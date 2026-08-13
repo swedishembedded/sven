@@ -11,6 +11,7 @@ sven-machines          = { path = "../machines" }
 sven-workspace       = { path = "../workspace" }
 sven-mcp-client    = { path = "../mcp-client" }
 sven-hsm           = { path = "../hsm" }
+sven-kernel        = { path = "../kernel" }
 sven-executors     = { path = "../executors" }
 sven-llm           = { path = "../llm" }
 # New integration crates - optional at bootstrap level

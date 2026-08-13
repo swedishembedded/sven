@@ -9,10 +9,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use common::{AgentMachine, GuardMachine, TState, TimerMachine};
-use sven_hsm::{
-    Clock, Context, Effect, EffectExecutor, Event, EventSink, Hsm, ObservationSink,
-    PermissionPolicy, Runtime, TimerService, VirtualClock,
-};
+use sven_hsm::{Context, Effect, Event, Hsm, ObservationSink, PermissionPolicy};
+use sven_kernel::{Clock, EffectExecutor, EventSink, Runtime, TimerService, VirtualClock};
 
 /// Executor that turns `ScheduleTimeout`/`CancelTimeout` into real timer tasks
 /// via a [`TimerService`] backed by the injected clock.

@@ -10,7 +10,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{CompactionStrategyUsed, Context, ErasedRuntime, Event, PermissionPolicy, UiEvent};
+use sven_hsm::{CompactionStrategyUsed, Context, Event, PermissionPolicy, UiEvent};
+use sven_kernel::ErasedRuntime;
 use tokio::sync::Mutex;
 
 // ─────────────────────────────────────────────────────────────────────────────

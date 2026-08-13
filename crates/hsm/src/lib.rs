@@ -5,9 +5,11 @@
 //! [`Event`]s, tools run only via typed [`Effect`]s the machine emits, and a
 //! single permission choke point makes unsafe tool use unrepresentable.
 //!
-//! The crate has **no dependencies on other sven crates** - only `serde`,
-//! `serde_json`, `uuid`, `thiserror`, `tokio`, and `async-trait`. Everything
-//! else in Sven is built on top of it.
+//! The crate depends only on `sven-vocab` (the pure session-event vocabulary
+//! `UiEvent` re-exports), plus `serde`, `serde_json`, `uuid`, `thiserror`, and
+//! `tokio` (for `observation`'s broadcast channel only - the crate has no
+//! `async-trait` and no active-object execution machinery). Everything else
+//! in Sven is built on top of it.
 //!
 //! # The spine
 //!
@@ -17,9 +19,10 @@
 //! ```
 //!
 //! Every transition function is **pure**: it mutates only the extended
-//! [`Context`] and *returns* [`Effect`]s; it performs no I/O. The
-//! [`Runtime`] executes those effects on separate tasks and feeds results back
-//! as [`Event`]s, preserving run-to-completion via a single consumer task.
+//! [`Context`] and *returns* [`Effect`]s; it performs no I/O. `sven-kernel`
+//! (a separate crate, one tier up) executes those effects on separate tasks
+//! and feeds results back as [`Event`]s, preserving run-to-completion via a
+//! single consumer task.
 //!
 //! # Architecture
 //!
@@ -35,14 +38,15 @@
 //! | [`submachine`] | hierarchical composition ([`Submachine`], [`ErasedMachine`]) |
 //! | [`permissions`] | [`PermissionPolicy`] + [`validate_effects_are_allowed`] choke point |
 //! | [`audit`] | [`AuditRecord`] + event-sourcing [`replay`] |
-//! | [`runtime`] | the tokio Active Object ([`Runtime`]), [`EffectExecutor`], [`Clock`], [`TimerService`] |
+//! | [`observation`] | the outward broadcast plane ([`ObservationSink`], [`UiEvent`]) |
 //! | [`error`] | [`MachineError`] |
 //!
 //! # Building a machine
 //!
 //! Implement [`Machine`] for your state enum, then drive it with [`Hsm`] (pure,
-//! synchronous, perfect for tests) or [`Runtime`] (async, with real effect
-//! execution). See the crate's integration tests for a worked 3-level example.
+//! synchronous, perfect for tests) or `sven_kernel::Runtime`/`ErasedRuntime`
+//! (async, with real effect execution, in the separate `sven-kernel` crate).
+//! See that crate's integration tests for a worked 3-level example.
 
 #![warn(missing_docs)]
 
@@ -56,7 +60,7 @@ pub mod ids;
 pub mod machine;
 pub mod observation;
 pub mod permissions;
-pub mod runtime;
+pub mod report;
 pub mod status;
 pub mod submachine;
 
@@ -75,9 +79,6 @@ pub use permissions::{
     capability_for_tool_name, classify, validate_effects_are_allowed, EffectDisposition,
     PermissionPolicy, PermissionPolicyBuilder, ToolCapability,
 };
-pub use runtime::{
-    AuditTrailHandle, ChildSpawner, Clock, EffectExecutor, ErasedReport, ErasedRuntime, EventSink,
-    Runtime, RuntimeReport, RuntimeStatus, StateLabel, SystemClock, TimerService, VirtualClock,
-};
+pub use report::{AuditTrailHandle, ErasedReport, RuntimeReport, RuntimeStatus, StateLabel};
 pub use status::Reaction;
 pub use submachine::{ErasedMachine, Submachine, SubmachineOutcome};

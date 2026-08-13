@@ -23,7 +23,8 @@ use tokio::sync::broadcast::error::RecvError;
 
 use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config};
-use sven_hsm::{Event, EventSink, UiEvent};
+use sven_hsm::{Event, UiEvent};
+use sven_kernel::EventSink;
 use sven_model::Message;
 use sven_tools::ToolCall;
 

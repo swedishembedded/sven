@@ -11,7 +11,8 @@
 
 use async_trait::async_trait;
 use sven_hsm::event::InternalEvent;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink};
+use sven_hsm::{Effect, Event, ObservationSink};
+use sven_kernel::{EffectExecutor, EventSink};
 
 /// Executes [`Effect::EmitInternal`] by re-posting the signal to the kernel queue.
 pub struct InternalExecutor;
@@ -47,9 +48,9 @@ impl EffectExecutor for InternalExecutor {
 mod tests {
     use serde_json::json;
     use sven_hsm::{
-        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, ObservationSink,
-        PermissionPolicy, Reaction, Runtime,
+        Context, Effect, Event, Hsm, MachineId, ObservationSink, PermissionPolicy, Reaction,
     };
+    use sven_kernel::{EffectExecutor, EventSink, Runtime};
 
     use super::InternalExecutor;
 

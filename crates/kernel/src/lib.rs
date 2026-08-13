@@ -1,4 +1,4 @@
-//! The tokio Active Object runtime.
+//! The tokio Active Object runtime that drives a [`sven_hsm::Machine`].
 //!
 //! Per `04-active-objects.md` §7.5, the kernel runs as a **single consumer
 //! task** draining an `mpsc` event queue. That single task is what guarantees
@@ -16,6 +16,15 @@
 //! [`EventSink`]. Timers are deterministic in tests via the [`Clock`]
 //! abstraction: a [`SystemClock`] for production and a [`VirtualClock`] whose
 //! time only advances when the test calls [`VirtualClock::advance`].
+//!
+//! Split out of `sven-hsm` (Phase 4.4 of the crate-architecture refactor
+//! plan) so the kernel's pure vocabulary (`Machine`, `Effect`, `Event`,
+//! `Context`, `PermissionPolicy`, `AuditRecord`) has no tokio dependency of
+//! its own — only the active-object execution engine that drives it does.
+//! `sven-hsm`'s outward observation plane (`ObservationSink`, a broadcast
+//! channel) stays in `sven-hsm`: it's part of the kernel's event vocabulary,
+//! not the execution engine, and moving it too would force a `sven-kernel`
+//! dependency onto every one of `UiEvent`'s many consumers for no benefit.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -27,15 +36,12 @@ use tokio::task::JoinHandle;
 
 use serde_json::Value;
 
-use crate::audit::{AuditRecord, ToolAuditRecord};
-use crate::context::Context;
-use crate::effect::Effect;
-use crate::event::{Event, EventKind, InternalEvent};
-use crate::ids::{MachineId, TimerId};
-use crate::machine::Machine;
-use crate::observation::{ObservationSink, UiEvent};
-use crate::permissions::{classify, validate_effects_are_allowed, EffectDisposition, PermissionPolicy};
-use crate::Hsm;
+use sven_hsm::{
+    classify, validate_effects_are_allowed, AuditRecord, AuditTrailHandle, Context, Effect,
+    EffectDisposition, ErasedMachine, ErasedReport, Event, EventKind, Hsm, InternalEvent, Machine,
+    MachineId, ObservationSink, PermissionPolicy, RuntimeReport, RuntimeStatus, StateLabel,
+    TimerId, ToolAuditRecord, UiEvent,
+};
 
 /// Default capacity of the per-runtime observation broadcast channel.
 const OBSERVATION_CAPACITY: usize = 1024;
@@ -300,28 +306,6 @@ fn note_child_completion(children: &mut ChildRegistry, event: &Event) {
             children.remove(&MachineId::from_uuid(uuid));
         }
     }
-}
-
-/// An observable snapshot of the running machine, published after every
-/// dispatch.
-#[derive(Clone, Debug, Default)]
-pub struct RuntimeStatus {
-    /// Current state label.
-    pub state_label: String,
-    /// `true` once the machine reaches a terminal state.
-    pub done: bool,
-    /// Most recent permission-gate rejection message, if any.
-    pub last_error: Option<String>,
-    /// Number of events processed so far.
-    pub processed: u64,
-}
-
-/// What the consumer task returns when it stops: the final machine and context.
-pub struct RuntimeReport<M: Machine> {
-    /// The machine in its final state.
-    pub hsm: Hsm<M>,
-    /// The final extended state (including the full audit trail).
-    pub ctx: Context,
 }
 
 /// A handle to a running kernel. Post events, observe state, and join for the
@@ -717,125 +701,6 @@ fn publish<M: Machine>(
     });
 }
 
-// ── ErasedReport ──────────────────────────────────────────────────────────────
-
-/// Like [`RuntimeReport`] but for type-erased machines. Returns the final
-/// state label and extended context; the machine itself is consumed by the
-/// loop.
-pub struct ErasedReport {
-    /// State label of the machine when it stopped.
-    pub state_label: String,
-    /// Final extended state (including the full audit trail).
-    pub ctx: Context,
-}
-
-// ── StateLabel ────────────────────────────────────────────────────────────────
-
-/// Wraps a state-label string so that `format!("{:?}", label)` returns the
-/// label itself — without surrounding quotes — matching the key format used by
-/// [`PermissionPolicy::state_label`].
-///
-/// Needed by [`ErasedRuntime`] to satisfy the `S: Debug` bound of
-/// [`validate_effects_are_allowed`] when the concrete machine type is erased
-/// and only a string label is available.
-pub struct StateLabel(pub String);
-
-impl std::fmt::Debug for StateLabel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-// ── AuditTrailHandle ──────────────────────────────────────────────────────────
-
-/// A shared, observable mirror of a running kernel's audit trail.
-///
-/// The ground-truth audit log lives in [`Context::audit`] /
-/// [`Context::tool_audit`], owned by the single consumer task. The runtime
-/// mirrors both vectors into this handle after every dispatch — and again
-/// immediately *before* executing a dispatch's effects — so out-of-task
-/// observers (most importantly an audit-persisting executor servicing
-/// [`Effect::PersistAudit`](crate::Effect::PersistAudit)) can read the records
-/// that led up to the effect they are executing.
-///
-/// Both mirrors are append-only: records are only ever appended, never mutated
-/// or removed, so consumers may keep a cursor into the snapshots they take.
-#[derive(Clone, Debug, Default)]
-pub struct AuditTrailHandle {
-    records: Arc<Mutex<Vec<AuditRecord>>>,
-    tool_records: Arc<Mutex<Vec<ToolAuditRecord>>>,
-}
-
-impl AuditTrailHandle {
-    /// Creates an empty trail.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// A snapshot of the dispatch audit records mirrored so far.
-    #[must_use]
-    pub fn records(&self) -> Vec<AuditRecord> {
-        self.records
-            .lock()
-            .expect("audit trail mutex poisoned")
-            .clone()
-    }
-
-    /// A snapshot of the per-tool-call audit records mirrored so far.
-    #[must_use]
-    pub fn tool_records(&self) -> Vec<ToolAuditRecord> {
-        self.tool_records
-            .lock()
-            .expect("audit trail mutex poisoned")
-            .clone()
-    }
-
-    /// The dispatch audit records mirrored so far, starting at index `start`.
-    ///
-    /// Because the trail is append-only, a consumer that has already processed
-    /// `start` records can fetch just the new suffix instead of cloning the
-    /// whole (potentially long-session) vector.
-    #[must_use]
-    pub fn records_from(&self, start: usize) -> Vec<AuditRecord> {
-        let guard = self.records.lock().expect("audit trail mutex poisoned");
-        guard[start.min(guard.len())..].to_vec()
-    }
-
-    /// The per-tool-call audit records mirrored so far, starting at index
-    /// `start` (see [`records_from`](Self::records_from)).
-    #[must_use]
-    pub fn tool_records_from(&self, start: usize) -> Vec<ToolAuditRecord> {
-        let guard = self
-            .tool_records
-            .lock()
-            .expect("audit trail mutex poisoned");
-        guard[start.min(guard.len())..].to_vec()
-    }
-
-    /// Mirrors `ctx`'s audit vectors into this handle.
-    ///
-    /// Called by the kernel's consumer task. Both vectors in [`Context`] are
-    /// append-only, so a sync normally just appends the new suffix (O(new
-    /// records), not O(all records)); if `ctx` is ever shorter than the
-    /// mirror (a fresh context reusing a handle), the mirror is replaced.
-    pub fn sync_from(&self, ctx: &Context) {
-        fn sync_vec<T: Clone + PartialEq>(mirror: &Mutex<Vec<T>>, source: &[T]) {
-            if let Ok(mut guard) = mirror.lock() {
-                if guard.len() <= source.len() {
-                    let cursor = guard.len();
-                    guard.extend_from_slice(&source[cursor..]);
-                } else {
-                    guard.clear();
-                    guard.extend_from_slice(source);
-                }
-            }
-        }
-        sync_vec(&self.records, &ctx.audit);
-        sync_vec(&self.tool_records, &ctx.tool_audit);
-    }
-}
-
 // ── ErasedRuntime ─────────────────────────────────────────────────────────────
 
 /// A handle to a running kernel backed by a `Box<dyn ErasedMachine>`.
@@ -857,7 +722,7 @@ impl ErasedRuntime {
     /// `queue_depth` bounds the event mpsc channel. Initial-entry effects are
     /// validated and executed inside the spawned task.
     pub fn spawn<E>(
-        machine: Box<dyn crate::submachine::ErasedMachine>,
+        machine: Box<dyn ErasedMachine>,
         ctx: Context,
         policy: PermissionPolicy,
         executor: E,
@@ -873,7 +738,7 @@ impl ErasedRuntime {
     /// services [`Effect::InstantiateSubmachine`] by running children
     /// concurrently. Pass `None` for the historical (no submachine) behavior.
     pub fn spawn_with_children<E>(
-        machine: Box<dyn crate::submachine::ErasedMachine>,
+        machine: Box<dyn ErasedMachine>,
         ctx: Context,
         policy: PermissionPolicy,
         executor: E,
@@ -900,13 +765,13 @@ impl ErasedRuntime {
     /// Share a clone of `trail` with an audit-persisting executor: the
     /// consumer task syncs the handle before and after every dispatch's
     /// effects and then executes
-    /// [`Effect::PersistAudit`](crate::Effect::PersistAudit) itself, so every
+    /// [`Effect::PersistAudit`](sven_hsm::Effect::PersistAudit) itself, so every
     /// dispatch/tool/rejection record — including those of the final,
     /// terminal dispatch — reaches the durable log without any machine
     /// having to emit `PersistAudit`. Executors without an audit slot ignore
     /// the effect.
     pub fn spawn_with_audit_trail<E>(
-        machine: Box<dyn crate::submachine::ErasedMachine>,
+        machine: Box<dyn ErasedMachine>,
         ctx: Context,
         policy: PermissionPolicy,
         executor: E,
@@ -1023,7 +888,7 @@ impl ErasedRuntime {
 
 #[allow(clippy::too_many_arguments)]
 async fn erased_consumer_loop<E>(
-    mut machine: Box<dyn crate::submachine::ErasedMachine>,
+    mut machine: Box<dyn ErasedMachine>,
     mut ctx: Context,
     policy: PermissionPolicy,
     mut executor: E,
@@ -1163,57 +1028,3 @@ fn publish_erased(
     });
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::audit::{AuditRecord, ToolAuditRecord};
-    use crate::context::Principal;
-    use crate::event::EventKind;
-    use crate::ids::ToolCallId;
-    use crate::permissions::ToolCapability;
-
-    use super::*;
-
-    #[test]
-    fn audit_trail_handle_mirrors_context_vectors() {
-        let trail = AuditTrailHandle::new();
-        assert!(trail.records().is_empty());
-        assert!(trail.tool_records().is_empty());
-
-        let mut ctx = Context::new();
-        ctx.principal = Some(Principal::new("acme", "alice"));
-        ctx.push_audit(AuditRecord::ignored("Idle", EventKind::UserMessage));
-        ctx.tool_audit.push(ToolAuditRecord::started(
-            "Working",
-            ToolCallId::new(),
-            "read_file",
-            ToolCapability::ReadFile,
-        ));
-
-        trail.sync_from(&ctx);
-
-        let records = trail.records();
-        assert_eq!(records.len(), 1);
-        // Principal stamping from push_audit is preserved in the mirror.
-        assert_eq!(records[0].tenant_id.as_deref(), Some("acme"));
-        assert_eq!(records[0].actor_id.as_deref(), Some("alice"));
-        assert_eq!(trail.tool_records().len(), 1);
-
-        // Re-syncing an extended context only appends.
-        ctx.push_audit(AuditRecord::ignored("Idle", EventKind::Timeout));
-        trail.sync_from(&ctx);
-        assert_eq!(trail.records().len(), 2);
-        assert_eq!(trail.records()[0], records[0]);
-    }
-
-    #[test]
-    fn audit_trail_handle_clones_share_state() {
-        let trail = AuditTrailHandle::new();
-        let clone = trail.clone();
-
-        let mut ctx = Context::new();
-        ctx.push_audit(AuditRecord::ignored("Idle", EventKind::UserMessage));
-        trail.sync_from(&ctx);
-
-        assert_eq!(clone.records().len(), 1, "clone observes the same trail");
-    }
-}

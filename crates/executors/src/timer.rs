@@ -1,13 +1,14 @@
 //! Timer effect executor.
 //!
 //! Handles [`Effect::ScheduleTimeout`] and [`Effect::CancelTimeout`] by
-//! delegating to a [`sven_hsm::TimerService`] backed by a [`sven_hsm::Clock`]
-//! injected at construction.
+//! delegating to a [`sven_kernel::TimerService`] backed by a
+//! [`sven_kernel::Clock`] injected at construction.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{Clock, Effect, EffectExecutor, EventSink, ObservationSink, TimerService};
+use sven_hsm::{Effect, ObservationSink};
+use sven_kernel::{Clock, EffectExecutor, EventSink, TimerService};
 
 /// Executes timer effects using an injected [`Clock`].
 ///
@@ -21,8 +22,8 @@ pub struct TimerExecutor {
 impl TimerExecutor {
     /// Creates a new timer executor backed by `clock`.
     ///
-    /// Pass a [`sven_hsm::SystemClock`] in production and a
-    /// [`sven_hsm::VirtualClock`] in tests.
+    /// Pass a [`sven_kernel::SystemClock`] in production and a
+    /// [`sven_kernel::VirtualClock`] in tests.
     pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             clock,
@@ -57,10 +58,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use sven_hsm::{
-        Context, Effect, EffectExecutor, Event, Hsm, MachineId, PermissionPolicy, Reaction,
-        Runtime, TimerId, VirtualClock,
-    };
+    use sven_hsm::{Context, Effect, Event, Hsm, MachineId, PermissionPolicy, Reaction, TimerId};
+    use sven_kernel::{EffectExecutor, Runtime, VirtualClock};
 
     use super::TimerExecutor;
 
@@ -135,7 +134,7 @@ mod tests {
 
         // Schedule a 10-second timeout directly via a cloned TimerService.
         let timer_id = TimerId::new();
-        let mut svc = sven_hsm::TimerService::new(Arc::new(clock.clone()), sink);
+        let mut svc = sven_kernel::TimerService::new(Arc::new(clock.clone()), sink);
         svc.schedule(timer_id, Duration::from_secs(10));
 
         // Advance virtual time past the deadline.
@@ -193,7 +192,7 @@ mod tests {
         // interacts with the same timer service.  We chain them manually
         // below.
         let timer_id = TimerId::new();
-        let mut svc = sven_hsm::TimerService::new(
+        let mut svc = sven_kernel::TimerService::new(
             Arc::new(clock.clone()),
             // Dummy sink pointing to a dropped channel - we only care that
             // cancel aborts the task.

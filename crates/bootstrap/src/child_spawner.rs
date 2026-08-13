@@ -30,9 +30,10 @@ use sven_config::Config;
 use sven_machines::TaskMachine;
 use sven_executors::{CompositeExecutorBuilder, ToolExecutor, TurnExecutor};
 use sven_hsm::{
-    event::InternalEvent, ChildSpawner, Context, Event, EventSink, Hsm, MachineId,
-    PermissionPolicy, Runtime, SystemClock, ToolCallId, ToolCapability,
+    event::InternalEvent, Context, Event, Hsm, MachineId, PermissionPolicy, ToolCallId,
+    ToolCapability,
 };
+use sven_kernel::{ChildSpawner, EventSink, Runtime, SystemClock};
 use sven_llm::ThreadStore;
 use sven_tools::ToolRegistry;
 

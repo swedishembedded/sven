@@ -57,6 +57,7 @@ sven-session-store = "services"
 sven-llm        = "services"
 sven-tools      = "services"
 sven-mcp-client = "services"
+sven-kernel     = "services"
 
 # domain
 sven-channels      = "domain"
@@ -209,7 +210,7 @@ path = "src/cli.rs"
 lines = 1589
 [[allow.large_file]]
 path = "crates/node/src/control/service.rs"
-lines = 1571
+lines = 1572
 [[allow.large_file]]
 path = "crates/cloud/src/channels.rs"
 lines = 1554
@@ -238,9 +239,6 @@ lines = 1257
 path = "crates/workspace/src/skills.rs"
 lines = 1238
 [[allow.large_file]]
-path = "crates/hsm/src/runtime.rs"
-lines = 1219
-[[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
 lines = 1194
 [[allow.large_file]]
@@ -260,7 +258,7 @@ path = "crates/tui/src/app/session_manager.rs"
 lines = 1141
 [[allow.large_file]]
 path = "crates/executors/tests/pipeline_integration.rs"
-lines = 1121
+lines = 1122
 [[allow.large_file]]
 path = "crates/model/src/anthropic.rs"
 lines = 1116
@@ -279,6 +277,9 @@ lines = 1033
 [[allow.large_file]]
 path = "crates/tui/src/submit.rs"
 lines = 1032
+[[allow.large_file]]
+path = "crates/kernel/src/lib.rs"
+lines = 1030
 [[allow.large_file]]
 path = "crates/session-model/src/conversation.rs"
 lines = 1029
@@ -320,7 +321,7 @@ path = "crates/node/src/p2p/handler.rs"
 lines = 872
 [[allow.large_file]]
 path = "crates/ci/src/runner/runtime_runner.rs"
-lines = 855
+lines = 856
 [[allow.large_file]]
 path = "crates/companion/src/policy.rs"
 lines = 851

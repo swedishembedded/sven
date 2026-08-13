@@ -10,7 +10,8 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink};
+use sven_hsm::{Effect, Event, ObservationSink};
+use sven_kernel::{EffectExecutor, EventSink};
 
 /// Executes checkpoint effects using `git stash` in `repo_dir`.
 pub struct CheckpointExecutor {
@@ -191,9 +192,9 @@ mod tests {
     use std::process::Command as StdCmd;
 
     use sven_hsm::{
-        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, ObservationSink,
-        PermissionPolicy, Reaction, Runtime,
+        Context, Effect, Event, Hsm, MachineId, ObservationSink, PermissionPolicy, Reaction,
     };
+    use sven_kernel::{EffectExecutor, EventSink, Runtime};
     use tempfile::TempDir;
 
     use super::CheckpointExecutor;

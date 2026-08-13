@@ -26,9 +26,8 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use sven_hsm::{
-    Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId, ToolCapability, UiEvent,
-};
+use sven_hsm::{Effect, Event, ObservationSink, ToolCallId, ToolCapability, UiEvent};
+use sven_kernel::{EffectExecutor, EventSink};
 use sven_llm::ThreadStore;
 use sven_model::Message;
 use sven_tools::{ToolCall, ToolRegistry};
@@ -252,9 +251,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use sven_hsm::{
-        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, ObservationSink,
-        PermissionPolicy, Reaction, Runtime, ToolCallId, ToolCapability,
+        Context, Effect, Event, Hsm, MachineId, ObservationSink, PermissionPolicy, Reaction,
+        ToolCallId, ToolCapability,
     };
+    use sven_kernel::{EffectExecutor, EventSink, Runtime};
     use sven_tools::ToolRegistry;
 
     use super::ToolExecutor;

@@ -27,7 +27,8 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use chrono::Utc;
 pub use sven_chain::{append_chain, read_chain, verify_chain, ChainError, ChainedLine, GENESIS_HASH};
-use sven_hsm::{AuditTrailHandle, Effect, EffectExecutor, EventSink, ObservationSink};
+use sven_hsm::{AuditTrailHandle, Effect, ObservationSink};
+use sven_kernel::{EffectExecutor, EventSink};
 
 /// Executes [`Effect::PersistAudit`] by appending hash-chained entries to an
 /// append-only JSONL log (see the module docs for the line format and for
@@ -162,10 +163,11 @@ impl EffectExecutor for AuditExecutor {
 #[cfg(test)]
 mod tests {
     use sven_hsm::{
-        AuditRecord, AuditTrailHandle, Context, Effect, EffectExecutor, Event, EventKind,
-        EventSink, Hsm, MachineId, ObservationSink, PermissionPolicy, Principal, Reaction, Runtime,
-        ToolAuditRecord, ToolCallId, ToolCapability,
+        AuditRecord, AuditTrailHandle, Context, Effect, Event, EventKind, Hsm, MachineId,
+        ObservationSink, PermissionPolicy, Principal, Reaction, ToolAuditRecord, ToolCallId,
+        ToolCapability,
     };
+    use sven_kernel::{EffectExecutor, EventSink, Runtime};
 
     use super::{verify_chain, AuditExecutor, ChainedLine, GENESIS_HASH};
 
@@ -514,7 +516,7 @@ mod tests {
     #[tokio::test]
     async fn erased_runtime_session_writes_verifiable_audit_log() {
         use crate::CompositeExecutorBuilder;
-        use sven_hsm::ErasedRuntime;
+        use sven_kernel::ErasedRuntime;
 
         let dir = tempfile::TempDir::new().unwrap();
         let log_path = dir.path().join("audit.jsonl");

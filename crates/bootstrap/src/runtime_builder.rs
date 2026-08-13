@@ -33,9 +33,9 @@ use sven_executors::{
     CompositeExecutorBuilder, ToolExecutor, TurnExecutor,
 };
 use sven_hsm::{
-    Context, EffectExecutor, ErasedRuntime, Event, EventSink, ObservationSink, Principal,
-    RuntimeStatus, ToolCallId, UiEvent,
+    Context, Event, ObservationSink, Principal, RuntimeStatus, ToolCallId, UiEvent,
 };
+use sven_kernel::{EffectExecutor, ErasedRuntime, EventSink};
 use sven_llm::ThreadStore;
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
@@ -671,7 +671,7 @@ impl RuntimeBuilder {
         // the kernel can service `Effect::InstantiateSubmachine` by running each
         // decomposed task as an isolated concurrent child kernel.
         let is_sdlc = self.mode.as_str() == "sdlc";
-        let child_spawner: Option<Arc<dyn sven_hsm::ChildSpawner>> = if is_sdlc {
+        let child_spawner: Option<Arc<dyn sven_kernel::ChildSpawner>> = if is_sdlc {
             Some(Arc::new(crate::child_spawner::SdlcChildSpawner::new(
                 model.clone(),
                 Arc::clone(&self.config),
@@ -711,7 +711,7 @@ impl RuntimeBuilder {
             None => {
                 let base = CompositeExecutorBuilder::default()
                     .with_user(question_tx, approval_tx)
-                    .with_timers(Arc::new(sven_hsm::SystemClock::new()))
+                    .with_timers(Arc::new(sven_kernel::SystemClock::new()))
                     .with_checkpoints(checkpoint_dir)
                     .with_audit_trail(audit_log_path, audit_trail.clone())
                     .with_turn(turn_executor);

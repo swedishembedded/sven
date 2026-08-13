@@ -9,6 +9,7 @@ license      = "Apache-2.0"
 sven-chain    = { path = "../chain" }
 sven-config   = { path = "../config" }
 sven-hsm      = { path = "../hsm" }
+sven-kernel   = { path = "../kernel" }
 sven-llm      = { path = "../llm" }
 sven-tools    = { path = "../tools" }
 sven-model    = { path = "../model" }

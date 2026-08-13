@@ -14,9 +14,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use sven_hsm::event::InternalEvent;
 use sven_hsm::{
-    ChildSpawner, Context, Effect, EffectExecutor, Event, EventSink, Hsm, Machine, MachineId,
-    ObservationSink, PermissionPolicy, Reaction, Runtime,
+    Context, Effect, Event, Hsm, Machine, MachineId, ObservationSink, PermissionPolicy, Reaction,
 };
+use sven_kernel::{ChildSpawner, EffectExecutor, EventSink, Runtime};
 
 // ── A trivial child machine: doubles the `task` fact it was seeded with ───────
 

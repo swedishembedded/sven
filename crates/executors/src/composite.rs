@@ -24,9 +24,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{
-    AuditTrailHandle, Clock, Effect, EffectExecutor, EffectKind, EventSink, ObservationSink,
-};
+use sven_hsm::{AuditTrailHandle, Effect, EffectKind, ObservationSink};
+use sven_kernel::{Clock, EffectExecutor, EventSink};
 use sven_tools::ToolRegistry;
 use tokio::sync::mpsc;
 
@@ -240,7 +239,7 @@ impl CompositeExecutorBuilder {
     /// mirrored in `trail` to `log_path`.
     ///
     /// Share the same [`AuditTrailHandle`] with the runtime (see
-    /// [`sven_hsm::ErasedRuntime::spawn_with_audit_trail`]) so `PersistAudit`
+    /// `sven_kernel::ErasedRuntime::spawn_with_audit_trail`) so `PersistAudit`
     /// flushes every dispatch and tool audit record accumulated since the
     /// previous flush.
     pub fn with_audit_trail(
@@ -320,9 +319,8 @@ mod tests {
     use std::sync::Arc;
 
     use serde_json::json;
-    use sven_hsm::{
-        Context, Effect, EffectExecutor, Event, Hsm, MachineId, PermissionPolicy, Reaction, Runtime,
-    };
+    use sven_hsm::{Context, Effect, Event, Hsm, MachineId, PermissionPolicy, Reaction};
+    use sven_kernel::{EffectExecutor, Runtime};
     use sven_tools::ToolRegistry;
 
     use super::{CompositeExecutor, CompositeExecutorBuilder};
@@ -445,7 +443,7 @@ mod tests {
         async fn execute(
             &mut self,
             effect: Effect,
-            _sink: &sven_hsm::EventSink,
+            _sink: &sven_kernel::EventSink,
             _obs: &sven_hsm::ObservationSink,
         ) {
             self.effects.lock().unwrap().push(effect);

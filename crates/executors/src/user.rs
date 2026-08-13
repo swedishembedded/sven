@@ -15,9 +15,8 @@
 //!   or `Event::HumanRejected`.
 
 use async_trait::async_trait;
-use sven_hsm::{
-    ApprovalId, Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCapability,
-};
+use sven_hsm::{ApprovalId, Effect, Event, ObservationSink, ToolCapability};
+use sven_kernel::{EffectExecutor, EventSink};
 use tokio::sync::{mpsc, oneshot};
 
 // ── Channel message types ─────────────────────────────────────────────────────
@@ -163,9 +162,10 @@ impl EffectExecutor for UserExecutor {
 #[cfg(test)]
 mod tests {
     use sven_hsm::{
-        ApprovalId, Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId,
-        ObservationSink, PermissionPolicy, Reaction, Runtime, ToolCapability,
+        ApprovalId, Context, Effect, Event, Hsm, MachineId, ObservationSink, PermissionPolicy,
+        Reaction, ToolCapability,
     };
+    use sven_kernel::{EffectExecutor, EventSink, Runtime};
     use tokio::sync::mpsc;
 
     use super::{ApprovalRequest, UserExecutor, UserQuestion};

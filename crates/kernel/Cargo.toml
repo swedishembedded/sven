@@ -1,0 +1,16 @@
+[package]
+name        = "sven-kernel"
+version.workspace = true
+edition     = "2021"
+description = "The tokio Active Object runtime that drives a sven-hsm Machine: Runtime<M>/ErasedRuntime, EffectExecutor, EventSink, ChildSpawner, Clock, TimerService."
+license     = "Apache-2.0"
+
+[dependencies]
+sven-hsm    = { path = "../hsm" }
+tokio       = { workspace = true }
+async-trait = { workspace = true }
+serde_json  = { workspace = true }
+uuid        = { workspace = true }
+
+[dev-dependencies]
+tokio       = { workspace = true }

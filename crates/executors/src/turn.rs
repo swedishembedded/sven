@@ -112,9 +112,9 @@ fn register_calls(
 
 use async_trait::async_trait;
 use sven_hsm::{
-    CompactionStrategyUsed, Effect, EffectExecutor, Event, EventSink, ObservationSink,
-    ProposedToolCall, ToolCallId, UiEvent,
+    CompactionStrategyUsed, Effect, Event, ObservationSink, ProposedToolCall, ToolCallId, UiEvent,
 };
+use sven_kernel::{EffectExecutor, EventSink};
 use sven_llm::{ThreadStore, TurnRequest};
 use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
 use sven_tools::ToolRegistry;
