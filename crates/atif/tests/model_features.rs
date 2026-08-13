@@ -5,10 +5,10 @@
 //! `llm_call_count = 0` deterministic dispatch, `is_copied_context`
 //! filtering, and the Section VII context-management convention.
 
-use trace::{
-    AgentProfile, ContentSegment, ContextManagement, ImageMediaType, MessageBody, ObservationEntry,
-    StepObservation, StepOrigin, SubagentRef, ToolInvocation, TraceStep, Trajectory,
-    validate_trajectory,
+use atif::{
+    validate_trajectory, AgentProfile, ContentSegment, ContextManagement, ImageMediaType,
+    MessageBody, ObservationEntry, StepObservation, StepOrigin, SubagentRef, ToolInvocation,
+    TraceStep, Trajectory,
 };
 
 fn roundtrip(t: &Trajectory) -> Trajectory {
@@ -88,11 +88,7 @@ fn multimodal_observation_content_round_trips() {
     t.steps.push(step);
 
     let restored = roundtrip(&t);
-    let content = restored.steps[0]
-        .observation
-        .as_ref()
-        .unwrap()
-        .results[0]
+    let content = restored.steps[0].observation.as_ref().unwrap().results[0]
         .content
         .as_ref()
         .unwrap();
@@ -106,7 +102,9 @@ fn multimodal_observation_content_round_trips() {
 fn embedded_subagent_round_trips_and_validates() {
     let mut child = Trajectory::new("ATIF-v1.7", AgentProfile::new("sub-agent", "0.1.0"));
     child.trajectory_id = Some("child-abc".into());
-    child.steps.push(TraceStep::new(1, StepOrigin::User, "Summarize this."));
+    child
+        .steps
+        .push(TraceStep::new(1, StepOrigin::User, "Summarize this."));
     child
         .steps
         .push(TraceStep::new(2, StepOrigin::Agent, "Summary: ..."));
@@ -114,9 +112,9 @@ fn embedded_subagent_round_trips_and_validates() {
     let mut parent = Trajectory::new("ATIF-v1.7", AgentProfile::new("sven", "1.0.0"));
     parent.trajectory_id = Some("parent-1".into());
     let mut step = TraceStep::new(1, StepOrigin::Agent, "Delegating to a subagent.");
-    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(vec![
-        SubagentRef::by_trajectory_id("child-abc"),
-    ])));
+    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(
+        vec![SubagentRef::by_trajectory_id("child-abc")],
+    )));
     parent.steps.push(step);
     parent.subagent_trajectories = Some(vec![child]);
 
@@ -153,16 +151,22 @@ fn deterministic_dispatch_step_round_trips_and_validates() {
 #[test]
 fn is_copied_context_steps_are_excluded_from_sft_iteration() {
     let mut t = Trajectory::new("ATIF-v1.7", AgentProfile::new("sven", "1.0.0"));
-    t.steps.push(TraceStep::new(1, StepOrigin::User, "original turn"));
+    t.steps
+        .push(TraceStep::new(1, StepOrigin::User, "original turn"));
 
     let mut copied = TraceStep::new(2, StepOrigin::Agent, "copied from prior trajectory");
     copied.is_copied_context = Some(true);
     t.steps.push(copied);
 
-    t.steps.push(TraceStep::new(3, StepOrigin::Agent, "new turn"));
+    t.steps
+        .push(TraceStep::new(3, StepOrigin::Agent, "new turn"));
 
     let sft_ids: Vec<u64> = t.sft_steps().map(|s| s.step_id).collect();
-    assert_eq!(sft_ids, vec![1, 3], "step 2 (is_copied_context=true) must be excluded");
+    assert_eq!(
+        sft_ids,
+        vec![1, 3],
+        "step 2 (is_copied_context=true) must be excluded"
+    );
 }
 
 #[test]

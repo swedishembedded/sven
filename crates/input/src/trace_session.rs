@@ -16,12 +16,12 @@
 //! - [`SvenSessionMeta`] — sven-specific session metadata (title, status,
 //!   mode, parent link, timestamps) that has no dedicated ATIF field, stored
 //!   under `Trajectory.extra.sven`.
-//! - [`ChatUsage`]-to-[`trace::FinalMetrics`] mapping helpers.
+//! - [`ChatUsage`]-to-[`atif::FinalMetrics`] mapping helpers.
 //! - [`StepAssembler`] — the turn assembler: folds a flat stream of user
 //!   messages / assistant text / tool calls / tool results / thinking /
-//!   context-compaction events into turn-shaped [`trace::TraceStep`]s, and
+//!   context-compaction events into turn-shaped [`atif::TraceStep`]s, and
 //!   the reverse ([`steps_to_messages`]) for reseeding an agent's history.
-//! - File I/O built directly on `trace::persist` (new `sessions/` directory,
+//! - File I/O built directly on `atif::persist` (new `sessions/` directory,
 //!   `.json` extension, deliberately separate from the legacy `chats/`
 //!   directory so old and new files never collide in the same listing).
 //! - [`import_legacy_chat_document`] — one-way YAML `ChatDocument` → ATIF
@@ -31,17 +31,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use atif::{
+    AgentProfile, ContentSegment, ContextManagement, FinalMetrics, MessageBody, ObservationEntry,
+    StepObservation, StepOrigin, SubagentRef, ToolInvocation, TraceStep, Trajectory,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
-use trace::{
-    AgentProfile, ContentSegment, ContextManagement, FinalMetrics, MessageBody, ObservationEntry,
-    StepObservation, StepOrigin, SubagentRef, ToolInvocation, TraceStep, Trajectory,
-};
 
-use crate::chat_document::{ChatDocument, ChatStatus, ChatUsage};
 use crate::chat_document::{json_str_to_yaml, TurnRecord};
+use crate::chat_document::{ChatDocument, ChatStatus, ChatUsage};
 use crate::conversation::ConversationRecord;
 
 /// The ATIF schema version string this module writes and expects to read.
@@ -153,7 +153,9 @@ impl SvenSessionMeta {
     /// creating `extra` as a JSON object if it was absent or not an object.
     /// Other keys already present under `extra` are preserved.
     pub fn apply_to_trajectory(&self, trajectory: &mut Trajectory) {
-        let extra = trajectory.extra.get_or_insert_with(|| Value::Object(Map::new()));
+        let extra = trajectory
+            .extra
+            .get_or_insert_with(|| Value::Object(Map::new()));
         if !extra.is_object() {
             *extra = Value::Object(Map::new());
         }
@@ -232,19 +234,25 @@ pub fn new_session_id() -> String {
 /// later milestones' callers (CI runner / TUI / GUI) invoke it explicitly
 /// when they create a subagent session. See [`SvenSessionMeta::parent_session_id`]
 /// for the cheap reverse-lookup counterpart kept on the child.
-pub fn record_subagent_spawn(parent: &mut Trajectory, child_session_id: &str, child_trajectory_path: &Path) {
+pub fn record_subagent_spawn(
+    parent: &mut Trajectory,
+    child_session_id: &str,
+    child_trajectory_path: &Path,
+) {
     let step_id = parent.steps.len() as u64 + 1;
     let mut step = TraceStep::new(
         step_id,
         StepOrigin::System,
         format!("subagent spawned: session_id={child_session_id}"),
     );
-    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(vec![SubagentRef {
-        trajectory_id: None,
-        trajectory_path: Some(child_trajectory_path.to_string_lossy().to_string()),
-        session_id: Some(child_session_id.to_string()),
-        extra: None,
-    }])));
+    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(
+        vec![SubagentRef {
+            trajectory_id: None,
+            trajectory_path: Some(child_trajectory_path.to_string_lossy().to_string()),
+            session_id: Some(child_session_id.to_string()),
+            extra: None,
+        }],
+    )));
     parent.steps.push(step);
 }
 
@@ -277,7 +285,9 @@ impl ContextCompactionDetails {
     /// Extract compaction details from a step's `extra.sven` object, if
     /// present and well-formed.
     pub fn from_step_extra(extra: &Value) -> Option<Self> {
-        extra.get("sven").and_then(|v| serde_json::from_value(v.clone()).ok())
+        extra
+            .get("sven")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 }
 
@@ -391,12 +401,26 @@ impl StepAssembler {
                     None => text.clone(),
                 });
             }
-            (Role::Assistant, MessageContent::ToolCall { tool_call_id, function }) => {
-                let arguments = serde_json::from_str(&function.arguments).unwrap_or_else(|_| Value::Object(Map::new()));
-                let invocation = ToolInvocation::new(tool_call_id.clone(), function.name.clone()).with_arguments(arguments);
+            (
+                Role::Assistant,
+                MessageContent::ToolCall {
+                    tool_call_id,
+                    function,
+                },
+            ) => {
+                let arguments = serde_json::from_str(&function.arguments)
+                    .unwrap_or_else(|_| Value::Object(Map::new()));
+                let invocation = ToolInvocation::new(tool_call_id.clone(), function.name.clone())
+                    .with_arguments(arguments);
                 self.pending_or_new().tool_calls.push(invocation);
             }
-            (Role::Tool, MessageContent::ToolResult { tool_call_id, content }) => {
+            (
+                Role::Tool,
+                MessageContent::ToolResult {
+                    tool_call_id,
+                    content,
+                },
+            ) => {
                 let entry = ObservationEntry::for_call(tool_call_id.clone(), content.to_string());
                 self.pending_or_new().observation_results.push(entry);
             }
@@ -417,7 +441,13 @@ impl StepAssembler {
     /// `System` step, with the Section VII `context_management` convention
     /// object (`type: "compaction"`, `boundary: "replace"`) plus the full
     /// structured [`ContextCompactionDetails`] both nested under `extra`.
-    pub fn push_context_compacted(&mut self, tokens_before: usize, tokens_after: usize, strategy: Option<&str>, turn: Option<u32>) {
+    pub fn push_context_compacted(
+        &mut self,
+        tokens_before: usize,
+        tokens_after: usize,
+        strategy: Option<&str>,
+        turn: Option<u32>,
+    ) {
         self.flush_pending();
         let details = ContextCompactionDetails {
             tokens_before,
@@ -432,10 +462,10 @@ impl StepAssembler {
         );
         ContextManagement::new("compaction", "replace").insert_into_extra(&mut step.extra);
         let extra = step.extra.get_or_insert_with(|| Value::Object(Map::new()));
-        extra
-            .as_object_mut()
-            .expect("just ensured object")
-            .insert("sven".to_string(), serde_json::to_value(&details).expect("always serializes"));
+        extra.as_object_mut().expect("just ensured object").insert(
+            "sven".to_string(),
+            serde_json::to_value(&details).expect("always serializes"),
+        );
         self.steps.push(step);
     }
 
@@ -455,7 +485,7 @@ impl StepAssembler {
     /// completion signal), and that tool call's own result observation
     /// hasn't necessarily arrived yet either. Flushing here would split the
     /// tool call from its eventual tool-result observation across two
-    /// different steps — which `trace::validate::validate_trajectory`'s
+    /// different steps — which `atif::validate::validate_trajectory`'s
     /// `DanglingSourceCallId` rule rejects, since a `source_call_id` must
     /// resolve against a `tool_calls` entry in the *same* step. Attaching to
     /// the still-open pending step instead keeps everything about this turn
@@ -597,7 +627,12 @@ fn push_conversation_record(assembler: &mut StepAssembler, record: &Conversation
             tokens_after,
             strategy,
             turn,
-        } => assembler.push_context_compacted(*tokens_before, *tokens_after, strategy.as_deref(), *turn),
+        } => assembler.push_context_compacted(
+            *tokens_before,
+            *tokens_after,
+            strategy.as_deref(),
+            *turn,
+        ),
     }
 }
 
@@ -703,7 +738,10 @@ fn push_turn_record(assembler: &mut StepAssembler, turn: &TurnRecord) {
                 },
             });
         }
-        TurnRecord::ToolResult { tool_call_id, content } => {
+        TurnRecord::ToolResult {
+            tool_call_id,
+            content,
+        } => {
             assembler.push_message(&Message::tool_result(tool_call_id.clone(), content));
         }
         TurnRecord::ContextCompacted {
@@ -711,7 +749,12 @@ fn push_turn_record(assembler: &mut StepAssembler, turn: &TurnRecord) {
             tokens_after,
             strategy,
             turn,
-        } => assembler.push_context_compacted(*tokens_before, *tokens_after, strategy.as_deref(), *turn),
+        } => assembler.push_context_compacted(
+            *tokens_before,
+            *tokens_after,
+            strategy.as_deref(),
+            *turn,
+        ),
     }
 }
 
@@ -768,11 +811,9 @@ pub fn steps_to_messages(steps: &[TraceStep]) -> Vec<Message> {
                     }
                     if let Some(observation) = &step.observation {
                         for call in tool_calls {
-                            if let Some(entry) = observation
-                                .results
-                                .iter()
-                                .find(|r| r.source_call_id.as_deref() == Some(call.tool_call_id.as_str()))
-                            {
+                            if let Some(entry) = observation.results.iter().find(|r| {
+                                r.source_call_id.as_deref() == Some(call.tool_call_id.as_str())
+                            }) {
                                 let content = entry
                                     .content
                                     .as_ref()
@@ -885,11 +926,9 @@ pub fn steps_to_turn_records(steps: &[TraceStep]) -> Vec<TurnRecord> {
                     }
                     if let Some(observation) = &step.observation {
                         for call in tool_calls {
-                            if let Some(entry) = observation
-                                .results
-                                .iter()
-                                .find(|r| r.source_call_id.as_deref() == Some(call.tool_call_id.as_str()))
-                            {
+                            if let Some(entry) = observation.results.iter().find(|r| {
+                                r.source_call_id.as_deref() == Some(call.tool_call_id.as_str())
+                            }) {
                                 let content = entry
                                     .content
                                     .as_ref()
@@ -930,7 +969,7 @@ pub fn steps_to_conversation_records(steps: &[TraceStep]) -> Vec<ConversationRec
     crate::chat_document::turns_to_records(&turns)
 }
 
-// ── File I/O built on trace::persist ────────────────────────────────────────
+// ── File I/O built on atif::persist ────────────────────────────────────────
 
 /// Directory sven stores ATIF trajectory session files in.
 ///
@@ -940,7 +979,12 @@ pub fn steps_to_conversation_records(steps: &[TraceStep]) -> Vec<ConversationRec
 /// new `.json` trajectory files never collide in the same directory listing.
 pub fn session_dir() -> PathBuf {
     dirs::data_dir()
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".local").join("share"))
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".local")
+                .join("share")
+        })
         .join("sven")
         .join("sessions")
 }
@@ -948,7 +992,8 @@ pub fn session_dir() -> PathBuf {
 /// Create the session directory if it does not exist and return its path.
 pub fn ensure_session_dir() -> Result<PathBuf> {
     let dir = session_dir();
-    fs::create_dir_all(&dir).with_context(|| format!("creating session directory {}", dir.display()))?;
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("creating session directory {}", dir.display()))?;
     Ok(dir)
 }
 
@@ -960,12 +1005,12 @@ pub fn session_path(session_id: &str) -> PathBuf {
 /// Load a trajectory from an explicit file path.
 ///
 /// Callers that want to *write* a session go through
-/// [`trace::persist::write_trajectory_atomic`] directly (see the GUI's
+/// [`atif::persist::write_trajectory_atomic`] directly (see the GUI's
 /// `save_session_to_disk` and the TUI's `save_history_async`); the old
 /// `save_session`/`save_session_atomic`/`load_session_with_fingerprint`
 /// wrappers here had no callers and were removed.
 pub fn load_session_from(path: &Path) -> Result<Trajectory> {
-    let (trajectory, _fingerprint) = trace::persist::read_trajectory_with_fingerprint(path)?;
+    let (trajectory, _fingerprint) = atif::persist::read_trajectory_with_fingerprint(path)?;
     Ok(trajectory)
 }
 
@@ -986,7 +1031,7 @@ pub struct SessionEntry {
 
 /// List all session files in [`session_dir`], most recently updated first
 /// (falling back to filename order for entries with no `meta.updated_at`).
-/// Uses [`trace::persist::read_trajectory_header`] so listing stays cheap
+/// Uses [`atif::persist::read_trajectory_header`] so listing stays cheap
 /// even with a huge `steps` array in any individual file.
 pub fn list_sessions(limit: Option<usize>) -> Result<Vec<SessionEntry>> {
     let dir = session_dir();
@@ -1001,7 +1046,7 @@ pub fn list_sessions(limit: Option<usize>) -> Result<Vec<SessionEntry>> {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        match trace::persist::read_trajectory_header(&path) {
+        match atif::persist::read_trajectory_header(&path) {
             Ok(header) => {
                 let meta = header
                     .extra
@@ -1109,9 +1154,17 @@ fn merge_native_and_legacy(
                 meta.parent_session_id.clone(),
                 meta.updated_at,
             ),
-            None => ("Untitled".to_string(), ChatStatus::default(), None, Utc::now()),
+            None => (
+                "Untitled".to_string(),
+                ChatStatus::default(),
+                None,
+                Utc::now(),
+            ),
         };
-        let usage = entry.final_metrics.as_ref().map(final_metrics_to_chat_usage);
+        let usage = entry
+            .final_metrics
+            .as_ref()
+            .map(final_metrics_to_chat_usage);
         out.push(UnifiedSessionEntry {
             session_id: entry.session_id,
             path: entry.path,
@@ -1197,7 +1250,10 @@ mod tests {
     use crate::chat_document::SessionId;
 
     fn msg_values(messages: &[Message]) -> Vec<Value> {
-        messages.iter().map(|m| serde_json::to_value(m).unwrap()).collect()
+        messages
+            .iter()
+            .map(|m| serde_json::to_value(m).unwrap())
+            .collect()
     }
 
     fn assert_messages_eq(actual: &[Message], expected: &[Message]) {
@@ -1243,7 +1299,10 @@ mod tests {
         let mut trajectory = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
         SvenSessionMeta::new("Title").apply_to_trajectory(&mut trajectory);
         let extra = trajectory.extra.as_ref().unwrap();
-        assert!(extra.get("sven").is_some(), "must nest under a single `sven` key");
+        assert!(
+            extra.get("sven").is_some(),
+            "must nest under a single `sven` key"
+        );
         assert_eq!(extra["sven"]["title"], "Title");
     }
 
@@ -1252,7 +1311,10 @@ mod tests {
     #[test]
     fn model_maps_to_agent_model_name() {
         let agent = default_agent_profile().with_model("anthropic/claude-sonnet-4-20250514");
-        assert_eq!(agent.model_name.as_deref(), Some("anthropic/claude-sonnet-4-20250514"));
+        assert_eq!(
+            agent.model_name.as_deref(),
+            Some("anthropic/claude-sonnet-4-20250514")
+        );
     }
 
     #[test]
@@ -1320,30 +1382,45 @@ mod tests {
         meta.apply_to_trajectory(&mut child);
 
         let restored = SvenSessionMeta::from_trajectory(&child).unwrap();
-        assert_eq!(restored.parent_session_id.as_deref(), Some("root-session-1"));
+        assert_eq!(
+            restored.parent_session_id.as_deref(),
+            Some("root-session-1")
+        );
     }
 
     #[test]
     fn record_subagent_spawn_appends_forward_ref_and_validates() {
         let mut parent = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
         parent.session_id = Some("root-session-1".to_string());
-        parent.steps.push(TraceStep::new(1, StepOrigin::User, "Do the subtask"));
+        parent
+            .steps
+            .push(TraceStep::new(1, StepOrigin::User, "Do the subtask"));
 
-        record_subagent_spawn(&mut parent, "child-session-1", Path::new("/data/sessions/child-session-1.json"));
+        record_subagent_spawn(
+            &mut parent,
+            "child-session-1",
+            Path::new("/data/sessions/child-session-1.json"),
+        );
 
         assert_eq!(parent.steps.len(), 2);
         let step = &parent.steps[1];
         assert_eq!(step.step_id, 2);
         assert_eq!(step.source, StepOrigin::System);
         let obs = step.observation.as_ref().expect("observation present");
-        let refs = obs.results[0].subagent_trajectory_ref.as_ref().expect("refs present");
+        let refs = obs.results[0]
+            .subagent_trajectory_ref
+            .as_ref()
+            .expect("refs present");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].session_id.as_deref(), Some("child-session-1"));
-        assert_eq!(refs[0].trajectory_path.as_deref(), Some("/data/sessions/child-session-1.json"));
+        assert_eq!(
+            refs[0].trajectory_path.as_deref(),
+            Some("/data/sessions/child-session-1.json")
+        );
         assert!(refs[0].trajectory_id.is_none());
         assert!(!refs[0].is_unresolvable());
 
-        assert!(trace::validate_trajectory(&parent).is_ok());
+        assert!(atif::validate_trajectory(&parent).is_ok());
     }
 
     // ── agent.version ─────────────────────────────────────────────────────
@@ -1380,7 +1457,10 @@ mod tests {
         assert_eq!(steps[0].message.as_text(), Some("Hello, how are you?"));
         assert_eq!(steps[1].step_id, 2);
         assert_eq!(steps[1].source, StepOrigin::Agent);
-        assert_eq!(steps[1].message.as_text(), Some("I'm doing well, thank you!"));
+        assert_eq!(
+            steps[1].message.as_text(),
+            Some("I'm doing well, thank you!")
+        );
         assert!(steps[1].reasoning_content.is_none());
         assert!(steps[1].tool_calls.is_none());
     }
@@ -1404,12 +1484,19 @@ mod tests {
         a.push_message(&Message::assistant("The answer is 4."));
         let steps = a.finish();
 
-        assert_eq!(steps.len(), 2, "thinking+toolcall+toolresult+text must merge into ONE agent step");
+        assert_eq!(
+            steps.len(),
+            2,
+            "thinking+toolcall+toolresult+text must merge into ONE agent step"
+        );
         assert_eq!(steps[0].source, StepOrigin::User);
         let agent_step = &steps[1];
         assert_eq!(agent_step.step_id, 2);
         assert_eq!(agent_step.source, StepOrigin::Agent);
-        assert_eq!(agent_step.reasoning_content.as_deref(), Some("The user wants 2+2. That is 4."));
+        assert_eq!(
+            agent_step.reasoning_content.as_deref(),
+            Some("The user wants 2+2. That is 4.")
+        );
         assert_eq!(agent_step.message.as_text(), Some("The answer is 4."));
 
         let tool_calls = agent_step.tool_calls.as_ref().unwrap();
@@ -1420,10 +1507,16 @@ mod tests {
 
         let observation = agent_step.observation.as_ref().unwrap();
         assert_eq!(observation.results.len(), 1);
-        assert_eq!(observation.results[0].source_call_id.as_deref(), Some("call_1"));
-        assert_eq!(observation.results[0].content.as_ref().unwrap().as_text(), Some("4"));
+        assert_eq!(
+            observation.results[0].source_call_id.as_deref(),
+            Some("call_1")
+        );
+        assert_eq!(
+            observation.results[0].content.as_ref().unwrap().as_text(),
+            Some("4")
+        );
 
-        assert!(trace::validate_trajectory(&{
+        assert!(atif::validate_trajectory(&{
             let mut t = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
             t.steps = steps.clone();
             t
@@ -1511,7 +1604,11 @@ mod tests {
             "assistant text alone stays pending until something closes it"
         );
         a.push_message(&Message::user("Next"));
-        assert_eq!(a.closed_steps().len(), 3, "new user message flushes the pending agent step");
+        assert_eq!(
+            a.closed_steps().len(),
+            3,
+            "new user message flushes the pending agent step"
+        );
         let steps = a.finish();
         assert_eq!(steps.len(), 3);
     }
@@ -1531,16 +1628,28 @@ mod tests {
             },
         });
         // No tool result / closing event yet — the agent step is still open.
-        assert_eq!(a.closed_steps().len(), 1, "only the user step has closed so far");
+        assert_eq!(
+            a.closed_steps().len(),
+            1,
+            "only the user step has closed so far"
+        );
 
         let snapshot = a.snapshot_including_pending();
-        assert_eq!(snapshot.len(), 2, "snapshot includes the in-flight pending agent step");
+        assert_eq!(
+            snapshot.len(),
+            2,
+            "snapshot includes the in-flight pending agent step"
+        );
         assert_eq!(snapshot[1].source, StepOrigin::Agent);
         assert_eq!(snapshot[1].tool_calls.as_ref().unwrap().len(), 1);
 
         // The assembler itself is untouched: the pending step is still open
         // and can keep accumulating (e.g. the tool result arrives next).
-        assert_eq!(a.closed_steps().len(), 1, "snapshot must not consume pending");
+        assert_eq!(
+            a.closed_steps().len(),
+            1,
+            "snapshot must not consume pending"
+        );
         a.push_message(&Message::tool_result("c1", "result"));
         a.push_message(&Message::assistant("done"));
         let steps = a.finish();
@@ -1560,7 +1669,11 @@ mod tests {
         assert_eq!(steps.len(), 3);
         let compaction_step = &steps[2];
         assert_eq!(compaction_step.source, StepOrigin::System);
-        assert!(compaction_step.message.as_text().unwrap().contains("context_compaction"));
+        assert!(compaction_step
+            .message
+            .as_text()
+            .unwrap()
+            .contains("context_compaction"));
 
         let extra = compaction_step.extra.as_ref().expect("extra present");
         let cm = ContextManagement::from_extra(extra).expect("context_management present");
@@ -1582,7 +1695,7 @@ mod tests {
         // assistant text closes the turn. If `push_subagent_embedded` closed
         // the pending step early (as an earlier version of this method did),
         // the tool call and its eventual result would land in different
-        // steps and `trace::validate_trajectory` would reject the document
+        // steps and `atif::validate_trajectory` would reject the document
         // with a `DanglingSourceCallId` error — this test is the regression
         // guard for that.
         let mut a = StepAssembler::new();
@@ -1597,21 +1710,36 @@ mod tests {
                 },
             },
         });
-        assert_eq!(a.closed_steps().len(), 1, "only the user step has closed so far");
+        assert_eq!(
+            a.closed_steps().len(),
+            1,
+            "only the user step has closed so far"
+        );
 
         a.push_subagent_embedded(Some("tc-task"), "child-traj-9", Some("child-session-9"));
         a.push_message(&Message::tool_result("tc-task", "pong"));
         a.push_message(&Message::assistant("The delegated subtask finished."));
 
         let steps = a.finish();
-        assert_eq!(steps.len(), 2, "everything about this turn stays in one agent step");
+        assert_eq!(
+            steps.len(),
+            2,
+            "everything about this turn stays in one agent step"
+        );
         let step = &steps[1];
         assert_eq!(step.source, StepOrigin::Agent);
         assert_eq!(step.tool_calls.as_ref().unwrap().len(), 1);
-        assert_eq!(step.message.as_text(), Some("The delegated subtask finished."));
+        assert_eq!(
+            step.message.as_text(),
+            Some("The delegated subtask finished.")
+        );
 
         let obs = step.observation.as_ref().expect("observation present");
-        assert_eq!(obs.results.len(), 2, "subagent ref + tool result, both in this step");
+        assert_eq!(
+            obs.results.len(),
+            2,
+            "subagent ref + tool result, both in this step"
+        );
         let subagent_result = obs
             .results
             .iter()
@@ -1636,7 +1764,7 @@ mod tests {
         let mut child = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
         child.trajectory_id = Some("child-traj-9".to_string());
         trajectory.subagent_trajectories = Some(vec![child]);
-        assert!(trace::validate_trajectory(&trajectory).is_ok());
+        assert!(atif::validate_trajectory(&trajectory).is_ok());
     }
 
     #[test]
@@ -1718,20 +1846,30 @@ mod tests {
     #[test]
     fn steps_to_messages_unmerges_tool_call_and_result() {
         let mut step = TraceStep::new(1, StepOrigin::Agent, "Found main.rs");
-        step.tool_calls = Some(vec![ToolInvocation::new("call_1", "glob").with_arguments(serde_json::json!({"pattern": "**/*.rs"}))]);
-        step.observation = Some(StepObservation::single(ObservationEntry::for_call("call_1", "src/main.rs")));
+        step.tool_calls = Some(vec![ToolInvocation::new("call_1", "glob")
+            .with_arguments(serde_json::json!({"pattern": "**/*.rs"}))]);
+        step.observation = Some(StepObservation::single(ObservationEntry::for_call(
+            "call_1",
+            "src/main.rs",
+        )));
         let messages = steps_to_messages(&[step]);
 
         assert_eq!(messages.len(), 3);
         match &messages[0].content {
-            MessageContent::ToolCall { tool_call_id, function } => {
+            MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            } => {
                 assert_eq!(tool_call_id, "call_1");
                 assert_eq!(function.name, "glob");
             }
             _ => panic!("expected ToolCall"),
         }
         match &messages[1].content {
-            MessageContent::ToolResult { tool_call_id, content } => {
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } => {
                 assert_eq!(tool_call_id, "call_1");
                 assert_eq!(content.to_string(), "src/main.rs");
             }
@@ -1744,7 +1882,9 @@ mod tests {
     fn steps_to_messages_omits_empty_assistant_text() {
         let mut step = TraceStep::new(1, StepOrigin::Agent, "");
         step.tool_calls = Some(vec![ToolInvocation::new("call_1", "noop")]);
-        step.observation = Some(StepObservation::single(ObservationEntry::for_call("call_1", "ok")));
+        step.observation = Some(StepObservation::single(ObservationEntry::for_call(
+            "call_1", "ok",
+        )));
         let messages = steps_to_messages(&[step]);
         // ToolCall + ToolResult only, no trailing empty assistant text message.
         assert_eq!(messages.len(), 2);
@@ -1768,15 +1908,31 @@ mod tests {
     fn steps_to_turn_records_preserves_thinking_and_tool_calls() {
         let mut step = TraceStep::new(1, StepOrigin::Agent, "Found main.rs");
         step.reasoning_content = Some("I should search first.".to_string());
-        step.tool_calls = Some(vec![ToolInvocation::new("call_1", "glob").with_arguments(serde_json::json!({"pattern": "**/*.rs"}))]);
-        step.observation = Some(StepObservation::single(ObservationEntry::for_call("call_1", "src/main.rs")));
+        step.tool_calls = Some(vec![ToolInvocation::new("call_1", "glob")
+            .with_arguments(serde_json::json!({"pattern": "**/*.rs"}))]);
+        step.observation = Some(StepObservation::single(ObservationEntry::for_call(
+            "call_1",
+            "src/main.rs",
+        )));
 
         let turns = steps_to_turn_records(&[step]);
-        assert_eq!(turns.len(), 4, "thinking, tool call, tool result, assistant text");
-        assert!(matches!(&turns[0], TurnRecord::Thinking { content } if content == "I should search first."));
-        assert!(matches!(&turns[1], TurnRecord::ToolCall { tool_call_id, name, .. } if tool_call_id == "call_1" && name == "glob"));
-        assert!(matches!(&turns[2], TurnRecord::ToolResult { tool_call_id, content } if tool_call_id == "call_1" && content == "src/main.rs"));
-        assert!(matches!(&turns[3], TurnRecord::Assistant { content } if content == "Found main.rs"));
+        assert_eq!(
+            turns.len(),
+            4,
+            "thinking, tool call, tool result, assistant text"
+        );
+        assert!(
+            matches!(&turns[0], TurnRecord::Thinking { content } if content == "I should search first.")
+        );
+        assert!(
+            matches!(&turns[1], TurnRecord::ToolCall { tool_call_id, name, .. } if tool_call_id == "call_1" && name == "glob")
+        );
+        assert!(
+            matches!(&turns[2], TurnRecord::ToolResult { tool_call_id, content } if tool_call_id == "call_1" && content == "src/main.rs")
+        );
+        assert!(
+            matches!(&turns[3], TurnRecord::Assistant { content } if content == "Found main.rs")
+        );
     }
 
     #[test]
@@ -1794,7 +1950,11 @@ mod tests {
             .expect("context-compaction turn present");
         assert!(matches!(
             compaction,
-            TurnRecord::ContextCompacted { tokens_before: 1000, tokens_after: 100, .. }
+            TurnRecord::ContextCompacted {
+                tokens_before: 1000,
+                tokens_after: 100,
+                ..
+            }
         ));
     }
 
@@ -1817,7 +1977,10 @@ mod tests {
         ];
         let steps = conversation_records_to_steps(&records);
         let back = steps_to_conversation_records(&steps);
-        assert_eq!(msg_values_of_records(&back), msg_values_of_records(&records));
+        assert_eq!(
+            msg_values_of_records(&back),
+            msg_values_of_records(&records)
+        );
     }
 
     #[test]
@@ -1881,7 +2044,11 @@ mod tests {
             .expect("context-compaction record present");
         assert!(matches!(
             compaction,
-            ConversationRecord::ContextCompacted { tokens_before: 1000, tokens_after: 100, .. }
+            ConversationRecord::ContextCompacted {
+                tokens_before: 1000,
+                tokens_after: 100,
+                ..
+            }
         ));
     }
 
@@ -1892,11 +2059,16 @@ mod tests {
         let records =
             steps_to_conversation_records(&[copied, TraceStep::new(2, StepOrigin::Agent, "fresh")]);
         assert_eq!(records.len(), 1);
-        assert!(matches!(&records[0], ConversationRecord::Message(m) if m.as_text() == Some("fresh")));
+        assert!(
+            matches!(&records[0], ConversationRecord::Message(m) if m.as_text() == Some("fresh"))
+        );
     }
 
     fn msg_values_of_records(records: &[ConversationRecord]) -> Vec<Value> {
-        records.iter().map(|r| serde_json::to_value(r).unwrap()).collect()
+        records
+            .iter()
+            .map(|r| serde_json::to_value(r).unwrap())
+            .collect()
     }
 
     // ── full round-trip: multi-turn conversation, both directions ─────────
@@ -1919,7 +2091,9 @@ mod tests {
                 },
             }),
             ConversationRecord::Message(Message::tool_result("call_1", "found: main.rs")),
-            ConversationRecord::Message(Message::assistant("I found main.rs, which implements the entry point.")),
+            ConversationRecord::Message(Message::assistant(
+                "I found main.rs, which implements the entry point.",
+            )),
             ConversationRecord::Message(Message::user("Thanks!")),
             ConversationRecord::Message(Message::assistant("You're welcome!")),
         ];
@@ -1945,7 +2119,8 @@ mod tests {
         let mut t = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
         t.session_id = Some(session_id.to_string());
         t.steps.push(TraceStep::new(1, StepOrigin::User, "Hello"));
-        t.steps.push(TraceStep::new(2, StepOrigin::Agent, "Hi there"));
+        t.steps
+            .push(TraceStep::new(2, StepOrigin::Agent, "Hi there"));
         SvenSessionMeta::new("Test session").apply_to_trajectory(&mut t);
         t
     }
@@ -1953,8 +2128,16 @@ mod tests {
     #[test]
     fn session_dir_uses_sessions_not_chats() {
         let dir = session_dir();
-        assert!(dir.ends_with("sven/sessions"), "expected .../sven/sessions, got {}", dir.display());
-        assert_ne!(dir, crate::chat_document::chat_dir(), "must be a distinct directory from the legacy chat dir");
+        assert!(
+            dir.ends_with("sven/sessions"),
+            "expected .../sven/sessions, got {}",
+            dir.display()
+        );
+        assert_ne!(
+            dir,
+            crate::chat_document::chat_dir(),
+            "must be a distinct directory from the legacy chat dir"
+        );
     }
 
     #[test]
@@ -1962,7 +2145,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let trajectory = sample_trajectory("session-abc");
         let path = dir.path().join("session-abc.json");
-        trace::persist::write_trajectory(&path, &trajectory).unwrap();
+        atif::persist::write_trajectory(&path, &trajectory).unwrap();
 
         let loaded = load_session_from(&path).unwrap();
         assert_eq!(loaded.session_id.as_deref(), Some("session-abc"));
@@ -1977,15 +2160,17 @@ mod tests {
         let path = dir.path().join("session-atomic.json");
         let trajectory = sample_trajectory("session-atomic");
 
-        trace::persist::write_trajectory_atomic(&path, &trajectory, None).unwrap();
-        let (loaded, fingerprint) = trace::persist::read_trajectory_with_fingerprint(&path).unwrap();
+        atif::persist::write_trajectory_atomic(&path, &trajectory, None).unwrap();
+        let (loaded, fingerprint) = atif::persist::read_trajectory_with_fingerprint(&path).unwrap();
         assert_eq!(loaded.session_id.as_deref(), Some("session-atomic"));
 
         let mut updated = loaded.clone();
-        updated.steps.push(TraceStep::new(3, StepOrigin::User, "one more"));
-        trace::persist::write_trajectory_atomic(&path, &updated, Some(&fingerprint)).unwrap();
+        updated
+            .steps
+            .push(TraceStep::new(3, StepOrigin::User, "one more"));
+        atif::persist::write_trajectory_atomic(&path, &updated, Some(&fingerprint)).unwrap();
 
-        let (final_loaded, _) = trace::persist::read_trajectory_with_fingerprint(&path).unwrap();
+        let (final_loaded, _) = atif::persist::read_trajectory_with_fingerprint(&path).unwrap();
         assert_eq!(final_loaded.steps.len(), 3);
     }
 
@@ -2001,7 +2186,7 @@ mod tests {
         old_t.session_id = Some("old".to_string());
         old_meta.apply_to_trajectory(&mut old_t);
         old_t.steps.push(TraceStep::new(1, StepOrigin::User, "hi"));
-        trace::persist::write_trajectory(&old_path, &old_t).unwrap();
+        atif::persist::write_trajectory(&old_path, &old_t).unwrap();
 
         let mut new_meta = SvenSessionMeta::new("Newer");
         new_meta.updated_at = Utc::now();
@@ -2009,13 +2194,13 @@ mod tests {
         new_t.session_id = Some("new".to_string());
         new_meta.apply_to_trajectory(&mut new_t);
         new_t.steps.push(TraceStep::new(1, StepOrigin::User, "hi"));
-        trace::persist::write_trajectory(&new_path, &new_t).unwrap();
+        atif::persist::write_trajectory(&new_path, &new_t).unwrap();
 
         // list_sessions() reads from the real session_dir(); exercise the
         // underlying header-read path directly against our temp files
         // instead of relying on global state.
-        let old_header = trace::persist::read_trajectory_header(&old_path).unwrap();
-        let new_header = trace::persist::read_trajectory_header(&new_path).unwrap();
+        let old_header = atif::persist::read_trajectory_header(&old_path).unwrap();
+        let new_header = atif::persist::read_trajectory_header(&new_path).unwrap();
         assert_eq!(old_header.session_id.as_deref(), Some("old"));
         assert_eq!(new_header.session_id.as_deref(), Some("new"));
         assert!(old_header.extra.is_some());
@@ -2044,7 +2229,11 @@ mod tests {
         }
     }
 
-    fn legacy_entry(id: &str, title: &str, updated_at: DateTime<Utc>) -> crate::chat_document::ChatEntry {
+    fn legacy_entry(
+        id: &str,
+        title: &str,
+        updated_at: DateTime<Utc>,
+    ) -> crate::chat_document::ChatEntry {
         crate::chat_document::ChatEntry {
             id: SessionId::from_string(id.to_string()),
             path: PathBuf::from(format!("/chats/{id}.yaml")),
@@ -2083,9 +2272,17 @@ mod tests {
         let now = Utc::now();
         let merged = merge_native_and_legacy(
             vec![native_entry("s3", "Resaved", now)],
-            vec![legacy_entry("s3", "Old title", now - chrono::Duration::hours(1))],
+            vec![legacy_entry(
+                "s3",
+                "Old title",
+                now - chrono::Duration::hours(1),
+            )],
         );
-        assert_eq!(merged.len(), 1, "the legacy twin must be hidden: {merged:?}");
+        assert_eq!(
+            merged.len(),
+            1,
+            "the legacy twin must be hidden: {merged:?}"
+        );
         assert!(!merged[0].is_legacy);
         assert_eq!(merged[0].title, "Resaved");
     }
@@ -2169,13 +2366,16 @@ mod tests {
 
         assert_eq!(trajectory.schema_version, ATIF_SCHEMA_VERSION);
         assert_eq!(trajectory.session_id.as_deref(), Some(doc.id.as_str()));
-        assert_eq!(trajectory.agent.model_name.as_deref(), Some("anthropic/claude-3-5"));
+        assert_eq!(
+            trajectory.agent.model_name.as_deref(),
+            Some("anthropic/claude-3-5")
+        );
         assert_eq!(trajectory.steps.len(), 2);
 
         let meta = SvenSessionMeta::from_trajectory(&trajectory).unwrap();
         assert_eq!(meta.title, "Simple chat");
 
-        assert!(trace::validate_trajectory(&trajectory).is_ok());
+        assert!(atif::validate_trajectory(&trajectory).is_ok());
     }
 
     #[test]
@@ -2190,7 +2390,7 @@ mod tests {
         assert_eq!(agent_step.observation.as_ref().unwrap().results.len(), 1);
         assert_eq!(agent_step.message.as_text(), Some("Found 2 Rust files."));
 
-        assert!(trace::validate_trajectory(&trajectory).is_ok());
+        assert!(atif::validate_trajectory(&trajectory).is_ok());
     }
 
     #[test]
@@ -2199,13 +2399,18 @@ mod tests {
         let trajectory = import_legacy_chat_document(&doc);
 
         assert_eq!(trajectory.steps.len(), 3);
-        assert_eq!(trajectory.steps[1].reasoning_content.as_deref(), Some("The user wants to know 2+2. That is 4."));
+        assert_eq!(
+            trajectory.steps[1].reasoning_content.as_deref(),
+            Some("The user wants to know 2+2. That is 4.")
+        );
         assert_eq!(trajectory.steps[2].source, StepOrigin::System);
-        let details = ContextCompactionDetails::from_step_extra(trajectory.steps[2].extra.as_ref().unwrap()).unwrap();
+        let details =
+            ContextCompactionDetails::from_step_extra(trajectory.steps[2].extra.as_ref().unwrap())
+                .unwrap();
         assert_eq!(details.tokens_before, 1000);
         assert_eq!(details.strategy.as_deref(), Some("structured"));
 
-        assert!(trace::validate_trajectory(&trajectory).is_ok());
+        assert!(atif::validate_trajectory(&trajectory).is_ok());
     }
 
     #[test]

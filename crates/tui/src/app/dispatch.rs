@@ -1248,11 +1248,17 @@ impl App {
                         if let Some(path) = entry.session_path.clone() {
                             if path.exists() {
                                 if let Ok(mut trajectory) = sven_input::load_session_from(&path) {
-                                    if let Some(mut meta) = sven_input::SvenSessionMeta::from_trajectory(&trajectory) {
+                                    if let Some(mut meta) =
+                                        sven_input::SvenSessionMeta::from_trajectory(&trajectory)
+                                    {
                                         meta.status = sven_input::ChatStatus::Archived;
                                         meta.touch();
                                         meta.apply_to_trajectory(&mut trajectory);
-                                        let _ = trace::persist::write_trajectory_atomic(&path, &trajectory, None);
+                                        let _ = atif::persist::write_trajectory_atomic(
+                                            &path,
+                                            &trajectory,
+                                            None,
+                                        );
                                     }
                                 }
                             }

@@ -4,7 +4,7 @@
 //! One test proving each validation rule catches its violation, and one
 //! proving valid data passes, per the task brief.
 
-use trace::{
+use atif::{
     validate_trajectory, AgentProfile, ContentSegment, ImageMediaType, ObservationEntry,
     StepMetrics, StepObservation, StepOrigin, SubagentRef, ToolInvocation, TraceStep, Trajectory,
     ValidationError,
@@ -30,7 +30,9 @@ fn step_id_sequence_gap_fails() {
     t.steps.push(TraceStep::new(1, StepOrigin::User, "hi"));
     t.steps.push(TraceStep::new(3, StepOrigin::Agent, "hello")); // skips 2
     let errs = validate_trajectory(&t).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, ValidationError::StepIdSequence { .. })));
+    assert!(errs
+        .iter()
+        .any(|e| matches!(e, ValidationError::StepIdSequence { .. })));
 }
 
 #[test]
@@ -38,7 +40,9 @@ fn step_id_not_starting_at_one_fails() {
     let mut t = base_trajectory();
     t.steps.push(TraceStep::new(0, StepOrigin::User, "hi"));
     let errs = validate_trajectory(&t).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, ValidationError::StepIdSequence { .. })));
+    assert!(errs
+        .iter()
+        .any(|e| matches!(e, ValidationError::StepIdSequence { .. })));
 }
 
 // ── agent-only fields on non-agent steps ────────────────────────────────────
@@ -60,7 +64,10 @@ fn agent_only_fields_on_user_step_fail_and_are_all_collected() {
         .iter()
         .filter(|e| matches!(e, ValidationError::AgentOnlyField { .. }))
         .count();
-    assert_eq!(agent_only_count, 4, "expected 4 agent-only-field violations, got: {errs:?}");
+    assert_eq!(
+        agent_only_count, 4,
+        "expected 4 agent-only-field violations, got: {errs:?}"
+    );
 }
 
 #[test]
@@ -112,9 +119,10 @@ fn llm_call_count_zero_agent_step_with_metrics_fails() {
     let mut t = base_trajectory();
     t.steps.push(step);
     let errs = validate_trajectory(&t).unwrap_err();
-    assert!(errs
-        .iter()
-        .any(|e| matches!(e, ValidationError::DeterministicDispatchFieldsPresent { .. })));
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DeterministicDispatchFieldsPresent { .. }
+    )));
 }
 
 #[test]
@@ -125,9 +133,10 @@ fn llm_call_count_zero_agent_step_with_reasoning_content_fails() {
     let mut t = base_trajectory();
     t.steps.push(step);
     let errs = validate_trajectory(&t).unwrap_err();
-    assert!(errs
-        .iter()
-        .any(|e| matches!(e, ValidationError::DeterministicDispatchFieldsPresent { .. })));
+    assert!(errs.iter().any(|e| matches!(
+        e,
+        ValidationError::DeterministicDispatchFieldsPresent { .. }
+    )));
 }
 
 // ── ContentPart conditional fields (structurally enforced by the enum) ─────
@@ -176,7 +185,10 @@ fn image_media_type_accepts_all_four_allowed_values() {
 #[test]
 fn image_media_type_rejects_disallowed_value() {
     let result: Result<ImageMediaType, _> = serde_json::from_str("\"image/bmp\"");
-    assert!(result.is_err(), "image/bmp is not one of the 4 allowed ATIF media types");
+    assert!(
+        result.is_err(),
+        "image/bmp is not one of the 4 allowed ATIF media types"
+    );
 }
 
 // ── SubagentTrajectoryRef resolvability ─────────────────────────────────────
@@ -184,21 +196,23 @@ fn image_media_type_rejects_disallowed_value() {
 #[test]
 fn subagent_ref_with_neither_field_set_fails_validation() {
     let mut step = TraceStep::new(1, StepOrigin::Agent, "");
-    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(vec![
-        SubagentRef::default(),
-    ])));
+    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(
+        vec![SubagentRef::default()],
+    )));
     let mut t = base_trajectory();
     t.steps.push(step);
     let errs = validate_trajectory(&t).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, ValidationError::UnresolvableSubagentRef { .. })));
+    assert!(errs
+        .iter()
+        .any(|e| matches!(e, ValidationError::UnresolvableSubagentRef { .. })));
 }
 
 #[test]
 fn subagent_ref_with_trajectory_path_only_is_valid_pre_v1_7_back_compat() {
     let mut step = TraceStep::new(1, StepOrigin::Agent, "");
-    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(vec![
-        SubagentRef::by_trajectory_path("subagents/child.json"),
-    ])));
+    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(
+        vec![SubagentRef::by_trajectory_path("subagents/child.json")],
+    )));
     let mut t = base_trajectory();
     t.steps.push(step);
     assert!(validate_trajectory(&t).is_ok());
@@ -207,16 +221,18 @@ fn subagent_ref_with_trajectory_path_only_is_valid_pre_v1_7_back_compat() {
 #[test]
 fn subagent_ref_with_trajectory_id_only_is_valid() {
     let mut step = TraceStep::new(1, StepOrigin::Agent, "");
-    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(vec![
-        SubagentRef::by_trajectory_id("child-1"),
-    ])));
+    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(
+        vec![SubagentRef::by_trajectory_id("child-1")],
+    )));
     let mut t = base_trajectory();
     t.trajectory_id = Some("parent".into());
     t.steps.push(step);
 
     let mut child = Trajectory::new("ATIF-v1.7", AgentProfile::new("sub", "1.0.0"));
     child.trajectory_id = Some("child-1".into());
-    child.steps.push(TraceStep::new(1, StepOrigin::User, "task"));
+    child
+        .steps
+        .push(TraceStep::new(1, StepOrigin::User, "task"));
     t.subagent_trajectories = Some(vec![child]);
 
     assert!(validate_trajectory(&t).is_ok());
@@ -229,7 +245,9 @@ fn embedded_subagent_missing_trajectory_id_fails() {
     let mut t = base_trajectory();
     t.steps.push(TraceStep::new(1, StepOrigin::User, "hi"));
     let mut child = Trajectory::new("ATIF-v1.7", AgentProfile::new("sub", "1.0.0"));
-    child.steps.push(TraceStep::new(1, StepOrigin::User, "task")); // no trajectory_id set
+    child
+        .steps
+        .push(TraceStep::new(1, StepOrigin::User, "task")); // no trajectory_id set
     t.subagent_trajectories = Some(vec![child]);
 
     let errs = validate_trajectory(&t).unwrap_err();
@@ -262,12 +280,15 @@ fn embedded_subagent_step_id_sequence_is_recursively_validated() {
     t.steps.push(TraceStep::new(1, StepOrigin::User, "hi"));
     let mut child = Trajectory::new("ATIF-v1.7", AgentProfile::new("sub", "1.0.0"));
     child.trajectory_id = Some("child-1".into());
-    child.steps.push(TraceStep::new(5, StepOrigin::User, "broken sequence")); // should start at 1
+    child
+        .steps
+        .push(TraceStep::new(5, StepOrigin::User, "broken sequence")); // should start at 1
     t.subagent_trajectories = Some(vec![child]);
 
     let errs = validate_trajectory(&t).unwrap_err();
     assert!(
-        errs.iter().any(|e| matches!(e, ValidationError::Nested { .. })),
+        errs.iter()
+            .any(|e| matches!(e, ValidationError::Nested { .. })),
         "expected the child's own StepIdSequence violation to surface as a Nested error: {errs:?}"
     );
 }
@@ -278,7 +299,9 @@ fn embedded_subagent_step_id_sequence_is_recursively_validated() {
 fn source_call_id_matching_a_tool_call_passes() {
     let mut step = TraceStep::new(1, StepOrigin::Agent, "");
     step.tool_calls = Some(vec![ToolInvocation::new("call_1", "search")]);
-    step.observation = Some(StepObservation::single(ObservationEntry::for_call("call_1", "result")));
+    step.observation = Some(StepObservation::single(ObservationEntry::for_call(
+        "call_1", "result",
+    )));
     let mut t = base_trajectory();
     t.steps.push(step);
     assert!(validate_trajectory(&t).is_ok());
@@ -295,7 +318,9 @@ fn dangling_source_call_id_fails() {
     let mut t = base_trajectory();
     t.steps.push(step);
     let errs = validate_trajectory(&t).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, ValidationError::DanglingSourceCallId { .. })));
+    assert!(errs
+        .iter()
+        .any(|e| matches!(e, ValidationError::DanglingSourceCallId { .. })));
 }
 
 // ── schema_version sanity ───────────────────────────────────────────────────
@@ -312,7 +337,9 @@ fn empty_schema_version_fails() {
     let mut t = Trajectory::new("", AgentProfile::new("sven", "1.0.0"));
     t.steps.push(TraceStep::new(1, StepOrigin::User, "hi"));
     let errs = validate_trajectory(&t).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, ValidationError::SchemaVersion(_))));
+    assert!(errs
+        .iter()
+        .any(|e| matches!(e, ValidationError::SchemaVersion(_))));
 }
 
 #[test]
@@ -320,5 +347,7 @@ fn non_atif_schema_version_fails() {
     let mut t = Trajectory::new("not-atif", AgentProfile::new("sven", "1.0.0"));
     t.steps.push(TraceStep::new(1, StepOrigin::User, "hi"));
     let errs = validate_trajectory(&t).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, ValidationError::SchemaVersion(_))));
+    assert!(errs
+        .iter()
+        .any(|e| matches!(e, ValidationError::SchemaVersion(_))));
 }

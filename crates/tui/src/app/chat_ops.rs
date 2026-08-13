@@ -439,9 +439,9 @@ impl App {
         path
     }
 
-    /// Build the ATIF [`trace::Trajectory`] for the active session from its
+    /// Build the ATIF [`atif::Trajectory`] for the active session from its
     /// current chat segments.
-    fn active_session_trajectory(&self) -> trace::Trajectory {
+    fn active_session_trajectory(&self) -> atif::Trajectory {
         let model = Some(self.session.model_display.clone());
         let mode = Some(self.session.mode.to_string());
         let active_id = self.sessions.active_id.clone();
@@ -454,10 +454,14 @@ impl App {
                 .segments
                 .iter()
                 .filter_map(|seg| match seg {
-                    ChatSegment::Message(m) => Some(sven_input::ConversationRecord::Message(m.clone())),
-                    ChatSegment::Thinking { content } => Some(sven_input::ConversationRecord::Thinking {
-                        content: content.clone(),
-                    }),
+                    ChatSegment::Message(m) => {
+                        Some(sven_input::ConversationRecord::Message(m.clone()))
+                    }
+                    ChatSegment::Thinking { content } => {
+                        Some(sven_input::ConversationRecord::Thinking {
+                            content: content.clone(),
+                        })
+                    }
                     ChatSegment::ContextCompacted {
                         tokens_before,
                         tokens_after,
@@ -477,7 +481,7 @@ impl App {
             if let Some(m) = &model {
                 agent = agent.with_model(m.clone());
             }
-            let mut trajectory = trace::Trajectory::new(sven_input::ATIF_SCHEMA_VERSION, agent);
+            let mut trajectory = atif::Trajectory::new(sven_input::ATIF_SCHEMA_VERSION, agent);
             trajectory.session_id = Some(active_id.as_str().to_string());
             trajectory.steps = steps;
             let meta = sven_input::SvenSessionMeta {
@@ -500,7 +504,9 @@ impl App {
         self.chat.segments.iter().any(|seg| {
             matches!(
                 seg,
-                ChatSegment::Message(_) | ChatSegment::Thinking { .. } | ChatSegment::ContextCompacted { .. }
+                ChatSegment::Message(_)
+                    | ChatSegment::Thinking { .. }
+                    | ChatSegment::ContextCompacted { .. }
             )
         })
     }
@@ -519,7 +525,7 @@ impl App {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Err(e) = trace::persist::write_trajectory_atomic(&path, &trajectory, None) {
+        if let Err(e) = atif::persist::write_trajectory_atomic(&path, &trajectory, None) {
             tracing::debug!("failed to save session trajectory on exit: {e}");
         }
     }
@@ -535,7 +541,7 @@ impl App {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if let Err(e) = trace::persist::write_trajectory_atomic(&path, &trajectory, None) {
+            if let Err(e) = atif::persist::write_trajectory_atomic(&path, &trajectory, None) {
                 tracing::debug!("failed to save session trajectory: {e}");
             }
         });

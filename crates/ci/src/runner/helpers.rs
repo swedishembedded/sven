@@ -32,7 +32,7 @@ pub(crate) fn is_conversation_format(s: &str) -> bool {
 ///
 /// Used to detect when `--output-format jsonl` output from a prior sven run
 /// is piped into the next instance — each line is a standalone `TraceStep`
-/// JSON object (see [`trace::persist::read_steps_ndjson`]), not the whole
+/// JSON object (see [`atif::persist::read_steps_ndjson`]), not the whole
 /// `Trajectory` document `--output-trace`/`--trace` write to a file.  We
 /// inspect at most the first 10 non-empty lines to keep detection fast on
 /// large streams.
@@ -64,11 +64,11 @@ pub(crate) fn is_jsonl_format(s: &str) -> bool {
 /// stripped from `history` into `pending_user_input`; otherwise `history`
 /// covers every step and there is no pending turn.
 pub(crate) fn parse_jsonl_trace_steps(s: &str) -> anyhow::Result<(Vec<Message>, Option<String>)> {
-    let steps = trace::persist::read_steps_ndjson(std::io::Cursor::new(s.as_bytes()))
+    let steps = atif::persist::read_steps_ndjson(std::io::Cursor::new(s.as_bytes()))
         .context("parsing piped NDJSON trace steps")?;
 
-    let (history_steps, pending): (&[trace::TraceStep], Option<String>) = match steps.last() {
-        Some(step) if step.source == trace::StepOrigin::User => {
+    let (history_steps, pending): (&[atif::TraceStep], Option<String>) = match steps.last() {
+        Some(step) if step.source == atif::StepOrigin::User => {
             let pending = step.message.as_text().unwrap_or("").to_string();
             (&steps[..steps.len() - 1], Some(pending))
         }
@@ -107,9 +107,11 @@ pub(crate) fn is_json_summary_format(s: &str) -> bool {
 /// un-merged from their observations, reasoning never replayed) match every
 /// other trace-consuming path in the runner.
 pub(crate) fn parse_json_summary(s: &str) -> anyhow::Result<Vec<Message>> {
-    let trajectory: trace::Trajectory = serde_json::from_str(s.trim())
+    let trajectory: atif::Trajectory = serde_json::from_str(s.trim())
         .context("parsing --output-format json output as an ATIF trajectory")?;
-    Ok(sven_input::trace_session::steps_to_messages(&trajectory.steps))
+    Ok(sven_input::trace_session::steps_to_messages(
+        &trajectory.steps,
+    ))
 }
 
 // ── Artifacts ─────────────────────────────────────────────────────────────────

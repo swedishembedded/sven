@@ -4,11 +4,14 @@
 //! Header-only quick-read tests: fast path on small and large trajectories,
 //! and graceful fallback to a full parse on malformed/truncated input.
 
-use trace::persist::{read_trajectory_header, read_trajectory_header_fast};
-use trace::{AgentProfile, FinalMetrics, StepOrigin, TraceStep, Trajectory};
+use atif::persist::{read_trajectory_header, read_trajectory_header_fast};
+use atif::{AgentProfile, FinalMetrics, StepOrigin, TraceStep, Trajectory};
 
 fn big_trajectory(n: u64) -> Trajectory {
-    let mut t = Trajectory::new("ATIF-v1.7", AgentProfile::new("sven", "1.0.0").with_model("claude"));
+    let mut t = Trajectory::new(
+        "ATIF-v1.7",
+        AgentProfile::new("sven", "1.0.0").with_model("claude"),
+    );
     t.session_id = Some("session-xyz".into());
     t.trajectory_id = Some("traj-xyz".into());
     t.notes = Some("a big trajectory".into());
@@ -17,7 +20,8 @@ fn big_trajectory(n: u64) -> Trajectory {
         ..Default::default()
     });
     for i in 1..=n {
-        t.steps.push(TraceStep::new(i, StepOrigin::User, format!("turn {i}")));
+        t.steps
+            .push(TraceStep::new(i, StepOrigin::User, format!("turn {i}")));
     }
     t
 }
@@ -29,13 +33,17 @@ fn fast_path_header_matches_full_parse_on_small_trajectory() {
     let full = big_trajectory(2);
     std::fs::write(&path, serde_json::to_string_pretty(&full).unwrap()).unwrap();
 
-    let header = read_trajectory_header_fast(&path).expect("fast path must succeed on our own serializer output");
+    let header = read_trajectory_header_fast(&path)
+        .expect("fast path must succeed on our own serializer output");
     assert_eq!(header.schema_version, full.schema_version);
     assert_eq!(header.session_id, full.session_id);
     assert_eq!(header.trajectory_id, full.trajectory_id);
     assert_eq!(header.agent.name, full.agent.name);
     assert_eq!(header.notes, full.notes);
-    assert_eq!(header.final_metrics.unwrap().total_steps, full.final_metrics.unwrap().total_steps);
+    assert_eq!(
+        header.final_metrics.unwrap().total_steps,
+        full.final_metrics.unwrap().total_steps
+    );
 }
 
 #[test]
@@ -45,7 +53,8 @@ fn fast_path_header_matches_full_parse_on_large_trajectory() {
     let full = big_trajectory(5_000);
     std::fs::write(&path, serde_json::to_string_pretty(&full).unwrap()).unwrap();
 
-    let header = read_trajectory_header_fast(&path).expect("fast path must succeed on a large document too");
+    let header =
+        read_trajectory_header_fast(&path).expect("fast path must succeed on a large document too");
     assert_eq!(header.schema_version, "ATIF-v1.7");
     assert_eq!(header.agent.name, "sven");
     assert_eq!(header.final_metrics.unwrap().total_steps, Some(5_000));

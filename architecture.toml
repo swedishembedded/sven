@@ -44,7 +44,7 @@ sven-node-client = "foundation"
 sven-p2p         = "foundation"
 sven-runtime     = "foundation"
 sven-vocab       = "foundation"
-trace            = "foundation"
+atif             = "foundation"
 
 # kernel
 sven-model  = "kernel"
@@ -169,14 +169,14 @@ dependencies of its own, so this can never become a cycle.
 path = "src/main.rs"
 lines = 2866
 [[allow.large_file]]
+path = "crates/input/src/trace_session.rs"
+lines = 2444
+[[allow.large_file]]
 path = "crates/node/src/node.rs"
 lines = 2335
 [[allow.large_file]]
 path = "crates/p2p/src/node.rs"
 lines = 2287
-[[allow.large_file]]
-path = "crates/input/src/trace_session.rs"
-lines = 2239
 [[allow.large_file]]
 path = "crates/mcp-client/src/oauth.rs"
 lines = 2137
@@ -185,10 +185,10 @@ path = "crates/model/src/openai_compat/mod.rs"
 lines = 1956
 [[allow.large_file]]
 path = "crates/tui/src/app/dispatch.rs"
-lines = 1781
+lines = 1787
 [[allow.large_file]]
 path = "crates/tui/src/app/mod.rs"
-lines = 1738
+lines = 1748
 [[allow.large_file]]
 path = "crates/cloud/src/server.rs"
 lines = 1729
@@ -227,13 +227,13 @@ path = "crates/tools/tests/context_integration.rs"
 lines = 1417
 [[allow.large_file]]
 path = "crates/tui/src/app/chat_ops.rs"
-lines = 1318
+lines = 1324
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_firmware.rs"
 lines = 1309
 [[allow.large_file]]
 path = "crates/ci/src/runner/mod.rs"
-lines = 1240
+lines = 1257
 [[allow.large_file]]
 path = "crates/runtime/src/skills.rs"
 lines = 1238
@@ -247,14 +247,17 @@ lines = 1194
 path = "crates/tui/src/chat/markdown.rs"
 lines = 1185
 [[allow.large_file]]
+path = "crates/turn/src/stream_turn.rs"
+lines = 1171
+[[allow.large_file]]
 path = "crates/bootstrap/src/task_tool.rs"
 lines = 1157
 [[allow.large_file]]
-path = "crates/turn/src/stream_turn.rs"
-lines = 1146
-[[allow.large_file]]
 path = "crates/turn/src/prompts.rs"
 lines = 1145
+[[allow.large_file]]
+path = "crates/tui/src/app/session_manager.rs"
+lines = 1141
 [[allow.large_file]]
 path = "crates/executors/tests/pipeline_integration.rs"
 lines = 1121
@@ -262,14 +265,11 @@ lines = 1121
 path = "crates/model/src/anthropic.rs"
 lines = 1116
 [[allow.large_file]]
-path = "crates/tui/src/app/session_manager.rs"
-lines = 1083
-[[allow.large_file]]
 path = "crates/frontend/src/operator.rs"
 lines = 1071
 [[allow.large_file]]
 path = "crates/turn/src/compact.rs"
-lines = 1054
+lines = 1064
 [[allow.large_file]]
 path = "crates/config/src/loader.rs"
 lines = 1049
@@ -332,10 +332,13 @@ path = "crates/ci/src/index.rs"
 lines = 832
 [[allow.large_file]]
 path = "crates/ci/src/tests.rs"
-lines = 815
+lines = 814
 [[allow.large_file]]
 path = "crates/tools/src/registry.rs"
 lines = 814
+[[allow.large_file]]
+path = "crates/executors/src/turn.rs"
+lines = 809
 [[allow.large_file]]
 path = "crates/model/src/google.rs"
 lines = 806

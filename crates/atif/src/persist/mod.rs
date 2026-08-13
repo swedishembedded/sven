@@ -12,5 +12,7 @@ pub use atomic::{
     read_trajectory_with_fingerprint, remove_trajectory, write_trajectory, write_trajectory_atomic,
     FileFingerprint, PersistError,
 };
-pub use header::{read_trajectory_header, read_trajectory_header_fast, HeaderReadError, TrajectoryHeader};
+pub use header::{
+    read_trajectory_header, read_trajectory_header_fast, HeaderReadError, TrajectoryHeader,
+};
 pub use ndjson::{read_steps_ndjson, write_steps_ndjson, NdjsonError};

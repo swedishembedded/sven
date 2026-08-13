@@ -27,11 +27,11 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+use atif::Trajectory;
 use chrono::{DateTime, Utc};
 use sven_core::AgentEvent;
 use sven_input::{ChatStatus, ChatUsage, SessionId, SvenSessionMeta, UnifiedSessionEntry};
 use tokio::sync::{mpsc, Mutex};
-use trace::Trajectory;
 
 use crate::{
     agent::AgentRequest,
@@ -80,7 +80,7 @@ pub(crate) struct SessionEntry {
     /// (`is_copied_context == Some(true)`, e.g. context carried over from a
     /// continued trajectory). [`Self::to_trajectory`] prepends them so an
     /// open→save round trip never deletes them from the file.
-    pub copied_context_steps: Vec<trace::TraceStep>,
+    pub copied_context_steps: Vec<atif::TraceStep>,
 
     // ── Stored input/queue state (populated when session is inactive) ─────────
     /// Saved input buffer text for this session when inactive.
@@ -146,7 +146,13 @@ impl SessionEntry {
             .as_ref()
             .map(sven_input::final_metrics_to_chat_usage);
         let (total_input_tokens, total_output_tokens, total_cost_usd) = usage
-            .map(|u| (u.total_input_tokens, u.total_output_tokens, u.total_cost_usd))
+            .map(|u| {
+                (
+                    u.total_input_tokens,
+                    u.total_output_tokens,
+                    u.total_cost_usd,
+                )
+            })
             .unwrap_or((0, 0, 0.0));
         let now = Utc::now();
         Self {
@@ -155,9 +161,16 @@ impl SessionEntry {
                 .as_ref()
                 .and_then(|m| m.parent_session_id.clone())
                 .map(SessionId::from_string),
-            title: meta.as_ref().map(|m| m.title.clone()).unwrap_or_else(|| "Untitled".to_string()),
+            title: meta
+                .as_ref()
+                .map(|m| m.title.clone())
+                .unwrap_or_else(|| "Untitled".to_string()),
             status: meta.as_ref().map(|m| m.status).unwrap_or_default(),
-            session_path: if is_legacy { None } else { session_path.clone() },
+            session_path: if is_legacy {
+                None
+            } else {
+                session_path.clone()
+            },
             is_legacy,
             legacy_path: if is_legacy { session_path } else { None },
             created_at: meta.as_ref().map(|m| m.created_at).unwrap_or(now),
@@ -262,7 +275,12 @@ impl SessionEntry {
     /// Build an ATIF [`Trajectory`] from this entry, the supplied chat state,
     /// and runtime display metadata.  The entry's `created_at` is preserved
     /// so repeated saves don't reset the trajectory's creation timestamp.
-    pub fn to_trajectory(&self, chat: &ChatState, model: Option<String>, mode: Option<String>) -> Trajectory {
+    pub fn to_trajectory(
+        &self,
+        chat: &ChatState,
+        model: Option<String>,
+        mode: Option<String>,
+    ) -> Trajectory {
         use sven_input::ConversationRecord;
         use sven_model::Role;
 
@@ -504,16 +522,27 @@ impl SessionEntry {
 
 /// Build a [`SessionEntry`] from a listing row ([`UnifiedSessionEntry`]),
 /// with no stored chat/agent state yet (populated lazily on first switch-to).
-fn session_entry_from_unified(entry: UnifiedSessionEntry, parent_id: Option<SessionId>) -> SessionEntry {
+fn session_entry_from_unified(
+    entry: UnifiedSessionEntry,
+    parent_id: Option<SessionId>,
+) -> SessionEntry {
     let id = SessionId::from_string(entry.session_id);
     SessionEntry {
         id,
         parent_id,
         title: entry.title,
         status: entry.status,
-        session_path: if entry.is_legacy { None } else { Some(entry.path.clone()) },
+        session_path: if entry.is_legacy {
+            None
+        } else {
+            Some(entry.path.clone())
+        },
         is_legacy: entry.is_legacy,
-        legacy_path: if entry.is_legacy { Some(entry.path) } else { None },
+        legacy_path: if entry.is_legacy {
+            Some(entry.path)
+        } else {
+            None
+        },
         created_at: entry.updated_at,
         updated_at: entry.updated_at,
         stored_chat: None,
@@ -531,10 +560,22 @@ fn session_entry_from_unified(entry: UnifiedSessionEntry, parent_id: Option<Sess
         busy: false,
         current_tool: None,
         context_pct: 0,
-        total_context_tokens: entry.usage.as_ref().map(|u| u.total_input_tokens as u32).unwrap_or(0),
+        total_context_tokens: entry
+            .usage
+            .as_ref()
+            .map(|u| u.total_input_tokens as u32)
+            .unwrap_or(0),
         total_context_pct: 0,
-        total_output_tokens: entry.usage.as_ref().map(|u| u.total_output_tokens as u32).unwrap_or(0),
-        total_cost_usd: entry.usage.as_ref().map(|u| u.total_cost_usd).unwrap_or(0.0),
+        total_output_tokens: entry
+            .usage
+            .as_ref()
+            .map(|u| u.total_output_tokens as u32)
+            .unwrap_or(0),
+        total_cost_usd: entry
+            .usage
+            .as_ref()
+            .map(|u| u.total_cost_usd)
+            .unwrap_or(0.0),
         cache_hit_pct: 0,
     }
 }
@@ -668,8 +709,9 @@ impl SessionManager {
 
         // Separate roots and children; register roots first so parents exist
         // when we add children. Orphan children (parent not loaded) become roots.
-        let (roots, children): (Vec<_>, Vec<_>) =
-            entries.into_iter().partition(|e| e.parent_session_id.is_none());
+        let (roots, children): (Vec<_>, Vec<_>) = entries
+            .into_iter()
+            .partition(|e| e.parent_session_id.is_none());
 
         for entry in roots.into_iter().rev() {
             let id = SessionId::from_string(entry.session_id.clone());
@@ -819,7 +861,7 @@ impl SessionManager {
             }
             if let Some(path) = entry.session_path {
                 // Removes the atomic-writer `.lock`/temp sidecars too.
-                if let Err(e) = trace::persist::remove_trajectory(&path) {
+                if let Err(e) = atif::persist::remove_trajectory(&path) {
                     tracing::warn!(path = %path.display(), "failed to delete session file: {e}");
                 }
             }
@@ -893,9 +935,13 @@ mod tests {
         entry.id = SessionId::from_string("session-abc".to_string());
         let chat = chat_with_multi_turn_tool_call_and_thinking();
 
-        let trajectory = entry.to_trajectory(&chat, Some("anthropic/claude-3-5".to_string()), Some("agent".to_string()));
+        let trajectory = entry.to_trajectory(
+            &chat,
+            Some("anthropic/claude-3-5".to_string()),
+            Some("agent".to_string()),
+        );
         assert_eq!(trajectory.session_id.as_deref(), Some("session-abc"));
-        trace::persist::write_trajectory_atomic(&path, &trajectory, None).unwrap();
+        atif::persist::write_trajectory_atomic(&path, &trajectory, None).unwrap();
 
         let loaded = sven_input::load_session_from(&path).unwrap();
         let records = sven_input::steps_to_conversation_records(&loaded.steps);
@@ -910,7 +956,10 @@ mod tests {
             .iter()
             .filter(|s| matches!(s, ChatSegment::Thinking { .. }))
             .count();
-        assert_eq!(thinking_count, 1, "thinking must survive the round trip: {segments:?}");
+        assert_eq!(
+            thinking_count, 1,
+            "thinking must survive the round trip: {segments:?}"
+        );
 
         let tool_call_present = segments.iter().any(|s| {
             matches!(
@@ -928,7 +977,10 @@ mod tests {
                     if matches!(&m.content, MessageContent::ToolResult { tool_call_id, .. } if tool_call_id == "call_1")
             )
         });
-        assert!(tool_result_present, "tool result must survive: {segments:?}");
+        assert!(
+            tool_result_present,
+            "tool result must survive: {segments:?}"
+        );
 
         let user_texts: Vec<&str> = segments
             .iter()
@@ -954,15 +1006,15 @@ mod tests {
         // Spec: copied-context steps (is_copied_context == true, e.g. from a
         // continued trajectory) are hidden from the chat view, but an
         // open→save round trip must NOT delete them from the file.
-        let mut source = trace::Trajectory::new(
+        let mut source = atif::Trajectory::new(
             sven_input::ATIF_SCHEMA_VERSION,
             sven_input::default_agent_profile(),
         );
-        let mut copied = trace::TraceStep::new(1, trace::StepOrigin::User, "carried-over context");
+        let mut copied = atif::TraceStep::new(1, atif::StepOrigin::User, "carried-over context");
         copied.is_copied_context = Some(true);
         source.steps = vec![
             copied,
-            trace::TraceStep::new(2, trace::StepOrigin::User, "fresh question"),
+            atif::TraceStep::new(2, atif::StepOrigin::User, "fresh question"),
         ];
 
         let entry = SessionEntry::from_trajectory_into(
@@ -1014,7 +1066,8 @@ mod tests {
         entry.total_cost_usd = 0.02;
         let chat = chat_with_multi_turn_tool_call_and_thinking();
 
-        let trajectory = entry.to_trajectory(&chat, Some("gpt-4o".to_string()), Some("code".to_string()));
+        let trajectory =
+            entry.to_trajectory(&chat, Some("gpt-4o".to_string()), Some("code".to_string()));
         let meta = SvenSessionMeta::from_trajectory(&trajectory).expect("meta present");
         assert_eq!(meta.title, "My title");
         assert_eq!(meta.status, ChatStatus::Completed);
@@ -1056,7 +1109,10 @@ mod tests {
         );
 
         assert!(entry.is_legacy, "must be tagged legacy");
-        assert!(entry.session_path.is_none(), "legacy entries have no native session_path yet");
+        assert!(
+            entry.session_path.is_none(),
+            "legacy entries have no native session_path yet"
+        );
         assert_eq!(entry.legacy_path, Some(PathBuf::from("/chats/legacy.yaml")));
         assert_eq!(entry.title, "Legacy chat");
         assert_eq!(entry.id, legacy_id);
@@ -1068,7 +1124,9 @@ mod tests {
             .into_iter()
             .filter_map(crate::app::conversation_record_to_chat_segment)
             .collect();
-        assert!(segments.iter().any(|s| matches!(s, ChatSegment::Thinking { content } if content == "thinking about it")));
+        assert!(segments.iter().any(
+            |s| matches!(s, ChatSegment::Thinking { content } if content == "thinking about it")
+        ));
         assert!(segments.iter().any(
             |s| matches!(s, ChatSegment::Message(m) if m.role == Role::User && m.as_text() == Some("Hello from legacy"))
         ));

@@ -45,7 +45,7 @@ members = [
     # LLM metering: pricing catalog, credit ledger, statements
     "crates/metering",
     # ATIF v1.7 trajectory format (standalone; not yet wired into sven)
-    "crates/trace",
+    "crates/atif",
     # Workspace tooling: `cargo run -p xtask -- arch` enforces architecture.toml
     "xtask",
 ]

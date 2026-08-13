@@ -607,7 +607,11 @@ mod tests {
     fn prepare_compaction_splits_head_and_tail() {
         let msgs = long_history();
         let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
-        assert_eq!(plan.keep_tail.len(), 2, "must preserve exactly keep_recent messages");
+        assert_eq!(
+            plan.keep_tail.len(),
+            2,
+            "must preserve exactly keep_recent messages"
+        );
         // The two most recent messages are "question 3" and "answer 3".
         assert_eq!(plan.keep_tail[0].as_text(), Some("question 3"));
         assert_eq!(plan.keep_tail[1].as_text(), Some("answer 3"));
@@ -618,7 +622,10 @@ mod tests {
         let msgs = long_history();
         let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
         let request_text = plan.summarize_request.last().unwrap().as_text().unwrap();
-        assert!(request_text.contains("question 0"), "older turns must be in the summarize request");
+        assert!(
+            request_text.contains("question 0"),
+            "older turns must be in the summarize request"
+        );
         assert!(
             !request_text.contains("question 3"),
             "the preserved tail must NOT be duplicated into the summarize request"
@@ -655,7 +662,10 @@ mod tests {
         let final_msgs = finish_compaction(plan, "## Active Task\nSummary text here.");
         assert_eq!(final_msgs[0].role, Role::System);
         assert_eq!(final_msgs[1].role, Role::Assistant);
-        assert_eq!(final_msgs[1].as_text(), Some("## Active Task\nSummary text here."));
+        assert_eq!(
+            final_msgs[1].as_text(),
+            Some("## Active Task\nSummary text here.")
+        );
         assert_eq!(final_msgs[2].as_text(), Some("question 3"));
         assert_eq!(final_msgs[3].as_text(), Some("answer 3"));
         assert_eq!(final_msgs.len(), 4);

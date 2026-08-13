@@ -27,7 +27,9 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use sven_input::{parse_conversation, parse_workflow, serialize_conversation_turn, Step, StepQueue};
+    use sven_input::{
+        parse_conversation, parse_workflow, serialize_conversation_turn, Step, StepQueue,
+    };
     use sven_model::{Message, Role};
 
     // ── Helper aliases ────────────────────────────────────────────────────────
@@ -358,12 +360,12 @@ mod tests {
     // via `crate::runner::parse_jsonl_trace_steps` instead of
     // `sven_input::parse_jsonl_full`. These fixtures build that NDJSON the
     // same way the runner does: assemble `Message`s into turn-shaped
-    // `TraceStep`s, then serialize with `trace::persist::write_steps_ndjson`.
+    // `TraceStep`s, then serialize with `atif::persist::write_steps_ndjson`.
 
     fn make_jsonl_trace(messages: &[Message]) -> String {
         let steps = sven_input::trace_session::messages_to_steps(messages);
         let mut buf = Vec::new();
-        trace::persist::write_steps_ndjson(&mut buf, &steps).unwrap();
+        atif::persist::write_steps_ndjson(&mut buf, &steps).unwrap();
         String::from_utf8(buf).unwrap()
     }
 
@@ -706,7 +708,7 @@ mod tests {
         let steps = asm.finish();
 
         let mut buf = Vec::new();
-        trace::persist::write_steps_ndjson(&mut buf, &steps).unwrap();
+        atif::persist::write_steps_ndjson(&mut buf, &steps).unwrap();
         let jsonl = String::from_utf8(buf).unwrap();
 
         assert!(is_jsonl(&jsonl));
@@ -732,7 +734,7 @@ mod tests {
     fn json_trajectory_output_detected_as_json_summary_not_jsonl() {
         let messages = vec![Message::user("hi"), Message::assistant("hello")];
         let steps = sven_input::trace_session::messages_to_steps(&messages);
-        let mut trajectory = trace::Trajectory::new(
+        let mut trajectory = atif::Trajectory::new(
             sven_input::trace_session::ATIF_SCHEMA_VERSION,
             sven_input::trace_session::default_agent_profile(),
         );
@@ -748,12 +750,9 @@ mod tests {
 
     #[test]
     fn parse_json_summary_reconstructs_history_from_trajectory_steps() {
-        let messages = vec![
-            Message::user("task1"),
-            Message::assistant("result1"),
-        ];
+        let messages = vec![Message::user("task1"), Message::assistant("result1")];
         let steps = sven_input::trace_session::messages_to_steps(&messages);
-        let mut trajectory = trace::Trajectory::new(
+        let mut trajectory = atif::Trajectory::new(
             sven_input::trace_session::ATIF_SCHEMA_VERSION,
             sven_input::trace_session::default_agent_profile(),
         );

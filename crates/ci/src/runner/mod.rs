@@ -25,6 +25,7 @@ use anyhow::Context;
 use tokio::sync::mpsc;
 use tracing::debug;
 
+use atif::{TraceStep, Trajectory};
 use sven_bootstrap::RuntimeContext;
 use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
@@ -32,7 +33,6 @@ use sven_input::trace_session::{self, StepAssembler, SvenSessionMeta};
 use sven_input::{history, parse_conversation, parse_frontmatter, parse_workflow, Step, StepQueue};
 use sven_model::{ContentPart, Message, MessageContent, Role};
 use sven_runtime::resolve_auto_log_path;
-use trace::{TraceStep, Trajectory};
 
 use crate::kernel_agent::KernelAgent;
 
@@ -492,7 +492,8 @@ impl CiRunner {
         // fails fast with the same error the legacy runner surfaced before
         // constructing the agent. The kernel session (re)builds the provider
         // from `model_cfg` per turn.
-        let _ = sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
+        let _ =
+            sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
 
         write_stderr(&format!(
             "[sven:settings] model={} mode={}",
@@ -612,8 +613,12 @@ impl CiRunner {
         // RuntimeBuilder) seeded with the accumulated history, so per-step mode
         // and model overrides are honoured while the streaming AgentEvent
         // contract this runner consumes stays identical.
-        let mut agent =
-            KernelAgent::new(self.config.clone(), runtime_ctx, initial_mode, model_cfg.clone());
+        let mut agent = KernelAgent::new(
+            self.config.clone(),
+            runtime_ctx,
+            initial_mode,
+            model_cfg.clone(),
+        );
 
         let seed_count = if !existing_steps.is_empty() {
             // Loaded ATIF trajectory (--load-trace/--trace path).
@@ -657,7 +662,7 @@ impl CiRunner {
         // ── Turn assembler for this run's new steps ──────────────────────────
         // Continues the step_id sequence from whatever was loaded above, so
         // the combined `existing_steps ++ assembler` sequence stays
-        // contiguous starting at 1 (required by `trace::validate_trajectory`).
+        // contiguous starting at 1 (required by `atif::validate_trajectory`).
         let mut assembler = StepAssembler::resuming(existing_steps.len() as u64 + 1);
         // Number of `assembler.closed_steps()` already streamed to stdout;
         // only advances when `output_format == Jsonl`, see `event::stream_new_steps`.
@@ -719,7 +724,7 @@ impl CiRunner {
 
         // Write the combined ATIF trajectory (existing steps ++ new steps
         // accumulated so far) to `path`, atomically (temp file + rename; see
-        // `trace::persist::write_trajectory_atomic`) so a crash never leaves
+        // `atif::persist::write_trajectory_atomic`) so a crash never leaves
         // a half-written document. `expected: None` — same as the old JSONL
         // flush, this run is the sole writer for the duration and does not
         // need concurrent-modification detection against other processes.
@@ -735,7 +740,11 @@ impl CiRunner {
                 .with_model(format!("{}/{}", model_cfg.provider, model_cfg.name));
             let mut trajectory = Trajectory::new(trace_session::ATIF_SCHEMA_VERSION, agent_profile);
             trajectory.session_id = Some(run_session_id.clone());
-            trajectory.steps = existing_steps.iter().cloned().chain(new_steps.iter().cloned()).collect();
+            trajectory.steps = existing_steps
+                .iter()
+                .cloned()
+                .chain(new_steps.iter().cloned())
+                .collect();
             if !subagent_trajectories.is_empty() {
                 trajectory.subagent_trajectories = Some(subagent_trajectories.to_vec());
             }
@@ -750,8 +759,11 @@ impl CiRunner {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if let Err(e) = trace::persist::write_trajectory_atomic(path, &trajectory, None) {
-                eprintln!("[sven:warn] Failed to write trace log {}: {e}", path.display());
+            if let Err(e) = atif::persist::write_trajectory_atomic(path, &trajectory, None) {
+                eprintln!(
+                    "[sven:warn] Failed to write trace log {}: {e}",
+                    path.display()
+                );
             }
         };
 
@@ -1240,12 +1252,17 @@ impl CiRunner {
             for step in &new_steps[emitted_steps..] {
                 match serde_json::to_string(step) {
                     Ok(line) => write_stdout(&format!("{line}\n")),
-                    Err(e) => write_stderr(&format!("[sven:warn] Failed to serialize trace step: {e}")),
+                    Err(e) => {
+                        write_stderr(&format!("[sven:warn] Failed to serialize trace step: {e}"))
+                    }
                 }
             }
         }
-        let final_trajectory_steps: Vec<TraceStep> =
-            existing_steps.iter().cloned().chain(new_steps.iter().cloned()).collect();
+        let final_trajectory_steps: Vec<TraceStep> = existing_steps
+            .iter()
+            .cloned()
+            .chain(new_steps.iter().cloned())
+            .collect();
 
         // ── Final trace flush ────────────────────────────────────────────────
         // Ensure the last step is persisted even if no prior flush fired.

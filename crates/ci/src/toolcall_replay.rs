@@ -12,8 +12,8 @@
 
 use std::sync::Arc;
 
+use atif::{MessageBody, TraceStep};
 use sven_tools::{ToolCall, ToolRegistry};
-use trace::{MessageBody, TraceStep};
 
 /// Re-execute every tool call recorded across `steps` with fresh results.
 ///
@@ -63,9 +63,9 @@ pub async fn replay_tool_calls(steps: &mut [TraceStep], tools: &Arc<ToolRegistry
 #[cfg(test)]
 mod tests {
     use super::*;
+    use atif::{ObservationEntry, StepObservation, StepOrigin, ToolInvocation};
     use std::sync::Arc;
     use sven_tools::{ApprovalPolicy, Tool, ToolOutput, ToolRegistry};
-    use trace::{ObservationEntry, StepObservation, StepOrigin, ToolInvocation};
 
     struct EchoTool;
 
@@ -95,10 +95,18 @@ mod tests {
 
     /// Build a single agent step with one tool call and a stale observation
     /// result awaiting replay.
-    fn step_with_call(id: &str, name: &str, args: serde_json::Value, stale_result: &str) -> TraceStep {
+    fn step_with_call(
+        id: &str,
+        name: &str,
+        args: serde_json::Value,
+        stale_result: &str,
+    ) -> TraceStep {
         let mut step = TraceStep::new(1, StepOrigin::Agent, "");
         step.tool_calls = Some(vec![ToolInvocation::new(id, name).with_arguments(args)]);
-        step.observation = Some(StepObservation::single(ObservationEntry::for_call(id, stale_result)));
+        step.observation = Some(StepObservation::single(ObservationEntry::for_call(
+            id,
+            stale_result,
+        )));
         step
     }
 
@@ -220,9 +228,8 @@ mod tests {
 
         // Tool call with no observation recorded at all.
         let mut step = TraceStep::new(1, StepOrigin::Agent, "");
-        step.tool_calls = Some(vec![
-            ToolInvocation::new("c-orphan", "echo").with_arguments(serde_json::json!({"message":"hi"})),
-        ]);
+        step.tool_calls = Some(vec![ToolInvocation::new("c-orphan", "echo")
+            .with_arguments(serde_json::json!({"message":"hi"}))]);
         let mut steps = vec![step];
 
         let count = replay_tool_calls(&mut steps, &reg).await;

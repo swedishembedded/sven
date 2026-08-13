@@ -174,7 +174,10 @@ fn validate_agent_only_fields(step: &crate::model::TraceStep, errors: &mut Vec<V
     check(step.metrics.is_some(), "metrics");
 }
 
-fn validate_deterministic_dispatch(step: &crate::model::TraceStep, errors: &mut Vec<ValidationError>) {
+fn validate_deterministic_dispatch(
+    step: &crate::model::TraceStep,
+    errors: &mut Vec<ValidationError>,
+) {
     if step.source != StepOrigin::Agent || step.llm_call_count != Some(0) {
         return;
     }

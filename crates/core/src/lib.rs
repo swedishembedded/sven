@@ -20,21 +20,19 @@ pub mod mode;
 // edge disappear.
 pub use sven_turn::prompts;
 pub use sven_turn::{
-    set_thinking_budget_override, stream_turn, thinking_budget_override, to_model_schemas,
-    AbortedError, ModelResolver, ThinkingBudget,
-};
-pub use sven_turn::{
     compact_session, compact_session_with_strategy, emergency_compact, finish_compaction,
     prepare_compaction, smart_truncate, CompactionPlan,
+};
+pub use sven_turn::{
+    set_thinking_budget_override, stream_turn, thinking_budget_override, to_model_schemas,
+    AbortedError, ModelResolver, ThinkingBudget,
 };
 pub use sven_turn::{system_prompt, CollabEvent};
 
 pub use completion::development_complete;
 pub use events::{AgentEvent, CompactionStrategyUsed, PeerInfo};
 pub use machines::{
-    reactive_agent::ReactiveAgentMachine,
-    sdlc::task::TaskMachine,
-    sdlc::SdlcMachine,
+    reactive_agent::ReactiveAgentMachine, sdlc::task::TaskMachine, sdlc::SdlcMachine,
 };
 pub use mode::ModeRegistry;
 pub use runtime_context::AgentRuntimeContext;

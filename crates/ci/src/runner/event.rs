@@ -8,11 +8,11 @@
 
 use std::collections::HashMap;
 
+use atif::Trajectory;
 use sven_core::AgentEvent;
 use sven_input::trace_session::{self, StepAssembler};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::SubagentUpdate;
-use trace::Trajectory;
 
 use crate::output::{format_token_usage_line, tool_output_snippet, write_stderr, write_stdout};
 
@@ -31,7 +31,11 @@ use super::OutputFormat;
 /// end of the run. That is coarser-grained than the old one-record-per-raw-
 /// event stream, but matches ATIF's turn-shaped `StepObject`: a `ToolCall`
 /// and its result are one step, not two independent lines.
-pub(super) fn stream_new_steps(assembler: &StepAssembler, emitted: &mut usize, output_format: OutputFormat) {
+pub(super) fn stream_new_steps(
+    assembler: &StepAssembler,
+    emitted: &mut usize,
+    output_format: OutputFormat,
+) {
     let closed = assembler.closed_steps();
     if output_format == OutputFormat::Jsonl {
         for step in &closed[*emitted..] {
@@ -250,7 +254,12 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 "[sven:context:compacted:{strategy}] {tokens_before} → {tokens_after} tokens{turn_note}"
             ));
             let strategy_str = strategy.to_string();
-            assembler.push_context_compacted(tokens_before, tokens_after, Some(&strategy_str), Some(turn));
+            assembler.push_context_compacted(
+                tokens_before,
+                tokens_after,
+                Some(&strategy_str),
+                Some(turn),
+            );
             stream_new_steps(assembler, s.emitted_steps, output_format);
         }
         AgentEvent::Error(msg) => {

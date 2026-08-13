@@ -466,7 +466,10 @@ mod tests {
         }
         async fn execute(&self, call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
             // 100 numbered lines, comfortably over any small token cap.
-            let content = (0..100).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+            let content = (0..100)
+                .map(|i| format!("line {i}"))
+                .collect::<Vec<_>>()
+                .join("\n");
             if self.is_error {
                 sven_tools::ToolOutput::err(call.id.clone(), content)
             } else {
@@ -530,7 +533,10 @@ mod tests {
     #[tokio::test]
     async fn tool_result_token_cap_zero_disables_truncation() {
         let mut registry = ToolRegistry::new();
-        registry.register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: false });
+        registry.register(BigOutputTool {
+            category: sven_tools::OutputCategory::Generic,
+            is_error: false,
+        });
         let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
         let mut exec = ToolExecutor::unrestricted(Arc::new(registry)); // cap defaults to 0
 
@@ -542,14 +548,23 @@ mod tests {
             "big",
         )
         .await;
-        assert!(content.contains("line 99"), "the full output must be stored untruncated");
-        assert!(!content.contains("omitted"), "no truncation notice when the cap is 0: {content}");
+        assert!(
+            content.contains("line 99"),
+            "the full output must be stored untruncated"
+        );
+        assert!(
+            !content.contains("omitted"),
+            "no truncation notice when the cap is 0: {content}"
+        );
     }
 
     #[tokio::test]
     async fn tool_result_token_cap_truncates_large_output() {
         let mut registry = ToolRegistry::new();
-        registry.register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: false });
+        registry.register(BigOutputTool {
+            category: sven_tools::OutputCategory::Generic,
+            is_error: false,
+        });
         let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
         let mut exec =
             ToolExecutor::unrestricted(Arc::new(registry)).with_tool_result_token_cap(10);
@@ -562,7 +577,10 @@ mod tests {
             "big",
         )
         .await;
-        assert!(content.contains("omitted"), "a truncation notice must be present: {content}");
+        assert!(
+            content.contains("omitted"),
+            "a truncation notice must be present: {content}"
+        );
         assert!(
             !content.contains("line 99"),
             "the tail of a 100-line Generic-category output must be cut, not kept: {content}"
@@ -577,8 +595,10 @@ mod tests {
         let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
 
         let mut generic_registry = ToolRegistry::new();
-        generic_registry
-            .register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: false });
+        generic_registry.register(BigOutputTool {
+            category: sven_tools::OutputCategory::Generic,
+            is_error: false,
+        });
         let mut generic_exec =
             ToolExecutor::unrestricted(Arc::new(generic_registry)).with_tool_result_token_cap(30);
         let generic_content = run_tool_effect_and_get_stored_content(
@@ -591,8 +611,10 @@ mod tests {
         .await;
 
         let mut headtail_registry = ToolRegistry::new();
-        headtail_registry
-            .register(BigOutputTool { category: sven_tools::OutputCategory::HeadTail, is_error: false });
+        headtail_registry.register(BigOutputTool {
+            category: sven_tools::OutputCategory::HeadTail,
+            is_error: false,
+        });
         let mut headtail_exec =
             ToolExecutor::unrestricted(Arc::new(headtail_registry)).with_tool_result_token_cap(30);
         let headtail_content = run_tool_effect_and_get_stored_content(
@@ -617,7 +639,10 @@ mod tests {
     #[tokio::test]
     async fn tool_result_token_cap_applies_to_error_output_too() {
         let mut registry = ToolRegistry::new();
-        registry.register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: true });
+        registry.register(BigOutputTool {
+            category: sven_tools::OutputCategory::Generic,
+            is_error: true,
+        });
         let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
         let mut exec =
             ToolExecutor::unrestricted(Arc::new(registry)).with_tool_result_token_cap(10);
@@ -630,7 +655,13 @@ mod tests {
             "big",
         )
         .await;
-        assert!(content.starts_with("error:"), "error prefix must be preserved: {content}");
-        assert!(content.contains("omitted"), "error output must also be truncated: {content}");
+        assert!(
+            content.starts_with("error:"),
+            "error prefix must be preserved: {content}"
+        );
+        assert!(
+            content.contains("omitted"),
+            "error output must also be truncated: {content}"
+        );
     }
 }

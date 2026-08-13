@@ -96,6 +96,8 @@ impl Trajectory {
     /// Steps eligible for supervised fine-tuning: excludes any step with
     /// `is_copied_context == Some(true)`, per the RFC's normative rule.
     pub fn sft_steps(&self) -> impl Iterator<Item = &TraceStep> {
-        self.steps.iter().filter(|step| !step.is_excluded_from_sft())
+        self.steps
+            .iter()
+            .filter(|step| !step.is_excluded_from_sft())
     }
 }

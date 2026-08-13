@@ -77,7 +77,8 @@ fn fingerprint_of(metadata: &fs::Metadata) -> FileFingerprint {
 
 fn serialize_pretty(trajectory: &Trajectory) -> Result<String, PersistError> {
     let mut buf = Vec::new();
-    let mut serializer = serde_json::Serializer::with_formatter(&mut buf, serde_json::ser::PrettyFormatter::new());
+    let mut serializer =
+        serde_json::Serializer::with_formatter(&mut buf, serde_json::ser::PrettyFormatter::new());
     trajectory.serialize(&mut serializer)?;
     Ok(String::from_utf8(buf).expect("serde_json always produces valid UTF-8"))
 }
@@ -93,7 +94,9 @@ pub fn write_trajectory(path: &Path, trajectory: &Trajectory) -> Result<(), Pers
 
 /// Read a trajectory from `path` along with a [`FileFingerprint`] snapshot,
 /// for later use with [`write_trajectory_atomic`]'s `expected` parameter.
-pub fn read_trajectory_with_fingerprint(path: &Path) -> Result<(Trajectory, FileFingerprint), PersistError> {
+pub fn read_trajectory_with_fingerprint(
+    path: &Path,
+) -> Result<(Trajectory, FileFingerprint), PersistError> {
     let metadata = fs::metadata(path)?;
     let content = fs::read_to_string(path)?;
     let trajectory: Trajectory = serde_json::from_str(&content)?;
@@ -200,7 +203,11 @@ pub fn remove_trajectory(path: &Path) -> std::io::Result<()> {
     ) {
         if let Ok(entries) = fs::read_dir(parent) {
             for entry in entries.flatten() {
-                if entry.file_name().to_string_lossy().starts_with(&temp_prefix) {
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(&temp_prefix)
+                {
                     let _ = fs::remove_file(entry.path());
                 }
             }

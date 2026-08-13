@@ -12,7 +12,7 @@ sven-input     = { path = "../input" }
 sven-bootstrap = { path = "../bootstrap" }
 sven-runtime   = { path = "../runtime" }
 sven-hsm       = { path = "../hsm" }
-trace          = { path = "../trace" }
+atif           = { path = "../atif" }
 anyhow         = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }

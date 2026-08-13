@@ -25,7 +25,9 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use sven_model::{CompletionRequest, Message, ModelProvider, ResponseEvent, ResponseFormat, ToolSchema};
+use sven_model::{
+    CompletionRequest, Message, ModelProvider, ResponseEvent, ResponseFormat, ToolSchema,
+};
 use sven_tools::ToolCall;
 
 /// Convert tool-registry schemas into model-API schemas, preserving the order
@@ -321,7 +323,10 @@ pub async fn stream_turn(
         response_format,
     };
 
-    let mut stream = model.complete(req).await.context("model completion failed")?;
+    let mut stream = model
+        .complete(req)
+        .await
+        .context("model completion failed")?;
 
     let mut full_text = String::new();
     let mut thinking_buf = String::new();
@@ -366,8 +371,10 @@ pub async fn stream_turn(
                 warn!("model hit its max-output-tokens limit; response was truncated");
             }
             ResponseEvent::ThinkingDelta(delta) => {
-                let stall_started = *thinking_stall_started.get_or_insert_with(std::time::Instant::now);
-                thinking_token_estimate = thinking_token_estimate.saturating_add(estimate_tokens(&delta));
+                let stall_started =
+                    *thinking_stall_started.get_or_insert_with(std::time::Instant::now);
+                thinking_token_estimate =
+                    thinking_token_estimate.saturating_add(estimate_tokens(&delta));
                 thinking_buf.push_str(&delta);
                 let _ = tx.send(AgentEvent::ThinkingDelta(delta)).await;
 
@@ -659,7 +666,11 @@ mod stream_chunk_timeout_tests {
         let orig = std::env::var_os(STREAM_CHUNK_TIMEOUT_ENV);
         for bad in ["0", "-5", "not-a-number", ""] {
             unsafe { std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, bad) };
-            assert_eq!(stream_chunk_timeout(), DEFAULT_STREAM_CHUNK_TIMEOUT, "input {bad:?} should fall back to default");
+            assert_eq!(
+                stream_chunk_timeout(),
+                DEFAULT_STREAM_CHUNK_TIMEOUT,
+                "input {bad:?} should fall back to default"
+            );
         }
         unsafe {
             match &orig {
@@ -841,7 +852,9 @@ mod thinking_watchdog_tests {
         let _ = drain.await;
 
         let err = result.expect_err("the default 10% cap must still apply");
-        let aborted = err.downcast_ref::<AbortedError>().expect("must be AbortedError");
+        let aborted = err
+            .downcast_ref::<AbortedError>()
+            .expect("must be AbortedError");
         assert!(aborted.0.contains("thinking-token limit"));
     }
 
@@ -878,7 +891,9 @@ mod thinking_watchdog_tests {
         let _ = drain.await;
 
         let err = result.expect_err("must still abort - via the time cap, not the token cap");
-        let aborted = err.downcast_ref::<AbortedError>().expect("must be AbortedError");
+        let aborted = err
+            .downcast_ref::<AbortedError>()
+            .expect("must be AbortedError");
         assert!(
             aborted.0.contains("thinking timeout"),
             "the token cap must be disabled when the context window is unknown: {}",
@@ -922,7 +937,9 @@ mod thinking_watchdog_tests {
                 &self,
                 _req: CompletionRequest,
             ) -> anyhow::Result<
-                std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<ResponseEvent>> + Send>>,
+                std::pin::Pin<
+                    Box<dyn futures::Stream<Item = anyhow::Result<ResponseEvent>> + Send>,
+                >,
             > {
                 #[derive(Clone, Copy)]
                 enum Phase {
@@ -940,7 +957,9 @@ mod thinking_watchdog_tests {
                         // Non-empty, since `TextDelta` is only forward
                         // progress when `!delta.is_empty()` (matches the
                         // real loop's own guard - an empty delta is a no-op).
-                        Phase::Text => Some((Ok(ResponseEvent::TextDelta(".".into())), Phase::Thinking)),
+                        Phase::Text => {
+                            Some((Ok(ResponseEvent::TextDelta(".".into())), Phase::Thinking))
+                        }
                     }
                 });
                 Ok(Box::pin(stream))
@@ -973,7 +992,9 @@ mod thinking_watchdog_tests {
         let _ = drain.await;
 
         let err = result.expect_err("the token cap must still fire eventually");
-        let aborted = err.downcast_ref::<AbortedError>().expect("must be AbortedError");
+        let aborted = err
+            .downcast_ref::<AbortedError>()
+            .expect("must be AbortedError");
         assert!(
             aborted.0.contains("thinking-token limit"),
             "progress must reset the stall clock, not the token count: {}",
@@ -1032,7 +1053,9 @@ mod thinking_watchdog_tests {
         let _ = drain.await;
 
         let err = result.expect_err("the override's tiny cap must fire");
-        let aborted = err.downcast_ref::<AbortedError>().expect("must be AbortedError");
+        let aborted = err
+            .downcast_ref::<AbortedError>()
+            .expect("must be AbortedError");
         assert!(aborted.0.contains("thinking-token limit"));
     }
 
@@ -1075,7 +1098,9 @@ mod thinking_watchdog_tests {
         let _ = drain.await;
 
         let err = result.expect_err("must still abort, via the per-call time cap");
-        let aborted = err.downcast_ref::<AbortedError>().expect("must be AbortedError");
+        let aborted = err
+            .downcast_ref::<AbortedError>()
+            .expect("must be AbortedError");
         assert!(
             aborted.0.contains("thinking timeout"),
             "a cleared override must not leave the tiny token cap active: {}",

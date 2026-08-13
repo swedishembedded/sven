@@ -46,7 +46,9 @@ impl ContextManagement {
     /// Extract a `ContextManagement` from a step's `extra` object, if present
     /// and well-formed.
     pub fn from_extra(extra: &Value) -> Option<Self> {
-        extra.get(Self::EXTRA_KEY).and_then(|v| serde_json::from_value(v.clone()).ok())
+        extra
+            .get(Self::EXTRA_KEY)
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 
     /// Insert (or replace) this descriptor at `extra.context_management`,

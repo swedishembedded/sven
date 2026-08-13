@@ -1,5 +1,5 @@
 [package]
-name        = "trace"
+name        = "atif"
 version.workspace = true
 edition     = "2021"
 description = "ATIF (Agent Trajectory Interchange Format) v1.7 trajectory model, validator, and persistence"

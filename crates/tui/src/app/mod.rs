@@ -76,7 +76,7 @@ pub struct AppOptions {
     /// Combined load+output ATIF trace path (`--trace`), or the output-only
     /// path (`--output-trace`). Loaded and saved as a native ATIF `Trajectory`
     /// document (`trace_session::load_session_from` /
-    /// `trace::persist::write_trajectory_atomic`) - this is now the ONE
+    /// `atif::persist::write_trajectory_atomic`) - this is now the ONE
     /// session-persistence path for the TUI; there is no separate YAML/JSONL
     /// branch.
     pub trace_path: Option<PathBuf>,
@@ -176,8 +176,11 @@ impl App {
         // save target; `--load-trace PATH` alone only seeds history (matching
         // the headless runner's "load doesn't imply write-back" convention -
         // see `CiOptions::load_trace`'s doc comment).
-        let trace_load_path = opts.trace_path.clone().or_else(|| opts.load_trace_path.clone());
-        let mut loaded_trajectory: Option<trace::Trajectory> = None;
+        let trace_load_path = opts
+            .trace_path
+            .clone()
+            .or_else(|| opts.load_trace_path.clone());
+        let mut loaded_trajectory: Option<atif::Trajectory> = None;
         let initial_segments = if let Some(ref path) = trace_load_path {
             if path.exists() {
                 match sven_input::load_session_from(path) {
@@ -238,8 +241,12 @@ impl App {
         // If we loaded a trajectory, restore its title/status/timestamps into
         // the initial session entry so the sidebar shows the correct metadata.
         if let Some(ref trajectory) = loaded_trajectory {
-            initial_session_entry =
-                SessionEntry::from_trajectory_into(trajectory, initial_session_entry.id.clone(), None, false);
+            initial_session_entry = SessionEntry::from_trajectory_into(
+                trajectory,
+                initial_session_entry.id.clone(),
+                None,
+                false,
+            );
         }
         let active_session_id = initial_session_entry.id.clone();
         // `--trace PATH` is kept in sync after every turn; `--load-trace`-only
@@ -1012,10 +1019,7 @@ impl App {
         // raw escape-timeout heuristic to disambiguate `ESC` from the start
         // of an arrow-key sequence - and could leave the terminal stuck in
         // enhanced-keyboard mode after an unclean exit.
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::event::EnableBracketedPaste
-        );
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
 
         loop {
             // ── Layout cache update ───────────────────────────────────────────
@@ -1248,8 +1252,12 @@ impl App {
             if let Some(entry) = self.sessions.get_mut(&target_id) {
                 let is_legacy = entry.is_legacy;
                 let legacy_path = entry.legacy_path.clone();
-                let refreshed =
-                    SessionEntry::from_trajectory_into(&trajectory, target_id.clone(), None, is_legacy);
+                let refreshed = SessionEntry::from_trajectory_into(
+                    &trajectory,
+                    target_id.clone(),
+                    None,
+                    is_legacy,
+                );
                 entry.title = refreshed.title;
                 entry.status = refreshed.status;
                 entry.created_at = refreshed.created_at;
@@ -1665,7 +1673,9 @@ pub(crate) fn conversation_record_to_chat_segment(
                 Some(ChatSegment::Message(m))
             }
         }
-        sven_input::ConversationRecord::Thinking { content } => Some(ChatSegment::Thinking { content }),
+        sven_input::ConversationRecord::Thinking { content } => {
+            Some(ChatSegment::Thinking { content })
+        }
         sven_input::ConversationRecord::ContextCompacted {
             tokens_before,
             tokens_after,

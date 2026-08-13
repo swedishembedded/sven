@@ -312,26 +312,39 @@ impl TurnExecutor {
         configured_max_output: Option<u32>,
         obs: &ObservationSink,
     ) -> Vec<Message> {
-        let Some(plan) =
-            sven_turn::prepare_compaction(&messages, &self.compaction.strategy, self.compaction.keep_recent)
-        else {
+        let Some(plan) = sven_turn::prepare_compaction(
+            &messages,
+            &self.compaction.strategy,
+            self.compaction.keep_recent,
+        ) else {
             return messages;
         };
         let tokens_before = plan.tokens_before;
 
-        let budget = sven_model::budget::effective_input_budget(context_window, configured_max_output);
+        let budget =
+            sven_model::budget::effective_input_budget(context_window, configured_max_output);
         let request_estimate =
             sven_model::budget::estimate_request_tokens(&plan.summarize_request, &[], None);
         let request_fits = budget.is_none_or(|b| request_estimate <= b);
 
         let (final_messages, strategy_used) = if request_fits {
-            match self.run_compaction_turn(&plan, model, context_window, configured_max_output).await {
+            match self
+                .run_compaction_turn(&plan, model, context_window, configured_max_output)
+                .await
+            {
                 Some(summary_text) if !summary_text.trim().is_empty() => {
                     let strategy_used = match self.compaction.strategy {
-                        sven_config::CompactionStrategy::Structured => CompactionStrategyUsed::Structured,
-                        sven_config::CompactionStrategy::Narrative => CompactionStrategyUsed::Narrative,
+                        sven_config::CompactionStrategy::Structured => {
+                            CompactionStrategyUsed::Structured
+                        }
+                        sven_config::CompactionStrategy::Narrative => {
+                            CompactionStrategyUsed::Narrative
+                        }
                     };
-                    (sven_turn::finish_compaction(plan, &summary_text), strategy_used)
+                    (
+                        sven_turn::finish_compaction(plan, &summary_text),
+                        strategy_used,
+                    )
                 }
                 _ => {
                     tracing::warn!(
@@ -340,7 +353,11 @@ impl TurnExecutor {
                          falling back to emergency_compact"
                     );
                     let mut fallback = messages.clone();
-                    sven_turn::emergency_compact(&mut fallback, plan.system_msg, self.compaction.keep_recent);
+                    sven_turn::emergency_compact(
+                        &mut fallback,
+                        plan.system_msg,
+                        self.compaction.keep_recent,
+                    );
                     (fallback, CompactionStrategyUsed::Emergency)
                 }
             }
@@ -349,7 +366,11 @@ impl TurnExecutor {
             // model for a summary would just fail the same way one level
             // down. Skip straight to the deterministic fallback.
             let mut fallback = messages.clone();
-            sven_turn::emergency_compact(&mut fallback, plan.system_msg, self.compaction.keep_recent);
+            sven_turn::emergency_compact(
+                &mut fallback,
+                plan.system_msg,
+                self.compaction.keep_recent,
+            );
             (fallback, CompactionStrategyUsed::Emergency)
         };
 
@@ -379,9 +400,13 @@ impl TurnExecutor {
         context_window: Option<u32>,
         configured_max_output: Option<u32>,
     ) -> Option<String> {
-        let request_estimate = sven_model::budget::estimate_request_tokens(&plan.summarize_request, &[], None);
-        let max_output_tokens_override =
-            sven_model::budget::dynamic_output_budget(context_window, configured_max_output, request_estimate);
+        let request_estimate =
+            sven_model::budget::estimate_request_tokens(&plan.summarize_request, &[], None);
+        let max_output_tokens_override = sven_model::budget::dynamic_output_budget(
+            context_window,
+            configured_max_output,
+            request_estimate,
+        );
 
         let (tx, mut rx) = mpsc::channel::<UiEvent>(256);
         let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
@@ -497,17 +522,31 @@ impl EffectExecutor for TurnExecutor {
         // see `sven_model::budget::effective_input_budget`'s doc comment.
         let context_window = model.catalog_context_window();
         let configured_max_output = model.catalog_max_output_tokens();
-        let mut estimate =
-            sven_model::budget::estimate_request_tokens(&messages, &tool_schemas, req.dynamic_suffix.as_deref());
+        let mut estimate = sven_model::budget::estimate_request_tokens(
+            &messages,
+            &tool_schemas,
+            req.dynamic_suffix.as_deref(),
+        );
 
         // Proactive compaction: fires *before* the hard gate below, while
         // there's still enough room to ask the model for a summary. Only
         // possible when the window is known (same precondition as the gate
         // itself - see `effective_input_budget`'s doc comment).
-        if let Some(budget) = sven_model::budget::effective_input_budget(context_window, configured_max_output) {
-            if budget > 0 && (estimate as f32 / budget as f32) >= self.compaction.effective_threshold() {
+        if let Some(budget) =
+            sven_model::budget::effective_input_budget(context_window, configured_max_output)
+        {
+            if budget > 0
+                && (estimate as f32 / budget as f32) >= self.compaction.effective_threshold()
+            {
                 messages = self
-                    .compact_thread(&thread_id, messages, model.as_ref(), context_window, configured_max_output, obs)
+                    .compact_thread(
+                        &thread_id,
+                        messages,
+                        model.as_ref(),
+                        context_window,
+                        configured_max_output,
+                        obs,
+                    )
                     .await;
                 estimate = sven_model::budget::estimate_request_tokens(
                     &messages,
@@ -517,7 +556,9 @@ impl EffectExecutor for TurnExecutor {
             }
         }
 
-        if let Some(budget) = sven_model::budget::effective_input_budget(context_window, configured_max_output) {
+        if let Some(budget) =
+            sven_model::budget::effective_input_budget(context_window, configured_max_output)
+        {
             if estimate > budget {
                 let msg = format!(
                     "prompt (~{estimate} tokens) leaves no room for a response in this model's context \
@@ -538,8 +579,11 @@ impl EffectExecutor for TurnExecutor {
         // fixed reservation of the full configured cap on every request is
         // what made a 2-token "hi" against a small-context model with a
         // capacity-sized output cap impossible to send at all.
-        let max_output_tokens_override =
-            sven_model::budget::dynamic_output_budget(context_window, configured_max_output, estimate);
+        let max_output_tokens_override = sven_model::budget::dynamic_output_budget(
+            context_window,
+            configured_max_output,
+            estimate,
+        );
 
         // Build optional structured-output constraint.
         let response_format = if req.schema.is_null() {
@@ -646,17 +690,18 @@ impl EffectExecutor for TurnExecutor {
         // module doc for why that distinction matters to `SdlcMachine`.
         if let Err(e) = &result {
             if let Some(aborted) = e.downcast_ref::<AbortedError>() {
-                let partial = partial_text
-                    .lock()
-                    .map(|g| g.clone())
-                    .unwrap_or_default();
+                let partial = partial_text.lock().map(|g| g.clone()).unwrap_or_default();
                 let marker = format!("[aborted: {aborted}]");
                 let persisted = if partial.is_empty() {
                     marker
                 } else {
                     format!("{partial}\n\n{marker}")
                 };
-                append_messages(&self.store, &thread_id, vec![Message::assistant(&persisted)]);
+                append_messages(
+                    &self.store,
+                    &thread_id,
+                    vec![Message::assistant(&persisted)],
+                );
                 obs.emit(UiEvent::Aborted {
                     partial_text: partial,
                 });

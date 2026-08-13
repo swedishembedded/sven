@@ -7,7 +7,7 @@
 //! something we invented, so if this doesn't parse+reserialize cleanly
 //! nothing else in the crate can be trusted.
 
-use trace::{ReasoningEffort, StepOrigin, Trajectory};
+use atif::{ReasoningEffort, StepOrigin, Trajectory};
 
 /// Copied verbatim from Section IV of the ATIF v1.7 RFC.
 const SPEC_EXAMPLE: &str = r#"
@@ -147,11 +147,17 @@ fn spec_section_iv_example_round_trips() {
     );
     assert_eq!(trajectory.agent.name, "harbor-agent");
     assert_eq!(trajectory.agent.version, "1.0.0");
-    assert_eq!(trajectory.agent.model_name.as_deref(), Some("gemini-2.5-flash"));
+    assert_eq!(
+        trajectory.agent.model_name.as_deref(),
+        Some("gemini-2.5-flash")
+    );
     assert_eq!(trajectory.agent.tool_definitions.as_ref().unwrap().len(), 1);
     assert_eq!(trajectory.steps.len(), 3);
 
-    let fm = trajectory.final_metrics.as_ref().expect("final_metrics present");
+    let fm = trajectory
+        .final_metrics
+        .as_ref()
+        .expect("final_metrics present");
     assert_eq!(fm.total_prompt_tokens, Some(1120));
     assert_eq!(fm.total_steps, Some(3));
 
@@ -167,14 +173,20 @@ fn spec_section_iv_example_round_trips() {
     // Step 2: agent step with two tool calls and matching observation results.
     let step2 = &trajectory.steps[1];
     assert_eq!(step2.source, StepOrigin::Agent);
-    assert_eq!(step2.reasoning_effort, Some(ReasoningEffort::Text("medium".into())));
+    assert_eq!(
+        step2.reasoning_effort,
+        Some(ReasoningEffort::Text("medium".into()))
+    );
     let tool_calls = step2.tool_calls.as_ref().expect("tool_calls present");
     assert_eq!(tool_calls.len(), 2);
     assert_eq!(tool_calls[0].tool_call_id, "call_price_1");
     assert_eq!(tool_calls[0].function_name, "financial_search");
     let obs = step2.observation.as_ref().expect("observation present");
     assert_eq!(obs.results.len(), 2);
-    assert_eq!(obs.results[0].source_call_id.as_deref(), Some("call_price_1"));
+    assert_eq!(
+        obs.results[0].source_call_id.as_deref(),
+        Some("call_price_1")
+    );
 
     // Step 3: agent step with token-id/logprob metrics.
     let step3 = &trajectory.steps[2];
@@ -208,7 +220,15 @@ fn spec_section_iv_example_round_trips() {
         trajectory.steps[1].tool_calls.as_ref().unwrap().len()
     );
     assert_eq!(
-        reparsed.steps[2].metrics.as_ref().unwrap().completion_token_ids,
-        trajectory.steps[2].metrics.as_ref().unwrap().completion_token_ids
+        reparsed.steps[2]
+            .metrics
+            .as_ref()
+            .unwrap()
+            .completion_token_ids,
+        trajectory.steps[2]
+            .metrics
+            .as_ref()
+            .unwrap()
+            .completion_token_ids
     );
 }
