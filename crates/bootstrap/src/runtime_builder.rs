@@ -36,7 +36,7 @@ use sven_hsm::{
     Context, EffectExecutor, ErasedRuntime, Event, EventSink, ObservationSink, Principal,
     RuntimeStatus, ToolCallId, UiEvent,
 };
-use sven_llm::ConversationStore;
+use sven_llm::ThreadStore;
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
 use sven_tools::events::ToolEvent;
@@ -59,7 +59,7 @@ use crate::registry::build_tool_registry;
 /// the right thread. See [`RuntimeBuilder::with_tool_executor_override`].
 pub type ToolExecutorFactory = Box<
     dyn FnOnce(
-            Arc<std::sync::Mutex<ConversationStore>>,
+            Arc<std::sync::Mutex<ThreadStore>>,
             Arc<std::sync::Mutex<std::collections::HashMap<ToolCallId, (String, String)>>>,
         ) -> Box<dyn EffectExecutor>
         + Send,
@@ -120,7 +120,7 @@ pub struct RuntimeHandle {
     /// The kernel's shared conversation store (thread → turns). Exposed so
     /// interactive frontends can seed / replace history mid-session for the
     /// edit-resubmit and resume flows.
-    conv_store: Arc<std::sync::Mutex<ConversationStore>>,
+    conv_store: Arc<std::sync::Mutex<ThreadStore>>,
     /// The live tool registry. Exposed so frontends can hot-swap MCP tools via
     /// [`ToolRegistry::replace_mcp_tools`] without rebuilding the session.
     tool_registry: Arc<ToolRegistry>,
@@ -170,7 +170,7 @@ impl RuntimeHandle {
 
     /// The kernel's shared conversation store (for history seeding / resume).
     #[must_use]
-    pub fn conversation_store(&self) -> Arc<std::sync::Mutex<ConversationStore>> {
+    pub fn conversation_store(&self) -> Arc<std::sync::Mutex<ThreadStore>> {
         Arc::clone(&self.conv_store)
     }
 
@@ -405,7 +405,7 @@ impl RuntimeBuilder {
     ///
     /// Unlike [`Self::with_effect_executor`] — which drops the entire default
     /// composite — this substitutes just the tool executor. The `factory` is
-    /// handed the `TurnExecutor`'s shared [`ConversationStore`] and
+    /// handed the `TurnExecutor`'s shared [`ThreadStore`] and
     /// `call_id → thread` registry so a custom executor (e.g.
     /// `sven_executors::RemoteToolExecutor::with_shared_store`) can append tool
     /// results to the exact thread the turn engine reads on its continuation
@@ -595,7 +595,7 @@ impl RuntimeBuilder {
         // ── Shared TurnExecutor resources ─────────────────────────────────────
         // Conversation store and call-id registry are shared between TurnExecutor
         // and ToolExecutor so appended tool results can be retrieved per-thread.
-        let conv_store = Arc::new(std::sync::Mutex::new(ConversationStore::new()));
+        let conv_store = Arc::new(std::sync::Mutex::new(ThreadStore::new()));
         // Clone for the RuntimeHandle before the store is moved into the
         // ToolExecutor below (frontends reach it for history seeding / resume).
         let conv_store_for_handle = Arc::clone(&conv_store);

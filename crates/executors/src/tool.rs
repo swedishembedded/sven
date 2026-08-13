@@ -18,7 +18,7 @@
 //! An optional [`Arc<Mutex<HashMap<ToolCallId, String>>>`] maps call IDs to
 //! conversation thread IDs.  When set and a mapping exists for the completing
 //! call, the tool result is also appended to that thread in the shared
-//! [`ConversationStore`] (append-only; never mutates prior messages).  This
+//! [`ThreadStore`] (append-only; never mutates prior messages).  This
 //! registry is populated by the `TurnExecutor` in Phase B.
 
 use std::collections::HashMap;
@@ -29,7 +29,7 @@ use async_trait::async_trait;
 use sven_hsm::{
     Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId, ToolCapability, UiEvent,
 };
-use sven_llm::ConversationStore;
+use sven_llm::ThreadStore;
 use sven_model::Message;
 use sven_tools::{ToolCall, ToolRegistry};
 
@@ -42,7 +42,7 @@ pub struct ToolExecutor {
     pub call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
     /// Shared conversation store; tool results are appended here when a
     /// thread mapping exists.
-    pub store: Arc<Mutex<ConversationStore>>,
+    pub store: Arc<Mutex<ThreadStore>>,
     /// When set (`--no-tools`), every `CallTool` effect fails immediately
     /// instead of reaching the registry. Defence-in-depth alongside
     /// `TurnExecutor` sending an empty tool schema list: a model can't be
@@ -69,7 +69,7 @@ impl ToolExecutor {
             registry,
             allowed_capabilities,
             call_id_to_thread: Arc::new(Mutex::new(HashMap::new())),
-            store: Arc::new(Mutex::new(ConversationStore::new())),
+            store: Arc::new(Mutex::new(ThreadStore::new())),
             no_tools: false,
             tool_result_token_cap: 0,
         }
@@ -104,7 +104,7 @@ impl ToolExecutor {
         registry: Arc<ToolRegistry>,
         allowed_capabilities: HashSet<ToolCapability>,
         call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
-        store: Arc<Mutex<ConversationStore>>,
+        store: Arc<Mutex<ThreadStore>>,
     ) -> Self {
         Self {
             registry,
@@ -482,7 +482,7 @@ mod tests {
     /// needed to assert on the *content* truncation produces.
     async fn run_tool_effect_and_get_stored_content(
         exec: &mut ToolExecutor,
-        store: Arc<Mutex<sven_llm::ConversationStore>>,
+        store: Arc<Mutex<sven_llm::ThreadStore>>,
         thread_id: &str,
         call_id: ToolCallId,
         tool_name: &str,
@@ -531,7 +531,7 @@ mod tests {
     async fn tool_result_token_cap_zero_disables_truncation() {
         let mut registry = ToolRegistry::new();
         registry.register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: false });
-        let store = Arc::new(Mutex::new(sven_llm::ConversationStore::new()));
+        let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
         let mut exec = ToolExecutor::unrestricted(Arc::new(registry)); // cap defaults to 0
 
         let content = run_tool_effect_and_get_stored_content(
@@ -550,7 +550,7 @@ mod tests {
     async fn tool_result_token_cap_truncates_large_output() {
         let mut registry = ToolRegistry::new();
         registry.register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: false });
-        let store = Arc::new(Mutex::new(sven_llm::ConversationStore::new()));
+        let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
         let mut exec =
             ToolExecutor::unrestricted(Arc::new(registry)).with_tool_result_token_cap(10);
 
@@ -574,7 +574,7 @@ mod tests {
         // HeadTail keeps both ends; Generic hard-cuts from the start only.
         // Same content, same cap, different category -> different result,
         // proving the category actually reaches smart_truncate.
-        let store = Arc::new(Mutex::new(sven_llm::ConversationStore::new()));
+        let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
 
         let mut generic_registry = ToolRegistry::new();
         generic_registry
@@ -618,7 +618,7 @@ mod tests {
     async fn tool_result_token_cap_applies_to_error_output_too() {
         let mut registry = ToolRegistry::new();
         registry.register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: true });
-        let store = Arc::new(Mutex::new(sven_llm::ConversationStore::new()));
+        let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
         let mut exec =
             ToolExecutor::unrestricted(Arc::new(registry)).with_tool_result_token_cap(10);
 

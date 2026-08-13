@@ -18,7 +18,7 @@ use sven_hsm::{
     Context, Effect, EffectExecutor, ErasedRuntime, Event, EventSink, Hsm, MachineId,
     ObservationSink, PermissionPolicy, Reaction, Runtime, ToolCallId, ToolCapability, UiEvent,
 };
-use sven_llm::ConversationStore;
+use sven_llm::ThreadStore;
 use sven_tools::ToolRegistry;
 use tokio::sync::Mutex as TokioMutex;
 
@@ -108,7 +108,7 @@ fn turn_executor(
     provider: Arc<dyn sven_model::ModelProvider>,
     registry: Arc<ToolRegistry>,
 ) -> sven_executors::TurnExecutor {
-    let store = Arc::new(Mutex::new(ConversationStore::new()));
+    let store = Arc::new(Mutex::new(ThreadStore::new()));
     let call_id_to_thread = Arc::new(Mutex::new(HashMap::<ToolCallId, (String, String)>::new()));
     let cancel_handle = Arc::new(TokioMutex::new(None));
     sven_executors::TurnExecutor::new(

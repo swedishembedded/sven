@@ -33,7 +33,7 @@ use sven_hsm::{
     event::InternalEvent, ChildSpawner, Context, Event, EventSink, Hsm, MachineId,
     PermissionPolicy, Runtime, SystemClock, ToolCallId, ToolCapability,
 };
-use sven_llm::ConversationStore;
+use sven_llm::ThreadStore;
 use sven_tools::ToolRegistry;
 
 /// Spawns isolated child task kernels for parallel SDLC execution.
@@ -85,7 +85,7 @@ impl ChildSpawner for SdlcChildSpawner {
             .to_string();
 
         // Each child gets its own fresh conversation store (append-only thread).
-        let conv_store = Arc::new(std::sync::Mutex::new(ConversationStore::new()));
+        let conv_store = Arc::new(std::sync::Mutex::new(ThreadStore::new()));
         let call_id_to_thread = Arc::new(std::sync::Mutex::new(
             HashMap::<ToolCallId, (String, String)>::new(),
         ));

@@ -173,7 +173,7 @@ impl CompositeExecutorBuilder {
     ///
     /// `CallLlm` effects with `kind="turn"` are handled by `TurnExecutor`,
     /// which streams a single model response, appends to the
-    /// `ConversationStore`, and posts `LlmTurnComplete`.
+    /// `ThreadStore`, and posts `LlmTurnComplete`.
     pub fn with_turn(mut self, exec: TurnExecutor) -> Self {
         self.turn = Some(Box::new(exec));
         self
@@ -197,7 +197,7 @@ impl CompositeExecutorBuilder {
     /// Attach a pre-built [`ToolExecutor`].
     ///
     /// Use this when the `ToolExecutor` must share its `call_id_to_thread`
-    /// registry and `ConversationStore` with a `TurnExecutor` so tool results
+    /// registry and `ThreadStore` with a `TurnExecutor` so tool results
     /// are appended under the correct thread before the continuation LLM call.
     pub fn with_tool_executor(mut self, exec: ToolExecutor) -> Self {
         self.tool = Some(Box::new(exec));

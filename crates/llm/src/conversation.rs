@@ -20,14 +20,14 @@ pub type ThreadId = String;
 /// Owns one append-only `Vec<Message>` per thread for the lifetime of a runtime.
 ///
 /// Threads are created lazily on first access.  The store never rewrites or
-/// removes earlier turns — only [`append`](ConversationStore::append) is
+/// removes earlier turns — only [`append`](ThreadStore::append) is
 /// exposed for mutation, preserving the cache-safety invariant.
 #[derive(Debug, Default)]
-pub struct ConversationStore {
+pub struct ThreadStore {
     threads: HashMap<ThreadId, Vec<Message>>,
 }
 
-impl ConversationStore {
+impl ThreadStore {
     /// Create an empty store.
     #[must_use]
     pub fn new() -> Self {
@@ -110,7 +110,7 @@ pub struct TurnRequest {
     /// When set, `TurnExecutor` calls
     /// `store.append(thread, Message::user(instruction))` before taking the
     /// snapshot, so the machine can initiate the first turn simply by putting
-    /// the user's text here rather than managing the ConversationStore directly.
+    /// the user's text here rather than managing the ThreadStore directly.
     #[serde(default)]
     pub instruction: String,
     /// Names of the tools this turn is allowed to call.
@@ -173,7 +173,6 @@ impl TurnRequest {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,7 +180,7 @@ mod tests {
 
     #[test]
     fn store_is_append_only_and_snapshots() {
-        let mut store = ConversationStore::new();
+        let mut store = ThreadStore::new();
         assert!(store.is_empty("intake"));
         store.append("intake", Message::system("role"));
         store.append("intake", Message::user("hi"));
@@ -194,7 +193,7 @@ mod tests {
 
     #[test]
     fn thread_creates_lazily() {
-        let mut store = ConversationStore::new();
+        let mut store = ThreadStore::new();
         store.thread("discovery").push(Message::user("explore"));
         assert_eq!(store.len("discovery"), 1);
         assert!(store.exists("discovery"));

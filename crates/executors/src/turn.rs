@@ -7,7 +7,7 @@
 //! any machine that uses [`crate::loop_core`].  For each turn:
 //!
 //! 1. Deserialises the [`TurnRequest`] from the effect payload.
-//! 2. Loads a snapshot of the named thread from the shared [`ConversationStore`].
+//! 2. Loads a snapshot of the named thread from the shared [`ThreadStore`].
 //! 3. Resolves the model provider (per-state override or default).
 //! 4. Resolves tool schemas from the registry for the requested tool names.
 //! 5. Calls [`sven_core::stream_turn`] which streams a single model response,
@@ -65,7 +65,7 @@ const EMPTY_TURN_FAILURE_THRESHOLD: u32 = 2;
 // ─── Sync helpers ─────────────────────────────────────────────────────────────
 
 /// Snapshot a thread from the store (non-async; guard is never held across await).
-fn snapshot_thread(store: &Mutex<ConversationStore>, thread_id: &str) -> Vec<Message> {
+fn snapshot_thread(store: &Mutex<ThreadStore>, thread_id: &str) -> Vec<Message> {
     store
         .lock()
         .map(|s| s.snapshot(thread_id))
@@ -73,7 +73,7 @@ fn snapshot_thread(store: &Mutex<ConversationStore>, thread_id: &str) -> Vec<Mes
 }
 
 /// Append a batch of messages to a store thread (non-async).
-fn append_messages(store: &Mutex<ConversationStore>, thread_id: &str, messages: Vec<Message>) {
+fn append_messages(store: &Mutex<ThreadStore>, thread_id: &str, messages: Vec<Message>) {
     if let Ok(mut s) = store.lock() {
         for msg in messages {
             s.append(thread_id, msg);
@@ -116,7 +116,7 @@ use sven_hsm::{
     Effect, EffectExecutor, Event, EventSink, ObservationSink, ProposedToolCall, ToolCallId,
     UiEvent,
 };
-use sven_llm::{ConversationStore, TurnRequest};
+use sven_llm::{ThreadStore, TurnRequest};
 use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
 use sven_tools::ToolRegistry;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
@@ -243,7 +243,7 @@ pub use sven_llm::TURN_KIND;
 
 /// Executes single-turn `CallLlm { kind: "turn" }` effects.
 ///
-/// Owns a reference to the shared [`ConversationStore`] and the
+/// Owns a reference to the shared [`ThreadStore`] and the
 /// `call_id → thread` registry populated for [`ToolExecutor`].
 pub struct TurnExecutor {
     /// Default model used when the request does not name a per-state override.
@@ -253,7 +253,7 @@ pub struct TurnExecutor {
     /// Shared tool registry; tool schemas and capabilities are resolved here.
     tools: Arc<ToolRegistry>,
     /// Append-only per-thread conversation history.
-    store: Arc<Mutex<ConversationStore>>,
+    store: Arc<Mutex<ThreadStore>>,
     /// Maps `call_id → (thread_id, original_call_id)`; fed to `ToolExecutor`
     /// so results land on the right thread using the exact id the LLM assigned.
     call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
@@ -340,7 +340,7 @@ impl TurnExecutor {
         default_model: Arc<dyn sven_model::ModelProvider>,
         model_resolver: Option<ModelResolver>,
         tools: Arc<ToolRegistry>,
-        store: Arc<Mutex<ConversationStore>>,
+        store: Arc<Mutex<ThreadStore>>,
         call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
         cancel_handle: Arc<TokioMutex<Option<oneshot::Sender<()>>>>,
     ) -> Self {

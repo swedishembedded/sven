@@ -2,7 +2,7 @@
 //!
 //! # Purpose
 //!
-//! Provides the [`ConversationStore`] append-only thread store, [`TurnRequest`]
+//! Provides the [`ThreadStore`] append-only thread store, [`TurnRequest`]
 //! for kernel-native single-turn LLM effects, and associated utilities.
 //!
 //! All LLM interactions are mediated by the HSM kernel via `Effect::CallLlm`
@@ -12,7 +12,7 @@ pub mod conversation;
 pub mod error;
 
 // Re-export the most important types at the crate root.
-pub use conversation::{ConversationStore, ThreadId, TurnRequest, TURN_KIND};
+pub use conversation::{ThreadStore, ThreadId, TurnRequest, TURN_KIND};
 pub use error::LlmError;
 
 /// Strip leading/trailing markdown code fences from a string.
