@@ -7,23 +7,14 @@ edition = "2021"
 sven-config  = { path = "../config" }
 sven-llm     = { path = "../llm" }
 sven-model   = { path = "../model" }
-sven-tools   = { path = "../tools" }
 sven-runtime = { path = "../runtime" }
 sven-hsm     = { path = "../hsm" }
 sven-vocab   = { path = "../vocab" }
-sven-session-model = { path = "../session-model" }
-anyhow      = { workspace = true }
-thiserror   = { workspace = true }
+sven-turn    = { path = "../turn" }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
-tokio       = { workspace = true }
-tokio-stream = { workspace = true }
-async-trait = { workspace = true }
-futures     = { workspace = true }
-tracing     = { workspace = true }
 uuid        = { workspace = true }
 chrono      = { workspace = true }
-regex       = { workspace = true }
 
 [dev-dependencies]
 tempfile    = { workspace = true }

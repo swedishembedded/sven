@@ -43,8 +43,8 @@ pub fn to_model_schemas(schemas: Vec<sven_tools::ToolSchema>) -> Vec<ToolSchema>
         .collect()
 }
 
-use crate::events::AgentEvent;
 use crate::tool_slots::attempt_json_repair;
+use sven_vocab::SessionEvent as AgentEvent;
 
 /// Marker error distinguishing a deliberate abort - a user cancel (Esc,
 /// Ctrl+C, `/abort`, ACP `cancel()`) or the thinking-token/time watchdog -

@@ -65,6 +65,7 @@ sven-memory        = "domain"
 sven-metering      = "domain"
 sven-scheduler     = "domain"
 sven-team          = "domain"
+sven-turn          = "domain"
 
 # machines
 sven-core      = "machines"
@@ -263,10 +264,10 @@ lines = 1185
 path = "crates/bootstrap/src/task_tool.rs"
 lines = 1157
 [[allow.large_file]]
-path = "crates/core/src/stream_turn.rs"
+path = "crates/turn/src/stream_turn.rs"
 lines = 1146
 [[allow.large_file]]
-path = "crates/core/src/prompts.rs"
+path = "crates/turn/src/prompts.rs"
 lines = 1145
 [[allow.large_file]]
 path = "crates/executors/tests/pipeline_integration.rs"
@@ -276,12 +277,12 @@ path = "crates/model/src/anthropic.rs"
 lines = 1116
 [[allow.large_file]]
 path = "crates/tui/src/app/session_manager.rs"
-lines = 1094
+lines = 1083
 [[allow.large_file]]
 path = "crates/frontend/src/operator.rs"
 lines = 1071
 [[allow.large_file]]
-path = "crates/core/src/compact.rs"
+path = "crates/turn/src/compact.rs"
 lines = 1054
 [[allow.large_file]]
 path = "crates/config/src/loader.rs"
@@ -352,6 +353,3 @@ lines = 814
 [[allow.large_file]]
 path = "crates/model/src/google.rs"
 lines = 806
-[[allow.large_file]]
-path = "crates/tui/src/app/agent_events.rs"
-lines = 801

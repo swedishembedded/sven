@@ -12,6 +12,7 @@ members = [
     "crates/input",
     "crates/session-model",
     "crates/tools",
+    "crates/turn",
     "crates/core",
     "crates/runtime",
     "crates/bootstrap",
