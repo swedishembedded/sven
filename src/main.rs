@@ -2580,6 +2580,18 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
     CiRunner::new(config).run(opts).await
 }
 
+/// Whether the Kitty keyboard-enhancement flags were actually pushed for this
+/// run. Push/Pop is a per-terminal *stack*: pushing unconditionally (without
+/// checking terminal support) and popping unconditionally on every exit path
+/// used to leave the pair unbalanced whenever a path popped without having
+/// pushed (or vice versa on a terminal that silently ignores the CSI), which
+/// can leave the user's terminal stuck in enhanced-keyboard mode after sven
+/// exits. Set once in `run_tui` right after the support probe; read by every
+/// teardown path (normal exit, panic, SIGTERM/SIGINT) so each pops iff it
+/// pushed.
+static KEYBOARD_ENHANCEMENT_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
     use ratatui::crossterm::{
         event::{
@@ -2620,13 +2632,16 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     // below so escape sequences written there would never reach the terminal.
     {
         use ratatui::crossterm::{
-            event::DisableMouseCapture,
+            event::{DisableMouseCapture, PopKeyboardEnhancementFlags},
             execute,
             terminal::{disable_raw_mode, LeaveAlternateScreen},
         };
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             let _ = disable_raw_mode();
+            if KEYBOARD_ENHANCEMENT_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+            }
             let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture,);
             original_hook(info);
         }));
@@ -2638,15 +2653,37 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     // stderr fd avoids that.  Stderr still points to the real terminal here
     // because the dup2 redirect below has not happened yet.
     let _ = execute!(std::io::stderr(), EnableMouseCapture);
-    let _ = execute!(
-        std::io::stderr(),
-        PushKeyboardEnhancementFlags(
-            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-                | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
-        )
-    );
+
+    // Push the Kitty keyboard-enhancement flags exactly once, and only on a
+    // terminal that actually implements the protocol. This used to be pushed
+    // unconditionally here AND a second time in `sven_tui::App::run` (on
+    // stdout), against a single Pop below - an imbalanced stack that could
+    // leave a legacy `ESC [ A`-style arrow-key sequence half-parsed as a
+    // literal character on terminals that don't support the protocol at all
+    // (the flags are silently ignored, so sven still relies on the raw
+    // escape-timeout heuristic it would otherwise disambiguate away), and
+    // could leave the terminal wedged in enhanced mode after an unclean exit.
+    // `KEYBOARD_ENHANCEMENT_ACTIVE` records the outcome so every teardown
+    // path (normal exit, panic, SIGTERM/SIGINT) pops iff this pushed.
+    //
+    // REPORT_ALL_KEYS_AS_ESCAPE_CODES makes even plain Enter arrive as
+    // `\x1b[13u`, ensuring every Enter variant carries its modifiers (plain
+    // Enter = no modifiers, Shift+Enter = modifier 2, etc.) and is parsed by
+    // crossterm as a distinct event.
+    let keyboard_enhanced =
+        ratatui::crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+    if keyboard_enhanced {
+        let _ = execute!(
+            std::io::stderr(),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+            )
+        );
+    }
+    KEYBOARD_ENHANCEMENT_ACTIVE.store(keyboard_enhanced, std::sync::atomic::Ordering::SeqCst);
 
     // Redirect stderr to /dev/null (or SVEN_LOG_FILE) AFTER setup is done.
     // From this point on stderr is a sink; all cleanup escape sequences use
@@ -2688,7 +2725,7 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     // Uses stdout for all escape sequences (stderr is now /dev/null).
     tokio::spawn(async move {
         use ratatui::crossterm::{
-            event::DisableMouseCapture,
+            event::{DisableMouseCapture, PopKeyboardEnhancementFlags},
             execute,
             terminal::{disable_raw_mode, LeaveAlternateScreen},
         };
@@ -2713,6 +2750,9 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
             let _ = tokio::signal::ctrl_c().await;
         }
         let _ = disable_raw_mode();
+        if KEYBOARD_ENHANCEMENT_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+            let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+        }
         let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture,);
         std::process::exit(1);
     });
@@ -2822,7 +2862,9 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     let app = App::new(config, opts);
     let result = app.run(terminal).await;
 
-    let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    if KEYBOARD_ENHANCEMENT_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    }
     let _ = execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
 

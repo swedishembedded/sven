@@ -1001,32 +1001,20 @@ impl App {
         let mut anim_tick = tokio::time::interval(tokio::time::Duration::from_millis(80));
         anim_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-        // Enable bracketed paste and push keyboard enhancement flags to stdout.
-        //
-        // We also push the flags in main.rs (via stderr, before stderr is
-        // redirected to /dev/null), but some terminals tie keyboard state to
-        // the specific fd / alternate-screen session.  Sending them again to
-        // stdout here guarantees they are active regardless.
-        //
-        // REPORT_ALL_KEYS_AS_ESCAPE_CODES makes even plain Enter arrive as
-        // `\x1b[13u`, ensuring every Enter variant carries its modifiers
-        // (plain Enter = no modifiers, Shift+Enter = modifier 2, etc.) and
-        // is parsed by crossterm as a distinct event.
-        {
-            use crossterm::event::{
-                EnableBracketedPaste, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-            };
-            let _ = crossterm::execute!(std::io::stdout(), EnableBracketedPaste);
-            let _ = crossterm::execute!(
-                std::io::stdout(),
-                PushKeyboardEnhancementFlags(
-                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-                        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
-                )
-            );
-        }
+        // Enable bracketed paste. Mouse capture and the Kitty
+        // keyboard-enhancement flags are set up exactly once, in
+        // `run_tui` (`src/main.rs`), gated on
+        // `supports_keyboard_enhancement()`. Pushing the keyboard flags a
+        // second time here used to create an unbalanced Push/Pop pair
+        // against `run_tui`'s single Pop on exit, which could leave a
+        // terminal that doesn't fully support the protocol relying on the
+        // raw escape-timeout heuristic to disambiguate `ESC` from the start
+        // of an arrow-key sequence - and could leave the terminal stuck in
+        // enhanced-keyboard mode after an unclean exit.
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::EnableBracketedPaste
+        );
 
         loop {
             // ── Layout cache update ───────────────────────────────────────────

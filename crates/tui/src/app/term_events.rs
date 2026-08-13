@@ -39,6 +39,13 @@ impl App {
     pub(crate) async fn handle_term_event(&mut self, event: Event) -> bool {
         match event {
             Event::Key(k) if k.kind == KeyEventKind::Press => {
+                // Raw-event trace: the single place to look when a terminal's
+                // keyboard-protocol handshake goes wrong and a legacy escape
+                // sequence (e.g. `ESC [ A` for Up) gets misparsed into a
+                // literal character instead of a `KeyCode::Up`. Enable with
+                // `RUST_LOG=sven_tui::app::term_events=trace`.
+                tracing::trace!(code = ?k.code, modifiers = ?k.modifiers, "raw key event");
+
                 if self.ui.show_help {
                     self.ui.show_help = false;
                     return false;
