@@ -202,18 +202,22 @@ impl KernelAgent {
 }
 
 /// Map a caller [`AgentMode`] to a registered kernel mode. Coding-family modes
-/// (agent/plan/research/code) all resolve to the reactive `agent` machine.
+/// (agent/plan/research) all resolve to the reactive `agent` machine.
 fn kernel_mode(mode: AgentMode) -> &'static str {
     match mode {
         AgentMode::Chat => "chat",
         AgentMode::Sdlc => "sdlc",
-        _ => "agent",
+        AgentMode::Agent | AgentMode::Plan | AgentMode::Research => "agent",
     }
 }
 
 /// Append this turn's produced messages to the accumulated history so the next
 /// rebuilt session is seeded with them. Mirrors the message shapes the runners'
 /// `handle_event`/`collect_event_full` push into their own `collected` copy.
+///
+/// Every non-handled variant is named explicitly (rather than a trailing
+/// `_ => {}`) so a future variant that plausibly belongs in history forces a
+/// decision here instead of being silently skipped.
 fn reduce_history(ev: &AgentEvent, history: &mut Vec<Message>) {
     match ev {
         AgentEvent::TextComplete(text) if !text.is_empty() => {
@@ -237,6 +241,32 @@ fn reduce_history(ev: &AgentEvent, history: &mut Vec<Message>) {
         AgentEvent::Aborted { partial_text } if !partial_text.is_empty() => {
             history.push(Message::assistant(partial_text));
         }
-        _ => {}
+        // Empty TextComplete/Aborted (already excluded above by the guards),
+        // plus every event with no message-history representation: streaming
+        // deltas (folded into the eventual TextComplete), progress/usage/
+        // compaction telemetry, mode/model/todo bookkeeping, questions,
+        // titles, team/subagent/peer observations, and the transition trace.
+        AgentEvent::TextComplete(_)
+        | AgentEvent::Aborted { .. }
+        | AgentEvent::TextDelta(_)
+        | AgentEvent::ThinkingDelta(_)
+        | AgentEvent::ThinkingComplete(_)
+        | AgentEvent::ToolProgress { .. }
+        | AgentEvent::ContextCompacted { .. }
+        | AgentEvent::TokenUsage { .. }
+        | AgentEvent::TurnComplete
+        | AgentEvent::Error(_)
+        | AgentEvent::TodoUpdate(_)
+        | AgentEvent::ModeChanged(_)
+        | AgentEvent::ModelChanged(_)
+        | AgentEvent::Question { .. }
+        | AgentEvent::QuestionAnswer { .. }
+        | AgentEvent::TitleGenerated(_)
+        | AgentEvent::CollabEvent(_)
+        | AgentEvent::DelegateSummary { .. }
+        | AgentEvent::SubagentStarted { .. }
+        | AgentEvent::SubagentEvent { .. }
+        | AgentEvent::PeerList(_)
+        | AgentEvent::Transition { .. } => {}
     }
 }

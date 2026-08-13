@@ -72,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **sven-ci**: extracted `tool_output_snippet` (the verbose-only, length-capped ` output=…` snippet on `[sven:tool:result]` lines) into `crate::output` as the one shared implementation. `RuntimeRunner` (`runner/runtime_runner.rs`) had it as a named function; `CiRunner` (`runner/event.rs`) carried a byte-identical copy inlined into its `ToolCallFinished` arm. Both now call the shared version.
+- **sven-ci**: `kernel_agent.rs`'s `reduce_history` — which decides which `AgentEvent`s get replayed into a rebuilt session's seed history — named every `SessionEvent` variant explicitly instead of a trailing `_ => {}`, so a future variant that plausibly belongs in history forces a decision here instead of silently landing in the catch-all. Same fix for `kernel_mode`/`mode_to_kernel_mode` (`sven-ci`, `sven-frontend`): the three coding-family `AgentMode` variants that fall back to the `"agent"` kernel machine are now named rather than `_ => "agent"`, so a new mode forces the same explicit "which machine does this run on" decision. (Explored applying `#[deny(clippy::wildcard_enum_match_arm)]` crate-wide per the refactor plan's Phase 3.6, but it fires on every enum in these crates, not just the session-event ones — `ChatSegment`, `MessageContent`, `ControlCommand`, third-party protocol enums, etc. — a ~30-site audit disproportionate to the actual risk; deferred.)
 
 ## [1.9.0] - 2026-03-22
 

@@ -490,7 +490,7 @@ fn mode_to_kernel_mode(mode: AgentMode) -> &'static str {
     match mode {
         AgentMode::Chat => "chat",
         AgentMode::Sdlc => "sdlc",
-        _ => "agent",
+        AgentMode::Agent | AgentMode::Plan | AgentMode::Research => "agent",
     }
 }
 
