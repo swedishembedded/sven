@@ -125,60 +125,24 @@ pub fn find_workspace_root(project_root: &Path) -> PathBuf {
 
 // ─── Project context file ─────────────────────────────────────────────────────
 
-/// Maximum bytes loaded from a project context file.
-const MAX_CONTEXT_FILE_BYTES: usize = 16 * 1024;
-
-/// Attempt to load a project-level context / instructions file.  Tried in
-/// order:
+/// Locate a project-level context / instructions file, without reading it.
+/// Tried in order:
 /// 1. `.sven/context.md`   — sven-specific instructions
 /// 2. `AGENTS.md`          — standard agent instructions
 /// 3. `CLAUDE.md`          — Claude Code project file
-pub fn load_project_context_file(project_root: &Path) -> Option<String> {
-    load_project_context_file_with_path(project_root).map(|(_, content)| content)
-}
-
-/// Like [`load_project_context_file`] but also returns the path of the loaded file.
-pub fn load_project_context_file_with_path(
-    project_root: &Path,
-) -> Option<(std::path::PathBuf, String)> {
+///
+/// Returns the path only — the system prompt references it (see
+/// `sven_core::prompts`) rather than inlining its content on every turn, so
+/// an agent whose task doesn't touch it never pays for reading a file it
+/// never needed. An agent that decides the file is relevant reads it itself
+/// with its normal file tool.
+pub fn find_project_context_file(project_root: &Path) -> Option<PathBuf> {
     let candidates = [
         project_root.join(".sven").join("context.md"),
         project_root.join("AGENTS.md"),
         project_root.join("CLAUDE.md"),
     ];
-
-    for path in &candidates {
-        if !path.exists() {
-            continue;
-        }
-        match std::fs::read(path) {
-            Err(_) => continue,
-            Ok(bytes) => {
-                let (content, truncated) = if bytes.len() > MAX_CONTEXT_FILE_BYTES {
-                    let safe = &bytes[..MAX_CONTEXT_FILE_BYTES];
-                    let s = String::from_utf8_lossy(safe).trim_end().to_string();
-                    (s, true)
-                } else {
-                    (String::from_utf8_lossy(&bytes).trim().to_string(), false)
-                };
-
-                if content.is_empty() {
-                    continue;
-                }
-
-                let content = if truncated {
-                    format!(
-                        "{content}\n\n*(Context file truncated at {} bytes)*",
-                        MAX_CONTEXT_FILE_BYTES
-                    )
-                } else {
-                    content
-                };
-                return Some((path.clone(), content));
-            }
-        }
-    }
-    None
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 // ─── Unit tests ───────────────────────────────────────────────────────────────
@@ -270,22 +234,35 @@ mod tests {
     }
 
     #[test]
-    fn load_project_context_file_missing_returns_none() {
+    fn find_project_context_file_missing_returns_none() {
         let tmp = std::env::temp_dir().join("sven_rt_test_no_ctx");
         let _ = std::fs::create_dir_all(&tmp);
-        assert!(load_project_context_file(&tmp).is_none());
+        assert!(find_project_context_file(&tmp).is_none());
     }
 
     #[test]
-    fn load_project_context_file_reads_agents_md() {
+    fn find_project_context_file_finds_agents_md() {
         let tmp = std::env::temp_dir().join("sven_rt_test_agents_md");
         let _ = std::fs::create_dir_all(&tmp);
         let agents_path = tmp.join("AGENTS.md");
         std::fs::write(&agents_path, "# Project instructions\n\nAlways use Rust.").unwrap();
-        let result = load_project_context_file(&tmp);
+        let result = find_project_context_file(&tmp);
         let _ = std::fs::remove_file(&agents_path);
-        let content = result.expect("should find AGENTS.md");
-        assert!(content.contains("Always use Rust"));
+        assert_eq!(result, Some(agents_path));
+    }
+
+    #[test]
+    fn find_project_context_file_prefers_sven_context_over_agents_md() {
+        let tmp = std::env::temp_dir().join("sven_rt_test_ctx_priority");
+        let sven_dir = tmp.join(".sven");
+        let _ = std::fs::create_dir_all(&sven_dir);
+        let ctx_path = sven_dir.join("context.md");
+        let agents_path = tmp.join("AGENTS.md");
+        std::fs::write(&ctx_path, "sven-specific").unwrap();
+        std::fs::write(&agents_path, "generic").unwrap();
+        let result = find_project_context_file(&tmp);
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(result, Some(ctx_path));
     }
 
     #[test]

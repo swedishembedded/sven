@@ -22,8 +22,12 @@ pub struct AgentRuntimeContext {
     pub git_context_note: Option<String>,
     /// Pre-formatted CI environment context block.
     pub ci_context_note: Option<String>,
-    /// Contents of the project context file (`.sven/context.md`, `AGENTS.md`, …).
-    pub project_context_file: Option<String>,
+    /// Path of the project context file (`.sven/context.md`, `AGENTS.md`, …),
+    /// when one exists. The system prompt references this path rather than
+    /// inlining the file's content on every turn (see `sven_core::prompts`) —
+    /// an agent that decides the file is relevant reads it itself with its
+    /// normal file tool.
+    pub project_context_file: Option<PathBuf>,
     /// Text appended to the default system prompt (from `--append-system-prompt`).
     pub append_system_prompt: Option<String>,
     /// Full system prompt override (from `--system-prompt-file`).

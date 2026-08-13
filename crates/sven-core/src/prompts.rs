@@ -19,8 +19,10 @@ pub struct PromptContext<'a> {
     /// this content is placed in a *separate, uncached* system block so that
     /// the stable prefix remains cacheable across sessions.
     pub git_context: Option<&'a str>,
-    /// Contents of the project context file (AGENTS.md / .sven/context.md).
-    pub project_context_file: Option<&'a str>,
+    /// Path of the project context file (AGENTS.md / .sven/context.md), when
+    /// one exists. Referenced by path in the system prompt, not inlined — see
+    /// `context_file_section`'s doc.
+    pub project_context_file: Option<&'a Path>,
     /// Pre-formatted CI environment block.
     ///
     /// **Caching note**: like `git_context`, this is volatile between CI runs.
@@ -695,10 +697,19 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         String::new()
     };
 
-    // Project context file (AGENTS.md / .sven/context.md) — injected as a
-    // labelled section so the model treats it as authoritative instructions.
-    let context_file_section = if let Some(content) = ctx.project_context_file {
-        format!("\n\n## Project Instructions\n\n{content}")
+    // Project context file (AGENTS.md / .sven/context.md) — referenced by
+    // path, never inlined. Every turn used to pay for the file's full content
+    // whether or not the task ever touched it; on a large file that alone can
+    // be a meaningful fraction of the context window, and combined with other
+    // long input (a big image, a long conversation) can push a request well
+    // past what's actually needed. The model reads it itself with its normal
+    // file tool on the turns where it's actually relevant.
+    let context_file_section = if let Some(path) = ctx.project_context_file {
+        format!(
+            "\n\n## Project Instructions\n\nThis project has instructions at `{}`. \
+             Read it if it's relevant to your task.",
+            path.display()
+        )
     } else {
         String::new()
     };
@@ -937,15 +948,19 @@ mod tests {
     }
 
     #[test]
-    fn project_context_file_appears_in_prompt() {
-        let file_content = "Always write tests for every function.";
+    fn project_context_file_is_referenced_by_path_not_inlined() {
+        // The system prompt must never inline the file's content on every
+        // turn (that content could be arbitrarily large and irrelevant to
+        // most tasks) -- only reference its path so the model can read it
+        // itself when relevant.
+        let path = Path::new("AGENTS.md");
         let ctx = PromptContext {
-            project_context_file: Some(file_content),
+            project_context_file: Some(path),
             ..Default::default()
         };
         let pr = system_prompt(AgentMode::Agent, None, ctx);
         assert!(pr.contains("Project Instructions"));
-        assert!(pr.contains("Always write tests"));
+        assert!(pr.contains("AGENTS.md"));
     }
 
     #[test]

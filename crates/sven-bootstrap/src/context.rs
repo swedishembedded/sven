@@ -33,8 +33,10 @@ pub struct RuntimeContext {
     pub git_context: Option<GitContext>,
     /// CI environment metadata.
     pub ci_context: Option<CiContext>,
-    /// Contents of `.sven/context.md`, `AGENTS.md`, or `CLAUDE.md`.
-    pub project_context_file: Option<String>,
+    /// Path of `.sven/context.md`, `AGENTS.md`, or `CLAUDE.md`, when one
+    /// exists. Referenced by path in the system prompt, not inlined — see
+    /// `sven_core::prompts`.
+    pub project_context_file: Option<PathBuf>,
     /// Text appended after the default system prompt Guidelines section.
     pub append_system_prompt: Option<String>,
     /// Full system prompt override (from `--system-prompt-file`).
@@ -63,7 +65,7 @@ impl RuntimeContext {
         let ci_context = Some(sven_runtime::detect_ci_context());
         let project_context_file = project_root
             .as_ref()
-            .and_then(|r| sven_runtime::load_project_context_file(r));
+            .and_then(|r| sven_runtime::find_project_context_file(r));
         let skills = SharedSkills::new(sven_runtime::discover_skills(project_root.as_deref()));
         let agents = SharedAgents::new(sven_runtime::discover_agents(project_root.as_deref()));
 

@@ -514,14 +514,14 @@ impl CiRunner {
             .and_then(|w| sven_runtime::format_drift_warnings(&w));
         let knowledge = sven_runtime::SharedKnowledge::new(knowledge_items);
 
-        let project_context = opts
+        let project_context_file = opts
             .project_root
             .as_ref()
-            .and_then(|r| sven_runtime::load_project_context_file_with_path(r));
+            .and_then(|r| sven_runtime::find_project_context_file(r));
 
-        if let Some((path, _)) = &project_context {
+        if let Some(path) = &project_context_file {
             write_progress(&format!(
-                "[sven:info] Project context file loaded from {}",
+                "[sven:info] Project context file found at {} (referenced, not auto-loaded)",
                 path.display()
             ));
         }
@@ -533,7 +533,7 @@ impl CiRunner {
                 .as_ref()
                 .map(|r| sven_runtime::collect_git_context(r)),
             ci_context: Some(ci_ctx),
-            project_context_file: project_context.map(|(_, content)| content),
+            project_context_file,
             append_system_prompt: combined_append,
             system_prompt_override: None,
             skills,
