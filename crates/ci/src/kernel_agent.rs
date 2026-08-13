@@ -25,7 +25,7 @@ use anyhow::Context as _;
 use tokio::sync::mpsc;
 
 use sven_bootstrap::{
-    build_tool_registry, ui_event_to_agent_event, KernelChannels, RuntimeBuilder, RuntimeContext,
+    build_tool_registry, ui_event_to_agent_event, RuntimeBuilder, RuntimeContext,
     ToolSetProfile,
 };
 use sven_config::{AgentMode, Config, ModelConfig};
@@ -161,7 +161,7 @@ impl KernelAgent {
             .context("failed to build kernel session")?;
 
         // Auto-approve all human gates (headless CI is non-interactive).
-        tokio::spawn(auto_approve(bundle.channels));
+        tokio::spawn(bundle.channels.auto_approve());
 
         let sink = bundle.handle.sink();
         let mut obs_rx = bundle.handle.subscribe_observations();
@@ -243,23 +243,5 @@ fn reduce_history(ev: &AgentEvent, history: &mut Vec<Message>) {
             history.push(Message::assistant(partial_text));
         }
         _ => {}
-    }
-}
-
-/// Auto-approve every human gate, replying immediately so CI never blocks.
-async fn auto_approve(mut channels: KernelChannels) {
-    loop {
-        tokio::select! {
-            q = channels.question_rx.recv() => match q {
-                // No interactive user in CI: reply with an empty answer.
-                Some(q) => { let _ = q.reply_tx.send(String::new()); }
-                None => break,
-            },
-            a = channels.approval_rx.recv() => match a {
-                // Approve all tool capabilities in CI.
-                Some(a) => { let _ = a.reply_tx.send(true); }
-                None => break,
-            },
-        }
     }
 }

@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use tokio::sync::broadcast::error::RecvError;
 
-use sven_bootstrap::{KernelChannels, RuntimeBuilder, RuntimeContext};
+use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config};
 use sven_hsm::{Event, EventSink, UiEvent};
 use sven_model::Message;
@@ -195,7 +195,7 @@ impl RuntimeRunner {
         let mut obs_rx = bundle.handle.subscribe_observations();
 
         // Auto-approve all human gates (CI is non-interactive).
-        tokio::spawn(auto_approve(bundle.channels));
+        tokio::spawn(bundle.channels.auto_approve());
 
         // Post the user prompt.
         if !sink
@@ -624,24 +624,6 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         UiEvent::CollabEvent(_) | UiEvent::PeerList(_) => {}
     }
     None
-}
-
-/// Auto-approve every human gate, replying immediately so CI never blocks.
-async fn auto_approve(mut channels: KernelChannels) {
-    loop {
-        tokio::select! {
-            q = channels.question_rx.recv() => match q {
-                // No interactive user in CI: reply with an empty answer.
-                Some(q) => { let _ = q.reply_tx.send(String::new()); }
-                None => break,
-            },
-            a = channels.approval_rx.recv() => match a {
-                // Approve all tool capabilities in CI.
-                Some(a) => { let _ = a.reply_tx.send(true); }
-                None => break,
-            },
-        }
-    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

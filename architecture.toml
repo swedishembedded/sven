@@ -167,10 +167,10 @@ sven-companion both repoint at that and this edge is deleted.
 # measured tree at the start of the refactor (2026-08-13).
 [[allow.large_file]]
 path = "src/main.rs"
-lines = 2880
+lines = 2866
 [[allow.large_file]]
 path = "crates/node/src/node.rs"
-lines = 2337
+lines = 2323
 [[allow.large_file]]
 path = "crates/p2p/src/node.rs"
 lines = 2287
@@ -214,14 +214,14 @@ lines = 1575
 path = "crates/cloud/src/channels.rs"
 lines = 1562
 [[allow.large_file]]
-path = "crates/node/src/control/service.rs"
-lines = 1516
-[[allow.large_file]]
 path = "crates/team/src/spawn.rs"
 lines = 1506
 [[allow.large_file]]
 path = "crates/tui/src/nvim/bridge.rs"
 lines = 1506
+[[allow.large_file]]
+path = "crates/node/src/control/service.rs"
+lines = 1474
 [[allow.large_file]]
 path = "crates/tools/tests/context_integration.rs"
 lines = 1417
@@ -244,11 +244,11 @@ lines = 1238
 path = "crates/hsm/src/runtime.rs"
 lines = 1219
 [[allow.large_file]]
+path = "crates/bootstrap/src/runtime_builder.rs"
+lines = 1196
+[[allow.large_file]]
 path = "crates/tui/src/chat/markdown.rs"
 lines = 1185
-[[allow.large_file]]
-path = "crates/bootstrap/src/runtime_builder.rs"
-lines = 1170
 [[allow.large_file]]
 path = "crates/executors/src/audit.rs"
 lines = 1168
@@ -268,11 +268,11 @@ lines = 1121
 path = "crates/model/src/anthropic.rs"
 lines = 1116
 [[allow.large_file]]
-path = "crates/frontend/src/operator.rs"
-lines = 1108
-[[allow.large_file]]
 path = "crates/tui/src/app/session_manager.rs"
 lines = 1094
+[[allow.large_file]]
+path = "crates/frontend/src/operator.rs"
+lines = 1086
 [[allow.large_file]]
 path = "crates/core/src/compact.rs"
 lines = 1054
@@ -307,11 +307,11 @@ lines = 924
 path = "crates/node/src/config.rs"
 lines = 921
 [[allow.large_file]]
-path = "crates/ci/src/runner/runtime_runner.rs"
-lines = 913
-[[allow.large_file]]
 path = "crates/cloud/src/portal.rs"
 lines = 904
+[[allow.large_file]]
+path = "crates/ci/src/runner/runtime_runner.rs"
+lines = 895
 [[allow.large_file]]
 path = "crates/executors/src/turn.rs"
 lines = 883

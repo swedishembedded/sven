@@ -80,6 +80,32 @@ pub struct KernelChannels {
     pub approval_rx: mpsc::Receiver<ApprovalRequest>,
 }
 
+impl KernelChannels {
+    /// Auto-consumes every kernel-level question and approval gate, replying
+    /// immediately so the session never blocks on a human who isn't there:
+    /// an empty string for every `AskUser`, `true` (approve) for every
+    /// `RequestHumanApproval`. Returns once both channels close.
+    ///
+    /// This is the unattended path -- CI runs, the P2P node's reactive-mode
+    /// sessions (which gate tool execution through the tool registry instead
+    /// of these HSM-level effects), one-shot test/demo wiring. Typically
+    /// driven with `tokio::spawn(channels.auto_approve())`.
+    pub async fn auto_approve(mut self) {
+        loop {
+            tokio::select! {
+                q = self.question_rx.recv() => match q {
+                    Some(q) => { let _ = q.reply_tx.send(String::new()); }
+                    None => break,
+                },
+                a = self.approval_rx.recv() => match a {
+                    Some(a) => { let _ = a.reply_tx.send(true); }
+                    None => break,
+                },
+            }
+        }
+    }
+}
+
 // ── RuntimeHandle ─────────────────────────────────────────────────────────────
 
 /// A cheap-to-clone handle to a spawned [`ErasedRuntime`].

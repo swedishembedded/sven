@@ -1874,21 +1874,7 @@ async fn run_share_command(
     // Auto-consume kernel approval/question gates so unattended shared turns run
     // to completion (reactive mode routes approvals at the tool-registry level,
     // exactly as the node path does).
-    let mut channels = bundle.channels;
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                q = channels.question_rx.recv() => match q {
-                    Some(q) => { let _ = q.reply_tx.send(String::new()); }
-                    None => break,
-                },
-                a = channels.approval_rx.recv() => match a {
-                    Some(a) => { let _ = a.reply_tx.send(true); }
-                    None => break,
-                },
-            }
-        }
-    });
+    tokio::spawn(bundle.channels.auto_approve());
     // Keep the runtime (and its consumer task) alive for the life of the share.
     let _runtime = bundle.runtime;
 
