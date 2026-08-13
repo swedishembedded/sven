@@ -106,6 +106,19 @@ downward. Delete this entry when that split lands.
 """
 
 [[same_layer]]
+from = "sven-config"
+to   = "sven-vocab"
+why  = """
+Both are leaf, no-further-layering "foundation" crates. sven-config needs
+AgentMode (now defined in sven-vocab alongside the other event/session
+payload types it groups with, per Phase 3 of the refactor plan) for its CLI
+schema. Not a same-tier violation in spirit -- config has zero dependents at
+the foundation tier itself, so this can never become a cycle -- but the
+checker only reasons about tiers, not sub-tier leaf status, so it is
+recorded explicitly rather than silently allowed.
+"""
+
+[[same_layer]]
 from = "sven-executors"
 to   = "sven-core"
 why  = """

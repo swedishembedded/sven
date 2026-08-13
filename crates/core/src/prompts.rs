@@ -437,54 +437,7 @@ pub fn format_collab_event(event: &CollabEvent) -> String {
 ///
 /// These are display-only entries that track the lifecycle of team operations
 /// without adding them to the LLM context.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum CollabEvent {
-    TeammateSpawned {
-        name: String,
-        role: String,
-    },
-    TaskDelegated {
-        task_id: String,
-        to_name: String,
-        task_title: String,
-    },
-    WaitingForTeammates {
-        names: Vec<String>,
-    },
-    TeammateFinished {
-        name: String,
-        task_id: String,
-        /// `"completed"`, `"failed"`, or `"cancelled"`.
-        status: String,
-    },
-    TeammateMessage {
-        from: String,
-        /// First ~60 chars of the message (inline preview).
-        preview: String,
-    },
-    TeammateIdle {
-        name: String,
-    },
-    TeamCreated {
-        team_name: String,
-    },
-    TeamCleanedUp {
-        team_name: String,
-    },
-    PlanSubmitted {
-        name: String,
-        task_id: String,
-    },
-    PlanApproved {
-        name: String,
-        task_id: String,
-    },
-    PlanRejected {
-        name: String,
-        task_id: String,
-        feedback: String,
-    },
-}
+pub use sven_vocab::CollabEvent;
 
 /// Guidelines injected into the system prompt when an agent is executing a
 /// task that was **delegated to it by a peer** over the P2P swarm.

@@ -7,36 +7,7 @@ use sven_tools::{
     ToolCall,
 };
 
-/// Information about a connected peer (node proxy / list_peers).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PeerInfo {
-    pub name: String,
-    pub peer_id: String,
-    pub connected: bool,
-    pub can_delegate: bool,
-}
-
-/// Which compaction strategy was executed when `ContextCompacted` fired.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CompactionStrategyUsed {
-    /// Structured Markdown checkpoint with typed sections.
-    Structured,
-    /// Legacy free-form narrative summary.
-    Narrative,
-    /// Emergency fallback: history was dropped without a model summary call
-    /// because the session was too large to fit even a compaction prompt.
-    Emergency,
-}
-
-impl std::fmt::Display for CompactionStrategyUsed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CompactionStrategyUsed::Structured => write!(f, "structured"),
-            CompactionStrategyUsed::Narrative => write!(f, "narrative"),
-            CompactionStrategyUsed::Emergency => write!(f, "emergency"),
-        }
-    }
-}
+pub use sven_vocab::{CompactionStrategyUsed, PeerInfo};
 
 /// Events emitted by the agent during a single turn.
 /// Consumers (CI runner, TUI) subscribe to these to drive their output.

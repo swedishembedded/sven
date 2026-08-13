@@ -165,3 +165,199 @@ pub struct ToolSchema {
     /// invalidates the MCP section, not the stable core tools section (BP1).
     pub is_mcp: bool,
 }
+
+// ─── Session/event vocabulary ──────────────────────────────────────────────
+//
+// Pure data types named by the (to-be-unified) agent/UI event streams. They
+// live here, below `sven-config`/`sven-core`/`sven-tools`, so a future
+// `SessionEvent` enum in this same crate can name them without pulling in
+// config schema parsing, the machine implementations, or tool execution.
+
+/// The agent's current operating mode, selectable via `--mode`/`/mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentMode {
+    /// Pure research - read-only tools, no writes
+    Research,
+    /// Generate a structured plan, no code changes
+    Plan,
+    /// Full agent with read/write tools
+    Agent,
+    /// Conversational chat mode (HSM ReactiveAgentMachine in chat mode)
+    Chat,
+    /// Software development lifecycle mode (HSM SdlcMachine)
+    Sdlc,
+}
+
+impl std::fmt::Display for AgentMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AgentMode::Research => write!(f, "research"),
+            AgentMode::Plan => write!(f, "plan"),
+            AgentMode::Agent => write!(f, "agent"),
+            AgentMode::Chat => write!(f, "chat"),
+            AgentMode::Sdlc => write!(f, "sdlc"),
+        }
+    }
+}
+
+/// Which compaction strategy was executed when context compaction fired.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompactionStrategyUsed {
+    /// Structured Markdown checkpoint with typed sections.
+    Structured,
+    /// Legacy free-form narrative summary.
+    Narrative,
+    /// Emergency fallback: history was dropped without a model summary call
+    /// because the session was too large to fit even a compaction prompt.
+    Emergency,
+}
+
+impl std::fmt::Display for CompactionStrategyUsed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompactionStrategyUsed::Structured => write!(f, "structured"),
+            CompactionStrategyUsed::Narrative => write!(f, "narrative"),
+            CompactionStrategyUsed::Emergency => write!(f, "emergency"),
+        }
+    }
+}
+
+/// Information about a connected peer (node proxy / list_peers).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PeerInfo {
+    pub name: String,
+    pub peer_id: String,
+    pub connected: bool,
+    pub can_delegate: bool,
+}
+
+/// The lifecycle state of a [`TodoItem`].
+///
+/// Serialises as the lowercase snake_case string the LLM expects
+/// (`"pending"`, `"in_progress"`, `"completed"`, `"cancelled"`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Cancelled,
+}
+
+impl TodoStatus {
+    /// Icon used in single-line todo summaries.
+    pub fn icon(&self) -> &'static str {
+        match self {
+            TodoStatus::Completed => "✓",
+            TodoStatus::InProgress => "→",
+            TodoStatus::Cancelled => "✗",
+            TodoStatus::Pending => "○",
+        }
+    }
+}
+
+impl std::fmt::Display for TodoStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            TodoStatus::Pending => "pending",
+            TodoStatus::InProgress => "in_progress",
+            TodoStatus::Completed => "completed",
+            TodoStatus::Cancelled => "cancelled",
+        };
+        f.write_str(s)
+    }
+}
+
+/// A structured todo item managed by the todo tool.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TodoItem {
+    pub id: String,
+    pub content: String,
+    pub status: TodoStatus,
+}
+
+/// A structured event streamed from a subagent over ACP.
+///
+/// This is a sven-native mirror of ACP `SessionUpdate` variants, kept
+/// dependency-free so callers do not need to depend on the ACP crate.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum SubagentUpdate {
+    /// A chunk of assistant text (streamed).
+    TextDelta(String),
+    /// A chunk of thinking/reasoning text (streamed).
+    ThinkingDelta(String),
+    /// The subagent started a tool call.
+    ToolCallStarted {
+        id: String,
+        name: String,
+        args: Value,
+    },
+    /// A subagent tool call completed.
+    ToolCallFinished {
+        id: String,
+        name: String,
+        output: String,
+        is_error: bool,
+    },
+    /// The subagent's turn is complete; `final_text` is the accumulated
+    /// assistant response that the parent agent should use as the task result.
+    Finished { final_text: String },
+    /// The subagent timed out or terminated with an error.
+    Failed { reason: String },
+    /// Token usage / cost from the subagent (when API reports it, e.g. OpenRouter).
+    TokenUsage { cost_usd: f64 },
+}
+
+/// A collaboration event that can be recorded as a `ChatSegment::CollabEvent`.
+///
+/// These are display-only entries that track the lifecycle of team operations
+/// without adding them to the LLM context.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum CollabEvent {
+    TeammateSpawned {
+        name: String,
+        role: String,
+    },
+    TaskDelegated {
+        task_id: String,
+        to_name: String,
+        task_title: String,
+    },
+    WaitingForTeammates {
+        names: Vec<String>,
+    },
+    TeammateFinished {
+        name: String,
+        task_id: String,
+        /// `"completed"`, `"failed"`, or `"cancelled"`.
+        status: String,
+    },
+    TeammateMessage {
+        from: String,
+        /// First ~60 chars of the message (inline preview).
+        preview: String,
+    },
+    TeammateIdle {
+        name: String,
+    },
+    TeamCreated {
+        team_name: String,
+    },
+    TeamCleanedUp {
+        team_name: String,
+    },
+    PlanSubmitted {
+        name: String,
+        task_id: String,
+    },
+    PlanApproved {
+        name: String,
+        task_id: String,
+    },
+    PlanRejected {
+        name: String,
+        task_id: String,
+        feedback: String,
+    },
+}

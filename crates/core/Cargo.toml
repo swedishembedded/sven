@@ -10,6 +10,7 @@ sven-model   = { path = "../model" }
 sven-tools   = { path = "../tools" }
 sven-runtime = { path = "../runtime" }
 sven-hsm     = { path = "../hsm" }
+sven-vocab   = { path = "../vocab" }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 serde       = { workspace = true }
