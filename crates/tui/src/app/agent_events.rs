@@ -205,23 +205,10 @@ impl App {
                     ChatSegment::Message(Message::tool_result(&call_id, &output_with_error));
                 // Insert the result immediately after the matching tool call so
                 // that get_paired_result_idx() groups them correctly during streaming.
-                let insert_pos = self
-                    .chat
-                    .segments
-                    .iter()
-                    .rposition(|seg| {
-                        if let ChatSegment::Message(m) = seg {
-                            if let MessageContent::ToolCall { tool_call_id, .. } = &m.content {
-                                return tool_call_id == &call_id;
-                            }
-                        }
-                        false
-                    })
-                    .map(|call_idx| {
-                        // Insert right after the tool call, skipping any already-inserted
-                        // results for the same call (shouldn't happen, but be safe).
-                        call_idx + 1
-                    });
+                let insert_pos = crate::chat::segment::tool_result_insert_position(
+                    &self.chat.segments,
+                    &call_id,
+                );
                 let seg_idx = if let Some(pos) = insert_pos {
                     // Shift expand_level indices >= pos up by 1 to keep them aligned.
                     let shifted: std::collections::HashMap<usize, u8> = self
@@ -762,11 +749,21 @@ fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdate) {
             } else {
                 output.clone()
             };
-            chat.segments
-                .push(ChatSegment::Message(Message::tool_result(
-                    id,
-                    &output_with_error,
-                )));
+            let result_seg = ChatSegment::Message(Message::tool_result(id, &output_with_error));
+            // Correlate by call_id so the result lands right after its matching
+            // ToolCall, same as the foreground and background-session paths.
+            match crate::chat::segment::tool_result_insert_position(&chat.segments, id) {
+                Some(pos) => {
+                    let shifted: std::collections::HashMap<usize, u8> = chat
+                        .expand_level
+                        .drain()
+                        .map(|(i, v)| (if i >= pos { i + 1 } else { i }, v))
+                        .collect();
+                    chat.expand_level = shifted;
+                    chat.segments.insert(pos, result_seg);
+                }
+                None => chat.segments.push(result_seg),
+            }
         }
         SubagentUpdate::Finished { .. } => {
             // Flush remaining streamed text as the final assistant message.

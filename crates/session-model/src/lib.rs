@@ -169,6 +169,26 @@ pub fn segment_tool_call_id(seg: &ChatSegment) -> Option<&str> {
     }
 }
 
+/// Find where a `ToolCallFinished` result for `call_id` should be inserted
+/// into `segments`, so it lands immediately after its matching `ToolCall`
+/// rather than at the end of the transcript (which would separate a call from
+/// its result whenever more segments/streamed text arrived in between).
+///
+/// Returns `None` when no matching `ToolCall` is found - the caller should
+/// push the result to the end of `segments` instead.
+pub fn tool_result_insert_position(segments: &[ChatSegment], call_id: &str) -> Option<usize> {
+    segments
+        .iter()
+        .rposition(|seg| match seg {
+            ChatSegment::Message(m) => matches!(
+                &m.content,
+                MessageContent::ToolCall { tool_call_id, .. } if tool_call_id == call_id
+            ),
+            _ => false,
+        })
+        .map(|call_idx| call_idx + 1)
+}
+
 /// Return a short single-line preview of a segment for use in dialog messages.
 pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
     const MAX_CHARS: usize = 60;
@@ -296,6 +316,35 @@ mod tests {
 
     fn assistant_msg(text: &str) -> Message {
         Message::assistant(text)
+    }
+
+    #[test]
+    fn tool_result_insert_position_lands_right_after_matching_call() {
+        let segments = vec![
+            ChatSegment::Message(user_msg("do something")),
+            ChatSegment::Message(tool_call_msg("call_a")),
+            ChatSegment::Message(tool_call_msg("call_b")),
+        ];
+        // call_a's result must be inserted between call_a and call_b, not at the end.
+        assert_eq!(tool_result_insert_position(&segments, "call_a"), Some(2));
+    }
+
+    #[test]
+    fn tool_result_insert_position_none_when_call_not_found() {
+        let segments = vec![ChatSegment::Message(user_msg("hi"))];
+        assert_eq!(tool_result_insert_position(&segments, "missing"), None);
+    }
+
+    #[test]
+    fn tool_result_insert_position_ignores_prior_tool_results() {
+        // A prior ToolResult for a different call_id must not be mistaken for
+        // the ToolCall being searched for.
+        let segments = vec![
+            ChatSegment::Message(tool_call_msg("call_a")),
+            ChatSegment::Message(tool_result_msg("call_a")),
+            ChatSegment::Message(tool_call_msg("call_b")),
+        ];
+        assert_eq!(tool_result_insert_position(&segments, "call_b"), Some(3));
     }
 
     #[test]

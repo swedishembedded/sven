@@ -9,5 +9,5 @@
 pub use sven_session_model::{
     format_collab_event, messages_for_resubmit, segment_at_line, segment_editable_text,
     segment_is_removable, segment_is_rerunnable, segment_short_preview, segment_tool_call_id,
-    ChatSegment,
+    tool_result_insert_position, ChatSegment,
 };

@@ -10,7 +10,7 @@
 // Re-export the canonical type and all framework-agnostic helpers.
 pub use sven_frontend::{
     messages_for_resubmit, segment_at_line, segment_editable_text, segment_is_removable,
-    segment_is_rerunnable, segment_tool_call_id, ChatSegment,
+    segment_is_rerunnable, segment_tool_call_id, tool_result_insert_position, ChatSegment,
 };
 
 // ── TUI-specific display helper ───────────────────────────────────────────────

@@ -344,7 +344,6 @@ impl SessionEntry {
     /// on the session that originated the event.
     pub fn apply_background_event(&mut self, event: &AgentEvent) {
         use sven_core::AgentEvent as Ev;
-        use sven_model::MessageContent;
 
         match event {
             Ev::TextDelta(_) | Ev::ThinkingDelta(_) => {
@@ -384,18 +383,8 @@ impl SessionEntry {
                     let result_seg = crate::chat::segment::ChatSegment::Message(
                         sven_model::Message::tool_result(call_id, &output_with_error),
                     );
-                    let insert_pos = chat
-                        .segments
-                        .iter()
-                        .rposition(|seg| {
-                            if let crate::chat::segment::ChatSegment::Message(m) = seg {
-                                if let MessageContent::ToolCall { tool_call_id, .. } = &m.content {
-                                    return tool_call_id == call_id;
-                                }
-                            }
-                            false
-                        })
-                        .map(|call_idx| call_idx + 1);
+                    let insert_pos =
+                        crate::chat::segment::tool_result_insert_position(&chat.segments, call_id);
                     if let Some(pos) = insert_pos {
                         let shifted: std::collections::HashMap<usize, u8> = chat
                             .expand_level
