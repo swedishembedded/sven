@@ -119,6 +119,18 @@ recorded explicitly rather than silently allowed.
 """
 
 [[same_layer]]
+from = "sven-hsm"
+to   = "sven-vocab"
+why  = """
+Both are leaf "foundation" crates. sven-hsm's outward observation plane
+(UiEvent) is now `sven_vocab::SessionEvent` -- the unified event enum shared
+with sven-core's AgentEvent (Phase 3 of the refactor plan) -- rather than a
+kernel-local opaque-payload enum, since SessionEvent's typed payloads
+(ToolCall, TodoItem, ...) live in sven-vocab. sven-vocab has zero
+dependencies of its own, so this can never become a cycle.
+"""
+
+[[same_layer]]
 from = "sven-executors"
 to   = "sven-core"
 why  = """
@@ -192,14 +204,14 @@ lines = 1589
 path = "src/cli.rs"
 lines = 1589
 [[allow.large_file]]
-path = "crates/config/src/schema.rs"
-lines = 1575
-[[allow.large_file]]
 path = "crates/cloud/src/channels.rs"
 lines = 1562
 [[allow.large_file]]
 path = "crates/node/src/control/service.rs"
 lines = 1559
+[[allow.large_file]]
+path = "crates/config/src/schema.rs"
+lines = 1550
 [[allow.large_file]]
 path = "crates/team/src/spawn.rs"
 lines = 1506
@@ -216,9 +228,6 @@ lines = 1318
 path = "crates/cloud/tests/e2e_firmware.rs"
 lines = 1309
 [[allow.large_file]]
-path = "crates/core/src/prompts.rs"
-lines = 1241
-[[allow.large_file]]
 path = "crates/ci/src/runner/mod.rs"
 lines = 1240
 [[allow.large_file]]
@@ -229,7 +238,10 @@ path = "crates/hsm/src/runtime.rs"
 lines = 1219
 [[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
-lines = 1196
+lines = 1194
+[[allow.large_file]]
+path = "crates/core/src/prompts.rs"
+lines = 1194
 [[allow.large_file]]
 path = "crates/tui/src/chat/markdown.rs"
 lines = 1185
@@ -291,14 +303,11 @@ lines = 921
 path = "crates/cloud/src/portal.rs"
 lines = 904
 [[allow.large_file]]
-path = "crates/executors/src/turn.rs"
-lines = 883
+path = "crates/ci/src/runner/runtime_runner.rs"
+lines = 884
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_platform.rs"
 lines = 881
-[[allow.large_file]]
-path = "crates/ci/src/runner/runtime_runner.rs"
-lines = 880
 [[allow.large_file]]
 path = "crates/tui/src/app/term_events.rs"
 lines = 880
@@ -318,11 +327,11 @@ lines = 850
 path = "crates/ci/src/index.rs"
 lines = 832
 [[allow.large_file]]
-path = "crates/tools/src/registry.rs"
-lines = 828
-[[allow.large_file]]
 path = "crates/ci/src/tests.rs"
 lines = 815
+[[allow.large_file]]
+path = "crates/tools/src/registry.rs"
+lines = 814
 [[allow.large_file]]
 path = "crates/model/src/google.rs"
 lines = 806

@@ -395,6 +395,7 @@ fn collect_event_full(event: AgentEvent, records: &mut Vec<ConversationRecord>, 
         | AgentEvent::DelegateSummary { .. }
         | AgentEvent::SubagentStarted { .. }
         | AgentEvent::SubagentEvent { .. }
+        | AgentEvent::Transition { .. }
         | AgentEvent::PeerList(_) => {}
         AgentEvent::Aborted { partial_text } => {
             if !partial_text.is_empty() {

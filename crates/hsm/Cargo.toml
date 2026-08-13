@@ -2,7 +2,7 @@
 name    = "sven-hsm"
 version.workspace = true
 edition = "2021"
-description = "Deterministic Hierarchical State Machine kernel: pure HSM dispatch (Super walk + LCA + entry/exit/init), typed Effects/Events, a permission choke point, event-sourcing replay, and a tokio Active Object runtime. Zero dependencies on other sven crates."
+description = "Deterministic Hierarchical State Machine kernel: pure HSM dispatch (Super walk + LCA + entry/exit/init), typed Effects/Events, a permission choke point, event-sourcing replay, and a tokio Active Object runtime. Depends only on sven-vocab (the pure session-event vocabulary), not on any behavioral sven crate."
 license = "Apache-2.0"
 
 [dependencies]
@@ -12,6 +12,7 @@ uuid        = { workspace = true }
 thiserror   = { workspace = true }
 tokio       = { workspace = true }
 async-trait = { workspace = true }
+sven-vocab  = { path = "../vocab" }
 
 [dev-dependencies]
 tokio       = { workspace = true }

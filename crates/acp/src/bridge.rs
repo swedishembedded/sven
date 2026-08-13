@@ -123,6 +123,11 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
             UsageUpdate::new(0, 0).cost(Cost::new(*c, "USD")),
         )),
 
+        // Transition (the kernel's per-dispatch trace event) has no ACP
+        // representation; SDLC phase progress is not part of the ACP wire
+        // contract.
+        AgentEvent::Transition { .. } => None,
+
         // The remaining events have no ACP representation at this time.
         AgentEvent::TokenUsage { cost_usd: None, .. }
         | AgentEvent::ContextCompacted { .. }
@@ -142,89 +147,14 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
 
 /// Map one kernel [`UiEvent`] to zero or one ACP [`SessionUpdate`] notifications.
 ///
-/// Mirrors [`agent_event_to_session_update`] but consumes events from the
-/// HSM observation bus rather than the legacy `AgentEvent` channel.
+/// `UiEvent` and `AgentEvent` are now both re-exports of the same
+/// [`sven_vocab::SessionEvent`] type (previously this duplicated
+/// [`agent_event_to_session_update`] field-for-field against a
+/// stringly-typed `UiEvent` shape — including a `ModeChanged` string match
+/// that only recognised lowercase `"research"`/`"plan"`, so a kernel-driven
+/// Research or Plan session reported itself to the IDE as Agent mode).
 pub fn ui_event_to_session_update(ev: &UiEvent) -> Option<SessionUpdate> {
-    match ev {
-        UiEvent::TextDelta(text) => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
-            ContentBlock::from(text.as_str()),
-        ))),
-
-        UiEvent::TextComplete(_) => None,
-
-        UiEvent::ThinkingDelta(text) => Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
-            ContentBlock::from(text.as_str()),
-        ))),
-
-        UiEvent::ThinkingComplete(_) => None,
-
-        UiEvent::ToolStarted {
-            call_id,
-            name,
-            args,
-        } => {
-            let acp_tc = AcpToolCall::new(call_id.clone(), name.clone())
-                .kind(tool_name_to_kind(name))
-                .status(ToolCallStatus::InProgress)
-                .raw_input(args.clone());
-            Some(SessionUpdate::ToolCall(acp_tc))
-        }
-
-        UiEvent::ToolFinished {
-            call_id,
-            name,
-            output,
-            is_error,
-        } => {
-            let status = if *is_error {
-                ToolCallStatus::Failed
-            } else {
-                ToolCallStatus::Completed
-            };
-            let raw_output = serde_json::Value::String(output.clone());
-            let acp_tc = AcpToolCall::new(call_id.clone(), name.clone())
-                .kind(tool_name_to_kind(name))
-                .status(status)
-                .raw_output(raw_output);
-            Some(SessionUpdate::ToolCall(acp_tc))
-        }
-
-        UiEvent::ToolProgress { .. } => Some(SessionUpdate::Plan(Plan::new(vec![]))),
-
-        UiEvent::TokenUsage {
-            cost_usd: Some(c), ..
-        } => Some(SessionUpdate::UsageUpdate(
-            UsageUpdate::new(0, 0).cost(Cost::new(*c, "USD")),
-        )),
-
-        UiEvent::ModeChanged(mode_str) => {
-            let mode = match mode_str.as_str() {
-                "research" => AgentMode::Research,
-                "plan" => AgentMode::Plan,
-                _ => AgentMode::Agent,
-            };
-            let mode_id = sven_mode_to_acp_mode_id(mode);
-            Some(SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new(
-                mode_id,
-            )))
-        }
-
-        UiEvent::TodoUpdate(json_val) => {
-            if let Ok(todos) = serde_json::from_value::<Vec<TodoItem>>(json_val.clone()) {
-                let entries = todos.iter().map(todo_item_to_plan_entry).collect();
-                Some(SessionUpdate::Plan(Plan::new(entries)))
-            } else {
-                None
-            }
-        }
-
-        UiEvent::Error(msg) => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
-            ContentBlock::from(format!("[error] {msg}").as_str()),
-        ))),
-
-        // TurnComplete and other non-representable events: handled by caller.
-        _ => None,
-    }
+    agent_event_to_session_update(ev)
 }
 
 // ─── Tool-kind heuristic ──────────────────────────────────────────────────────

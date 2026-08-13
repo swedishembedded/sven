@@ -25,6 +25,7 @@ use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config};
 use sven_hsm::{Event, EventSink, UiEvent};
 use sven_model::Message;
+use sven_tools::ToolCall;
 
 use crate::output::{
     finalise_stdout, format_token_usage_line, write_progress, write_stderr, write_stdout,
@@ -420,11 +421,11 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                 write_progress(&format!("[sven:thinking] {c}"));
             }
         }
-        UiEvent::ToolStarted {
-            call_id,
+        UiEvent::ToolCallStarted(ToolCall {
+            id: call_id,
             name,
             args,
-        } => {
+        }) => {
             // A tool call ends any open assistant text section.
             close_sven_section(state);
             ensure_user_header(state);
@@ -446,9 +447,9 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                 write_progress(&format!("[sven:progress] {message}"));
             }
         }
-        UiEvent::ToolFinished {
+        UiEvent::ToolCallFinished {
             call_id,
-            name,
+            tool_name: name,
             is_error,
             output,
         } => {
@@ -580,21 +581,17 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                 "[sven:subagent:started] call_id=\"{call_id}\" handle_id=\"{handle_id}\" description={description:?}"
             ));
         }
-        UiEvent::SubagentEvent { handle_id, update, .. } => {
-            if let Ok(update) = serde_json::from_value::<sven_tools::events::SubagentUpdate>(update) {
-                match update {
-                    sven_tools::events::SubagentUpdate::Finished { .. } => {
-                        write_stderr(&format!("[sven:subagent:finished] handle_id=\"{handle_id}\""));
-                    }
-                    sven_tools::events::SubagentUpdate::Failed { reason } => {
-                        write_stderr(&format!(
-                            "[sven:subagent:failed] handle_id=\"{handle_id}\" reason={reason:?}"
-                        ));
-                    }
-                    _ => {}
-                }
+        UiEvent::SubagentEvent { handle_id, update, .. } => match update {
+            sven_tools::events::SubagentUpdate::Finished { .. } => {
+                write_stderr(&format!("[sven:subagent:finished] handle_id=\"{handle_id}\""));
             }
-        }
+            sven_tools::events::SubagentUpdate::Failed { reason } => {
+                write_stderr(&format!(
+                    "[sven:subagent:failed] handle_id=\"{handle_id}\" reason={reason:?}"
+                ));
+            }
+            _ => {}
+        },
         UiEvent::DelegateSummary {
             to_name,
             task_title,
@@ -606,7 +603,14 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                 "[sven:subagent:delegate_summary] to=\"{to_name}\" task={task_title:?} status=\"{status}\" duration_ms={duration_ms} result_preview={result_preview:?}"
             ));
         }
-        UiEvent::CollabEvent(_) | UiEvent::PeerList(_) => {}
+        // Question/QuestionAnswer never fire in headless mode (the session
+        // runs under an auto-approve gate); TitleGenerated has no headless
+        // stdout/stderr representation.
+        UiEvent::CollabEvent(_)
+        | UiEvent::PeerList(_)
+        | UiEvent::Question { .. }
+        | UiEvent::QuestionAnswer { .. }
+        | UiEvent::TitleGenerated(_) => {}
     }
     None
 }
@@ -721,11 +725,11 @@ mod tests {
     fn tool_started_emits_the_user_header_when_no_text_preceded_it() {
         let mut st = state(0);
         handle_ui_event(
-            UiEvent::ToolStarted {
-                call_id: "tc-1".into(),
+            UiEvent::ToolCallStarted(ToolCall {
+                id: "tc-1".into(),
                 name: "write_file".into(),
                 args: serde_json::json!({}),
-            },
+            }),
             &mut st,
         );
         assert!(st.user_header_emitted);
@@ -759,11 +763,11 @@ mod tests {
     fn tool_started_counts_and_traces() {
         let mut st = state(0);
         let r = handle_ui_event(
-            UiEvent::ToolStarted {
-                call_id: "tc-1".into(),
+            UiEvent::ToolCallStarted(ToolCall {
+                id: "tc-1".into(),
                 name: "write_file".into(),
                 args: serde_json::json!({"path": "/tmp/x"}),
-            },
+            }),
             &mut st,
         );
         assert!(r.is_none());
@@ -864,9 +868,9 @@ mod tests {
     fn tool_error_is_non_fatal() {
         let mut st = state(0);
         handle_ui_event(
-            UiEvent::ToolFinished {
+            UiEvent::ToolCallFinished {
                 call_id: "tc-1".into(),
-                name: "read_file".into(),
+                tool_name: "read_file".into(),
                 output: "no such file".into(),
                 is_error: true,
             },

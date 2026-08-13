@@ -428,17 +428,15 @@ pub fn ui_event_to_control(ev: sven_hsm::UiEvent, session_id: Uuid) -> Option<Co
             text,
             role: "thinking".to_string(),
         }),
-        UiEvent::ToolStarted {
-            call_id,
-            name,
-            args,
-        } => Some(ControlEvent::ToolCall {
-            session_id,
-            call_id,
-            tool_name: name,
-            args,
-        }),
-        UiEvent::ToolFinished {
+        UiEvent::ToolCallStarted(sven_vocab::ToolCall { id, name, args }) => {
+            Some(ControlEvent::ToolCall {
+                session_id,
+                call_id: id,
+                tool_name: name,
+                args,
+            })
+        }
+        UiEvent::ToolCallFinished {
             call_id,
             output,
             is_error,

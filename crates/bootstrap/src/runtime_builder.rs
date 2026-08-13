@@ -876,10 +876,8 @@ fn spawn_tool_event_forwarder(mut rx: mpsc::Receiver<ToolEvent>, obs: Observatio
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             let ui_event = match event {
-                ToolEvent::TodoUpdate(items) => UiEvent::TodoUpdate(
-                    serde_json::to_value(&items).unwrap_or(serde_json::Value::Null),
-                ),
-                ToolEvent::ModeChanged(mode) => UiEvent::ModeChanged(format!("{mode:?}")),
+                ToolEvent::TodoUpdate(items) => UiEvent::TodoUpdate(items),
+                ToolEvent::ModeChanged(mode) => UiEvent::ModeChanged(mode),
                 ToolEvent::ModelChanged(m) => UiEvent::ModelChanged(m),
                 ToolEvent::Progress { call_id, message } => {
                     UiEvent::ToolProgress { call_id, message }
@@ -915,7 +913,7 @@ fn spawn_tool_event_forwarder(mut rx: mpsc::Receiver<ToolEvent>, obs: Observatio
                 } => UiEvent::SubagentEvent {
                     call_id,
                     handle_id,
-                    update: serde_json::to_value(&update).unwrap_or(serde_json::Value::Null),
+                    update,
                 },
                 // No `UiEvent` counterpart — see the doc comment above.
                 ToolEvent::McpServerAdded { .. } | ToolEvent::McpServerRemoved(_) => continue,

@@ -33,13 +33,10 @@
 
 use std::sync::Arc;
 
-use sven_core::{AgentEvent, CompactionStrategyUsed, PeerInfo};
-use sven_core::prompts::CollabEvent;
-use sven_config::AgentMode;
+use sven_core::AgentEvent;
 use sven_hsm::{ErasedRuntime, UiEvent};
 use sven_mcp_client::McpManager;
-use sven_tools::events::{SubagentUpdate, TodoItem};
-use sven_tools::{Question, QuestionRequest, ToolCall};
+use sven_tools::{Question, QuestionRequest};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
@@ -49,153 +46,13 @@ use crate::runtime_builder::{KernelChannels, RuntimeHandle, SessionBundle};
 /// Bridge a single [`UiEvent`] from the outward observation plane to the
 /// corresponding [`AgentEvent`] expected by existing consumers.
 ///
-/// Returns `None` for observation-only events that have no `AgentEvent`
-/// equivalent — currently none, since SDLC transitions are surfaced as a
-/// lightweight [`AgentEvent::ToolProgress`] status line — but the `Option`
-/// return keeps the mapping total and future-proof.
+/// `AgentEvent` and `UiEvent` are now both re-exports of the same
+/// [`sven_vocab::SessionEvent`] type, so this is the identity function. See
+/// [`sven_executors::turn::agent_event_to_ui`] for why it stays in place
+/// rather than being deleted outright.
 #[must_use]
 pub fn ui_event_to_agent_event(ev: UiEvent) -> Option<AgentEvent> {
-    Some(match ev {
-        UiEvent::TextDelta(d) => AgentEvent::TextDelta(d),
-        UiEvent::TextComplete(t) => AgentEvent::TextComplete(t),
-        UiEvent::ThinkingDelta(d) => AgentEvent::ThinkingDelta(d),
-        UiEvent::ThinkingComplete(c) => AgentEvent::ThinkingComplete(c),
-        UiEvent::ToolStarted {
-            call_id,
-            name,
-            args,
-        } => AgentEvent::ToolCallStarted(ToolCall {
-            id: call_id,
-            name,
-            args,
-        }),
-        UiEvent::ToolProgress { call_id, message } => AgentEvent::ToolProgress { call_id, message },
-        UiEvent::ToolFinished {
-            call_id,
-            name,
-            output,
-            is_error,
-        } => AgentEvent::ToolCallFinished {
-            call_id,
-            tool_name: name,
-            output,
-            is_error,
-        },
-        UiEvent::TokenUsage {
-            input,
-            output,
-            cache_read,
-            cache_write,
-            cache_read_total,
-            cache_write_total,
-            max_tokens,
-            max_output_tokens,
-            cost_usd,
-        } => AgentEvent::TokenUsage {
-            input,
-            output,
-            cache_read,
-            cache_write,
-            cache_read_total,
-            cache_write_total,
-            max_tokens,
-            max_output_tokens,
-            cost_usd,
-        },
-        UiEvent::ContextCompacted {
-            tokens_before,
-            tokens_after,
-            strategy,
-            turn,
-        } => {
-            let strategy = match strategy.as_str() {
-                "emergency" => CompactionStrategyUsed::Emergency,
-                "narrative" => CompactionStrategyUsed::Narrative,
-                _ => CompactionStrategyUsed::Structured,
-            };
-            AgentEvent::ContextCompacted {
-                tokens_before,
-                tokens_after,
-                strategy,
-                turn,
-            }
-        }
-        UiEvent::TodoUpdate(v) => {
-            let items: Vec<TodoItem> = serde_json::from_value(v).unwrap_or_default();
-            AgentEvent::TodoUpdate(items)
-        }
-        UiEvent::ModeChanged(s) => AgentEvent::ModeChanged(parse_agent_mode(&s)),
-        UiEvent::ModelChanged(m) => AgentEvent::ModelChanged(m),
-        UiEvent::Error(e) => AgentEvent::Error(e),
-        UiEvent::TurnComplete => AgentEvent::TurnComplete,
-        UiEvent::Aborted { partial_text } => AgentEvent::Aborted { partial_text },
-        // Surface SDLC phase transitions as a lightweight ToolProgress status
-        // line (e.g. "SDLC: Planning → GenerateCandidatePlan") so the user sees
-        // progress without a chat segment being appended.
-        UiEvent::Transition { from, to, event: _ } => AgentEvent::ToolProgress {
-            call_id: "sdlc_phase".to_string(),
-            message: format!("SDLC: {from} → {to}"),
-        },
-        // Subagent / delegate / team observations flow back to the exact
-        // `AgentEvent`s the TUI consumed before the kernel path existed.
-        // Opaque JSON payloads are deserialized back into their typed form;
-        // a corrupt payload drops only that one event (`?` → `None`).
-        UiEvent::SubagentStarted {
-            call_id,
-            handle_id,
-            description,
-            prompt,
-        } => AgentEvent::SubagentStarted {
-            call_id,
-            handle_id,
-            description,
-            prompt,
-        },
-        UiEvent::SubagentEvent {
-            call_id,
-            handle_id,
-            update,
-        } => {
-            let update: SubagentUpdate = serde_json::from_value(update).ok()?;
-            AgentEvent::SubagentEvent {
-                call_id,
-                handle_id,
-                update,
-            }
-        }
-        UiEvent::DelegateSummary {
-            to_name,
-            task_title,
-            duration_ms,
-            status,
-            result_preview,
-        } => AgentEvent::DelegateSummary {
-            to_name,
-            task_title,
-            duration_ms,
-            status,
-            result_preview,
-        },
-        UiEvent::CollabEvent(v) => {
-            let event: CollabEvent = serde_json::from_value(v).ok()?;
-            AgentEvent::CollabEvent(event)
-        }
-        UiEvent::PeerList(v) => {
-            let peers: Vec<PeerInfo> = serde_json::from_value(v).ok()?;
-            AgentEvent::PeerList(peers)
-        }
-    })
-}
-
-/// Parse the kernel's mode string label into an [`AgentMode`].
-fn parse_agent_mode(s: &str) -> AgentMode {
-    match s {
-        "chat" | "Chat" => AgentMode::Chat,
-        "sdlc" | "Sdlc" => AgentMode::Sdlc,
-        "plan" | "Plan" => AgentMode::Plan,
-        "research" | "Research" => AgentMode::Research,
-        _ => AgentMode::Agent,
-    }
+    Some(ev)
 }
 
 /// Spawn the observation bridge: forward the kernel's outward [`UiEvent`]
@@ -462,6 +319,7 @@ mod tests {
     use sven_executors::user::{ApprovalRequest, UserQuestion};
     use sven_hsm::{ApprovalId, ObservationSink, ToolCapability};
     use sven_model::ScriptedMockProvider;
+    use sven_tools::ToolCall;
 
     use super::*;
     use crate::runtime_builder::RuntimeBuilder;
@@ -477,14 +335,14 @@ mod tests {
     fn maps_full_turn_ui_event_sequence() {
         let seq = vec![
             UiEvent::TextDelta("Hi".into()),
-            UiEvent::ToolStarted {
-                call_id: "call-1".into(),
+            UiEvent::ToolCallStarted(ToolCall {
+                id: "call-1".into(),
                 name: "shell".into(),
                 args: tool_args(),
-            },
-            UiEvent::ToolFinished {
+            }),
+            UiEvent::ToolCallFinished {
                 call_id: "call-1".into(),
-                name: "shell".into(),
+                tool_name: "shell".into(),
                 output: "file.txt".into(),
                 is_error: false,
             },
@@ -597,14 +455,14 @@ mod tests {
         let task = spawn_observation_bridge(obs_rx, event_tx);
 
         sink.emit(UiEvent::TextDelta("Hi".into()));
-        sink.emit(UiEvent::ToolStarted {
-            call_id: "c1".into(),
+        sink.emit(UiEvent::ToolCallStarted(ToolCall {
+            id: "c1".into(),
             name: "shell".into(),
             args: tool_args(),
-        });
-        sink.emit(UiEvent::ToolFinished {
+        }));
+        sink.emit(UiEvent::ToolCallFinished {
             call_id: "c1".into(),
-            name: "shell".into(),
+            tool_name: "shell".into(),
             output: "ok".into(),
             is_error: false,
         });

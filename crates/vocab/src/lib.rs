@@ -13,11 +13,16 @@
 //! `sven-tools` re-exports all of these at its crate root, so existing
 //! `sven_tools::ToolCall` (etc.) call sites are unaffected by where the
 //! types are actually defined.
+//!
+//! [`SessionEvent`] is the unified session-event stream (re-exported as
+//! `sven_core::AgentEvent` and `sven_hsm::UiEvent`) and its payload types
+//! ([`AgentMode`], [`TodoItem`], [`SubagentUpdate`], [`CollabEvent`],
+//! [`PeerInfo`], [`CompactionStrategyUsed`]) live here for the same reason.
 
 use serde_json::Value;
 
 /// A single tool invocation requested by the model.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ToolCall {
     /// Opaque identifier returned by the model (forwarded verbatim)
     pub id: String,
@@ -202,7 +207,7 @@ impl std::fmt::Display for AgentMode {
 }
 
 /// Which compaction strategy was executed when context compaction fired.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CompactionStrategyUsed {
     /// Structured Markdown checkpoint with typed sections.
     Structured,
@@ -224,7 +229,7 @@ impl std::fmt::Display for CompactionStrategyUsed {
 }
 
 /// Information about a connected peer (node proxy / list_peers).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PeerInfo {
     pub name: String,
     pub peer_id: String,
@@ -270,7 +275,7 @@ impl std::fmt::Display for TodoStatus {
 }
 
 /// A structured todo item managed by the todo tool.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TodoItem {
     pub id: String,
     pub content: String,
@@ -281,7 +286,7 @@ pub struct TodoItem {
 ///
 /// This is a sven-native mirror of ACP `SessionUpdate` variants, kept
 /// dependency-free so callers do not need to depend on the ACP crate.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SubagentUpdate {
     /// A chunk of assistant text (streamed).
     TextDelta(String),
@@ -313,7 +318,7 @@ pub enum SubagentUpdate {
 ///
 /// These are display-only entries that track the lifecycle of team operations
 /// without adding them to the LLM context.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum CollabEvent {
     TeammateSpawned {
         name: String,
@@ -359,5 +364,144 @@ pub enum CollabEvent {
         name: String,
         task_id: String,
         feedback: String,
+    },
+}
+
+/// The single, unified session event stream.
+///
+/// Historically the codebase had two parallel enums for this: `AgentEvent`
+/// (typed payloads, produced by the legacy `sven_core::Agent` loop) and
+/// `UiEvent` (opaque `Value`/`String` payloads, produced by the HSM kernel's
+/// outward observation plane). A translator pair converted between them on
+/// every event, and because both were hand-maintained, they had already
+/// diverged (`ui_event_to_agent_event`'s `_ => None` silently dropped
+/// variants no one had gotten around to mapping).
+///
+/// `SessionEvent` replaces both: it carries `AgentEvent`'s typed payloads
+/// (so consumers pattern-match on real types, not `Value`) plus
+/// [`Transition`](SessionEvent::Transition), the kernel's per-dispatch trace
+/// event that had no `AgentEvent` equivalent. `sven-core` re-exports this as
+/// `AgentEvent` and `sven-hsm` re-exports it as `UiEvent`, so both names
+/// still resolve for existing call sites — see `docs/adr/` for the full
+/// migration.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SessionEvent {
+    /// A text chunk streamed from the model.
+    TextDelta(String),
+    /// A complete text response from the model (after streaming finishes).
+    TextComplete(String),
+    /// A thinking/reasoning chunk from the model (extended thinking API).
+    /// Consumers should accumulate deltas and finalise them into a Thinking
+    /// segment when the model signals the end of the reasoning block.
+    ThinkingDelta(String),
+    /// A complete thinking/reasoning block (accumulated from `ThinkingDelta`).
+    ThinkingComplete(String),
+    /// The model has requested a tool call.
+    ToolCallStarted(ToolCall),
+    /// A tool call finished.
+    ToolCallFinished {
+        call_id: String,
+        tool_name: String,
+        output: String,
+        is_error: bool,
+    },
+    /// A long-running tool is reporting incremental progress. Consumers
+    /// should update the spinner/status bar without adding a chat segment.
+    ToolProgress { call_id: String, message: String },
+    /// Context was compacted; statistics for the UI.
+    ContextCompacted {
+        tokens_before: usize,
+        tokens_after: usize,
+        strategy: CompactionStrategyUsed,
+        /// Agentic loop round in which compaction fired (0 = pre-submit).
+        turn: u32,
+    },
+    /// Current token usage update.
+    ///
+    /// Providers may emit this multiple times per turn with different fields
+    /// populated (e.g. Anthropic sends input stats on `message_start` and
+    /// output stats on `message_delta`). Fields not reported for this
+    /// particular event are zero; consumers should only update their display
+    /// when the relevant field is non-zero.
+    TokenUsage {
+        /// Input tokens processed this request (does NOT include cache hits).
+        input: u32,
+        /// Output tokens generated this request.
+        output: u32,
+        /// Tokens served from the provider's prompt cache this turn.
+        cache_read: u32,
+        /// Tokens written into the provider's prompt cache this turn.
+        cache_write: u32,
+        /// Running total of cache-read tokens across the whole session.
+        cache_read_total: u32,
+        /// Running total of cache-write tokens across the whole session.
+        cache_write_total: u32,
+        /// The model's maximum context window (tokens). Zero means unknown.
+        max_tokens: usize,
+        /// The model's maximum output tokens per completion. Zero means unknown.
+        max_output_tokens: usize,
+        /// Cost in USD when reported by the API (e.g. OpenRouter).
+        cost_usd: Option<f64>,
+    },
+    /// The agent has finished processing the current user turn.
+    TurnComplete,
+    /// The current run was aborted (via Ctrl+C or /abort). `partial_text`
+    /// contains any assistant text that was streamed before the abort; it
+    /// may be empty if the model had not yet produced any output.
+    Aborted { partial_text: String },
+    /// A recoverable error occurred.
+    Error(String),
+    /// The todo list was updated.
+    TodoUpdate(Vec<TodoItem>),
+    /// The agent mode was changed.
+    ModeChanged(AgentMode),
+    /// The active model was changed by the agent tool. The string is a
+    /// resolved `"provider/id"` identifier (e.g. `"anthropic/claude-opus-4-6"`).
+    ModelChanged(String),
+    /// The agent is asking the user a question (id links to `QuestionAnswer`).
+    Question { id: String, questions: Vec<String> },
+    /// Answer to a previous `Question` event.
+    QuestionAnswer { id: String, answer: String },
+    /// Chat title generated from the first user message (LLM, low max_tokens).
+    TitleGenerated(String),
+    /// A team lifecycle event to be shown in the chat as a collapsible segment.
+    CollabEvent(CollabEvent),
+    /// A completed delegate subtree - rendered as a collapsible summary segment.
+    DelegateSummary {
+        to_name: String,
+        task_title: String,
+        duration_ms: u64,
+        status: String,
+        result_preview: String,
+    },
+    /// A subagent was started via the task tool; the frontend creates a child
+    /// session view.
+    SubagentStarted {
+        call_id: String,
+        handle_id: String,
+        description: String,
+        /// Full prompt sent to the subagent; shown as the first user message.
+        prompt: String,
+    },
+    /// A structured event streamed from a running subagent.
+    SubagentEvent {
+        /// Tool-call ID of the spawning `task` call (matches `ToolCallStarted`).
+        call_id: String,
+        /// Buffer handle identifying which subagent session this belongs to.
+        handle_id: String,
+        update: SubagentUpdate,
+    },
+    /// List of peers (from node proxy / list_peers).
+    PeerList(Vec<PeerInfo>),
+    /// The HSM kernel took a transition (full transition trace). Has no
+    /// legacy `AgentEvent` equivalent; only the kernel's observation plane
+    /// ever produced it.
+    Transition {
+        /// State label before the dispatch.
+        from: String,
+        /// State label after the dispatch.
+        to: String,
+        /// The kind of event dispatched.
+        event: String,
     },
 }

@@ -111,7 +111,9 @@ fn register_calls(
 }
 
 use async_trait::async_trait;
-use sven_core::{stream_turn, to_model_schemas, AbortedError, AgentEvent, ModelResolver};
+use sven_core::{
+    stream_turn, to_model_schemas, AbortedError, AgentEvent, CompactionStrategyUsed, ModelResolver,
+};
 use sven_hsm::{
     Effect, EffectExecutor, Event, EventSink, ObservationSink, ProposedToolCall, ToolCallId,
     UiEvent,
@@ -123,119 +125,15 @@ use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
 /// Convert an [`AgentEvent`] to a [`UiEvent`] for the outward observation plane.
 ///
-/// Returns `None` for events that have no renderable UI equivalent or that are
-/// handled directly by the executor (`TurnComplete`).
+/// `AgentEvent` and `UiEvent` are now both re-exports of the same
+/// [`sven_vocab::SessionEvent`] type, so this is the identity function. It
+/// stays in place (rather than being deleted and call sites updated to pass
+/// the event straight through) as the seam the next refactor phase deletes,
+/// per the migration plan's identity-transform pattern for a risky enum
+/// merge: land the unification with the translator degenerated to `Some`,
+/// verify nothing else broke, delete the translator in a follow-up commit.
 pub fn agent_event_to_ui(ev: AgentEvent) -> Option<UiEvent> {
-    use sven_core::AgentEvent as AE;
-    Some(match ev {
-        AE::TextDelta(d) => UiEvent::TextDelta(d),
-        AE::TextComplete(t) => UiEvent::TextComplete(t),
-        AE::ThinkingDelta(d) => UiEvent::ThinkingDelta(d),
-        AE::ThinkingComplete(c) => UiEvent::ThinkingComplete(c),
-        AE::ToolCallStarted(tc) => UiEvent::ToolStarted {
-            call_id: tc.id,
-            name: tc.name,
-            args: tc.args,
-        },
-        AE::ToolCallFinished {
-            call_id,
-            tool_name,
-            output,
-            is_error,
-        } => UiEvent::ToolFinished {
-            call_id,
-            name: tool_name,
-            output,
-            is_error,
-        },
-        AE::ToolProgress { call_id, message } => UiEvent::ToolProgress { call_id, message },
-        AE::ContextCompacted {
-            tokens_before,
-            tokens_after,
-            strategy,
-            turn,
-        } => UiEvent::ContextCompacted {
-            tokens_before,
-            tokens_after,
-            strategy: strategy.to_string(),
-            turn,
-        },
-        AE::TokenUsage {
-            input,
-            output,
-            cache_read,
-            cache_write,
-            cache_read_total,
-            cache_write_total,
-            max_tokens,
-            max_output_tokens,
-            cost_usd,
-        } => UiEvent::TokenUsage {
-            input,
-            output,
-            cache_read,
-            cache_write,
-            cache_read_total,
-            cache_write_total,
-            max_tokens,
-            max_output_tokens,
-            cost_usd,
-        },
-        // TurnComplete is handled by execute() directly (ordering guarantee).
-        AE::TurnComplete => return None,
-        AE::Aborted { partial_text } => UiEvent::Aborted { partial_text },
-        AE::Error(e) => UiEvent::Error(e),
-        AE::TodoUpdate(items) => {
-            UiEvent::TodoUpdate(serde_json::to_value(&items).unwrap_or(serde_json::Value::Null))
-        }
-        AE::ModeChanged(mode) => UiEvent::ModeChanged(format!("{mode:?}")),
-        AE::ModelChanged(m) => UiEvent::ModelChanged(m),
-        // Subagent / delegate / team observations pass through the outward
-        // plane so the frontend can render child-session views, delegate
-        // summaries, and collab segments. Complex payloads are carried as
-        // opaque JSON so the kernel stays dependency-free.
-        AE::SubagentStarted {
-            call_id,
-            handle_id,
-            description,
-            prompt,
-        } => UiEvent::SubagentStarted {
-            call_id,
-            handle_id,
-            description,
-            prompt,
-        },
-        AE::SubagentEvent {
-            call_id,
-            handle_id,
-            update,
-        } => UiEvent::SubagentEvent {
-            call_id,
-            handle_id,
-            update: serde_json::to_value(&update).unwrap_or(serde_json::Value::Null),
-        },
-        AE::DelegateSummary {
-            to_name,
-            task_title,
-            duration_ms,
-            status,
-            result_preview,
-        } => UiEvent::DelegateSummary {
-            to_name,
-            task_title,
-            duration_ms,
-            status,
-            result_preview,
-        },
-        AE::CollabEvent(e) => {
-            UiEvent::CollabEvent(serde_json::to_value(&e).unwrap_or(serde_json::Value::Null))
-        }
-        AE::PeerList(peers) => {
-            UiEvent::PeerList(serde_json::to_value(&peers).unwrap_or(serde_json::Value::Null))
-        }
-        // No renderable observation equivalent for these.
-        AE::Question { .. } | AE::QuestionAnswer { .. } | AE::TitleGenerated(_) => return None,
-    })
+    Some(ev)
 }
 
 /// The JSON `kind` tag that selects the single-turn engine.
@@ -441,14 +339,14 @@ impl TurnExecutor {
             sven_model::budget::estimate_request_tokens(&plan.summarize_request, &[], None);
         let request_fits = budget.is_none_or(|b| request_estimate <= b);
 
-        let (final_messages, strategy_label) = if request_fits {
+        let (final_messages, strategy_used) = if request_fits {
             match self.run_compaction_turn(&plan, model, context_window, configured_max_output).await {
                 Some(summary_text) if !summary_text.trim().is_empty() => {
-                    let strategy_label = match self.compaction.strategy {
-                        sven_config::CompactionStrategy::Structured => "structured",
-                        sven_config::CompactionStrategy::Narrative => "narrative",
+                    let strategy_used = match self.compaction.strategy {
+                        sven_config::CompactionStrategy::Structured => CompactionStrategyUsed::Structured,
+                        sven_config::CompactionStrategy::Narrative => CompactionStrategyUsed::Narrative,
                     };
-                    (sven_core::finish_compaction(plan, &summary_text), strategy_label)
+                    (sven_core::finish_compaction(plan, &summary_text), strategy_used)
                 }
                 _ => {
                     tracing::warn!(
@@ -458,7 +356,7 @@ impl TurnExecutor {
                     );
                     let mut fallback = messages.clone();
                     sven_core::emergency_compact(&mut fallback, plan.system_msg, self.compaction.keep_recent);
-                    (fallback, "emergency")
+                    (fallback, CompactionStrategyUsed::Emergency)
                 }
             }
         } else {
@@ -467,7 +365,7 @@ impl TurnExecutor {
             // down. Skip straight to the deterministic fallback.
             let mut fallback = messages.clone();
             sven_core::emergency_compact(&mut fallback, plan.system_msg, self.compaction.keep_recent);
-            (fallback, "emergency")
+            (fallback, CompactionStrategyUsed::Emergency)
         };
 
         let tokens_after: usize = final_messages.iter().map(Message::approx_tokens).sum();
@@ -477,7 +375,7 @@ impl TurnExecutor {
         obs.emit(UiEvent::ContextCompacted {
             tokens_before,
             tokens_after,
-            strategy: strategy_label.to_string(),
+            strategy: strategy_used,
             turn: 0,
         });
         final_messages

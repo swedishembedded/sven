@@ -199,9 +199,9 @@ impl EffectExecutor for ToolExecutor {
             // (emitted by the turn stream) and carries no inward semantics — the
             // authoritative result still flows via `Event::ToolSucceeded` /
             // `Event::ToolFailed` below.
-            obs.emit(UiEvent::ToolFinished {
+            obs.emit(UiEvent::ToolCallFinished {
                 call_id: display_id,
-                name: name.clone(),
+                tool_name: name.clone(),
                 output: output.content.clone(),
                 is_error: output.is_error,
             });

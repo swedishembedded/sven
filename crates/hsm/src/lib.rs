@@ -70,7 +70,7 @@ pub use error::{MachineError, Result};
 pub use event::{Event, EventKind, InternalEvent, ProposedToolCall};
 pub use ids::{ApprovalId, CorrelationId, MachineId, TaskId, TimerId, ToolCallId};
 pub use machine::Machine;
-pub use observation::{ObservationSink, UiEvent};
+pub use observation::{CompactionStrategyUsed, ObservationSink, UiEvent};
 pub use permissions::{
     capability_for_tool_name, classify, validate_effects_are_allowed, EffectDisposition,
     PermissionPolicy, PermissionPolicyBuilder, ToolCapability,

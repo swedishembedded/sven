@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{Context, ErasedRuntime, Event, PermissionPolicy, UiEvent};
+use sven_hsm::{CompactionStrategyUsed, Context, ErasedRuntime, Event, PermissionPolicy, UiEvent};
 use tokio::sync::Mutex;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -817,7 +817,7 @@ async fn long_thread_triggers_compaction_before_the_next_turn() {
         "tokens_before ({tokens_before}) must cover at least the seeded history ({tokens_before_seed})"
     );
     assert!(tokens_after < tokens_before, "compaction must actually shrink the thread");
-    assert_eq!(strategy, "structured");
+    assert_eq!(strategy, CompactionStrategyUsed::Structured);
 
     // Exactly two model calls: one to summarize, one for the real turn.
     assert_eq!(
@@ -956,7 +956,7 @@ async fn compaction_falls_back_to_emergency_when_the_summarization_call_fails() 
     rt.abort();
 
     assert!(
-        events.iter().any(|e| matches!(e, UiEvent::ContextCompacted { strategy, .. } if strategy == "emergency")),
+        events.iter().any(|e| matches!(e, UiEvent::ContextCompacted { strategy, .. } if *strategy == CompactionStrategyUsed::Emergency)),
         "must fall back to emergency compaction when the summarization call errors: {events:?}"
     );
     assert!(

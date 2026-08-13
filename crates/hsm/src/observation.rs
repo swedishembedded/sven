@@ -14,153 +14,18 @@
 //! The kernel also emits a [`UiEvent::Transition`] on this bus after every
 //! dispatch, giving observers a full transition trace.
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::sync::broadcast;
 
 /// A renderable event emitted on the outward observation plane.
 ///
-/// `UiEvent`s mirror the renderable subset of the legacy agent event stream.
-/// They never re-enter the inward event queue; they exist purely so frontends
+/// Re-exports [`sven_vocab::SessionEvent`] — the single, unified session
+/// event stream (`sven-core` re-exports the same type as `AgentEvent`). They
+/// never re-enter the inward event queue; they exist purely so frontends
 /// (TUI, GUI, CI, node, ACP) can render streaming output, tool progress,
 /// usage, and the transition trace while effects are in flight.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum UiEvent {
-    /// A streamed chunk of assistant text.
-    TextDelta(String),
-    /// The complete assistant text for a turn (after streaming finishes).
-    TextComplete(String),
-    /// A streamed chunk of model "thinking" / reasoning.
-    ThinkingDelta(String),
-    /// The complete thinking block (accumulated from `ThinkingDelta`).
-    ThinkingComplete(String),
-    /// A tool invocation has begun.
-    ToolStarted {
-        /// Correlates with the originating tool call.
-        call_id: String,
-        /// Tool name.
-        name: String,
-        /// Tool arguments.
-        args: Value,
-    },
-    /// A long-running tool is reporting incremental progress.
-    ToolProgress {
-        /// Correlates with the originating tool call.
-        call_id: String,
-        /// Short human-readable status line.
-        message: String,
-    },
-    /// A tool invocation has finished.
-    ToolFinished {
-        /// Correlates with the originating tool call.
-        call_id: String,
-        /// Tool name.
-        name: String,
-        /// Tool output (truncated for display by the frontend if needed).
-        output: String,
-        /// `true` if the tool reported an error.
-        is_error: bool,
-    },
-    /// Token usage update for the current turn.
-    TokenUsage {
-        /// Input tokens processed this request (excludes cache hits).
-        input: u32,
-        /// Output tokens generated this request.
-        output: u32,
-        /// Tokens served from the provider's prompt cache this turn.
-        cache_read: u32,
-        /// Tokens written to the provider's prompt cache this turn.
-        cache_write: u32,
-        /// Running total of cache-read tokens for the session.
-        cache_read_total: u32,
-        /// Running total of cache-write tokens for the session.
-        cache_write_total: u32,
-        /// Model context window (tokens); zero if unknown.
-        max_tokens: usize,
-        /// Model max output tokens; zero if unknown.
-        max_output_tokens: usize,
-        /// Cost in USD when reported by the provider.
-        cost_usd: Option<f64>,
-    },
-    /// The session context was compacted.
-    ContextCompacted {
-        /// Token count before compaction.
-        tokens_before: usize,
-        /// Token count after compaction.
-        tokens_after: usize,
-        /// Strategy used (e.g. `"structured"`, `"narrative"`, `"emergency"`).
-        strategy: String,
-        /// Agentic round in which compaction fired (0 = pre-submit).
-        turn: u32,
-    },
-    /// The todo list was updated (opaque structured payload).
-    TodoUpdate(Value),
-    /// The agent mode changed.
-    ModeChanged(String),
-    /// The active model changed (resolved `provider/id`).
-    ModelChanged(String),
-    /// The machine took a transition (full transition trace).
-    Transition {
-        /// State label before the dispatch.
-        from: String,
-        /// State label after the dispatch.
-        to: String,
-        /// The kind of event dispatched.
-        event: String,
-    },
-    /// A recoverable error occurred.
-    Error(String),
-    /// The current user turn finished.
-    TurnComplete,
-    /// The current run was aborted; carries any streamed-but-uncommitted text.
-    Aborted {
-        /// Partial assistant text streamed before the abort.
-        partial_text: String,
-    },
-    /// A subagent was started via the task tool; the frontend creates a child
-    /// session view. Pure observation pass-through — the kernel neither
-    /// interprets nor acts on these fields.
-    SubagentStarted {
-        /// Tool-call ID of the spawning `task` call.
-        call_id: String,
-        /// Buffer handle identifying the subagent session.
-        handle_id: String,
-        /// Short human-readable description for the sidebar.
-        description: String,
-        /// Full prompt sent to the subagent (first user message in its view).
-        prompt: String,
-    },
-    /// A structured event streamed from a running subagent. `update` carries an
-    /// opaque, serialized `SubagentUpdate` (the kernel stays dependency-free of
-    /// the tool/event types).
-    SubagentEvent {
-        /// Tool-call ID of the spawning `task` call.
-        call_id: String,
-        /// Buffer handle identifying the subagent session.
-        handle_id: String,
-        /// Serialized `SubagentUpdate` payload (opaque to the kernel).
-        update: Value,
-    },
-    /// A completed delegate subtree, rendered as a collapsible summary segment.
-    DelegateSummary {
-        /// Name of the agent the work was delegated to.
-        to_name: String,
-        /// Short title of the delegated task.
-        task_title: String,
-        /// Wall-clock duration in milliseconds.
-        duration_ms: u64,
-        /// `"completed"`, `"failed"`, or `"partial"`.
-        status: String,
-        /// First meaningful line of the result, shown collapsed.
-        result_preview: String,
-    },
-    /// A team collaboration lifecycle event, shown as a collapsible chat
-    /// segment. Carries an opaque, serialized `CollabEvent`.
-    CollabEvent(Value),
-    /// List of peers (node proxy / list_peers). Carries an opaque, serialized
-    /// `Vec<PeerInfo>`.
-    PeerList(Value),
-}
+pub use sven_vocab::SessionEvent as UiEvent;
+/// Re-export of [`UiEvent::ContextCompacted`]'s `strategy` field type.
+pub use sven_vocab::CompactionStrategyUsed;
 
 /// A broadcast sender for [`UiEvent`]s — the outward observation plane.
 ///

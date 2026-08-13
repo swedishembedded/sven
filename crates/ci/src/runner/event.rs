@@ -353,6 +353,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         | AgentEvent::QuestionAnswer { .. }
         | AgentEvent::CollabEvent(_)
         | AgentEvent::TitleGenerated(_)
+        | AgentEvent::Transition { .. }
         | AgentEvent::PeerList(_) => {}
         // A P2P-team delegate subtree completed (`sven-node`'s `delegate`
         // tool — a distinct feature from the `task` tool's ACP subagents
