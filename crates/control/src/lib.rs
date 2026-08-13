@@ -248,6 +248,18 @@ pub enum ControlEvent {
         session_id: Uuid,
         entries: Vec<HistoryEntry>,
     },
+
+    /// Any event variant this build doesn't recognize.
+    ///
+    /// The control protocol crosses a real network boundary (operator client
+    /// to node, or node to cloud) where the two ends are not guaranteed to be
+    /// built from the same release. Without this catch-all, a client built
+    /// against an older protocol version would fail to deserialize (and drop)
+    /// every event on the stream the moment the server adds a variant, not
+    /// just the new one. Never constructed directly; only reachable through
+    /// deserialization of an event this build's `ControlEvent` doesn't define.
+    #[serde(other)]
+    Unknown,
 }
 
 // ── History replay types ──────────────────────────────────────────────────────
@@ -290,10 +302,11 @@ pub struct PeerListEntry {
 }
 
 /// Lifecycle state of an agent session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionState {
     /// The session exists but is not currently processing input.
+    #[default]
     Idle,
     /// The agent is actively running (model call or tool execution in flight).
     Running,
@@ -303,6 +316,26 @@ pub enum SessionState {
     Completed,
     /// The session was cancelled.
     Cancelled,
+}
+
+impl SessionState {
+    /// `true` once the session accepts no more input.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled)
+    }
+
+    /// Human-readable label for status lines.
+    #[must_use]
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::AwaitingApproval => "awaiting approval",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+        }
+    }
 }
 
 /// Tool schema entry returned by [`ControlEvent::ToolList`].

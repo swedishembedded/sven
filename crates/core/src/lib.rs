@@ -23,7 +23,7 @@ pub use compact::{
     prepare_compaction, smart_truncate, CompactionPlan,
 };
 pub use completion::development_complete;
-pub use events::{AgentEvent, AgentEventVisitor, CompactionStrategyUsed, PeerInfo};
+pub use events::{AgentEvent, CompactionStrategyUsed, PeerInfo};
 pub use machines::{
     reactive_agent::ReactiveAgentMachine,
     sdlc::task::TaskMachine,

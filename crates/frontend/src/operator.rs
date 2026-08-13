@@ -5,7 +5,7 @@
 //!
 //! The cloud control plane exposes one control endpoint per tenant, each
 //! speaking the same JSON-over-WebSocket protocol as a plain sven node
-//! ([`crate::control`]). This module lets a frontend *operate* the platform
+//! ([`sven_control`]). This module lets a frontend *operate* the platform
 //! rather than drive a single chat:
 //!
 //! - [`OperatorConsole`] — a **pure** projection that folds the tenant-tagged
@@ -27,7 +27,8 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::control::{ControlCommand, ControlEvent};
+use sven_control::{ControlCommand, ControlEvent, SessionState};
+
 use crate::node_agent::{connect_control_ws, send_cmd};
 use crate::types::NodeBackend;
 
@@ -74,49 +75,6 @@ pub enum TenantSelection {
 
 // ── Session view ──────────────────────────────────────────────────────────────
 
-/// Lifecycle phase of a session, parsed from the wire `state` string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SessionPhase {
-    #[default]
-    Idle,
-    Running,
-    AwaitingApproval,
-    Completed,
-    Cancelled,
-}
-
-impl SessionPhase {
-    /// Parses the snake_case wire name; unknown names map to `Idle`.
-    #[must_use]
-    pub fn parse(state: &str) -> Self {
-        match state {
-            "running" => Self::Running,
-            "awaiting_approval" => Self::AwaitingApproval,
-            "completed" => Self::Completed,
-            "cancelled" => Self::Cancelled,
-            _ => Self::Idle,
-        }
-    }
-
-    /// `true` once the session accepts no more input.
-    #[must_use]
-    pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Cancelled)
-    }
-
-    /// Human-readable label for status lines.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Running => "running",
-            Self::AwaitingApproval => "awaiting approval",
-            Self::Completed => "completed",
-            Self::Cancelled => "cancelled",
-        }
-    }
-}
-
 /// A tool call waiting for an operator decision.
 #[derive(Debug, Clone)]
 pub struct PendingApproval {
@@ -132,7 +90,7 @@ pub struct SessionView {
     pub session_id: Uuid,
     /// Agent mode wire name (empty until a `SessionList` fills it in).
     pub mode: String,
-    pub phase: SessionPhase,
+    pub phase: SessionState,
     pub working_dir: Option<String>,
     /// ISO-8601 creation timestamp (empty until a `SessionList` fills it in).
     pub created_at: String,
@@ -154,7 +112,7 @@ impl SessionView {
             tenant_id: tenant_id.to_string(),
             session_id,
             mode: String::new(),
-            phase: SessionPhase::default(),
+            phase: SessionState::default(),
             working_dir: None,
             created_at: String::new(),
             output_buffer: String::new(),
@@ -288,8 +246,8 @@ impl OperatorConsole {
                     .retain(|(tenant, id), _| tenant != tenant_id || listed.contains(id));
                 for info in sessions {
                     let row = self.row(tenant_id, info.id);
-                    row.mode = info.mode;
-                    row.phase = SessionPhase::parse(&info.state);
+                    row.mode = info.mode.to_string();
+                    row.phase = info.state;
                     row.working_dir = info.working_dir;
                     row.created_at = info.created_at;
                 }
@@ -300,7 +258,7 @@ impl OperatorConsole {
                 role,
             } => {
                 let row = self.row(tenant_id, session_id);
-                row.phase = SessionPhase::Running;
+                row.phase = SessionState::Running;
                 if role != "thinking" {
                     row.output_buffer.push_str(&delta);
                 }
@@ -322,7 +280,7 @@ impl OperatorConsole {
                 ..
             } => {
                 let row = self.row(tenant_id, session_id);
-                row.phase = SessionPhase::Running;
+                row.phase = SessionState::Running;
                 row.current_tool = Some(tool_name);
             }
             ControlEvent::ToolResult {
@@ -341,7 +299,7 @@ impl OperatorConsole {
                 args,
             } => {
                 let row = self.row(tenant_id, session_id);
-                row.phase = SessionPhase::AwaitingApproval;
+                row.phase = SessionState::AwaitingApproval;
                 if !row.pending_approvals.iter().any(|a| a.call_id == call_id) {
                     row.pending_approvals.push(PendingApproval {
                         call_id,
@@ -352,7 +310,7 @@ impl OperatorConsole {
             }
             ControlEvent::SessionState { session_id, state } => {
                 let row = self.row(tenant_id, session_id);
-                row.phase = SessionPhase::parse(&state);
+                row.phase = state;
                 if row.phase.is_terminal() {
                     row.current_tool = None;
                     row.pending_approvals.clear();
@@ -373,6 +331,11 @@ impl OperatorConsole {
             }
             ControlEvent::ToolList { .. }
             | ControlEvent::PeerList { .. }
+            | ControlEvent::ToolCallOutput { .. }
+            | ControlEvent::WebDeviceList { .. }
+            | ControlEvent::WebDeviceUpdated { .. }
+            | ControlEvent::WebDeviceError { .. }
+            | ControlEvent::History { .. }
             | ControlEvent::Unknown => {}
         }
     }
@@ -446,6 +409,18 @@ enum Routed {
     },
 }
 
+/// Parses the lowercase wire name of an [`OperatorRequest::NewSession`] mode
+/// into an [`sven_config::AgentMode`]; unknown names fall back to `Agent`.
+fn parse_agent_mode(s: &str) -> sven_config::AgentMode {
+    match s {
+        "research" => sven_config::AgentMode::Research,
+        "plan" => sven_config::AgentMode::Plan,
+        "chat" => sven_config::AgentMode::Chat,
+        "sdlc" => sven_config::AgentMode::Sdlc,
+        _ => sven_config::AgentMode::Agent,
+    }
+}
+
 /// Maps an [`OperatorRequest`] onto the control protocol. Pure.
 fn route_request(request: OperatorRequest) -> Routed {
     match request {
@@ -455,14 +430,17 @@ fn route_request(request: OperatorRequest) -> Routed {
             tenant_id,
             session_id,
             mode,
-        } => Routed::ToTenant {
-            tenant_id,
-            command: ControlCommand::NewSession {
-                id: session_id,
-                mode,
-                working_dir: None,
-            },
-        },
+        } => {
+            let mode = parse_agent_mode(&mode);
+            Routed::ToTenant {
+                tenant_id,
+                command: ControlCommand::NewSession {
+                    id: session_id,
+                    mode,
+                    working_dir: None,
+                },
+            }
+        }
         OperatorRequest::SendInput {
             tenant_id,
             session_id,
@@ -727,17 +705,17 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::control::SessionInfo;
+    use sven_control::SessionInfo;
 
     fn console() -> OperatorConsole {
         OperatorConsole::new(vec![TenantInfo::new("acme"), TenantInfo::new("globex")])
     }
 
-    fn info(id: Uuid, state: &str) -> SessionInfo {
+    fn info(id: Uuid, state: SessionState) -> SessionInfo {
         SessionInfo {
             id,
-            mode: "agent".into(),
-            state: state.into(),
+            mode: sven_config::AgentMode::Agent,
+            state,
             working_dir: None,
             created_at: "2026-07-14T12:00:00Z".into(),
         }
@@ -782,22 +760,22 @@ mod tests {
         c.apply(
             "acme",
             ControlEvent::SessionList {
-                sessions: vec![info(a, "running")],
+                sessions: vec![info(a, SessionState::Running)],
             },
         );
         c.apply(
             "globex",
             ControlEvent::SessionList {
-                sessions: vec![info(b, "idle")],
+                sessions: vec![info(b, SessionState::Idle)],
             },
         );
 
         let visible = c.visible_sessions();
         assert_eq!(visible.len(), 2, "cross-tenant view shows both");
         let acme = c.session("acme", a).unwrap();
-        assert_eq!(acme.phase, SessionPhase::Running);
+        assert_eq!(acme.phase, SessionState::Running);
         assert_eq!(acme.mode, "agent");
-        assert_eq!(c.session("globex", b).unwrap().phase, SessionPhase::Idle);
+        assert_eq!(c.session("globex", b).unwrap().phase, SessionState::Idle);
     }
 
     #[test]
@@ -807,13 +785,13 @@ mod tests {
         c.apply(
             "acme",
             ControlEvent::SessionList {
-                sessions: vec![info(a, "running")],
+                sessions: vec![info(a, SessionState::Running)],
             },
         );
         c.apply(
             "globex",
             ControlEvent::SessionList {
-                sessions: vec![info(b, "running")],
+                sessions: vec![info(b, SessionState::Running)],
             },
         );
 
@@ -831,19 +809,19 @@ mod tests {
         c.apply(
             "acme",
             ControlEvent::SessionList {
-                sessions: vec![info(old, "running"), info(kept, "running")],
+                sessions: vec![info(old, SessionState::Running), info(kept, SessionState::Running)],
             },
         );
         c.apply(
             "acme",
             ControlEvent::SessionList {
-                sessions: vec![info(kept, "completed")],
+                sessions: vec![info(kept, SessionState::Completed)],
             },
         );
         assert!(c.session("acme", old).is_none());
         assert_eq!(
             c.session("acme", kept).unwrap().phase,
-            SessionPhase::Completed
+            SessionState::Completed
         );
     }
 
@@ -862,7 +840,7 @@ mod tests {
         c.apply(
             "acme",
             ControlEvent::SessionList {
-                sessions: vec![info(sid, "idle")],
+                sessions: vec![info(sid, SessionState::Idle)],
             },
         );
         assert_eq!(
@@ -877,7 +855,7 @@ mod tests {
         c.apply(
             "intruder",
             ControlEvent::SessionList {
-                sessions: vec![info(Uuid::new_v4(), "running")],
+                sessions: vec![info(Uuid::new_v4(), SessionState::Running)],
             },
         );
         assert!(c.visible_sessions().is_empty());
@@ -900,7 +878,7 @@ mod tests {
         {
             let row = c.session("acme", sid).unwrap();
             assert_eq!(row.output_buffer, "hello");
-            assert_eq!(row.phase, SessionPhase::Running);
+            assert_eq!(row.phase, SessionState::Running);
         }
         c.apply(
             "acme",
@@ -929,7 +907,7 @@ mod tests {
         );
         let row = c.session("acme", sid).unwrap();
         assert!(row.output_buffer.is_empty());
-        assert_eq!(row.phase, SessionPhase::Running);
+        assert_eq!(row.phase, SessionState::Running);
     }
 
     #[test]
@@ -957,7 +935,7 @@ mod tests {
         );
         {
             let row = c.session("acme", sid).unwrap();
-            assert_eq!(row.phase, SessionPhase::AwaitingApproval);
+            assert_eq!(row.phase, SessionState::AwaitingApproval);
             assert_eq!(row.pending_approvals.len(), 1);
             assert_eq!(row.pending_approvals[0].tool_name, "run_shell");
         }
@@ -1001,11 +979,11 @@ mod tests {
             "acme",
             ControlEvent::SessionState {
                 session_id: sid,
-                state: "completed".into(),
+                state: SessionState::Completed,
             },
         );
         let row = c.session("acme", sid).unwrap();
-        assert_eq!(row.phase, SessionPhase::Completed);
+        assert_eq!(row.phase, SessionState::Completed);
         assert!(row.phase.is_terminal());
         assert!(row.current_tool.is_none());
         assert!(row.pending_approvals.is_empty());
@@ -1046,13 +1024,13 @@ mod tests {
         c.apply(
             "acme",
             ControlEvent::SessionList {
-                sessions: vec![info(a, "running")],
+                sessions: vec![info(a, SessionState::Running)],
             },
         );
         c.apply(
             "globex",
             ControlEvent::SessionList {
-                sessions: vec![info(b, "running")],
+                sessions: vec![info(b, SessionState::Running)],
             },
         );
         c.select(TenantSelection::Tenant("acme".into()));

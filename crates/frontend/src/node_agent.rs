@@ -12,7 +12,7 @@
 //! # Protocol
 //!
 //! The bridge speaks the node's JSON-over-WebSocket control protocol
-//! ([`crate::control`]):
+//! ([`sven_control`]):
 //!
 //! - `AgentRequest::Submit { content }` → `NewSession` + `SendInput`
 //! - `ControlEvent::OutputDelta { role: "assistant" }` → `AgentEvent::TextDelta`
@@ -35,8 +35,9 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use sven_control::{ControlCommand as Cmd, ControlEvent as Evt, SessionState};
+
 use crate::agent::AgentRequest;
-use crate::control::{ControlCommand as Cmd, ControlEvent as Evt};
 
 // ── Public entry points ────────────────────────────────────────────────────────
 
@@ -174,7 +175,7 @@ pub async fn node_agent_task(
             &ws_out_tx,
             &Cmd::NewSession {
                 id: sid,
-                mode: "agent".to_string(),
+                mode: sven_config::AgentMode::Agent,
                 working_dir: None,
             },
         )
@@ -437,7 +438,7 @@ async fn handle_event(
             }
         }
         Evt::SessionState { state, .. } => {
-            if state == "completed" || state == "cancelled" {
+            if state == SessionState::Completed || state == SessionState::Cancelled {
                 if !thinking_buf.is_empty() {
                     let content = std::mem::take(thinking_buf);
                     let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
@@ -454,7 +455,14 @@ async fn handle_event(
             let _ = tx.send(AgentEvent::Error(message)).await;
             return true;
         }
-        Evt::ToolList { .. } | Evt::SessionList { .. } | Evt::Unknown => {}
+        Evt::ToolList { .. }
+        | Evt::SessionList { .. }
+        | Evt::ToolCallOutput { .. }
+        | Evt::WebDeviceList { .. }
+        | Evt::WebDeviceUpdated { .. }
+        | Evt::WebDeviceError { .. }
+        | Evt::History { .. }
+        | Evt::Unknown => {}
         Evt::PeerList { peers } => {
             let peer_infos = peers
                 .into_iter()
@@ -596,14 +604,14 @@ mod tests {
     // 80ms anim_tick repaints the screen forever.
     #[tokio::test]
     async fn session_state_completed_maps_to_turn_complete() {
-        for state in ["completed", "cancelled"] {
+        for state in [SessionState::Completed, SessionState::Cancelled] {
             let (tx, mut rx) = mpsc::channel(4);
             let (ws_tx, _ws_rx) = mpsc::unbounded_channel();
             let mut buf = String::new();
             let done = handle_event(
                 Evt::SessionState {
                     session_id: Uuid::nil(),
-                    state: state.to_string(),
+                    state: state.clone(),
                 },
                 &tx,
                 &ws_tx,
@@ -628,7 +636,7 @@ mod tests {
         let done = handle_event(
             Evt::SessionState {
                 session_id: Uuid::nil(),
-                state: "running".to_string(),
+                state: SessionState::Running,
             },
             &tx,
             &ws_tx,
