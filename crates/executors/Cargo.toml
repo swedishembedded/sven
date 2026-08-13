@@ -6,6 +6,7 @@ description  = "Effect executors for the Sven HSM runtime"
 license      = "Apache-2.0"
 
 [dependencies]
+sven-chain    = { path = "../chain" }
 sven-config   = { path = "../config" }
 sven-hsm      = { path = "../hsm" }
 sven-llm      = { path = "../llm" }
@@ -14,10 +15,7 @@ sven-tools    = { path = "../tools" }
 sven-model    = { path = "../model" }
 sven-wire     = { path = "../wire" }
 anyhow        = { workspace = true }
-thiserror     = { workspace = true }
-serde         = { workspace = true }
 serde_json    = { workspace = true }
-sha2          = { workspace = true }
 tokio         = { workspace = true }
 chrono        = { workspace = true }
 async-trait   = { workspace = true }

@@ -54,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **sven-node**: a session that ended via a kernel-internal `UiEvent::Aborted` (a cancellation or watchdog timeout that didn't go through the explicit `CancelSession` command) was marked `Completed` in the node's session table and never broadcast a `ControlEvent::SessionState` at all — every connected operator saw the session simply stop updating, indistinguishable from a normal finish, instead of `Cancelled`. `cloud/src/runtime.rs` already hand-compensated for the equivalent gap in `ui_event_to_control` (which has no mapping for `Aborted`); the node's observation-drain task now carries an `aborted` flag through its internal completion channel and applies the same compensation `handle_cancel`'s explicit path already did. Regression test: `aborted_completion_sets_cancelled_and_broadcasts_it`.
 
+### Added
+- **sven-chain**: new crate — the sha256 hash-chain primitives (`append_chain`/`read_chain`/`verify_chain`, `ChainedLine`, `ChainError`, `GENESIS_HASH`) extracted verbatim out of `sven-executors`' `audit.rs`, with zero dependencies on other sven crates. This was the entire reason `sven-metering` (pricing/billing) and `sven-companion` (customer-premises local hands) depended on the effects/I/O executor layer: neither needed anything else from it.
+
+### Changed
+- **sven-executors, sven-metering, sven-companion**: `AuditExecutor` now builds on `sven_chain` instead of defining the chain format itself; `sven-metering`'s credit ledger and `sven-companion`'s local audit copy do the same. Deletes the `sven-metering → sven-executors` and `sven-companion → sven-executors` (production) dependency edges — companion's remaining need for `sven-executors::RemoteToolExecutor` is test-only (verifying the cloud-sandbox loopback path), so that dependency moves to `[dev-dependencies]`. `sven-executors` drops its now-unused `sha2`/`serde`/`thiserror` dependencies (they backed only the code that moved).
+
 ## [1.9.0] - 2026-03-22
 
 ### Added

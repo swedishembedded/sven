@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     ".",
     "crates/hsm",
+    "crates/chain",
     "crates/config",
     "crates/model",
     "crates/image",

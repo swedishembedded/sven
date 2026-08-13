@@ -36,6 +36,7 @@ order = [
 
 [crates]
 # foundation
+sven-chain       = "foundation"
 sven-config      = "foundation"
 sven-hsm         = "foundation"
 sven-image       = "foundation"
@@ -142,19 +143,6 @@ control protocol. Fix: same as sven-wire, Phase 2.1-2.2 moves those types to
 sven-vocab (foundation tier).
 """
 
-[[allow.upward]]
-from = "sven-metering"
-to   = "sven-executors"
-why  = """
-sven-metering (domain tier: pricing + credit ledger) depends on
-sven-executors (machines tier) only for three sha256 append-only JSONL
-hash-chain helpers (append_chain/read_chain/verify_chain, co-located with
-AuditExecutor in executors/src/audit.rs) that have nothing to do with effects
-or I/O. Fix: Phase 2.3 of the refactor plan extracts those three functions
-into a new sven-chain crate (foundation tier); sven-metering and
-sven-companion both repoint at that and this edge is deleted.
-"""
-
 # ── Known dead/unused internal dependencies. ────────────────────────────────
 # A dependency is "dead" here if crate `crate` declares a normal (non-dev) dep
 # on `dep` but has zero real (non-comment) `dep_ident::` references under its
@@ -249,9 +237,6 @@ lines = 1196
 [[allow.large_file]]
 path = "crates/tui/src/chat/markdown.rs"
 lines = 1185
-[[allow.large_file]]
-path = "crates/executors/src/audit.rs"
-lines = 1168
 [[allow.large_file]]
 path = "crates/input/src/conversation.rs"
 lines = 1165
