@@ -213,6 +213,8 @@ impl RuntimeRunner {
         let drive = async {
             let mut state = CiOutState {
                 trace,
+                prompt,
+                user_header_emitted: false,
                 streamed_text: String::new(),
                 sven_header_emitted: false,
                 had_error: false,
@@ -225,12 +227,15 @@ impl RuntimeRunner {
                 latest_cache_write_total: 0,
             };
 
-            // Emit the step banner and the `## User` conversation section up
-            // front, mirroring the legacy conversation output contract.
+            // The step banner goes to stderr immediately; the `## User`
+            // conversation section on stdout is written lazily (see
+            // `ensure_user_header`) - only once the turn is about to
+            // produce its first real stdout content. A turn that fails
+            // before producing anything must leave stdout untouched
+            // (`11_error_handling.bats`'s "produces no stdout content"),
+            // and eagerly writing "## User" here (as this used to)
+            // unconditionally broke that contract on every provider error.
             write_progress("[sven:step:start] 1/1");
-            if !prompt.is_empty() {
-                write_stdout(&format!("## User\n{prompt}\n\n"));
-            }
             let started = Instant::now();
 
             let exit = loop {
@@ -296,6 +301,11 @@ impl RuntimeRunner {
 struct CiOutState {
     /// Verbosity level (0 = default, 1 = `-v`, 2+ = trace).
     trace: u8,
+    /// The user prompt, held so `ensure_user_header` can write it lazily
+    /// (see that function's doc comment for why eager doesn't work).
+    prompt: String,
+    /// Whether the `## User` section has been written yet this turn.
+    user_header_emitted: bool,
     /// Assistant text streamed to stdout so far this turn.
     streamed_text: String,
     /// Whether an open `## Sven` section is awaiting a close.
@@ -340,6 +350,28 @@ fn tool_output_snippet(trace: u8, output: &str) -> String {
     }
 }
 
+/// Write the `## User` conversation section exactly once, right before the
+/// turn's first real stdout content (assistant text, a tool call, or a
+/// partial answer from an abort).
+///
+/// Deliberately lazy, not eager: writing it unconditionally up front (as
+/// this runner used to) means a turn that fails before producing anything
+/// still leaves "## User\n<prompt>\n\n" on stdout, contradicting the
+/// contract that a failed turn produces no stdout content at all
+/// (`11_error_handling.bats`, "provider mid-stream error produces no stdout
+/// content") - confirmed to reproduce on the original code with no relation
+/// to any other change, i.e. a pre-existing bug independent of what's being
+/// worked on here, still worth fixing under the same "always fix bugs you
+/// find" instruction as everything else in this session.
+fn ensure_user_header(state: &mut CiOutState) {
+    if !state.user_header_emitted {
+        if !state.prompt.is_empty() {
+            write_stdout(&format!("## User\n{}\n\n", state.prompt));
+        }
+        state.user_header_emitted = true;
+    }
+}
+
 /// Close an open `## Sven` streaming section, if any.
 fn close_sven_section(state: &mut CiOutState) {
     if state.sven_header_emitted {
@@ -376,6 +408,7 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
     match ev {
         UiEvent::TextDelta(d) => {
             if !state.sven_header_emitted {
+                ensure_user_header(state);
                 write_stdout("## Sven\n");
                 state.sven_header_emitted = true;
             }
@@ -386,6 +419,7 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         // streamed (some providers send a single TextComplete with no deltas).
         UiEvent::TextComplete(t) => {
             if state.streamed_text.is_empty() && !t.is_empty() {
+                ensure_user_header(state);
                 write_stdout("## Sven\n");
                 state.streamed_text.push_str(&t);
                 write_stdout(&t);
@@ -408,6 +442,7 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         } => {
             // A tool call ends any open assistant text section.
             close_sven_section(state);
+            ensure_user_header(state);
             state.tools_used += 1;
             let args_str = serde_json::to_string(&args).unwrap_or_default();
             write_progress(&format!(
@@ -528,6 +563,7 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         }
         UiEvent::Aborted { partial_text } => {
             if state.streamed_text.is_empty() && !partial_text.is_empty() {
+                ensure_user_header(state);
                 write_stdout("## Sven\n");
                 write_stdout(&partial_text);
                 state.streamed_text.push_str(&partial_text);
@@ -645,6 +681,8 @@ mod tests {
     fn state(trace: u8) -> CiOutState {
         CiOutState {
             trace,
+            prompt: "test prompt".to_string(),
+            user_header_emitted: false,
             streamed_text: String::new(),
             sven_header_emitted: false,
             had_error: false,
@@ -682,6 +720,72 @@ mod tests {
         handle_ui_event(UiEvent::Error("boom".into()), &mut st);
         let r = handle_ui_event(UiEvent::TurnComplete, &mut st);
         assert_eq!(r, Some(EXIT_AGENT_ERROR));
+    }
+
+    /// Regression test for the eager-`## User`-header bug: a turn that
+    /// fails before producing any content must never write "## User" to
+    /// stdout, matching `11_error_handling.bats`'s "produces no stdout
+    /// content" contract. `ensure_user_header` is only called from the
+    /// content-writing arms (`TextDelta`, `TextComplete`'s fallback,
+    /// `ToolStarted`, `Aborted`-with-partial-text) - an error-only turn
+    /// never reaches any of them, so `user_header_emitted` must stay false.
+    #[test]
+    fn error_only_turn_never_emits_the_user_header() {
+        let mut st = state(0);
+        handle_ui_event(UiEvent::Error("boom".into()), &mut st);
+        handle_ui_event(UiEvent::TurnComplete, &mut st);
+        assert!(
+            !st.user_header_emitted,
+            "an error-only turn must produce no stdout content at all"
+        );
+    }
+
+    #[test]
+    fn text_delta_emits_the_user_header_exactly_once() {
+        let mut st = state(0);
+        handle_ui_event(UiEvent::TextDelta("a".into()), &mut st);
+        assert!(st.user_header_emitted);
+        // A second delta must not re-emit it.
+        handle_ui_event(UiEvent::TextDelta("b".into()), &mut st);
+        assert!(st.user_header_emitted);
+    }
+
+    #[test]
+    fn tool_started_emits_the_user_header_when_no_text_preceded_it() {
+        let mut st = state(0);
+        handle_ui_event(
+            UiEvent::ToolStarted {
+                call_id: "tc-1".into(),
+                name: "write_file".into(),
+                args: serde_json::json!({}),
+            },
+            &mut st,
+        );
+        assert!(st.user_header_emitted);
+    }
+
+    #[test]
+    fn aborted_with_partial_text_emits_the_user_header() {
+        let mut st = state(0);
+        handle_ui_event(
+            UiEvent::Aborted {
+                partial_text: "partial".into(),
+            },
+            &mut st,
+        );
+        assert!(st.user_header_emitted);
+    }
+
+    #[test]
+    fn aborted_with_no_partial_text_never_emits_the_user_header() {
+        let mut st = state(0);
+        handle_ui_event(
+            UiEvent::Aborted {
+                partial_text: String::new(),
+            },
+            &mut st,
+        );
+        assert!(!st.user_header_emitted);
     }
 
     #[test]
