@@ -17,8 +17,10 @@ briefly and was removed - the TUI is the only interactive local surface.)
 - **Key principle**: The HSM is the deterministic process kernel; the LLM is an
   untrusted reasoning service; tools are invoked exclusively through typed
   `Effect` values emitted by HSM transitions. **Transition functions must stay
-  pure (no I/O).** All I/O happens in executors (`sven-executors`), the only
-  place the outside world is touched.
+  pure (no I/O).** `sven-core` (the `Machine` impls) has no path to
+  `sven-model`/`sven-tools` at all. The outside world is touched only by
+  `sven-executors`' `EffectExecutor`s and the impure turn primitives they call
+  into (`sven-turn`'s `stream_turn`/`compact`) - never from a transition.
 - **Cloud model**: the kernel (the "brain") can run in the cloud while tools
   (the "hands") execute on customer premises via a `RemoteToolExecutor` over an
   outbound WSS tether. Credentials never leave the customer boundary.
@@ -82,7 +84,8 @@ The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) 
 | `sven-input` | ATIF trajectory-backed session store (`trace_session`), legacy YAML chat import, markdown history, conversation parse/render |
 | **`trace`** | **ATIF v1.7 trajectory format** (package name `trace`, deliberately without the `sven-` prefix): `Trajectory`/`TraceStep`/`AgentProfile`/etc. model, spec validation (`validate_trajectory`), atomic whole-document JSON persistence with opt-in concurrent-modification detection (the interactive surfaces currently pass `expected = None`), header-only fast reads, NDJSON step streaming. Zero dependencies on other sven crates - `sven-input::trace_session` is the sole consumer. |
 | `sven-tools` | Tool suite, `Tool`/`ToolDisplay` traits, `ApprovalPolicy`, `ToolPolicy`/`RolePolicy` (fs_root jail), `PermissionRequester`, `ToolRegistry` (`execute` / `execute_with_requester` / `execute_unattended`) |
-| `sven-core` | HSM machines: `ReactiveAgentMachine`, `SdlcMachine`, `TaskMachine`, `ModeRegistry`, `loop_core`; `AgentEvent` + the kernel→AgentEvent adapter |
+| `sven-core` | Pure HSM machines: `ReactiveAgentMachine`, `SdlcMachine`, `TaskMachine`, `ModeRegistry`, `loop_core`. Re-exports `sven-turn` and `sven_vocab::SessionEvent` (as `AgentEvent`) unchanged for existing call sites |
+| `sven-turn` | Impure turn primitives, one tier below `sven-core`/`sven-executors`: `stream_turn` (the real LLM streaming call), context compaction (`compact_session`/`smart_truncate`/...), tool-arg JSON repair, system-prompt assembly |
 | `sven-runtime` | Shared runtime utils: workspace root, skill/agent/knowledge discovery |
 | `sven-bootstrap` | `RuntimeBuilder` (assembles the kernel from config + mode; `with_effect_executor`, `with_principal`), `SessionSupervisor`, `SessionBundle`/`RuntimeHandle` |
 | `sven-ci` | Headless runner: `RuntimeRunner` (single-shot HSM driver) + workflow orchestration (`--file`, `--var`, jsonl/chat I/O, artifacts, output formats) driving the kernel |

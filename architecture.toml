@@ -148,20 +148,6 @@ kernel-local opaque-payload enum, since SessionEvent's typed payloads
 dependencies of its own, so this can never become a cycle.
 """
 
-[[same_layer]]
-from = "sven-executors"
-to   = "sven-core"
-why  = """
-TEMPORARY, tracked for Phase 4.1-4.2 of the refactor plan. This is NOT a
-legitimate peer edge: core/src/stream_turn.rs (the actual async LLM call) and
-core/src/compact.rs are impure turn-execution primitives misfiled in the
-"pure machines" crate. Nothing under core/src/machines/ imports sven_model;
-stream_turn.rs and compact.rs do. Phase 4.1 extracts them into a new
-sven-turn crate (domain tier); sven-executors depends on that instead and this
-same-tier edge disappears rather than being legitimized. See
-docs/adr/ (refactor plan) for the full analysis. Delete this entry when Phase
-4.1-4.2 land.
-"""
 
 # ── Known upward (illegal) edges, each with a fix owner and a why. ─────────
 # None currently outstanding. sven-wire and sven-control both depended on

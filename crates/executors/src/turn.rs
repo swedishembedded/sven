@@ -10,7 +10,7 @@
 //! 2. Loads a snapshot of the named thread from the shared [`ThreadStore`].
 //! 3. Resolves the model provider (per-state override or default).
 //! 4. Resolves tool schemas from the registry for the requested tool names.
-//! 5. Calls [`sven_core::stream_turn`] which streams a single model response,
+//! 5. Calls [`sven_turn::stream_turn`] which streams a single model response,
 //!    collecting proposed tool calls (accumulation-only, no dispatch).
 //! 6. Appends the assistant turn (text + tool-call messages) to the thread
 //!    **append-only** (cache-safety invariant).
@@ -111,16 +111,14 @@ fn register_calls(
 }
 
 use async_trait::async_trait;
-use sven_core::{
-    stream_turn, to_model_schemas, AbortedError, AgentEvent, CompactionStrategyUsed, ModelResolver,
-};
 use sven_hsm::{
-    Effect, EffectExecutor, Event, EventSink, ObservationSink, ProposedToolCall, ToolCallId,
-    UiEvent,
+    CompactionStrategyUsed, Effect, EffectExecutor, Event, EventSink, ObservationSink,
+    ProposedToolCall, ToolCallId, UiEvent,
 };
 use sven_llm::{ThreadStore, TurnRequest};
 use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
 use sven_tools::ToolRegistry;
+use sven_turn::{stream_turn, to_model_schemas, AbortedError, ModelResolver};
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
 /// The JSON `kind` tag that selects the single-turn engine.
@@ -164,9 +162,9 @@ pub struct TurnExecutor {
     /// time and has no memory of prior ones).
     cache_totals: Arc<Mutex<HashMap<String, (u64, u64)>>>,
     /// Thinking-loop watchdog caps forwarded to every `stream_turn` call
-    /// (main turn and compaction turn alike). See [`sven_core::ThinkingBudget`]
+    /// (main turn and compaction turn alike). See [`sven_turn::ThinkingBudget`]
     /// and [`Self::with_thinking_budget`].
-    thinking_budget: sven_core::ThinkingBudget,
+    thinking_budget: sven_turn::ThinkingBudget,
 }
 
 /// Proactive-compaction settings, mirroring `sven_config::AgentConfig`'s
@@ -240,7 +238,7 @@ impl TurnExecutor {
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
-            thinking_budget: sven_core::ThinkingBudget::default(),
+            thinking_budget: sven_turn::ThinkingBudget::default(),
         }
     }
 
@@ -260,10 +258,10 @@ impl TurnExecutor {
     }
 
     /// Configure the thinking-loop watchdog caps (see
-    /// [`sven_core::ThinkingBudget`]). Defaults to `ThinkingBudget::default()`
+    /// [`sven_turn::ThinkingBudget`]). Defaults to `ThinkingBudget::default()`
     /// (10% of the model's context window, 600s stall timeout) when not called.
     #[must_use]
-    pub fn with_thinking_budget(mut self, thinking_budget: sven_core::ThinkingBudget) -> Self {
+    pub fn with_thinking_budget(mut self, thinking_budget: sven_turn::ThinkingBudget) -> Self {
         self.thinking_budget = thinking_budget;
         self
     }
@@ -290,7 +288,7 @@ impl TurnExecutor {
     /// shared store, and return it so the in-flight turn continues with the
     /// smaller history immediately (no need to wait for the next turn).
     ///
-    /// Tries LLM-based summarization first (`sven_core::prepare_compaction` /
+    /// Tries LLM-based summarization first (`sven_turn::prepare_compaction` /
     /// `finish_compaction`), asking the model itself for a summary of
     /// everything except the most recent `compaction.keep_recent` messages.
     /// Falls back to the deterministic, model-free `emergency_compact` (drop
@@ -315,7 +313,7 @@ impl TurnExecutor {
         obs: &ObservationSink,
     ) -> Vec<Message> {
         let Some(plan) =
-            sven_core::prepare_compaction(&messages, &self.compaction.strategy, self.compaction.keep_recent)
+            sven_turn::prepare_compaction(&messages, &self.compaction.strategy, self.compaction.keep_recent)
         else {
             return messages;
         };
@@ -333,7 +331,7 @@ impl TurnExecutor {
                         sven_config::CompactionStrategy::Structured => CompactionStrategyUsed::Structured,
                         sven_config::CompactionStrategy::Narrative => CompactionStrategyUsed::Narrative,
                     };
-                    (sven_core::finish_compaction(plan, &summary_text), strategy_used)
+                    (sven_turn::finish_compaction(plan, &summary_text), strategy_used)
                 }
                 _ => {
                     tracing::warn!(
@@ -342,7 +340,7 @@ impl TurnExecutor {
                          falling back to emergency_compact"
                     );
                     let mut fallback = messages.clone();
-                    sven_core::emergency_compact(&mut fallback, plan.system_msg, self.compaction.keep_recent);
+                    sven_turn::emergency_compact(&mut fallback, plan.system_msg, self.compaction.keep_recent);
                     (fallback, CompactionStrategyUsed::Emergency)
                 }
             }
@@ -351,7 +349,7 @@ impl TurnExecutor {
             // model for a summary would just fail the same way one level
             // down. Skip straight to the deterministic fallback.
             let mut fallback = messages.clone();
-            sven_core::emergency_compact(&mut fallback, plan.system_msg, self.compaction.keep_recent);
+            sven_turn::emergency_compact(&mut fallback, plan.system_msg, self.compaction.keep_recent);
             (fallback, CompactionStrategyUsed::Emergency)
         };
 
@@ -376,7 +374,7 @@ impl TurnExecutor {
     /// them in response to the user's actual message.
     async fn run_compaction_turn(
         &self,
-        plan: &sven_core::CompactionPlan,
+        plan: &sven_turn::CompactionPlan,
         model: &dyn sven_model::ModelProvider,
         context_window: Option<u32>,
         configured_max_output: Option<u32>,
@@ -385,7 +383,7 @@ impl TurnExecutor {
         let max_output_tokens_override =
             sven_model::budget::dynamic_output_budget(context_window, configured_max_output, request_estimate);
 
-        let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
+        let (tx, mut rx) = mpsc::channel::<UiEvent>(256);
         let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
 
         let result = stream_turn(
@@ -557,8 +555,8 @@ impl EffectExecutor for TurnExecutor {
             })
         };
 
-        // Bridge AgentEvents → UiEvents while the stream runs.
-        let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
+        // Forward stream_turn's progress events onward while the stream runs.
+        let (tx, mut rx) = mpsc::channel::<UiEvent>(256);
         let obs_fwd = obs.clone();
         // stream_turn only knows about the model call it just made - it has
         // no memory of prior turns, so it always reports cache_read_total/
@@ -583,12 +581,12 @@ impl EffectExecutor for TurnExecutor {
         let partial_text_fwd = Arc::clone(&partial_text);
         let forwarder = tokio::spawn(async move {
             while let Some(mut ev) = rx.recv().await {
-                if let AgentEvent::TextDelta(delta) = &ev {
+                if let UiEvent::TextDelta(delta) = &ev {
                     if let Ok(mut buf) = partial_text_fwd.lock() {
                         buf.push_str(delta);
                     }
                 }
-                if let AgentEvent::TokenUsage {
+                if let UiEvent::TokenUsage {
                     cache_read,
                     cache_write,
                     cache_read_total,

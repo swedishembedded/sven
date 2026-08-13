@@ -51,7 +51,7 @@ pub struct ToolExecutor {
     no_tools: bool,
     /// Maximum tokens for a single tool result before it is deterministically
     /// truncated on the way into the conversation store (see
-    /// `sven_core::smart_truncate`; category comes from
+    /// `sven_turn::smart_truncate`; category comes from
     /// `ToolRegistry::output_category`). `0` disables truncation. Mirrors
     /// `AgentConfig::tool_result_token_cap`; only affects what's stored for
     /// the model's next turn - `UiEvent::ToolFinished`/`Event::ToolSucceeded`
@@ -84,7 +84,7 @@ impl ToolExecutor {
 
     /// Deterministically truncate tool results over `cap` tokens before they
     /// enter the conversation store (`0` disables truncation). See
-    /// `sven_core::smart_truncate`.
+    /// `sven_turn::smart_truncate`.
     #[must_use]
     pub fn with_tool_result_token_cap(mut self, cap: usize) -> Self {
         self.tool_result_token_cap = cap;
@@ -207,7 +207,7 @@ impl EffectExecutor for ToolExecutor {
             });
 
             // Append to conversation thread if a mapping exists. Truncated
-            // deterministically and content-aware (`sven_core::smart_truncate`,
+            // deterministically and content-aware (`sven_turn::smart_truncate`,
             // category from the tool's own declaration) so the stored history
             // never carries an oversized single result into every future turn
             // - unlike UiEvent::ToolFinished/Event::ToolSucceeded above, which
@@ -216,7 +216,7 @@ impl EffectExecutor for ToolExecutor {
                 if let Ok(mut s) = store.lock() {
                     let category = registry.output_category(&name);
                     let truncated =
-                        sven_core::smart_truncate(&output.content, category, tool_result_token_cap);
+                        sven_turn::smart_truncate(&output.content, category, tool_result_token_cap);
                     let msg = if output.is_error {
                         Message::tool_result(orig, format!("error: {truncated}"))
                     } else {
