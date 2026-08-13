@@ -1,6 +1,6 @@
 [package]
 name         = "sven-llm"
-version      = "0.1.0"
+version.workspace = true
 edition      = "2021"
 description  = "Typed LLM operation contracts for the Sven HSM runtime"
 license      = "Apache-2.0"

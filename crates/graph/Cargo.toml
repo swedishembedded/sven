@@ -1,6 +1,6 @@
 [package]
 name    = "sven-graph"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Sven workflow DSL: graph model, guard evaluator, template interpolation, dot renderer, and native-action registry. Pure data layer — no I/O, no kernel wiring."
 license = "Apache-2.0"

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [package]
 name        = "sven-control"
-version     = "0.1.0"
+version.workspace = true
 edition     = "2021"
 description = "Transport-agnostic operator control protocol (ControlCommand/ControlEvent) and its kernel mappings, shared by sven-node, sven-cloud and sven-frontend"
 license     = "Apache-2.0"

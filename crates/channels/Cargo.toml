@@ -1,6 +1,6 @@
 [package]
 name    = "sven-channels"
-version = "1.0.0"
+version.workspace = true
 edition = "2021"
 description = "Messaging channel integrations for sven (Telegram, Discord, WhatsApp, Signal, Matrix, IRC)"
 

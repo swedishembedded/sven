@@ -1,6 +1,6 @@
 [package]
 name    = "sven-hsm"
-version = "0.5.0"
+version.workspace = true
 edition = "2021"
 description = "Deterministic Hierarchical State Machine kernel: pure HSM dispatch (Super walk + LCA + entry/exit/init), typed Effects/Events, a permission choke point, event-sourcing replay, and a tokio Active Object runtime. Zero dependencies on other sven crates."
 license = "Apache-2.0"

@@ -1,6 +1,6 @@
 [package]
 name         = "sven-executors"
-version      = "0.6.0"
+version.workspace = true
 edition      = "2021"
 description  = "Effect executors for the Sven HSM runtime"
 license      = "Apache-2.0"

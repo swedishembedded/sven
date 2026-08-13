@@ -1,6 +1,6 @@
 [package]
 name    = "sven-integrations"
-version = "1.0.0"
+version.workspace = true
 edition = "2021"
 description = "Email, calendar, and voice integrations for sven agents"
 

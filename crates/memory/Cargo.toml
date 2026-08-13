@@ -1,6 +1,6 @@
 [package]
 name    = "sven-memory"
-version = "1.0.0"
+version.workspace = true
 edition = "2021"
 description = "Semantic (vector + BM25) memory store for sven agents"
 

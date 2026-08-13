@@ -1,6 +1,6 @@
 [package]
 name    = "sven-model"
-version = "1.0.1"
+version.workspace = true
 edition = "2021"
 
 [features]

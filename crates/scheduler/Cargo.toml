@@ -1,6 +1,6 @@
 [package]
 name    = "sven-scheduler"
-version = "1.0.0"
+version.workspace = true
 edition = "2021"
 description = "Cron scheduler, heartbeat, and job store for sven agents"
 

@@ -1,6 +1,6 @@
 [package]
 name        = "trace"
-version     = "0.1.0"
+version.workspace = true
 edition     = "2021"
 description = "ATIF (Agent Trajectory Interchange Format) v1.7 trajectory model, validator, and persistence"
 license     = "Apache-2.0"

@@ -1,6 +1,6 @@
 [package]
 name        = "sven-mcp-client"
-version     = "1.0.0"
+version.workspace = true
 edition     = "2021"
 description = "MCP client for sven - connects to external MCP servers as a tool/prompt/resource source"
 license     = "Apache-2.0"
