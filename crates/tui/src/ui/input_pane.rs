@@ -37,6 +37,31 @@ pub enum InputEditMode {
 /// Columns reserved for the `> ` prompt gutter on the left.
 pub const PROMPT_WIDTH: u16 = 2;
 
+// ── Placeholder text ──────────────────────────────────────────────────────────
+
+/// The full empty-input hint, shown when there's room for the whole thing.
+const PLACEHOLDER_FULL: &str = "Ask anything... (Enter to send, / for commands)";
+/// A shorter fallback for narrower panes.
+const PLACEHOLDER_SHORT: &str = "Ask anything...";
+
+/// Pick the widest placeholder candidate that fits completely within `width`
+/// columns, falling back to `""` (no hint - just the `> ` prompt) when even
+/// the shortest candidate doesn't fit.
+///
+/// This never returns a *truncated* candidate. A truncated fragment (e.g. a
+/// lone "A" cut from "Ask anything...") reads as stray typed content in an
+/// otherwise-empty, focused input box - worse than showing no hint at all,
+/// since it looks exactly like a bug rather than an intentional placeholder.
+fn placeholder_for(width: usize) -> &'static str {
+    if width >= PLACEHOLDER_FULL.chars().count() {
+        PLACEHOLDER_FULL
+    } else if width >= PLACEHOLDER_SHORT.chars().count() {
+        PLACEHOLDER_SHORT
+    } else {
+        ""
+    }
+}
+
 // ── InputPane widget ──────────────────────────────────────────────────────────
 
 /// Claude-style multi-line input box.
@@ -187,7 +212,6 @@ impl Widget for InputPane<'_> {
         // Show placeholder text when content is empty.
         if wrap.lines.is_empty() || (wrap.lines.len() == 1 && wrap.lines[0].is_empty()) {
             if text_height > 0 {
-                let placeholder = "Ask anything... (Enter to send, / for commands)";
                 buf.set_string(
                     prompt_x,
                     text_start_y,
@@ -198,14 +222,8 @@ impl Widget for InputPane<'_> {
                         prompt_unfocused
                     },
                 );
-                // Only draw the hint when the WHOLE thing fits. A truncated
-                // fragment (e.g. just "A" at effective_text_width == 1, the
-                // pane's narrowest legal width) reads as stray typed content
-                // - and disappears the instant the user actually types,
-                // which is exactly what made it look like a bug rather than
-                // an intentional hint. Showing nothing at that width is
-                // strictly better than showing something misleading.
-                if effective_text_width as usize >= placeholder.chars().count() {
+                let placeholder = placeholder_for(effective_text_width as usize);
+                if !placeholder.is_empty() {
                     buf.set_string(
                         text_x,
                         text_start_y,
@@ -392,5 +410,50 @@ mod tests {
             rendered.starts_with("Ask anything..."),
             "the full placeholder must render when there's room: {rendered:?}"
         );
+    }
+
+    // ── placeholder_for: the ladder itself, in isolation ────────────────────
+
+    #[test]
+    fn placeholder_for_never_returns_a_truncated_candidate() {
+        // For every width, whatever comes back must either be empty or be
+        // rendered in full - never a byte/char-level slice of a candidate.
+        for width in 0..=PLACEHOLDER_FULL.chars().count() + 5 {
+            let hint = placeholder_for(width);
+            assert!(
+                hint.is_empty() || hint == PLACEHOLDER_FULL || hint == PLACEHOLDER_SHORT,
+                "width {width} produced a fragment: {hint:?}"
+            );
+            assert!(
+                hint.chars().count() <= width,
+                "width {width} produced a hint wider than the pane: {hint:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn placeholder_for_full_width_returns_full_text() {
+        assert_eq!(
+            placeholder_for(PLACEHOLDER_FULL.chars().count()),
+            PLACEHOLDER_FULL
+        );
+    }
+
+    #[test]
+    fn placeholder_for_mid_width_falls_back_to_short_text() {
+        // Wide enough for the short fallback, too narrow for the full hint.
+        let width = PLACEHOLDER_SHORT.chars().count();
+        assert_eq!(placeholder_for(width), PLACEHOLDER_SHORT);
+        assert_eq!(
+            placeholder_for(PLACEHOLDER_FULL.chars().count() - 1),
+            PLACEHOLDER_SHORT
+        );
+    }
+
+    #[test]
+    fn placeholder_for_narrow_width_returns_nothing() {
+        assert_eq!(placeholder_for(PLACEHOLDER_SHORT.chars().count() - 1), "");
+        assert_eq!(placeholder_for(1), "");
+        assert_eq!(placeholder_for(0), "");
     }
 }
