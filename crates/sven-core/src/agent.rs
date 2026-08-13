@@ -13,8 +13,19 @@ use std::time::Duration;
 ///
 /// 5 minutes allows slow reasoning models and large plan/tool-call generation
 /// to complete; the agent loop propagates the error back to the caller, which
-/// can retry if appropriate.
-const STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(300);
+/// can retry if appropriate. Override with `SVEN_STREAM_CHUNK_TIMEOUT_SECS`
+/// for a genuinely slower backend (e.g. a large model's cold prefill on
+/// modest hardware) rather than a stalled connection - mirrors brain's own
+/// `BRAIN_GPU_WAIT_S`.
+fn stream_chunk_timeout() -> Duration {
+    const DEFAULT_SECS: u64 = 300;
+    let secs = std::env::var("SVEN_STREAM_CHUNK_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_SECS);
+    Duration::from_secs(secs)
+}
 
 use anyhow::Context;
 use futures::StreamExt;
@@ -967,6 +978,10 @@ impl Agent {
         // Accumulate thinking deltas so we can emit a single ThinkingComplete
         // event to consumers (CI runner, TUI) once the thinking block ends.
         let mut thinking_buf = String::new();
+        // Read once per turn (not per chunk): an env lookup on every chunk of
+        // a fast-streaming response is real per-chunk overhead for a value
+        // that never changes mid-stream.
+        let chunk_timeout = stream_chunk_timeout();
 
         loop {
             // Enforce a per-chunk idle timeout.  If the model API stalls —
@@ -974,12 +989,12 @@ impl Agent {
             // stream, `stream.next()` would block indefinitely.  The timeout
             // converts a silent stall into an explicit error so the agent loop
             // (and the ACP serve path) can surface it rather than hanging.
-            let maybe_event = tokio::time::timeout(STREAM_CHUNK_TIMEOUT, stream.next())
+            let maybe_event = tokio::time::timeout(chunk_timeout, stream.next())
                 .await
                 .map_err(|_| {
                     anyhow::anyhow!(
                         "model stream idle for >{} s — stale connection",
-                        STREAM_CHUNK_TIMEOUT.as_secs()
+                        chunk_timeout.as_secs()
                     )
                 })?;
             let event = match maybe_event {
