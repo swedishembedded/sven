@@ -134,7 +134,7 @@ impl RuntimeRunner {
         } else {
             opts.project_root
                 .as_ref()
-                .and_then(|r| sven_runtime::load_project_context_file_with_path(r))
+                .and_then(|r| sven_workspace::load_project_context_file_with_path(r))
         };
         if let Some((path, _)) = &project_context {
             write_stderr(&format!(
@@ -357,7 +357,10 @@ fn close_sven_section(state: &mut CiOutState) {
 fn print_total_usage(state: &CiOutState) {
     write_progress(&format!(
         "[sven:tokens:total] input={} output={} cache_read={} cache_write={}",
-        state.total_input, state.total_output, state.latest_cache_read_total, state.latest_cache_write_total
+        state.total_input,
+        state.total_output,
+        state.latest_cache_read_total,
+        state.latest_cache_write_total
     ));
 }
 
@@ -562,9 +565,13 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                 "[sven:subagent:started] call_id=\"{call_id}\" handle_id=\"{handle_id}\" description={description:?}"
             ));
         }
-        UiEvent::SubagentEvent { handle_id, update, .. } => match update {
+        UiEvent::SubagentEvent {
+            handle_id, update, ..
+        } => match update {
             sven_tools::events::SubagentUpdate::Finished { .. } => {
-                write_stderr(&format!("[sven:subagent:finished] handle_id=\"{handle_id}\""));
+                write_stderr(&format!(
+                    "[sven:subagent:finished] handle_id=\"{handle_id}\""
+                ));
             }
             sven_tools::events::SubagentUpdate::Failed { reason } => {
                 write_stderr(&format!(

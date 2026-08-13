@@ -170,7 +170,7 @@ mod output_category_tests {
     #[test]
     fn list_knowledge_is_matchlist() {
         let t = super::knowledge::list_knowledge::ListKnowledgeTool {
-            knowledge: sven_runtime::SharedKnowledge::empty(),
+            knowledge: sven_workspace::SharedKnowledge::empty(),
         };
         assert_eq!(t.output_category(), OutputCategory::MatchList);
     }
@@ -178,7 +178,7 @@ mod output_category_tests {
     #[test]
     fn search_knowledge_is_matchlist() {
         let t = super::search::search_knowledge::SearchKnowledgeTool {
-            knowledge: sven_runtime::SharedKnowledge::empty(),
+            knowledge: sven_workspace::SharedKnowledge::empty(),
         };
         assert_eq!(t.output_category(), OutputCategory::MatchList);
     }

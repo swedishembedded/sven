@@ -14,7 +14,7 @@ members = [
     "crates/tools",
     "crates/turn",
     "crates/core",
-    "crates/runtime",
+    "crates/workspace",
     "crates/bootstrap",
     "crates/ci",
     "crates/tui",

@@ -24,7 +24,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 use tracing::debug;
 
-use sven_runtime::{load_skill_content_from_disk, SharedSkills, SkillInfo};
+use sven_workspace::{load_skill_content_from_disk, SharedSkills, SkillInfo};
 
 use sven_hsm::ToolCapability;
 
@@ -379,7 +379,7 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::path::PathBuf;
-    use sven_runtime::{SharedSkills, SkillInfo, SvenSkillMeta};
+    use sven_workspace::{SharedSkills, SkillInfo, SvenSkillMeta};
 
     fn make_skill(command: &str, description: &str, content: &str) -> SkillInfo {
         let name = command.rsplit('/').next().unwrap_or(command).to_string();

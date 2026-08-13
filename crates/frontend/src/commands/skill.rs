@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use sven_runtime::{AgentInfo, SkillInfo};
+use sven_workspace::{AgentInfo, SkillInfo};
 
 use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
@@ -211,7 +211,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use sven_config::Config;
-    use sven_runtime::AgentInfo;
+    use sven_workspace::AgentInfo;
 
     fn make_cmd(name: &str, description: &str, content: &str) -> (SkillCommand, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();

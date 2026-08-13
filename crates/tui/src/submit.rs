@@ -201,9 +201,7 @@ impl App {
                             let _ = toast_tx
                                 .send(crate::app::ui_state::Toast::info(match budget {
                                     Some(_) => "Thinking-loop watchdog override set".to_string(),
-                                    None => {
-                                        "Thinking-loop watchdog override cleared".to_string()
-                                    }
+                                    None => "Thinking-loop watchdog override cleared".to_string(),
                                 }))
                                 .await;
                         }
@@ -259,7 +257,7 @@ impl App {
                         let skills = self.shared_skills.get();
                         let agents = self.shared_agents.get();
                         let buffer_store = std::sync::Arc::clone(&self.buffer_store);
-                        let project_root = sven_runtime::find_project_root().ok();
+                        let project_root = sven_workspace::find_project_root().ok();
                         let is_node = self.is_node_proxy;
                         let inspector = match kind {
                             InspectorKind::Skills => {
@@ -423,7 +421,10 @@ impl App {
             // The model IS forwarded in node-proxy mode (the remote turns it into
             // a SetModel); mode stays local-only (the node owns /mode).
             let (model_override, mode_override) = if self.is_node_proxy {
-                (qm.model_transition.map(ModelDirective::into_model_config), None)
+                (
+                    qm.model_transition.map(ModelDirective::into_model_config),
+                    None,
+                )
             } else {
                 (
                     qm.model_transition.map(ModelDirective::into_model_config),
@@ -438,12 +439,16 @@ impl App {
                 })
                 .await;
             if send_result.is_err() {
-                tracing::warn!("send_to_agent: agent channel closed; kernel session may have exited");
-                self.chat.segments.push(crate::chat::segment::ChatSegment::Error(
-                    "Agent session has stopped — check the error above for details.\n\
+                tracing::warn!(
+                    "send_to_agent: agent channel closed; kernel session may have exited"
+                );
+                self.chat
+                    .segments
+                    .push(crate::chat::segment::ChatSegment::Error(
+                        "Agent session has stopped — check the error above for details.\n\
                      Verify your model config (provider / base_url) and restart sven."
-                        .into(),
-                ));
+                            .into(),
+                    ));
                 self.rerender_chat().await;
                 return;
             }
@@ -473,7 +478,10 @@ impl App {
             // The model IS forwarded in node-proxy mode (the remote turns it into
             // a SetModel); mode stays local-only (the node owns /mode).
             let (model_override, mode_override) = if self.is_node_proxy {
-                (qm.model_transition.map(ModelDirective::into_model_config), None)
+                (
+                    qm.model_transition.map(ModelDirective::into_model_config),
+                    None,
+                )
             } else {
                 (
                     qm.model_transition.map(ModelDirective::into_model_config),
@@ -495,12 +503,16 @@ impl App {
                 // The kernel session exited (e.g. model config error at startup).
                 // Surface the failure as an error segment so the user sees it
                 // instead of a silent endless spinner.
-                tracing::warn!("send_resubmit_to_agent: agent channel closed; kernel session may have exited");
-                self.chat.segments.push(crate::chat::segment::ChatSegment::Error(
-                    "Agent session has stopped — check the error above for details.\n\
+                tracing::warn!(
+                    "send_resubmit_to_agent: agent channel closed; kernel session may have exited"
+                );
+                self.chat
+                    .segments
+                    .push(crate::chat::segment::ChatSegment::Error(
+                        "Agent session has stopped — check the error above for details.\n\
                      Verify your model config (provider / base_url) and restart sven."
-                        .into(),
-                ));
+                            .into(),
+                    ));
                 self.rerender_chat().await;
                 return;
             }

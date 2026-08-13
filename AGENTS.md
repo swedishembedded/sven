@@ -86,7 +86,7 @@ The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) 
 | `sven-tools` | Tool suite, `Tool`/`ToolDisplay` traits, `ApprovalPolicy`, `ToolPolicy`/`RolePolicy` (fs_root jail), `PermissionRequester`, `ToolRegistry` (`execute` / `execute_with_requester` / `execute_unattended`) |
 | `sven-core` | Pure HSM machines: `ReactiveAgentMachine`, `SdlcMachine`, `TaskMachine`, `ModeRegistry`, `loop_core`. Re-exports `sven-turn` and `sven_vocab::SessionEvent` (as `AgentEvent`) unchanged for existing call sites |
 | `sven-turn` | Impure turn primitives, one tier below `sven-core`/`sven-executors`: `stream_turn` (the real LLM streaming call), context compaction (`compact_session`/`smart_truncate`/...), tool-arg JSON repair, system-prompt assembly |
-| `sven-runtime` | Shared runtime utils: workspace root, skill/agent/knowledge discovery |
+| `sven-workspace` | Workspace/project discovery: root detection, skill/agent/knowledge scanning (renamed from `sven-runtime` in Phase 4.3 - "runtime" already named the HSM's `Runtime<M>`/`ErasedRuntime`/`RuntimeBuilder`/`RuntimeContext`, and this crate is none of those) |
 | `sven-bootstrap` | `RuntimeBuilder` (assembles the kernel from config + mode; `with_effect_executor`, `with_principal`), `SessionSupervisor`, `SessionBundle`/`RuntimeHandle` |
 | `sven-ci` | Headless runner: `RuntimeRunner` (single-shot HSM driver) + workflow orchestration (`--file`, `--var`, jsonl/chat I/O, artifacts, output formats) driving the kernel |
 | `sven-mcp-client` | MCP client (stdio + Streamable HTTP, OAuth); merges external tools into the registry |

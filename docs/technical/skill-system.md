@@ -51,7 +51,7 @@ it is not registered as a sub-skill.
 
 ## Discovery sources
 
-`discover_skills()` in `sven-runtime` scans six directories in order of
+`discover_skills()` in `sven-workspace` scans six directories in order of
 increasing precedence.  When two sources contain a skill with the same command,
 the later (higher-precedence) source wins:
 
@@ -122,7 +122,7 @@ removed; relationships are now derived structurally from the directory tree.
 
 ---
 
-## `SkillInfo` data type (`sven-runtime`)
+## `SkillInfo` data type (`sven-workspace`)
 
 ```rust
 pub struct SkillInfo {
@@ -273,7 +273,7 @@ sent.  The model discovers and loads children via the sub-skill hint returned by
 
 | Crate | Responsibility |
 |-------|---------------|
-| `sven-runtime` | `SkillInfo`, `SvenSkillMeta`, `ParsedSkill`; `parse_skill_file()`; `discover_skills()` and the recursive scanner; requirement checking (`requires_bins`, `requires_env`) |
+| `sven-workspace` | `SkillInfo`, `SvenSkillMeta`, `ParsedSkill`; `parse_skill_file()`; `discover_skills()` and the recursive scanner; requirement checking (`requires_bins`, `requires_env`) |
 | `sven-core` | `build_skills_section()` - serialises skill metadata into the system-prompt XML block; `PromptContext.skills` field |
 | `sven-tools` | `LoadSkillTool` - tool implementation, child-detection logic, bundled-file collection |
 | `sven-bootstrap` | Calls `discover_skills()`, stores the `Arc<[SkillInfo]>` in `RuntimeContext`, wires it into `AgentRuntimeContext` and registers `LoadSkillTool` |

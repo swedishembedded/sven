@@ -110,8 +110,8 @@ pub struct App {
     pub(crate) session: crate::state::SessionState,
     pub(crate) command_registry: Arc<CommandRegistry>,
     pub(crate) completion_manager: CompletionManager,
-    pub(crate) shared_skills: sven_runtime::SharedSkills,
-    pub(crate) shared_agents: sven_runtime::SharedAgents,
+    pub(crate) shared_skills: sven_workspace::SharedSkills,
+    pub(crate) shared_agents: sven_workspace::SharedAgents,
     /// Shared tool snapshot - populated by the runtime builder after the local
     /// tool registry is built.  Empty in node-proxy mode (tools are fetched live
     /// from the node when `/tools` is opened).
@@ -210,14 +210,16 @@ impl App {
             config.model.clone()
         };
 
-        let project_root = sven_runtime::find_project_root().ok();
-        let shared_skills =
-            sven_runtime::SharedSkills::new(sven_runtime::discover_skills(project_root.as_deref()));
-        let shared_agents =
-            sven_runtime::SharedAgents::new(sven_runtime::discover_agents(project_root.as_deref()));
+        let project_root = sven_workspace::find_project_root().ok();
+        let shared_skills = sven_workspace::SharedSkills::new(sven_workspace::discover_skills(
+            project_root.as_deref(),
+        ));
+        let shared_agents = sven_workspace::SharedAgents::new(sven_workspace::discover_agents(
+            project_root.as_deref(),
+        ));
 
         let mut registry = CommandRegistry::with_builtins();
-        let startup_commands = sven_runtime::discover_commands(project_root.as_deref());
+        let startup_commands = sven_workspace::discover_commands(project_root.as_deref());
         registry.register_commands(&startup_commands);
         registry.register_agents(&shared_agents.get());
         let registry = Arc::new(registry);

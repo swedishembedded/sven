@@ -1,5 +1,5 @@
 [package]
-name    = "sven-runtime"
+name    = "sven-workspace"
 version.workspace = true
 edition = "2021"
 

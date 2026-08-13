@@ -42,7 +42,7 @@ sven-hsm         = "foundation"
 sven-image       = "foundation"
 sven-node-client = "foundation"
 sven-p2p         = "foundation"
-sven-runtime     = "foundation"
+sven-workspace   = "foundation"
 sven-vocab       = "foundation"
 atif             = "foundation"
 
@@ -188,7 +188,7 @@ path = "crates/tui/src/app/dispatch.rs"
 lines = 1787
 [[allow.large_file]]
 path = "crates/tui/src/app/mod.rs"
-lines = 1748
+lines = 1750
 [[allow.large_file]]
 path = "crates/cloud/src/server.rs"
 lines = 1729
@@ -235,7 +235,7 @@ lines = 1309
 path = "crates/ci/src/runner/mod.rs"
 lines = 1257
 [[allow.large_file]]
-path = "crates/runtime/src/skills.rs"
+path = "crates/workspace/src/skills.rs"
 lines = 1238
 [[allow.large_file]]
 path = "crates/hsm/src/runtime.rs"
@@ -277,11 +277,11 @@ lines = 1049
 path = "crates/cloud/src/metering.rs"
 lines = 1033
 [[allow.large_file]]
+path = "crates/tui/src/submit.rs"
+lines = 1032
+[[allow.large_file]]
 path = "crates/session-model/src/conversation.rs"
 lines = 1029
-[[allow.large_file]]
-path = "crates/tui/src/submit.rs"
-lines = 1020
 [[allow.large_file]]
 path = "crates/mcp-client/src/manager.rs"
 lines = 1016
@@ -313,20 +313,20 @@ lines = 881
 path = "crates/tui/src/app/term_events.rs"
 lines = 880
 [[allow.large_file]]
+path = "crates/frontend/src/agent.rs"
+lines = 875
+[[allow.large_file]]
 path = "crates/node/src/p2p/handler.rs"
 lines = 872
 [[allow.large_file]]
-path = "crates/frontend/src/agent.rs"
-lines = 862
+path = "crates/ci/src/runner/runtime_runner.rs"
+lines = 855
 [[allow.large_file]]
 path = "crates/companion/src/policy.rs"
 lines = 851
 [[allow.large_file]]
 path = "tests/context_pipeline_test.rs"
 lines = 850
-[[allow.large_file]]
-path = "crates/ci/src/runner/runtime_runner.rs"
-lines = 848
 [[allow.large_file]]
 path = "crates/ci/src/index.rs"
 lines = 832

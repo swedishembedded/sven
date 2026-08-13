@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use sven_runtime::{AgentInfo, SkillInfo};
+use sven_workspace::{AgentInfo, SkillInfo};
 
 use super::SlashCommand;
 

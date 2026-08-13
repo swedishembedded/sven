@@ -15,8 +15,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 use sven_core::AgentRuntimeContext;
-use sven_runtime::{CiContext, GitContext, SharedAgents, SharedKnowledge, SharedSkills};
 use sven_tools::{events::TodoItem, OutputBufferStore, QuestionRequest};
+use sven_workspace::{CiContext, GitContext, SharedAgents, SharedKnowledge, SharedSkills};
 
 // ─── RuntimeContext ───────────────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ pub struct RuntimeContext {
 impl RuntimeContext {
     /// Create with auto-detected project, git, CI context, skills, and knowledge.
     pub fn auto_detect() -> Self {
-        Self::auto_detect_at(sven_runtime::find_project_root().ok())
+        Self::auto_detect_at(sven_workspace::find_project_root().ok())
     }
 
     /// Create with detected git/CI/skills/agents/knowledge context, using an
@@ -82,8 +82,8 @@ impl RuntimeContext {
     pub fn auto_detect_at(project_root: Option<PathBuf>) -> Self {
         Self::auto_detect_with(
             project_root.clone(),
-            SharedSkills::new(sven_runtime::discover_skills(project_root.as_deref())),
-            SharedAgents::new(sven_runtime::discover_agents(project_root.as_deref())),
+            SharedSkills::new(sven_workspace::discover_skills(project_root.as_deref())),
+            SharedAgents::new(sven_workspace::discover_agents(project_root.as_deref())),
         )
     }
 
@@ -104,18 +104,18 @@ impl RuntimeContext {
     ) -> Self {
         let git_context = project_root
             .as_ref()
-            .map(|r| sven_runtime::collect_git_context(r));
-        let ci_context = Some(sven_runtime::detect_ci_context());
+            .map(|r| sven_workspace::collect_git_context(r));
+        let ci_context = Some(sven_workspace::detect_ci_context());
         let project_context_file = project_root
             .as_ref()
-            .and_then(|r| sven_runtime::find_project_context_file(r));
+            .and_then(|r| sven_workspace::find_project_context_file(r));
 
         // Discover knowledge docs and check for drift against recent git commits.
-        let knowledge_items = sven_runtime::discover_knowledge(project_root.as_deref());
+        let knowledge_items = sven_workspace::discover_knowledge(project_root.as_deref());
         let knowledge_drift_note = project_root
             .as_ref()
-            .map(|r| sven_runtime::check_knowledge_drift(r, &knowledge_items))
-            .and_then(|warnings| sven_runtime::format_drift_warnings(&warnings));
+            .map(|r| sven_workspace::check_knowledge_drift(r, &knowledge_items))
+            .and_then(|warnings| sven_workspace::format_drift_warnings(&warnings));
         let knowledge = SharedKnowledge::new(knowledge_items);
 
         Self {
@@ -317,9 +317,9 @@ mod tests {
     use tokio::sync::Mutex;
 
     use sven_config::AgentMode;
-    use sven_runtime::{SharedAgents, SharedSkills};
     use sven_tools::events::TodoItem;
     use sven_tools::OutputBufferStore;
+    use sven_workspace::{SharedAgents, SharedSkills};
 
     use super::{has_gdb_config, RuntimeContext, ToolSetProfile};
 
@@ -333,8 +333,8 @@ mod tests {
 
     // ── auto_detect_with ─────────────────────────────────────────────────────
 
-    fn skill(command: &str) -> sven_runtime::SkillInfo {
-        sven_runtime::SkillInfo {
+    fn skill(command: &str) -> sven_workspace::SkillInfo {
+        sven_workspace::SkillInfo {
             command: command.to_string(),
             name: command.to_string(),
             description: String::new(),
@@ -360,14 +360,15 @@ mod tests {
         let skills = SharedSkills::new(vec![skill("preloaded")]);
         let agents = SharedAgents::empty();
 
-        let ctx = RuntimeContext::auto_detect_with(
-            Some(empty_root.path().to_path_buf()),
-            skills,
-            agents,
-        );
+        let ctx =
+            RuntimeContext::auto_detect_with(Some(empty_root.path().to_path_buf()), skills, agents);
 
         let got = ctx.skills.get();
-        assert_eq!(got.len(), 1, "should carry the caller's pre-discovered skill");
+        assert_eq!(
+            got.len(),
+            1,
+            "should carry the caller's pre-discovered skill"
+        );
         assert_eq!(got[0].command, "preloaded");
     }
 

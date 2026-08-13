@@ -23,7 +23,6 @@ use tokio::sync::{mpsc, Mutex};
 
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
-use sven_runtime::Shared;
 #[cfg(unix)]
 use sven_tools::GdbSessionState;
 use sven_tools::{
@@ -32,6 +31,7 @@ use sven_tools::{
     MemoryTool, ModelCatalogEntry, OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool,
     SkillTool, SystemTool, TodoTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
 };
+use sven_workspace::Shared;
 
 use sven_core::AgentRuntimeContext;
 
@@ -310,7 +310,11 @@ fn build_profile_research(
         runtime.knowledge.clone(),
     ));
     reg.register(SkillTool::new(runtime.skills.clone()));
-    reg.register(SystemTool::new(mode_lock, tool_event_tx.clone(), model_catalog_for_tools()));
+    reg.register(SystemTool::new(
+        mode_lock,
+        tool_event_tx.clone(),
+        model_catalog_for_tools(),
+    ));
 
     if let Some(tx) = question_tx {
         reg.register(AskQuestionTool::new_tui(tx));
@@ -417,7 +421,11 @@ fn register_base_tools(
     reg.register(SkillTool::new(runtime.skills.clone()));
 
     // ── System (mode + model switching) ──────────────────────────────────────
-    reg.register(SystemTool::new(mode_lock, tool_event_tx.clone(), model_catalog_for_tools()));
+    reg.register(SystemTool::new(
+        mode_lock,
+        tool_event_tx.clone(),
+        model_catalog_for_tools(),
+    ));
 
     // ── Context and GDB (Full profile only) ──────────────────────────────────
     if include_full {

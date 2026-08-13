@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sven_runtime::SharedKnowledge;
+use sven_workspace::SharedKnowledge;
 use tracing::debug;
 
 use sven_hsm::ToolCapability;
@@ -232,7 +232,7 @@ async fn save_store(path: &str, store: &HashMap<String, String>) -> anyhow::Resu
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use sven_runtime::SharedKnowledge;
+    use sven_workspace::SharedKnowledge;
 
     use super::*;
     use crate::tool::{Tool, ToolCall};

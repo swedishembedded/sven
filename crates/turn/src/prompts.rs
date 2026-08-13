@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use sven_config::AgentMode;
-use sven_runtime::{find_workspace_root, AgentInfo, KnowledgeInfo, SkillInfo};
+use sven_workspace::{find_workspace_root, AgentInfo, KnowledgeInfo, SkillInfo};
 
 /// All optional contextual blocks that can be injected into the system prompt.
 #[derive(Debug)]
@@ -1016,10 +1016,10 @@ mod tests {
 
     // ── Skills section tests ──────────────────────────────────────────────────
 
-    fn make_test_skill(command: &str, description: &str) -> sven_runtime::SkillInfo {
+    fn make_test_skill(command: &str, description: &str) -> sven_workspace::SkillInfo {
         use std::path::PathBuf;
         let name = command.rsplit('/').next().unwrap_or(command).to_string();
-        sven_runtime::SkillInfo {
+        sven_workspace::SkillInfo {
             command: command.to_string(),
             name,
             description: description.to_string(),
@@ -1083,7 +1083,7 @@ mod tests {
 
     #[test]
     fn skills_section_omits_user_invocable_only() {
-        use sven_runtime::SvenSkillMeta;
+        use sven_workspace::SvenSkillMeta;
         let mut private = make_test_skill("private-skill", "Private tool.");
         private.sven_meta = Some(SvenSkillMeta {
             user_invocable_only: true,
@@ -1104,7 +1104,7 @@ mod tests {
 
     #[test]
     fn skills_section_always_skill_bypasses_budget() {
-        use sven_runtime::SvenSkillMeta;
+        use sven_workspace::SvenSkillMeta;
         // Construct an "always" skill and verify it appears even when budget is tight.
         let mut always = make_test_skill("critical", "Always included.");
         always.sven_meta = Some(SvenSkillMeta {

@@ -10,7 +10,7 @@ sven-tools     = { path = "../tools" }
 sven-core      = { path = "../core" }
 sven-input     = { path = "../input" }
 sven-bootstrap = { path = "../bootstrap" }
-sven-runtime   = { path = "../runtime" }
+sven-workspace   = { path = "../workspace" }
 sven-hsm       = { path = "../hsm" }
 atif           = { path = "../atif" }
 anyhow         = { workspace = true }

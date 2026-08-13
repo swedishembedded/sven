@@ -24,10 +24,10 @@ use tokio::sync::Mutex;
 
 use chrono::Local;
 use sven_mcp_client::ServerStatusSummary;
-use sven_runtime::{
+use sven_tools::{format_tools_list, OutputBufferStore, ToolSchema};
+use sven_workspace::{
     find_workspace_root, format_agents_list, format_skills_tree, AgentInfo, SkillInfo,
 };
-use sven_tools::{format_tools_list, OutputBufferStore, ToolSchema};
 
 use crate::markdown::render_markdown;
 use crate::pager::PagerOverlay;

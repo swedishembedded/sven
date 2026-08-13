@@ -214,7 +214,7 @@ high-level descriptions.
 
 | Crate | Responsibility |
 |-------|----------------|
-| `sven-runtime` | `KnowledgeInfo`, `SharedKnowledge`; `discover_knowledge()`; `check_knowledge_drift()`; `format_drift_warnings()` |
+| `sven-workspace` | `KnowledgeInfo`, `SharedKnowledge`; `discover_knowledge()`; `check_knowledge_drift()`; `format_drift_warnings()` |
 | `sven-core` | `build_knowledge_section()` - knowledge overview in system prompt; `PromptContext.knowledge` and `.knowledge_drift_note` fields |
 | `sven-tools` | `ListKnowledgeTool`, `SearchKnowledgeTool` |
 | `sven-bootstrap` | Calls `discover_knowledge()` and `check_knowledge_drift()` in `RuntimeContext::auto_detect()`; registers both tools in `build_tool_registry()` |

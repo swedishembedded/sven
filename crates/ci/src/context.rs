@@ -1,13 +1,13 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Re-exports from `sven-runtime` for backwards compatibility.
+//! Re-exports from `sven-workspace` for backwards compatibility.
 //!
-//! Environment-detection utilities now live in `sven-runtime`.  This module
+//! Environment-detection utilities now live in `sven-workspace`.  This module
 //! re-exports them so existing code that imports from `sven_ci::context`
 //! continues to compile without modification.
 
-pub use sven_runtime::{
+pub use sven_workspace::{
     ci_template_vars, collect_git_context, detect_ci_context, find_project_context_file,
     find_project_root, find_workspace_root, CiContext, GitContext,
 };

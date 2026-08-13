@@ -18,8 +18,8 @@ use sven_core::AgentEvent;
 use sven_input::make_title;
 use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
-use sven_runtime::{SharedAgents, SharedSkills};
 use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools};
+use sven_workspace::{SharedAgents, SharedSkills};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
 
@@ -146,8 +146,9 @@ async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Optio
 /// `sven_model::from_config`. Tests inject distinguishable mock providers to
 /// assert that a model / mode override actually re-drives the kernel through
 /// the intended provider.
-type ProviderFactory =
-    Box<dyn Fn(&ModelConfig, AgentMode) -> Option<Box<dyn sven_model::ModelProvider>> + Send + Sync>;
+type ProviderFactory = Box<
+    dyn Fn(&ModelConfig, AgentMode) -> Option<Box<dyn sven_model::ModelProvider>> + Send + Sync,
+>;
 
 /// Optional test seam: supply the MCP tool set a `RefreshMcpTools` request
 /// installs. Production passes `None` and the tools are pulled from the live
@@ -268,7 +269,7 @@ pub(crate) async fn run_kernel_session_task(
     // Reuses the caller's already-discovered skills/agents (the TUI discovers
     // them once at startup) instead of re-walking the search hierarchy here.
     let ctx = RuntimeContext::auto_detect_with(
-        sven_runtime::find_project_root().ok(),
+        sven_workspace::find_project_root().ok(),
         shared_skills,
         shared_agents,
     );
@@ -353,7 +354,10 @@ pub(crate) async fn run_kernel_session_task(
                 }
                 current_mode = new_mode;
                 current_model_cfg = new_model;
-                debug!(msg_len = content.len(), "kernel task: posting UserMessage (Submit)");
+                debug!(
+                    msg_len = content.len(),
+                    "kernel task: posting UserMessage (Submit)"
+                );
                 if !session.send_user_message(content).await {
                     let _ = tx
                         .send(AgentEvent::Error("kernel queue closed".into()))
@@ -410,7 +414,10 @@ pub(crate) async fn run_kernel_session_task(
             }
 
             AgentRequest::LoadHistory(messages) => {
-                debug!(n = messages.len(), "kernel task: load history (seeding store)");
+                debug!(
+                    n = messages.len(),
+                    "kernel task: load history (seeding store)"
+                );
                 session.seed_history(messages);
             }
 
@@ -509,10 +516,10 @@ mod tests {
     use serde_json::{json, Value};
     use sven_config::{AgentMode, Config, ModelConfig};
     use sven_model::{CompletionRequest, ModelProvider, ResponseEvent, ScriptedMockProvider};
-    use sven_runtime::{SharedAgents, SharedSkills};
     use sven_tools::{
         policy::ApprovalPolicy, OutputBufferStore, SharedTools, Tool, ToolCall, ToolOutput,
     };
+    use sven_workspace::{SharedAgents, SharedSkills};
     use tokio::sync::{mpsc, Mutex};
     use tokio::task::JoinHandle;
 
@@ -663,7 +670,11 @@ mod tests {
             .unwrap();
         turn_text(&mut ev).await;
 
-        let req = last_request.lock().unwrap().clone().expect("a request was sent");
+        let req = last_request
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("a request was sent");
         assert!(
             request_mentions(&req, "EDITED question"),
             "next turn must see the edited history: {:?}",
@@ -763,7 +774,10 @@ mod tests {
             .await
             .unwrap();
         let t1 = turn_text(&mut ev).await;
-        assert!(t1.contains("REPLY_FROM_A"), "turn 1 uses provider A: {t1:?}");
+        assert!(
+            t1.contains("REPLY_FROM_A"),
+            "turn 1 uses provider A: {t1:?}"
+        );
 
         req_tx
             .send(AgentRequest::Submit {
@@ -818,8 +832,7 @@ mod tests {
                 "done",
             )))
         });
-        let mcp_tools: McpToolsSource =
-            Box::new(|| vec![Arc::new(FakeMcpTool) as Arc<dyn Tool>]);
+        let mcp_tools: McpToolsSource = Box::new(|| vec![Arc::new(FakeMcpTool) as Arc<dyn Tool>]);
 
         let (req_tx, mut ev, _q, _h) = spawn_task(
             test_config(),

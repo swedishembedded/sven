@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sven_runtime::SharedKnowledge;
+use sven_workspace::SharedKnowledge;
 
 use sven_hsm::ToolCapability;
 
@@ -121,7 +121,7 @@ mod tests {
     use super::*;
     use crate::tool::{Tool, ToolCall};
     use serde_json::json;
-    use sven_runtime::KnowledgeInfo;
+    use sven_workspace::KnowledgeInfo;
 
     fn call() -> ToolCall {
         ToolCall {

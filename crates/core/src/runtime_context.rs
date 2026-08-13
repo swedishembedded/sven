@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use sven_config::AgentMode;
 use sven_model::Message;
-use sven_runtime::{SharedAgents, SharedKnowledge, SharedSkills};
+use sven_workspace::{SharedAgents, SharedKnowledge, SharedSkills};
 
 use crate::prompts::{system_prompt, PromptContext};
 
@@ -92,7 +92,10 @@ impl AgentRuntimeContext {
     ///   appended text alone becomes the entire system message.
     #[must_use]
     pub fn build_system_message(&self, mode: AgentMode) -> Option<Message> {
-        if self.no_system && self.system_prompt_override.is_none() && self.append_system_prompt.is_none() {
+        if self.no_system
+            && self.system_prompt_override.is_none()
+            && self.append_system_prompt.is_none()
+        {
             return None;
         }
 
@@ -129,7 +132,9 @@ mod tests {
     #[test]
     fn default_context_builds_the_full_default_prompt() {
         let ctx = AgentRuntimeContext::default();
-        let msg = ctx.build_system_message(AgentMode::Agent).expect("default prompt");
+        let msg = ctx
+            .build_system_message(AgentMode::Agent)
+            .expect("default prompt");
         let text = msg.as_text().unwrap();
         assert!(text.contains("You are Sven"));
         assert!(text.contains("## Guidelines"));
@@ -151,7 +156,9 @@ mod tests {
             system_prompt_override: Some("You are a test bot.".to_string()),
             ..Default::default()
         };
-        let msg = ctx.build_system_message(AgentMode::Agent).expect("override prompt");
+        let msg = ctx
+            .build_system_message(AgentMode::Agent)
+            .expect("override prompt");
         let text = msg.as_text().unwrap();
         assert_eq!(text, "You are a test bot.");
         assert!(!text.contains("You are Sven"));
@@ -165,7 +172,9 @@ mod tests {
             append_system_prompt: Some("Extra.".to_string()),
             ..Default::default()
         };
-        let msg = ctx.build_system_message(AgentMode::Agent).expect("combined prompt");
+        let msg = ctx
+            .build_system_message(AgentMode::Agent)
+            .expect("combined prompt");
         assert_eq!(msg.as_text().unwrap(), "Base.\n\nExtra.");
     }
 
@@ -176,7 +185,9 @@ mod tests {
             append_system_prompt: Some("Just this.".to_string()),
             ..Default::default()
         };
-        let msg = ctx.build_system_message(AgentMode::Agent).expect("append-only prompt");
+        let msg = ctx
+            .build_system_message(AgentMode::Agent)
+            .expect("append-only prompt");
         assert_eq!(msg.as_text().unwrap(), "Just this.");
     }
 
@@ -186,7 +197,9 @@ mod tests {
             system_prompt_override: Some("Custom only.".to_string()),
             ..Default::default()
         };
-        let msg = ctx.build_system_message(AgentMode::Agent).expect("override prompt");
+        let msg = ctx
+            .build_system_message(AgentMode::Agent)
+            .expect("override prompt");
         assert_eq!(msg.as_text().unwrap(), "Custom only.");
     }
 }

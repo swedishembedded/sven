@@ -32,7 +32,7 @@ use sven_core::AgentEvent;
 use sven_input::trace_session::{self, StepAssembler, SvenSessionMeta};
 use sven_input::{history, parse_conversation, parse_frontmatter, parse_workflow, Step, StepQueue};
 use sven_model::{ContentPart, Message, MessageContent, Role};
-use sven_runtime::resolve_auto_log_path;
+use sven_workspace::resolve_auto_log_path;
 
 use crate::kernel_agent::KernelAgent;
 
@@ -512,7 +512,7 @@ impl CiRunner {
         } else {
             opts.project_root
                 .as_ref()
-                .and_then(|r| sven_runtime::find_project_context_file(r))
+                .and_then(|r| sven_workspace::find_project_context_file(r))
         };
 
         if let Some(path) = &project_context_file {

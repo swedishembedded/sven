@@ -22,7 +22,7 @@ pub use runner::{
 };
 pub use toolcall_replay::replay_tool_calls;
 // Re-export runtime detection utilities for callers that import from sven_ci
-pub use sven_runtime::{
+pub use sven_workspace::{
     ci_template_vars, collect_git_context, detect_ci_context, find_project_context_file,
     find_project_root, GitContext,
 };
