@@ -11,7 +11,7 @@ sven-model       = { path = "../model" }
 sven-session-store       = { path = "../session-store" }
 sven-session-model = { path = "../session-model" }
 sven-tools       = { path = "../tools" }
-sven-core        = { path = "../core" }
+sven-machines        = { path = "../machines" }
 sven-bootstrap   = { path = "../bootstrap" }
 sven-hsm         = { path = "../hsm" }
 sven-mcp-client  = { path = "../mcp-client" }

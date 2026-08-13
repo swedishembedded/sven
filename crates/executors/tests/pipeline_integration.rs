@@ -157,7 +157,7 @@ impl sven_model::ModelProvider for EmptyProvider {
 
 #[tokio::test]
 async fn reactive_agent_machine_routes_user_message_to_text_delta_on_obs_sink() {
-    use sven_core::ReactiveAgentMachine;
+    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
@@ -285,7 +285,7 @@ impl sven_model::ModelProvider for HangingProvider {
 /// already treats as terminal on its own).
 #[tokio::test]
 async fn cancelling_mid_stream_preserves_partial_text_and_reports_aborted() {
-    use sven_core::ReactiveAgentMachine;
+    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
@@ -405,7 +405,7 @@ async fn cancelling_mid_stream_preserves_partial_text_and_reports_aborted() {
 /// must emit `UiEvent::Error` before `UiEvent::TurnComplete`.
 #[tokio::test]
 async fn empty_provider_fails_loudly_instead_of_silent_success() {
-    use sven_core::ReactiveAgentMachine;
+    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
@@ -501,7 +501,7 @@ async fn empty_provider_fails_loudly_instead_of_silent_success() {
 /// paying the connection/admission cost.
 #[tokio::test]
 async fn oversized_prompt_fails_before_any_network_call() {
-    use sven_core::ReactiveAgentMachine;
+    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
@@ -579,7 +579,7 @@ async fn oversized_prompt_fails_before_any_network_call() {
 /// cap unchanged or leaving it unset.
 #[tokio::test]
 async fn tiny_prompt_fits_a_small_window_with_a_full_size_output_cap() {
-    use sven_core::ReactiveAgentMachine;
+    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
@@ -712,8 +712,8 @@ impl sven_model::ModelProvider for CountingProvider {
 /// is not just "the turn got rejected", compaction must let it proceed).
 #[tokio::test]
 async fn long_thread_triggers_compaction_before_the_next_turn() {
-    use sven_core::machines::reactive_agent::CHAT_THREAD;
-    use sven_core::ReactiveAgentMachine;
+    use sven_machines::machines::reactive_agent::CHAT_THREAD;
+    use sven_machines::ReactiveAgentMachine;
     use sven_executors::{CompactionConfig, CompositeExecutorBuilder};
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
@@ -884,8 +884,8 @@ impl sven_model::ModelProvider for AlwaysErrorsProvider {
 /// must complete and be observable.
 #[tokio::test]
 async fn compaction_falls_back_to_emergency_when_the_summarization_call_fails() {
-    use sven_core::machines::reactive_agent::CHAT_THREAD;
-    use sven_core::ReactiveAgentMachine;
+    use sven_machines::machines::reactive_agent::CHAT_THREAD;
+    use sven_machines::ReactiveAgentMachine;
     use sven_executors::{CompactionConfig, CompositeExecutorBuilder};
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
@@ -1030,7 +1030,7 @@ impl sven_model::ModelProvider for UsageReportingProvider {
 /// started filling these in).
 #[tokio::test]
 async fn token_usage_reports_cumulative_cache_totals_and_model_capacity() {
-    use sven_core::ReactiveAgentMachine;
+    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 

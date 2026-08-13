@@ -5,7 +5,7 @@
 //!
 //! This is the single entry point for constructing a runtime: it produces an
 //! [`ErasedRuntime`] driven by a machine fetched from
-//! [`sven_core::ModeRegistry`].
+//! [`sven_machines::ModeRegistry`].
 //!
 //! # Usage
 //!
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sven_config::{AgentMode, Config, ModelConfig};
-use sven_core::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
+use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
     CompositeExecutorBuilder, ToolExecutor, TurnExecutor,
@@ -184,7 +184,7 @@ impl RuntimeHandle {
         self.conv_store
             .lock()
             .ok()
-            .map(|store| store.snapshot(sven_core::machines::reactive_agent::CHAT_THREAD))
+            .map(|store| store.snapshot(sven_machines::machines::reactive_agent::CHAT_THREAD))
             .unwrap_or_default()
     }
 
@@ -194,7 +194,7 @@ impl RuntimeHandle {
     /// against exactly those turns. A no-op if the store mutex is poisoned.
     pub fn seed_history(&self, messages: Vec<Message>) {
         if let Ok(mut store) = self.conv_store.lock() {
-            store.replace_thread(sven_core::machines::reactive_agent::CHAT_THREAD, messages);
+            store.replace_thread(sven_machines::machines::reactive_agent::CHAT_THREAD, messages);
         }
     }
 
@@ -615,11 +615,11 @@ impl RuntimeBuilder {
         if let Ok(mut store) = conv_store.lock() {
             let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
             if let Some(system_msg) = runtime.build_system_message(mode) {
-                store.append(sven_core::machines::reactive_agent::CHAT_THREAD, system_msg);
+                store.append(sven_machines::machines::reactive_agent::CHAT_THREAD, system_msg);
             }
             for msg in &self.initial_history {
                 store.append(
-                    sven_core::machines::reactive_agent::CHAT_THREAD,
+                    sven_machines::machines::reactive_agent::CHAT_THREAD,
                     msg.clone(),
                 );
             }
@@ -698,7 +698,7 @@ impl RuntimeBuilder {
         .with_compaction_config(sven_executors::CompactionConfig::from_agent_config(
             &self.config.agent,
         ))
-        .with_thinking_budget(sven_core::ThinkingBudget::from_agent_config(
+        .with_thinking_budget(sven_machines::ThinkingBudget::from_agent_config(
             &self.config.agent,
         ));
 
@@ -847,7 +847,7 @@ pub struct SessionBundle {
 ///
 /// `sven_tools::events::ToolEvent` predates the HSM kernel: it was how tools
 /// reported side-band state changes (todo list updates, mode/model switches,
-/// subagent lifecycle, delegate summaries) back to the old `sven_core::Agent`
+/// subagent lifecycle, delegate summaries) back to the old `sven_machines::Agent`
 /// loop. Several tools still send through it — `TodoTool`, `TaskTool`
 /// (`SubagentStarted`/`SubagentEvent`), `SystemTool` (`ModeChanged`) — but
 /// [`build`](RuntimeBuilder::build) used to just `drop` the receiver ("all
@@ -1093,7 +1093,7 @@ mod tests {
     /// Drive one turn through the default composite executor with a scripted
     /// provider and return the exact request it received, so `--no-system`
     /// wiring can be asserted end-to-end (not just at the `PromptContext`
-    /// composition level covered by `sven_core::runtime_context` unit tests).
+    /// composition level covered by `sven_machines::runtime_context` unit tests).
     async fn first_request_with(runtime_ctx: RuntimeContext) -> sven_model::CompletionRequest {
         let mut config = Config::default();
         config.model.provider = "mock".into();

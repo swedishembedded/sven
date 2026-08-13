@@ -842,7 +842,7 @@ impl AuditTrailHandle {
 ///
 /// Analogous to [`Runtime<M>`] but without the generic type parameter. Use
 /// this when the concrete machine type is selected at runtime (e.g. via
-/// `sven_core::ModeRegistry`).
+/// `sven_machines::ModeRegistry`).
 pub struct ErasedRuntime {
     sink: EventSink,
     obs: ObservationSink,

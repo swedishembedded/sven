@@ -14,7 +14,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use sven_bootstrap::{KernelAgentSession, McpManager, RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config, ModelConfig};
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 use sven_session_store::make_title;
 use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
@@ -468,7 +468,7 @@ pub(crate) async fn run_kernel_session_task(
                 tokio::spawn(async move {
                     if let Ok(share_id) = ready_rx.await {
                         let _ = notice_tx
-                            .send(sven_core::AgentEvent::TextComplete(format!(
+                            .send(sven_machines::AgentEvent::TextComplete(format!(
                                 "Session shared as {share_id}"
                             )))
                             .await;
@@ -480,7 +480,7 @@ pub(crate) async fn run_kernel_session_task(
                         crate::share::run_frontend_share_bridge(handle, *opts, Some(ready_tx)).await
                     {
                         let _ = err_tx
-                            .send(sven_core::AgentEvent::Error(format!("share: {e:#}")))
+                            .send(sven_machines::AgentEvent::Error(format!("share: {e:#}")))
                             .await;
                     }
                 });

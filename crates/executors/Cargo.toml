@@ -25,7 +25,7 @@ tracing       = { workspace = true }
 tokio      = { workspace = true }
 tempfile   = { workspace = true }
 sven-config = { path = "../config" }
-sven-core   = { path = "../core" }
+sven-machines   = { path = "../machines" }
 sven-model  = { path = "../model" }
 futures     = { workspace = true }
 async-trait = { workspace = true }

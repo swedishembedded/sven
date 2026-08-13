@@ -4,11 +4,11 @@
 //! Production [`ChildSpawner`] for the SDLC deliberation engine.
 //!
 //! [`SdlcChildSpawner`] services `Effect::InstantiateSubmachine` (emitted by
-//! [`SdlcMachine`](sven_core::SdlcMachine) when an approved plan decomposes into
+//! [`SdlcMachine`](sven_machines::SdlcMachine) when an approved plan decomposes into
 //! independent tasks). For each task it builds a **fully isolated** child
 //! kernel: a fresh [`Context`], a fresh [`TurnExecutor`] (hence a fresh
 //! append-only conversation store), running a one-shot
-//! [`TaskMachine`](sven_core::TaskMachine). The children run concurrently on
+//! [`TaskMachine`](sven_machines::TaskMachine). The children run concurrently on
 //! their own tokio tasks; when one terminates, its structured result is posted
 //! back to the parent as `Event::Internal(SubmachineCompleted { result })` so
 //! the parent can aggregate it (append-only) on the execution thread.
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use sven_config::Config;
-use sven_core::TaskMachine;
+use sven_machines::TaskMachine;
 use sven_executors::{CompositeExecutorBuilder, ToolExecutor, TurnExecutor};
 use sven_hsm::{
     event::InternalEvent, ChildSpawner, Context, Event, EventSink, Hsm, MachineId,
@@ -94,14 +94,14 @@ impl ChildSpawner for SdlcChildSpawner {
 
         let resolver_config = Arc::clone(&self.config);
         // Deliberately `from_config`, not `from_config_probed`: `ModelResolver`
-        // (`sven_core::stream_turn::ModelResolver`) is a synchronous `Fn`,
+        // (`sven_machines::stream_turn::ModelResolver`) is a synchronous `Fn`,
         // called synchronously from `TurnExecutor::resolve_model`, and
         // `from_config_probed` needs an `.await`. Probing here would require
         // making `ModelResolver` itself async across every call site — a
         // larger, separate refactor. The primary session model IS probed
         // (`runtime_builder.rs::build`); only a per-state/per-child model
         // override (this path) is not.
-        let model_resolver: sven_core::ModelResolver = Arc::new(move |model_str: &str| {
+        let model_resolver: sven_machines::ModelResolver = Arc::new(move |model_str: &str| {
             let model_cfg = sven_model::resolve_model_from_config(&resolver_config, model_str);
             let provider = sven_model::from_config(&model_cfg)?;
             Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
@@ -115,7 +115,7 @@ impl ChildSpawner for SdlcChildSpawner {
             Arc::clone(&call_id_to_thread),
             cancel_handle,
         )
-        .with_thinking_budget(sven_core::ThinkingBudget::from_agent_config(
+        .with_thinking_budget(sven_machines::ThinkingBudget::from_agent_config(
             &self.config.agent,
         ));
 

@@ -4,7 +4,7 @@
 //! Reusable HSM-kernel → [`AgentEvent`] adapter.
 //!
 //! Every consumer-facing surface (headless CI, interactive TUI/GUI, P2P node,
-//! local ACP) historically drove the legacy `sven_core::Agent` loop and
+//! local ACP) historically drove the legacy `sven_machines::Agent` loop and
 //! consumed its [`AgentEvent`] stream. The kernel ([`RuntimeBuilder`] /
 //! [`SessionBundle`]) instead exposes an outward observation plane of
 //! [`UiEvent`]s plus inward [`KernelChannels`] for user-question / approval
@@ -33,7 +33,7 @@
 
 use std::sync::Arc;
 
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 use sven_hsm::{ErasedRuntime, UiEvent};
 use sven_mcp_client::McpManager;
 use sven_tools::{Question, QuestionRequest};
@@ -255,7 +255,7 @@ impl KernelAgentSession {
     pub fn seed_history(&self, messages: Vec<sven_model::Message>) {
         if let Ok(mut store) = self.handle.conversation_store().lock() {
             store.replace_thread(
-                sven_core::machines::reactive_agent::CHAT_THREAD,
+                sven_machines::machines::reactive_agent::CHAT_THREAD,
                 messages,
             );
         }
@@ -272,7 +272,7 @@ impl KernelAgentSession {
             .conversation_store()
             .lock()
             .ok()
-            .map(|store| store.snapshot(sven_core::machines::reactive_agent::CHAT_THREAD))
+            .map(|store| store.snapshot(sven_machines::machines::reactive_agent::CHAT_THREAD))
             .unwrap_or_default()
     }
 

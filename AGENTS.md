@@ -13,11 +13,11 @@ briefly and was removed - the TUI is the only interactive local surface.)
   loop: the Hierarchical State Machine in `sven-hsm`, assembled by
   `sven-bootstrap::RuntimeBuilder`. Every surface (headless CI, interactive
   TUI, P2P node, ACP, cloud) drives that kernel. There is **no** second
-  "agent loop" - the legacy `sven_core::Agent`/`AgentBuilder` has been retired.
+  "agent loop" - the legacy `sven_machines::Agent`/`AgentBuilder` has been retired.
 - **Key principle**: The HSM is the deterministic process kernel; the LLM is an
   untrusted reasoning service; tools are invoked exclusively through typed
   `Effect` values emitted by HSM transitions. **Transition functions must stay
-  pure (no I/O).** `sven-core` (the `Machine` impls) has no path to
+  pure (no I/O).** `sven-machines` (the `Machine` impls) has no path to
   `sven-model`/`sven-tools` at all. The outside world is touched only by
   `sven-executors`' `EffectExecutor`s and the impure turn primitives they call
   into (`sven-turn`'s `stream_turn`/`compact`) - never from a transition.
@@ -27,7 +27,7 @@ briefly and was removed - the TUI is the only interactive local surface.)
 - **Skills** (load before writing code): Rust → `.cursor/skills/programming/rust/SKILL.md`;
   public API changes → `.cursor/skills/programming/rust-semver/SKILL.md`;
   TUI → `.cursor/skills/programming/ratatui/SKILL.md`.
-- **New behaviour**: a new `Machine` impl in `core/src/machines/` reusing
+- **New behaviour**: a new `Machine` impl in `machines/src/machines/` reusing
   `loop_core` for the tool-loop plumbing; register it in
   `mode.rs::default_registry()`. (A prior graph-DSL extension path was
   deleted — see `docs/adr/0001-delete-graph-dsl.md`.)
@@ -71,7 +71,7 @@ subcommand of the `sven` binary: `sven cloud serve` (control plane),
 ## Crate table
 
 The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) →
-{ `sven-core` (machines), `sven-executors` (I/O), `sven-model` (LLM), `sven-tools` }.
+{ `sven-machines` (machines), `sven-executors` (I/O), `sven-model` (LLM), `sven-tools` }.
 
 | Crate | Purpose |
 |-------|---------|
@@ -84,8 +84,8 @@ The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) 
 | `sven-session-store` | ATIF trajectory-backed session store (`trace_session`), legacy YAML chat import, markdown history, conversation parse/render (renamed from `sven-input` in Phase 4.3 - "input" didn't describe a session-persistence crate) |
 | **`atif`** | **ATIF v1.7 trajectory format** (package name `atif`, deliberately without the `sven-` prefix; renamed from `trace` in Phase 4.3 - the old name read as the `tracing` crate, not "trajectory"): `Trajectory`/`TraceStep`/`AgentProfile`/etc. model, spec validation (`validate_trajectory`), atomic whole-document JSON persistence with opt-in concurrent-modification detection (the interactive surfaces currently pass `expected = None`), header-only fast reads, NDJSON step streaming. Zero dependencies on other sven crates; consumed by `sven-session-store::trace_session` (session persistence), `sven-ci` (workflow trajectory I/O), and `sven-tui` (session save/load). |
 | `sven-tools` | Tool suite, `Tool`/`ToolDisplay` traits, `ApprovalPolicy`, `ToolPolicy`/`RolePolicy` (fs_root jail), `PermissionRequester`, `ToolRegistry` (`execute` / `execute_with_requester` / `execute_unattended`) |
-| `sven-core` | Pure HSM machines: `ReactiveAgentMachine`, `SdlcMachine`, `TaskMachine`, `ModeRegistry`, `loop_core`. Re-exports `sven-turn` and `sven_vocab::SessionEvent` (as `AgentEvent`) unchanged for existing call sites |
-| `sven-turn` | Impure turn primitives, one tier below `sven-core`/`sven-executors`: `stream_turn` (the real LLM streaming call), context compaction (`compact_session`/`smart_truncate`/...), tool-arg JSON repair, system-prompt assembly |
+| `sven-machines` | Pure HSM machines: `ReactiveAgentMachine`, `SdlcMachine`, `TaskMachine`, `ModeRegistry`, `loop_core`. Re-exports `sven-turn` and `sven_vocab::SessionEvent` (as `AgentEvent`) unchanged for existing call sites |
+| `sven-turn` | Impure turn primitives, one tier below `sven-machines`/`sven-executors`: `stream_turn` (the real LLM streaming call), context compaction (`compact_session`/`smart_truncate`/...), tool-arg JSON repair, system-prompt assembly |
 | `sven-workspace` | Workspace/project discovery: root detection, skill/agent/knowledge scanning (renamed from `sven-runtime` in Phase 4.3 - "runtime" already named the HSM's `Runtime<M>`/`ErasedRuntime`/`RuntimeBuilder`/`RuntimeContext`, and this crate is none of those) |
 | `sven-bootstrap` | `RuntimeBuilder` (assembles the kernel from config + mode; `with_effect_executor`, `with_principal`), `SessionSupervisor`, `SessionBundle`/`RuntimeHandle` |
 | `sven-ci` | Headless runner: `RuntimeRunner` (single-shot HSM driver) + workflow orchestration (`--file`, `--var`, jsonl/chat I/O, artifacts, output formats) driving the kernel |
@@ -117,7 +117,7 @@ The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) 
                   │
             sven-hsm (kernel: pure transitions → Vec<Effect>)
            /        |          \                    \
-     sven-core  sven-model  sven-executors ──────► sven-tools
+     sven-machines  sven-model  sven-executors ──────► sven-tools
      (machines) (LLM svc)   (ONLY I/O layer)     RemoteToolExecutor ──WSS──► sven-companion
                                                                             (customer premises)
 ```
@@ -132,7 +132,7 @@ Interactive surfaces **share `sven-frontend`** - never duplicate logic inside
 `sven-tui` that belongs in the shared layer; extract to `sven-frontend`. New
 slash commands go in `sven-frontend::commands::builtin`, never in `sven-tui`.
 Surfaces consume the `AgentEvent` stream (produced from the kernel's `UiEvent`
-by the adapter in `sven-core`) and the `MachineProjection` broadcast.
+by the adapter in `sven-machines`) and the `MachineProjection` broadcast.
 
 ---
 
@@ -152,7 +152,7 @@ site. When you add a new axis of extension, add a row here.
    existing one); it must post result `Event`s back via the `EventSink`.
 4. `hsm/src/audit.rs` - it is captured automatically as an `EffectKind`, but
    check `AuditOutcome` handling if it needs special treatment.
-5. Any machine in `sven-core` that should emit it.
+5. Any machine in `sven-machines` that should emit it.
 
 ### Add a new tool
 1. `tools/src/builtin/…` - implement `Tool` (+ `parameters_schema`,
@@ -166,16 +166,16 @@ site. When you add a new axis of extension, add a row here.
 ### Add a `ToolCapability` (permission bucket)
 1. `hsm/src/permissions.rs` - the `ToolCapability` enum,
    `is_inherently_dangerous`, and the classify path.
-2. Every machine's `permission_policy()` in `sven-core` (`reactive_agent.rs`,
+2. Every machine's `permission_policy()` in `sven-machines` (`reactive_agent.rs`,
    `sdlc/mod.rs`) - decide allow/approval per state.
 3. `node/src/p2p_kernel.rs::headless_policy()` and any cloud
    `SessionGate`/policy that enumerates capabilities.
 4. `sven-tools` `kernel_capability()` of the tools that use it.
 
 ### Add a new HSM machine / mode
-1. `core/src/machines/…` - implement `Machine`, reusing `loop_core` for the
+1. `machines/src/machines/…` - implement `Machine`, reusing `loop_core` for the
    tool-loop plumbing.
-2. `core/src/mode.rs::default_registry()` - register the mode string.
+2. `machines/src/mode.rs::default_registry()` - register the mode string.
 3. Its `permission_policy()`.
 4. `bootstrap/src/runtime_builder.rs` - any child-spawner wiring.
 5. Config: `sven-config` `AgentMode` if it's user-selectable.
@@ -203,8 +203,8 @@ must be applied to **each surface that constructs a kernel via
    Grep guard: `grep -rn "RuntimeBuilder" crates` finds every construction site.
 
 ### Add a new `AgentEvent` / `UiEvent`
-1. `sven-hsm` `UiEvent` (kernel-emitted) and/or `sven-core` `AgentEvent`.
-2. The `UiEvent`→`AgentEvent` adapter (`sven-core`).
+1. `sven-hsm` `UiEvent` (kernel-emitted) and/or `sven-machines` `AgentEvent`.
+2. The `UiEvent`→`AgentEvent` adapter (`sven-machines`).
 3. Consumers: `sven-frontend` (projection + renderers), `sven-tui`,
    `sven-ci` output (`runner/event.rs`, `conversation.rs` trace tokens),
    `sven-acp` notification mapping, `sven-node` `ui_event_to_control`.

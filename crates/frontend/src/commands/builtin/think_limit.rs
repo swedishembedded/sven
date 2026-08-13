@@ -7,16 +7,16 @@
 //! common case) that loops indefinitely in its reasoning instead of
 //! converging to an answer. Two independent caps, whichever fires first:
 //! total estimated thinking tokens for a turn, and wall-clock time spent
-//! reasoning with no forward progress. See `sven_core::stream_turn` and the
+//! reasoning with no forward progress. See `sven_machines::stream_turn` and the
 //! `agent.max_thinking_tokens`/`agent.thinking_timeout_secs` config fields.
 //!
-//! Sets a process-wide override (`sven_core::set_thinking_budget_override`)
+//! Sets a process-wide override (`sven_machines::set_thinking_budget_override`)
 //! that takes effect starting with the very next turn - no session rebuild
 //! needed, unlike `/model`. Applies to every concurrent session/subagent in
 //! this process, which is the intended scope for "the model is looping, turn
 //! this down right now".
 
-use sven_core::ThinkingBudget;
+use sven_machines::ThinkingBudget;
 
 use crate::commands::{CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand};
 
@@ -89,7 +89,7 @@ impl SlashCommand for ThinkLimitCommand {
 /// Render the currently active watchdog state as a local notice (never sent
 /// to the model - see `ImmediateAction::ShareInstructions`'s doc comment).
 fn current_status_text() -> String {
-    match sven_core::thinking_budget_override() {
+    match sven_machines::thinking_budget_override() {
         Some(b) => format!(
             "Thinking-loop watchdog: live override active for this process\n  \
              max_thinking_tokens: {}\n  thinking_timeout_secs: {}\n\n\

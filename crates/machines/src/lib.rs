@@ -14,7 +14,7 @@ pub mod mode;
 // compaction, tool-arg JSON repair, system-prompt assembly) live in
 // `sven-turn` (domain tier, below this "machines"-tier crate) as of Phase 4.1
 // of the crate-architecture refactor plan. Re-exported here unchanged so
-// existing `sven_core::stream_turn`/`sven_core::prompts::*` call sites don't
+// existing `sven_machines::stream_turn`/`sven_machines::prompts::*` call sites don't
 // need to change; `sven-executors` depends on `sven-turn` directly instead
 // (Phase 4.2), which is what lets the `sven-executors -> sven-core` same-tier
 // edge disappear.

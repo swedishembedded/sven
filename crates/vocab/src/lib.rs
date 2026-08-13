@@ -15,7 +15,7 @@
 //! types are actually defined.
 //!
 //! [`SessionEvent`] is the unified session-event stream (re-exported as
-//! `sven_core::AgentEvent` and `sven_hsm::UiEvent`) and its payload types
+//! `sven_machines::AgentEvent` and `sven_hsm::UiEvent`) and its payload types
 //! ([`AgentMode`], [`TodoItem`], [`SubagentUpdate`], [`CollabEvent`],
 //! [`PeerInfo`], [`CompactionStrategyUsed`]) live here for the same reason.
 
@@ -370,7 +370,7 @@ pub enum CollabEvent {
 /// The single, unified session event stream.
 ///
 /// Historically the codebase had two parallel enums for this: `AgentEvent`
-/// (typed payloads, produced by the legacy `sven_core::Agent` loop) and
+/// (typed payloads, produced by the legacy `sven_machines::Agent` loop) and
 /// `UiEvent` (opaque `Value`/`String` payloads, produced by the HSM kernel's
 /// outward observation plane). A translator pair converted between them on
 /// every event, and because both were hand-maintained, they had already

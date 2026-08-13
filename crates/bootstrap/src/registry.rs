@@ -33,7 +33,7 @@ use sven_tools::{
 };
 use sven_workspace::Shared;
 
-use sven_core::AgentRuntimeContext;
+use sven_machines::AgentRuntimeContext;
 
 use crate::context::ToolSetProfile;
 use crate::context_tool::ContextTool;

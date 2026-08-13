@@ -68,7 +68,7 @@ sven-team          = "domain"
 sven-turn          = "domain"
 
 # machines
-sven-core      = "machines"
+sven-machines  = "machines"
 sven-executors = "machines"
 
 # assembly

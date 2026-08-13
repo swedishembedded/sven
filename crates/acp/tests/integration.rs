@@ -11,7 +11,7 @@ use sven_acp::bridge::{
     acp_mode_id_to_sven_mode, agent_event_to_session_update, sven_mode_to_acp_mode_id,
 };
 use sven_config::AgentMode;
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 
 // ─── Bridge unit tests ────────────────────────────────────────────────────────
 

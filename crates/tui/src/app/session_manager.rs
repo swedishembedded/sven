@@ -29,7 +29,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use atif::Trajectory;
 use chrono::{DateTime, Utc};
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 use sven_session_store::{ChatStatus, ChatUsage, SessionId, SvenSessionMeta, UnifiedSessionEntry};
 use tokio::sync::{mpsc, Mutex};
 
@@ -361,7 +361,7 @@ impl SessionEntry {
     /// content are never shown in the wrong chat view - they are always stored
     /// on the session that originated the event.
     pub fn apply_background_event(&mut self, event: &AgentEvent) {
-        use sven_core::AgentEvent as Ev;
+        use sven_machines::AgentEvent as Ev;
 
         match event {
             Ev::TextDelta(_) | Ev::ThinkingDelta(_) => {
@@ -583,14 +583,14 @@ fn session_entry_from_unified(
 // ── SessionManager ────────────────────────────────────────────────────────────
 
 /// TUI multi-session UI state - the **session manager** that owns the set of active
-/// [`sven_core::Session`]s and tracks which one is focused in the sidebar.
+/// [`sven_machines::Session`]s and tracks which one is focused in the sidebar.
 ///
 /// # Layering note
 ///
 /// | Type | Crate | Role |
 /// |------|-------|------|
 /// | [`SessionManager`] | `sven-tui` | **TUI UI state** - tree of active sessions with sidebar selection and agent-event multiplexing. |
-/// | `sven_core::Session` | `sven-core` | **Runtime state** - one live agent session with mutable message history and token accounting. |
+/// | `sven_machines::Session` | `sven-core` | **Runtime state** - one live agent session with mutable message history and token accounting. |
 /// | `ConversationFile` | `sven-input` | **Persisted format** - a parsed `.md`/`.jsonl` snapshot used to seed session history on load. |
 ///
 /// The sidebar is a tree: roots are in `display_order`; children are in

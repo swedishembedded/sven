@@ -697,7 +697,7 @@ pub struct AgentConfig {
     /// Token fraction at which proactive compaction triggers (0.0-1.0),
     /// checked by `TurnExecutor` before every turn against the usable input
     /// budget (`sven_model::budget::effective_input_budget`), minus
-    /// `compaction_overhead_reserve`. See `sven_core::prepare_compaction`.
+    /// `compaction_overhead_reserve`. See `sven_machines::prepare_compaction`.
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: f32,
     /// Number of recent non-system messages preserved verbatim during
@@ -719,7 +719,7 @@ pub struct AgentConfig {
     pub compaction_strategy: CompactionStrategy,
     /// Maximum tokens allowed for a single tool result before it is
     /// deterministically truncated before entering the session, applied by
-    /// `ToolExecutor` on the way into the conversation store (`sven_core::
+    /// `ToolExecutor` on the way into the conversation store (`sven_machines::
     /// smart_truncate`; category comes from the tool's own
     /// `Tool::output_category()`).
     ///

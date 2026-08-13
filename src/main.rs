@@ -230,7 +230,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ── HSM mode resolution ─────────────────────────────────────────────────
     // `SVEN_MODE` env (or `--mode` flag mapped into kernel vocabulary) selects
-    // the machine from `sven_core::ModeRegistry`.  This string is forwarded to
+    // the machine from `sven_machines::ModeRegistry`.  This string is forwarded to
     // `RuntimeBuilder::new(config, mode)` inside run_tui / run_ci / run_gui as
     // those functions are migrated to the kernel path.
     //

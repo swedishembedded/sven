@@ -196,7 +196,7 @@ impl App {
                         // Process-wide and immediate - no session rebuild
                         // needed (unlike `/model`): the very next turn on
                         // any session/subagent in this process observes it.
-                        sven_core::set_thinking_budget_override(budget);
+                        sven_machines::set_thinking_budget_override(budget);
                         if let Some(ref toast_tx) = self.toast_tx {
                             let _ = toast_tx
                                 .send(crate::app::ui_state::Toast::info(match budget {
@@ -307,7 +307,7 @@ impl App {
                     if let Some(ImmediateAction::ApprovePlan { ref task_id }) =
                         result.immediate_action
                     {
-                        let ev = sven_core::CollabEvent::PlanApproved {
+                        let ev = sven_machines::CollabEvent::PlanApproved {
                             name: String::new(),
                             task_id: task_id.clone(),
                         };
@@ -324,7 +324,7 @@ impl App {
                         ref feedback,
                     }) = result.immediate_action
                     {
-                        let ev = sven_core::CollabEvent::PlanRejected {
+                        let ev = sven_machines::CollabEvent::PlanRejected {
                             name: String::new(),
                             task_id: task_id.clone(),
                             feedback: feedback.clone(),

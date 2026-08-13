@@ -28,7 +28,7 @@ use tracing::debug;
 use atif::{TraceStep, Trajectory};
 use sven_bootstrap::RuntimeContext;
 use sven_config::{AgentMode, Config};
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 use sven_model::{ContentPart, Message, MessageContent, Role};
 use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
 use sven_session_store::{
@@ -123,7 +123,7 @@ pub struct CiOptions {
     /// Text appended to the default system prompt (after Guidelines section).
     pub append_system_prompt: Option<String>,
     /// Suppress Sven's built-in system prompt (`--no-system`). See
-    /// [`sven_core::AgentRuntimeContext::build_system_message`] for exact
+    /// [`sven_machines::AgentRuntimeContext::build_system_message`] for exact
     /// semantics when combined with `system_prompt_file`/`append_system_prompt`.
     pub no_system: bool,
     /// Disable all tools for this session (`--no-tools`): no tool schemas are

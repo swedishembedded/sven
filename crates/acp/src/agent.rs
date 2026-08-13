@@ -7,7 +7,7 @@
 //! [`sven_bootstrap::RuntimeBuilder`] and wraps it in a
 //! [`sven_bootstrap::KernelAgentSession`] — the shared HSM-kernel adapter that
 //! maps the kernel's outward observation plane onto the same
-//! [`AgentEvent`](sven_core::AgentEvent) stream every other surface consumes.
+//! [`AgentEvent`](sven_machines::AgentEvent) stream every other surface consumes.
 //! The session is stored in a [`SessionEntry`] keyed by ACP [`SessionId`].
 //! `prompt` posts the user message through the session, drains the mapped
 //! `AgentEvent` stream, and bridges each event to an ACP `session/update`
@@ -50,7 +50,7 @@ const PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 
 use sven_bootstrap::{KernelAgentSession, RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config};
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 use sven_tools::QuestionRequest;
 
 use crate::bridge::{

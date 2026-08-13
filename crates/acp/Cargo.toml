@@ -6,7 +6,7 @@ description = "ACP (Agent Client Protocol) server for sven - exposes sven as an 
 license     = "Apache-2.0"
 
 [dependencies]
-sven-core        = { path = "../core" }
+sven-machines        = { path = "../machines" }
 sven-tools       = { path = "../tools" }
 sven-hsm         = { path = "../hsm" }
 sven-bootstrap   = { path = "../bootstrap" }

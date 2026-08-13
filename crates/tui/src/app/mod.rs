@@ -24,7 +24,7 @@ use crossterm::event::EventStream;
 use futures::StreamExt;
 use ratatui::{layout::Rect, DefaultTerminal, Frame};
 use sven_config::{AgentMode, Config};
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 use sven_model::Message;
 use sven_tools::QuestionRequest;
 use tokio::sync::mpsc;
@@ -1684,7 +1684,7 @@ pub(crate) fn conversation_record_to_chat_segment(
             strategy,
             turn,
         } => {
-            use sven_core::CompactionStrategyUsed;
+            use sven_machines::CompactionStrategyUsed;
             let strategy = match strategy.as_deref() {
                 Some("emergency") => CompactionStrategyUsed::Emergency,
                 Some("narrative") => CompactionStrategyUsed::Narrative,

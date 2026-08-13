@@ -12,7 +12,7 @@ use tracing::debug;
 
 use sven_bootstrap::RuntimeContext;
 use sven_config::{AgentMode, Config};
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 use sven_session_store::{
     parse_conversation, parse_jsonl_full, serialize_conversation_turn_with_metadata,
     serialize_jsonl_records, ConversationRecord, TurnMetadata,

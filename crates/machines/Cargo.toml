@@ -1,5 +1,5 @@
 [package]
-name    = "sven-core"
+name    = "sven-machines"
 version.workspace = true
 edition = "2021"
 

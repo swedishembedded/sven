@@ -117,10 +117,10 @@ pub enum ImmediateAction {
     /// `/think-limit <args>`: set (`Some`) or clear (`None`, reverting to the
     /// `agent.max_thinking_tokens`/`agent.thinking_timeout_secs` config
     /// values) the process-wide thinking-loop watchdog override
-    /// (`sven_core::stream_turn::set_thinking_budget_override`). Live for
+    /// (`sven_machines::stream_turn::set_thinking_budget_override`). Live for
     /// every session/subagent in this process starting with the next turn -
     /// no session rebuild needed, unlike `/model`.
-    SetThinkingBudget(Option<sven_core::ThinkingBudget>),
+    SetThinkingBudget(Option<sven_machines::ThinkingBudget>),
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────

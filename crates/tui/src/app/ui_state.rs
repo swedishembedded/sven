@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use ratatui::style::Color;
 
-use sven_core::PeerInfo;
+use sven_machines::PeerInfo;
 
 use crate::{
     chat::search::SearchState,

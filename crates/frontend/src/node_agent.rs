@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use serde::Serialize;
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 use sven_tools::ToolSchema;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, warn};
@@ -412,7 +412,7 @@ async fn handle_event(
         Evt::PeerList { peers } => {
             let peer_infos = peers
                 .into_iter()
-                .map(|p| sven_core::PeerInfo {
+                .map(|p| sven_machines::PeerInfo {
                     name: p.name,
                     peer_id: p.peer_id,
                     connected: p.connected,

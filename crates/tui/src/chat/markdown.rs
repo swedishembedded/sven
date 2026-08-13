@@ -63,7 +63,7 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
             strategy,
             turn,
         } => {
-            use sven_core::CompactionStrategyUsed;
+            use sven_machines::CompactionStrategyUsed;
             let label = match strategy {
                 CompactionStrategyUsed::Structured => "Context compacted (structured)",
                 CompactionStrategyUsed::Narrative => "Context compacted (narrative)",
@@ -88,7 +88,7 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
         }
         ChatSegment::TodoUpdate(todos) => format_todos_markdown(todos),
         ChatSegment::CollabEvent(ev) => {
-            let line = sven_core::prompts::format_collab_event(ev);
+            let line = sven_machines::prompts::format_collab_event(ev);
             format!("\n*{line}*\n")
         }
         ChatSegment::DelegateSummary {

@@ -1,11 +1,11 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Kernel-backed drop-in for the small slice of the legacy `sven_core::Agent`
+//! Kernel-backed drop-in for the small slice of the legacy `sven_machines::Agent`
 //! API that the headless runners ([`CiRunner`](crate::CiRunner) and
 //! [`ConversationRunner`](crate::ConversationRunner)) depend on.
 //!
-//! Instead of driving the retired `sven_core::Agent` loop, [`KernelAgent`]
+//! Instead of driving the retired `sven_machines::Agent` loop, [`KernelAgent`]
 //! runs each turn on the HSM kernel built by [`RuntimeBuilder`]. It preserves
 //! the exact `submit → AgentEvent stream` contract those runners consume, so
 //! the multi-step orchestration, output formatting, JSONL persistence, caching
@@ -26,13 +26,13 @@ use tokio::sync::mpsc;
 
 use sven_bootstrap::{build_tool_registry, RuntimeBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 use sven_hsm::{Event, UiEvent};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::ToolRegistry;
 
 /// A kernel-backed replacement for the headless runners' use of
-/// `sven_core::Agent`.
+/// `sven_machines::Agent`.
 ///
 /// Owns the reusable runtime context and accumulated conversation history, and
 /// exposes the exact method slice ([`submit`](Self::submit),
