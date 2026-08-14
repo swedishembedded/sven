@@ -71,8 +71,8 @@ use sven_tools::{
     events::{SubagentUpdate, ToolEvent},
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
-    BufGrepTool, BufReadTool, BufStatusTool, BufferSource, OutputBufferStore,
 };
+use sven_tools_fs::{BufGrepTool, BufReadTool, BufStatusTool, BufferSource, OutputBufferStore};
 
 /// Environment variable set when running as a subagent (depth 0).
 const DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
@@ -1017,10 +1017,8 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{mpsc, Mutex};
 
-    use sven_tools::{
-        tool::{Tool, ToolCall},
-        OutputBufferStore,
-    };
+    use sven_tools::tool::{Tool, ToolCall};
+    use sven_tools_fs::OutputBufferStore;
 
     use super::TaskTool;
 

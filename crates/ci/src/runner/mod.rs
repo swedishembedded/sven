@@ -171,7 +171,7 @@ pub struct CiOptions {
 
 /// Build the initial user turn's content parts from the prompt plus `paths`.
 ///
-/// Classification and loading go through `sven_tools::load_attachment`, the
+/// Classification and loading go through `sven_tools_fs::load_attachment`, the
 /// same function the `attach_file` tool uses, so the CLI flag and the tool can
 /// never disagree about how a path becomes a content part.
 async fn build_attachment_parts(
@@ -180,7 +180,7 @@ async fn build_attachment_parts(
     model: &Arc<dyn sven_model::ModelProvider>,
     asr: &sven_config::AsrConfig,
 ) -> anyhow::Result<Vec<sven_model::ContentPart>> {
-    let opts = sven_tools::AttachOptions {
+    let opts = sven_tools_fs::AttachOptions {
         supports_images: model.supports_images(),
         supports_audio: model.supports_audio(),
         force_transcribe: false,
@@ -190,7 +190,7 @@ async fn build_attachment_parts(
 
     let mut parts = vec![sven_model::ContentPart::text(prompt)];
     for path in paths {
-        let loaded = sven_tools::load_attachment(path, &opts, &label)
+        let loaded = sven_tools_fs::load_attachment(path, &opts, &label)
             .await
             .with_context(|| format!("attaching {}", path.display()))?;
         write_stderr(&format!(

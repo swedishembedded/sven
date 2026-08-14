@@ -18,7 +18,8 @@ use sven_machines::AgentEvent;
 use sven_session_store::make_title;
 use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
-use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools};
+use sven_tools::{QuestionRequest, SharedToolDisplays, SharedTools};
+use sven_tools_fs::OutputBufferStore;
 use sven_workspace::{SharedAgents, SharedSkills};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
@@ -517,9 +518,8 @@ mod tests {
     use sven_config::{AgentMode, Config, ModelConfig};
     use sven_model::{CompletionRequest, ModelProvider, ResponseEvent};
     use sven_model_mock::ScriptedMockProvider;
-    use sven_tools::{
-        policy::ApprovalPolicy, OutputBufferStore, SharedTools, Tool, ToolCall, ToolOutput,
-    };
+    use sven_tools::{policy::ApprovalPolicy, SharedTools, Tool, ToolCall, ToolOutput};
+    use sven_tools_fs::OutputBufferStore;
     use sven_workspace::{SharedAgents, SharedSkills};
     use tokio::sync::{mpsc, Mutex};
     use tokio::task::JoinHandle;

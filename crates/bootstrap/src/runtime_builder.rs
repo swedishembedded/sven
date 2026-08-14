@@ -555,7 +555,8 @@ impl RuntimeBuilder {
         let todos = Arc::new(tokio::sync::Mutex::new(
             Vec::<sven_tools::events::TodoItem>::new(),
         ));
-        let buffer_store = Arc::new(tokio::sync::Mutex::new(sven_tools::OutputBufferStore::new()));
+        let buffer_store =
+            Arc::new(tokio::sync::Mutex::new(sven_tools_fs::OutputBufferStore::new()));
 
         let mut tool_registry = build_tool_registry(
             &self.config,

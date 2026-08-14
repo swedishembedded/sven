@@ -24,7 +24,8 @@ use tokio::sync::Mutex;
 
 use chrono::Local;
 use sven_mcp_client::ServerStatusSummary;
-use sven_tools::{format_tools_list, OutputBufferStore, ToolSchema};
+use sven_tools::{format_tools_list, ToolSchema};
+use sven_tools_fs::OutputBufferStore;
 use sven_workspace::{
     find_workspace_root, format_agents_list, format_skills_tree, AgentInfo, SkillInfo,
 };
@@ -217,15 +218,15 @@ fn format_peers_markdown(
     } else {
         for meta in &metadata {
             let status_icon = match &meta.status {
-                sven_tools::BufferStatus::Running { .. } => "⟳",
-                sven_tools::BufferStatus::Finished { exit_code } => {
+                sven_tools_fs::BufferStatus::Running { .. } => "⟳",
+                sven_tools_fs::BufferStatus::Finished { exit_code } => {
                     if *exit_code == 0 {
                         "✓"
                     } else {
                         "✗"
                     }
                 }
-                sven_tools::BufferStatus::Failed { .. } => "✗",
+                sven_tools_fs::BufferStatus::Failed { .. } => "✗",
             };
             let elapsed = format_elapsed(meta.elapsed_secs);
             out.push_str(&format!(
@@ -324,13 +325,13 @@ fn format_context_markdown(
             if !meta.description.is_empty() {
                 out.push_str(&format!("- **Source:** {}\n", meta.description));
             }
-            if let sven_tools::BufferStatus::Running { pid: Some(pid) } = &meta.status {
+            if let sven_tools_fs::BufferStatus::Running { pid: Some(pid) } = &meta.status {
                 out.push_str(&format!("- **PID:** {pid}\n"));
             }
-            if let sven_tools::BufferStatus::Finished { exit_code } = &meta.status {
+            if let sven_tools_fs::BufferStatus::Finished { exit_code } = &meta.status {
                 out.push_str(&format!("- **Exit code:** {exit_code}\n"));
             }
-            if let sven_tools::BufferStatus::Failed { error } = &meta.status {
+            if let sven_tools_fs::BufferStatus::Failed { error } = &meta.status {
                 out.push_str(&format!("- **Error:** {error}\n"));
             }
             out.push('\n');

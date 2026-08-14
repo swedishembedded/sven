@@ -39,18 +39,8 @@ pub use tool::{
 };
 pub use tool_summary::{shorten_path, tool_category, tool_icon, tool_smart_summary};
 
-// File operation tools
-pub use builtin::file::asr::{AsrError, Transcript};
-pub use builtin::file::attach_file::AttachFileTool;
-pub use builtin::file::attachment::{
-    classify as classify_attachment, load_attachment, AttachError, AttachOptions, AttachmentKind,
-    LoadedAttachment,
-};
-pub use builtin::file::delete_file::DeleteFileTool;
-pub use builtin::file::edit_file::EditFileTool;
-pub use builtin::file::find_file::FindFileTool;
-pub use builtin::file::read_file::ReadFileTool;
-pub use builtin::file::write_file::WriteTool;
+// File and buffer tools moved to sven-tools-fs (5.2 of the refactor plan's
+// god-crate splits). Consumers depend on sven-tools-fs directly now.
 
 // Search tools
 pub use builtin::search::grep::GrepTool;
@@ -65,9 +55,6 @@ pub use builtin::system::skill::SkillTool;
 pub use builtin::system::system::{ModelCatalogEntry, SystemTool};
 pub use builtin::system::todo::TodoTool;
 
-// Terminal tools
-pub use builtin::terminal::run_terminal_command::RunTerminalCommandTool;
-
 // Web tools
 pub use builtin::web::web_fetch::WebFetchTool;
 pub use builtin::web::web_search::WebSearchTool;
@@ -75,28 +62,16 @@ pub use builtin::web::web_search::WebSearchTool;
 // Knowledge tools
 pub use builtin::knowledge::list_knowledge::ListKnowledgeTool;
 
-// Shell tool
-pub use builtin::shell::ShellTool;
+// Shell/terminal tools moved to sven-tools-exec (5.3 of the refactor plan's
+// god-crate splits). Consumers depend on sven-tools-exec directly now.
 
-// GDB debugging tools (Unix only - GDB signal APIs are not available on Windows)
-#[cfg(unix)]
-pub use builtin::gdb::state::GdbSessionState;
-#[cfg(unix)]
-pub use builtin::gdb::GdbTool;
-#[cfg(unix)]
-pub use builtin::gdb::{
-    GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbStartServerTool, GdbStatusTool,
-    GdbStopTool, GdbWaitStoppedTool,
-};
+// GDB debugging tools moved to sven-tools-gdb (5.7 of the refactor plan's
+// god-crate splits; Unix only -- GDB signal APIs are not available on
+// Windows). Consumers depend on sven-tools-gdb directly now.
 
 // Context (RLM memory-mapped) tools
 pub use builtin::context::{
     ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore, SubQueryRunner,
-};
-
-// Streaming output buffer tools
-pub use builtin::buffer::{
-    BufGrepTool, BufReadTool, BufStatusTool, BufferSource, BufferStatus, OutputBufferStore,
 };
 
 // Image tool (still at root level)

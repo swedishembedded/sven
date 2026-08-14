@@ -7,6 +7,8 @@ license     = "MIT"
 
 [dependencies]
 sven-tools           = { path = "../tools" }
+sven-tools-exec      = { path = "../tools-exec" }
+sven-tools-fs        = { path = "../tools-fs" }
 anyhow               = { workspace = true }
 serde                = { workspace = true }
 serde_json           = { workspace = true }

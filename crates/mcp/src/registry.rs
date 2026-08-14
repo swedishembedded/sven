@@ -13,10 +13,11 @@
 //! and work without any running sven node or TUI.
 
 use sven_tools::{
-    DeleteFileTool, EditFileTool, FindFileTool, GrepTool, ReadFileTool, ReadImageTool,
-    ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool, ShellTool, ToolRegistry,
-    WebFetchTool, WebSearchTool, WriteTool,
+    GrepTool, ReadImageTool, ReadLintsTool, SearchCodebaseTool, ToolRegistry, WebFetchTool,
+    WebSearchTool,
 };
+use sven_tools_exec::{RunTerminalCommandTool, ShellTool};
+use sven_tools_fs::{DeleteFileTool, EditFileTool, FindFileTool, ReadFileTool, WriteTool};
 
 /// Tool names included in the default MCP-safe set.
 ///

@@ -8,6 +8,8 @@ sven-config        = { path = "../config" }
 sven-model         = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-tools         = { path = "../tools" }
+sven-tools-fs      = { path = "../tools-fs" }
+sven-tools-exec    = { path = "../tools-exec" }
 sven-machines          = { path = "../machines" }
 sven-workspace       = { path = "../workspace" }
 sven-mcp-client    = { path = "../mcp-client" }
@@ -40,6 +42,9 @@ integrations = [
     "dep:sven-integrations",
     "dep:sven-memory",
 ]
+
+[target.'cfg(unix)'.dependencies]
+sven-tools-gdb = { path = "../tools-gdb" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

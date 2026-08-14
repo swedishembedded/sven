@@ -24,12 +24,15 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 #[cfg(unix)]
-use sven_tools::GdbSessionState;
+use sven_tools_gdb::GdbSessionState;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
-    AskQuestionTool, AttachFileTool, ContextStore, EditFileTool, FindFileTool, GrepTool,
-    MemoryTool, ModelCatalogEntry, OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool,
-    SkillTool, SystemTool, TodoTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
+    AskQuestionTool, ContextStore, GrepTool, MemoryTool, ModelCatalogEntry, QuestionRequest,
+    SkillTool, SystemTool, TodoTool, ToolRegistry, WebFetchTool, WebSearchTool,
+};
+use sven_tools_exec::ShellTool;
+use sven_tools_fs::{
+    AttachFileTool, EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool, WriteTool,
 };
 use sven_workspace::Shared;
 

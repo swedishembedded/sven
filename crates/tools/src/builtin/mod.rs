@@ -1,17 +1,10 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 
 // SPDX-License-Identifier: Apache-2.0
-pub mod buffer;
 pub mod context;
-pub mod file;
-#[cfg(unix)]
-pub mod gdb;
-pub mod grep_match;
 pub mod knowledge;
 pub mod search;
-pub mod shell;
 pub mod system;
-pub mod terminal;
 pub mod web;
 
 // Legacy re-exports for backward compatibility during transition
@@ -19,8 +12,6 @@ pub mod web;
 pub mod read_image;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
-//
-// buf_read → FileContent, buf_grep → MatchList, buf_status → Generic (default)
 
 // Each builtin tool that overrides `output_category()` is verified here so
 // that renames or copy-paste errors are caught at compile time with a clear
@@ -30,51 +21,10 @@ pub mod read_image;
 mod output_category_tests {
     use crate::tool::OutputCategory;
     use crate::Tool;
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
 
-    #[cfg(unix)]
-    use {super::gdb::state::GdbSessionState, sven_config::GdbConfig};
-
-    #[cfg(unix)]
-    fn gdb_state() -> Arc<Mutex<GdbSessionState>> {
-        Arc::new(Mutex::new(GdbSessionState::default()))
-    }
-
-    // ── HeadTail tools (terminal / process output) ────────────────────────────
-
-    #[test]
-    fn shell_tool_is_headtail() {
-        let t = super::shell::ShellTool { timeout_secs: 30 };
-        assert_eq!(t.output_category(), OutputCategory::HeadTail);
-    }
-
-    #[test]
-    fn run_terminal_command_is_headtail() {
-        let t = super::terminal::run_terminal_command::RunTerminalCommandTool { timeout_secs: 30 };
-        assert_eq!(t.output_category(), OutputCategory::HeadTail);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn gdb_command_is_headtail() {
-        let t = super::gdb::command::GdbCommandTool::new(gdb_state(), GdbConfig::default());
-        assert_eq!(t.output_category(), OutputCategory::HeadTail);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn gdb_wait_stopped_is_headtail() {
-        let t = super::gdb::wait_stopped::GdbWaitStoppedTool::new(gdb_state());
-        assert_eq!(t.output_category(), OutputCategory::HeadTail);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn gdb_interrupt_is_headtail() {
-        let t = super::gdb::interrupt::GdbInterruptTool::new(gdb_state());
-        assert_eq!(t.output_category(), OutputCategory::HeadTail);
-    }
+    // The GDB and shell/terminal HeadTail tools' equivalents of this contract
+    // test moved with them into sven-tools-gdb and sven-tools-exec (5.7 and
+    // 5.3 of the refactor plan's god-crate splits).
 
     // ── MatchList tools (ordered result sets) ────────────────────────────────
 
@@ -96,33 +46,11 @@ mod output_category_tests {
         assert_eq!(t.output_category(), OutputCategory::MatchList);
     }
 
-    // ── FileContent tools (file reads) ────────────────────────────────────────
-
-    #[test]
-    fn read_file_is_filecontent() {
-        let t = super::file::read_file::ReadFileTool;
-        assert_eq!(t.output_category(), OutputCategory::FileContent);
-    }
-
-    // ── Generic tools (no override - hard truncation) ─────────────────────────
-
-    #[test]
-    fn write_tool_is_generic() {
-        let t = super::file::write_file::WriteTool;
-        assert_eq!(t.output_category(), OutputCategory::Generic);
-    }
-
-    #[test]
-    fn edit_file_is_generic() {
-        let t = super::file::edit_file::EditFileTool;
-        assert_eq!(t.output_category(), OutputCategory::Generic);
-    }
-
-    #[test]
-    fn delete_file_is_generic() {
-        let t = super::file::delete_file::DeleteFileTool;
-        assert_eq!(t.output_category(), OutputCategory::Generic);
-    }
+    // ── FileContent / Generic file tools ──────────────────────────────────────
+    //
+    // read_file/write_file/edit_file/delete_file/find_file's equivalents of
+    // this contract test moved with them into sven-tools-fs (5.2 of the
+    // refactor plan's god-crate splits).
 
     #[test]
     fn web_fetch_is_generic() {
@@ -133,35 +61,6 @@ mod output_category_tests {
     #[test]
     fn web_search_is_generic() {
         let t = super::web::web_search::WebSearchTool { api_key: None };
-        assert_eq!(t.output_category(), OutputCategory::Generic);
-    }
-
-    #[test]
-    fn find_file_tool_is_generic() {
-        let t = super::file::find_file::FindFileTool;
-        assert_eq!(t.output_category(), OutputCategory::Generic);
-    }
-
-    // ── Buffer tools ──────────────────────────────────────────────────────────
-
-    #[test]
-    fn buf_read_is_filecontent() {
-        let store = Arc::new(Mutex::new(super::buffer::store::OutputBufferStore::new()));
-        let t = super::buffer::read::BufReadTool::new(store);
-        assert_eq!(t.output_category(), OutputCategory::FileContent);
-    }
-
-    #[test]
-    fn buf_grep_is_matchlist() {
-        let store = Arc::new(Mutex::new(super::buffer::store::OutputBufferStore::new()));
-        let t = super::buffer::grep::BufGrepTool::new(store);
-        assert_eq!(t.output_category(), OutputCategory::MatchList);
-    }
-
-    #[test]
-    fn buf_status_is_generic() {
-        let store = Arc::new(Mutex::new(super::buffer::store::OutputBufferStore::new()));
-        let t = super::buffer::status::BufStatusTool::new(store);
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 

@@ -1,0 +1,30 @@
+[package]
+name        = "sven-tools-gdb"
+version.workspace = true
+edition     = "2021"
+description = "GDB/MI debugging tools (connect, start-server, command, interrupt, stop, wait-stopped, and the compound GdbTool dispatcher), plus GDB-server-binary discovery. Domain tier. Unix only -- GDB signal APIs are not available on Windows. Split out of sven-tools's builtin/gdb/ (5.7 of the refactor plan's god-crate splits); verified fully self-contained (zero cross-refs into any other builtin/ subdirectory) before the move."
+license     = "Apache-2.0"
+
+[dependencies]
+sven-tool-api = { path = "../tool-api" }
+sven-config   = { path = "../config" }
+sven-hsm      = { path = "../hsm" }
+anyhow        = { workspace = true }
+async-trait   = { workspace = true }
+serde_json    = { workspace = true }
+tokio         = { workspace = true }
+tracing       = { workspace = true }
+regex         = { workspace = true }
+# This whole crate is Unix only (GDB signal APIs are not available on
+# Windows); unlike sven-tools's old builtin/gdb/, which lived inside a
+# cross-platform crate and so gated gdbmi/libc under
+# `target.'cfg(unix)'.dependencies` and the module declaration under
+# `#[cfg(unix)]`, this crate has no non-unix code path to protect -- every
+# consumer already gates its `sven-tools-gdb` dependency itself under
+# `target.'cfg(unix)'.dependencies` (see crates/bootstrap/Cargo.toml), so
+# these can be plain, unconditional dependencies here.
+libc  = { workspace = true }
+gdbmi = "0.0.2"
+
+[dev-dependencies]
+tempfile = { workspace = true }

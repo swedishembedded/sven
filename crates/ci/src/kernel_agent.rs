@@ -117,7 +117,7 @@ impl KernelAgent {
         let (tool_event_tx, _tool_event_rx) =
             mpsc::channel::<sven_tools::events::ToolEvent>(64);
         let todos = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let buffer_store = Arc::new(tokio::sync::Mutex::new(sven_tools::OutputBufferStore::new()));
+        let buffer_store = Arc::new(tokio::sync::Mutex::new(sven_tools_fs::OutputBufferStore::new()));
         let profile = ToolSetProfile::Full {
             question_tx: None,
             todos,

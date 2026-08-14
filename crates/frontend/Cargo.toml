@@ -13,6 +13,7 @@ sven-model-drivers = { path = "../model-drivers" }
 sven-session-store       = { path = "../session-store" }
 sven-session-model = { path = "../session-model" }
 sven-tools       = { path = "../tools" }
+sven-tools-fs    = { path = "../tools-fs" }
 sven-machines        = { path = "../machines" }
 sven-bootstrap   = { path = "../bootstrap" }
 sven-hsm         = { path = "../hsm" }

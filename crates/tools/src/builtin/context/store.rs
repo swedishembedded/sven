@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
 
-pub use crate::builtin::grep_match::GrepMatch;
+pub use sven_tool_api::grep_match::GrepMatch;
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 

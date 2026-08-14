@@ -77,6 +77,9 @@ sven-metering      = "domain"
 sven-scheduler     = "domain"
 sven-team          = "domain"
 sven-turn          = "domain"
+sven-tools-fs      = "domain"
+sven-tools-exec    = "domain"
+sven-tools-gdb     = "domain"
 
 # machines
 sven-machines  = "machines"
@@ -312,7 +315,7 @@ lines = 1727
 path = "crates/model-drivers/tests/wire_format_tests.rs"
 lines = 1706
 [[allow.large_file]]
-path = "crates/tools/src/builtin/file/edit_file.rs"
+path = "crates/tools-fs/src/file/edit_file.rs"
 lines = 1695
 [[allow.large_file]]
 path = "crates/node-control/src/service.rs"
@@ -340,7 +343,7 @@ path = "crates/tui/src/app/chat_ops.rs"
 lines = 1324
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_firmware.rs"
-lines = 1310
+lines = 1312
 [[allow.large_file]]
 path = "crates/ci/src/runner/mod.rs"
 lines = 1257
@@ -349,7 +352,7 @@ path = "crates/workspace/src/skills.rs"
 lines = 1238
 [[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
-lines = 1194
+lines = 1195
 [[allow.large_file]]
 path = "crates/tui/src/chat/markdown.rs"
 lines = 1185
@@ -358,7 +361,7 @@ path = "crates/turn/src/stream_turn.rs"
 lines = 1171
 [[allow.large_file]]
 path = "crates/bootstrap/src/task_tool.rs"
-lines = 1157
+lines = 1155
 [[allow.large_file]]
 path = "crates/turn/src/prompts.rs"
 lines = 1145
@@ -405,7 +408,7 @@ lines = 1012
 path = "crates/node-config/src/config.rs"
 lines = 959
 [[allow.large_file]]
-path = "crates/tools/src/builtin/gdb/discovery.rs"
+path = "crates/tools-gdb/src/discovery.rs"
 lines = 942
 [[allow.large_file]]
 path = "crates/tui/src/keys.rs"
@@ -421,7 +424,7 @@ path = "crates/cloud-portal/src/portal.rs"
 lines = 916
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_platform.rs"
-lines = 882
+lines = 883
 [[allow.large_file]]
 path = "crates/tui/src/app/term_events.rs"
 lines = 880

@@ -79,7 +79,8 @@ fn tool_policy_deny() {
 #[tokio::test]
 async fn shell_tool_executes_echo() {
     use sven_tools::Tool;
-    use sven_tools::{ShellTool, ToolCall};
+    use sven_tools::ToolCall;
+    use sven_tools_exec::ShellTool;
 
     let tool = ShellTool::default();
     let call = ToolCall {
@@ -94,7 +95,8 @@ async fn shell_tool_executes_echo() {
 
 #[tokio::test]
 async fn fs_tool_write_read_roundtrip() {
-    use sven_tools::{ReadFileTool, Tool, ToolCall, WriteTool};
+    use sven_tools::{Tool, ToolCall};
+    use sven_tools_fs::{ReadFileTool, WriteTool};
 
     let tmp_dir = tempfile::tempdir().unwrap();
     let path = tmp_dir

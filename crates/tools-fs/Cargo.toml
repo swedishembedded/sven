@@ -1,0 +1,27 @@
+[package]
+name        = "sven-tools-fs"
+version.workspace = true
+edition     = "2021"
+description = "Filesystem tools: direct file read/write/edit/delete/find (file/) and the streaming subprocess-output buffer tools (buffer/). Domain tier. Split out of sven-tools's builtin/file/ + builtin/buffer/ (5.2 of the refactor plan's god-crate splits); verified zero cross-refs between the two subtrees or into any other builtin/ subdirectory."
+license     = "Apache-2.0"
+
+[dependencies]
+sven-tool-api = { path = "../tool-api" }
+sven-config   = { path = "../config" }
+sven-hsm      = { path = "../hsm" }
+sven-image    = { path = "../image" }
+sven-audio    = { path = "../sven-audio" }
+sven-model    = { path = "../model" }
+anyhow        = { workspace = true }
+async-trait   = { workspace = true }
+regex         = { workspace = true }
+serde_json    = { workspace = true }
+similar       = { workspace = true }
+tempfile      = { workspace = true }
+thiserror     = { workspace = true }
+tokio         = { workspace = true }
+tracing       = { workspace = true }
+walkdir       = { workspace = true }
+
+[dev-dependencies]
+sven-model-mock = { path = "../model-mock" }
