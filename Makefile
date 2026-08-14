@@ -226,9 +226,11 @@ fmt:
 check: check/arch
 	$(CARGO) clippy --all-targets $(CARGO_FLAGS) -- -D warnings
 
-## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet)
+## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
+##              and the `minimal` cargo feature profile's forbidden-crate list)
 check/arch:
 	$(CARGO) run -q -p xtask -- arch
+	$(CARGO) run -q -p xtask -- arch --profile minimal
 
 ## relay     - build the sven-relay server (requires git-discovery feature)
 relay:

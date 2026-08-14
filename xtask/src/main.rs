@@ -468,13 +468,74 @@ fn count_lines(path: &Path) -> Result<usize> {
     Ok(text.lines().count())
 }
 
+/// Third-party crates a portable/minimal build must never resolve, per the
+/// refactor plan's Phase 6 target ("no GUI toolkit, no libp2p, no HTTP
+/// server"). Checked against `cargo tree`'s *normal*-edge closure only --
+/// dev-dependencies (test-only) are exempt by the same rule as the rest of
+/// this file's checks.
+const FORBIDDEN_IN_MINIMAL: &[&str] = &[
+    "slint",
+    "ratatui",
+    "libp2p",
+    "git2",
+    "openssl-sys",
+    "webauthn-rs",
+    "portable-pty",
+    "gdbmi",
+    "axum",
+    "teloxide",
+    "rusqlite",
+    "nvim-rs",
+];
+
 /// `--profile <name>` support: asserts the resolved dependency closure for a
-/// named Cargo feature profile contains none of a forbidden set of
-/// third-party crates. Currently a stub -- wired up in full once the
-/// `minimal` feature profile exists on sven-cli (refactor plan Phase 6).
-fn check_profile(_workspace_root: &Path, profile: &str) -> Result<Vec<String>> {
-    eprintln!("note: --profile {profile} is not yet implemented (refactor plan Phase 6.3); skipping.");
-    Ok(Vec::new())
+/// named Cargo feature profile (`cargo tree -p sven --no-default-features
+/// --features <name> -e normal`) contains none of [`FORBIDDEN_IN_MINIMAL`].
+/// Only meaningful for `--profile minimal`; other profile names run the same
+/// check against their own resolved closure (harmless, just not the
+/// portability target the check exists for).
+fn check_profile(workspace_root: &Path, profile: &str) -> Result<Vec<String>> {
+    let output = Command::new("cargo")
+        .args([
+            "tree",
+            "-p",
+            "sven",
+            "--no-default-features",
+            "--features",
+            profile,
+            "-e",
+            "normal",
+        ])
+        .current_dir(workspace_root)
+        .output()
+        .context("running `cargo tree` for --profile check")?;
+    if !output.status.success() {
+        bail!(
+            "`cargo tree -p sven --no-default-features --features {profile} -e normal` failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let tree = String::from_utf8_lossy(&output.stdout);
+
+    let mut violations = Vec::new();
+    for line in tree.lines() {
+        // cargo tree draws each entry as tree-art followed by "<name> v<ver>"
+        // (or "<name> v<ver> (*)" for a repeated subtree). Strip the tree-art
+        // prefix and take the first whitespace-separated token as the name.
+        let name = line
+            .trim_start_matches(|c: char| !c.is_alphanumeric() && c != '_')
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        if let Some(forbidden) = FORBIDDEN_IN_MINIMAL.iter().find(|f| **f == name) {
+            violations.push(format!(
+                "error[ARCH-007]: forbidden crate in --profile {profile}\n  = note: `{forbidden}` is resolved into the `sven` binary's normal-dependency closure\n  = help: this profile must exclude {forbidden} (see FORBIDDEN_IN_MINIMAL in xtask); check which enabled feature pulls it in with `cargo tree -p sven --no-default-features --features {profile} -e normal -i {forbidden}`"
+            ));
+        }
+    }
+    violations.sort();
+    violations.dedup();
+    Ok(violations)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
