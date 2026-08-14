@@ -7,8 +7,8 @@ use tracing::debug;
 
 use sven_hsm::ToolCapability;
 
-use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput, ToolOutputPart};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{Tool, ToolCall, ToolOutput, ToolOutputPart};
 
 pub struct ReadImageTool;
 
@@ -99,7 +99,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::tool::Tool;
+    use sven_tool_api::tool::Tool;
 
     fn call(args: serde_json::Value) -> ToolCall {
         ToolCall {

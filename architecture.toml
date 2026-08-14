@@ -81,6 +81,7 @@ sven-tools-fs      = "domain"
 sven-tools-exec    = "domain"
 sven-tools-ctx     = "domain"
 sven-tools-agent   = "domain"
+sven-tools-web     = "domain"
 sven-tools-gdb     = "domain"
 
 # machines
@@ -122,20 +123,29 @@ xtask = "foundation"
 from = "sven-tools"
 to   = "sven-tool-registry"
 why  = """
-TEMPORARY, Phase 5.1 of the refactor plan. sven-tools split into sven-tool-api
-(kernel tier: the Tool trait + its interface) and sven-tool-registry (services
-tier: the concrete ToolRegistry + config-driven policy engines), but the ~18k
-LOC of built-in tool *implementations* (crates/tools/src/builtin/) have not
-yet been carved into their own per-concern domain crates (5.2-5.8 of the
-plan). Until that lands, sven-tools stays at services tier -- it is still the
-home of those implementations -- and re-exports both new crates' public
-surface at their original module paths so the ~20 crates that still write
-`sven_tools::ToolRegistry` / `sven_tools::ApprovalPolicy` keep compiling.
-sven-tools -> sven-tool-api is already a legal downward edge (kernel < services)
-and needs no exception. No cycle risk: sven-tool-registry does not and cannot
-depend back on sven-tools. Delete this entry once builtin/ moves out and
-sven-tools's own dependency on the registry (kept only for the re-export shim)
-goes with it.
+UPDATED, Phase 5.2-5.8 of the refactor plan (god-crate splits): builtin/'s
+~18k LOC of concrete tool *implementations* has now been fully carved into
+sven-tools-{fs,exec,web,ctx,agent,gdb} -- crates/tools/src/builtin/ is empty
+and deleted. sven-tools itself is left as a Phase 5.1 re-export shim purely
+over sven-tool-api (kernel: the Tool trait) and sven-tool-registry (services:
+the concrete ToolRegistry + config-driven policy engines), so the ~20 crates
+still writing `sven_tools::ToolRegistry` / `sven_tools::Tool` / etc. (shared
+kernel-tier vocabulary, not a concrete tool -- those call sites were never
+part of this split) keep compiling.
+
+This edge -- and this exception -- is NOT resolved by finishing the builtin/
+split alone, correcting the plan's stated resolution condition: sven-tools
+depends on sven-tool-registry (services tier) for its `registry` re-export,
+which forces sven-tools itself to services tier regardless of whether
+builtin/ holds any code, and a services-tier crate depending on another
+services-tier crate is exactly what this same-tier exception exists for.
+Deleting the exception requires deleting sven-tools outright and repointing
+every one of its ~20 consumers directly at sven-tool-api/sven-tool-registry
+-- out of scope for the builtin/ split itself (a much larger, separate
+mechanical sweep across the whole workspace) and left as the tracked
+follow-up. sven-tools -> sven-tool-api is already a legal downward edge
+(kernel < services) and needs no exception. No cycle risk: sven-tool-registry
+does not and cannot depend back on sven-tools.
 """
 
 [[same_layer]]

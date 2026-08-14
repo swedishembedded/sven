@@ -14,8 +14,15 @@
 //! `OutputBufferStore` today. `GrepMatch`, shared with `sven-tools-ctx`'s
 //! `context/store.rs`, moved to `sven-tool-api` (kernel tier) ahead of this
 //! split rather than living in either domain crate.
+//!
+//! `read_image` joined later, once it was the only file left in
+//! `sven-tools`'s `builtin/` root: it reads a file and produces tool output
+//! about its content, the same shape as `ReadFileTool`, and already depended
+//! on `sven-image` (the same crate `read_file.rs`'s inline image detection
+//! uses).
 pub mod buffer;
 pub mod file;
+pub mod read_image;
 
 pub use buffer::{BufGrepTool, BufReadTool, BufStatusTool, BufferSource, BufferStatus, OutputBufferStore};
 pub use file::{
@@ -23,6 +30,7 @@ pub use file::{
     AttachmentKind, DeleteFileTool, EditFileTool, FindFileTool, LoadedAttachment, ReadFileTool,
     WriteTool,
 };
+pub use read_image::ReadImageTool;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
 //

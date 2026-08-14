@@ -9,9 +9,9 @@ use tracing::debug;
 
 use sven_hsm::ToolCapability;
 
-use crate::params::{opt_bool, opt_str, opt_u64, require_str};
-use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
+use sven_tool_api::params::{opt_bool, opt_str, opt_u64, require_str};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 
 /// Cached availability of `rg` (ripgrep).  Probed once on first use; the
 /// result never changes during a sven session.
@@ -287,7 +287,7 @@ impl ToolDisplay for GrepTool {
         "search"
     }
     fn collapsed_summary(&self, args: &serde_json::Value) -> String {
-        crate::tool_summary::tool_smart_summary("grep", args)
+        sven_tool_api::tool_summary::tool_smart_summary("grep", args)
     }
 }
 
@@ -296,7 +296,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::tool::{Tool, ToolCall};
+    use sven_tool_api::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
         ToolCall {

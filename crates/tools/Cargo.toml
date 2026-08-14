@@ -1,21 +1,11 @@
 [package]
-name    = "sven-tools"
+name        = "sven-tools"
 version.workspace = true
-edition = "2021"
+edition     = "2021"
+description = "Phase 5.1 re-export shim over sven-tool-api (the Tool trait) and sven-tool-registry (the concrete ToolRegistry), kept so the ~20 crates still writing sven_tools::ToolRegistry/Tool/ToolCall (shared kernel-tier vocabulary, not a concrete tool -- builtin/'s ~18k LOC of those all moved to the sven-tools-{fs,exec,web,ctx,agent,gdb,p2p} domain crates) keep compiling. Deleting this crate and repointing every call site directly is the tracked follow-up."
+license     = "Apache-2.0"
 
 [dependencies]
 sven-tool-api      = { path = "../tool-api" }
 sven-tool-registry = { path = "../tool-registry" }
-sven-hsm     = { path = "../hsm" }
-sven-image   = { path = "../image" }
-anyhow      = { workspace = true }
-serde_json  = { workspace = true }
-tokio       = { workspace = true }
-async-trait = { workspace = true }
-tracing     = { workspace = true }
-regex       = { workspace = true }
-reqwest     = { workspace = true }
-html2text   = { workspace = true }
-
-[dev-dependencies]
-tempfile = { workspace = true }
+sven-hsm           = { path = "../hsm" }

@@ -7,8 +7,8 @@ use tracing::debug;
 
 use sven_hsm::ToolCapability;
 
-use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 #[derive(Default)]
 pub struct WebSearchTool {
@@ -169,14 +169,14 @@ impl ToolDisplay for WebSearchTool {
         "web"
     }
     fn collapsed_summary(&self, args: &serde_json::Value) -> String {
-        crate::tool_summary::tool_smart_summary("web_search", args)
+        sven_tool_api::tool_summary::tool_smart_summary("web_search", args)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::Tool;
+    use sven_tool_api::tool::Tool;
 
     #[test]
     fn schema_requires_query() {
@@ -188,7 +188,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_error_without_api_key() {
-        use crate::tool::ToolCall;
+        use sven_tool_api::tool::ToolCall;
         use serde_json::json;
 
         // Ensure env var is unset for test

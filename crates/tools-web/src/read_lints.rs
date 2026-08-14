@@ -7,8 +7,8 @@ use tracing::debug;
 
 use sven_hsm::ToolCapability;
 
-use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 
 pub struct ReadLintsTool;
 
@@ -232,7 +232,7 @@ impl ToolDisplay for ReadLintsTool {
         if let Some(paths) = args.get("paths").and_then(|v| v.as_array()) {
             if !paths.is_empty() {
                 let first = paths[0].as_str().unwrap_or("");
-                return crate::tool_summary::shorten_path(first, 2);
+                return sven_tool_api::tool_summary::shorten_path(first, 2);
             }
         }
         String::new()
@@ -244,7 +244,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::tool::{Tool, ToolCall};
+    use sven_tool_api::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
         ToolCall {

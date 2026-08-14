@@ -27,7 +27,7 @@ use sven_model::ModelProvider;
 use sven_tools_gdb::GdbSessionState;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
-    GrepTool, ToolRegistry, WebFetchTool, WebSearchTool,
+    ToolRegistry,
 };
 use sven_tools_agent::{
     AskQuestionTool, ModelCatalogEntry, QuestionRequest, SkillTool, SystemTool, TodoTool,
@@ -37,6 +37,7 @@ use sven_tools_exec::ShellTool;
 use sven_tools_fs::{
     AttachFileTool, EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool, WriteTool,
 };
+use sven_tools_web::{GrepTool, WebFetchTool, WebSearchTool};
 use sven_workspace::Shared;
 
 use sven_machines::AgentRuntimeContext;

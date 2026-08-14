@@ -7,8 +7,8 @@ use tracing::debug;
 
 use sven_hsm::ToolCapability;
 
-use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 /// Default character ceiling for fetched page content.
 /// 20 K chars ≈ 5,000 tokens - fits comfortably within a 40 K-token context window.
@@ -128,7 +128,7 @@ impl ToolDisplay for WebFetchTool {
         "web"
     }
     fn collapsed_summary(&self, args: &serde_json::Value) -> String {
-        crate::tool_summary::tool_smart_summary("web_fetch", args)
+        sven_tool_api::tool_summary::tool_smart_summary("web_fetch", args)
     }
 }
 
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn schema_requires_url() {
-        use crate::tool::Tool;
+        use sven_tool_api::tool::Tool;
         let t = WebFetchTool;
         let schema = t.parameters_schema();
         let required = schema["required"].as_array().unwrap();

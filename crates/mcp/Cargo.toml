@@ -9,6 +9,7 @@ license     = "MIT"
 sven-tools           = { path = "../tools" }
 sven-tools-exec      = { path = "../tools-exec" }
 sven-tools-fs        = { path = "../tools-fs" }
+sven-tools-web       = { path = "../tools-web" }
 anyhow               = { workspace = true }
 serde                = { workspace = true }
 serde_json           = { workspace = true }
