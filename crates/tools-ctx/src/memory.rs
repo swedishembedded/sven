@@ -13,12 +13,10 @@ use tracing::debug;
 
 use sven_hsm::ToolCapability;
 
-use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
-use crate::builtin::{
-    knowledge::list_knowledge::ListKnowledgeTool, search::search_knowledge::SearchKnowledgeTool,
-};
+use crate::knowledge::{list_knowledge::ListKnowledgeTool, search_knowledge::SearchKnowledgeTool};
 
 /// Compound memory tool - persistent KV store and project knowledge in one.
 pub struct MemoryTool {
@@ -235,7 +233,7 @@ mod tests {
     use sven_workspace::SharedKnowledge;
 
     use super::*;
-    use crate::tool::{Tool, ToolCall};
+    use sven_tool_api::tool::{Tool, ToolCall};
 
     fn make_tool() -> MemoryTool {
         use std::sync::atomic::{AtomicU32, Ordering};

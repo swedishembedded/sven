@@ -25,9 +25,9 @@ use tempfile::NamedTempFile;
 use tokio::sync::Mutex;
 
 use sven_bootstrap::context_query::{ContextQueryTool, ContextReduceTool};
-use sven_tools::builtin::context::store::ContextStore;
-use sven_tools::builtin::context::{ContextOpenTool, SubQueryRunner};
-use sven_tools::tool::{Tool, ToolCall};
+use sven_tool_api::tool::{Tool, ToolCall};
+use sven_tools_ctx::context::store::ContextStore;
+use sven_tools_ctx::context::{ContextOpenTool, SubQueryRunner};
 
 // ─── Test double ──────────────────────────────────────────────────────────────
 
@@ -241,7 +241,7 @@ mod query_tests {
             .expect("results handle not found in output");
 
         // Read the results handle through context_read - verifying both chunks appear.
-        use sven_tools::builtin::context::ContextReadTool;
+        use sven_tools_ctx::context::ContextReadTool;
         let read_tool = ContextReadTool::new(store.clone());
         let read_out = read_tool
             .execute(&tool_call(
@@ -627,10 +627,10 @@ mod reduce_tests {
 
 mod e2e_pipeline_tests {
     use super::*;
-    use sven_tools::builtin::context::ContextGrepTool;
+    use sven_tools_ctx::context::ContextGrepTool;
 
-    const STORE_RS: &str = "crates/tools/src/builtin/context/store.rs";
-    const CONTEXT_DIR: &str = "crates/tools/src/builtin/context";
+    const STORE_RS: &str = "crates/tools-ctx/src/context/store.rs";
+    const CONTEXT_DIR: &str = "crates/tools-ctx/src/context";
 
     /// Full RLM pipeline on a real source file:
     ///   context_open → context_grep → context_query (targeted) → context_reduce

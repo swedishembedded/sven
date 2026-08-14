@@ -39,10 +39,10 @@ pub use supervisor::{SessionId, SessionSupervisor};
 pub use sven_mcp_client::McpManager;
 pub use task_tool::TaskTool;
 
-// Re-export compound tools from sven-tools/sven-tools-gdb for convenience.
+// Re-export compound tools for convenience.
 #[cfg(unix)]
 pub use sven_tools_gdb::GdbTool;
-pub use sven_tools::MemoryTool;
+pub use sven_tools_ctx::MemoryTool;
 
 // Re-export OutputBufferStore so frontends can access it via sven-bootstrap.
 pub use sven_tools_fs::OutputBufferStore;

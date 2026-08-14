@@ -42,14 +42,14 @@ pub use tool_summary::{shorten_path, tool_category, tool_icon, tool_smart_summar
 // File and buffer tools moved to sven-tools-fs (5.2 of the refactor plan's
 // god-crate splits). Consumers depend on sven-tools-fs directly now.
 
-// Search tools
+// Search tools (search_knowledge moved to sven-tools-ctx along with
+// list_knowledge -- see that crate's doc comment)
 pub use builtin::search::grep::GrepTool;
 pub use builtin::search::search_codebase::SearchCodebaseTool;
-pub use builtin::search::search_knowledge::SearchKnowledgeTool;
 
-// System tools
+// System tools (memory moved to sven-tools-ctx along with the knowledge
+// tools it composes -- see that crate's doc comment)
 pub use builtin::system::ask_question::{AskQuestionTool, Question, QuestionRequest};
-pub use builtin::system::memory::MemoryTool;
 pub use builtin::system::read_lints::ReadLintsTool;
 pub use builtin::system::skill::SkillTool;
 pub use builtin::system::system::{ModelCatalogEntry, SystemTool};
@@ -59,20 +59,10 @@ pub use builtin::system::todo::TodoTool;
 pub use builtin::web::web_fetch::WebFetchTool;
 pub use builtin::web::web_search::WebSearchTool;
 
-// Knowledge tools
-pub use builtin::knowledge::list_knowledge::ListKnowledgeTool;
-
-// Shell/terminal tools moved to sven-tools-exec (5.3 of the refactor plan's
-// god-crate splits). Consumers depend on sven-tools-exec directly now.
-
-// GDB debugging tools moved to sven-tools-gdb (5.7 of the refactor plan's
-// god-crate splits; Unix only -- GDB signal APIs are not available on
-// Windows). Consumers depend on sven-tools-gdb directly now.
-
-// Context (RLM memory-mapped) tools
-pub use builtin::context::{
-    ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore, SubQueryRunner,
-};
+// Knowledge, context (RLM memory-mapped), shell/terminal, and GDB tools moved
+// to sven-tools-ctx (5.4), sven-tools-exec (5.3), and sven-tools-gdb (5.7) of
+// the refactor plan's god-crate splits. Consumers depend on those crates
+// directly now.
 
 // Image tool (still at root level)
 pub use builtin::read_image::ReadImageTool;

@@ -23,8 +23,8 @@ use sven_tools::{
     events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
-    ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore,
 };
+use sven_tools_ctx::{ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore};
 
 use crate::context_query::{build_context_query_tools, ContextQueryTool, ContextReduceTool};
 
@@ -267,7 +267,7 @@ mod tests {
         use std::sync::Arc;
         use sven_config::Config;
         use sven_model_mock::MockProvider;
-        use sven_tools::ContextStore;
+        use sven_tools_ctx::ContextStore;
         use tokio::sync::Mutex;
 
         let store = Arc::new(Mutex::new(ContextStore::new()));

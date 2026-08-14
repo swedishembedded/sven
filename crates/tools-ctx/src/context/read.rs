@@ -12,8 +12,8 @@ use sven_config::AgentMode;
 
 use sven_hsm::ToolCapability;
 
-use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
 use super::store::ContextStore;
 

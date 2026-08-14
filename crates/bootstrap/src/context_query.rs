@@ -34,8 +34,8 @@ use sven_tools::{
     events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{OutputCategory, Tool, ToolCall, ToolOutput},
-    ContextStore, SubQueryRunner,
 };
+use sven_tools_ctx::{ContextStore, SubQueryRunner};
 
 // ─── ModelSubQueryRunner ──────────────────────────────────────────────────────
 

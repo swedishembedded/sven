@@ -79,6 +79,7 @@ sven-team          = "domain"
 sven-turn          = "domain"
 sven-tools-fs      = "domain"
 sven-tools-exec    = "domain"
+sven-tools-ctx     = "domain"
 sven-tools-gdb     = "domain"
 
 # machines
@@ -336,8 +337,8 @@ lines = 1506
 path = "crates/tui/src/nvim/bridge.rs"
 lines = 1506
 [[allow.large_file]]
-path = "crates/tools/tests/context_integration.rs"
-lines = 1417
+path = "crates/tools-ctx/tests/context_integration.rs"
+lines = 1418
 [[allow.large_file]]
 path = "crates/tui/src/app/chat_ops.rs"
 lines = 1324
@@ -402,7 +403,7 @@ lines = 1029
 path = "crates/mcp-client/src/manager.rs"
 lines = 1016
 [[allow.large_file]]
-path = "crates/tools/src/builtin/context/store.rs"
+path = "crates/tools-ctx/src/context/store.rs"
 lines = 1012
 [[allow.large_file]]
 path = "crates/node-config/src/config.rs"

@@ -23,21 +23,21 @@ use serde_json::json;
 use tempfile::{NamedTempFile, TempDir};
 use tokio::sync::Mutex;
 
-use sven_tools::builtin::context::store::ContextStore;
-use sven_tools::builtin::context::{ContextGrepTool, ContextOpenTool, ContextReadTool};
-use sven_tools::tool::{Tool, ToolCall};
+use sven_tools_ctx::context::store::ContextStore;
+use sven_tools_ctx::context::{ContextGrepTool, ContextOpenTool, ContextReadTool};
+use sven_tool_api::tool::{Tool, ToolCall};
 
 // ─── Paths to always-present source files ─────────────────────────────────────
 
 /// The store.rs file: large (~1000 lines), contains well-known symbols.
-const STORE_RS: &str = "crates/tools/src/builtin/context/store.rs";
+const STORE_RS: &str = "crates/tools-ctx/src/context/store.rs";
 
 /// The context module directory: 6 .rs files with known content.
-const CONTEXT_DIR: &str = "crates/tools/src/builtin/context";
+const CONTEXT_DIR: &str = "crates/tools-ctx/src/context";
 
 /// The mod.rs file in the context module: small, predictable content.
 #[allow(dead_code)]
-const MOD_RS: &str = "crates/tools/src/builtin/context/mod.rs";
+const MOD_RS: &str = "crates/tools-ctx/src/context/mod.rs";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ fn write_tmp(content: &str) -> NamedTempFile {
 mod store_tests {
     use super::*;
     use memmap2::Mmap;
-    use sven_tools::builtin::context::store::build_line_index;
+    use sven_tools_ctx::context::store::build_line_index;
 
     fn mmap_from_bytes(content: &[u8]) -> (NamedTempFile, Mmap) {
         let mut f = NamedTempFile::new().unwrap();
@@ -114,7 +114,8 @@ mod store_tests {
 
     #[test]
     fn line_index_matches_rust_lines_count_on_real_file() {
-        // Ground truth: store.rs is 1007 lines.
+        // Ground truth: computed dynamically below, not hardcoded (store.rs's
+        // line count drifts release over release).
         let path = std::path::Path::new(STORE_RS);
         if !path.exists() {
             return; // Guard: runs only when the repo is present.

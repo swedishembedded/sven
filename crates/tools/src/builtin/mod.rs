@@ -1,8 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 
 // SPDX-License-Identifier: Apache-2.0
-pub mod context;
-pub mod knowledge;
 pub mod search;
 pub mod system;
 pub mod web;
@@ -64,21 +62,7 @@ mod output_category_tests {
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
-    // ── Knowledge tools ───────────────────────────────────────────────────────
-
-    #[test]
-    fn list_knowledge_is_matchlist() {
-        let t = super::knowledge::list_knowledge::ListKnowledgeTool {
-            knowledge: sven_workspace::SharedKnowledge::empty(),
-        };
-        assert_eq!(t.output_category(), OutputCategory::MatchList);
-    }
-
-    #[test]
-    fn search_knowledge_is_matchlist() {
-        let t = super::search::search_knowledge::SearchKnowledgeTool {
-            knowledge: sven_workspace::SharedKnowledge::empty(),
-        };
-        assert_eq!(t.output_category(), OutputCategory::MatchList);
-    }
+    // The knowledge tools' (list_knowledge/search_knowledge) equivalent of
+    // this contract test moved with them into sven-tools-ctx (5.4 of the
+    // refactor plan's god-crate splits).
 }

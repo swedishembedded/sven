@@ -10,8 +10,8 @@ use sven_workspace::SharedKnowledge;
 
 use sven_hsm::ToolCapability;
 
-use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
 /// Number of context lines shown before and after each match.
 const CONTEXT_LINES: usize = 3;
@@ -220,7 +220,7 @@ fn extract_excerpts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::{Tool, ToolCall};
+    use sven_tool_api::tool::{Tool, ToolCall};
     use serde_json::json;
     use sven_workspace::KnowledgeInfo;
 

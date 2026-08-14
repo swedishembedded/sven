@@ -20,6 +20,7 @@ members = [
     "crates/tools",
     "crates/tools-fs",
     "crates/tools-exec",
+    "crates/tools-ctx",
     "crates/tools-gdb",
     "crates/turn",
     "crates/machines",
@@ -188,6 +189,8 @@ sven-bootstrap   = { path = "crates/bootstrap" }
 sven-tools       = { path = "crates/tools" }
 sven-tools-exec  = { path = "crates/tools-exec" }
 sven-tools-fs    = { path = "crates/tools-fs" }
+sven-tools-ctx   = { path = "crates/tools-ctx" }
+sven-tool-api    = { path = "crates/tool-api" }
 sven-config      = { path = "crates/config" }
 sven-model       = { path = "crates/model" }
 sven-channels    = { path = "crates/channels" }
