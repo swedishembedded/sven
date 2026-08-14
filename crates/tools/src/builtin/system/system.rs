@@ -27,9 +27,9 @@ use crate::tool::{Tool, ToolCall, ToolOutput};
 
 /// The `provider`/`id`/`name` slice of a model catalog entry that
 /// `switch_model`'s fuzzy search needs. A local type rather than depending on
-/// `sven_model::catalog::ModelCatalogEntry` directly: the tool layer has no
+/// `sven_model_catalog::ModelCatalogEntry` directly: the tool layer has no
 /// other reason to know about the model-provider crate, and the catalog is
-/// static data the caller already has (via `sven_model::catalog::static_catalog()`)
+/// static data the caller already has (via `sven_model_catalog::static_catalog()`)
 /// when it constructs a [`SystemTool`].
 #[derive(Debug, Clone)]
 pub struct ModelCatalogEntry {
@@ -504,7 +504,7 @@ mod tests {
     ) -> (SystemTool, Arc<Mutex<AgentMode>>, mpsc::Receiver<ToolEvent>) {
         let current = Arc::new(Mutex::new(mode));
         let (tx, rx) = mpsc::channel(16);
-        let catalog = sven_model::catalog::static_catalog()
+        let catalog = sven_model_catalog::static_catalog()
             .into_iter()
             .map(|e| ModelCatalogEntry {
                 id: e.id,

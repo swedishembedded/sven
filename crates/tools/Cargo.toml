@@ -38,3 +38,4 @@ gdbmi       = "0.0.2"
 
 [dev-dependencies]
 tempfile = { workspace = true }
+sven-model-catalog = { path = "../model-catalog" }
