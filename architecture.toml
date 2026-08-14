@@ -37,6 +37,7 @@ order = [
 [crates]
 # foundation
 sven-chain       = "foundation"
+sven-cloud-store = "foundation"
 sven-config      = "foundation"
 sven-hsm         = "foundation"
 sven-image       = "foundation"
@@ -54,6 +55,7 @@ sven-wire   = "kernel"
 sven-control = "kernel"
 sven-session-model = "kernel"
 sven-tool-api = "kernel"
+sven-cloud-identity = "kernel"
 
 # services
 sven-session-store = "services"
@@ -76,10 +78,12 @@ sven-turn          = "domain"
 # machines
 sven-machines  = "machines"
 sven-executors = "machines"
+sven-cloud-metering = "machines"
 
 # assembly
 sven-bootstrap = "assembly"
 sven-companion = "assembly"
+sven-cloud-tether = "assembly"
 
 # wiring
 sven-frontend = "wiring"
@@ -96,6 +100,7 @@ sven-tui = "surface"
 # composite
 sven-acp   = "composite"
 sven-cloud = "composite"
+sven-cloud-portal = "composite"
 
 # binary
 sven = "binary"
@@ -203,6 +208,30 @@ AgentHandle/ControlCommand/ControlEvent types. No cycle risk: sven-node-control
 has no dependency on sven-node-p2p.
 """
 
+[[same_layer]]
+from = "sven-cloud"
+to   = "sven-cloud-portal"
+why  = """
+Phase 5 of the refactor plan split sven-cloud's `portal`/`feed`/`channels`/
+`runtime` modules into sven-cloud-portal. Both crates need
+sven_node::control::protocol (surface tier), which puts a floor of
+"composite" under each of them individually -- there is no lower tier left
+for either to sit at, so this is not a missed opportunity to avoid the
+same-tier edge, it is the tier the real dependencies put them at.
+
+The edge is one-directional and cannot become a cycle: sven-cloud's
+CloudServer (the axum/TLS WSS tether+share+operator-ws listener) needs
+sven-cloud-portal's CloudSessionLauncher and SessionFeed, but nothing in
+sven-cloud-portal depends on sven-cloud -- the one edge that used to run the
+other way (`portal.rs`'s `use crate::server::extract_bearer`) was cut by
+giving each crate its own six-line copy of that helper rather than sharing
+it. sven-cloud-portal itself could not be split further (feed/channels/
+portal/runtime) without recreating this same edge in the opposite
+direction: CloudServer and PortalState both need CloudSessionLauncher, and
+CloudSessionLauncher needs SessionFeed, so whichever piece ended up in the
+"lower" crate would still need the "higher" one.
+"""
+
 
 # ── Known upward (illegal) edges, each with a fix owner and a why. ─────────
 # None currently outstanding. sven-wire and sven-control both depended on
@@ -246,7 +275,7 @@ path = "crates/tui/src/app/mod.rs"
 lines = 1750
 [[allow.large_file]]
 path = "crates/cloud/src/server.rs"
-lines = 1729
+lines = 1727
 [[allow.large_file]]
 path = "crates/model/src/lib.rs"
 lines = 1721
@@ -263,7 +292,7 @@ lines = 1589
 path = "crates/node-control/src/service.rs"
 lines = 1575
 [[allow.large_file]]
-path = "crates/cloud/src/channels.rs"
+path = "crates/cloud-portal/src/channels.rs"
 lines = 1554
 [[allow.large_file]]
 path = "crates/config/src/schema.rs"
@@ -326,7 +355,7 @@ lines = 1064
 path = "crates/config/src/loader.rs"
 lines = 1049
 [[allow.large_file]]
-path = "crates/cloud/src/metering.rs"
+path = "crates/cloud-metering/src/metering.rs"
 lines = 1033
 [[allow.large_file]]
 path = "crates/tui/src/submit.rs"
@@ -359,8 +388,8 @@ lines = 927
 path = "crates/node/src/telegram.rs"
 lines = 925
 [[allow.large_file]]
-path = "crates/cloud/src/portal.rs"
-lines = 904
+path = "crates/cloud-portal/src/portal.rs"
+lines = 916
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_platform.rs"
 lines = 881

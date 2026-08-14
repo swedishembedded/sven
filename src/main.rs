@@ -1672,7 +1672,7 @@ fn run_cloud_tenant_command(cmd: &CloudTenantCommands) -> anyhow::Result<()> {
 }
 
 fn run_cloud_token_command(cmd: &CloudTokenCommands) -> anyhow::Result<()> {
-    use sven_cloud::{IdentityService, Role};
+    use sven_cloud::{IdentityService, Role, RolePolicy};
 
     match cmd {
         CloudTokenCommands::Mint {

@@ -45,6 +45,21 @@ members = [
     "crates/companion",
     # Cloud control plane: companion registry + tether routing
     "crates/cloud",
+    # Cloud control-plane persistence (Phase 5 split of sven-cloud's `store`).
+    "crates/cloud-store",
+    # Cloud identity: token minting/authentication/authorisation + companion
+    # bearer-token auth (Phase 5 split of sven-cloud's `identity`/`auth`).
+    "crates/cloud-identity",
+    # Cloud tether routing core: CompanionRegistry (Phase 5 split of
+    # sven-cloud's `registry`).
+    "crates/cloud-tether",
+    # Cloud LLM metering gateway + session gate (Phase 5 split of
+    # sven-cloud's `metering`/`gate`).
+    "crates/cloud-metering",
+    # Cloud human portal, live session feed, Slack/Telegram approval routing,
+    # and the cloud session runtime (Phase 5 split of sven-cloud's
+    # `portal`/`feed`/`channels`/`runtime`).
+    "crates/cloud-portal",
     # LLM metering: pricing catalog, credit ledger, statements
     "crates/metering",
     # ATIF v1.7 trajectory format (standalone; not yet wired into sven)
