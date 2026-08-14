@@ -87,10 +87,6 @@ impl App {
             let cancel_handle_task = self.agent.cancel.clone();
             let shared_skills_task = self.shared_skills.clone();
             let shared_agents_task = self.shared_agents.clone();
-            let shared_tools_task = self.shared_tools.clone();
-            let shared_tool_displays_task = self.shared_tool_displays.clone();
-            let buffer_store_task = Arc::clone(&self.buffer_store);
-            let mcp_refresh_rx = mcp_refresh_tx.subscribe();
             let (mcp_tx, mcp_rx) = tokio::sync::oneshot::channel::<(
                 Arc<McpManager>,
                 tokio::sync::mpsc::Receiver<sven_mcp_client::McpEvent>,
@@ -106,11 +102,7 @@ impl App {
                     cancel_handle_task,
                     shared_skills_task,
                     shared_agents_task,
-                    shared_tools_task,
-                    shared_tool_displays_task,
-                    buffer_store_task,
                     Some(mcp_tx),
-                    Some(mcp_refresh_rx),
                 )
                 .await;
             });

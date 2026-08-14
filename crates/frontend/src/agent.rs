@@ -18,11 +18,9 @@ use sven_machines::AgentEvent;
 use sven_session_store::make_title;
 use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
-use sven_tools::{SharedToolDisplays, SharedTools};
 use sven_tools_agent::QuestionRequest;
-use sven_tools_fs::OutputBufferStore;
 use sven_workspace::{SharedAgents, SharedSkills};
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
 
 /// Request sent from a frontend to the background agent task.
@@ -168,11 +166,7 @@ pub async fn kernel_session_task(
     cancel_handle: Arc<Mutex<Option<oneshot::Sender<()>>>>,
     shared_skills: SharedSkills,
     shared_agents: SharedAgents,
-    shared_tools: SharedTools,
-    shared_tool_displays: SharedToolDisplays,
-    buffer_store: Arc<Mutex<OutputBufferStore>>,
     mcp_manager_tx: Option<oneshot::Sender<(Arc<McpManager>, mpsc::Receiver<McpEvent>)>>,
-    mcp_refresh_rx: Option<broadcast::Receiver<()>>,
 ) {
     run_kernel_session_task(
         config,
@@ -184,11 +178,7 @@ pub async fn kernel_session_task(
         cancel_handle,
         shared_skills,
         shared_agents,
-        shared_tools,
-        shared_tool_displays,
-        buffer_store,
         mcp_manager_tx,
-        mcp_refresh_rx,
         None,
         None,
     )
@@ -260,11 +250,7 @@ pub(crate) async fn run_kernel_session_task(
     cancel_handle: Arc<Mutex<Option<oneshot::Sender<()>>>>,
     shared_skills: SharedSkills,
     shared_agents: SharedAgents,
-    _shared_tools: SharedTools,
-    _shared_tool_displays: SharedToolDisplays,
-    _buffer_store: Arc<Mutex<OutputBufferStore>>,
     mcp_manager_tx: Option<oneshot::Sender<(Arc<McpManager>, mpsc::Receiver<McpEvent>)>>,
-    _mcp_refresh_rx: Option<broadcast::Receiver<()>>,
     provider_factory: Option<ProviderFactory>,
     mcp_tools_source: Option<McpToolsSource>,
 ) {
@@ -519,8 +505,7 @@ mod tests {
     use sven_config::{AgentMode, Config, ModelConfig};
     use sven_model::{CompletionRequest, ModelProvider, ResponseEvent};
     use sven_model_mock::ScriptedMockProvider;
-    use sven_tools::{policy::ApprovalPolicy, SharedTools, Tool, ToolCall, ToolOutput};
-    use sven_tools_fs::OutputBufferStore;
+    use sven_tools::{policy::ApprovalPolicy, Tool, ToolCall, ToolOutput};
     use sven_workspace::{SharedAgents, SharedSkills};
     use tokio::sync::{mpsc, Mutex};
     use tokio::task::JoinHandle;
@@ -570,10 +555,6 @@ mod tests {
             cancel,
             SharedSkills::empty(),
             SharedAgents::empty(),
-            SharedTools::empty(),
-            sven_tools::SharedToolDisplays::new(),
-            Arc::new(Mutex::new(OutputBufferStore::new())),
-            None,
             None,
             provider_factory,
             mcp_tools_source,

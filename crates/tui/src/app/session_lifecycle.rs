@@ -341,10 +341,6 @@ impl App {
         let startup_model_cfg = self.session.model_cfg.clone();
         let shared_skills = self.shared_skills.clone();
         let shared_agents = self.shared_agents.clone();
-        let shared_tools = self.shared_tools.clone();
-        let shared_tool_displays = self.shared_tool_displays.clone();
-        let buffer_store = Arc::clone(&self.buffer_store);
-        let mcp_refresh_rx = self.mcp_refresh_tx.as_ref().map(|tx| tx.subscribe());
 
         tokio::spawn(crate::agent::kernel_session_task(
             cfg,
@@ -356,11 +352,7 @@ impl App {
             cancel,
             shared_skills,
             shared_agents,
-            shared_tools,
-            shared_tool_displays,
-            buffer_store,
             None, // mcp_manager_tx - not needed for sub-session restarts
-            mcp_refresh_rx,
         ));
     }
 }
