@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `/quit` command - exit the application.
 
-use crate::commands::{
+use crate::{
     CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
 };
 

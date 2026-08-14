@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Team collaboration slash commands.
 
-use crate::commands::{
+use crate::{
     CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
 };
 

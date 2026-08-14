@@ -5,7 +5,7 @@
 
 use sven_model::catalog;
 
-use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
+use crate::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 pub struct ModelCommand;
 
@@ -92,10 +92,10 @@ impl SlashCommand for ModelCommand {
             candidates.push(CompletionItem::with_desc(value, display, desc));
         }
 
-        let mut ranked = crate::commands::completion::filter_and_rank(candidates, partial);
+        let mut ranked = crate::completion::filter_and_rank(candidates, partial);
 
         let current_matches = partial.is_empty()
-            || crate::commands::completion::fuzzy_score(partial, &current_value).is_some();
+            || crate::completion::fuzzy_score(partial, &current_value).is_some();
         if current_matches {
             ranked.insert(0, current_item);
         }

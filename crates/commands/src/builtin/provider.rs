@@ -5,7 +5,7 @@
 
 use sven_model::registry;
 
-use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
+use crate::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 pub struct ProviderCommand;
 
@@ -50,7 +50,7 @@ impl SlashCommand for ProviderCommand {
             items.push(CompletionItem::with_desc(driver.id, display, desc));
         }
 
-        crate::commands::completion::filter_and_rank(items, partial)
+        crate::completion::filter_and_rank(items, partial)
     }
 
     fn execute(&self, args: Vec<String>) -> CommandResult {

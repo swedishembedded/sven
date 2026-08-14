@@ -17,10 +17,10 @@
 
 use std::path::PathBuf;
 
-use crate::commands::{
-    CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
+use crate::{
+    CommandContext, CommandResult, CompletionItem, FrontendShareOptions, ImmediateAction,
+    SlashCommand,
 };
-use crate::share::FrontendShareOptions;
 
 pub struct ShareCommand;
 

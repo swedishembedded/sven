@@ -130,7 +130,9 @@ makes the cloud split (remote tools, replay, audit ledger) possible.
 
 Interactive surfaces **share `sven-frontend`** - never duplicate logic inside
 `sven-tui` that belongs in the shared layer; extract to `sven-frontend`. New
-slash commands go in `sven-frontend::commands::builtin`, never in `sven-tui`.
+slash commands go in `sven-commands::builtin` (a lower-tier crate that
+`sven-frontend` re-exports at its historical `commands` module path), never
+in `sven-tui`.
 Surfaces consume the `AgentEvent` stream (produced from the kernel's `UiEvent`
 by the adapter in `sven-machines`) and the `MachineProjection` broadcast.
 

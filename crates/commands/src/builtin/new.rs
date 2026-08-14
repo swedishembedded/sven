@@ -1,21 +1,21 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `/refresh` command - re-scan skill directories and rebuild slash commands.
+//! `/new` command - start a completely new conversation.
 
-use crate::commands::{
+use crate::{
     CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
 };
 
-pub struct RefreshCommand;
+pub struct NewCommand;
 
-impl SlashCommand for RefreshCommand {
+impl SlashCommand for NewCommand {
     fn name(&self) -> &str {
-        "refresh"
+        "new"
     }
 
     fn description(&self) -> &str {
-        "Re-scan skill directories and update slash commands"
+        "Start a completely new conversation"
     }
 
     fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
@@ -24,7 +24,7 @@ impl SlashCommand for RefreshCommand {
 
     fn execute(&self, _args: Vec<String>) -> CommandResult {
         CommandResult {
-            immediate_action: Some(ImmediateAction::RefreshSkills),
+            immediate_action: Some(ImmediateAction::NewConversation),
             ..Default::default()
         }
     }

@@ -24,12 +24,16 @@
 //!       │
 //! sven-frontend
 //!       │
-//! ┌─────┼─────┬─────────────┐
-//! sven-bootstrap  sven-core  sven-tools  sven-control
+//! ┌─────┼─────┬─────────────┬──────────────┐
+//! sven-bootstrap  sven-machines  sven-tools  sven-control  sven-commands
 //! ```
+//!
+//! The slash-command vocabulary (`SlashCommand`, `CommandRegistry`, and the
+//! builtin `/…` commands) lives in the lower-tier `sven-commands` crate, not
+//! here — this crate re-exports it at its historical `commands` module path
+//! (`pub use sven_commands as commands`) so `sven-tui` is unaffected.
 
 pub mod agent;
-pub mod commands;
 pub mod markdown;
 pub mod node_agent;
 pub mod operator;
@@ -39,6 +43,14 @@ pub mod segment;
 pub mod share;
 pub mod tool_view;
 pub mod types;
+
+/// Compatibility re-export: `sven-frontend`'s `commands` module used to hold
+/// the `SlashCommand` vocabulary directly. It now lives in `sven-commands`
+/// (a lower-tier crate — the commands only need `sven-config`,
+/// `sven-workspace`, `sven-mcp-client`, `sven-model`, and `sven-machines`,
+/// never anything `sven-frontend`-specific), and this crate depends on it.
+/// Every existing `sven_frontend::commands::*` path keeps compiling.
+pub use sven_commands as commands;
 
 // ── Convenience re-exports ────────────────────────────────────────────────────
 

@@ -18,7 +18,7 @@
 
 use sven_machines::ThinkingBudget;
 
-use crate::commands::{CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand};
+use crate::{CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand};
 
 pub struct ThinkLimitCommand;
 
@@ -45,7 +45,7 @@ impl SlashCommand for ThinkLimitCommand {
             "off",
             "clear the live override, revert to config/defaults",
         )];
-        crate::commands::completion::filter_and_rank(candidates.to_vec(), partial)
+        crate::completion::filter_and_rank(candidates.to_vec(), partial)
     }
 
     fn execute(&self, args: Vec<String>) -> CommandResult {

@@ -1,0 +1,18 @@
+[package]
+name    = "sven-commands"
+version.workspace = true
+edition = "2021"
+description = "The SlashCommand vocabulary and builtin `/…` commands shared by every sven frontend"
+license = "Apache-2.0"
+
+[dependencies]
+sven-config     = { path = "../config" }
+sven-workspace  = { path = "../workspace" }
+sven-mcp-client = { path = "../mcp-client" }
+sven-model      = { path = "../model" }
+sven-machines   = { path = "../machines" }
+tokio           = { workspace = true }
+unicode-width   = { workspace = true }
+
+[dev-dependencies]
+tempfile        = { workspace = true }

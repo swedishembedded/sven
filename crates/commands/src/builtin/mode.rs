@@ -5,7 +5,7 @@
 
 use sven_config::AgentMode;
 
-use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
+use crate::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 pub struct ModeCommand;
 
@@ -46,7 +46,7 @@ impl SlashCommand for ModeCommand {
             .map(|(name, desc)| CompletionItem::with_desc(*name, *name, *desc))
             .collect();
 
-        crate::commands::completion::filter_and_rank(items, partial)
+        crate::completion::filter_and_rank(items, partial)
     }
 
     fn execute(&self, args: Vec<String>) -> CommandResult {
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn complete_returns_all_three_modes_when_filter_is_empty() {
-        use crate::commands::CommandContext;
+        use crate::CommandContext;
         use std::sync::Arc;
         use sven_config::Config;
         let ctx = CommandContext {
@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn complete_filters_by_prefix() {
-        use crate::commands::CommandContext;
+        use crate::CommandContext;
         use std::sync::Arc;
         use sven_config::Config;
         let ctx = CommandContext {

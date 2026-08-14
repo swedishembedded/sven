@@ -7,15 +7,15 @@
 //! `/tenant all` (or no argument) restores the cross-tenant view. The
 //! resulting [`ImmediateAction::SelectTenant`] is forwarded by the frontend
 //! to its operator console as an
-//! [`OperatorRequest::SelectTenant`](crate::operator::OperatorRequest).
+//! `OperatorRequest::SelectTenant` (`sven_frontend::operator::OperatorRequest`).
 //!
-//! Not registered by [`CommandRegistry::with_builtins`](crate::commands::CommandRegistry::with_builtins):
+//! Not registered by [`CommandRegistry::with_builtins`](crate::CommandRegistry::with_builtins):
 //! frontends opt in through
-//! [`CommandRegistry::register_operator_commands`](crate::commands::CommandRegistry::register_operator_commands)
+//! [`CommandRegistry::register_operator_commands`](crate::CommandRegistry::register_operator_commands)
 //! when they wire an operator console — without one the command would be a
 //! visible no-op.
 
-use crate::commands::{
+use crate::{
     CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
 };
 
@@ -46,7 +46,7 @@ impl SlashCommand for TenantCommand {
             "all",
             "Show sessions of every tenant",
         )];
-        crate::commands::completion::filter_and_rank(items, partial)
+        crate::completion::filter_and_rank(items, partial)
     }
 
     fn execute(&self, args: Vec<String>) -> CommandResult {
@@ -98,7 +98,7 @@ mod tests {
 
         use sven_config::Config;
 
-        use crate::commands::CommandContext;
+        use crate::CommandContext;
         let ctx = CommandContext {
             config: Arc::new(Config::default()),
             current_model_provider: "openai".into(),

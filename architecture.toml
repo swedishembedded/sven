@@ -85,6 +85,7 @@ sven-cloud-metering = "machines"
 
 # assembly
 sven-bootstrap = "assembly"
+sven-commands  = "assembly"
 sven-companion = "assembly"
 sven-cloud-tether = "assembly"
 

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Inspector slash commands: `/skills`, `/subagents`, `/peers`, `/context`, `/tools`, `/mcp`.
 
-use crate::commands::{
+use crate::{
     CommandContext, CommandResult, CompletionItem, ImmediateAction, InspectorKind, SlashCommand,
 };
 

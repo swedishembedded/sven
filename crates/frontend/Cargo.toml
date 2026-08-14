@@ -2,11 +2,12 @@
 name    = "sven-frontend"
 version.workspace = true
 edition = "2021"
-description = "Shared agent-wiring layer for sven frontends (TUI and GUI)"
+description = "Shared agent-wiring layer for sven frontends (TUI)"
 license = "Apache-2.0"
 
 [dependencies]
 sven-config      = { path = "../config" }
+sven-commands    = { path = "../commands" }
 sven-model       = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-session-store       = { path = "../session-store" }

@@ -10,7 +10,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use sven_workspace::{AgentInfo, SkillInfo};
 
-use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
+use crate::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 const MAX_DESCRIPTION_LEN: usize = 100;
 
@@ -207,7 +207,7 @@ pub fn make_agent_slash_commands(agents: &[AgentInfo]) -> Vec<AgentCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::CommandContext;
+    use crate::CommandContext;
     use std::path::PathBuf;
     use std::sync::Arc;
     use sven_config::Config;

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `/abort` - abort the current model run.
 
-use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
+use crate::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 pub struct AbortCommand;
 
@@ -27,7 +27,7 @@ impl SlashCommand for AbortCommand {
 
     fn execute(&self, _args: Vec<String>) -> CommandResult {
         CommandResult {
-            immediate_action: Some(crate::commands::ImmediateAction::Abort),
+            immediate_action: Some(crate::ImmediateAction::Abort),
             ..Default::default()
         }
     }

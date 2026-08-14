@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use sven_mcp_client::{McpManager, McpPromptArgInfo, McpPromptInfo};
 
-use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
+use crate::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 // ── McpPromptCommand ──────────────────────────────────────────────────────────
 

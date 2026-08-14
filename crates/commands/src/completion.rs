@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn get_completions_preserves_cmd_complete_ordering() {
-        use crate::commands::{CommandContext, CommandRegistry, ParsedCommand};
+        use crate::{CommandContext, CommandRegistry, ParsedCommand};
         use std::sync::Arc;
         use sven_config::Config;
 

@@ -61,10 +61,10 @@ impl CommandRegistry {
     /// Deliberately **not** part of [`CommandRegistry::with_builtins`]:
     /// these commands emit operator-console actions
     /// ([`super::ImmediateAction::SelectTenant`]) that only a frontend with
-    /// a running operator console ([`crate::operator`]) consumes. Registered
-    /// unconditionally they would show up in completion and silently no-op
-    /// in a plain chat frontend. Call this when wiring
-    /// [`crate::operator::operator_console_task`] into a frontend.
+    /// a running operator console (`sven_frontend::operator`) consumes.
+    /// Registered unconditionally they would show up in completion and
+    /// silently no-op in a plain chat frontend. Call this when wiring
+    /// `sven_frontend::operator::operator_console_task` into a frontend.
     pub fn register_operator_commands(&mut self) {
         use super::builtin;
         self.register(Arc::new(builtin::tenant::TenantCommand));

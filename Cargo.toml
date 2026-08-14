@@ -22,6 +22,8 @@ members = [
     "crates/machines",
     "crates/workspace",
     "crates/bootstrap",
+    # SlashCommand vocabulary + builtins shared by every sven frontend
+    "crates/commands",
     "crates/ci",
     "crates/tui",
     "crates/frontend",

@@ -7,18 +7,23 @@
 //! The system is extensible: built-in commands are registered at startup;
 //! skill files, subagents, and MCP prompts extend the registry at runtime.
 //!
-//! This module is shared between sven-tui and sven-gui via sven-frontend.
+//! This crate is shared by every sven frontend (currently `sven-tui`, via
+//! `sven_frontend`'s `pub use sven_commands as commands` compatibility
+//! re-export). It knows nothing about how any particular frontend renders a
+//! command's effects — see [`CommandResult`] / [`ImmediateAction`].
 
 pub mod builtin;
 pub mod completion;
 pub mod mcp;
 pub mod parser;
 pub mod registry;
+pub mod share_options;
 pub mod skill;
 
 pub use completion::{CompletionItem, CompletionManager};
 pub use parser::{parse, ParsedCommand};
 pub use registry::CommandRegistry;
+pub use share_options::FrontendShareOptions;
 
 use std::sync::Arc;
 use sven_config::{AgentMode, Config};
@@ -112,7 +117,7 @@ pub enum ImmediateAction {
     /// bridge. Carries the broker URL/token/tenant resolved from the
     /// environment plus the (optional) share id and title.
     ShareSession {
-        options: Box<crate::share::FrontendShareOptions>,
+        options: Box<crate::FrontendShareOptions>,
     },
     /// `/think-limit <args>`: set (`Some`) or clear (`None`, reverting to the
     /// `agent.max_thinking_tokens`/`agent.thinking_timeout_secs` config
