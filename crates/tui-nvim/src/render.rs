@@ -66,7 +66,7 @@ mod tests {
     use ratatui::style::{Color, Style};
 
     use super::*;
-    use crate::nvim::grid::{Cell, HlAttr};
+    use crate::grid::{Cell, HlAttr};
 
     #[test]
     fn render_produces_one_line_per_visible_row() {

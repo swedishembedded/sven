@@ -37,7 +37,9 @@ pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
         Some(ChatSegment::TodoUpdate(todos)) => {
             return format!("(todo update · {} items)", todos.len())
         }
-        Some(ChatSegment::CollabEvent(ev)) => return sven_machines::prompts::format_collab_event(ev),
+        Some(ChatSegment::CollabEvent(ev)) => {
+            return sven_machines::prompts::format_collab_event(ev)
+        }
         Some(ChatSegment::DelegateSummary {
             to_name,
             task_title,

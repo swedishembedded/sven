@@ -31,7 +31,7 @@ use crate::{
     layout::AppLayout,
 };
 
-use super::dispatch::prev_char_boundary;
+use super::dispatch_input::prev_char_boundary;
 
 impl App {
     // ── Terminal event handler ────────────────────────────────────────────────

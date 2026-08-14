@@ -1,0 +1,15 @@
+[package]
+name        = "sven-tui-nvim"
+version.workspace = true
+edition     = "2021"
+description = "Embedded Neovim client: spawns `nvim --embed`, drives the nvim-rpc UI protocol, mirrors its redraw grid, and renders it to ratatui `Line`s. Foundation tier: zero internal sven dependencies -- extracted so the nvim-rs/rmpv dependency closure only ships in builds that actually use `sven-tui`'s Neovim edit mode, not every sven-tui build."
+license     = "Apache-2.0"
+
+[dependencies]
+anyhow      = { workspace = true }
+async-trait = { workspace = true }
+nvim-rs     = { workspace = true }
+ratatui     = { workspace = true }
+rmpv        = { workspace = true }
+tokio       = { workspace = true }
+tracing     = { workspace = true }

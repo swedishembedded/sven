@@ -33,6 +33,7 @@ members = [
     "crates/commands",
     "crates/ci",
     "crates/tui",
+    "crates/tui-nvim",
     "crates/frontend",
     "crates/sven-p2p",
     "crates/sven-node",

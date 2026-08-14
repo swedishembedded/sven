@@ -481,7 +481,8 @@ impl App {
             if let Some(m) = &model {
                 agent = agent.with_model(m.clone());
             }
-            let mut trajectory = atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
+            let mut trajectory =
+                atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
             trajectory.session_id = Some(active_id.as_str().to_string());
             trajectory.steps = steps;
             let meta = sven_session_store::SvenSessionMeta {

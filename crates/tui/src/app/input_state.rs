@@ -200,9 +200,9 @@ mod history_tests {
             s.history_down();
         }
         assert_eq!(s.buffer, "would-be-lost-if-recaptured"); // caller applies the return value
-        // (Confirms history_down's *return value* is the original draft;
-        // dispatch.rs is what copies it into `buffer` - see InputHistoryUp/
-        // InputHistoryDown in app/dispatch.rs.)
+                                                             // (Confirms history_down's *return value* is the original draft;
+                                                             // dispatch.rs is what copies it into `buffer` - see InputHistoryUp/
+                                                             // InputHistoryDown in app/dispatch.rs.)
     }
 
     #[test]
@@ -223,7 +223,10 @@ mod history_tests {
         let mut s = InputState::new();
         s.buffer = "draft".to_string();
         assert_eq!(s.history_up(), None);
-        assert_eq!(s.history_draft, None, "must not capture a draft with nowhere to go");
+        assert_eq!(
+            s.history_draft, None,
+            "must not capture a draft with nowhere to go"
+        );
     }
 
     #[test]
@@ -237,7 +240,10 @@ mod history_tests {
         s.push_history("newly submitted");
         assert_eq!(s.history_idx, None);
         assert_eq!(s.history_draft, None);
-        assert_eq!(s.history.last().map(String::as_str), Some("newly submitted"));
+        assert_eq!(
+            s.history.last().map(String::as_str),
+            Some("newly submitted")
+        );
     }
 
     #[test]

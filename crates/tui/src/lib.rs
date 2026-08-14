@@ -11,7 +11,6 @@ mod keys;
 mod layout;
 mod markdown;
 pub mod node_agent;
-mod nvim;
 mod overlay;
 mod pager;
 mod state;

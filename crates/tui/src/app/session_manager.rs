@@ -281,8 +281,8 @@ impl SessionEntry {
         model: Option<String>,
         mode: Option<String>,
     ) -> Trajectory {
-        use sven_session_store::ConversationRecord;
         use sven_model::Role;
+        use sven_session_store::ConversationRecord;
 
         let records: Vec<ConversationRecord> = chat
             .segments
@@ -338,7 +338,8 @@ impl SessionEntry {
             total_cost_usd: self.total_cost_usd,
         };
         if !usage.is_empty() {
-            trajectory.final_metrics = Some(sven_session_store::chat_usage_to_final_metrics(&usage));
+            trajectory.final_metrics =
+                Some(sven_session_store::chat_usage_to_final_metrics(&usage));
         }
 
         let meta = SvenSessionMeta {
@@ -947,7 +948,7 @@ mod tests {
         let records = sven_session_store::steps_to_conversation_records(&loaded.steps);
         let segments: Vec<ChatSegment> = records
             .into_iter()
-            .filter_map(crate::app::conversation_record_to_chat_segment)
+            .filter_map(crate::app::construct::conversation_record_to_chat_segment)
             .collect();
 
         // Every original message must survive: 2 user + 2 assistant text +
@@ -1030,7 +1031,7 @@ mod tests {
         let mut chat = ChatState::new();
         chat.segments = records
             .into_iter()
-            .filter_map(crate::app::conversation_record_to_chat_segment)
+            .filter_map(crate::app::construct::conversation_record_to_chat_segment)
             .collect();
         let saved = entry.to_trajectory(&chat, None, None);
 
@@ -1122,7 +1123,7 @@ mod tests {
         let records = sven_session_store::steps_to_conversation_records(&trajectory.steps);
         let segments: Vec<ChatSegment> = records
             .into_iter()
-            .filter_map(crate::app::conversation_record_to_chat_segment)
+            .filter_map(crate::app::construct::conversation_record_to_chat_segment)
             .collect();
         assert!(segments.iter().any(
             |s| matches!(s, ChatSegment::Thinking { content } if content == "thinking about it")

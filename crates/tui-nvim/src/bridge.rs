@@ -347,7 +347,7 @@ mod tests {
     mod nvim_integration {
         use tokio::time::{sleep, Duration};
 
-        use crate::nvim::bridge::NvimBridge;
+        use crate::bridge::NvimBridge;
         use rmpv::Value;
 
         fn nvim_available() -> bool {

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::nvim::NvimBridge;
+use sven_tui_nvim::NvimBridge;
 
 /// State for the optional embedded Neovim process.
 pub(crate) struct NvimState {

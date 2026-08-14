@@ -15,6 +15,7 @@ sven-bootstrap = { path = "../bootstrap" }
 sven-mcp-client = { path = "../mcp-client" }
 sven-workspace   = { path = "../workspace" }
 sven-frontend  = { path = "../frontend" }
+sven-tui-nvim  = { path = "../tui-nvim" }
 atif           = { path = "../atif" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
@@ -28,9 +29,6 @@ regex       = { workspace = true }
 syntect     = { workspace = true }
 serde_json  = { workspace = true }
 serde       = { workspace = true }
-nvim-rs     = { workspace = true }
-rmpv        = { workspace = true }
-async-trait = { workspace = true }
 chrono      = { workspace = true }
 uuid        = { workspace = true }
 base64      = { workspace = true }

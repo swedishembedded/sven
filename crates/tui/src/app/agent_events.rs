@@ -5,8 +5,8 @@
 
 use std::time::Instant;
 
-use sven_machines::AgentEvent;
 use sven_frontend::MachineProjection;
+use sven_machines::AgentEvent;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::SubagentUpdate;
 use sven_tools_agent::QuestionRequest;

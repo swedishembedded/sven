@@ -45,6 +45,7 @@ sven-node-client = "foundation"
 sven-node-config = "foundation"
 sven-node-web    = "foundation"
 sven-p2p         = "foundation"
+sven-tui-nvim    = "foundation"
 sven-workspace   = "foundation"
 sven-vocab       = "foundation"
 atif             = "foundation"
@@ -332,12 +333,6 @@ lines = 2119
 path = "crates/model-drivers/src/openai_compat/mod.rs"
 lines = 1955
 [[allow.large_file]]
-path = "crates/tui/src/app/dispatch.rs"
-lines = 1787
-[[allow.large_file]]
-path = "crates/tui/src/app/mod.rs"
-lines = 1750
-[[allow.large_file]]
 path = "crates/cloud/src/server.rs"
 lines = 1727
 [[allow.large_file]]
@@ -362,14 +357,14 @@ lines = 1550
 path = "crates/team/src/spawn.rs"
 lines = 1506
 [[allow.large_file]]
-path = "crates/tui/src/nvim/bridge.rs"
+path = "crates/tui-nvim/src/bridge.rs"
 lines = 1506
 [[allow.large_file]]
 path = "crates/tools-ctx/tests/context_integration.rs"
 lines = 1418
 [[allow.large_file]]
 path = "crates/tui/src/app/chat_ops.rs"
-lines = 1324
+lines = 1325
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_firmware.rs"
 lines = 1312
@@ -396,7 +391,7 @@ path = "crates/turn/src/prompts.rs"
 lines = 1145
 [[allow.large_file]]
 path = "crates/tui/src/app/session_manager.rs"
-lines = 1141
+lines = 1142
 [[allow.large_file]]
 path = "crates/executors/tests/pipeline_integration.rs"
 lines = 1122
