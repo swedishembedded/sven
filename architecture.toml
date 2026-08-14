@@ -285,9 +285,6 @@ CloudSessionLauncher needs SessionFeed, so whichever piece ended up in the
 # Regenerate with `cargo run -p xtask -- arch --bless`. Seeded from the
 # measured tree at the start of the refactor (2026-08-13).
 [[allow.large_file]]
-path = "src/main.rs"
-lines = 2866
-[[allow.large_file]]
 path = "crates/session-store/src/trace_session.rs"
 lines = 2444
 [[allow.large_file]]
@@ -317,9 +314,6 @@ lines = 1706
 [[allow.large_file]]
 path = "crates/tools/src/builtin/file/edit_file.rs"
 lines = 1695
-[[allow.large_file]]
-path = "src/cli.rs"
-lines = 1589
 [[allow.large_file]]
 path = "crates/node-control/src/service.rs"
 lines = 1577
