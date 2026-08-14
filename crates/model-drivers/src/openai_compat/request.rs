@@ -5,7 +5,7 @@
 
 use serde_json::{json, Value};
 
-use crate::Role;
+use sven_model::Role;
 
 /// Build an OpenAI `input_audio` content part.
 ///
@@ -20,12 +20,12 @@ use crate::Role;
 /// nothing standard to send, so the part degrades to a text note rather than
 /// inventing a non-standard field.
 fn audio_part_json(audio_url: &str, format: Option<&str>) -> Value {
-    let derived = crate::types::ContentPart::Audio {
+    let derived = sven_model::ContentPart::Audio {
         audio_url: audio_url.to_string(),
         format: format.map(|f| f.to_string()),
     };
     let fmt = derived.audio_format().to_string();
-    match crate::types::parse_data_url_parts(audio_url) {
+    match sven_model::parse_data_url_parts(audio_url) {
         Ok((_mime, b64)) => json!({
             "type": "input_audio",
             "input_audio": { "data": b64, "format": fmt },
@@ -57,10 +57,10 @@ pub(crate) fn role_str(r: &Role) -> &'static str {
 /// `MessageContent::ToolCall` entry internally (easier to work with), so this
 /// function merges consecutive `ToolCall` messages into one JSON object before
 /// sending them to the API.
-pub(crate) fn build_openai_messages(messages: &[crate::Message]) -> Vec<Value> {
-    use crate::{ContentPart, MessageContent, ToolContentPart, ToolResultContent};
+pub(crate) fn build_openai_messages(messages: &[sven_model::Message]) -> Vec<Value> {
+    use sven_model::{ContentPart, MessageContent, ToolContentPart, ToolResultContent};
 
-    fn tool_call_to_json(tool_call_id: &str, function: &crate::FunctionCall) -> Value {
+    fn tool_call_to_json(tool_call_id: &str, function: &sven_model::FunctionCall) -> Value {
         json!({
             "id": tool_call_id,
             "type": "function",

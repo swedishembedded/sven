@@ -28,5 +28,6 @@ tempfile   = { workspace = true }
 sven-config = { path = "../config" }
 sven-machines   = { path = "../machines" }
 sven-model  = { path = "../model" }
+sven-model-mock = { path = "../model-mock" }
 futures     = { workspace = true }
 async-trait = { workspace = true }

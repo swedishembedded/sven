@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use futures::stream;
 
-use crate::{catalog::InputModality, provider::ResponseStream, CompletionRequest, ResponseEvent};
+use sven_model::{catalog::InputModality, CompletionRequest, ResponseEvent, ResponseStream};
 
 /// Deterministic mock provider for tests.  Echoes the last user message
 /// back as the assistant response.
@@ -14,7 +14,7 @@ use crate::{catalog::InputModality, provider::ResponseStream, CompletionRequest,
 pub struct MockProvider;
 
 #[async_trait]
-impl crate::ModelProvider for MockProvider {
+impl sven_model::ModelProvider for MockProvider {
     fn name(&self) -> &str {
         "mock"
     }
@@ -27,7 +27,7 @@ impl crate::ModelProvider for MockProvider {
             .messages
             .iter()
             .rev()
-            .find(|m| matches!(m.role, crate::Role::User))
+            .find(|m| matches!(m.role, sven_model::Role::User))
             .and_then(|m| m.as_text())
             .unwrap_or("[no input]")
             .to_string();
@@ -139,7 +139,7 @@ impl ScriptedMockProvider {
 }
 
 #[async_trait]
-impl crate::ModelProvider for ScriptedMockProvider {
+impl sven_model::ModelProvider for ScriptedMockProvider {
     fn name(&self) -> &str {
         &self.name
     }
@@ -177,7 +177,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{CompletionRequest, Message, ModelProvider, ResponseEvent};
+    use sven_model::{CompletionRequest, Message, ModelProvider, ResponseEvent};
 
     fn empty_req() -> CompletionRequest {
         CompletionRequest {

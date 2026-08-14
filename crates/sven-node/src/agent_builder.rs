@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //!
-//! Constructs `sven_core::Agent` instances used by the node.
+//! Constructs `sven_machines::Agent` instances used by the node.
 //!
 //! ## Entry points
 //!
@@ -33,7 +33,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use sven_bootstrap::{build_tool_registry, OutputBufferStore, RuntimeContext, ToolSetProfile};
 use sven_config::Config;
-use sven_core::{Agent, AgentRuntimeContext};
+use sven_machines::{Agent, AgentRuntimeContext};
 use sven_p2p::{protocol::types::AgentCard, P2pHandle};
 use sven_team::{
     AssignTaskTool, ClaimTaskTool, CleanupTeamTool, CompleteTaskTool, CreateTaskTool,
@@ -168,7 +168,7 @@ pub async fn build_task_agent(
 
     let mut agent_runtime = runtime_ctx.to_agent_runtime();
     agent_runtime.append_system_prompt =
-        Some(sven_core::prompts::p2p_task_guidelines().to_string());
+        Some(sven_machines::prompts::p2p_task_guidelines().to_string());
 
     build_node_agent_inner(
         config,

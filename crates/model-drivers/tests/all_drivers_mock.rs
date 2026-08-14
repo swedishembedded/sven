@@ -9,7 +9,8 @@
 //! `base_url` (LiteLLM, Cloudflare, Azure) are tested with a dummy URL.
 
 use sven_config::ModelConfig;
-use sven_model::{from_config, get_driver, list_drivers, registry::DriverMeta};
+use sven_model::{get_driver, list_drivers, registry::DriverMeta};
+use sven_model_drivers::from_config;
 
 fn minimal_cfg(provider: &str) -> ModelConfig {
     ModelConfig {

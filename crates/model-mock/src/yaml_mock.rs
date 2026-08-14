@@ -43,7 +43,7 @@ use futures::stream;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::{provider::ResponseStream, CompletionRequest, ResponseEvent, Role};
+use sven_model::{CompletionRequest, ResponseEvent, ResponseStream, Role};
 
 // ─── YAML schema ─────────────────────────────────────────────────────────────
 
@@ -136,7 +136,7 @@ impl YamlMockProvider {
 }
 
 #[async_trait]
-impl crate::ModelProvider for YamlMockProvider {
+impl sven_model::ModelProvider for YamlMockProvider {
     fn name(&self) -> &str {
         &self.name
     }
@@ -280,7 +280,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{Message, ModelProvider};
+    use sven_model::{Message, ModelProvider};
 
     const BASIC_YAML: &str = r#"
 responses:

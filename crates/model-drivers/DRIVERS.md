@@ -1,7 +1,12 @@
 # Model Driver API
 
-This document describes the driver architecture in `sven-model` and explains
-how to add support for a new model provider.
+This document describes the driver architecture in `sven-model-drivers` and
+explains how to add support for a new model provider. (`sven-model` itself
+is now just the `ModelProvider` trait + request/response types + the pure
+`ModelResolver`/`resolve_model_cfg` config-resolution logic — no reqwest, no
+per-provider dependency closure. See that crate's `lib.rs` for how the two
+fit together, and `sven-model-catalog`/`sven-model-mock` for the other two
+crates this one used to bundle.)
 
 ## Architecture overview
 
@@ -9,7 +14,7 @@ how to add support for a new model provider.
 sven_config::ModelConfig
         │
         ▼
-sven_model::from_config()          ← single dispatch function
+sven_model_drivers::from_config()  ← single dispatch function
         │
         ├─ "openai"    → OpenAiProvider      (wraps OpenAICompatProvider)
         ├─ "anthropic" → AnthropicProvider   (native Anthropic Messages API)
@@ -201,10 +206,10 @@ Integration tests are `#[ignore]`d by default.  To run them:
 
 ```sh
 # All integration tests (requires respective API keys):
-cargo test -p sven-model -- --include-ignored
+cargo test -p sven-model-drivers -- --include-ignored
 
 # Specific provider:
-GROQ_API_KEY=gsk_... cargo test -p sven-model test_groq -- --include-ignored
+GROQ_API_KEY=gsk_... cargo test -p sven-model-drivers test_groq -- --include-ignored
 ```
 
 Test files:

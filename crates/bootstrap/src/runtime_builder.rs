@@ -242,7 +242,7 @@ pub struct RuntimeBuilder {
     /// `None` (the default) preserves the historical single-user behaviour.
     principal: Option<Principal>,
     /// When set, this provider is used instead of the one
-    /// `sven_model::from_config` would construct (see
+    /// `sven_model_drivers::from_config` would construct (see
     /// [`Self::with_model_provider`]).
     model_provider_override: Option<Box<dyn sven_model::ModelProvider>>,
     /// The interactive [`AgentMode`] this session runs as (see
@@ -432,7 +432,7 @@ impl RuntimeBuilder {
     ///
     /// This is the structural seam gateway wrappers hang off: managed-cloud
     /// deployments build the config provider themselves
-    /// (`sven_model::from_config`), wrap it (e.g. in `sven-cloud`'s
+    /// (`sven_model_drivers::from_config`), wrap it (e.g. in `sven-cloud`'s
     /// `MeteredProvider` so every turn is priced and debited live), and
     /// inject the wrapped provider here — no kernel path can then reach the
     /// model unmetered. Unlike [`Self::with_effect_executor`], all default
@@ -489,7 +489,7 @@ impl RuntimeBuilder {
             // `build()` already does I/O two lines below (MCP connect), so
             // this adds no new purity concern; it is a builder, not a
             // transition.
-            None => sven_model::from_config_probed(&model_cfg).await?,
+            None => sven_model_drivers::from_config_probed(&model_cfg).await?,
         };
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model_provider);
 
@@ -1005,7 +1005,7 @@ mod tests {
 
         let (runtime, _handle, _channels, _mcp_manager, _mcp_event_rx) =
             RuntimeBuilder::new(config, "chat")
-                .with_model_provider(Box::new(sven_model::MockProvider))
+                .with_model_provider(Box::new(sven_model_mock::MockProvider))
                 .build()
                 .await
                 .expect("an injected provider must bypass from_config");
@@ -1099,7 +1099,7 @@ mod tests {
         config.model.provider = "mock".into();
         config.model.name = "mock-model".into();
 
-        let provider = sven_model::ScriptedMockProvider::always_text("hi");
+        let provider = sven_model_mock::ScriptedMockProvider::always_text("hi");
         let last_request = provider.last_request.clone();
 
         let (runtime, handle, _channels, _mcp_manager, _mcp_event_rx) =

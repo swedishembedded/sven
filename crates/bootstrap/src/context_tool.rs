@@ -266,7 +266,7 @@ mod tests {
     fn make_tool() -> ContextTool {
         use std::sync::Arc;
         use sven_config::Config;
-        use sven_model::MockProvider;
+        use sven_model_mock::MockProvider;
         use sven_tools::ContextStore;
         use tokio::sync::Mutex;
 

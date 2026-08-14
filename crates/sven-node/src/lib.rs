@@ -4,7 +4,7 @@
 //!
 //! `sven-node` — HTTP/P2P node for sven agents.
 //!
-//! The node exposes a running [`sven_core::Agent`] to remote operators
+//! The node exposes a running [`sven_machines::Agent`] to remote operators
 //! over two transport paths:
 //!
 //! - **Native clients** (mobile apps, remote CLI): libp2p with Noise

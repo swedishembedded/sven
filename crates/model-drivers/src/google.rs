@@ -20,9 +20,9 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use tracing::debug;
 
-use crate::{
+use sven_model::{
     catalog::{static_catalog, ModelCatalogEntry},
-    provider::ResponseStream,
+    ResponseStream,
     CompletionRequest, MessageContent, ResponseEvent, Role,
 };
 
@@ -56,7 +56,7 @@ impl GoogleProvider {
 }
 
 #[async_trait]
-impl crate::ModelProvider for GoogleProvider {
+impl sven_model::ModelProvider for GoogleProvider {
     fn name(&self) -> &str {
         "google"
     }
@@ -217,7 +217,7 @@ impl crate::ModelProvider for GoogleProvider {
 /// parts can carry the correct function name (Gemini matches responses to calls
 /// by function name, not by the opaque call ID).
 fn message_to_gemini_parts(
-    m: &crate::Message,
+    m: &sven_model::Message,
     tc_name_map: &HashMap<String, String>,
 ) -> Vec<Value> {
     match &m.content {
@@ -229,12 +229,12 @@ fn message_to_gemini_parts(
             parts
                 .iter()
                 .map(|p| match p {
-                    crate::ContentPart::Text { text } => json!({ "text": text }),
+                    sven_model::ContentPart::Text { text } => json!({ "text": text }),
                     // Gemini genuinely accepts audio, delivered the same way as
                     // images: an `inline_data` blob carrying the base64 payload
                     // with its real MIME type.
-                    crate::ContentPart::Audio { audio_url, .. } => {
-                        if let Ok((mime, data)) = crate::types::parse_data_url_parts(audio_url) {
+                    sven_model::ContentPart::Audio { audio_url, .. } => {
+                        if let Ok((mime, data)) = sven_model::parse_data_url_parts(audio_url) {
                             json!({
                                 "inline_data": {
                                     "mime_type": mime,
@@ -245,8 +245,8 @@ fn message_to_gemini_parts(
                             json!({ "file_data": { "file_uri": audio_url } })
                         }
                     }
-                    crate::ContentPart::Image { image_url, .. } => {
-                        if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
+                    sven_model::ContentPart::Image { image_url, .. } => {
+                        if let Ok((mime, data)) = sven_model::parse_data_url_parts(image_url) {
                             json!({
                                 "inline_data": {
                                     "mime_type": mime,
@@ -285,7 +285,7 @@ fn message_to_gemini_parts(
                 .unwrap_or(tool_call_id); // fallback to ID if name unknown
 
             match content {
-                crate::ToolResultContent::Text(t) => {
+                sven_model::ToolResultContent::Text(t) => {
                     vec![json!({
                         "functionResponse": {
                             "name": fn_name,
@@ -293,14 +293,14 @@ fn message_to_gemini_parts(
                         }
                     })]
                 }
-                crate::ToolResultContent::Parts(parts) => {
+                sven_model::ToolResultContent::Parts(parts) => {
                     // Gemini functionResponse carries text in "output".
                     // Images are emitted as separate inline_data parts alongside
                     // the functionResponse part.
                     let output_text: String = parts
                         .iter()
                         .filter_map(|p| match p {
-                            crate::ToolContentPart::Text { text } => Some(text.as_str()),
+                            sven_model::ToolContentPart::Text { text } => Some(text.as_str()),
                             _ => None,
                         })
                         .collect::<Vec<_>>()
@@ -322,12 +322,12 @@ fn message_to_gemini_parts(
                         // Both images and audio ride along as inline_data parts
                         // next to the functionResponse.
                         let blob_url = match p {
-                            crate::ToolContentPart::Image { image_url } => Some(image_url),
-                            crate::ToolContentPart::Audio { audio_url } => Some(audio_url),
-                            crate::ToolContentPart::Text { .. } => None,
+                            sven_model::ToolContentPart::Image { image_url } => Some(image_url),
+                            sven_model::ToolContentPart::Audio { audio_url } => Some(audio_url),
+                            sven_model::ToolContentPart::Text { .. } => None,
                         };
                         if let Some(url) = blob_url {
-                            if let Ok((mime, data)) = crate::types::parse_data_url_parts(url) {
+                            if let Ok((mime, data)) = sven_model::parse_data_url_parts(url) {
                                 result_parts.push(json!({
                                     "inline_data": { "mime_type": mime, "data": data }
                                 }));
@@ -455,7 +455,7 @@ fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ModelProvider;
+    use sven_model::ModelProvider;
 
     #[test]
     fn provider_name() {
@@ -531,10 +531,10 @@ mod tests {
 
     #[test]
     fn tool_result_uses_function_name_not_call_id() {
-        use crate::{FunctionCall, Message, MessageContent};
+        use sven_model::{FunctionCall, Message, MessageContent};
         // Build a conversation: ToolCall then ToolResult.
         let tc_msg = Message {
-            role: crate::Role::Assistant,
+            role: sven_model::Role::Assistant,
             content: MessageContent::ToolCall {
                 tool_call_id: "call_opaque_id_123".into(),
                 function: FunctionCall {
@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn tool_result_falls_back_to_call_id_when_no_mapping() {
-        use crate::Message;
+        use sven_model::Message;
         let tr_msg = Message::tool_result("unmapped_id", "result");
         let parts = message_to_gemini_parts(&tr_msg, &HashMap::new());
         assert_eq!(parts[0]["functionResponse"]["name"], "unmapped_id");
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn tool_result_parts_image_only_uses_placeholder_text() {
-        use crate::{Message, ToolContentPart};
+        use sven_model::{Message, ToolContentPart};
         let msg = Message::tool_result_with_parts(
             "tc-1",
             vec![ToolContentPart::Image {
@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     fn content_parts_image_serialized_as_inline_data() {
-        use crate::{ContentPart, Message};
+        use sven_model::{ContentPart, Message};
         let msg = Message::user_with_parts(vec![
             ContentPart::Text {
                 text: "look".into(),

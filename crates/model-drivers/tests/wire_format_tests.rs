@@ -12,9 +12,8 @@ use futures::StreamExt;
 use serde_json::Value;
 use std::collections::HashMap;
 use sven_config::ModelConfig;
-use sven_model::{
-    from_config, from_config_probed, CompletionRequest, ContentPart, Message, ResponseEvent, ToolSchema,
-};
+use sven_model::{CompletionRequest, ContentPart, Message, ResponseEvent, ToolSchema};
+use sven_model_drivers::{from_config, from_config_probed};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 

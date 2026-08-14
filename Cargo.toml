@@ -8,6 +8,9 @@ members = [
     "crates/vocab",
     "crates/config",
     "crates/model",
+    "crates/model-catalog",
+    "crates/model-mock",
+    "crates/model-drivers",
     "crates/image",
     "crates/sven-audio",
     "crates/session-store",
@@ -140,6 +143,7 @@ path = "src/main.rs"
 [dependencies]
 sven-config      = { path = "crates/config" }
 sven-model       = { path = "crates/model" }
+sven-model-drivers = { path = "crates/model-drivers" }
 sven-session-store = { path = "crates/session-store" }
 sven-tools       = { path = "crates/tools" }
 sven-bootstrap   = { path = "crates/bootstrap" }

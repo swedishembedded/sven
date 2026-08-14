@@ -6,7 +6,7 @@
 use anyhow::bail;
 use serde_json::Value;
 
-use crate::ResponseEvent;
+use sven_model::ResponseEvent;
 
 /// Parse a single complete SSE `data:` line into a [`ResponseEvent`].
 ///

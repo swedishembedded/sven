@@ -254,7 +254,7 @@ async fn multi_round_chat_completes_twice_via_kernel() {
     use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::submachine::ErasedMachine;
-    use sven_model::MockProvider;
+    use sven_model_mock::MockProvider;
 
     let provider = Arc::new(MockProvider);
     let registry = Arc::new(ToolRegistry::new());

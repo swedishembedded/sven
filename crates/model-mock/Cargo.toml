@@ -1,0 +1,19 @@
+[package]
+name    = "sven-model-mock"
+version.workspace = true
+edition = "2021"
+description = "The --model mock test/dev ModelProvider implementations (MockProvider, YamlMockProvider), split out of sven-model so trait-only consumers don't pay for them."
+
+[dependencies]
+sven-model  = { path = "../model" }
+anyhow      = { workspace = true }
+async-trait = { workspace = true }
+futures     = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+serde_yaml  = { workspace = true }
+regex       = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+tokio       = { workspace = true }

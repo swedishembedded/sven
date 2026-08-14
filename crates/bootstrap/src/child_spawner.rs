@@ -104,7 +104,7 @@ impl ChildSpawner for SdlcChildSpawner {
         // override (this path) is not.
         let model_resolver: sven_machines::ModelResolver = Arc::new(move |model_str: &str| {
             let model_cfg = sven_model::resolve_model_from_config(&resolver_config, model_str);
-            let provider = sven_model::from_config(&model_cfg)?;
+            let provider = sven_model_drivers::from_config(&model_cfg)?;
             Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
         });
 

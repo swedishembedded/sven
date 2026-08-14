@@ -51,6 +51,7 @@ atif             = "foundation"
 
 # kernel
 sven-model  = "kernel"
+sven-model-catalog = "kernel"
 sven-wire   = "kernel"
 sven-control = "kernel"
 sven-session-model = "kernel"
@@ -65,6 +66,8 @@ sven-tool-registry = "services"
 sven-mcp-client = "services"
 sven-kernel     = "services"
 sven-node-chat  = "services"
+sven-model-drivers = "services"
+sven-model-mock    = "services"
 
 # domain
 sven-channels      = "domain"
@@ -140,6 +143,37 @@ schema. Not a same-tier violation in spirit -- config has zero dependents at
 the foundation tier itself, so this can never become a cycle -- but the
 checker only reasons about tiers, not sub-tier leaf status, so it is
 recorded explicitly rather than silently allowed.
+"""
+
+[[same_layer]]
+from = "sven-model"
+to   = "sven-model-catalog"
+why  = """
+Both are "kernel" tier: pure trait/type vocabulary crates, no heavy deps (no
+reqwest, no cloud SDKs). Phase 5 of the refactor plan split sven-model's
+static catalog data (ModelCatalogEntry, static_catalog(), lookup(), the
+on-disk live-cache overlay) out into sven-model-catalog so sven-tools et al.
+could depend on just the data without the ~10k-LOC god-crate. sven-model
+still needs it directly: ModelProvider's default trait methods
+(catalog_max_output_tokens, input_modalities, ...) call straight into the
+catalog, and sanitize::strip_images_if_unsupported needs InputModality. No
+cycle risk: sven-model-catalog has zero sven-tier dependencies of its own.
+"""
+
+[[same_layer]]
+from = "sven-model-drivers"
+to   = "sven-model-mock"
+why  = """
+TEMPORARY, precedented by the sven-mcp-client -> sven-tools entry above.
+Both are "services" tier: concrete ModelProvider implementations built on
+the sven-model kernel vocabulary. sven-model-drivers's from_config() factory
+constructs a mock provider unconditionally for `provider: "mock"` today (see
+DRIVERS.md) -- that match arm is the single call site pulling in
+sven-model-mock as a real (non-dev) dependency. Refactor plan Phase 6 is
+expected to put mock support behind a feature flag so it stops shipping in
+release builds; at that point sven-model-mock becomes an optional/dev-only
+dependency of sven-model-drivers and this edge either disappears or becomes
+a legitimate feature-gated same-tier edge recorded here with an updated why.
 """
 
 [[same_layer]]
@@ -265,8 +299,8 @@ lines = 2137
 path = "crates/node/src/node.rs"
 lines = 2119
 [[allow.large_file]]
-path = "crates/model/src/openai_compat/mod.rs"
-lines = 1956
+path = "crates/model-drivers/src/openai_compat/mod.rs"
+lines = 1955
 [[allow.large_file]]
 path = "crates/tui/src/app/dispatch.rs"
 lines = 1787
@@ -277,11 +311,8 @@ lines = 1750
 path = "crates/cloud/src/server.rs"
 lines = 1727
 [[allow.large_file]]
-path = "crates/model/src/lib.rs"
-lines = 1721
-[[allow.large_file]]
-path = "crates/model/tests/wire_format_tests.rs"
-lines = 1707
+path = "crates/model-drivers/tests/wire_format_tests.rs"
+lines = 1706
 [[allow.large_file]]
 path = "crates/tools/src/builtin/file/edit_file.rs"
 lines = 1695
@@ -314,7 +345,7 @@ path = "crates/tui/src/app/chat_ops.rs"
 lines = 1324
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_firmware.rs"
-lines = 1309
+lines = 1310
 [[allow.large_file]]
 path = "crates/ci/src/runner/mod.rs"
 lines = 1257
@@ -343,7 +374,7 @@ lines = 1141
 path = "crates/executors/tests/pipeline_integration.rs"
 lines = 1122
 [[allow.large_file]]
-path = "crates/model/src/anthropic.rs"
+path = "crates/model-drivers/src/anthropic.rs"
 lines = 1116
 [[allow.large_file]]
 path = "crates/frontend/src/operator.rs"
@@ -351,6 +382,9 @@ lines = 1071
 [[allow.large_file]]
 path = "crates/turn/src/compact.rs"
 lines = 1064
+[[allow.large_file]]
+path = "crates/model-drivers/src/lib.rs"
+lines = 1058
 [[allow.large_file]]
 path = "crates/config/src/loader.rs"
 lines = 1049
@@ -392,13 +426,13 @@ path = "crates/cloud-portal/src/portal.rs"
 lines = 916
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_platform.rs"
-lines = 881
+lines = 882
 [[allow.large_file]]
 path = "crates/tui/src/app/term_events.rs"
 lines = 880
 [[allow.large_file]]
 path = "crates/frontend/src/agent.rs"
-lines = 875
+lines = 876
 [[allow.large_file]]
 path = "crates/node-p2p/src/handler.rs"
 lines = 871
@@ -424,5 +458,5 @@ lines = 814
 path = "crates/executors/src/turn.rs"
 lines = 809
 [[allow.large_file]]
-path = "crates/model/src/google.rs"
+path = "crates/model-drivers/src/google.rs"
 lines = 806

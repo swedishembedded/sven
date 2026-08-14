@@ -92,7 +92,12 @@ struct CatalogFile {
 /// Parsed exactly once via [`OnceLock`]; subsequent calls are zero-cost
 /// pointer returns.  This is the raw YAML-only view - callers that want
 /// live-cache entries should use the public API functions.
-pub(crate) fn yaml_catalog() -> &'static [ModelCatalogEntry] {
+///
+/// `pub` (not `pub(crate)`) because `sven-model-drivers`'s OpenRouter cache
+/// refresh needs the YAML-only view specifically, to build its meta-model
+/// fallback list without creating a circular dependency with the live cache
+/// (see that call site's own comment).
+pub fn yaml_catalog() -> &'static [ModelCatalogEntry] {
     static CATALOG: OnceLock<Vec<ModelCatalogEntry>> = OnceLock::new();
     CATALOG.get_or_init(|| {
         let yaml = include_str!("../models.yaml");

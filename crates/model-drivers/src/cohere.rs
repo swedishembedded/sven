@@ -13,9 +13,9 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use tracing::debug;
 
-use crate::{
+use sven_model::{
     catalog::{static_catalog, ModelCatalogEntry},
-    provider::ResponseStream,
+    ResponseStream,
     CompletionRequest, MessageContent, ResponseEvent, Role,
 };
 
@@ -48,7 +48,7 @@ impl CohereProvider {
 }
 
 #[async_trait]
-impl crate::ModelProvider for CohereProvider {
+impl sven_model::ModelProvider for CohereProvider {
     fn name(&self) -> &str {
         "cohere"
     }
@@ -104,9 +104,9 @@ impl crate::ModelProvider for CohereProvider {
                             let text = parts
                                 .iter()
                                 .map(|p| match p {
-                                    crate::ContentPart::Text { text } => text.clone(),
-                                    crate::ContentPart::Image { .. } => "[image]".to_string(),
-                                    crate::ContentPart::Audio { .. } => "[audio]".to_string(),
+                                    sven_model::ContentPart::Text { text } => text.clone(),
+                                    sven_model::ContentPart::Image { .. } => "[image]".to_string(),
+                                    sven_model::ContentPart::Audio { .. } => "[audio]".to_string(),
                                 })
                                 .collect::<Vec<_>>()
                                 .join("\n");
@@ -133,15 +133,15 @@ impl crate::ModelProvider for CohereProvider {
                             content,
                         } => {
                             let text_content = match content {
-                                crate::ToolResultContent::Text(t) => t.clone(),
-                                crate::ToolResultContent::Parts(parts) => parts
+                                sven_model::ToolResultContent::Text(t) => t.clone(),
+                                sven_model::ToolResultContent::Parts(parts) => parts
                                     .iter()
                                     .map(|p| match p {
-                                        crate::ToolContentPart::Text { text } => text.clone(),
-                                        crate::ToolContentPart::Image { .. } => {
+                                        sven_model::ToolContentPart::Text { text } => text.clone(),
+                                        sven_model::ToolContentPart::Image { .. } => {
                                             "[image]".to_string()
                                         }
-                                        crate::ToolContentPart::Audio { .. } => {
+                                        sven_model::ToolContentPart::Audio { .. } => {
                                             "[audio]".to_string()
                                         }
                                     })
@@ -301,7 +301,7 @@ fn parse_cohere_event(v: &Value) -> anyhow::Result<ResponseEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ModelProvider;
+    use sven_model::ModelProvider;
 
     #[test]
     fn provider_name() {

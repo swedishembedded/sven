@@ -61,7 +61,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use libp2p::{Multiaddr, PeerId};
-use sven_core::AgentEvent;
+use sven_machines::AgentEvent;
 use sven_p2p::{
     protocol::types::{
         AgentCard, ContentBlock, P2pResponse, SessionMessageWire, SessionRole, TaskStatus,
@@ -768,7 +768,7 @@ async fn execute_inbound_session_message(
     buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
     use std::time::Instant;
-    use sven_core::AgentEvent;
+    use sven_machines::AgentEvent;
 
     let start = Instant::now();
     let max_ctx = model
@@ -1022,7 +1022,7 @@ async fn execute_inbound_room_post(
     buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
     use std::time::Instant;
-    use sven_core::AgentEvent;
+    use sven_machines::AgentEvent;
 
     let start = Instant::now();
     let inbound_depth = post.depth;
@@ -1049,7 +1049,7 @@ async fn execute_inbound_room_post(
         return;
     }
 
-    let runtime = sven_core::AgentRuntimeContext {
+    let runtime = sven_machines::AgentRuntimeContext {
         append_system_prompt: Some(format!(
             "A message was posted to room '{}' by agent '{}' (chain depth={inbound_depth}). \
              React ONLY if the post is directly relevant to your specific capabilities. \
@@ -1059,7 +1059,7 @@ async fn execute_inbound_room_post(
              nothing meaningful to contribute.",
             post.room, post.sender_name, post.room,
         )),
-        ..sven_core::AgentRuntimeContext::default()
+        ..sven_machines::AgentRuntimeContext::default()
     };
 
     let mut agent = match build_room_reactive_agent(
@@ -1123,8 +1123,8 @@ async fn build_session_agent(
     // task delegation) continues the same unified hop budget.
     session_depth: u32,
     buffer_store: Arc<Mutex<OutputBufferStore>>,
-) -> anyhow::Result<sven_core::Agent> {
-    use sven_core::AgentRuntimeContext;
+) -> anyhow::Result<sven_machines::Agent> {
+    use sven_machines::AgentRuntimeContext;
     use sven_model::Message;
 
     let peer_id_str = peer.to_base58();

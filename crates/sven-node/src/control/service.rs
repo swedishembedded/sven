@@ -34,7 +34,7 @@
 //! ```rust,no_run
 //! # use sven_node::control::service::{ControlService, AgentHandle};
 //! # use sven_node::control::protocol::{ControlCommand, ControlEvent, SessionState};
-//! # use sven_core::Agent;
+//! # use sven_machines::Agent;
 //! # use uuid::Uuid;
 //! # async fn example(agent: Agent) {
 //! // Construct the service and get a cheap clone-able handle.
@@ -72,7 +72,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use sven_config::AgentMode;
-use sven_core::{Agent, AgentEvent};
+use sven_machines::{Agent, AgentEvent};
 use sven_p2p::P2pHandle;
 
 use super::protocol::{
@@ -191,7 +191,7 @@ impl ControlService {
     /// runs for integration-level tests.
     #[cfg(test)]
     pub fn new_for_test() -> (Self, AgentHandle) {
-        use sven_core::AgentRuntimeContext;
+        use sven_machines::AgentRuntimeContext;
         use sven_tools::{ReadFileTool, ToolRegistry};
 
         let mut registry = ToolRegistry::new();

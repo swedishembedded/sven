@@ -8,12 +8,8 @@
 
 use async_trait::async_trait;
 
-use crate::{
-    catalog::ModelCatalogEntry,
-    openai_compat::{AuthStyle, OpenAICompatProvider},
-    provider::ResponseStream,
-    CompletionRequest,
-};
+use crate::openai_compat::{AuthStyle, OpenAICompatProvider};
+use sven_model::{catalog::ModelCatalogEntry, CompletionRequest, ResponseStream};
 
 /// OpenAI chat-completions driver.
 pub struct OpenAiProvider {
@@ -46,7 +42,7 @@ impl OpenAiProvider {
 }
 
 #[async_trait]
-impl crate::ModelProvider for OpenAiProvider {
+impl sven_model::ModelProvider for OpenAiProvider {
     fn name(&self) -> &str {
         self.inner.name()
     }

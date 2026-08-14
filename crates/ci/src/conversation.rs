@@ -102,7 +102,7 @@ impl ConversationRunner {
 
         // Validate the model provider builds now (fail fast); the kernel
         // session rebuilds it from `model_cfg` for the turn.
-        let _ = sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
+        let _ = sven_model_drivers::from_config(&model_cfg).context("failed to initialise model provider")?;
 
         write_stderr(&format!(
             "[sven:settings] model={} mode={}",

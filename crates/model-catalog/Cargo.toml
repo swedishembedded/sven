@@ -1,0 +1,12 @@
+[package]
+name    = "sven-model-catalog"
+version.workspace = true
+edition = "2021"
+description = "Static model catalog data (bundled YAML) + a live-cache overlay. No I/O beyond local disk cache reads/writes; no reqwest, no cloud SDKs."
+
+[dependencies]
+anyhow     = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+dirs       = { workspace = true }

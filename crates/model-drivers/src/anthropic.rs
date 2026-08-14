@@ -7,9 +7,9 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use tracing::{debug, warn};
 
-use crate::{
+use sven_model::{
     catalog::{static_catalog, ModelCatalogEntry},
-    provider::ResponseStream,
+    ResponseStream,
     CompletionRequest, ResponseEvent,
 };
 
@@ -130,7 +130,7 @@ impl AnthropicProvider {
 }
 
 #[async_trait]
-impl crate::ModelProvider for AnthropicProvider {
+impl sven_model::ModelProvider for AnthropicProvider {
     fn name(&self) -> &str {
         "anthropic"
     }
@@ -560,8 +560,8 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
 /// Returns `(system_text, conversation_messages)`.  The system message is
 /// separated out because Anthropic expects it as a top-level `system` field,
 /// not as a conversation turn.
-pub(crate) fn build_anthropic_messages(messages: &[crate::Message]) -> (String, Vec<Value>) {
-    use crate::{ContentPart, MessageContent, Role, ToolContentPart, ToolResultContent};
+pub(crate) fn build_anthropic_messages(messages: &[sven_model::Message]) -> (String, Vec<Value>) {
+    use sven_model::{ContentPart, MessageContent, Role, ToolContentPart, ToolResultContent};
 
     let mut system_text = String::new();
     let mut out: Vec<Value> = Vec::new();
@@ -600,7 +600,7 @@ pub(crate) fn build_anthropic_messages(messages: &[crate::Message]) -> (String, 
                             json!({ "type": "text", "text": ANTHROPIC_AUDIO_OMITTED })
                         }
                         ContentPart::Image { image_url, .. } => {
-                            if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url)
+                            if let Ok((mime, data)) = sven_model::parse_data_url_parts(image_url)
                             {
                                 json!({
                                     "type": "image",
@@ -672,7 +672,7 @@ pub(crate) fn build_anthropic_messages(messages: &[crate::Message]) -> (String, 
                                 }
                                 ToolContentPart::Image { image_url } => {
                                     if let Ok((mime, data)) =
-                                        crate::types::parse_data_url_parts(image_url)
+                                        sven_model::parse_data_url_parts(image_url)
                                     {
                                         json!({
                                             "type": "image",
@@ -712,7 +712,7 @@ pub(crate) fn build_anthropic_messages(messages: &[crate::Message]) -> (String, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ModelProvider;
+    use sven_model::ModelProvider;
 
     #[test]
     fn provider_name_and_model() {
@@ -999,7 +999,7 @@ mod tests {
 
     #[test]
     fn plain_text_message_serialized_correctly() {
-        use crate::Message;
+        use sven_model::Message;
         let (sys, msgs) = build_anthropic_messages(&[Message::user("hello")]);
         assert!(sys.is_empty());
         assert_eq!(msgs[0]["role"], "user");
@@ -1008,7 +1008,7 @@ mod tests {
 
     #[test]
     fn system_message_extracted_to_system_text() {
-        use crate::Message;
+        use sven_model::Message;
         let (sys, msgs) =
             build_anthropic_messages(&[Message::system("be helpful"), Message::user("hi")]);
         assert_eq!(sys, "be helpful");
@@ -1017,7 +1017,7 @@ mod tests {
 
     #[test]
     fn content_parts_image_base64_uses_source_block() {
-        use crate::{ContentPart, Message};
+        use sven_model::{ContentPart, Message};
         let data_url = "data:image/png;base64,iVBORw0KGgo=";
         let msg = Message::user_with_parts(vec![
             ContentPart::Text {
@@ -1037,7 +1037,7 @@ mod tests {
 
     #[test]
     fn content_parts_image_https_url_uses_url_source() {
-        use crate::{ContentPart, Message};
+        use sven_model::{ContentPart, Message};
         let url = "https://example.com/img.jpg";
         let msg = Message::user_with_parts(vec![ContentPart::image(url)]);
         let (_, msgs) = build_anthropic_messages(&[msg]);
@@ -1048,7 +1048,7 @@ mod tests {
 
     #[test]
     fn tool_result_parts_with_image_serialized_as_tool_result_content_array() {
-        use crate::{Message, ToolContentPart};
+        use sven_model::{Message, ToolContentPart};
         let data_url = "data:image/jpeg;base64,/9j/4AAQ=";
         let msg = Message::tool_result_with_parts(
             "tc-42",

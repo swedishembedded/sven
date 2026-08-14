@@ -111,7 +111,7 @@ impl KernelAgent {
     /// calls with fresh results, so a fresh Full-profile registry suffices.
     pub fn build_tool_registry(&self) -> anyhow::Result<Arc<ToolRegistry>> {
         let model =
-            sven_model::from_config(&self.model_cfg).context("failed to initialise model provider")?;
+            sven_model_drivers::from_config(&self.model_cfg).context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
         let mode_lock = Arc::new(tokio::sync::Mutex::new(AgentMode::Agent));
         let (tool_event_tx, _tool_event_rx) =

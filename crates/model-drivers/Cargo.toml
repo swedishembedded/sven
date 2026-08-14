@@ -1,0 +1,22 @@
+[package]
+name    = "sven-model-drivers"
+version.workspace = true
+edition = "2021"
+description = "Concrete ModelProvider driver implementations (34 providers) and the from_config/from_config_probed factory. Owns reqwest and every provider's own dependency closure so sven-model itself doesn't have to."
+
+[dependencies]
+sven-config      = { path = "../config" }
+sven-model       = { path = "../model" }
+sven-model-mock  = { path = "../model-mock" }
+anyhow      = { workspace = true }
+async-trait = { workspace = true }
+futures     = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+tokio       = { workspace = true }
+reqwest     = { workspace = true }
+tracing     = { workspace = true }
+sha2        = { workspace = true }
+hex         = { workspace = true }
+chrono      = { workspace = true }
+dirs        = { workspace = true }

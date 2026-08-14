@@ -28,9 +28,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tracing::debug;
 
-use crate::{
+use sven_model::{
     catalog::{static_catalog, ModelCatalogEntry},
-    provider::ResponseStream,
+    ResponseStream,
     CompletionRequest, MessageContent, ResponseEvent, Role,
 };
 
@@ -68,7 +68,7 @@ impl BedrockProvider {
 }
 
 #[async_trait]
-impl crate::ModelProvider for BedrockProvider {
+impl sven_model::ModelProvider for BedrockProvider {
     fn name(&self) -> &str {
         "aws"
     }
@@ -120,15 +120,15 @@ impl crate::ModelProvider for BedrockProvider {
                 MessageContent::ContentParts(parts) => parts
                     .iter()
                     .map(|p| match p {
-                        crate::ContentPart::Text { text } => json!({ "text": text }),
+                        sven_model::ContentPart::Text { text } => json!({ "text": text }),
                         // Bedrock Converse has no audio content block for the
                         // text models sven targets; degrade to a placeholder
                         // the same way an unparsable image does.
-                        crate::ContentPart::Audio { .. } => {
+                        sven_model::ContentPart::Audio { .. } => {
                             json!({ "text": AUDIO_PLACEHOLDER })
                         }
-                        crate::ContentPart::Image { image_url, .. } => {
-                            if let Ok((mime, b64)) = crate::types::parse_data_url_parts(image_url) {
+                        sven_model::ContentPart::Image { image_url, .. } => {
+                            if let Ok((mime, b64)) = sven_model::parse_data_url_parts(image_url) {
                                 let format = normalize_bedrock_image_format(&mime);
                                 json!({
                                     "image": {
@@ -161,17 +161,17 @@ impl crate::ModelProvider for BedrockProvider {
                     content,
                 } => {
                     let bedrock_content: Vec<Value> = match content {
-                        crate::ToolResultContent::Text(t) => vec![json!({ "text": t })],
-                        crate::ToolResultContent::Parts(parts) => parts
+                        sven_model::ToolResultContent::Text(t) => vec![json!({ "text": t })],
+                        sven_model::ToolResultContent::Parts(parts) => parts
                             .iter()
                             .map(|p| match p {
-                                crate::ToolContentPart::Text { text } => json!({ "text": text }),
-                                crate::ToolContentPart::Audio { .. } => {
+                                sven_model::ToolContentPart::Text { text } => json!({ "text": text }),
+                                sven_model::ToolContentPart::Audio { .. } => {
                                     json!({ "text": AUDIO_PLACEHOLDER })
                                 }
-                                crate::ToolContentPart::Image { image_url } => {
+                                sven_model::ToolContentPart::Image { image_url } => {
                                     if let Ok((mime, b64)) =
-                                        crate::types::parse_data_url_parts(image_url)
+                                        sven_model::parse_data_url_parts(image_url)
                                     {
                                         let format = normalize_bedrock_image_format(&mime);
                                         json!({
@@ -465,7 +465,7 @@ fn normalize_bedrock_image_format(mime: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ModelProvider;
+    use sven_model::ModelProvider;
 
     #[test]
     fn hmac_sha256_known_vector() {
@@ -543,8 +543,8 @@ mod tests {
     // ── reasoningContent (Claude Extended Thinking via Bedrock) ───────────────
 
     /// Helper: parse a Bedrock Converse response body into a flat event list.
-    fn parse_bedrock_events(body: serde_json::Value) -> Vec<crate::ResponseEvent> {
-        let mut events: Vec<anyhow::Result<crate::ResponseEvent>> = Vec::new();
+    fn parse_bedrock_events(body: serde_json::Value) -> Vec<sven_model::ResponseEvent> {
+        let mut events: Vec<anyhow::Result<sven_model::ResponseEvent>> = Vec::new();
 
         if let Some(output) = body.get("output") {
             if let Some(message) = output.get("message") {
@@ -552,14 +552,14 @@ mod tests {
                     for part in content_arr {
                         if let Some(text) = part["text"].as_str() {
                             if !text.is_empty() {
-                                events.push(Ok(crate::ResponseEvent::TextDelta(text.to_string())));
+                                events.push(Ok(sven_model::ResponseEvent::TextDelta(text.to_string())));
                             }
                         }
                         if let Some(rc) = part.get("reasoningContent") {
                             if let Some(rt) = rc.get("reasoningText") {
                                 if let Some(text) = rt["text"].as_str() {
                                     if !text.is_empty() {
-                                        events.push(Ok(crate::ResponseEvent::ThinkingDelta(
+                                        events.push(Ok(sven_model::ResponseEvent::ThinkingDelta(
                                             text.to_string(),
                                         )));
                                     }
@@ -595,7 +595,7 @@ mod tests {
         let events = parse_bedrock_events(body);
         assert_eq!(events.len(), 1);
         assert!(
-            matches!(&events[0], crate::ResponseEvent::ThinkingDelta(t) if t == "Let me think step by step."),
+            matches!(&events[0], sven_model::ResponseEvent::ThinkingDelta(t) if t == "Let me think step by step."),
             "expected ThinkingDelta, got {:?}",
             events[0]
         );
@@ -623,8 +623,8 @@ mod tests {
         });
         let events = parse_bedrock_events(body);
         assert_eq!(events.len(), 2);
-        assert!(matches!(&events[0], crate::ResponseEvent::ThinkingDelta(_)));
-        assert!(matches!(&events[1], crate::ResponseEvent::TextDelta(t) if t.contains("42")));
+        assert!(matches!(&events[0], sven_model::ResponseEvent::ThinkingDelta(_)));
+        assert!(matches!(&events[1], sven_model::ResponseEvent::TextDelta(t) if t.contains("42")));
     }
 
     #[test]

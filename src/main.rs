@@ -885,7 +885,7 @@ async fn list_models_cmd(
         } else {
             config.model.clone()
         };
-        let model = sven_model::from_config(&model_cfg)?;
+        let model = sven_model_drivers::from_config(&model_cfg)?;
         let mut live = model.list_models().await?;
         if let Some(prov) = provider_filter {
             live.retain(|e| e.provider == prov);

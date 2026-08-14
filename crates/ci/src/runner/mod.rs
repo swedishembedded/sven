@@ -495,7 +495,7 @@ impl CiRunner {
         // constructing the agent. The kernel session (re)builds the provider
         // from `model_cfg` per turn.
         let _ =
-            sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
+            sven_model_drivers::from_config(&model_cfg).context("failed to initialise model provider")?;
 
         write_stderr(&format!(
             "[sven:settings] model={} mode={}",
@@ -824,7 +824,7 @@ impl CiRunner {
                 let step_model_cfg = sven_model::resolve_model_from_config(&self.config, model_str);
                 // Validate the override builds before switching; on failure keep
                 // the current model (mirrors the legacy runner's warn-and-continue).
-                match sven_model::from_config(&step_model_cfg) {
+                match sven_model_drivers::from_config(&step_model_cfg) {
                     Ok(_) => {
                         agent.set_model_config(step_model_cfg);
                     }

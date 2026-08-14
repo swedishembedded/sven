@@ -27,7 +27,7 @@ use tracing::{debug, warn};
 ///
 /// All model overrides carry an already-resolved `ModelConfig`. The frontend
 /// resolves the config via `sven_model::resolve_model_from_config`; the agent
-/// task only calls `sven_model::from_config` to instantiate the provider,
+/// task only calls `sven_model_drivers::from_config` to instantiate the provider,
 /// never re-derives which model to use.
 #[derive(Debug)]
 pub enum AgentRequest {
@@ -66,7 +66,7 @@ pub enum AgentRequest {
 async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Option<String> {
     const TITLE_MAX_TOKENS: u32 = 50;
 
-    let title_model = match sven_model::from_config(cfg) {
+    let title_model = match sven_model_drivers::from_config(cfg) {
         Ok(m) => m,
         Err(e) => {
             warn!(provider = %cfg.provider, model = %cfg.name, error = %e, "title model init failed");
@@ -143,7 +143,7 @@ async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Optio
 /// Optional test seam: map a `(ModelConfig, AgentMode)` to a concrete provider.
 ///
 /// Production passes `None` and the kernel builds the provider from config via
-/// `sven_model::from_config`. Tests inject distinguishable mock providers to
+/// `sven_model_drivers::from_config`. Tests inject distinguishable mock providers to
 /// assert that a model / mode override actually re-drives the kernel through
 /// the intended provider.
 type ProviderFactory = Box<
@@ -515,7 +515,8 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::{json, Value};
     use sven_config::{AgentMode, Config, ModelConfig};
-    use sven_model::{CompletionRequest, ModelProvider, ResponseEvent, ScriptedMockProvider};
+    use sven_model::{CompletionRequest, ModelProvider, ResponseEvent};
+    use sven_model_mock::ScriptedMockProvider;
     use sven_tools::{
         policy::ApprovalPolicy, OutputBufferStore, SharedTools, Tool, ToolCall, ToolOutput,
     };

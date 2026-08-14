@@ -305,7 +305,7 @@ mod tests {
 
     use sven_executors::user::{ApprovalRequest, UserQuestion};
     use sven_hsm::{ApprovalId, ObservationSink, ToolCapability};
-    use sven_model::ScriptedMockProvider;
+    use sven_model_mock::ScriptedMockProvider;
     use sven_tools::ToolCall;
 
     use super::*;

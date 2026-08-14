@@ -13,9 +13,9 @@
 //! - `None` - no authentication (local servers like Ollama / LM Studio)
 //!
 //! # Usage
-//! Configure via `sven_config::ModelConfig` and call `sven_model::from_config`.
-//! This module is `pub(crate)` - direct construction is handled in
-//! `sven_model::from_config`.
+//! Configure via `sven_config::ModelConfig` and call
+//! `sven_model_drivers::from_config`. This module is `pub(crate)` - direct
+//! construction is handled in `sven_model_drivers::from_config`.
 
 mod request;
 mod stream;
@@ -34,10 +34,9 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use tracing::debug;
 
-use crate::{
+use sven_model::{
     catalog::{self, static_catalog, InputModality, ModelCatalogEntry},
-    provider::ResponseStream,
-    CompletionRequest, ResponseEvent,
+    CompletionRequest, ResponseEvent, ResponseStream,
 };
 /// How to send the API key in HTTP requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -254,7 +253,7 @@ fn derive_server_root(base_url: &str) -> String {
 }
 
 #[async_trait]
-impl crate::ModelProvider for OpenAICompatProvider {
+impl sven_model::ModelProvider for OpenAICompatProvider {
     fn name(&self) -> &str {
         self.driver_name
     }
@@ -395,8 +394,8 @@ impl crate::ModelProvider for OpenAICompatProvider {
             // uncached block concept.
             let mut msgs = req.messages.clone();
             if let Some(sys) = msgs.first_mut() {
-                if sys.role == crate::Role::System {
-                    use crate::MessageContent;
+                if sys.role == sven_model::Role::System {
+                    use sven_model::MessageContent;
                     if let MessageContent::Text(t) = &sys.content {
                         let combined = format!("{t}\n\n{suffix}");
                         sys.content = MessageContent::Text(combined);
@@ -494,8 +493,8 @@ impl crate::ModelProvider for OpenAICompatProvider {
         // merge so users can still override it via driver_options.
         if let Some(rf) = &req.response_format {
             body["response_format"] = match rf {
-                crate::ResponseFormat::JsonObject => json!({ "type": "json_object" }),
-                crate::ResponseFormat::JsonSchema { name, schema } => json!({
+                sven_model::ResponseFormat::JsonObject => json!({ "type": "json_object" }),
+                sven_model::ResponseFormat::JsonSchema { name, schema } => json!({
                     "type": "json_schema",
                     "json_schema": {
                         "name": name,
@@ -776,7 +775,7 @@ fn parse_openrouter_input_modalities(arr: Option<&Vec<Value>>) -> Vec<InputModal
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ModelProvider;
+    use sven_model::ModelProvider;
 
     fn make_provider() -> OpenAICompatProvider {
         OpenAICompatProvider::new(
@@ -1202,7 +1201,7 @@ mod tests {
 
     #[test]
     fn plain_text_message_serialized_as_string_content() {
-        use crate::Message;
+        use sven_model::Message;
         let msgs = vec![Message::user("hello world")];
         let json = build_openai_messages(&msgs);
         assert_eq!(json[0]["role"], "user");
@@ -1213,7 +1212,7 @@ mod tests {
     fn content_parts_single_text_collapses_to_string() {
         // user_with_parts(single text) collapses to MessageContent::Text for
         // cleaner serialization - the wire format should be a plain string.
-        use crate::{ContentPart, Message};
+        use sven_model::{ContentPart, Message};
         let msg = Message::user_with_parts(vec![ContentPart::Text {
             text: "describe this".into(),
         }]);
@@ -1223,7 +1222,7 @@ mod tests {
 
     #[test]
     fn content_parts_with_image_serialized_as_image_url_block() {
-        use crate::{ContentPart, Message};
+        use sven_model::{ContentPart, Message};
         let data_url = "data:image/png;base64,iVBORw0KGgo=";
         let msg = Message::user_with_parts(vec![
             ContentPart::Text {
@@ -1240,7 +1239,7 @@ mod tests {
 
     #[test]
     fn tool_result_parts_with_image_serialized_as_content_array() {
-        use crate::{Message, ToolContentPart};
+        use sven_model::{Message, ToolContentPart};
         let data_url = "data:image/jpeg;base64,/9j/4AAQ=";
         let msg = Message::tool_result_with_parts(
             "tc-99",
@@ -1265,7 +1264,7 @@ mod tests {
 
     #[test]
     fn tool_result_plain_text_serialized_as_string() {
-        use crate::Message;
+        use sven_model::Message;
         let msg = Message::tool_result("tc-1", "just text");
         let json = build_openai_messages(&[msg]);
         assert_eq!(json[0]["content"], "just text");
@@ -1273,7 +1272,7 @@ mod tests {
 
     #[test]
     fn image_with_detail_low_includes_detail_field() {
-        use crate::{ContentPart, Message};
+        use sven_model::{ContentPart, Message};
         let url = "data:image/png;base64,iVBORw0KGgo=";
         let msg = Message::user_with_parts(vec![
             ContentPart::Text {
@@ -1290,7 +1289,7 @@ mod tests {
 
     #[test]
     fn image_without_detail_omits_detail_field() {
-        use crate::{ContentPart, Message};
+        use sven_model::{ContentPart, Message};
         let url = "data:image/png;base64,iVBORw0KGgo=";
         let msg = Message::user_with_parts(vec![
             ContentPart::Text {
@@ -1466,7 +1465,7 @@ mod tests {
 
     #[test]
     fn two_consecutive_tool_call_messages_coalesced_into_one_assistant_message() {
-        use crate::{FunctionCall, Message, MessageContent, Role};
+        use sven_model::{FunctionCall, Message, MessageContent, Role};
         let msgs = vec![
             Message {
                 role: Role::Assistant,
@@ -1569,7 +1568,7 @@ mod tests {
 
     #[test]
     fn single_tool_call_message_still_works() {
-        use crate::{FunctionCall, Message, MessageContent, Role};
+        use sven_model::{FunctionCall, Message, MessageContent, Role};
         let msgs = vec![
             Message {
                 role: Role::Assistant,
