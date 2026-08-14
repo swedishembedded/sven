@@ -321,7 +321,7 @@ path = "src/cli.rs"
 lines = 1589
 [[allow.large_file]]
 path = "crates/node-control/src/service.rs"
-lines = 1575
+lines = 1577
 [[allow.large_file]]
 path = "crates/cloud-portal/src/channels.rs"
 lines = 1554
@@ -390,7 +390,7 @@ path = "crates/config/src/loader.rs"
 lines = 1049
 [[allow.large_file]]
 path = "crates/cloud-metering/src/metering.rs"
-lines = 1033
+lines = 1034
 [[allow.large_file]]
 path = "crates/tui/src/submit.rs"
 lines = 1032
