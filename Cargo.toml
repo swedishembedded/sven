@@ -23,6 +23,7 @@ members = [
     "crates/tools-ctx",
     "crates/tools-agent",
     "crates/tools-web",
+    "crates/tools-p2p",
     "crates/tools-gdb",
     "crates/turn",
     "crates/machines",

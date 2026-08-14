@@ -82,6 +82,7 @@ sven-tools-exec    = "domain"
 sven-tools-ctx     = "domain"
 sven-tools-agent   = "domain"
 sven-tools-web     = "domain"
+sven-tools-p2p     = "domain"
 sven-tools-gdb     = "domain"
 
 # machines
@@ -282,6 +283,22 @@ CloudSessionLauncher needs SessionFeed, so whichever piece ended up in the
 "lower" crate would still need the "higher" one.
 """
 
+[[same_layer]]
+from = "sven-tools-p2p"
+to   = "sven-team"
+why  = """
+Both are "domain" tier. sven-tools-p2p's BroadcastAbortTool needs
+sven_team::TeamConfigHandle to publish an abort event to the team the
+current agent belongs to. This edge is new in 5.8 of the refactor plan's
+god-crate splits: node/src/tools.rs (surface tier, inside sven-node) moved
+to sven-tools-p2p (domain tier), and a surface-tier crate depending on a
+domain-tier crate was always legal, so this same-tier constraint did not
+exist before the split -- it is a direct, correctly-identified consequence
+of moving the tools down to their proper tier, not something the split
+could have avoided. No cycle risk: sven-team has no dependency on
+sven-tools-p2p (it does not need P2P agent tools).
+"""
+
 
 # ── Known upward (illegal) edges, each with a fix owner and a why. ─────────
 # None currently outstanding. sven-wire and sven-control both depended on
@@ -336,11 +353,11 @@ lines = 1577
 path = "crates/cloud-portal/src/channels.rs"
 lines = 1554
 [[allow.large_file]]
+path = "crates/tools-p2p/src/lib.rs"
+lines = 1552
+[[allow.large_file]]
 path = "crates/config/src/schema.rs"
 lines = 1550
-[[allow.large_file]]
-path = "crates/node/src/tools.rs"
-lines = 1547
 [[allow.large_file]]
 path = "crates/team/src/spawn.rs"
 lines = 1506
