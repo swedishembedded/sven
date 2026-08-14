@@ -37,7 +37,7 @@ agent-client-protocol = { version = "0.10", features = ["unstable_session_usage"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [features]
-default = []
+default = ["gdb"]
 # Enable all integration tools at once
 integrations = [
     "dep:sven-channels",
@@ -45,9 +45,13 @@ integrations = [
     "dep:sven-integrations",
     "dep:sven-memory",
 ]
+# GDB/MI debugging tools (unix only regardless of this flag - see the
+# target-gated dependency below). Kept separately toggleable so a portable
+# headless build can exclude gdbmi and its transitive closure entirely.
+gdb = ["dep:sven-tools-gdb"]
 
 [target.'cfg(unix)'.dependencies]
-sven-tools-gdb = { path = "../tools-gdb" }
+sven-tools-gdb = { path = "../tools-gdb", optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

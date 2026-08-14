@@ -23,7 +23,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "gdb"))]
 use sven_tools_gdb::GdbSessionState;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
@@ -45,7 +45,7 @@ use sven_machines::AgentRuntimeContext;
 use crate::context::ToolSetProfile;
 use crate::context_tool::ContextTool;
 use crate::task_tool::TaskTool;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "gdb"))]
 use crate::GdbTool;
 
 // ── Integration tool providers ────────────────────────────────────────────────
@@ -447,7 +447,7 @@ fn register_base_tools(
 
         // Compound GDB tool: start_server|connect|command|interrupt|wait_stopped|status|stop
         // GDB tools use Unix signal APIs and are only available on Unix platforms.
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "gdb"))]
         {
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
             reg.register(GdbTool::new(gdb_state, cfg.tools.gdb.clone()));
@@ -512,7 +512,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
 
     // ── GDB ───────────────────────────────────────────────────────────────────
     // GDB tools use Unix signal APIs and are only available on Unix platforms.
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "gdb"))]
     {
         let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
         reg.register(GdbTool::new(gdb_state, cfg.tools.gdb.clone()));

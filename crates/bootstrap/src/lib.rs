@@ -40,7 +40,7 @@ pub use sven_mcp_client::McpManager;
 pub use task_tool::TaskTool;
 
 // Re-export compound tools for convenience.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "gdb"))]
 pub use sven_tools_gdb::GdbTool;
 pub use sven_tools_ctx::MemoryTool;
 
