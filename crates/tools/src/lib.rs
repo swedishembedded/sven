@@ -2,13 +2,32 @@
 
 // SPDX-License-Identifier: Apache-2.0
 pub mod builtin;
-pub mod display;
-pub mod events;
-pub(crate) mod params;
-pub mod policy;
-pub mod registry;
-pub mod tool;
-pub mod tool_summary;
+
+// ── Phase 5.1 of the refactor plan: the Tool trait / ToolDisplay /
+// ApprovalPolicy / PermissionRequester interface moved to sven-tool-api
+// (kernel tier), and the concrete ToolRegistry / ToolPolicy / RolePolicy
+// moved to sven-tool-registry (services tier). This crate re-exports both at
+// their original module paths so every existing `sven_tools::...` call site
+// (still ~20 crates deep across the workspace) keeps compiling unchanged;
+// only `builtin/`'s ~18k LOC of concrete tool implementations still live
+// here. Repointing those call sites directly at sven-tool-api /
+// sven-tool-registry, splitting builtin/ into its own per-concern domain
+// crates, and then deleting this shim is the tracked follow-up (see
+// CHANGELOG.md).
+pub use sven_tool_api::{display, events, tool, tool_summary};
+pub(crate) use sven_tool_api::params;
+
+/// Merged view of the approval-decision vocabulary
+/// ([`sven_tool_api::policy`]) and the config-driven engines that decide it
+/// ([`sven_tool_registry::policy`]). The two halves are disjoint (no name
+/// collisions) -- see `sven-tool-api::policy`'s module docs for why
+/// `ApprovalPolicy` had to move down a tier from where the original,
+/// pre-split plan placed it.
+pub mod policy {
+    pub use sven_tool_api::policy::{ApprovalPolicy, PermissionRequester};
+    pub use sven_tool_registry::policy::{RolePolicy, ToolPolicy};
+}
+pub use sven_tool_registry::registry;
 
 pub use display::format_tools_list;
 pub use events::{TodoItem, TodoStatus, ToolEvent};

@@ -12,6 +12,8 @@ members = [
     "crates/sven-audio",
     "crates/session-store",
     "crates/session-model",
+    "crates/tool-api",
+    "crates/tool-registry",
     "crates/tools",
     "crates/turn",
     "crates/machines",

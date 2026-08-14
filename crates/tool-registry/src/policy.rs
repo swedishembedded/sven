@@ -5,17 +5,7 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 use sven_config::ToolsConfig;
-
-/// Per-tool approval policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApprovalPolicy {
-    /// Always run without asking
-    Auto,
-    /// Ask user before each invocation
-    Ask,
-    /// Never run; return an error
-    Deny,
-}
+use sven_tool_api::ApprovalPolicy;
 
 /// Policy engine that maps a tool call to an approval decision.
 #[derive(Debug)]
@@ -126,19 +116,6 @@ impl RolePolicy {
     pub fn fs_root(&self) -> Option<&Path> {
         self.fs_root.as_deref()
     }
-}
-
-/// Async callback invoked before executing a tool that requires approval.
-///
-/// Implementors bridge from the tool-execution pipeline to an external approval
-/// mechanism.  When Sven runs as an ACP server the implementation calls
-/// `AgentSideConnection::request_permission` so the IDE can allow or deny the
-/// call.  When no requester is wired up, `ToolRegistry` falls back to the
-/// `ApprovalPolicy` declared on the tool itself.
-#[async_trait::async_trait]
-pub trait PermissionRequester: Send + Sync {
-    /// Return `true` to allow the tool call, `false` to deny it.
-    async fn request_permission(&self, call: &crate::ToolCall) -> bool;
 }
 
 /// Resolves `.` and `..` components lexically (without touching the

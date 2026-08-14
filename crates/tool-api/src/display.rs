@@ -7,7 +7,7 @@
 //! library.  Consumed by the TUI inspector (`/tools`) and usable in tests or
 //! CLI output.
 
-use crate::registry::ToolSchema;
+use sven_vocab::ToolSchema;
 
 // ── Tools ─────────────────────────────────────────────────────────────────────
 

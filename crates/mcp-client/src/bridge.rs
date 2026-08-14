@@ -4,14 +4,14 @@
 //! Bridge between MCP tool definitions and sven's `Tool` trait.
 //!
 //! `McpTool` wraps an MCP tool definition and routes execution through the
-//! `McpManager`.  It integrates transparently with `sven_tools::ToolRegistry`.
+//! `McpManager`.  It integrates transparently with `sven_tool_registry::ToolRegistry`.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
 
-use sven_tools::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolCapability, ToolOutput};
+use sven_tool_api::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolCapability, ToolOutput};
 
 use crate::manager::McpManager;
 

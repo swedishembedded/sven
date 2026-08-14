@@ -4,13 +4,14 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
+sven-tool-api      = { path = "../tool-api" }
+sven-tool-registry = { path = "../tool-registry" }
 sven-config  = { path = "../config" }
 sven-hsm     = { path = "../hsm" }
 sven-image   = { path = "../image" }
 sven-audio   = { path = "../sven-audio" }
 sven-model   = { path = "../model" }
 sven-workspace = { path = "../workspace" }
-sven-vocab   = { path = "../vocab" }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 serde       = { workspace = true }

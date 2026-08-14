@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 
 use sven_config::{McpServerConfig, McpTransport};
 
-use sven_tools::Tool as _;
+use sven_tool_api::Tool as _;
 
 use crate::bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
 use crate::client::McpConnection;

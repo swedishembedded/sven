@@ -51,11 +51,13 @@ sven-model  = "kernel"
 sven-wire   = "kernel"
 sven-control = "kernel"
 sven-session-model = "kernel"
+sven-tool-api = "kernel"
 
 # services
 sven-session-store = "services"
 sven-llm        = "services"
 sven-tools      = "services"
+sven-tool-registry = "services"
 sven-mcp-client = "services"
 sven-kernel     = "services"
 
@@ -97,15 +99,23 @@ xtask = "foundation"
 
 # ── Legitimate same-tier edges. Each needs a `why`. ─────────────────────────
 [[same_layer]]
-from = "sven-mcp-client"
-to   = "sven-tools"
+from = "sven-tools"
+to   = "sven-tool-registry"
 why  = """
-TEMPORARY, tracked for Phase 5 of the refactor plan. mcp-client adapts external
-MCP tools into sven-tools's ToolSchema, so it needs the tool-vocabulary types.
-Once sven-tools splits into sven-tool-api (kernel tier, just the Tool trait +
-ToolSchema) and sven-tool-registry (services tier, the registry impl),
-mcp-client repoints at sven-tool-api and this edge becomes legitimately
-downward. Delete this entry when that split lands.
+TEMPORARY, Phase 5.1 of the refactor plan. sven-tools split into sven-tool-api
+(kernel tier: the Tool trait + its interface) and sven-tool-registry (services
+tier: the concrete ToolRegistry + config-driven policy engines), but the ~18k
+LOC of built-in tool *implementations* (crates/tools/src/builtin/) have not
+yet been carved into their own per-concern domain crates (5.2-5.8 of the
+plan). Until that lands, sven-tools stays at services tier -- it is still the
+home of those implementations -- and re-exports both new crates' public
+surface at their original module paths so the ~20 crates that still write
+`sven_tools::ToolRegistry` / `sven_tools::ApprovalPolicy` keep compiling.
+sven-tools -> sven-tool-api is already a legal downward edge (kernel < services)
+and needs no exception. No cycle risk: sven-tool-registry does not and cannot
+depend back on sven-tools. Delete this entry once builtin/ moves out and
+sven-tools's own dependency on the registry (kept only for the re-export shim)
+goes with it.
 """
 
 [[same_layer]]
@@ -335,7 +345,7 @@ lines = 832
 path = "crates/ci/src/tests.rs"
 lines = 814
 [[allow.large_file]]
-path = "crates/tools/src/registry.rs"
+path = "crates/tool-registry/src/registry.rs"
 lines = 814
 [[allow.large_file]]
 path = "crates/executors/src/turn.rs"

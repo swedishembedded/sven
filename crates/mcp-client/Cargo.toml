@@ -6,8 +6,8 @@ description = "MCP client for sven - connects to external MCP servers as a tool/
 license     = "Apache-2.0"
 
 [dependencies]
-sven-config  = { path = "../config" }
-sven-tools   = { path = "../tools" }
+sven-config   = { path = "../config" }
+sven-tool-api = { path = "../tool-api" }
 
 anyhow       = { workspace = true }
 serde        = { workspace = true }

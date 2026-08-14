@@ -7,9 +7,9 @@ use std::sync::{Arc, RwLock};
 use sven_config::AgentMode;
 use sven_hsm::ToolCapability;
 
-use crate::policy::PermissionRequester;
-use crate::tool::ToolDisplayRegistry;
-use crate::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolOutput};
+use sven_tool_api::policy::PermissionRequester;
+use sven_tool_api::tool::ToolDisplayRegistry;
+use sven_tool_api::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolOutput};
 pub use sven_vocab::ToolSchema;
 
 /// Display metadata for a tool, used by the TUI for custom rendering.
@@ -109,14 +109,14 @@ impl ToolRegistry {
 
     /// Register a tool that also provides display metadata. The same instance
     /// is used for execution and for TUI display (collapsed summary, display name).
-    pub fn register_with_display(&mut self, tool: impl Tool + crate::tool::ToolDisplay + 'static) {
+    pub fn register_with_display(&mut self, tool: impl Tool + sven_tool_api::tool::ToolDisplay + 'static) {
         let arc = Arc::new(tool);
         let name = arc.name().to_string();
         if let Ok(mut guard) = self.tools.write() {
             guard.insert(name.clone(), Arc::clone(&arc) as Arc<dyn Tool>);
         }
         if let Ok(mut disp) = self.display_registry.write() {
-            disp.register_arc(name, arc as Arc<dyn crate::tool::ToolDisplay>);
+            disp.register_arc(name, arc as Arc<dyn sven_tool_api::tool::ToolDisplay>);
         }
     }
 
@@ -373,8 +373,8 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::*;
-    use crate::policy::ApprovalPolicy;
-    use crate::tool::{Tool, ToolCall, ToolOutput};
+    use sven_tool_api::policy::ApprovalPolicy;
+    use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
 
     /// Minimal no-op tool for registry tests.
     struct EchoTool {
@@ -629,7 +629,7 @@ mod tests {
     struct FixedRequester(bool);
 
     #[async_trait]
-    impl crate::policy::PermissionRequester for FixedRequester {
+    impl sven_tool_api::policy::PermissionRequester for FixedRequester {
         async fn request_permission(&self, _call: &ToolCall) -> bool {
             self.0
         }
