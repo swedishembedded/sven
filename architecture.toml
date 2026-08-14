@@ -318,9 +318,6 @@ sven-tools-p2p (it does not need P2P agent tools).
 # Regenerate with `cargo run -p xtask -- arch --bless`. Seeded from the
 # measured tree at the start of the refactor (2026-08-13).
 [[allow.large_file]]
-path = "crates/session-store/src/trace_session.rs"
-lines = 2444
-[[allow.large_file]]
 path = "crates/p2p/src/node.rs"
 lines = 2287
 [[allow.large_file]]
@@ -363,11 +360,17 @@ lines = 1506
 path = "crates/tools-ctx/tests/context_integration.rs"
 lines = 1418
 [[allow.large_file]]
+path = "crates/session-store/src/trace_session.rs"
+lines = 1331
+[[allow.large_file]]
 path = "crates/tui/src/app/chat_ops.rs"
 lines = 1325
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_firmware.rs"
 lines = 1312
+[[allow.large_file]]
+path = "crates/session-store/src/trace_session_tests.rs"
+lines = 1287
 [[allow.large_file]]
 path = "crates/ci/src/runner/mod.rs"
 lines = 1257

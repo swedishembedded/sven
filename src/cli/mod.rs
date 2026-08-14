@@ -448,6 +448,19 @@ pub enum Commands {
         #[arg(long, short = 'n', default_value = "20")]
         limit: usize,
     },
+    /// One-shot bulk migration of legacy `.yaml` chat files to the ATIF
+    /// `.json` trajectory format.
+    ///
+    /// Sven already migrates a legacy chat automatically the first time it's
+    /// opened (`--resume`, or picked in the TUI) - this command just runs
+    /// that same conversion for every legacy chat at once instead of one at
+    /// a time. Idempotent: never overwrites a session that already has a
+    /// `.json` file, and never touches the original `.yaml` files.
+    MigrateSessions {
+        /// Report what would be migrated without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Validate a workflow file: parse frontmatter, count steps, check syntax.
     /// Exits 0 if valid, non-zero with an error description otherwise.
     Validate {

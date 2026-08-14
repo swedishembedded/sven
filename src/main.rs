@@ -10,7 +10,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use sven_config::AgentMode;
 
-use run::chats::print_chats;
+use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
 #[cfg(feature = "network")]
 use run::cloud::run_cloud_command;
@@ -113,6 +113,9 @@ async fn main() -> anyhow::Result<()> {
             Commands::Chats { limit } => {
                 print_chats(*limit);
                 return Ok(());
+            }
+            Commands::MigrateSessions { dry_run } => {
+                return run_migrate_sessions_command(*dry_run);
             }
             Commands::Validate { file } => {
                 return validate_workflow(file);

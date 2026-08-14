@@ -9,7 +9,7 @@ use std::process::Stdio;
 
 #[cfg(feature = "tui")]
 use anyhow::Context;
-use sven_session_store::history;
+use sven_session_store::{history, migrate_legacy_chats};
 
 /// Print the list of saved conversations to stdout.
 pub(crate) fn print_chats(limit: usize) {
@@ -53,6 +53,39 @@ pub(crate) fn print_chats(limit: usize) {
             std::process::exit(1);
         }
     }
+}
+
+/// `sven migrate-sessions`: bulk-convert every legacy `.yaml` chat to ATIF.
+pub(crate) fn run_migrate_sessions_command(dry_run: bool) -> anyhow::Result<()> {
+    let summary = migrate_legacy_chats(dry_run)?;
+    let verb = if dry_run { "would migrate" } else { "migrated" };
+    if summary.migrated.is_empty()
+        && summary.skipped_existing.is_empty()
+        && summary.failed.is_empty()
+    {
+        println!("no legacy chat sessions found - nothing to migrate.");
+        return Ok(());
+    }
+    println!(
+        "{} {} session(s){}.",
+        verb,
+        summary.migrated.len(),
+        if dry_run { "" } else { " to ATIF" }
+    );
+    if !summary.skipped_existing.is_empty() {
+        println!(
+            "{} session(s) already had a trajectory file - left untouched.",
+            summary.skipped_existing.len()
+        );
+    }
+    if !summary.failed.is_empty() {
+        eprintln!("{} session(s) failed:", summary.failed.len());
+        for (id, err) in &summary.failed {
+            eprintln!("  {id}: {err}");
+        }
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// Launch `fzf` and let the user pick a conversation to resume.
