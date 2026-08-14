@@ -10,21 +10,29 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use sven_config::AgentMode;
 
+#[cfg(feature = "network")]
 use run::acp::run_acp_command;
 use run::chats::print_chats;
 use run::ci::run_ci;
+#[cfg(feature = "network")]
 use run::cloud::run_cloud_command;
 use run::index::run_index_command;
 use run::logging::init_logging;
+#[cfg(feature = "network")]
 use run::mcp::run_mcp_command;
 use run::models::{list_models_cmd, list_providers_cmd};
+#[cfg(feature = "network")]
 use run::node::run_node_command;
 use run::oauth::run_oauth_callback;
+#[cfg(feature = "network")]
 use run::peer::run_peer_command;
 use run::pipeline::{run_map_command, run_reduce_command, run_tee_command};
+#[cfg(feature = "network")]
 use run::share::run_share_command;
+#[cfg(feature = "network")]
 use run::team::{run_as_teammate, run_team_command};
 use run::tool::run_tool_command;
+#[cfg(feature = "tui")]
 use run::tui::run_tui;
 use run::workflow::validate_workflow;
 
@@ -50,6 +58,7 @@ async fn main() -> anyhow::Result<()> {
     // setting SVEN_LOG_FILE (writes to that file) or by passing --verbose
     // (writes to stderr - only useful with headless / CI mode).
     let is_interactive = !cli.is_headless() && cli.command.is_none();
+    #[cfg(feature = "network")]
     let is_node = matches!(
         &cli.command,
         Some(Commands::Node { .. })
@@ -59,6 +68,8 @@ async fn main() -> anyhow::Result<()> {
             | Some(Commands::Cloud { .. })
             | Some(Commands::Share { .. })
     );
+    #[cfg(not(feature = "network"))]
+    let is_node = false;
     init_logging(cli.verbose, is_interactive, is_node);
 
     // Handle subcommands first (before loading config)
@@ -68,15 +79,19 @@ async fn main() -> anyhow::Result<()> {
                 let config = sven_config::load(cli.config.as_deref())?;
                 return run_tool_command(command, &config).await;
             }
+            #[cfg(feature = "network")]
             Commands::Mcp { command } => {
                 return run_mcp_command(command).await;
             }
+            #[cfg(feature = "network")]
             Commands::Acp { command } => {
                 return run_acp_command(command).await;
             }
+            #[cfg(feature = "network")]
             Commands::Node { command } => {
                 return run_node_command(command).await;
             }
+            #[cfg(feature = "network")]
             Commands::Peer { command } => {
                 return run_peer_command(command).await;
             }
@@ -136,12 +151,15 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await;
             }
+            #[cfg(feature = "network")]
             Commands::Team { command } => {
                 return run_team_command(command);
             }
+            #[cfg(feature = "network")]
             Commands::Cloud { command } => {
                 return run_cloud_command(command, cli.config.as_deref()).await;
             }
+            #[cfg(feature = "network")]
             Commands::Connect {
                 uri,
                 identity,
@@ -159,21 +177,31 @@ async fn main() -> anyhow::Result<()> {
                 // Interactive: pair over P2P, stand up a loopback WS bridge, and
                 // hand off to the SAME node-proxy TUI (`run_tui`) the cloud/node
                 // paths use — the full sven interface, over the pairing.
-                let client =
-                    sven_node::connect::pair_client(uri, identity.as_deref()).await?;
-                let bridge = sven_node::connect_bridge::serve_bridge(client).await?;
-                // SAFETY: single-threaded startup, before the TUI/tokio work.
-                unsafe {
-                    std::env::set_var("SVEN_NODE_URL", &bridge.ws_url);
-                    // The bridge listens on loopback, which any local process
-                    // can reach: authenticate with its per-launch token.
-                    std::env::set_var("SVEN_NODE_TOKEN", &bridge.token);
-                    std::env::set_var("SVEN_NODE_INSECURE", "1");
+                #[cfg(feature = "tui")]
+                {
+                    let client =
+                        sven_node::connect::pair_client(uri, identity.as_deref()).await?;
+                    let bridge = sven_node::connect_bridge::serve_bridge(client).await?;
+                    // SAFETY: single-threaded startup, before the TUI/tokio work.
+                    unsafe {
+                        std::env::set_var("SVEN_NODE_URL", &bridge.ws_url);
+                        // The bridge listens on loopback, which any local process
+                        // can reach: authenticate with its per-launch token.
+                        std::env::set_var("SVEN_NODE_TOKEN", &bridge.token);
+                        std::env::set_var("SVEN_NODE_INSECURE", "1");
+                    }
+                    let tui_cli = Cli::parse_from(["sven"]);
+                    let config = Arc::new(sven_config::load(cli.config.as_deref())?);
+                    return run_tui(tui_cli, config).await;
                 }
-                let tui_cli = Cli::parse_from(["sven"]);
-                let config = Arc::new(sven_config::load(cli.config.as_deref())?);
-                return run_tui(tui_cli, config).await;
+                #[cfg(not(feature = "tui"))]
+                {
+                    anyhow::bail!(
+                        "interactive `sven connect` requires the 'tui' feature; pass --message for a non-interactive one-shot connection, or rebuild with --features tui"
+                    );
+                }
             }
+            #[cfg(feature = "network")]
             Commands::Share {
                 url,
                 token,
@@ -219,6 +247,7 @@ async fn main() -> anyhow::Result<()> {
     // ── Teammate mode ─────────────────────────────────────────────────────────
     // When --team-name is set (injected by spawn_teammate), skip the normal CI
     // runner and enter the team-member polling loop instead.
+    #[cfg(feature = "network")]
     if let Some(team_name) = cli.team_name.clone() {
         let agent_name = cli
             .teammate_name
@@ -252,6 +281,15 @@ async fn main() -> anyhow::Result<()> {
     if cli.is_headless() {
         run_ci(cli, config).await
     } else {
-        run_tui(cli, config).await
+        #[cfg(feature = "tui")]
+        {
+            run_tui(cli, config).await
+        }
+        #[cfg(not(feature = "tui"))]
+        {
+            anyhow::bail!(
+                "sven was built without the 'tui' feature; pass --headless, a PROMPT, or -f WORKFLOW.md, or rebuild with --features tui"
+            );
+        }
     }
 }

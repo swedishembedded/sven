@@ -11,7 +11,7 @@ sven-tools     = { path = "../tools" }
 sven-tools-fs  = { path = "../tools-fs" }
 sven-machines      = { path = "../machines" }
 sven-session-store     = { path = "../session-store" }
-sven-bootstrap = { path = "../bootstrap" }
+sven-bootstrap = { path = "../bootstrap", default-features = false }
 sven-workspace   = { path = "../workspace" }
 sven-hsm       = { path = "../hsm" }
 sven-kernel    = { path = "../kernel" }

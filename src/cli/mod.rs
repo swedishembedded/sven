@@ -7,24 +7,36 @@
 //! This mirrors `src/run/` (see `src/main.rs`), which holds the *handler*
 //! for each of these groups — this module only declares the clap grammar.
 
+#[cfg(feature = "network")]
 mod acp;
+#[cfg(feature = "network")]
 mod cloud;
 mod index;
+#[cfg(feature = "network")]
 mod mcp;
+#[cfg(feature = "network")]
 mod node;
+#[cfg(feature = "network")]
 mod peer;
+#[cfg(feature = "network")]
 mod team;
 mod tool;
 
+#[cfg(feature = "network")]
 pub use acp::AcpCommands;
+#[cfg(feature = "network")]
 pub use cloud::{
     CloudCommands, CloudRoleArg, CloudSessionCommands, CloudTenantCommands, CloudTlsArg,
     CloudTokenCommands,
 };
 pub use index::IndexCommands;
+#[cfg(feature = "network")]
 pub use mcp::McpCommands;
+#[cfg(feature = "network")]
 pub use node::{NodeCommands, WebDevicesCommands};
+#[cfg(feature = "network")]
 pub use peer::PeerCommands;
+#[cfg(feature = "network")]
 pub use team::TeamCommands;
 pub use tool::ToolCommands;
 
@@ -283,6 +295,7 @@ pub enum Commands {
     ///
     /// Run `sven mcp serve` to start the server.  The process blocks on
     /// stdin/stdout until the host disconnects.
+    #[cfg(feature = "network")]
     Mcp {
         #[command(subcommand)]
         command: McpCommands,
@@ -293,6 +306,7 @@ pub enum Commands {
     ///
     /// Run `sven acp serve` to start the agent server.  The process blocks on
     /// stdin/stdout until the IDE disconnects.
+    #[cfg(feature = "network")]
     Acp {
         #[command(subcommand)]
         command: AcpCommands,
@@ -304,6 +318,7 @@ pub enum Commands {
     /// and other clients. The node prints a pairing QR / `sven://` URI at
     /// startup; open it with `sven connect <uri>` (or the mobile app) to
     /// pair, or authorize a device's own URI with `sven node authorize`.
+    #[cfg(feature = "network")]
     Node {
         #[command(subcommand)]
         command: NodeCommands,
@@ -320,6 +335,7 @@ pub enum Commands {
     /// (its key is added to the node's allowlist); afterwards reconnect with the
     /// same `--identity` and no token. You see the conversation on connect and
     /// can send messages; `--message` sends one turn and exits.
+    #[cfg(feature = "network")]
     Connect {
         /// The `sven://…` pairing URI from the node's QR code.
         uri: String,
@@ -340,6 +356,7 @@ pub enum Commands {
     ///   sven peer chat backend-agent                - interactive chat session
     ///   sven peer search backend-agent "auth"       - grep conversation history
     ///   sven peer search --all "(?i)out.of.memory"  - search across all peers
+    #[cfg(feature = "network")]
     Peer {
         #[command(subcommand)]
         command: PeerCommands,
@@ -354,6 +371,7 @@ pub enum Commands {
     ///   sven team cleanup <NAME> --force   - remove team data
     ///   sven team definitions              - list project team YAML files
     ///   sven team init --name <N>          - generate a starter definition
+    #[cfg(feature = "network")]
     Team {
         #[command(subcommand)]
         command: TeamCommands,
@@ -365,6 +383,7 @@ pub enum Commands {
     ///   sven cloud token mint --tenant acme --role companion
     ///   sven cloud serve                            - start the tether endpoint
     ///   sven cloud session start --tenant acme --prompt "..."
+    #[cfg(feature = "network")]
     Cloud {
         #[command(subcommand)]
         command: CloudCommands,
@@ -380,6 +399,7 @@ pub enum Commands {
     ///
     ///   sven -c sven.yaml share --url https://cloud.example.com \
     ///     --token "$(cat tenant.token)" --tenant-id acme --share-id debug-1
+    #[cfg(feature = "network")]
     Share {
         /// Control-plane base URL, e.g. `https://cloud.example.com`.
         #[arg(long, env = "SVEN_CLOUD_URL", default_value = "https://localhost:8443")]

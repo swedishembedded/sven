@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "tui")]
 use std::io::Write;
+#[cfg(feature = "tui")]
 use std::process::Stdio;
 
+#[cfg(feature = "tui")]
 use anyhow::Context;
 use sven_session_store::history;
 
@@ -53,6 +56,7 @@ pub(crate) fn print_chats(limit: usize) {
 }
 
 /// Launch `fzf` and let the user pick a conversation to resume.
+#[cfg(feature = "tui")]
 pub(crate) fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
     let entries = history::list(None).context("listing saved conversations")?;
     if entries.is_empty() {

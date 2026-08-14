@@ -156,19 +156,24 @@ sven-model       = { path = "crates/model" }
 sven-model-drivers = { path = "crates/model-drivers" }
 sven-session-store = { path = "crates/session-store" }
 sven-tools       = { path = "crates/tools" }
-sven-bootstrap   = { path = "crates/bootstrap" }
+sven-bootstrap   = { path = "crates/bootstrap", default-features = false }
 sven-ci          = { path = "crates/ci" }
-sven-team        = { path = "crates/team" }
-sven-tui         = { path = "crates/tui" }
-sven-node        = { path = "crates/sven-node" }
-sven-p2p         = { path = "crates/sven-p2p" }
-sven-node-client = { path = "crates/sven-node-client" }
-sven-mcp         = { path = "crates/mcp" }
-sven-acp         = { path = "crates/acp" }
+# ── Optional surfaces, gated by the `tui`/`network` cargo features below ──────
+sven-tui         = { path = "crates/tui", optional = true }
+# `network` bundles p2p/node/acp/mcp/cloud/team rather than toggling them
+# independently: sven-acp/sven-mcp/sven-cloud's `--node` proxy submodes all
+# pull in sven-node/sven-p2p, so they can't be split further without removing
+# that functionality (see the Phase 6 plan-correction CHANGELOG entry).
+sven-team        = { path = "crates/team", optional = true }
+sven-node        = { path = "crates/sven-node", optional = true }
+sven-p2p         = { path = "crates/sven-p2p", optional = true }
+sven-node-client = { path = "crates/sven-node-client", optional = true }
+sven-mcp         = { path = "crates/mcp", optional = true }
+sven-acp         = { path = "crates/acp", optional = true }
 # Cloud control plane (`sven cloud` subcommand): tenants, tokens, tether, gating.
-sven-cloud       = { path = "crates/cloud" }
+sven-cloud       = { path = "crates/cloud", optional = true }
 # Pricing catalog + credit ledger backing `sven cloud session`'s gate.
-sven-metering    = { path = "crates/metering" }
+sven-metering    = { path = "crates/metering", optional = true }
 anyhow      = { workspace = true }
 humantime   = { workspace = true }
 tokio       = { workspace = true }
@@ -183,8 +188,40 @@ serde_yaml  = { workspace = true }
 serde       = { workspace = true }
 reqwest     = { workspace = true }
 libc        = { workspace = true }
-ratatui     = { workspace = true }
+ratatui     = { workspace = true, optional = true }
 chrono      = { workspace = true }
+
+[features]
+default = ["tui", "network", "gdb"]
+# Interactive terminal UI (the default when `sven` is run with no subcommand
+# and a TTY is attached). Pulls in ratatui + sven-tui-nvim (nvim-rs).
+tui = ["dep:sven-tui", "dep:ratatui"]
+# GDB/MI debugging tools (sven-bootstrap's own `gdb` feature - see that
+# crate's Cargo.toml). Forwarded explicitly since sven-bootstrap is depended
+# on with `default-features = false` here so that a `minimal` build (which
+# doesn't request this feature) truly excludes gdbmi, rather than getting it
+# back via feature unification with sven-ci's own (always-on) bootstrap edge.
+gdb = ["sven-bootstrap/gdb"]
+# P2P node, cloud control plane, and every command that dials or proxies
+# through them (`sven node`, `sven mcp`/`sven acp --node`, `sven cloud`,
+# `sven connect`, `sven peer`, `sven team`, `sven share`). Bundled rather
+# than split further - see the Phase 6 plan-correction CHANGELOG entry.
+network = [
+    "dep:sven-p2p",
+    "dep:sven-node",
+    "dep:sven-node-client",
+    "dep:sven-acp",
+    "dep:sven-mcp",
+    "dep:sven-cloud",
+    "dep:sven-metering",
+    "dep:sven-team",
+]
+# Portable headless-only build: `sven`/`sven -f workflow.md` (CI mode),
+# `sven tool`, `sven map`/`tee`/`reduce`, `sven index`. No TUI, no P2P/libp2p,
+# no cloud control plane, no HTTP server. The `xtask arch --profile minimal`
+# check (Phase 6.3) asserts this excludes ratatui/libp2p/git2/webauthn-rs/
+# rusqlite/axum/gdbmi from the resolved dependency closure.
+minimal = []
 
 [dev-dependencies]
 serde_json       = { workspace = true }
