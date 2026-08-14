@@ -7,33 +7,26 @@
 //! This mirrors `src/run/` (see `src/main.rs`), which holds the *handler*
 //! for each of these groups — this module only declares the clap grammar.
 
-#[cfg(feature = "network")]
-mod acp;
-#[cfg(feature = "network")]
-mod cloud;
 mod index;
-#[cfg(feature = "network")]
-mod mcp;
-#[cfg(feature = "network")]
-mod node;
 #[cfg(feature = "network")]
 mod peer;
 #[cfg(feature = "network")]
 mod team;
 mod tool;
 
+// `AcpCommands`/`McpCommands`/`NodeCommands`/`CloudCommands` (& friends) live
+// in `sven-acp`/`sven-mcp`/`sven-node`/`sven-cloud` themselves (Phase 6.2 of
+// the refactor plan), shared verbatim with the standalone `sven-acp`/
+// `sven-mcp`/`svend`/`sven-cloudd` binaries rather than duplicated here.
 #[cfg(feature = "network")]
-pub use acp::AcpCommands;
+pub use sven_acp::cli::AcpCommands;
 #[cfg(feature = "network")]
-pub use cloud::{
-    CloudCommands, CloudRoleArg, CloudSessionCommands, CloudTenantCommands, CloudTlsArg,
-    CloudTokenCommands,
-};
+pub use sven_cloud::cli::CloudCommands;
 pub use index::IndexCommands;
 #[cfg(feature = "network")]
-pub use mcp::McpCommands;
+pub use sven_mcp::cli::McpCommands;
 #[cfg(feature = "network")]
-pub use node::{NodeCommands, WebDevicesCommands};
+pub use sven_node::cli::NodeCommands;
 #[cfg(feature = "network")]
 pub use peer::PeerCommands;
 #[cfg(feature = "network")]

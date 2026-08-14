@@ -5,19 +5,13 @@
 //! matching clap grammar). `main.rs` parses [`crate::cli::Cli`] and dispatches
 //! into these.
 
-#[cfg(feature = "network")]
-pub(crate) mod acp;
 pub(crate) mod chats;
 pub(crate) mod ci;
 #[cfg(feature = "network")]
 pub(crate) mod cloud;
 pub(crate) mod index;
 pub(crate) mod logging;
-#[cfg(feature = "network")]
-pub(crate) mod mcp;
 pub(crate) mod models;
-#[cfg(feature = "network")]
-pub(crate) mod node;
 pub(crate) mod oauth;
 #[cfg(feature = "network")]
 pub(crate) mod peer;

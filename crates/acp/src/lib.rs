@@ -21,6 +21,7 @@
 //! ```
 
 pub mod bridge;
+pub mod cli;
 
 mod agent;
 mod node_proxy;

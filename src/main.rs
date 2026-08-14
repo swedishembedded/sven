@@ -10,19 +10,22 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use sven_config::AgentMode;
 
-#[cfg(feature = "network")]
-use run::acp::run_acp_command;
 use run::chats::print_chats;
 use run::ci::run_ci;
 #[cfg(feature = "network")]
 use run::cloud::run_cloud_command;
 use run::index::run_index_command;
 use run::logging::init_logging;
-#[cfg(feature = "network")]
-use run::mcp::run_mcp_command;
 use run::models::{list_models_cmd, list_providers_cmd};
+// `run_acp_command`/`run_mcp_command`/`run_node_command` live in
+// `sven-acp`/`sven-mcp`/`sven-node` (Phase 6.2 of the refactor plan), shared
+// verbatim with the standalone binaries.
 #[cfg(feature = "network")]
-use run::node::run_node_command;
+use sven_acp::cli::run_acp_command;
+#[cfg(feature = "network")]
+use sven_mcp::cli::run_mcp_command;
+#[cfg(feature = "network")]
+use sven_node::cli::run_node_command;
 use run::oauth::run_oauth_callback;
 #[cfg(feature = "network")]
 use run::peer::run_peer_command;

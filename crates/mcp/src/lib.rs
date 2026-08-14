@@ -73,6 +73,7 @@
 //! ```
 
 pub mod bridge;
+pub mod cli;
 pub mod node_proxy;
 pub mod registry;
 pub mod server;

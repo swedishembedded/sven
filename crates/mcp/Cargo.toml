@@ -5,16 +5,22 @@ edition     = "2021"
 description = "MCP server for sven - exposes sven tools to any MCP client"
 license     = "MIT"
 
+[[bin]]
+name = "sven-mcp"
+path = "src/bin/sven-mcp.rs"
+
 [dependencies]
 sven-tools           = { path = "../tools" }
 sven-tools-exec      = { path = "../tools-exec" }
 sven-tools-fs        = { path = "../tools-fs" }
 sven-tools-web       = { path = "../tools-web" }
 anyhow               = { workspace = true }
+clap                 = { workspace = true }
 serde                = { workspace = true }
 serde_json           = { workspace = true }
 tokio                = { workspace = true }
 tracing              = { workspace = true }
+tracing-subscriber   = { workspace = true }
 uuid                 = { workspace = true }
 sven-node-client     = { path = "../sven-node-client" }
 tokio-tungstenite    = { version = "0.24", features = ["rustls-tls-native-roots"] }
