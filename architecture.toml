@@ -41,6 +41,8 @@ sven-config      = "foundation"
 sven-hsm         = "foundation"
 sven-image       = "foundation"
 sven-node-client = "foundation"
+sven-node-config = "foundation"
+sven-node-web    = "foundation"
 sven-p2p         = "foundation"
 sven-workspace   = "foundation"
 sven-vocab       = "foundation"
@@ -60,6 +62,7 @@ sven-tools      = "services"
 sven-tool-registry = "services"
 sven-mcp-client = "services"
 sven-kernel     = "services"
+sven-node-chat  = "services"
 
 # domain
 sven-channels      = "domain"
@@ -80,6 +83,9 @@ sven-companion = "assembly"
 
 # wiring
 sven-frontend = "wiring"
+sven-node-control = "wiring"
+sven-node-http    = "wiring"
+sven-node-p2p     = "wiring"
 
 # surface
 sven-ci  = "surface"
@@ -159,6 +165,44 @@ kernel-local opaque-payload enum, since SessionEvent's typed payloads
 dependencies of its own, so this can never become a cycle.
 """
 
+[[same_layer]]
+from = "sven-node-config"
+to   = "sven-p2p"
+why  = """
+Both are leaf "foundation" crates (zero sven-internal dependencies of their
+own before this edge). sven-node-config's build_agent_card (NodeConfig ->
+AgentCard, a pure data transform) needs sven_p2p::protocol::types::AgentCard.
+build_agent_card moved here from sven-node::node specifically to break a real
+sven-node::node <-> sven-node::peer intra-crate cycle when peer.rs was
+extracted into sven-node-chat (Phase 5 god-crate split) -- see
+sven-node-config's crate doc comment. sven-p2p has no dependency on
+sven-node-config, so this can never become a cycle.
+"""
+
+[[same_layer]]
+from = "sven-node-http"
+to   = "sven-node-control"
+why  = """
+Both are "wiring" tier (Phase 5 god-crate split of sven-node). sven-node-http
+is sven-node's HTTPS/WebSocket transport; it needs sven-node-control's
+AgentHandle/ControlCommand/ControlEvent to speak the wire protocol over that
+transport. sven-node-control is forced to "wiring" (not lower) because its
+ControlService owns a real sven_bootstrap::RuntimeHandle (assembly tier) --
+see sven-node-control's crate doc comment. No cycle risk: sven-node-control
+has no dependency on sven-node-http.
+"""
+
+[[same_layer]]
+from = "sven-node-p2p"
+to   = "sven-node-control"
+why  = """
+Same reasoning as sven-node-http -> sven-node-control immediately above:
+sven-node-p2p is sven-node's P2P operator-control transport (the counterpart
+to sven-node-http for native/mobile clients) and needs the same
+AgentHandle/ControlCommand/ControlEvent types. No cycle risk: sven-node-control
+has no dependency on sven-node-p2p.
+"""
+
 
 # ── Known upward (illegal) edges, each with a fix owner and a why. ─────────
 # None currently outstanding. sven-wire and sven-control both depended on
@@ -183,14 +227,14 @@ lines = 2866
 path = "crates/session-store/src/trace_session.rs"
 lines = 2444
 [[allow.large_file]]
-path = "crates/node/src/node.rs"
-lines = 2335
-[[allow.large_file]]
 path = "crates/p2p/src/node.rs"
 lines = 2287
 [[allow.large_file]]
 path = "crates/mcp-client/src/oauth.rs"
 lines = 2137
+[[allow.large_file]]
+path = "crates/node/src/node.rs"
+lines = 2119
 [[allow.large_file]]
 path = "crates/model/src/openai_compat/mod.rs"
 lines = 1956
@@ -213,20 +257,20 @@ lines = 1707
 path = "crates/tools/src/builtin/file/edit_file.rs"
 lines = 1695
 [[allow.large_file]]
-path = "crates/node/src/tools.rs"
-lines = 1589
-[[allow.large_file]]
 path = "src/cli.rs"
 lines = 1589
 [[allow.large_file]]
-path = "crates/node/src/control/service.rs"
-lines = 1572
+path = "crates/node-control/src/service.rs"
+lines = 1575
 [[allow.large_file]]
 path = "crates/cloud/src/channels.rs"
 lines = 1554
 [[allow.large_file]]
 path = "crates/config/src/schema.rs"
 lines = 1550
+[[allow.large_file]]
+path = "crates/node/src/tools.rs"
+lines = 1547
 [[allow.large_file]]
 path = "crates/team/src/spawn.rs"
 lines = 1506
@@ -300,6 +344,9 @@ lines = 1016
 path = "crates/tools/src/builtin/context/store.rs"
 lines = 1012
 [[allow.large_file]]
+path = "crates/node-config/src/config.rs"
+lines = 959
+[[allow.large_file]]
 path = "crates/tools/src/builtin/gdb/discovery.rs"
 lines = 942
 [[allow.large_file]]
@@ -311,9 +358,6 @@ lines = 927
 [[allow.large_file]]
 path = "crates/node/src/telegram.rs"
 lines = 925
-[[allow.large_file]]
-path = "crates/node/src/config.rs"
-lines = 921
 [[allow.large_file]]
 path = "crates/cloud/src/portal.rs"
 lines = 904
@@ -327,8 +371,8 @@ lines = 880
 path = "crates/frontend/src/agent.rs"
 lines = 875
 [[allow.large_file]]
-path = "crates/node/src/p2p/handler.rs"
-lines = 872
+path = "crates/node-p2p/src/handler.rs"
+lines = 871
 [[allow.large_file]]
 path = "crates/ci/src/runner/runtime_runner.rs"
 lines = 856
