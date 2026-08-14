@@ -47,22 +47,19 @@ pub use tool_summary::{shorten_path, tool_category, tool_icon, tool_smart_summar
 pub use builtin::search::grep::GrepTool;
 pub use builtin::search::search_codebase::SearchCodebaseTool;
 
-// System tools (memory moved to sven-tools-ctx along with the knowledge
-// tools it composes -- see that crate's doc comment)
-pub use builtin::system::ask_question::{AskQuestionTool, Question, QuestionRequest};
+// System tools: only read_lints remains (memory moved to sven-tools-ctx;
+// system/todo/ask_question/skill moved to sven-tools-agent -- see that
+// crate's doc comment for the judgment calls involved)
 pub use builtin::system::read_lints::ReadLintsTool;
-pub use builtin::system::skill::SkillTool;
-pub use builtin::system::system::{ModelCatalogEntry, SystemTool};
-pub use builtin::system::todo::TodoTool;
 
 // Web tools
 pub use builtin::web::web_fetch::WebFetchTool;
 pub use builtin::web::web_search::WebSearchTool;
 
-// Knowledge, context (RLM memory-mapped), shell/terminal, and GDB tools moved
-// to sven-tools-ctx (5.4), sven-tools-exec (5.3), and sven-tools-gdb (5.7) of
-// the refactor plan's god-crate splits. Consumers depend on those crates
-// directly now.
+// Knowledge, context (RLM memory-mapped), shell/terminal, GDB, and agent
+// self-management tools moved to sven-tools-ctx (5.4), sven-tools-exec (5.3),
+// sven-tools-gdb (5.7), and sven-tools-agent (5.6) of the refactor plan's
+// god-crate splits. Consumers depend on those crates directly now.
 
 // Image tool (still at root level)
 pub use builtin::read_image::ReadImageTool;

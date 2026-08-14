@@ -8,6 +8,7 @@ license     = "Apache-2.0"
 [dependencies]
 sven-machines        = { path = "../machines" }
 sven-tools       = { path = "../tools" }
+sven-tools-agent = { path = "../tools-agent" }
 sven-hsm         = { path = "../hsm" }
 sven-bootstrap   = { path = "../bootstrap" }
 sven-config      = { path = "../config" }

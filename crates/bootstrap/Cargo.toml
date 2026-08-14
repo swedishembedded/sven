@@ -11,6 +11,7 @@ sven-tools         = { path = "../tools" }
 sven-tools-fs      = { path = "../tools-fs" }
 sven-tools-exec    = { path = "../tools-exec" }
 sven-tools-ctx     = { path = "../tools-ctx" }
+sven-tools-agent   = { path = "../tools-agent" }
 sven-machines          = { path = "../machines" }
 sven-workspace       = { path = "../workspace" }
 sven-mcp-client    = { path = "../mcp-client" }

@@ -6,28 +6,16 @@ edition = "2021"
 [dependencies]
 sven-tool-api      = { path = "../tool-api" }
 sven-tool-registry = { path = "../tool-registry" }
-sven-config  = { path = "../config" }
 sven-hsm     = { path = "../hsm" }
 sven-image   = { path = "../image" }
-sven-audio   = { path = "../sven-audio" }
-sven-model   = { path = "../model" }
-sven-workspace = { path = "../workspace" }
 anyhow      = { workspace = true }
-thiserror   = { workspace = true }
-serde       = { workspace = true }
 serde_json  = { workspace = true }
-serde_yaml  = { workspace = true }
 tokio       = { workspace = true }
 async-trait = { workspace = true }
 tracing     = { workspace = true }
 regex       = { workspace = true }
 reqwest     = { workspace = true }
 html2text   = { workspace = true }
-dirs        = { workspace = true }
-
-[target.'cfg(unix)'.dependencies]
-libc        = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-sven-model-catalog = { path = "../model-catalog" }

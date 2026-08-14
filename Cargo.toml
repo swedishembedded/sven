@@ -21,6 +21,7 @@ members = [
     "crates/tools-fs",
     "crates/tools-exec",
     "crates/tools-ctx",
+    "crates/tools-agent",
     "crates/tools-gdb",
     "crates/turn",
     "crates/machines",

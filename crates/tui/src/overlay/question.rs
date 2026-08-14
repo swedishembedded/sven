@@ -4,7 +4,7 @@
 //! Question modal: multi-step question/answer flow triggered by the agent's
 //! `AskQuestion` tool.
 
-use sven_tools::Question;
+use sven_tools_agent::Question;
 use tokio::sync::oneshot;
 
 /// Snapshot of a question's answer state, used to navigate back.

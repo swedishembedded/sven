@@ -8,8 +8,8 @@ use tracing::debug;
 
 use sven_hsm::ToolCapability;
 
-use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
 
 /// A single structured question with multiple-choice options.
 #[derive(Debug, Clone)]
@@ -365,7 +365,7 @@ fn parse_stdin_answer(input: &str, options: &[String], allow_multiple: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::Tool;
+    use sven_tool_api::tool::Tool;
 
     #[test]
     fn schema_requires_questions() {
@@ -377,7 +377,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_questions_is_error() {
-        use crate::tool::ToolCall;
+        use sven_tool_api::tool::ToolCall;
         use serde_json::json;
         let t = AskQuestionTool::new();
         let call = ToolCall {
@@ -392,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn too_many_questions_is_error() {
-        use crate::tool::ToolCall;
+        use sven_tool_api::tool::ToolCall;
         use serde_json::json;
         let t = AskQuestionTool::new();
         let make_q = |prompt: &str| {
@@ -417,7 +417,7 @@ mod tests {
     /// blocking forever waiting for interactive input.
     #[tokio::test]
     async fn headless_mode_returns_error_with_question_list() {
-        use crate::tool::ToolCall;
+        use sven_tool_api::tool::ToolCall;
         use serde_json::json;
 
         // Use new_headless() so the test is deterministic regardless of whether

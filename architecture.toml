@@ -80,6 +80,7 @@ sven-turn          = "domain"
 sven-tools-fs      = "domain"
 sven-tools-exec    = "domain"
 sven-tools-ctx     = "domain"
+sven-tools-agent   = "domain"
 sven-tools-gdb     = "domain"
 
 # machines
@@ -353,7 +354,7 @@ path = "crates/workspace/src/skills.rs"
 lines = 1238
 [[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
-lines = 1195
+lines = 1196
 [[allow.large_file]]
 path = "crates/tui/src/chat/markdown.rs"
 lines = 1185
@@ -431,7 +432,7 @@ path = "crates/tui/src/app/term_events.rs"
 lines = 880
 [[allow.large_file]]
 path = "crates/frontend/src/agent.rs"
-lines = 876
+lines = 877
 [[allow.large_file]]
 path = "crates/node-p2p/src/handler.rs"
 lines = 871

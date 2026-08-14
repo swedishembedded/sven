@@ -138,7 +138,7 @@ impl Widget for ConfirmModalView<'_> {
 /// "Other" row.
 #[allow(clippy::too_many_arguments)]
 pub struct QuestionModalView<'a> {
-    pub questions: &'a [sven_tools::Question],
+    pub questions: &'a [sven_tools_agent::Question],
     pub current_q: usize,
     pub selected_options: &'a [usize],
     pub other_selected: bool,

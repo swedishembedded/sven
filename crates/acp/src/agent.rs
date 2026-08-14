@@ -51,7 +51,7 @@ const PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 use sven_bootstrap::{KernelAgentSession, RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config};
 use sven_machines::AgentEvent;
-use sven_tools::QuestionRequest;
+use sven_tools_agent::QuestionRequest;
 
 use crate::bridge::{
     acp_mode_id_to_sven_mode, agent_event_to_session_update, sven_mode_to_acp_mode_id,

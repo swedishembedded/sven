@@ -28,8 +28,8 @@ use sven_workspace::{load_skill_content_from_disk, SharedSkills, SkillInfo};
 
 use sven_hsm::ToolCapability;
 
-use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
 
 /// Maximum number of bundled file paths to list in the tool response.
 const MAX_BUNDLED_FILES: usize = 20;
@@ -375,7 +375,7 @@ fn collect_files_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::ToolCall;
+    use sven_tool_api::tool::ToolCall;
     use serde_json::json;
     use std::fs;
     use std::path::PathBuf;

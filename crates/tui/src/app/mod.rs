@@ -26,7 +26,7 @@ use ratatui::{layout::Rect, DefaultTerminal, Frame};
 use sven_config::{AgentMode, Config};
 use sven_machines::AgentEvent;
 use sven_model::Message;
-use sven_tools::QuestionRequest;
+use sven_tools_agent::QuestionRequest;
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -1472,7 +1472,7 @@ impl App {
         // through the single question_rx in run().  Fall back to a disconnected
         // channel only in tests where run() was never called.
         let question_tx = self.question_tx.clone().unwrap_or_else(|| {
-            let (tx, _) = mpsc::channel::<sven_tools::QuestionRequest>(4);
+            let (tx, _) = mpsc::channel::<sven_tools_agent::QuestionRequest>(4);
             tx
         });
         let cancel = Arc::new(tokio::sync::Mutex::new(None));

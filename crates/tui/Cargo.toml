@@ -9,6 +9,7 @@ sven-model     = { path = "../model" }
 sven-session-store     = { path = "../session-store" }
 sven-tools     = { path = "../tools" }
 sven-tools-fs  = { path = "../tools-fs" }
+sven-tools-agent = { path = "../tools-agent" }
 sven-machines      = { path = "../machines" }
 sven-bootstrap = { path = "../bootstrap" }
 sven-mcp-client = { path = "../mcp-client" }

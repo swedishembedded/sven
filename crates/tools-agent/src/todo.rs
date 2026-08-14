@@ -10,9 +10,9 @@ use tracing::debug;
 
 use sven_hsm::ToolCapability;
 
-use crate::events::{TodoItem, TodoStatus, ToolEvent};
-use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
+use sven_tool_api::events::{TodoItem, TodoStatus, ToolEvent};
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 pub struct TodoTool {
     todos: Arc<Mutex<Vec<TodoItem>>>,
@@ -322,7 +322,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::tool::{Tool, ToolCall};
+    use sven_tool_api::tool::{Tool, ToolCall};
 
     fn make_tool() -> (
         TodoTool,

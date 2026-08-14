@@ -40,7 +40,8 @@ use sven_llm::ThreadStore;
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
 use sven_tools::events::ToolEvent;
-use sven_tools::{PermissionRequester, QuestionRequest, ToolRegistry};
+use sven_tools::{PermissionRequester, ToolRegistry};
+use sven_tools_agent::QuestionRequest;
 use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 

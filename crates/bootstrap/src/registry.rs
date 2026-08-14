@@ -27,8 +27,10 @@ use sven_model::ModelProvider;
 use sven_tools_gdb::GdbSessionState;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
-    AskQuestionTool, GrepTool, ModelCatalogEntry, QuestionRequest, SkillTool, SystemTool,
-    TodoTool, ToolRegistry, WebFetchTool, WebSearchTool,
+    GrepTool, ToolRegistry, WebFetchTool, WebSearchTool,
+};
+use sven_tools_agent::{
+    AskQuestionTool, ModelCatalogEntry, QuestionRequest, SkillTool, SystemTool, TodoTool,
 };
 use sven_tools_ctx::{ContextStore, MemoryTool};
 use sven_tools_exec::ShellTool;

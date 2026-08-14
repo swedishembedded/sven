@@ -15,7 +15,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 use sven_machines::AgentRuntimeContext;
-use sven_tools::{events::TodoItem, QuestionRequest};
+use sven_tools::events::TodoItem;
+use sven_tools_agent::QuestionRequest;
 use sven_tools_fs::OutputBufferStore;
 use sven_workspace::{CiContext, GitContext, SharedAgents, SharedKnowledge, SharedSkills};
 

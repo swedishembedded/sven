@@ -21,9 +21,9 @@ use sven_config::{AgentMode, McpOAuthConfig, McpServerConfig, McpTransport};
 
 use sven_hsm::ToolCapability;
 
-use crate::events::ToolEvent;
-use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use sven_tool_api::events::ToolEvent;
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
 
 /// The `provider`/`id`/`name` slice of a model catalog entry that
 /// `switch_model`'s fuzzy search needs. A local type rather than depending on
@@ -497,7 +497,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::tool::{Tool, ToolCall};
+    use sven_tool_api::tool::{Tool, ToolCall};
 
     fn make_tool(
         mode: AgentMode,

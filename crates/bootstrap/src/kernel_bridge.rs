@@ -37,7 +37,7 @@ use sven_machines::AgentEvent;
 use sven_hsm::UiEvent;
 use sven_kernel::ErasedRuntime;
 use sven_mcp_client::McpManager;
-use sven_tools::{Question, QuestionRequest};
+use sven_tools_agent::{Question, QuestionRequest};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
