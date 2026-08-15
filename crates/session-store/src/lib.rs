@@ -7,6 +7,7 @@ pub mod frontmatter;
 pub mod history;
 mod markdown;
 mod queue;
+pub mod reward;
 pub mod trace_session;
 
 // Legacy YAML chat support: only the read-only import surface the GUI/TUI
@@ -27,6 +28,9 @@ pub use frontmatter::{parse_frontmatter, WorkflowMetadata};
 pub use history::{make_title, sanitize_llm_title};
 pub use markdown::{parse_workflow, ParsedWorkflow};
 pub use queue::{Step, StepOptions, StepQueue};
+pub use reward::{
+    apply_reward_to_trajectory, trajectory_reward, OutcomeFold, RunConclusion, SessionReward,
+};
 pub use trace_session::{
     chat_usage_to_final_metrics, conversation_records_to_steps,
     conversation_records_to_steps_with_copied_context, copied_context_steps, default_agent_profile,

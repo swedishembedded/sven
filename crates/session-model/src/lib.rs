@@ -15,6 +15,9 @@ use sven_vocab::{CollabEvent, CompactionStrategyUsed, TodoItem};
 mod projection;
 pub use projection::{projection_to_session_state, MachineProjection};
 
+mod outcome;
+pub use outcome::{OutcomeFold, RunConclusion, SessionReward};
+
 mod conversation;
 pub use conversation::{
     parse_conversation, serialize_conversation, serialize_conversation_turn,

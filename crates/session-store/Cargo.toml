@@ -21,3 +21,6 @@ libc          = { workspace = true }
 
 [dev-dependencies]
 tempfile      = { workspace = true }
+# Only the reward contract test needs `SessionEvent` directly; the crate itself
+# reaches it through `sven-session-model`.
+sven-vocab    = { path = "../vocab" }
