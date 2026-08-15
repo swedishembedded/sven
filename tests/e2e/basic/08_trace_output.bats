@@ -315,3 +315,101 @@ assert child_id in resolved, (child_id, resolved)
     [[ "${STDERR_OUT}" == *"[sven:subagent:started]"* ]]
     [[ "${STDERR_OUT}" == *"[sven:subagent:finished]"* ]]
 }
+
+# ── Reward stamping ───────────────────────────────────────────────────────────
+# A concluded trajectory carries `final_metrics.extra.reward`, the per-session
+# training weight an external trajectory consumer reads. Absent means "outcome
+# unknown" and the trajectory is skipped, so these tests pin PRESENCE as much
+# as value.
+
+@test "08.33 a concluded trace stamps final_metrics.extra.reward" {
+    local trace_file
+    trace_file="$(tmp_file)"
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --output-trace "$1"' -- "${trace_file}"
+    run python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+extra = d['final_metrics']['extra']
+r = extra['reward']
+assert isinstance(r, (int, float)) and not isinstance(r, bool), type(r)
+assert 0.0 <= r <= 1.0, r
+assert r == 1.0, r
+assert extra['outcome'] == 'success', extra
+" "${trace_file}"
+    [ "${status}" -eq 0 ]
+    rm -f "${trace_file}"
+}
+
+@test "08.34 tool errors grade the reward below 1.0 rather than zeroing it" {
+    # The run still reached its conclusion, so it is scored - just worth less.
+    # Exit 3 is EXIT_TOOL_WARNINGS: a warning, not an agent failure.
+    local trace_file
+    trace_file="$(tmp_file)"
+    run bash -c 'echo "read nonexistent file" | "$BIN" --headless --model mock --output-trace "$1"' -- "${trace_file}"
+    [ "${status}" -eq 3 ]
+    run python3 -c "
+import json, sys
+extra = json.load(open(sys.argv[1]))['final_metrics']['extra']
+assert 0.0 < extra['reward'] < 1.0, extra
+assert extra['outcome'] == 'success_with_tool_errors', extra
+assert extra['tool_errors'] >= 1, extra
+" "${trace_file}"
+    [ "${status}" -eq 0 ]
+    rm -f "${trace_file}"
+}
+
+@test "08.35 the reward reads back through the exact consumer lookup path" {
+    # Mirrors the consumer's reader byte-for-byte: four plain key lookups and a
+    # float coercion, with no schema types involved. A renamed key or a
+    # non-finite number (which serialises as null) fails here.
+    local trace_file
+    trace_file="$(tmp_file)"
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --output-trace "$1"' -- "${trace_file}"
+    run python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+r = d.get('final_metrics', {}).get('extra', {}).get('reward')
+sys.exit(0 if isinstance(r, float) else 1)
+" "${trace_file}"
+    [ "${status}" -eq 0 ]
+    rm -f "${trace_file}"
+}
+
+@test "08.36 a plain headless run auto-logs a stamped trajectory into .sven/logs" {
+    # The default headless path (no --output-trace, no workflow flags) routes
+    # to RuntimeRunner. It writes the project auto-log, so ordinary runs are
+    # recorded and ingestable, not just explicitly-traced ones.
+    local work_dir
+    work_dir="$(tmp_file)"
+    mkdir -p "${work_dir}/.sven"
+    run bash -c 'cd "$1" && echo "ping" | "$BIN" --headless --model mock' -- "${work_dir}"
+    [ "${status}" -eq 0 ]
+    run python3 -c "
+import glob, json, sys
+files = glob.glob(sys.argv[1] + '/.sven/logs/*.atif.json')
+assert len(files) == 1, files
+d = json.load(open(files[0]))
+assert d['final_metrics']['extra']['reward'] == 1.0, d['final_metrics']
+assert any(s.get('message') == 'ping' for s in d['steps']), d['steps']
+" "${work_dir}"
+    [ "${status}" -eq 0 ]
+    rm -rf "${work_dir}"
+}
+
+@test "08.37 an exhausted token budget stamps a zero reward" {
+    local work_dir
+    work_dir="$(tmp_file)"
+    mkdir -p "${work_dir}/.sven"
+    run bash -c 'cd "$1" && echo "ping" | "$BIN" --headless --model mock --max-tokens 1' -- "${work_dir}"
+    [ "${status}" -eq 4 ]
+    run python3 -c "
+import glob, json, sys
+files = glob.glob(sys.argv[1] + '/.sven/logs/*.atif.json')
+assert len(files) == 1, files
+extra = json.load(open(files[0]))['final_metrics']['extra']
+assert extra['reward'] == 0.0, extra
+assert extra['outcome'] == 'budget_exhausted', extra
+" "${work_dir}"
+    [ "${status}" -eq 0 ]
+    rm -rf "${work_dir}"
+}

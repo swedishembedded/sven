@@ -21,11 +21,14 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use tokio::sync::broadcast::error::RecvError;
 
+use atif::Trajectory;
 use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config};
 use sven_hsm::{Event, UiEvent};
 use sven_kernel::EventSink;
-use sven_model::Message;
+use sven_model::{FunctionCall, Message, MessageContent, Role};
+use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
+use sven_session_store::{apply_reward_to_trajectory, make_title, OutcomeFold, RunConclusion};
 use sven_tools::ToolCall;
 
 use crate::output::{
@@ -195,87 +198,105 @@ impl RuntimeRunner {
             anyhow::bail!("kernel event queue closed before UserMessage was delivered");
         }
 
-        let trace = opts.trace_level;
-        let token_budget = opts.max_tokens_budget;
-        let prompt = opts.prompt.clone();
-        let drive = async {
-            let mut state = CiOutState {
-                trace,
-                prompt,
-                user_header_emitted: false,
-                streamed_text: String::new(),
-                sven_header_emitted: false,
-                had_error: false,
-                tools_used: 0,
-                run_total_tokens: 0,
-                token_budget,
-                total_input: 0,
-                total_output: 0,
-                latest_cache_read_total: 0,
-                latest_cache_write_total: 0,
-            };
+        // The trajectory this run records: history replayed into the kernel
+        // first, then the new prompt, so the document stands on its own.
+        let mut assembler = StepAssembler::new();
+        for msg in &opts.history {
+            assembler.push_message(msg);
+        }
+        assembler.push_message(&Message::user(&opts.prompt));
 
-            // The step banner goes to stderr immediately; the `## User`
-            // conversation section on stdout is written lazily (see
-            // `ensure_user_header`) - only once the turn is about to
-            // produce its first real stdout content. A turn that fails
-            // before producing anything must leave stdout untouched
-            // (`11_error_handling.bats`'s "produces no stdout content"),
-            // and eagerly writing "## User" here (as this used to)
-            // unconditionally broke that contract on every provider error.
-            write_progress("[sven:step:start] 1/1");
-            let started = Instant::now();
-
-            let exit = loop {
-                match obs_rx.recv().await {
-                    Ok(ev) => {
-                        if let Some(done) = handle_ui_event(ev, &mut state) {
-                            break done;
-                        }
-                    }
-                    // The session ended and dropped the sender; treat as done.
-                    // Close any open `## Sven` streaming section first so the
-                    // trailing conversation document is well-formed for a
-                    // downstream pipe stage (mirrors the TurnComplete / Aborted
-                    // finalisation paths).
-                    Err(RecvError::Closed) => {
-                        close_sven_section(&mut state);
-                        finalise_stdout(&state.streamed_text);
-                        print_total_usage(&state);
-                        break if state.had_error {
-                            EXIT_AGENT_ERROR
-                        } else {
-                            EXIT_SUCCESS
-                        };
-                    }
-                    // Dropped some observations under load; keep going.
-                    Err(RecvError::Lagged(_)) => continue,
-                }
-            };
-
-            write_progress(&format!(
-                "[sven:step:complete] 1/1 duration_ms={} tools={} success={}",
-                started.elapsed().as_millis(),
-                state.tools_used,
-                exit == EXIT_SUCCESS
-            ));
-            exit
+        let mut state = CiOutState {
+            trace: opts.trace_level,
+            prompt: opts.prompt.clone(),
+            user_header_emitted: false,
+            streamed_text: String::new(),
+            sven_header_emitted: false,
+            had_error: false,
+            tools_used: 0,
+            run_total_tokens: 0,
+            token_budget: opts.max_tokens_budget,
+            total_input: 0,
+            total_output: 0,
+            latest_cache_read_total: 0,
+            latest_cache_write_total: 0,
+            assembler,
+            outcome: OutcomeFold::default(),
         };
+
+        // The step banner goes to stderr immediately; the `## User`
+        // conversation section on stdout is written lazily (see
+        // `ensure_user_header`) - only once the turn is about to
+        // produce its first real stdout content. A turn that fails
+        // before producing anything must leave stdout untouched
+        // (`11_error_handling.bats`'s "produces no stdout content"),
+        // and eagerly writing "## User" here (as this used to)
+        // unconditionally broke that contract on every provider error.
+        write_progress("[sven:step:start] 1/1");
+        let started = Instant::now();
 
         // A per-run timeout takes precedence; otherwise fall back to the
         // per-step timeout (for a single-turn kernel run the two coincide).
-        let effective_timeout = opts.timeout_secs.or(opts.step_timeout_secs);
-        let result = if let Some(t) = effective_timeout {
-            tokio::select! {
-                r = drive => r,
-                _ = tokio::time::sleep(Duration::from_secs(t)) => {
-                    write_stderr(&format!("[sven:error] RuntimeRunner timed out after {t}s"));
-                    EXIT_TIMEOUT
+        // The deadline is enforced per `recv` rather than by racing the whole
+        // drive loop in a `select!`: dropping that future on timeout would
+        // take `state` - and with it the trajectory accumulated so far - down
+        // with it, leaving a timed-out run with no record at all.
+        let deadline = opts
+            .timeout_secs
+            .or(opts.step_timeout_secs)
+            .map(|t| started + Duration::from_secs(t));
+
+        let result = loop {
+            let received = match deadline {
+                Some(dl) => {
+                    let remaining = dl.saturating_duration_since(Instant::now());
+                    match tokio::time::timeout(remaining, obs_rx.recv()).await {
+                        Ok(r) => r,
+                        Err(_) => {
+                            write_stderr(&format!(
+                                "[sven:error] RuntimeRunner timed out after {}s",
+                                (dl - started).as_secs()
+                            ));
+                            break EXIT_TIMEOUT;
+                        }
+                    }
                 }
+                None => obs_rx.recv().await,
+            };
+            match received {
+                Ok(ev) => {
+                    if let Some(done) = handle_ui_event(ev, &mut state) {
+                        break done;
+                    }
+                }
+                // The session ended and dropped the sender; treat as done.
+                // Close any open `## Sven` streaming section first so the
+                // trailing conversation document is well-formed for a
+                // downstream pipe stage (mirrors the TurnComplete / Aborted
+                // finalisation paths).
+                Err(RecvError::Closed) => {
+                    close_sven_section(&mut state);
+                    finalise_stdout(&state.streamed_text);
+                    print_total_usage(&state);
+                    break if state.had_error {
+                        EXIT_AGENT_ERROR
+                    } else {
+                        EXIT_SUCCESS
+                    };
+                }
+                // Dropped some observations under load; keep going.
+                Err(RecvError::Lagged(_)) => continue,
             }
-        } else {
-            drive.await
         };
+
+        write_progress(&format!(
+            "[sven:step:complete] 1/1 duration_ms={} tools={} success={}",
+            started.elapsed().as_millis(),
+            state.tools_used,
+            result == EXIT_SUCCESS
+        ));
+
+        write_trajectory(state, result, &self.config, &opts.mode);
 
         // Keep the runtime alive until here so the audit log flushes.
         drop(bundle.runtime);
@@ -316,6 +337,66 @@ struct CiOutState {
     /// tracking - so the latest value IS the run total, nothing to sum here).
     latest_cache_read_total: u32,
     latest_cache_write_total: u32,
+    /// Accumulates this run's `TraceStep`s for the ATIF trajectory written at
+    /// conclusion. Fed with the same message shapes the legacy runner uses
+    /// (see [`super::event::handle_event`]) so both backends produce
+    /// interchangeable documents.
+    assembler: StepAssembler,
+    /// Outcome tally for the reward stamped on that trajectory. Reward-only:
+    /// the exit code is still decided by `had_error` and the budget/timeout
+    /// paths alone.
+    outcome: OutcomeFold,
+}
+
+/// Map this runner's exit code onto the conclusion the reward scorer expects.
+///
+/// `EXIT_SUCCESS` is a claim, not a verdict: an aborted run also exits 0 here,
+/// and [`OutcomeFold::conclude`] vetoes it from the event stream.
+fn conclusion_for(exit: i32) -> RunConclusion {
+    match exit {
+        EXIT_SUCCESS => RunConclusion::Success,
+        EXIT_TIMEOUT => RunConclusion::Timeout,
+        EXIT_BUDGET_EXHAUSTED => RunConclusion::BudgetExhausted,
+        _ => RunConclusion::AgentError,
+    }
+}
+
+/// Write this run's ATIF trajectory to the project auto-log, stamped with the
+/// reward its outcome earned.
+///
+/// Only ever called once, after the run has settled, so the document is always
+/// a conclusion — a consumer that sees no `final_metrics.extra.reward` on a
+/// trajectory knows the session did not finish.
+///
+/// Writes nothing when there is no `.sven/` project directory to write into
+/// (`resolve_auto_log_path` returns `None`), and nothing here is fatal: a
+/// failed trace write warns and leaves the run's exit code alone. Unlike
+/// `CiRunner`, this runner embeds no `subagent_trajectories` — it keeps no
+/// child assemblers.
+fn write_trajectory(state: CiOutState, exit: i32, config: &Config, mode: &str) {
+    let Some(path) = sven_workspace::resolve_auto_log_path() else {
+        return;
+    };
+    let reward = state.outcome.conclude(conclusion_for(exit));
+
+    let agent = trace_session::default_agent_profile()
+        .with_model(format!("{}/{}", config.model.provider, config.model.name));
+    let mut trajectory = Trajectory::new(trace_session::ATIF_SCHEMA_VERSION, agent);
+    trajectory.session_id = Some(trace_session::new_session_id());
+    trajectory.steps = state.assembler.finish();
+
+    let mut meta = SvenSessionMeta::new(make_title(&state.prompt));
+    meta.mode = Some(mode.to_string());
+    meta.apply_to_trajectory(&mut trajectory);
+    apply_reward_to_trajectory(&mut trajectory, &reward);
+
+    match atif::persist::write_trajectory_atomic(&path, &trajectory, None) {
+        Ok(()) => write_progress(&format!("[sven:trace] Trace written to {}", path.display())),
+        Err(e) => write_stderr(&format!(
+            "[sven:warn] Failed to write trace log {}: {e}",
+            path.display()
+        )),
+    }
 }
 
 /// Write the `## User` conversation section exactly once, right before the
@@ -376,6 +457,8 @@ fn print_total_usage(state: &CiOutState) {
 /// Returns `Some(exit_code)` when the turn has settled (the caller should stop
 /// driving the loop), or `None` to keep going.
 fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
+    // Fold into the reward tally before dispatching, so no arm can forget it.
+    state.outcome.observe(&ev);
     match ev {
         UiEvent::TextDelta(d) => {
             if !state.sven_header_emitted {
@@ -389,6 +472,9 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         // Deltas were already streamed; only emit the complete text if nothing
         // streamed (some providers send a single TextComplete with no deltas).
         UiEvent::TextComplete(t) => {
+            if !t.is_empty() {
+                state.assembler.push_message(&Message::assistant(&t));
+            }
             if state.streamed_text.is_empty() && !t.is_empty() {
                 ensure_user_header(state);
                 write_stdout("## Sven\n");
@@ -404,6 +490,7 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         UiEvent::ThinkingComplete(c) => {
             if !c.is_empty() {
                 write_progress(&format!("[sven:thinking] {c}"));
+                state.assembler.push_thinking(&c);
             }
         }
         UiEvent::ToolCallStarted(ToolCall {
@@ -426,6 +513,16 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
             });
             let pretty = serde_json::to_string_pretty(&envelope).unwrap_or_default();
             write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
+            state.assembler.push_message(&Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: call_id,
+                    function: FunctionCall {
+                        name,
+                        arguments: args_str,
+                    },
+                },
+            });
         }
         UiEvent::ToolProgress { message, .. } => {
             if state.trace >= 1 {
@@ -452,6 +549,9 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                 output_snippet
             ));
             write_stdout(&format!("## Tool Result\n```\n{output}\n```\n\n"));
+            state
+                .assembler
+                .push_message(&Message::tool_result(&call_id, &output));
         }
         UiEvent::TokenUsage {
             input,
@@ -509,6 +609,12 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
             write_progress(&format!(
                 "[sven:compact] strategy={strategy} turn={turn} {tokens_before}->{tokens_after}"
             ));
+            state.assembler.push_context_compacted(
+                tokens_before,
+                tokens_after,
+                Some(&strategy.to_string()),
+                Some(turn),
+            );
         }
         UiEvent::TodoUpdate(_) => {}
         UiEvent::ModeChanged(m) => write_progress(&format!("[sven:mode] {m}")),
@@ -533,6 +639,15 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
             });
         }
         UiEvent::Aborted { partial_text } => {
+            // Record whatever the model managed to say before the abort, on
+            // the same condition stdout uses: only when nothing was streamed,
+            // since a streamed turn ends in `TextComplete`, which already
+            // pushed it. The run scores zero either way.
+            if state.streamed_text.is_empty() && !partial_text.is_empty() {
+                state
+                    .assembler
+                    .push_message(&Message::assistant(&partial_text));
+            }
             if state.streamed_text.is_empty() && !partial_text.is_empty() {
                 ensure_user_header(state);
                 write_stdout("## Sven\n");
@@ -547,11 +662,11 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         }
         // Subagent / delegate / team observations are otherwise rendered as
         // rich child-session views by the interactive frontends; this runner
-        // has no such surface (and, unlike `CiRunner`, no ATIF trace
-        // document to embed a subagent trajectory into — `RuntimeRunner`
-        // never writes `--output-trace`; see `main.rs`'s runner-routing
-        // comment, which forces `CiRunner` whenever `--output-trace` is
-        // given). Still emit the same `[sven:subagent:...]` stderr tokens
+        // has no such surface. It writes an ATIF trajectory (the project
+        // auto-log; `--output-trace` still routes to `CiRunner`, see
+        // `run/ci.rs`'s runner-routing comment) but keeps no child
+        // assemblers, so that document carries no `subagent_trajectories` —
+        // unlike `CiRunner`'s. Still emit the same `[sven:subagent:...]` stderr tokens
         // `CiRunner` does (see `crates/ci/src/runner/event.rs`) so a plain
         // `sven --headless` run (no `--output-trace`) has the same
         // subagent-lifecycle visibility on stderr instead of silently
@@ -653,6 +768,8 @@ mod tests {
             total_output: 0,
             latest_cache_read_total: 0,
             latest_cache_write_total: 0,
+            assembler: StepAssembler::new(),
+            outcome: OutcomeFold::default(),
         }
     }
 
@@ -852,5 +969,75 @@ mod tests {
         assert!(!st.had_error);
         let r = handle_ui_event(UiEvent::TurnComplete, &mut st);
         assert_eq!(r, Some(EXIT_SUCCESS));
+        // ... but it does grade the reward down, without changing the verdict.
+        let reward = st.outcome.conclude(conclusion_for(EXIT_SUCCESS));
+        assert!(
+            reward.reward > 0.0 && reward.reward < 1.0,
+            "graded reward expected, got {}",
+            reward.reward
+        );
+        assert_eq!(reward.outcome, "success_with_tool_errors");
+    }
+
+    #[test]
+    fn conclusion_for_maps_every_exit_code() {
+        assert_eq!(conclusion_for(EXIT_SUCCESS), RunConclusion::Success);
+        assert_eq!(conclusion_for(EXIT_TIMEOUT), RunConclusion::Timeout);
+        assert_eq!(
+            conclusion_for(EXIT_BUDGET_EXHAUSTED),
+            RunConclusion::BudgetExhausted
+        );
+        assert_eq!(conclusion_for(EXIT_AGENT_ERROR), RunConclusion::AgentError);
+        // Anything unexpected is a failure, never a silent success.
+        assert_eq!(conclusion_for(42), RunConclusion::AgentError);
+    }
+
+    #[test]
+    fn an_aborted_run_exits_zero_but_scores_zero() {
+        // `Aborted` returns EXIT_SUCCESS (a cancelled run is not a CI failure),
+        // so the event stream is the only thing that knows not to train on it.
+        let mut st = state(0);
+        let r = handle_ui_event(
+            UiEvent::Aborted {
+                partial_text: "half a thought".into(),
+            },
+            &mut st,
+        );
+        assert_eq!(r, Some(EXIT_SUCCESS));
+        let reward = st.outcome.conclude(conclusion_for(EXIT_SUCCESS));
+        assert_eq!(reward.reward, 0.0);
+        assert_eq!(reward.outcome, "cancelled");
+    }
+
+    #[test]
+    fn the_conversation_is_recorded_into_the_trajectory() {
+        let mut st = state(0);
+        st.assembler.push_message(&Message::user("do a thing"));
+        handle_ui_event(
+            UiEvent::ToolCallStarted(ToolCall {
+                id: "tc-1".into(),
+                name: "read_file".into(),
+                args: serde_json::json!({"path": "a.txt"}),
+            }),
+            &mut st,
+        );
+        handle_ui_event(
+            UiEvent::ToolCallFinished {
+                call_id: "tc-1".into(),
+                tool_name: "read_file".into(),
+                output: "contents".into(),
+                is_error: false,
+            },
+            &mut st,
+        );
+        handle_ui_event(UiEvent::TextComplete("all done".into()), &mut st);
+
+        let steps = st.assembler.finish();
+        assert!(!steps.is_empty(), "the run must produce trace steps");
+        let rendered = serde_json::to_string(&steps).expect("serialize steps");
+        assert!(rendered.contains("do a thing"), "user prompt missing");
+        assert!(rendered.contains("read_file"), "tool call missing");
+        assert!(rendered.contains("contents"), "tool result missing");
+        assert!(rendered.contains("all done"), "assistant reply missing");
     }
 }

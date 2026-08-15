@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use atif::Trajectory;
 use sven_machines::AgentEvent;
 use sven_session_store::trace_session::{self, StepAssembler};
+use sven_session_store::OutcomeFold;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::SubagentUpdate;
 
@@ -124,11 +125,19 @@ pub(super) struct StepState<'a> {
     /// on every flush, so a mid-run crash still yields a valid partial
     /// document with whatever subagents completed so far.
     pub completed_subagents: &'a mut Vec<Trajectory>,
+    /// Outcome tally for this run's reward stamp. Reward-only: it deliberately
+    /// does **not** feed the exit-code verdict (`failed`, `any_tool_errors`,
+    /// `consecutive_tool_errors` still own that), so scoring can be retuned
+    /// without changing what CI reports.
+    pub outcome: &'a mut OutcomeFold,
 }
 /// Process a single agent event: write diagnostics to stderr, collect
 /// messages into `collected`, fold the event into `assembler`, and track
 /// response text / tool usage.
 pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
+    // Fold every event into the reward tally first — one insertion point that
+    // no future arm can forget.
+    s.outcome.observe(&event);
     let response_text = &mut *s.response_text;
     let tools_used = &mut *s.tools_used;
     let failed = &mut *s.failed;

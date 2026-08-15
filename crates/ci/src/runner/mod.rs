@@ -32,7 +32,8 @@ use sven_machines::AgentEvent;
 use sven_model::{ContentPart, Message, MessageContent, Role};
 use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
 use sven_session_store::{
-    history, parse_conversation, parse_frontmatter, parse_workflow, Step, StepQueue,
+    apply_reward_to_trajectory, history, parse_conversation, parse_frontmatter, parse_workflow,
+    OutcomeFold, RunConclusion, SessionReward, Step, StepQueue,
 };
 use sven_workspace::resolve_auto_log_path;
 
@@ -713,6 +714,10 @@ impl CiRunner {
         // Cross-step tracking for exit code decisions.
         let mut any_tool_errors: bool = false;
         let mut run_total_tokens: u64 = 0;
+        // Outcome tally for the reward stamped on the concluded trajectory.
+        // Spans the whole run (not per-step), like `subagent_children` below,
+        // because the reward scores the session as a whole.
+        let mut outcome_fold = OutcomeFold::default();
         let max_tokens_budget = opts.max_tokens_budget;
 
         // In-progress `task`-tool subagents (keyed by ACP `handle_id`) and
@@ -735,9 +740,20 @@ impl CiRunner {
         // `completed_subagents` keep mutating after this closure is defined,
         // so each call site passes a fresh snapshot instead of the closure
         // holding a live (and therefore borrow-conflicting) reference.
+        // `reward` is what makes a flush a CONCLUSION: `Some` stamps
+        // `final_metrics.extra.reward`, declaring the outcome final; `None`
+        // leaves the document unstamped, which downstream trajectory
+        // consumers read as "outcome unknown" and skip. It is a parameter
+        // rather than a captured flag so the compiler forces every flush site
+        // — including ones added later — to say which it is.
+        //
+        // Note this closure rebuilds the trajectory from scratch, so with
+        // `--load-trace` a predecessor run's reward is dropped rather than
+        // inherited. That is intended: the reward describes *this* run.
         let flush_trace = |path: &PathBuf,
                            new_steps: &[TraceStep],
-                           subagent_trajectories: &[Trajectory]| {
+                           subagent_trajectories: &[Trajectory],
+                           reward: Option<&SessionReward>| {
             let agent_profile = trace_session::default_agent_profile()
                 .with_model(format!("{}/{}", model_cfg.provider, model_cfg.name));
             let mut trajectory = Trajectory::new(trace_session::ATIF_SCHEMA_VERSION, agent_profile);
@@ -757,6 +773,9 @@ impl CiRunner {
             meta.touch();
             meta.mode = Some(opts.mode.to_string());
             meta.apply_to_trajectory(&mut trajectory);
+            if let Some(reward) = reward {
+                apply_reward_to_trajectory(&mut trajectory, reward);
+            }
 
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -786,6 +805,17 @@ impl CiRunner {
                         step_idx - 1,
                         total
                     ));
+                    // Record the timed-out run rather than exiting with no
+                    // document: the previous step's flush left the trajectory
+                    // unstamped, which would otherwise read as "still running".
+                    if let Some(ref path) = effective_output_trace {
+                        flush_trace(
+                            path,
+                            &assembler.snapshot_including_pending(),
+                            &completed_subagents,
+                            Some(&outcome_fold.conclude(RunConclusion::Timeout)),
+                        );
+                    }
                     std::process::exit(EXIT_TIMEOUT);
                 }
             }
@@ -990,6 +1020,7 @@ impl CiRunner {
                                         path,
                                         &assembler.snapshot_including_pending(),
                                         &completed_subagents,
+                                        Some(&outcome_fold.conclude(RunConclusion::Timeout)),
                                     );
                                 }
                                 std::process::exit(EXIT_TIMEOUT);
@@ -1006,6 +1037,7 @@ impl CiRunner {
                                     path,
                                     &assembler.snapshot_including_pending(),
                                     &completed_subagents,
+                                    Some(&outcome_fold.conclude(RunConclusion::Cancelled)),
                                 );
                             }
                             std::process::exit(EXIT_INTERRUPT);
@@ -1031,6 +1063,7 @@ impl CiRunner {
                                 budget_exhausted: &mut budget_exhausted,
                                 subagent_children: &mut subagent_children,
                                 completed_subagents: &mut completed_subagents,
+                                outcome: &mut outcome_fold,
                             });
 
                             // Abort if the `--max-tokens` budget was exhausted.
@@ -1047,6 +1080,10 @@ impl CiRunner {
                                         path,
                                         &assembler.snapshot_including_pending(),
                                         &completed_subagents,
+                                        Some(
+                                            &outcome_fold
+                                                .conclude(RunConclusion::BudgetExhausted),
+                                        ),
                                     );
                                 }
                                 std::process::exit(EXIT_BUDGET_EXHAUSTED);
@@ -1069,6 +1106,7 @@ impl CiRunner {
                                         path,
                                         &assembler.snapshot_including_pending(),
                                         &completed_subagents,
+                                        Some(&outcome_fold.conclude(RunConclusion::AgentError)),
                                     );
                                 }
                                 std::process::exit(EXIT_AGENT_ERROR);
@@ -1080,6 +1118,18 @@ impl CiRunner {
                                 write_stderr(&format!(
                                     "[sven:fatal] Step {step_idx} ({label:?}) failed: {e:#}"
                                 ));
+                                // A hard submit failure is exactly the kind of
+                                // negative outcome the trajectory should record,
+                                // so flush before exiting rather than leaving no
+                                // document at all.
+                                if let Some(ref path) = effective_output_trace {
+                                    flush_trace(
+                                        path,
+                                        &assembler.snapshot_including_pending(),
+                                        &completed_subagents,
+                                        Some(&outcome_fold.conclude(RunConclusion::AgentError)),
+                                    );
+                                }
                                 std::process::exit(EXIT_AGENT_ERROR);
                             }
                             while let Ok(ev) = rx.try_recv() {
@@ -1102,6 +1152,7 @@ impl CiRunner {
                                     budget_exhausted: &mut budget_exhausted,
                                     subagent_children: &mut subagent_children,
                                     completed_subagents: &mut completed_subagents,
+                                    outcome: &mut outcome_fold,
                                 });
                                 if budget_exhausted {
                                     break;
@@ -1116,6 +1167,10 @@ impl CiRunner {
                                         path,
                                         &assembler.snapshot_including_pending(),
                                         &completed_subagents,
+                                        Some(
+                                            &outcome_fold
+                                                .conclude(RunConclusion::BudgetExhausted),
+                                        ),
                                     );
                                 }
                                 std::process::exit(EXIT_BUDGET_EXHAUSTED);
@@ -1158,11 +1213,14 @@ impl CiRunner {
             vars.insert(format!("step.{}.output", step_idx), response_text.clone());
 
             // ── Flush the trace after every step ─────────────────────────────
+            // Mid-run, so deliberately unstamped: the run has not concluded and
+            // later steps may still fail.
             if let Some(ref path) = effective_output_trace {
                 flush_trace(
                     path,
                     &assembler.snapshot_including_pending(),
                     &completed_subagents,
+                    None,
                 );
             }
 
@@ -1234,6 +1292,7 @@ impl CiRunner {
                         path,
                         &assembler.snapshot_including_pending(),
                         &completed_subagents,
+                        Some(&outcome_fold.conclude(RunConclusion::AgentError)),
                     );
                 }
                 std::process::exit(EXIT_AGENT_ERROR);
@@ -1268,8 +1327,9 @@ impl CiRunner {
 
         // ── Final trace flush ────────────────────────────────────────────────
         // Ensure the last step is persisted even if no prior flush fired.
+        let final_reward = outcome_fold.conclude(RunConclusion::Success);
         if let Some(ref path) = effective_output_trace {
-            flush_trace(path, &new_steps, &completed_subagents);
+            flush_trace(path, &new_steps, &completed_subagents, Some(&final_reward));
             write_progress(&format!("[sven:trace] Trace written to {}", path.display()));
         }
 
@@ -1293,6 +1353,9 @@ impl CiRunner {
             meta.touch();
             meta.mode = Some(opts.mode.to_string());
             meta.apply_to_trajectory(&mut trajectory);
+            // Same document as `--output-trace` would have written, so it
+            // carries the same conclusion stamp.
+            apply_reward_to_trajectory(&mut trajectory, &final_reward);
 
             match serde_json::to_string_pretty(&trajectory) {
                 Ok(json) => write_stdout(&format!("{json}\n")),

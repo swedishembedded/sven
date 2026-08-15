@@ -589,6 +589,27 @@ EOF
     [ "${status}" -eq 0 ]
 }
 
+@test "06.52a an elapsed --run-timeout exits 124 and still records the run" {
+    # The deadline is enforced per observation rather than by racing the whole
+    # drive loop, so a timed-out run keeps the trajectory it accumulated and
+    # gets stamped as a timeout instead of vanishing without a record.
+    local work_dir
+    work_dir="$(tmp_file)"
+    mkdir -p "${work_dir}/.sven"
+    run bash -c 'cd "$1" && echo "ping" | "$BIN" --headless --model mock --run-timeout 0 2>/dev/null' -- "${work_dir}"
+    [ "${status}" -eq 124 ]
+    run python3 -c "
+import glob, json, sys
+files = glob.glob(sys.argv[1] + '/.sven/logs/*.atif.json')
+assert len(files) == 1, files
+extra = json.load(open(files[0]))['final_metrics']['extra']
+assert extra['reward'] == 0.0, extra
+assert extra['outcome'] == 'timeout', extra
+" "${work_dir}"
+    [ "${status}" -eq 0 ]
+    rm -rf "${work_dir}"
+}
+
 # ── Conversation format - tool sections ──────────────────────────────────────
 
 @test "06.53 tool call appears as ## Tool section in conversation output" {

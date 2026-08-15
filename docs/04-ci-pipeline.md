@@ -357,6 +357,44 @@ object), not line-delimited — see
 **[docs/technical/pipe-composition.md](technical/pipe-composition.md)** for
 the full field reference.
 
+Every headless run also writes an automatic trajectory to `.sven/logs/` when a
+`.sven/` project directory exists, whether or not `--output-trace` was given —
+a flat directory of `*.json` documents an RL or SFT pipeline can ingest
+directly.
+
+### Outcome rewards
+
+A **concluded** trajectory carries the outcome of its run as a training weight:
+
+```json
+"final_metrics": {
+  "extra": {
+    "reward": 0.9,
+    "outcome": "success_with_tool_errors",
+    "tool_calls": 10,
+    "tool_errors": 2
+  }
+}
+```
+
+`reward` is a float in `[0.0, 1.0]`; `0.0` means "do not learn from this run".
+The other keys are diagnostics for reading a training set by eye — only
+`reward` is meant to be consumed programmatically.
+
+| `outcome` | `reward` | when |
+|-----------|----------|------|
+| `success` | `1.0` | the run finished with no failing tool call |
+| `success_with_tool_errors` | `0.5`–`1.0` | finished, but some tool calls errored; scaled by the error ratio |
+| `agent_error` | `0.0` | the agent reported a fatal error |
+| `cancelled` | `0.0` | interrupted (Ctrl+C) or aborted |
+| `timeout` | `0.0` | a step or run deadline elapsed |
+| `budget_exhausted` | `0.0` | `--max-tokens` was reached mid-run |
+
+**An absent `reward` means the outcome is unknown, not that it was zero.** A
+consumer must skip such a trajectory rather than defaulting it. This is what
+makes the mid-run flushes safe: a still-running session is written unstamped,
+so only concluded runs are ever trained on.
+
 ### Redirect by format
 
 ```bash

@@ -366,14 +366,14 @@ lines = 1331
 path = "crates/tui/src/app/chat_ops.rs"
 lines = 1325
 [[allow.large_file]]
+path = "crates/ci/src/runner/mod.rs"
+lines = 1322
+[[allow.large_file]]
 path = "crates/cloud/tests/e2e_firmware.rs"
 lines = 1312
 [[allow.large_file]]
 path = "crates/session-store/src/trace_session_tests.rs"
 lines = 1287
-[[allow.large_file]]
-path = "crates/ci/src/runner/mod.rs"
-lines = 1257
 [[allow.large_file]]
 path = "crates/workspace/src/skills.rs"
 lines = 1238
@@ -413,6 +413,9 @@ lines = 1058
 [[allow.large_file]]
 path = "crates/config/src/loader.rs"
 lines = 1049
+[[allow.large_file]]
+path = "crates/ci/src/runner/runtime_runner.rs"
+lines = 1043
 [[allow.large_file]]
 path = "crates/cloud-metering/src/metering.rs"
 lines = 1034
@@ -456,14 +459,11 @@ lines = 883
 path = "crates/tui/src/app/term_events.rs"
 lines = 880
 [[allow.large_file]]
-path = "crates/frontend/src/agent.rs"
-lines = 877
-[[allow.large_file]]
 path = "crates/node-p2p/src/handler.rs"
 lines = 871
 [[allow.large_file]]
-path = "crates/ci/src/runner/runtime_runner.rs"
-lines = 856
+path = "crates/frontend/src/agent.rs"
+lines = 858
 [[allow.large_file]]
 path = "crates/companion/src/policy.rs"
 lines = 851
