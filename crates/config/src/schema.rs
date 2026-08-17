@@ -813,10 +813,6 @@ pub struct ToolsConfig {
     pub deny_patterns: Vec<String>,
     /// Timeout in seconds for a single tool call
     pub timeout_secs: u64,
-    /// Use Docker sandbox for shell execution
-    pub use_docker: bool,
-    /// Docker image to use when use_docker is true
-    pub docker_image: Option<String>,
     /// Web fetch and search configuration
     #[serde(default)]
     pub web: WebConfig,
@@ -900,8 +896,6 @@ impl Default for ToolsConfig {
             ],
             deny_patterns: vec!["rm -rf /*".into(), "dd if=*".into()],
             timeout_secs: 30,
-            use_docker: false,
-            docker_image: None,
             web: WebConfig::default(),
             memory: MemoryConfig::default(),
             lints: LintsConfig::default(),
@@ -1348,12 +1342,6 @@ mod tests {
     fn config_default_tools_has_auto_approve_patterns() {
         let c = Config::default();
         assert!(!c.tools.auto_approve_patterns.is_empty());
-    }
-
-    #[test]
-    fn config_default_docker_disabled() {
-        let c = Config::default();
-        assert!(!c.tools.use_docker);
     }
 
     // ── AgentMode ─────────────────────────────────────────────────────────────

@@ -402,8 +402,6 @@ const TOOLS_CONFIG_KEYS: &[&str] = &[
     "auto_approve_patterns",
     "deny_patterns",
     "timeout_secs",
-    "use_docker",
-    "docker_image",
     "web",
     "memory",
     "lints",

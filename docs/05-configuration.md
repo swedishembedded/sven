@@ -227,12 +227,6 @@ tools:
   # Timeout for a single tool call, in seconds.
   timeout_secs: 30
 
-  # Run shell commands inside a Docker container for additional isolation.
-  use_docker: false
-
-  # Docker image to use when use_docker: true.
-  # docker_image: ubuntu:22.04
-
 
 # ── Web tools ──────────────────────────────────────────────────────────────
 
@@ -472,8 +466,6 @@ Controls what the agent is allowed to do and how.
 | `auto_approve_patterns` | `["cat *", "ls *", ...]` | Commands matching these run without confirmation |
 | `deny_patterns` | `["rm -rf /*", ...]` | Commands matching these are always blocked |
 | `timeout_secs` | `30` | Per-tool-call timeout in seconds |
-| `use_docker` | `false` | Sandbox shell execution in Docker |
-| `docker_image` | - | Docker image for sandboxed execution |
 
 **Adding auto-approve patterns:**
 
