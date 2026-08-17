@@ -119,6 +119,9 @@ impl Tool for SearchCodebaseTool {
                 args.push("-g".to_string());
                 args.push(glob.clone());
             }
+            // `--` stops option parsing, so a query or path starting with `-`
+            // is treated as data rather than an rg flag.
+            args.push("--".to_string());
             args.push(query.clone());
             args.push(path.clone());
 
@@ -132,20 +135,8 @@ impl Tool for SearchCodebaseTool {
             // required: install with `winget install BurntSushi.ripgrep`.
             #[cfg(not(windows))]
             {
-                let mut cmd_parts = vec!["grep -rn".to_string()];
-                if !case_sensitive {
-                    cmd_parts.push("-i".to_string());
-                }
-                cmd_parts.push("--exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules --exclude-dir=dist".to_string());
-                if let Some(glob) = &include {
-                    cmd_parts.push(format!("--include={glob}"));
-                }
-                cmd_parts.push(shell_escape(&query));
-                cmd_parts.push(shell_escape(&path));
-
-                tokio::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(cmd_parts.join(" "))
+                tokio::process::Command::new("grep")
+                    .args(grep_args(&query, &path, include.as_deref(), case_sensitive))
                     .stdin(std::process::Stdio::null())
                     .output()
                     .await
@@ -182,8 +173,31 @@ impl Tool for SearchCodebaseTool {
     }
 }
 
-fn shell_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
+/// The argv for the `grep` fallback used when ripgrep is not installed.
+///
+/// Every caller-supplied value is a separate argv element and no shell is
+/// involved, so metacharacters in any of them are inert. This previously built
+/// a single string for `sh -c`; `query` and `path` were quoted but `include`
+/// was interpolated raw, which made an LLM-supplied `include` glob arbitrary
+/// command execution through a tool that is `ApprovalPolicy::Auto` and
+/// therefore never approval-gated.
+fn grep_args(query: &str, path: &str, include: Option<&str>, case_sensitive: bool) -> Vec<String> {
+    let mut args = vec!["-rn".to_string()];
+    if !case_sensitive {
+        args.push("-i".to_string());
+    }
+    for dir in [".git", "target", "node_modules", "dist"] {
+        args.push(format!("--exclude-dir={dir}"));
+    }
+    if let Some(glob) = include {
+        args.push(format!("--include={glob}"));
+    }
+    // `--` stops option parsing, so a query or path starting with `-` is
+    // treated as data rather than a grep flag.
+    args.push("--".to_string());
+    args.push(query.to_string());
+    args.push(path.to_string());
+    args
 }
 
 impl ToolDisplay for SearchCodebaseTool {
@@ -207,6 +221,49 @@ mod tests {
 
     use super::*;
     use sven_tool_api::tool::{Tool, ToolCall};
+
+    /// `search_codebase` is `ApprovalPolicy::Auto` + `ToolCapability::ReadFile`,
+    /// so it is never approval-gated. Its grep fallback must therefore not be
+    /// able to reach a shell: every caller-supplied value has to stay one argv
+    /// element, whatever metacharacters it contains.
+    #[test]
+    fn grep_fallback_keeps_injected_metacharacters_in_one_argv_element() {
+        let args = grep_args(
+            "needle; touch /tmp/pwned",
+            "/repo; touch /tmp/pwned",
+            Some("*.rs; touch /tmp/pwned"),
+            true,
+        );
+
+        assert!(
+            args.contains(&"--include=*.rs; touch /tmp/pwned".to_string()),
+            "the include glob must survive whole, unsplit: {args:?}"
+        );
+        assert!(
+            args.contains(&"needle; touch /tmp/pwned".to_string()),
+            "the query must survive whole: {args:?}"
+        );
+        assert!(
+            args.contains(&"/repo; touch /tmp/pwned".to_string()),
+            "the path must survive whole: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "sh" || a == "-c"),
+            "no shell may appear in the argv: {args:?}"
+        );
+    }
+
+    /// A query or path beginning with `-` is data, not a grep option.
+    #[test]
+    fn grep_fallback_stops_option_parsing_before_user_values() {
+        let args = grep_args("-v", "-r", None, true);
+        let end = args.iter().position(|a| a == "--").expect("`--` present");
+        assert_eq!(
+            &args[end + 1..],
+            &["-v".to_string(), "-r".to_string()],
+            "query and path must both follow `--`"
+        );
+    }
 
     fn call(args: serde_json::Value) -> ToolCall {
         ToolCall {
