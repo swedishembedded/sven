@@ -153,18 +153,14 @@ impl sven_model::ModelProvider for GoogleProvider {
             body["tools"] = tools;
         }
 
-        let url = format!(
-            "{}/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
-            self.base_url.trim_end_matches('/'),
-            self.model,
-            key
-        );
+        let url = stream_url(&self.base_url, &self.model);
 
         debug!(model = %self.model, "sending Google Gemini request");
 
         let resp = self
             .client
             .post(&url)
+            .header("x-goog-api-key", key)
             .json(&body)
             .send()
             .await
@@ -452,10 +448,42 @@ fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     Ok(ResponseEvent::TextDelta(String::new()))
 }
 
+/// The streaming endpoint for `model`.
+///
+/// The API key is deliberately **not** a query parameter. `reqwest::Error`'s
+/// `Display` appends `" for url (...)"`, and `sven-executors`' turn loop
+/// renders a failed request with `format!("{e:#}")` — anyhow's alternate form,
+/// which walks the whole source chain — then emits it as `UiEvent::Error` and
+/// `Event::LlmFailed`. With the key in the URL, any transport error (DNS,
+/// timeout, TLS) wrote it to CI stderr, broadcast it to every node-control
+/// WebSocket client, and pushed it onto the cloud session feed. It travels in
+/// the `x-goog-api-key` header instead, which never appears in an error.
+fn stream_url(base_url: &str, model: &str) -> String {
+    format!(
+        "{}/v1beta/models/{model}:streamGenerateContent?alt=sse",
+        base_url.trim_end_matches('/')
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sven_model::ModelProvider;
+
+    /// The URL is interpolated into `reqwest` transport errors, which this
+    /// workspace renders into user-visible events. It must carry no secret.
+    #[test]
+    fn stream_url_carries_no_credential() {
+        let url = stream_url("https://generativelanguage.googleapis.com/", "gemini-2.0-flash");
+        assert!(
+            url.ends_with("/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse"),
+            "unexpected endpoint: {url}"
+        );
+        assert!(
+            !url.contains("key="),
+            "no api key may appear in the URL: {url}"
+        );
+    }
 
     #[test]
     fn provider_name() {
