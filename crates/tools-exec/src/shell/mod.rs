@@ -4,5 +4,5 @@
 //! Shell execution tool.
 
 mod tool;
-pub(crate) use tool::head_tail_truncate;
+pub(crate) use tool::{head_tail_truncate, MAX_TIMEOUT_SECS};
 pub use tool::ShellTool;

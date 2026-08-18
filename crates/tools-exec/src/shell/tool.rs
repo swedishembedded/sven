@@ -27,6 +27,14 @@ const HEAD_LINES: usize = 100;
 const TAIL_LINES: usize = 100;
 
 /// Built-in tool that runs a shell command.
+/// Ceiling on a model-supplied `timeout_secs`.
+///
+/// The argument comes straight from the model, so without a bound a single
+/// call could pin a task and a shell essentially forever (`timeout_secs:
+/// 4294967295` is ~136 years). One hour is far above any legitimate build or
+/// test run.
+pub(crate) const MAX_TIMEOUT_SECS: u64 = 3600;
+
 pub struct ShellTool {
     pub timeout_secs: u64,
 }
@@ -116,7 +124,8 @@ impl Tool for ShellTool {
             .args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
-            .unwrap_or(self.timeout_secs);
+            .unwrap_or(self.timeout_secs)
+            .min(MAX_TIMEOUT_SECS);
 
         debug!(cmd = %command, "executing shell tool");
 

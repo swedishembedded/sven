@@ -1,6 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
+use crate::shell::MAX_TIMEOUT_SECS;
 use async_trait::async_trait;
 #[cfg(unix)]
 use libc;
@@ -107,7 +108,8 @@ impl Tool for RunTerminalCommandTool {
             .args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
-            .unwrap_or(self.timeout_secs);
+            .unwrap_or(self.timeout_secs)
+            .min(MAX_TIMEOUT_SECS);
 
         debug!(cmd = %command, "run_terminal_command tool");
 
