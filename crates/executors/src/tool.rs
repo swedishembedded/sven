@@ -24,13 +24,17 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use sven_hsm::{Effect, Event, ObservationSink, ToolCallId, ToolCapability, UiEvent};
 use sven_kernel::{EffectExecutor, EventSink};
+
+/// Default for [`ToolExecutor::tool_timeout`].
+const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(600);
 use sven_llm::ThreadStore;
 use sven_model::Message;
-use sven_tools::{ToolCall, ToolRegistry};
+use sven_tools::{ToolCall, ToolOutput, ToolRegistry};
 
 /// Executes [`Effect::CallTool`] using the injected [`ToolRegistry`].
 pub struct ToolExecutor {
@@ -56,6 +60,15 @@ pub struct ToolExecutor {
     /// the model's next turn - `UiEvent::ToolFinished`/`Event::ToolSucceeded`
     /// still carry the full, untruncated output for human/audit visibility.
     tool_result_token_cap: usize,
+    /// Wall-clock backstop for a single tool invocation.
+    ///
+    /// Nothing else bounds one: the machine advances only when the spawned
+    /// task emits `ToolSucceeded`/`ToolFailed`, no machine arms a
+    /// `SetTimeout` for an in-flight call, and `shell`/`run_terminal_command`
+    /// take their own `timeout_secs` from model-supplied arguments with no
+    /// ceiling. This is deliberately far longer than any legitimate tool so it
+    /// only ever catches a hang.
+    tool_timeout: Duration,
 }
 
 impl ToolExecutor {
@@ -71,6 +84,7 @@ impl ToolExecutor {
             store: Arc::new(Mutex::new(ThreadStore::new())),
             no_tools: false,
             tool_result_token_cap: 0,
+            tool_timeout: DEFAULT_TOOL_TIMEOUT,
         }
     }
 
@@ -87,6 +101,14 @@ impl ToolExecutor {
     #[must_use]
     pub fn with_tool_result_token_cap(mut self, cap: usize) -> Self {
         self.tool_result_token_cap = cap;
+        self
+    }
+
+    /// Overrides the per-invocation watchdog. Mainly for tests, which cannot
+    /// wait out the production default.
+    #[must_use]
+    pub fn with_tool_timeout(mut self, timeout: Duration) -> Self {
+        self.tool_timeout = timeout;
         self
     }
 
@@ -112,6 +134,7 @@ impl ToolExecutor {
             store,
             no_tools: false,
             tool_result_token_cap: 0,
+            tool_timeout: DEFAULT_TOOL_TIMEOUT,
         }
     }
 }
@@ -164,6 +187,7 @@ impl EffectExecutor for ToolExecutor {
         let sink = sink.clone();
         let obs = obs.clone();
         let tool_result_token_cap = self.tool_result_token_cap;
+        let tool_timeout = self.tool_timeout;
 
         // Spawn-and-forget: the task runs concurrently with other effects.
         tokio::spawn(async move {
@@ -191,7 +215,49 @@ impl EffectExecutor for ToolExecutor {
             let display_id = tool_call.id.clone();
 
             tracing::debug!(tool = %name, "ToolExecutor: invoking tool (spawned)");
-            let output = registry.execute(&tool_call).await;
+
+            // A tool that panics or never returns must still advance the
+            // machine. This task is spawn-and-forget and its `JoinHandle` is
+            // dropped, so without this the `call_id` stays in `loop_core`'s
+            // pending set forever and the session wedges holding its whole
+            // object graph — with no error surfaced anywhere.
+            let output = {
+                // Shadowed inside this block only; the outer `registry` is
+                // still used below for `output_category`.
+                let registry = Arc::clone(&registry);
+                let call = tool_call.clone();
+                let task = tokio::spawn(async move { registry.execute(&call).await });
+                let abort = task.abort_handle();
+                match tokio::time::timeout(tool_timeout, task).await {
+                    Ok(Ok(output)) => output,
+                    Ok(Err(join_err)) => {
+                        tracing::error!(
+                            tool = %name,
+                            error = %join_err,
+                            "tool task did not return a result"
+                        );
+                        ToolOutput::err(
+                            tool_call.id.clone(),
+                            format!("tool '{name}' failed: {join_err}"),
+                        )
+                    }
+                    Err(_elapsed) => {
+                        abort.abort();
+                        tracing::error!(
+                            tool = %name,
+                            timeout_secs = tool_timeout.as_secs(),
+                            "tool exceeded the executor watchdog; aborted"
+                        );
+                        ToolOutput::err(
+                            tool_call.id.clone(),
+                            format!(
+                                "tool '{name}' did not finish within {}s and was aborted",
+                                tool_timeout.as_secs()
+                            ),
+                        )
+                    }
+                }
+            };
 
             // Emit the outward completion observation so headless / UI observers
             // can render the tool result. This mirrors `UiEvent::ToolStarted`
@@ -319,7 +385,7 @@ mod tests {
         async fn execute(&mut self, _effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {}
     }
 
-    async fn run_tool_effect(exec: &mut ToolExecutor, effect: Effect) -> String {
+    pub(super) async fn run_tool_effect(exec: &mut ToolExecutor, effect: Effect) -> String {
         let rt = Runtime::spawn(
             Hsm::new(OneShotMachine::new()),
             Context::new(),
@@ -662,6 +728,101 @@ mod tests {
         assert!(
             content.contains("omitted"),
             "error output must also be truncated: {content}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use sven_hsm::{Effect, ToolCallId};
+    use sven_tools::{ApprovalPolicy, Tool, ToolRegistry};
+
+    use super::tests::run_tool_effect;
+    use super::ToolExecutor;
+
+    struct HangingTool;
+    #[async_trait::async_trait]
+    impl Tool for HangingTool {
+        fn name(&self) -> &str {
+            "hangs"
+        }
+        fn description(&self) -> &str {
+            "never returns"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        async fn execute(&self, _call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
+            std::future::pending::<()>().await;
+            unreachable!()
+        }
+    }
+
+    struct PanickingTool;
+    #[async_trait::async_trait]
+    impl Tool for PanickingTool {
+        fn name(&self) -> &str {
+            "panics"
+        }
+        fn description(&self) -> &str {
+            "panics"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        async fn execute(&self, _call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
+            panic!("boom");
+        }
+    }
+
+    fn effect(name: &str) -> Effect {
+        Effect::CallTool {
+            call_id: ToolCallId::new(),
+            name: name.into(),
+            capability: sven_hsm::ToolCapability::ReadFile,
+            args: serde_json::json!({}),
+        }
+    }
+
+    /// The machine only advances when the spawned task emits a result, and the
+    /// task's `JoinHandle` is dropped. A tool that never returns therefore used
+    /// to leave the `call_id` pending forever with nothing reported.
+    #[tokio::test]
+    async fn a_hanging_tool_reports_tool_failed() {
+        let mut registry = ToolRegistry::new();
+        registry.register(HangingTool);
+        let mut exec = ToolExecutor::new(Arc::new(registry), HashSet::new())
+            .with_tool_timeout(Duration::from_millis(50));
+
+        assert_eq!(
+            run_tool_effect(&mut exec, effect("hangs")).await,
+            "ToolFailed",
+            "a hung tool must fail the call, not stall the machine"
+        );
+    }
+
+    /// Same for a panic: it happens inside the spawned task, so nothing
+    /// observed it.
+    #[tokio::test]
+    async fn a_panicking_tool_reports_tool_failed() {
+        let mut registry = ToolRegistry::new();
+        registry.register(PanickingTool);
+        let mut exec = ToolExecutor::new(Arc::new(registry), HashSet::new());
+
+        assert_eq!(
+            run_tool_effect(&mut exec, effect("panics")).await,
+            "ToolFailed",
+            "a panicking tool must fail the call, not stall the machine"
         );
     }
 }
