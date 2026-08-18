@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use clap::Parser;
 use cli::{Cli, Commands};
-use sven_config::AgentMode;
 
 use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
@@ -265,24 +264,6 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|| "teammate".to_string());
         return run_as_teammate(agent_name, team_name, role, config).await;
     }
-
-    // ── HSM mode resolution ─────────────────────────────────────────────────
-    // `SVEN_MODE` env (or `--mode` flag mapped into kernel vocabulary) selects
-    // the machine from `sven_machines::ModeRegistry`.  This string is forwarded to
-    // `RuntimeBuilder::new(config, mode)` inside run_tui / run_ci / run_gui as
-    // those functions are migrated to the kernel path.
-    //
-    // Priority: SVEN_MODE env > --mode CLI flag > "chat"
-    let _hsm_mode: String = std::env::var("SVEN_MODE").unwrap_or_else(|_| {
-        match cli.mode {
-            AgentMode::Agent => "chat",
-            AgentMode::Plan => "sdlc",
-            AgentMode::Research => "chat",
-            AgentMode::Chat => "chat",
-            AgentMode::Sdlc => "sdlc",
-        }
-        .to_string()
-    });
 
     if cli.is_headless() {
         run_ci(cli, config).await

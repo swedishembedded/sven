@@ -1,9 +1,9 @@
 # Agent Sven
 
-**A keyboard-driven AI agent for the terminal and desktop.** Built in Rust, sven
-works as an interactive TUI, a Slint desktop GUI (`sven-ui`), a headless CI
-runner, a networked node that teams up with other sven instances, and a
-proactive personal automation platform - two binaries, one agent.
+**A keyboard-driven AI agent for the terminal.** Built in Rust, sven works as
+an interactive TUI, a headless CI runner, a networked node that teams up with
+other sven instances, and a managed-agents cloud platform - one HSM kernel
+behind every surface.
 
 [![CI](https://github.com/swedishembedded/sven/actions/workflows/ci.yml/badge.svg)](https://github.com/swedishembedded/sven/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -21,7 +21,6 @@ Telegram, making voice calls, and running scheduled workflows.
 
 - **HSM-kernel architecture** - Control flow is a formally-specified Hierarchical State Machine; the LLM is a typed reasoning service that proposes actions but never drives execution. Deterministic, auditable, and fully testable without an API key.
 - **Interactive TUI** - Full-screen Ratatui interface with scrollable markdown chat, vim-style navigation, and live-streamed responses. Swap to an embedded Neovim buffer with `--nvim`.
-- **Desktop GUI** - `sven-ui` is a native Slint window with the full agent and tool suite, no terminal required.
 - **Headless / CI** - Reads from stdin or a markdown workflow file, writes clean text to stdout. Pipeable: chain sven instances to build multi-agent pipelines.
 - **Markdown workflow files** - `##`-headed steps, YAML frontmatter, per-step directives, and variable templating make `.md` files first-class agent programs (unique to sven).
 - **Agent networking** - Multiple sven nodes discover each other via mDNS (or a relay), and the LLM gains `list_peers` and `delegate_task` tools to route work across machines.
