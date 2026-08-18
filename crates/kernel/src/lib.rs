@@ -26,6 +26,8 @@
 //! not the execution engine, and moving it too would force a `sven-kernel`
 //! dependency onto every one of `UiEvent`'s many consumers for no benefit.
 
+mod abort_on_drop;
+use abort_on_drop::AbortOnDrop;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -308,46 +310,6 @@ fn note_child_completion(children: &mut ChildRegistry, event: &Event) {
     }
 }
 
-/// A [`JoinHandle`] that aborts its task when dropped.
-///
-/// The kernel consumer loop is handed an owning clone of the event `EventSink`,
-/// so its `rx.recv()` never returns `None` and the loop cannot end on its own
-/// unless the machine reports done — which `ReactiveAgentMachine` never does.
-/// Without this, dropping a `Runtime`/`ErasedRuntime` left a parked task
-/// pinning the whole object graph behind it: the `Context` (both audit
-/// vectors), the boxed machine, the executor's conversation store, the tool
-/// registry including live MCP handles, and the provider's HTTP pool. Every
-/// TUI model switch, session delete, and ACP teardown leaked one.
-///
-/// [`Self::disarm`] hands the handle back for an orderly `join`, so awaiting a
-/// report is unaffected.
-struct AbortOnDrop<T>(Option<JoinHandle<T>>);
-
-impl<T> AbortOnDrop<T> {
-    fn new(handle: JoinHandle<T>) -> Self {
-        Self(Some(handle))
-    }
-
-    fn abort(&self) {
-        if let Some(handle) = &self.0 {
-            handle.abort();
-        }
-    }
-
-    /// Takes the handle, so dropping this wrapper no longer aborts the task.
-    fn disarm(mut self) -> JoinHandle<T> {
-        self.0.take().expect("handle is taken exactly once, by join")
-    }
-}
-
-impl<T> Drop for AbortOnDrop<T> {
-    fn drop(&mut self) {
-        if let Some(handle) = &self.0 {
-            handle.abort();
-        }
-    }
-}
-
 /// A handle to a running kernel. Post events, observe state, and join for the
 /// final report.
 pub struct Runtime<M: Machine> {
@@ -482,6 +444,13 @@ where
     /// Aborts the consumer task without waiting (best-effort shutdown).
     pub fn abort(&self) {
         self.handle.abort();
+    }
+
+    /// Detaches the consumer task so it outlives this handle. See
+    /// [`ErasedRuntime::detach`].
+    pub fn detach(self) {
+        // Dropping a `JoinHandle` detaches its task, which is the point.
+        std::mem::drop(self.handle.disarm());
     }
 
     /// Awaits the consumer task and returns the final machine + context. The
@@ -914,6 +883,21 @@ impl ErasedRuntime {
     /// Aborts the consumer task (best-effort shutdown, no drain).
     pub fn abort(&self) {
         self.handle.abort();
+    }
+
+    /// Detaches the consumer task: it keeps running after this handle is
+    /// dropped.
+    ///
+    /// Sessions are normally owned — dropping the handle aborts the task and
+    /// releases the machine, context, executor and conversation store with it.
+    /// Some callers instead hand a cheap [`RuntimeHandle`] to a long-lived
+    /// service (`ControlService`, the headless CI runner) and let the owning
+    /// handle go out of scope, expecting the kernel to keep serving. Those
+    /// callers must say so, because the two cases are indistinguishable at the
+    /// drop site and the difference is a live session versus a dead one.
+    pub fn detach(self) {
+        // Dropping a `JoinHandle` detaches its task, which is the point.
+        std::mem::drop(self.handle.disarm());
     }
 
     /// Awaits the consumer task and returns the final context.

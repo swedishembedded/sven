@@ -196,7 +196,7 @@ impl KernelAgent {
 
         // Keep the runtime alive until the turn is fully drained so the audit
         // log flushes; dropping it shuts the session down.
-        drop(bundle.runtime);
+        bundle.runtime.detach();
         Ok(())
     }
 }

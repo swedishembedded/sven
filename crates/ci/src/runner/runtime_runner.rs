@@ -299,7 +299,7 @@ impl RuntimeRunner {
         write_trajectory(state, result, &self.config, &opts.mode);
 
         // Keep the runtime alive until here so the audit log flushes.
-        drop(bundle.runtime);
+        bundle.runtime.detach();
         Ok(result)
     }
 }
