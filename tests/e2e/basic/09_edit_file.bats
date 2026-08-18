@@ -941,8 +941,3 @@ EOF
 
 # ── Cargo unit test gate ──────────────────────────────────────────────────────
 
-@test "09.39 all edit_file Rust unit tests pass" {
-    run bash -c 'cd "${_REPO_ROOT}" && CARGO_HOME=/tmp/cargo_home cargo test -p sven-tools edit_file 2>&1 | tail -8'
-    [ "${status}" -eq 0 ]
-    assert_output_contains "ok"
-}

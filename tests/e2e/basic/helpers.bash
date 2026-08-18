@@ -40,15 +40,6 @@ export MOCK_RESPONSES="${FIXTURES}/mock_responses.yaml"
 
 # ── Cargo environment ─────────────────────────────────────────────────────────
 
-# On the local dev box the system CARGO_HOME (/opt/rust) is read-only, so any
-# `cargo` invocation inside a bats test (e.g. the `cargo test -p sven-tools`
-# unit-test runners in 05_new_tools.bats) needs the writable copy.  Only apply
-# that machine-local override where it exists — on CI runners the default
-# CARGO_HOME is correct and /data does not exist.
-if [[ -d /data/.cargo-home ]]; then
-    export CARGO_HOME=/data/.cargo-home
-fi
-
 # ── Environment for mock model ────────────────────────────────────────────────
 
 # Export so every sven invocation picks up the mock responses file.

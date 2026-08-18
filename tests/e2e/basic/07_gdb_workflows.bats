@@ -22,15 +22,6 @@ load helpers
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-# Cargo wrapper that works around registry permission issues in dev containers.
-run_cargo_test() {
-    local test_name="$1"
-    shift
-    CARGO_HOME=/tmp/cargo_home cargo test -p sven-tools \
-        "${test_name}" \
-        --no-fail-fast -- --nocapture "$@" 2>&1
-}
-
 # Skip if J-Link testing is not enabled.
 require_jlink() {
     if [[ "${SVEN_TEST_JLINK:-0}" != "1" ]]; then
@@ -82,11 +73,6 @@ setup() {
     [ "${status}" -eq 0 ]
 
     rm -rf "${tmp_dir}"
-}
-
-@test "07.04 find_file double-star glob resolves nested paths" {
-    run run_cargo_test "finds_with_double_star_pattern"
-    [ "${status}" -eq 0 ]
 }
 
 @test "07.05 gdb_stop mock returns success when no session active" {
@@ -156,77 +142,7 @@ setup() {
 
 # ── Tier 1: Discovery from fixture project structures ─────────────────────────
 
-@test "07.13 discovery finds device from debugging/launch.json fixture" {
-    run run_cargo_test "discovery_reads_debugging_launch_json"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.14 discovery finds device from Makefile fixture" {
-    run run_cargo_test "discovery_reads_makefile_device"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.15 elf discovery finds sysbuild zephyr.elf" {
-    run run_cargo_test "elf_discovery_finds_sysbuild_elf"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.16 elf discovery skips mcuboot prefers app elf" {
-    run run_cargo_test "elf_discovery_skips_mcuboot_prefers_app"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.17 glob matching handles double-star segment" {
-    run run_cargo_test "glob_matches_double_star"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.18 connect gives helpful error when elf not found" {
-    run run_cargo_test "connect_fails_when_elf_not_found"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.19 connect gives helpful error when nothing listening" {
-    run run_cargo_test "connect_fails_gracefully_when_nothing_listening"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.20 launch.json dash-prefixed device name is handled" {
-    run run_cargo_test "launch_json_servertype_jlink_device_with_dash_prefix"
-    [ "${status}" -eq 0 ]
-}
-
 # ── Tier 1: Regression tests for known bugs ───────────────────────────────────
-
-@test "07.21 gdb_connect MI output decoding strips tilde prefix" {
-    run run_cargo_test "decode_mi_output_strips_tilde_prefix"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.22 gdb_connect probe fails when nothing listening" {
-    run run_cargo_test "probe_fails_when_nothing_listening"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.23 discovery reads vscode launch.json path" {
-    run run_cargo_test "discovery_reads_vscode_launch_json"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.24 discovery detects device from Makefile JLink line" {
-    run run_cargo_test "makefile_detects_at32f435"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.25 find_file resolves paths in nested subdirectories" {
-    run run_cargo_test "finds_in_nested_subdirectory"
-    [ "${status}" -eq 0 ]
-}
-
-@test "07.26 find_firmware_elf discovers PlatformIO structure" {
-    run run_cargo_test "find_firmware_elf_platformio_structure"
-    [ "${status}" -eq 0 ]
-}
 
 # ── Tier 2: Real hardware (requires SVEN_TEST_JLINK=1) ───────────────────────
 
@@ -261,10 +177,12 @@ setup() {
 
 @test "07.30 hardware: full gdb session lifecycle via cargo test" {
     require_jlink
-    run cargo test -p sven-tools \
+    run cargo test -p sven-tools-gdb \
         hardware_jlink_at32_full_lifecycle \
         --no-fail-fast -- --ignored --nocapture 2>&1
     [ "${status}" -eq 0 ]
+    # `cargo test` exits 0 when a filter matches nothing, so assert a test ran.
+    assert_output_contains "1 passed"
 }
 
 # ── Tier 3: Device-specific tests ─────────────────────────────────────────────
