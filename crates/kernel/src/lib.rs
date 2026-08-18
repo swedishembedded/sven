@@ -308,6 +308,46 @@ fn note_child_completion(children: &mut ChildRegistry, event: &Event) {
     }
 }
 
+/// A [`JoinHandle`] that aborts its task when dropped.
+///
+/// The kernel consumer loop is handed an owning clone of the event `EventSink`,
+/// so its `rx.recv()` never returns `None` and the loop cannot end on its own
+/// unless the machine reports done — which `ReactiveAgentMachine` never does.
+/// Without this, dropping a `Runtime`/`ErasedRuntime` left a parked task
+/// pinning the whole object graph behind it: the `Context` (both audit
+/// vectors), the boxed machine, the executor's conversation store, the tool
+/// registry including live MCP handles, and the provider's HTTP pool. Every
+/// TUI model switch, session delete, and ACP teardown leaked one.
+///
+/// [`Self::disarm`] hands the handle back for an orderly `join`, so awaiting a
+/// report is unaffected.
+struct AbortOnDrop<T>(Option<JoinHandle<T>>);
+
+impl<T> AbortOnDrop<T> {
+    fn new(handle: JoinHandle<T>) -> Self {
+        Self(Some(handle))
+    }
+
+    fn abort(&self) {
+        if let Some(handle) = &self.0 {
+            handle.abort();
+        }
+    }
+
+    /// Takes the handle, so dropping this wrapper no longer aborts the task.
+    fn disarm(mut self) -> JoinHandle<T> {
+        self.0.take().expect("handle is taken exactly once, by join")
+    }
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.0 {
+            handle.abort();
+        }
+    }
+}
+
 /// A handle to a running kernel. Post events, observe state, and join for the
 /// final report.
 pub struct Runtime<M: Machine> {
@@ -315,7 +355,7 @@ pub struct Runtime<M: Machine> {
     obs: ObservationSink,
     status_rx: watch::Receiver<RuntimeStatus>,
     audit: Arc<Mutex<Vec<AuditRecord>>>,
-    handle: JoinHandle<RuntimeReport<M>>,
+    handle: AbortOnDrop<RuntimeReport<M>>,
 }
 
 impl<M> Runtime<M>
@@ -379,7 +419,7 @@ where
             obs,
             status_rx,
             audit,
-            handle,
+            handle: AbortOnDrop::new(handle),
         }
     }
 
@@ -451,7 +491,7 @@ where
     ///
     /// Returns the join error if the task panicked or was aborted.
     pub async fn join(self) -> std::result::Result<RuntimeReport<M>, tokio::task::JoinError> {
-        self.handle.await
+        self.handle.disarm().await
     }
 }
 
@@ -713,7 +753,7 @@ pub struct ErasedRuntime {
     obs: ObservationSink,
     status_rx: watch::Receiver<RuntimeStatus>,
     trail: AuditTrailHandle,
-    handle: JoinHandle<ErasedReport>,
+    handle: AbortOnDrop<ErasedReport>,
 }
 
 impl ErasedRuntime {
@@ -805,7 +845,7 @@ impl ErasedRuntime {
             obs,
             status_rx,
             trail,
-            handle,
+            handle: AbortOnDrop::new(handle),
         }
     }
 
@@ -882,7 +922,7 @@ impl ErasedRuntime {
     ///
     /// Returns the join error if the task panicked or was aborted.
     pub async fn join(self) -> std::result::Result<ErasedReport, tokio::task::JoinError> {
-        self.handle.await
+        self.handle.disarm().await
     }
 }
 

@@ -164,3 +164,83 @@ async fn executor_results_re_enter_the_queue_as_events() {
 
     rt.abort();
 }
+
+/// Executor holding a sentinel whose `Drop` records that the consumer task's
+/// stack was actually torn down.
+struct SentinelExec {
+    _sentinel: DropSentinel,
+}
+
+struct DropSentinel(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for DropSentinel {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl EffectExecutor for SentinelExec {
+    async fn execute(&mut self, _effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {}
+}
+
+/// Dropping a `Runtime` must tear down its consumer task.
+///
+/// The loop is handed an owning clone of the event sink, so `rx.recv()` never
+/// returns `None`; for a machine that never reports done, nothing ends the task
+/// on its own. Before `AbortOnDrop`, dropping the handle left it parked forever
+/// holding the context, the machine, the executor and everything the executor
+/// owns — leaked on every TUI model switch, session delete and ACP teardown.
+#[tokio::test]
+async fn dropping_a_runtime_aborts_its_consumer_task() {
+    let torn_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let rt = Runtime::spawn(
+        Hsm::new(AgentMachine::default()),
+        Context::new(),
+        PermissionPolicy::builder().build(),
+        SentinelExec {
+            _sentinel: DropSentinel(Arc::clone(&torn_down)),
+        },
+        16,
+    );
+
+    // Drive one dispatch so the task is definitely running and parked on recv.
+    assert!(rt.post(Event::user_message("hello")).await);
+    tokio::task::yield_now().await;
+    assert!(
+        !torn_down.load(std::sync::atomic::Ordering::SeqCst),
+        "executor must still be alive while the runtime handle is held"
+    );
+
+    drop(rt);
+
+    // An abort is observed at the next scheduler pass.
+    for _ in 0..100 {
+        if torn_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("consumer task still alive after the runtime was dropped");
+}
+
+/// `join` must still get an orderly report — the abort-on-drop is disarmed.
+#[tokio::test]
+async fn joining_a_runtime_still_returns_its_report() {
+    let torn_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let rt = Runtime::spawn(
+        Hsm::new(AgentMachine::default()),
+        Context::new(),
+        PermissionPolicy::builder().build(),
+        SentinelExec {
+            _sentinel: DropSentinel(torn_down),
+        },
+        16,
+    );
+    assert!(rt.post(Event::user_message("done")).await);
+    rt.abort();
+    assert!(
+        rt.join().await.is_err(),
+        "an aborted task reports a join error rather than hanging"
+    );
+}

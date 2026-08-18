@@ -292,8 +292,9 @@ impl KernelAgentSession {
 
 impl Drop for KernelAgentSession {
     fn drop(&mut self) {
-        // Dropping `_runtime` already aborts the kernel consumer; abort the
-        // bridge tasks so they don't linger on a closed observation channel.
+        // Dropping `_runtime` aborts the kernel consumer (sven-kernel's
+        // `AbortOnDrop`); abort the bridge tasks so they don't linger on a
+        // closed observation channel.
         self.obs_task.abort();
         self.question_task.abort();
     }
