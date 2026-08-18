@@ -233,7 +233,7 @@ impl VectorStore for SqliteMemoryStore {
             rows.into_iter()
                 .map(|(id, content, meta_json)| {
                     let snippet = if content.len() > 120 {
-                        format!("{}...", &content[..120])
+                        format!("{}...", &content[..content.floor_char_boundary(120)])
                     } else {
                         content
                     };
@@ -259,7 +259,7 @@ impl VectorStore for SqliteMemoryStore {
             rows.into_iter()
                 .map(|(id, content, meta_json)| {
                     let snippet = if content.len() > 120 {
-                        format!("{}...", &content[..120])
+                        format!("{}...", &content[..content.floor_char_boundary(120)])
                     } else {
                         content
                     };

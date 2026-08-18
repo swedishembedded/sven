@@ -286,6 +286,11 @@ pub fn smart_truncate(content: &str, category: OutputCategory, cap_tokens: usize
             ),
         ),
         OutputCategory::Generic => {
+            // `cap_chars` is a byte budget derived from a token estimate, so it
+            // lands wherever it lands; slicing there splits a multi-byte
+            // character and panics. This runs on *every* tool result, so any
+            // non-ASCII output over the budget took the session down.
+            let cap_chars = content.floor_char_boundary(cap_chars);
             let cut = content[..cap_chars]
                 .rfind('\n')
                 .map(|p| p + 1)
@@ -359,7 +364,10 @@ fn head_lines(content: &str, cap_chars: usize, notice_template: &str) -> String 
     }
     let omitted = lines.len().saturating_sub(kept_count);
     if omitted == 0 {
-        return content[..cap_chars.min(content.len())].to_string();
+        // `str::lines()` strips `\r`, so for CRLF input `kept` is shorter than
+        // `content` and this cut lands at an arbitrary byte rather than the
+        // line boundary it looks like it lands on.
+        return content[..content.floor_char_boundary(cap_chars)].to_string();
     }
     let notice = notice_template.replace("{lines}", &omitted.to_string());
     format!("{kept}\n{notice}")
@@ -417,13 +425,54 @@ fn head_tail_lines(
 
     let omitted = lines.len().saturating_sub(head_count + tail_count);
     if omitted == 0 {
-        return content[..cap_chars.min(content.len())].to_string();
+        // Same hazard as the line-oriented path: the head/tail accounting is
+        // in bytes and `lines()` drops `\r`, so this offset need not sit on a
+        // character boundary.
+        return content[..content.floor_char_boundary(cap_chars)].to_string();
     }
     let notice = notice_template.replace("{lines}", &omitted.to_string());
     format!("{head}\n{notice}\n{tail}")
 }
 
 // ─── Unit tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod truncation_boundary_tests {
+    use super::*;
+
+    /// `smart_truncate` runs on every tool result, and its byte budget is
+    /// derived from a token estimate, so the cut lands wherever it lands.
+    /// Slicing a `&str` there splits a multi-byte character and panics —
+    /// killing the session on any non-ASCII tool output over budget.
+    ///
+    /// Sweeps every budget across content built from 1-, 2-, 3- and 4-byte
+    /// characters, in every output category, including CRLF (which `lines()`
+    /// strips, so `kept` and `content` disagree on length).
+    #[test]
+    fn smart_truncate_never_splits_a_character() {
+        let corpora = [
+            "aé€😀\n".repeat(40),
+            "AB\r\nCé\r\n".repeat(40),
+            "😀".repeat(80),
+            "line one\nline two é\nline three 😀\n".repeat(20),
+        ];
+        let categories = [
+            OutputCategory::Generic,
+            OutputCategory::HeadTail,
+            OutputCategory::MatchList,
+            OutputCategory::FileContent,
+        ];
+        for content in &corpora {
+            for category in categories {
+                for cap_tokens in 0..80 {
+                    // Must not panic, and must stay valid UTF-8 by construction.
+                    let out = smart_truncate(content, category, cap_tokens);
+                    assert!(out.is_char_boundary(0));
+                }
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

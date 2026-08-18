@@ -102,9 +102,13 @@ async fn fetch_url(url: &str, max_chars: usize) -> anyhow::Result<String> {
     };
 
     if content.len() > max_chars {
+        // The model picks both the URL and `max_chars`, so this offset is
+        // attacker- and model-influenced and lands mid-character on any
+        // non-ASCII page. Round down to the nearest boundary.
+        let cut = content.floor_char_boundary(max_chars);
         Ok(format!(
             "{}...[truncated at {max_chars} chars; total {} chars]",
-            &content[..max_chars],
+            &content[..cut],
             content.len()
         ))
     } else {

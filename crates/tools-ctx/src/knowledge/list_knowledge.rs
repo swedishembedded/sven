@@ -89,7 +89,7 @@ impl Tool for ListKnowledgeTool {
                 doc.files.join(", ")
             };
             let covers_display = if covers.len() > 38 {
-                format!("{}...", &covers[..37])
+                format!("{}...", &covers[..covers.floor_char_boundary(37)])
             } else {
                 covers
             };
@@ -99,7 +99,7 @@ impl Tool for ListKnowledgeTool {
 
             lines.push(format!(
                 "{:<30} {:<40} {:<12} {}",
-                &doc.subsystem[..doc.subsystem.len().min(29)],
+                &doc.subsystem[..doc.subsystem.floor_char_boundary(29)],
                 covers_display,
                 updated,
                 filename
@@ -119,8 +119,8 @@ impl Tool for ListKnowledgeTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sven_tool_api::tool::{Tool, ToolCall};
     use serde_json::json;
+    use sven_tool_api::tool::{Tool, ToolCall};
     use sven_workspace::KnowledgeInfo;
 
     fn call() -> ToolCall {

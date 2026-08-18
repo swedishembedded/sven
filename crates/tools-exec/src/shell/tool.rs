@@ -234,11 +234,15 @@ pub(crate) fn head_tail_truncate(s: &str) -> String {
     if total <= HEAD_LINES + TAIL_LINES {
         // Enough lines to show everything but byte budget exceeded (very long lines).
         // Fall back to a simple byte-level truncation with a tail window.
-        let tail_start = s.len().saturating_sub(OUTPUT_LIMIT_BYTES / 2);
-        // Align to a line boundary
+        // Both offsets are raw byte budgets, so they split multi-byte
+        // characters on any non-ASCII output — reached whenever a command
+        // emits >20 KB in few lines (minified JS, one-line JSON from curl,
+        // `cargo --message-format=json`). `ceil`/`floor` keep the two windows
+        // from overlapping.
+        let tail_start = s.ceil_char_boundary(s.len().saturating_sub(OUTPUT_LIMIT_BYTES / 2));
         let tail_str = &s[tail_start..];
-        let head_end = OUTPUT_LIMIT_BYTES / 2;
-        let head_str = &s[..head_end.min(s.len())];
+        let head_end = s.floor_char_boundary((OUTPUT_LIMIT_BYTES / 2).min(s.len()));
+        let head_str = &s[..head_end];
         let omitted_bytes = s.len() - head_str.len() - tail_str.len();
         return format!(
             "{}\n...[{} bytes omitted]...\n{}",
@@ -276,6 +280,30 @@ impl ToolDisplay for ShellTool {
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────
+
+/// `head_tail_truncate` cuts command output at raw byte budgets. Any command
+/// emitting >20 KB in few lines takes that path — minified JS, one-line JSON
+/// from `curl`, `cargo --message-format=json` — and a multi-byte character
+/// straddling either offset panicked the tool task.
+#[cfg(test)]
+mod truncation_boundary_tests {
+    use super::head_tail_truncate;
+
+    #[test]
+    fn head_tail_truncate_never_splits_a_character() {
+        for unit in ["é", "€", "😀", "a"] {
+            // Sweep lengths around the byte budget so both the head cut and the
+            // tail cut land inside a character for some input.
+            for extra in 0..64 {
+                let long_line = unit.repeat(20_000 + extra);
+                let _ = head_tail_truncate(&long_line);
+
+                let many_lines = format!("{}\n", unit.repeat(200 + extra)).repeat(300);
+                let _ = head_tail_truncate(&many_lines);
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -620,7 +620,7 @@ async fn tree_reduce_inner(
         let truncated = if content.len() > max_chars {
             format!(
                 "{}\n[... {} bytes omitted - tree reduction depth limit reached ...]",
-                &content[..max_chars],
+                &content[..content.floor_char_boundary(max_chars)],
                 content.len() - max_chars
             )
         } else {

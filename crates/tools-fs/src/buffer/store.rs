@@ -115,7 +115,8 @@ impl OutputBuffer {
         match &self.source {
             BufferSource::Subagent { description, .. } => description.clone(),
             BufferSource::Shell { command, .. } => {
-                format!("shell: {}", &command[..command.len().min(60)])
+                // The command text comes from the model and is arbitrary UTF-8.
+                format!("shell: {}", &command[..command.floor_char_boundary(60)])
             }
         }
     }
