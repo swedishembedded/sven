@@ -483,5 +483,10 @@ lines = 814
 path = "crates/executors/src/turn.rs"
 lines = 809
 [[allow.large_file]]
+# Raised from 806: the Gemini key moved out of the request URL into the
+# x-goog-api-key header (it was leaking into user-visible error events via
+# reqwest's Display), which added `stream_url` and its regression test. The
+# SSE byte-framing loop in this file is a near-verbatim copy of
+# openai_compat::stream's; deduplicating it would take this back under 806.
 path = "crates/model-drivers/src/google.rs"
-lines = 806
+lines = 834
