@@ -682,6 +682,12 @@ mod stream_chunk_timeout_tests {
 }
 
 #[cfg(test)]
+// `OVERRIDE_TEST_LOCK` (below) is deliberately held across the `.await` of
+// `stream_turn`: the process-wide thinking-budget override must stay pinned
+// for the whole test body, which is exactly what the lint warns about and
+// exactly what serialising these tests requires. Scoped to this test module,
+// so the lint still applies to production code.
+#[allow(clippy::await_holding_lock)]
 mod thinking_watchdog_tests {
     use super::*;
     use async_trait::async_trait;

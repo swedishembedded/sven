@@ -224,7 +224,7 @@ fmt:
 
 ## check     - architecture ratchet, then lint without building
 check: check/arch
-	$(CARGO) clippy --all-targets $(CARGO_FLAGS) -- -D warnings
+	$(CARGO) clippy --workspace --all-targets $(CARGO_FLAGS) -- -D warnings
 
 ## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
 ##              and the `minimal` cargo feature profile's forbidden-crate list)
