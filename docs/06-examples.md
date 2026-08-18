@@ -226,18 +226,18 @@ Analyse the existing product and user modules to understand what data is availab
 EOF
 
 # First pass - sven reads, analyses, and appends its response
-sven --file feature.md --conversation
+sven --file feature.md
 
 # Review the response in your editor, then add the next step
 printf '\n## User\nBased on what you found, implement a basic shopping cart model in src/models/cart.ts.\n' \
   >> feature.md
 
 # Second pass - sven sees the full history and implements
-sven --file feature.md --conversation
+sven --file feature.md
 
 # Continue iterating...
 printf '\n## User\nWrite tests for the cart model.\n' >> feature.md
-sven --file feature.md --conversation
+sven --file feature.md
 ```
 
 The file accumulates a complete, readable history of the work.

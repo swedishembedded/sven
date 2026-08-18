@@ -8,6 +8,22 @@
 
 ---
 
+## Option 0 - Install script (quickest)
+
+Downloads the latest release binary for your platform and installs it:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://agentsven.com/install | sh
+```
+
+Environment variables:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `SVEN_VERSION` | latest | Install a specific version, e.g. `0.2.1` |
+| `SVEN_INSTALL_DIR` | `/usr/local/bin` | Where to put the binary |
+| `SVEN_NO_SUDO` | unset | Set to `1` to never use sudo (fails if the directory is not writable) |
+
 ## Option 1 - Debian/Ubuntu package
 
 If a `.deb` package is available for your version, this is the simplest route.
@@ -113,8 +129,15 @@ sven needs an API key to talk to a language model. The simplest way is to set
 an environment variable. Add one of these lines to your shell profile
 (`~/.bashrc`, `~/.zshrc`, or similar):
 
+Sven defaults to OpenRouter (`openrouter/auto`), and auto-detects in the
+order brain → OpenRouter → Anthropic → OpenAI when a key is present.
+See [providers.md](providers.md#default-provider-auto-detection).
+
 ```sh
-# OpenAI (default provider)
+# OpenRouter (the default)
+export OPENROUTER_API_KEY="sk-or-..."
+
+# OpenAI
 export OPENAI_API_KEY="sk-..."
 
 # Anthropic
@@ -131,9 +154,16 @@ You can also put the key in the sven config file - see
 With your API key set, run:
 
 ```sh
-echo "Say hello in one sentence." | sven --headless --model mock
+echo "Say hello in one sentence." | sven --headless
 ```
 
-If you do not have an API key yet, the `mock` model can be used for testing
-without making any network calls. You should see a response printed to standard
-output and the process should exit cleanly.
+You should see a response printed to standard output and the process should
+exit cleanly. This actually calls the provider, so it is what tells you the key
+works.
+
+To check the binary itself without a key — and without any network call — use
+the mock model:
+
+```sh
+echo "Say hello in one sentence." | sven --headless --model mock
+```

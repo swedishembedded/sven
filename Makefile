@@ -210,6 +210,7 @@ docs-pdf: docs
 	}
 	pandoc target/docs/sven-user-guide.md \
 		--metadata-file=docs/metadata.yaml \
+		--resource-path=docs \
 		--pdf-engine=xelatex \
 		--toc \
 		--toc-depth=2 \
