@@ -137,9 +137,22 @@ mod tests {
     use super::*;
     use crate::job::{Job, Schedule};
 
+    /// A store backed by a fresh temp file.
+    ///
+    /// `load_or_default(None)` resolves to `~/.config/sven/scheduler/jobs.yaml`
+    /// — the developer's real config. Tests using it wrote fixture jobs into
+    /// that file, then read each other's (and previous runs') writes back,
+    /// which made them order-dependent and cumulatively flaky.
+    fn temp_store() -> (tempfile::TempDir, JobStore) {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("jobs.yaml");
+        let store = JobStore::load_or_default(Some(&path)).unwrap();
+        (dir, store)
+    }
+
     #[tokio::test]
     async fn add_and_list() {
-        let store = JobStore::load_or_default(None).unwrap();
+        let (_dir, store) = temp_store();
         let job = Job::new(
             "test-job",
             Schedule::Interval {
@@ -155,7 +168,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_existing() {
-        let store = JobStore::load_or_default(None).unwrap();
+        let (_dir, store) = temp_store();
         let job = Job::new(
             "to-remove",
             Schedule::Interval {
@@ -170,7 +183,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_nonexistent() {
-        let store = JobStore::load_or_default(None).unwrap();
+        let (_dir, store) = temp_store();
         let id = uuid::Uuid::new_v4();
         assert!(!store.remove(id).await.unwrap());
     }
