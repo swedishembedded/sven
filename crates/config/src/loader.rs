@@ -407,6 +407,9 @@ const TOOLS_CONFIG_KEYS: &[&str] = &[
     "lints",
     "gdb",
     "asr",
+    // Consumed by `sven_bootstrap::context_query`; omitting it warned users
+    // about a key that works.
+    "context",
 ];
 
 /// Known keys in [`crate::AsrConfig`].

@@ -121,7 +121,11 @@ pub struct Cli {
     pub config: Option<PathBuf>,
 
     /// Enable embedded Neovim chat view (default: plain ratatui).
-    #[arg(long, alias = "no-nvim")]
+    //
+    // No `no-nvim` alias: clap maps an alias onto the *same* bool, so
+    // `--no-nvim` switched Neovim on. It appeared in `sven completions`, so
+    // users found and used it.
+    #[arg(long)]
     pub nvim: bool,
 
     /// Output format for headless runs (conversation | json | compact)

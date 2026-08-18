@@ -183,7 +183,7 @@ impl Tool for FindFileTool {
            '**/sven-team/**/*.rs' - .rs files inside any 'sven-team' directory\n\
            'Cargo.toml'         - exact filename anywhere under root\n\
            '*lint*'             - filenames containing 'lint'\n\
-         For content search use grep or search_codebase instead."
+         For content search use grep instead."
     }
 
     fn parameters_schema(&self) -> Value {

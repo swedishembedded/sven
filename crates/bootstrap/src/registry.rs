@@ -308,7 +308,7 @@ fn build_profile_research(
     reg.register(ReadFileTool);
     reg.register(FindFileTool);
     reg.register(GrepTool);
-    reg.register(WebFetchTool);
+    reg.register(WebFetchTool::new(cfg.tools.web.fetch_max_chars));
     reg.register(WebSearchTool {
         api_key: cfg.tools.web.search.api_key.clone(),
     });
@@ -412,7 +412,7 @@ fn register_base_tools(
     });
 
     // ── Web ───────────────────────────────────────────────────────────────────
-    reg.register(WebFetchTool);
+    reg.register(WebFetchTool::new(cfg.tools.web.fetch_max_chars));
     reg.register(WebSearchTool {
         api_key: cfg.tools.web.search.api_key.clone(),
     });
@@ -482,7 +482,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     reg.register(GrepTool);
 
     // ── Web ───────────────────────────────────────────────────────────────────
-    reg.register(WebFetchTool);
+    reg.register(WebFetchTool::new(cfg.tools.web.fetch_max_chars));
     reg.register(WebSearchTool {
         api_key: cfg.tools.web.search.api_key.clone(),
     });

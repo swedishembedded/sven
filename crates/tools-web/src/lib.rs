@@ -61,7 +61,7 @@ mod output_category_tests {
 
     #[test]
     fn web_fetch_is_generic() {
-        let t = super::WebFetchTool;
+        let t = super::WebFetchTool::default();
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 

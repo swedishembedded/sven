@@ -99,7 +99,7 @@ pub fn build_mcp_registry(
         reg.register(ShellTool::default());
     }
     if allow("web_fetch") {
-        reg.register(WebFetchTool);
+        reg.register(WebFetchTool::default());
     }
     if allow("web_search") {
         reg.register(WebSearchTool {

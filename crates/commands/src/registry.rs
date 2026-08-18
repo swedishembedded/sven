@@ -100,17 +100,6 @@ impl CommandRegistry {
             self.register(Arc::new(cmd));
         }
     }
-
-    /// Query the `McpManager` for available prompts and register each as a slash command.
-    pub async fn register_mcp_prompts(
-        &mut self,
-        manager: &std::sync::Arc<sven_mcp_client::McpManager>,
-    ) {
-        let commands = super::mcp::discover_mcp_prompts(manager).await;
-        for cmd in commands {
-            self.register(Arc::new(cmd));
-        }
-    }
 }
 
 #[cfg(test)]

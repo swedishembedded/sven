@@ -14,7 +14,25 @@ use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 /// 20 K chars ≈ 5,000 tokens - fits comfortably within a 40 K-token context window.
 const DEFAULT_MAX_CHARS: usize = 20_000;
 
-pub struct WebFetchTool;
+pub struct WebFetchTool {
+    /// Cap applied when the caller does not pass `max_chars`, from
+    /// `tools.web.fetch_max_chars`.
+    default_max_chars: usize,
+}
+
+impl WebFetchTool {
+    /// A tool whose default cap comes from config.
+    #[must_use]
+    pub fn new(default_max_chars: usize) -> Self {
+        Self { default_max_chars }
+    }
+}
+
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_CHARS)
+    }
+}
 
 #[async_trait]
 impl Tool for WebFetchTool {
@@ -25,7 +43,8 @@ impl Tool for WebFetchTool {
     fn description(&self) -> &str {
         "Fetch a URL and return content as readable text (HTML → markdown). Read-only.\n\
          Valid http/https only. No auth, no binary, no localhost/private IPs.\n\
-         max_chars: 50,000 by default. For non-webpage URLs use run_terminal_command."
+         max_chars: defaults to the configured tools.web.fetch_max_chars.\n\
+         For non-webpage URLs use shell."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -62,7 +81,7 @@ impl Tool for WebFetchTool {
             .args
             .get("max_chars")
             .and_then(|v| v.as_u64())
-            .unwrap_or(DEFAULT_MAX_CHARS as u64) as usize;
+            .unwrap_or(self.default_max_chars as u64) as usize;
 
         debug!(url = %url, "web_fetch tool");
 
@@ -152,7 +171,7 @@ mod tests {
     #[test]
     fn schema_requires_url() {
         use sven_tool_api::tool::Tool;
-        let t = WebFetchTool;
+        let t = WebFetchTool::default();
         let schema = t.parameters_schema();
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v.as_str() == Some("url")));

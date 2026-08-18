@@ -952,7 +952,7 @@ pub struct WebConfig {
     /// Search backend configuration
     #[serde(default)]
     pub search: WebSearchConfig,
-    /// Default maximum characters for web_fetch (default 50000)
+    /// Default maximum characters for web_fetch (default 20000)
     pub fetch_max_chars: usize,
 }
 
@@ -960,7 +960,7 @@ impl Default for WebConfig {
     fn default() -> Self {
         Self {
             search: WebSearchConfig::default(),
-            fetch_max_chars: 50_000,
+            fetch_max_chars: 20_000,
         }
     }
 }
