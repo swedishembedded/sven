@@ -344,7 +344,13 @@ pub fn handle_tool_event<S>(
             let mut ls = LoopState::load(ctx);
             // Remove from pending — it won't produce a ToolSucceeded.
             ls.pending.remove(call_id);
-            let approval_id = ApprovalId::new();
+            // Derived from the call it gates, never minted fresh: transitions
+            // must be pure for event-sourced replay to reproduce state. A
+            // random id makes the recorded `HumanApproved { approval_id }`
+            // fail the guard below on replay, after which the event falls
+            // through to the SDLC phase transition and the replayed machine
+            // advances a phase the original never did.
+            let approval_id = ApprovalId::from_uuid(call_id.as_uuid());
             ls.awaiting_tool_approval = Some(approval_id);
             ctx.set_pending_approval(PendingApproval {
                 approval_id,
@@ -562,6 +568,66 @@ mod tests {
         assert!(reaction.is_some());
         let ls2 = LoopState::load(&ctx);
         assert!(ls2.awaiting_tool_approval.is_none());
+    }
+
+    /// Replaying a recorded event stream must reproduce the same state *and*
+    /// the same permission set.
+    ///
+    /// The approval id used to be minted with `ApprovalId::new()` inside the
+    /// transition. Replay therefore generated a different id than the one in
+    /// the recorded `HumanApproved`, the guard failed, and the capability was
+    /// never granted — silently, because `Context::approve` no-ops on a
+    /// mismatch. Asserting on `granted_capabilities` is what catches it;
+    /// asserting on state alone does not.
+    #[test]
+    fn replaying_an_approval_grants_the_same_capability() {
+        let call_id = ToolCallId::new();
+        let required = Event::ToolApprovalRequired {
+            call_id,
+            capability: ToolCapability::ExecuteShell,
+            description: "run tests".into(),
+        };
+
+        // ── Live run: record the id the machine chose. ──────────────────────
+        let mut live = make_ctx();
+        init_loop(&mut live, "chat", &[], "", 16);
+        let _: Option<Reaction<u8>> =
+            handle_tool_event(&mut live, |ls| ls.continuation_turn(), &required);
+        let recorded = LoopState::load(&live)
+            .awaiting_tool_approval
+            .expect("approval requested");
+        let approved = Event::HumanApproved {
+            approval_id: recorded,
+        };
+        let _: Option<Reaction<u8>> =
+            handle_tool_event(&mut live, |ls| ls.continuation_turn(), &approved);
+
+        // ── Replay: same events, including the *recorded* approval id. ──────
+        let mut replayed = make_ctx();
+        init_loop(&mut replayed, "chat", &[], "", 16);
+        let _: Option<Reaction<u8>> =
+            handle_tool_event(&mut replayed, |ls| ls.continuation_turn(), &required);
+        assert_eq!(
+            LoopState::load(&replayed).awaiting_tool_approval,
+            Some(recorded),
+            "replay must derive the same approval id, not mint a fresh one"
+        );
+        let _: Option<Reaction<u8>> =
+            handle_tool_event(&mut replayed, |ls| ls.continuation_turn(), &approved);
+
+        assert!(
+            LoopState::load(&replayed).awaiting_tool_approval.is_none(),
+            "replayed approval must resolve"
+        );
+        assert!(
+            replayed.has_granted(ToolCapability::ExecuteShell),
+            "replay must grant the same capability the live run did"
+        );
+        assert_eq!(
+            live.has_granted(ToolCapability::ExecuteShell),
+            replayed.has_granted(ToolCapability::ExecuteShell),
+            "live and replayed permission sets must agree"
+        );
     }
 
     #[test]

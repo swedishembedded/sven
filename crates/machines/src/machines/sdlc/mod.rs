@@ -248,7 +248,11 @@ fn ask_user_effect(decision: &Value) -> Effect {
 
 /// Record a pending approval in `ctx` and return the matching effect.
 fn request_approval(ctx: &mut Context, decision: &Value) -> Effect {
-    let approval_id = ApprovalId::new();
+    // Replay-deterministic: `Context::approve` no-ops on an id mismatch, so a
+    // fresh id would silently skip the grant while the transition still fired.
+    // The high half namespaces these away from `loop_core`'s call-id-derived ids.
+    let seq = u64::from(ctx.bump_retry("sdlc_approval_seq"));
+    let approval_id = ApprovalId::from_uuid(uuid::Uuid::from_u64_pair(0x5344_4C43_4150_5052, seq));
     let description = approval_prompt_of(decision);
     ctx.set_pending_approval(PendingApproval {
         approval_id,
