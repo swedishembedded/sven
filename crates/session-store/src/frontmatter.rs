@@ -165,8 +165,16 @@ fn split_kv(s: &str) -> Option<(String, String)> {
 }
 
 /// Strip a single layer of matching `"..."` or `'...'` quotes if present.
+///
+/// The length guard is what makes a lone quote character safe: `"` satisfies
+/// both `starts_with` and `ends_with` on the *same* byte, so without it the
+/// slice is `&s[1..0]` and panics. `parse_frontmatter` runs over
+/// user-authored workflow markdown (`sven-ci`'s runner reads it), where
+/// `title: "` is a typo, not an attack.
 fn unquote(s: &str) -> &str {
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
+    let quoted = s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')));
+    if quoted {
         &s[1..s.len() - 1]
     } else {
         s
@@ -178,6 +186,20 @@ fn unquote(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A lone quote satisfies both `starts_with` and `ends_with` on the same
+    /// byte. Before the length guard this sliced `&s[1..0]` and panicked,
+    /// taking down the CI runner on a workflow file containing `title: "`.
+    #[test]
+    fn unquote_tolerates_a_single_quote_character() {
+        assert_eq!(unquote("\""), "\"");
+        assert_eq!(unquote("'"), "'");
+        assert_eq!(unquote(""), "");
+        // Normal stripping still works.
+        assert_eq!(unquote("\"hi\""), "hi");
+        assert_eq!(unquote("'hi'"), "hi");
+        assert_eq!(unquote("bare"), "bare");
+    }
 
     #[test]
     fn no_frontmatter_returns_none_and_full_content() {
