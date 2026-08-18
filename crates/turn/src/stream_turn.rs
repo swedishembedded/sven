@@ -579,10 +579,21 @@ pub(crate) fn extract_inline_think_block(text: &str) -> Option<String> {
 /// extracted [`ToolCall`] objects.  Parameter values that parse as valid JSON
 /// are stored as JSON; otherwise they are stored as plain strings.
 pub(crate) fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
+    use std::sync::LazyLock;
+
     use regex::Regex;
 
-    let invoke_re = Regex::new(r#"(?s)<invoke\s+name="([^"]+)">(.*?)</invoke>"#).unwrap();
-    let param_re = Regex::new(r#"(?s)<parameter\s+name="([^"]+)">(.*?)</parameter>"#).unwrap();
+    // Compiled once. This runs on every assistant message, and regex
+    // compilation is orders of magnitude more expensive than the match.
+    static INVOKE_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?s)<invoke\s+name="([^"]+)">(.*?)</invoke>"#)
+            .expect("literal invoke pattern is valid")
+    });
+    static PARAM_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?s)<parameter\s+name="([^"]+)">(.*?)</parameter>"#)
+            .expect("literal parameter pattern is valid")
+    });
+    let (invoke_re, param_re) = (&*INVOKE_RE, &*PARAM_RE);
 
     let mut tool_calls = Vec::new();
 
