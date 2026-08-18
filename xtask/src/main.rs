@@ -463,9 +463,49 @@ fn check_large_files(workspace_root: &Path, allow: &[LargeFile]) -> Result<Vec<S
     Ok(violations)
 }
 
+/// Production lines in `path`: everything outside a `#[cfg(test)]` module.
+///
+/// The ratchet exists to stop production files sprawling. Counting raw lines
+/// made it count tests too, so it penalised exactly what it should reward: a
+/// well-tested file could sit far over the limit on test code alone, and
+/// adding a single test to any allowlisted file failed the build until
+/// someone re-blessed it. Test modules are `//! …` inline by convention here,
+/// so this scans for `#[cfg(test)]` and skips to the end of the item that
+/// follows, tracking brace depth.
 fn count_lines(path: &Path) -> Result<usize> {
     let text = fs::read_to_string(path).unwrap_or_default();
-    Ok(text.lines().count())
+    Ok(count_production_lines(&text))
+}
+
+fn count_production_lines(text: &str) -> usize {
+    let mut count = 0usize;
+    let mut lines = text.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        if !line.trim_start().starts_with("#[cfg(test)]") {
+            count += 1;
+            continue;
+        }
+        // Skip the attribute and the item it guards. Depth only starts
+        // tracking once the item's first `{` is seen, so attributes and a
+        // `mod foo;` declaration on the following line are both handled.
+        let mut depth = 0isize;
+        let mut opened = false;
+        for body in lines.by_ref() {
+            depth += body.matches('{').count() as isize;
+            depth -= body.matches('}').count() as isize;
+            if depth > 0 {
+                opened = true;
+            }
+            if opened && depth <= 0 {
+                break;
+            }
+            if !opened && body.trim_end().ends_with(';') {
+                break;
+            }
+        }
+    }
+    count
 }
 
 /// Third-party crates a portable/minimal build must never resolve, per the

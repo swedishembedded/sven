@@ -324,20 +324,15 @@ lines = 2287
 path = "crates/mcp-client/src/oauth.rs"
 lines = 2137
 [[allow.large_file]]
+# 2119 -> 2120: `drop(bundle.runtime)` became an explicit `detach()`.
 path = "crates/node/src/node.rs"
-lines = 2119
-[[allow.large_file]]
-path = "crates/model-drivers/src/openai_compat/mod.rs"
-lines = 1955
+lines = 2120
 [[allow.large_file]]
 path = "crates/cloud/src/server.rs"
 lines = 1727
 [[allow.large_file]]
 path = "crates/model-drivers/tests/wire_format_tests.rs"
 lines = 1706
-[[allow.large_file]]
-path = "crates/tools-fs/src/file/edit_file.rs"
-lines = 1695
 [[allow.large_file]]
 path = "crates/node-control/src/service.rs"
 lines = 1577
@@ -352,9 +347,6 @@ path = "crates/config/src/schema.rs"
 lines = 1550
 [[allow.large_file]]
 path = "crates/team/src/spawn.rs"
-lines = 1506
-[[allow.large_file]]
-path = "crates/tui-nvim/src/bridge.rs"
 lines = 1506
 [[allow.large_file]]
 path = "crates/tools-ctx/tests/context_integration.rs"
@@ -381,17 +373,8 @@ lines = 1238
 path = "crates/bootstrap/src/runtime_builder.rs"
 lines = 1196
 [[allow.large_file]]
-path = "crates/tui/src/chat/markdown.rs"
-lines = 1185
-[[allow.large_file]]
-path = "crates/turn/src/stream_turn.rs"
-lines = 1171
-[[allow.large_file]]
 path = "crates/bootstrap/src/task_tool.rs"
 lines = 1155
-[[allow.large_file]]
-path = "crates/turn/src/prompts.rs"
-lines = 1145
 [[allow.large_file]]
 path = "crates/tui/src/app/session_manager.rs"
 lines = 1142
@@ -399,35 +382,12 @@ lines = 1142
 path = "crates/executors/tests/pipeline_integration.rs"
 lines = 1122
 [[allow.large_file]]
-path = "crates/model-drivers/src/anthropic.rs"
-lines = 1116
-[[allow.large_file]]
-path = "crates/frontend/src/operator.rs"
-lines = 1071
-[[allow.large_file]]
-path = "crates/turn/src/compact.rs"
-lines = 1064
-[[allow.large_file]]
-path = "crates/model-drivers/src/lib.rs"
-lines = 1058
-[[allow.large_file]]
-path = "crates/config/src/loader.rs"
-lines = 1049
-[[allow.large_file]]
-path = "crates/ci/src/runner/runtime_runner.rs"
-lines = 1043
-[[allow.large_file]]
-path = "crates/cloud-metering/src/metering.rs"
-lines = 1034
-[[allow.large_file]]
-path = "crates/tui/src/submit.rs"
-lines = 1032
-[[allow.large_file]]
+# 1030 -> 1052: session teardown used to leak its whole object graph, so
+# dropping a runtime now aborts its task, and the callers that deliberately
+# outlive their handle say `detach()`. Adds the `abort_on_drop` module wiring
+# and `detach` on both runtimes. The guard itself lives in its own file.
 path = "crates/kernel/src/lib.rs"
-lines = 1030
-[[allow.large_file]]
-path = "crates/session-model/src/conversation.rs"
-lines = 1029
+lines = 1054
 [[allow.large_file]]
 path = "crates/mcp-client/src/manager.rs"
 lines = 1016
@@ -438,18 +398,6 @@ lines = 1012
 path = "crates/node-config/src/config.rs"
 lines = 959
 [[allow.large_file]]
-path = "crates/tools-gdb/src/discovery.rs"
-lines = 942
-[[allow.large_file]]
-path = "crates/tui/src/keys.rs"
-lines = 936
-[[allow.large_file]]
-path = "crates/team/src/tools.rs"
-lines = 927
-[[allow.large_file]]
-path = "crates/node/src/telegram.rs"
-lines = 925
-[[allow.large_file]]
 path = "crates/cloud-portal/src/portal.rs"
 lines = 916
 [[allow.large_file]]
@@ -459,34 +407,8 @@ lines = 883
 path = "crates/tui/src/app/term_events.rs"
 lines = 880
 [[allow.large_file]]
-path = "crates/node-p2p/src/handler.rs"
-lines = 871
-[[allow.large_file]]
-path = "crates/frontend/src/agent.rs"
-lines = 858
-[[allow.large_file]]
-path = "crates/companion/src/policy.rs"
-lines = 851
-[[allow.large_file]]
 path = "tests/context_pipeline_test.rs"
 lines = 850
 [[allow.large_file]]
-path = "crates/ci/src/index.rs"
-lines = 832
-[[allow.large_file]]
-path = "crates/ci/src/tests.rs"
-lines = 814
-[[allow.large_file]]
-path = "crates/tool-registry/src/registry.rs"
-lines = 814
-[[allow.large_file]]
 path = "crates/executors/src/turn.rs"
 lines = 809
-[[allow.large_file]]
-# Raised from 806: the Gemini key moved out of the request URL into the
-# x-goog-api-key header (it was leaking into user-visible error events via
-# reqwest's Display), which added `stream_url` and its regression test. The
-# SSE byte-framing loop in this file is a near-verbatim copy of
-# openai_compat::stream's; deduplicating it would take this back under 806.
-path = "crates/model-drivers/src/google.rs"
-lines = 834
