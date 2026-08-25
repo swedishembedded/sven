@@ -27,14 +27,12 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic tests/e2e/cloud demos deb deb/debug deb/release clean help fmt check check/arch docs docs-pdf \
-        relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test \
+.PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt check check/arch docs docs-pdf \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
         _require-cargo-release \
         site/build site/publish site/serve \
-        benchmark benchmark/build benchmark/terminal-bench benchmark/report \
-        android android/core
+        benchmark benchmark/build benchmark/terminal-bench benchmark/report
 
 all: build
 
@@ -67,30 +65,8 @@ test:
 tests/e2e/basic: build
 	bats tests/e2e/basic/
 
-## tests/e2e/cloud - run the managed-agents platform end-to-end tests (requires bats-core)
-## Drives mock LLM → cloud session → RemoteToolExecutor → companion (loopback + WSS)
-## → metered ledger → statement export via the sven-cloud e2e integration tests.
-tests/e2e/cloud:
-	bats tests/e2e/cloud/
-
 ## tests/e2e - run all end-to-end test suites (requires bats-core)
-tests/e2e: tests/e2e/basic tests/e2e/cloud
-
-## demos - hermetic live-binary smoke demos (no docker, no API keys, no hardware)
-## Full-CLI coverage of the running platform: cloud brain→local hands
-## (local-demo, demo-firmware), local brain→remote steer (demo-share), and the
-## normal operator UI over /operator/ws (demo-operator).
-## Each starts a control plane on the mock LLM and asserts an OK sentinel;
-## a non-zero exit fails the target. Distinct ports so a lingering listener
-## from one demo cannot clash with the next.
-demos:
-	$(CARGO) build --release -p sven -p sven-companion
-	@PORT=18443 bash deploy/local-demo.sh    || { echo "FAIL: deploy/local-demo.sh";    exit 1; }
-	@PORT=18444 bash deploy/demo-firmware.sh  || { echo "FAIL: deploy/demo-firmware.sh"; exit 1; }
-	@PORT=18445 bash deploy/demo-share.sh     || { echo "FAIL: deploy/demo-share.sh";    exit 1; }
-	@PORT=18446 bash deploy/demo-operator.sh  || { echo "FAIL: deploy/demo-operator.sh"; exit 1; }
-	@bash deploy/demo-pair.sh                 || { echo "FAIL: deploy/demo-pair.sh";     exit 1; }
-	@echo "== all deploy demos green =="
+tests/e2e: tests/e2e/basic
 
 # ── Benchmark targets ─────────────────────────────────────────────────────────
 # Run sven against Terminal-Bench 2.0 via Harbor and generate a Markdown report.
@@ -193,7 +169,7 @@ deb/release: release
 docs:
 	@mkdir -p target/docs
 	@printf '' > target/docs/sven-user-guide.md
-	@for f in docs/[0-9][0-9]-*.md docs/providers.md docs/cloud/*.md; do \
+	@for f in docs/[0-9][0-9]-*.md docs/providers.md; do \
 		if [ -f "$$f" ]; then \
 			cat "$$f" >> target/docs/sven-user-guide.md; \
 			printf '\n---\n\n' >> target/docs/sven-user-guide.md; \
@@ -232,39 +208,6 @@ check: check/arch
 check/arch:
 	$(CARGO) run -q -p xtask -- arch
 	$(CARGO) run -q -p xtask -- arch --profile minimal
-
-## relay     - build the sven-relay server (requires git-discovery feature)
-relay:
-	$(CARGO) build -p sven-p2p --bin sven-relay --features git-discovery $(CARGO_FLAGS)
-	@echo "Binary: target/debug/sven-relay"
-	@echo "Usage:  sven-relay --listen /ip4/0.0.0.0/tcp/4001 --repo /path/to/git/repo"
-
-## relay-release - release-optimised relay binary
-relay-release:
-	$(CARGO) build -p sven-p2p --bin sven-relay --features git-discovery --release $(CARGO_FLAGS)
-	@echo "Binary: target/release/sven-relay"
-
-## p2p-client - build the sven-p2p-client TUI/chat client
-p2p-client:
-	$(CARGO) build -p sven-p2p --bin sven-p2p-client $(CARGO_FLAGS)
-	@echo "Binary: target/debug/sven-p2p-client"
-	@echo "Usage:  sven-p2p-client --repo . --room <room> --name <name>"
-	@echo "        sven-p2p-client --repo . --room <room> --name <name> -m '@peer hello'"
-
-## p2p-client-release - release-optimised client binary
-p2p-client-release:
-	$(CARGO) build -p sven-p2p --bin sven-p2p-client --release $(CARGO_FLAGS)
-	@echo "Binary: target/release/sven-p2p-client"
-
-## p2p      - build both relay and client debug binaries
-p2p: relay p2p-client
-
-## p2p-release - build both relay and client release binaries
-p2p-release: relay-release p2p-client-release
-
-## p2p-test - run sven-p2p unit and integration tests
-p2p-test:
-	$(CARGO) test -p sven-p2p $(CARGO_FLAGS)
 
 ## clean     - remove build artefacts
 clean:
@@ -359,17 +302,3 @@ _require-cargo-release:
 	    echo "cargo-release not found - installing..."; \
 	    cargo install cargo-release --locked; \
 	fi
-
-## android - build the Android client: `:core` JVM tests (no emulator, CI-safe)
-## then the debug APK. Requires a JDK 17 and the Android SDK (ANDROID_HOME).
-## Uses the committed Gradle wrapper; override GRADLE to use a system gradle.
-ANDROID_DIR := android
-GRADLE ?= ./gradlew
-android:
-	cd $(ANDROID_DIR) && $(GRADLE) :core:test --no-daemon --console=plain
-	cd $(ANDROID_DIR) && $(GRADLE) :app:assembleDebug -Psven.android.app=true --no-daemon --console=plain
-	@echo "APK: $(ANDROID_DIR)/app/build/outputs/apk/debug/app-debug.apk"
-
-## android/core - just the CI-critical pure-JVM tests (pairing parser + wire codec)
-android/core:
-	cd $(ANDROID_DIR) && $(GRADLE) :core:test --no-daemon --console=plain

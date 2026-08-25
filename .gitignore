@@ -1,6 +1,5 @@
 # Sven Configuration
 .sven.yaml
-.node.yaml
 .auth.yaml
 
 # Rust / Cargo
@@ -61,8 +60,5 @@ logs/
 **/.sven/
 *.token
 credit.jsonl
-sven-cloud.db
-cloud-ca.pem
-sven-cloud.db*
 credit.jsonl*
 portal-devices.yaml

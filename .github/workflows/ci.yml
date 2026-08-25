@@ -52,45 +52,6 @@ jobs:
       - name: Run basic e2e tests
         run: make tests/e2e/basic
 
-  # End-to-end managed-agents platform tests: mock LLM → cloud session →
-  # RemoteToolExecutor → companion (loopback + WSS) → metered ledger →
-  # statement export, plus the firmware wedge (real gdb-multiarch against an
-  # in-process GDB-remote stub).
-  e2e-cloud:
-    name: E2E cloud platform tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install bats-core and gdb-multiarch
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y bats gdb-multiarch
-
-      - name: Run cloud platform e2e tests
-        run: make tests/e2e/cloud
-
-  demos:
-    name: Deploy demos (hermetic live-binary smoke)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      # Runs the hermetic deploy demos end-to-end against real release binaries
-      # (mock LLM, no API keys/hardware): cloud brain→local hands (local-demo,
-      # demo-firmware), local brain→remote steer (demo-share), and the normal
-      # operator UI over /operator/ws (demo-operator, PORT=18446).
-      - name: Run deploy demos
-        run: make demos
-
   # Quick smoke-test: make sure we can actually build a release binary.
   # This catches linker / feature-flag issues before a real release.
   build-smoke:
@@ -105,7 +66,7 @@ jobs:
         run: make release
 
   # Portability target (refactor plan Phase 6): a headless-only build with no
-  # TUI, no P2P/libp2p, no cloud control plane, no GDB tools - proves the
+  # TUI and no GDB tools - proves the
   # `minimal` cargo feature profile actually cross-compiles for a real
   # constrained target, not just `cargo check` on the host. aarch64-musl is
   # the plan's chosen target: static libc, no glibc version skew, matches
@@ -155,22 +116,3 @@ jobs:
         run: cargo check --workspace
       - name: cargo test
         run: cargo test --workspace
-
-  # Android client: the CI-critical logic (pairing parser, wire codec,
-  # connection state machine, transport client, cert pinning) lives in the
-  # pure-JVM :core module — no Android SDK or emulator needed.
-  android-core:
-    name: Android :core tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: gradle/actions/setup-gradle@v4
-
-      - name: Run :core JVM tests
-        run: make android/core

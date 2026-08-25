@@ -57,8 +57,6 @@ sven/
 | `sven-session-store` | ATIF trajectory-backed session store (renamed from `sven-input` in Phase 4.3) |
 | `sven-mcp` | MCP (Model Context Protocol) client integration |
 | `sven-model` | LLM provider drivers (OpenAI, Anthropic, mock, ...) |
-| `sven-node` | P2P agent node: kernel-wired control service, task/session/room executors |
-| `sven-p2p` | libp2p networking layer, wire types, protocol constants |
 | `sven-workspace` | Tokio runtime wiring and process lifecycle |
 | `sven-tools` | 18-tool toolkit (file, shell, grep, todo, GDB, ...) |
 | `sven-tui` | Terminal UI: `UiMode` enum, `MachineProjection` consumer, key bindings |

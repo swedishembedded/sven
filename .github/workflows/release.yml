@@ -86,9 +86,8 @@ jobs:
 
   # ── Linux aarch64 ────────────────────────────────────────────────────────────
   # Cross-compiles via `cross` (Docker-based), reuses completions from x86 job.
-  # OpenSSL is vendored via the `openssl/vendored` Cargo feature in sven-node;
   # Cross.toml installs `perl` in the cross container (required by OpenSSL's
-  # ./Configure script during the vendored source build).
+  # ./Configure script during a vendored source build).
   # continue-on-error: the x86_64 release is never blocked by an aarch64 failure.
   build-linux-aarch64:
     name: Linux aarch64 [experimental]
@@ -136,13 +135,11 @@ jobs:
           path: dist/
 
   # ── macOS universal binary ────────────────────────────────────────────────────
-  # OpenSSL is vendored via the `openssl/vendored` Cargo feature declared in
-  # node/Cargo.toml (which owns the webauthn-rs dependency).  Cargo feature
-  # unification propagates `vendored` to the single openssl-sys compile unit, so
-  # OpenSSL is always built from source - no system library or Homebrew bottle
-  # required.  This is the only reliable strategy when cross-compiling from the
-  # Apple Silicon (aarch64) macos-latest runner to x86_64, because Homebrew does
-  # not ship x86_64 bottles on that architecture.
+  # Any OpenSSL in the dependency closure is built from source rather than
+  # linked against a system library or Homebrew bottle.  This is the only
+  # reliable strategy when cross-compiling from the Apple Silicon (aarch64)
+  # macos-latest runner to x86_64, because Homebrew does not ship x86_64
+  # bottles on that architecture.
   build-macos:
     name: macOS (universal) [experimental]
     runs-on: macos-latest

@@ -147,7 +147,7 @@ Priority: optional
 Homepage: https://agentsven.com
 Description: An efficient AI coding agent for CLI, TUI, and CI
  Sven is an efficient AI coding agent that works as an interactive terminal UI
- (TUI), a headless CI pipeline tool, and a networked P2P node.  It can read multi-step instructions from Markdown
+ (TUI) and a headless CI pipeline tool.  It can read multi-step instructions from Markdown
  files or stdin, execute tool calls (shell, filesystem, glob search), and stream
  clean text to stdout so its output pipes directly into other agents or CI steps.
 EOF
