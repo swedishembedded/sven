@@ -16,7 +16,6 @@ sven-tools       = { path = "../tools" }
 sven-tools-agent = { path = "../tools-agent" }
 sven-machines        = { path = "../machines" }
 sven-bootstrap   = { path = "../bootstrap" }
-sven-hsm         = { path = "../hsm" }
 sven-mcp-client  = { path = "../mcp-client" }
 sven-workspace     = { path = "../workspace" }
 # Transport-agnostic control protocol + kernel mappings (no transport deps).

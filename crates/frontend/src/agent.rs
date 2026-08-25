@@ -6,7 +6,7 @@
 //! This module is shared by all Sven frontends (TUI and GUI). It provides the
 //! `AgentRequest` enum and the `kernel_session_task` that drives a full
 //! [`RuntimeBuilder`] kernel session (via the shared [`KernelAgentSession`]
-//! adapter) and bridges [`UiEvent`](sven_hsm::UiEvent)s back to the existing
+//! adapter) and bridges `UiEvent`s back to the existing
 //! [`AgentEvent`] renderers so the TUI/GUI require no changes.
 
 use std::sync::Arc;
@@ -122,7 +122,7 @@ async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Optio
 ///
 /// Builds a full [`RuntimeBuilder`] session for the requested mode, then wraps
 /// it in the shared [`KernelAgentSession`] adapter, which subscribes to the
-/// kernel's outward observation bus and bridges [`UiEvent`](sven_hsm::UiEvent)s
+/// kernel's outward observation bus and bridges `UiEvent`s
 /// into the existing [`AgentEvent`] renderers plus relays kernel `AskUser` /
 /// approval prompts to the frontend's [`QuestionRequest`] modal channel. The
 /// TUI/GUI therefore keep consuming the exact same `AgentEvent` contract.
