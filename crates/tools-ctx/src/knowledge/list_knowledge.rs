@@ -149,7 +149,7 @@ mod tests {
                 subsystem: "P2P Networking".to_string(),
                 files: vec!["crates/p2p/**".to_string()],
                 updated: Some("2026-01-15".to_string()),
-                path: std::path::PathBuf::from(".sven/knowledge/sven-p2p.md"),
+                path: std::path::PathBuf::from(".sven/knowledge/sven-hsm.md"),
                 body: "P2P body.".to_string(),
             },
             KnowledgeInfo {
@@ -169,7 +169,7 @@ mod tests {
         assert!(out.content.contains("P2P Networking"));
         assert!(out.content.contains("Tool System"));
         assert!(out.content.contains("2026-01-15"));
-        assert!(out.content.contains("sven-p2p.md"));
+        assert!(out.content.contains("sven-hsm.md"));
         assert!(out.content.contains("search_knowledge"));
     }
 }

@@ -6,11 +6,9 @@
 //! concrete `ToolRegistry` and config-driven policy engines).
 //!
 //! `builtin/`'s ~18k LOC of concrete tool implementations -- everything this
-//! crate used to hold directly -- has now been fully carved into the seven
+//! crate used to hold directly -- has now been fully carved into the
 //! domain-tier crates the refactor plan named: `sven-tools-{fs,exec,web,ctx,
-//! agent,gdb}` (from `crates/tools/src/builtin/`) and `sven-tools-p2p` (from
-//! `crates/node/src/tools.rs`, tracked separately since it never lived
-//! here). This crate now exists purely so the ~20 crates still writing
+//! agent,gdb}`. This crate now exists purely so the ~20 crates still writing
 //! `sven_tools::ToolRegistry` / `sven_tools::Tool` / `sven_tools::ToolCall`
 //! (etc. -- the shared kernel-tier vocabulary, not a concrete tool) keep
 //! compiling unchanged. Repointing every one of those call sites directly at

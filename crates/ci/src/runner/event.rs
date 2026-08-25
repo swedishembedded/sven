@@ -359,9 +359,9 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         | AgentEvent::TitleGenerated(_)
         | AgentEvent::Transition { .. }
         | AgentEvent::PeerList(_) => {}
-        // A P2P-team delegate subtree completed (`sven-node`'s `delegate`
-        // tool — a distinct feature from the `task` tool's ACP subagents
-        // above). It carries only a condensed summary, not a structured
+        // A delegate subtree completed (a distinct feature from the `task`
+        // tool's ACP subagents above). It carries only a condensed summary,
+        // not a structured
         // conversation stream, so there is nothing to fold into an embedded
         // `Trajectory`; still emit a stderr trace token so the delegation is
         // at least visible (previously silently dropped).

@@ -14,7 +14,7 @@
 //! [`GENESIS_HASH`]. `entry` is caller-defined JSON — this crate has no
 //! opinion on its shape; [`sven_executors::audit::AuditExecutor`] wraps
 //! `{"kind": ..., "timestamp": ..., "record": {...}}`, and
-//! `sven-metering`'s credit ledger wraps its own entry shape.
+//! A ledger built on top of it wraps its own entry shape.
 //!
 //! # Integrity guarantees — and their limits
 //!
@@ -338,7 +338,7 @@ fn lock_path_for(log_path: &Path) -> PathBuf {
 /// the chain but at worst duplicates records (at-least-once). That is fine
 /// for records whose duplication doesn't change meaning; callers appending
 /// entries whose duplication would change meaning (e.g. monetary ledger
-/// entries) must **not** blindly retry on error — see `sven-metering`'s
+/// entries) must **not** blindly retry on error — see a ledger's
 /// `CreditLedger::append`.
 pub fn append_chain(path: &Path, entries: Vec<serde_json::Value>) -> std::io::Result<usize> {
     if entries.is_empty() {

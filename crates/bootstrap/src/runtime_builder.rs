@@ -55,9 +55,9 @@ use crate::registry::build_tool_registry;
 /// Installing a custom tool executor this way — instead of
 /// [`RuntimeBuilder::with_effect_executor`] — keeps every other default
 /// executor (turn/user/timer/checkpoint/audit) wired; only tool dispatch is
-/// replaced. Managed-cloud deployments pass a factory that shares the store
-/// with a `sven_executors::RemoteToolExecutor` so remote tool results append to
-/// the right thread. See [`RuntimeBuilder::with_tool_executor_override`].
+/// replaced. A deployment can pass a factory that shares the store with its
+/// own executor so tool results append to the right thread. See
+/// [`RuntimeBuilder::with_tool_executor_override`].
 pub type ToolExecutorFactory = Box<
     dyn FnOnce(
             Arc<std::sync::Mutex<ThreadStore>>,
@@ -407,11 +407,9 @@ impl RuntimeBuilder {
     /// Unlike [`Self::with_effect_executor`] — which drops the entire default
     /// composite — this substitutes just the tool executor. The `factory` is
     /// handed the `TurnExecutor`'s shared [`ThreadStore`] and
-    /// `call_id → thread` registry so a custom executor (e.g.
-    /// `sven_executors::RemoteToolExecutor::with_shared_store`) can append tool
+    /// `call_id → thread` registry so a custom executor can append tool
     /// results to the exact thread the turn engine reads on its continuation
-    /// call. This is how managed-cloud sessions route `CallTool` to a customer's
-    /// companion while the LLM turn loop keeps running in the cloud.
+    /// call.
     ///
     /// Ignored when [`Self::with_effect_executor`] is also set (the wholesale
     /// override wins).
@@ -431,12 +429,10 @@ impl RuntimeBuilder {
     /// Supply the [`sven_model::ModelProvider`] the kernel talks to instead
     /// of letting the builder construct one from config.
     ///
-    /// This is the structural seam gateway wrappers hang off: managed-cloud
-    /// deployments build the config provider themselves
-    /// (`sven_model_drivers::from_config`), wrap it (e.g. in `sven-cloud`'s
-    /// `MeteredProvider` so every turn is priced and debited live), and
-    /// inject the wrapped provider here — no kernel path can then reach the
-    /// model unmetered. Unlike [`Self::with_effect_executor`], all default
+    /// This is the structural seam gateway wrappers hang off: a deployment
+    /// builds the config provider itself (`sven_model_drivers::from_config`),
+    /// wraps it, and injects the wrapped provider here — no kernel path can
+    /// then reach the model unwrapped. Unlike [`Self::with_effect_executor`], all default
     /// executors (turn/tool/user/timer/checkpoint/audit) stay wired.
     pub fn with_model_provider(mut self, provider: Box<dyn sven_model::ModelProvider>) -> Self {
         self.model_provider_override = Some(provider);
@@ -990,8 +986,8 @@ mod tests {
     async fn injected_model_provider_replaces_config_construction() {
         // A config whose provider `from_config` cannot build: if the build
         // succeeds, the injected provider — not the config — was used. This
-        // is the seam metering gateways (sven-cloud's MeteredProvider) hang
-        // off, so it must structurally bypass config construction.
+        // is the seam gateway wrappers hang off, so it must structurally
+        // bypass config construction.
         let mut config = Config::default();
         config.model.provider = "no-such-provider".into();
         config.model.name = "ghost".into();
@@ -1012,50 +1008,6 @@ mod tests {
                 .await
                 .expect("an injected provider must bypass from_config");
         runtime.abort();
-    }
-
-    #[tokio::test]
-    async fn remote_tool_executor_installs_via_effect_executor_hook() {
-        let mut config = Config::default();
-        config.model.provider = "mock".into();
-        config.model.name = "mock-model".into();
-
-        // RemoteToolExecutor owns CallTool; everything else must flow to its
-        // delegate. A recording delegate stands in for the default composite.
-        let (tx, mut rx) = mpsc::unbounded_channel::<Effect>();
-        let (to_companion_tx, _to_companion_rx) = mpsc::channel(8);
-        let exec = sven_executors::RemoteToolExecutor::new(to_companion_tx)
-            .with_delegate(Box::new(RecordingExecutor { tx }));
-
-        let (runtime, handle, _channels, _mcp_manager, _mcp_event_rx) =
-            RuntimeBuilder::new(Arc::new(config), "chat")
-                .with_effect_executor(Box::new(exec))
-                .build()
-                .await
-                .expect("runtime should build with a RemoteToolExecutor");
-
-        handle.send_user_message("hello".into()).await;
-
-        // The chat machine reacts with a CallLlm effect — not owned by the
-        // remote tool executor, so it must reach the delegate.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        let mut saw_call_llm = false;
-        while tokio::time::Instant::now() < deadline {
-            match tokio::time::timeout_at(deadline, rx.recv()).await {
-                Ok(Some(effect)) => {
-                    if effect.kind() == EffectKind::CallLlm {
-                        saw_call_llm = true;
-                        break;
-                    }
-                }
-                _ => break,
-            }
-        }
-        runtime.abort();
-        assert!(
-            saw_call_llm,
-            "RemoteToolExecutor must delegate non-CallTool effects to the composite"
-        );
     }
 
     #[tokio::test]

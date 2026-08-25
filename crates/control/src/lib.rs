@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Transport-agnostic operator **control protocol** and its kernel mappings.
 //!
-//! This crate owns the wire vocabulary spoken between a remote operator (or a
-//! sharing consultant) and a running Sven agent:
+//! This crate owns the wire vocabulary spoken between a remote operator and a
+//! running Sven agent:
 //!
 //! * [`ControlCommand`] — operator → agent (submit input, approve/deny a tool,
-//!   list sessions/tools/peers, …).
+//!   list sessions/tools, …).
 //! * [`ControlEvent`] — agent → operator (streamed output, tool activity,
 //!   session-state changes, …).
 //!
@@ -20,11 +20,9 @@
 //!   the [`Event`](sven_hsm::Event) posted onto the kernel queue.
 //!
 //! The crate depends only on `sven-hsm` + `sven-config` + `sven-vocab` (plus
-//! serde / uuid / ciborium) — **not** on `sven-tools` or `sven-node`
-//! (libp2p/axum). That is what lets `sven-frontend` reuse the protocol and
-//! mappings for the in-process one-tap `/share` bridge without bloating the
-//! interactive binaries, while `sven-node` re-exports these types so all
-//! existing call sites keep compiling.
+//! serde / uuid / ciborium) — **not** on `sven-tools` or any transport stack.
+//! That is what lets `sven-frontend` reuse the protocol and mappings without
+//! bloating the interactive binaries.
 
 use serde::{Deserialize, Serialize};
 use sven_config::AgentMode;
@@ -388,8 +386,7 @@ pub struct WebDeviceSummary {
 /// Session-lifecycle bookkeeping (`SessionState::Completed`/`Cancelled` on a
 /// terminal event) is the caller's responsibility — it needs to update
 /// server-side session-table state as well as broadcast, which this pure
-/// mapping has no access to. See `sven-node`'s and `sven-cloud`'s
-/// observation-drain loops.
+/// mapping has no access to.
 #[must_use]
 pub fn ui_event_to_control(ev: sven_hsm::UiEvent, session_id: Uuid) -> ControlEvent {
     ControlEvent::Session {

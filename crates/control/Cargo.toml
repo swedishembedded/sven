@@ -5,7 +5,7 @@
 name        = "sven-control"
 version.workspace = true
 edition     = "2021"
-description = "Transport-agnostic operator control protocol (ControlCommand/ControlEvent) and its kernel mappings, shared by sven-node, sven-cloud and sven-frontend"
+description = "Transport-agnostic operator control protocol (ControlCommand/ControlEvent) and its kernel mappings"
 license     = "Apache-2.0"
 
 [dependencies]

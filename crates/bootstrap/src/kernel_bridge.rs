@@ -27,7 +27,7 @@
 //!   these on top of a [`RuntimeBuilder`](crate::RuntimeBuilder) session.
 //!
 //! The adapter lives in `sven-bootstrap` (not `sven-frontend`) precisely so the
-//! headless `sven-ci` and `sven-node` surfaces can depend on it without pulling
+//! headless `sven-ci` surface can depend on it without pulling
 //! in any TUI/GUI code, and without creating a dependency cycle — every surface
 //! already depends on `sven-bootstrap`.
 

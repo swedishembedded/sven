@@ -18,7 +18,7 @@ use crate::permissions::ToolCapability;
 
 /// The identity on whose behalf a session runs.
 ///
-/// In the managed-agents platform every session is owned by a tenant and
+/// In a multi-tenant deployment every session is owned by a tenant and
 /// driven by an actor (a human user, a service account, an API key, ...).
 /// The kernel treats the principal as opaque data: it is stamped into every
 /// [`AuditRecord`] for attribution but never interpreted by transition logic.

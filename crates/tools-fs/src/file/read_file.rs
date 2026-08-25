@@ -330,7 +330,7 @@ fn to_ihex_lines(data: &[u8]) -> Vec<String> {
 fn ascend_to_find(path: &str) -> Option<std::path::PathBuf> {
     use std::path::{Component, Path};
 
-    // Opt-out for sandboxed hosts (e.g. the companion's fs jail): ascent
+    // Opt-out for sandboxed hosts with their own fs jail: ascent
     // resolves a requested path to a *different*, component-dropped sibling
     // that may live outside a jail whose check only validated the requested
     // string. When `SVEN_NO_PATH_ASCENT` is set, read exactly what was asked

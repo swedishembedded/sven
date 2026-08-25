@@ -81,7 +81,7 @@ impl Shared<KnowledgeInfo> {
 pub struct DriftWarning {
     /// Subsystem name from the knowledge document.
     pub subsystem: String,
-    /// File name of the knowledge document (e.g. `"sven-p2p.md"`).
+    /// File name of the knowledge document (e.g. `"sven-hsm.md"`).
     pub knowledge_file: String,
     /// The `updated:` date recorded in the document.
     pub updated: String,
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn parse_knowledge_file_valid() {
         let raw = "---\nsubsystem: P2P Networking\nfiles:\n  - crates/p2p/**\nupdated: 2026-01-15\n---\n\n## Core Architecture\n\nDetail here.";
-        let path = PathBuf::from("/tmp/sven-p2p.md");
+        let path = PathBuf::from("/tmp/sven-hsm.md");
         let info = parse_knowledge_file(raw, &path).expect("should parse");
         assert_eq!(info.subsystem, "P2P Networking");
         assert_eq!(info.files, vec!["crates/p2p/**"]);
@@ -454,13 +454,13 @@ mod tests {
     fn format_drift_warnings_single() {
         let warnings = vec![DriftWarning {
             subsystem: "P2P Networking".to_string(),
-            knowledge_file: "sven-p2p.md".to_string(),
+            knowledge_file: "sven-hsm.md".to_string(),
             updated: "2026-01-15".to_string(),
             changed_files: vec!["crates/p2p/src/node.rs".to_string()],
         }];
         let text = format_drift_warnings(&warnings).unwrap();
         assert!(text.contains("Knowledge Drift Detected"));
-        assert!(text.contains("sven-p2p.md"));
+        assert!(text.contains("sven-hsm.md"));
         assert!(text.contains("P2P Networking"));
         assert!(text.contains("2026-01-15"));
         assert!(text.contains("crates/p2p/src/node.rs"));

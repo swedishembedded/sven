@@ -100,7 +100,7 @@ impl MachineProjection {
     }
 }
 
-/// Maps a [`MachineProjection`] to the legacy `sven_node` `SessionState`
+/// Maps a [`MachineProjection`] to the legacy `SessionState`
 /// variants so the node control service can broadcast backwards-compatible
 /// events to older clients.
 ///
