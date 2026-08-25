@@ -23,28 +23,23 @@
 # (or same-tier, if explicitly listed in [[same_layer]]).
 order = [
     "foundation", # zero internal sven deps
-    "kernel",     # trait/type vocabulary: config schema, HSM types, provider trait, wire ids
+    "kernel",     # trait/type vocabulary: config schema, HSM types, provider trait
     "services",   # concrete registries/stores built on the kernel vocabulary
     "domain",     # tool implementations and other domain services
     "machines",   # pure Machine impls + the I/O executor layer that drives them
     "assembly",   # the composition root(s): RuntimeBuilder and friends
     "wiring",     # async surface plumbing shared by every frontend
-    "surface",    # user-visible entry points (CLI/TUI/GUI, headless runner, node, MCP server)
-    "composite",  # surfaces that assemble other surfaces (ACP proxies a node; cloud fronts a companion)
+    "surface",    # user-visible entry points (CLI/TUI, headless runner, MCP server)
+    "composite",  # surfaces that assemble other surfaces
     "binary",     # the `sven` binary itself
 ]
 
 [crates]
 # foundation
 sven-chain       = "foundation"
-sven-cloud-store = "foundation"
 sven-config      = "foundation"
 sven-hsm         = "foundation"
 sven-image       = "foundation"
-sven-node-client = "foundation"
-sven-node-config = "foundation"
-sven-node-web    = "foundation"
-sven-p2p         = "foundation"
 sven-tui-nvim    = "foundation"
 sven-workspace   = "foundation"
 sven-vocab       = "foundation"
@@ -53,11 +48,9 @@ atif             = "foundation"
 # kernel
 sven-model  = "kernel"
 sven-model-catalog = "kernel"
-sven-wire   = "kernel"
 sven-control = "kernel"
 sven-session-model = "kernel"
 sven-tool-api = "kernel"
-sven-cloud-identity = "kernel"
 
 # services
 sven-session-store = "services"
@@ -66,7 +59,6 @@ sven-tools      = "services"
 sven-tool-registry = "services"
 sven-mcp-client = "services"
 sven-kernel     = "services"
-sven-node-chat  = "services"
 sven-model-drivers = "services"
 sven-model-mock    = "services"
 
@@ -74,7 +66,6 @@ sven-model-mock    = "services"
 sven-channels      = "domain"
 sven-integrations  = "domain"
 sven-memory        = "domain"
-sven-metering      = "domain"
 sven-scheduler     = "domain"
 sven-team          = "domain"
 sven-turn          = "domain"
@@ -83,36 +74,26 @@ sven-tools-exec    = "domain"
 sven-tools-ctx     = "domain"
 sven-tools-agent   = "domain"
 sven-tools-web     = "domain"
-sven-tools-p2p     = "domain"
 sven-tools-gdb     = "domain"
 
 # machines
 sven-machines  = "machines"
 sven-executors = "machines"
-sven-cloud-metering = "machines"
 
 # assembly
 sven-bootstrap = "assembly"
 sven-commands  = "assembly"
-sven-companion = "assembly"
-sven-cloud-tether = "assembly"
 
 # wiring
 sven-frontend = "wiring"
-sven-node-control = "wiring"
-sven-node-http    = "wiring"
-sven-node-p2p     = "wiring"
 
 # surface
 sven-ci  = "surface"
 sven-mcp = "surface"
-sven-node = "surface"
 sven-tui = "surface"
 
 # composite
 sven-acp   = "composite"
-sven-cloud = "composite"
-sven-cloud-portal = "composite"
 
 # binary
 sven = "binary"
@@ -222,90 +203,10 @@ kernel-local opaque-payload enum, since SessionEvent's typed payloads
 dependencies of its own, so this can never become a cycle.
 """
 
-[[same_layer]]
-from = "sven-node-config"
-to   = "sven-p2p"
-why  = """
-Both are leaf "foundation" crates (zero sven-internal dependencies of their
-own before this edge). sven-node-config's build_agent_card (NodeConfig ->
-AgentCard, a pure data transform) needs sven_p2p::protocol::types::AgentCard.
-build_agent_card moved here from sven-node::node specifically to break a real
-sven-node::node <-> sven-node::peer intra-crate cycle when peer.rs was
-extracted into sven-node-chat (Phase 5 god-crate split) -- see
-sven-node-config's crate doc comment. sven-p2p has no dependency on
-sven-node-config, so this can never become a cycle.
-"""
-
-[[same_layer]]
-from = "sven-node-http"
-to   = "sven-node-control"
-why  = """
-Both are "wiring" tier (Phase 5 god-crate split of sven-node). sven-node-http
-is sven-node's HTTPS/WebSocket transport; it needs sven-node-control's
-AgentHandle/ControlCommand/ControlEvent to speak the wire protocol over that
-transport. sven-node-control is forced to "wiring" (not lower) because its
-ControlService owns a real sven_bootstrap::RuntimeHandle (assembly tier) --
-see sven-node-control's crate doc comment. No cycle risk: sven-node-control
-has no dependency on sven-node-http.
-"""
-
-[[same_layer]]
-from = "sven-node-p2p"
-to   = "sven-node-control"
-why  = """
-Same reasoning as sven-node-http -> sven-node-control immediately above:
-sven-node-p2p is sven-node's P2P operator-control transport (the counterpart
-to sven-node-http for native/mobile clients) and needs the same
-AgentHandle/ControlCommand/ControlEvent types. No cycle risk: sven-node-control
-has no dependency on sven-node-p2p.
-"""
-
-[[same_layer]]
-from = "sven-cloud"
-to   = "sven-cloud-portal"
-why  = """
-Phase 5 of the refactor plan split sven-cloud's `portal`/`feed`/`channels`/
-`runtime` modules into sven-cloud-portal. Both crates need
-sven_node::control::protocol (surface tier), which puts a floor of
-"composite" under each of them individually -- there is no lower tier left
-for either to sit at, so this is not a missed opportunity to avoid the
-same-tier edge, it is the tier the real dependencies put them at.
-
-The edge is one-directional and cannot become a cycle: sven-cloud's
-CloudServer (the axum/TLS WSS tether+share+operator-ws listener) needs
-sven-cloud-portal's CloudSessionLauncher and SessionFeed, but nothing in
-sven-cloud-portal depends on sven-cloud -- the one edge that used to run the
-other way (`portal.rs`'s `use crate::server::extract_bearer`) was cut by
-giving each crate its own six-line copy of that helper rather than sharing
-it. sven-cloud-portal itself could not be split further (feed/channels/
-portal/runtime) without recreating this same edge in the opposite
-direction: CloudServer and PortalState both need CloudSessionLauncher, and
-CloudSessionLauncher needs SessionFeed, so whichever piece ended up in the
-"lower" crate would still need the "higher" one.
-"""
-
-[[same_layer]]
-from = "sven-tools-p2p"
-to   = "sven-team"
-why  = """
-Both are "domain" tier. sven-tools-p2p's BroadcastAbortTool needs
-sven_team::TeamConfigHandle to publish an abort event to the team the
-current agent belongs to. This edge is new in 5.8 of the refactor plan's
-god-crate splits: node/src/tools.rs (surface tier, inside sven-node) moved
-to sven-tools-p2p (domain tier), and a surface-tier crate depending on a
-domain-tier crate was always legal, so this same-tier constraint did not
-exist before the split -- it is a direct, correctly-identified consequence
-of moving the tools down to their proper tier, not something the split
-could have avoided. No cycle risk: sven-team has no dependency on
-sven-tools-p2p (it does not need P2P agent tools).
-"""
-
-
 # ── Known upward (illegal) edges, each with a fix owner and a why. ─────────
-# None currently outstanding. sven-wire and sven-control both depended on
-# sven-tools only for ToolCall/ToolOutput/ToolSchema, which moved to
-# sven-vocab (foundation tier) in Phase 2.1-2.2 -- deleting both edges
-# rather than legitimizing them.
+# None currently outstanding. sven-control depended on sven-tools only for
+# ToolCall/ToolOutput/ToolSchema, which moved to sven-vocab (foundation tier)
+# in Phase 2.1-2.2 -- deleting the edge rather than legitimizing it.
 
 # ── Known dead/unused internal dependencies. ────────────────────────────────
 # A dependency is "dead" here if crate `crate` declares a normal (non-dev) dep
@@ -318,30 +219,11 @@ sven-tools-p2p (it does not need P2P agent tools).
 # Regenerate with `cargo run -p xtask -- arch --bless`. Seeded from the
 # measured tree at the start of the refactor (2026-08-13).
 [[allow.large_file]]
-path = "crates/p2p/src/node.rs"
-lines = 2287
-[[allow.large_file]]
 path = "crates/mcp-client/src/oauth.rs"
 lines = 2137
 [[allow.large_file]]
-# 2119 -> 2120: `drop(bundle.runtime)` became an explicit `detach()`.
-path = "crates/node/src/node.rs"
-lines = 2120
-[[allow.large_file]]
-path = "crates/cloud/src/server.rs"
-lines = 1727
-[[allow.large_file]]
 path = "crates/model-drivers/tests/wire_format_tests.rs"
 lines = 1706
-[[allow.large_file]]
-path = "crates/node-control/src/service.rs"
-lines = 1577
-[[allow.large_file]]
-path = "crates/cloud-portal/src/channels.rs"
-lines = 1554
-[[allow.large_file]]
-path = "crates/tools-p2p/src/lib.rs"
-lines = 1552
 [[allow.large_file]]
 path = "crates/config/src/schema.rs"
 lines = 1550
@@ -360,9 +242,6 @@ lines = 1325
 [[allow.large_file]]
 path = "crates/ci/src/runner/mod.rs"
 lines = 1322
-[[allow.large_file]]
-path = "crates/cloud/tests/e2e_firmware.rs"
-lines = 1312
 [[allow.large_file]]
 path = "crates/session-store/src/trace_session_tests.rs"
 lines = 1287
@@ -394,15 +273,6 @@ lines = 1016
 [[allow.large_file]]
 path = "crates/tools-ctx/src/context/store.rs"
 lines = 1012
-[[allow.large_file]]
-path = "crates/node-config/src/config.rs"
-lines = 959
-[[allow.large_file]]
-path = "crates/cloud-portal/src/portal.rs"
-lines = 916
-[[allow.large_file]]
-path = "crates/cloud/tests/e2e_platform.rs"
-lines = 883
 [[allow.large_file]]
 path = "crates/tui/src/app/term_events.rs"
 lines = 880
