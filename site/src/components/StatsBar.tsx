@@ -4,7 +4,7 @@ import { useRef } from 'react'
 
 const STATS = [
   { value: '35+', label: 'AI Models', sub: 'OpenAI, Anthropic, Ollama & more - no lock-in' },
-  { value: '1', label: 'Binary', sub: 'TUI, headless, CI, and P2P node in one' },
+  { value: '1', label: 'Binary', sub: 'TUI, headless, and CI in one' },
   { value: '0', label: 'Context Switches', sub: 'Entire dev lifecycle in one session' },
   { value: '0', label: 'Runtime Dependencies', sub: 'Pure Rust, install and run immediately' },
 ]

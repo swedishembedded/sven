@@ -33,9 +33,9 @@ const FEATURES: Feature[] = [
   },
   {
     icon: <NetworkIcon />,
-    title: 'Agent-to-Agent P2P',
+    title: 'Teams of Agents',
     description:
-      'Spin up multiple agents, have them discover each other via mDNS, and delegate subtasks. One agent coordinates, others execute - no central server, no config required.',
+      'Spin up a team of agents from one session, break work into tasks on a shared board, and let each teammate claim, execute, and report back. One agent coordinates, others execute.',
     tag: 'Unique',
     tagColor: '#5b8dee',
   },

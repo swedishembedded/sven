@@ -66,47 +66,6 @@ export function GDBFeature() {
   )
 }
 
-export function P2PFeature() {
-  return (
-    <FeatureSection
-      tag="Multi-Agent P2P"
-      heading="Delegate and conquer."
-      body={
-        <>
-          Run <span className="code-inline">sven node start</span> and your agent joins a
-          peer-to-peer network. Large tasks that would overwhelm one context window get split across
-          specialists - a backend agent, a frontend agent, an embedded agent - each working in
-          parallel. Agents discover each other via <strong className="text-text-primary">mDNS</strong>{' '}
-          on your LAN or connect across the internet through a relay. No central server. No config.
-        </>
-      }
-      bullets={[
-        { text: 'mDNS auto-discovery: agents find each other on the same network automatically' },
-        { text: 'Internet relay: connect agents across networks without port-forwarding' },
-        { text: 'Task delegation: send a subtask to a peer and wait for the result - one tool call' },
-        { text: 'Persistent rooms: agents post to named rooms for async coordination' },
-        { text: 'WebAuthn passkeys: secure device authorization for the web terminal' },
-        { text: 'mTLS transport: every peer connection is mutually authenticated and encrypted' },
-      ]}
-      imageSrc="/sven-p2p.svg"
-      imageAlt="Diagram of multiple Sven agent nodes connected in a P2P network"
-      imageWidth={800}
-      imageHeight={500}
-    >
-      <div className="flex flex-col sm:flex-row gap-3">
-        <a
-          href="https://github.com/swedishembedded/sven/tree/main/docs/08-node.md"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="btn-secondary text-sm"
-        >
-          Node documentation →
-        </a>
-      </div>
-    </FeatureSection>
-  )
-}
-
 export function CIFeature() {
   return (
     <FeatureSection
