@@ -7,17 +7,11 @@
 
 pub(crate) mod chats;
 pub(crate) mod ci;
-#[cfg(feature = "network")]
-pub(crate) mod cloud;
 pub(crate) mod index;
 pub(crate) mod logging;
 pub(crate) mod models;
 pub(crate) mod oauth;
-#[cfg(feature = "network")]
-pub(crate) mod peer;
 pub(crate) mod pipeline;
-#[cfg(feature = "network")]
-pub(crate) mod share;
 #[cfg(feature = "network")]
 pub(crate) mod team;
 pub(crate) mod tool;

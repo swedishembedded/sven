@@ -9,26 +9,17 @@
 
 mod index;
 #[cfg(feature = "network")]
-mod peer;
-#[cfg(feature = "network")]
 mod team;
 mod tool;
 
-// `AcpCommands`/`McpCommands`/`NodeCommands`/`CloudCommands` (& friends) live
-// in `sven-acp`/`sven-mcp`/`sven-node`/`sven-cloud` themselves (Phase 6.2 of
-// the refactor plan), shared verbatim with the standalone `sven-acp`/
-// `sven-mcp`/`svend`/`sven-cloudd` binaries rather than duplicated here.
+// `AcpCommands`/`McpCommands` live in `sven-acp`/`sven-mcp` themselves,
+// shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
+// than duplicated here.
 #[cfg(feature = "network")]
 pub use sven_acp::cli::AcpCommands;
-#[cfg(feature = "network")]
-pub use sven_cloud::cli::CloudCommands;
 pub use index::IndexCommands;
 #[cfg(feature = "network")]
 pub use sven_mcp::cli::McpCommands;
-#[cfg(feature = "network")]
-pub use sven_node::cli::NodeCommands;
-#[cfg(feature = "network")]
-pub use peer::PeerCommands;
 #[cfg(feature = "network")]
 pub use team::TeamCommands;
 pub use tool::ToolCommands;
@@ -263,10 +254,6 @@ pub struct Cli {
     #[arg(long, hide = true)]
     pub team_role: Option<String>,
 
-    /// Peer ID of the team lead.  Informational - used to find the team config.
-    #[arg(long, hide = true)]
-    pub team_lead_peer: Option<String>,
-
     /// Name for this agent within the team.  Used for task assignment matching.
     #[arg(long, hide = true, alias = "agent-name")]
     pub teammate_name: Option<String>,
@@ -309,56 +296,6 @@ pub enum Commands {
         command: AcpCommands,
     },
 
-    /// Node: start the agent, pair devices, manage tokens.
-    ///
-    /// Run `sven node start` to expose this agent to mobile apps, Slack,
-    /// and other clients. The node prints a pairing QR / `sven://` URI at
-    /// startup; open it with `sven connect <uri>` (or the mobile app) to
-    /// pair, or authorize a device's own URI with `sven node authorize`.
-    #[cfg(feature = "network")]
-    Node {
-        #[command(subcommand)]
-        command: NodeCommands,
-    },
-
-    /// Connect to a paired node over P2P and steer its session.
-    ///
-    /// Scan the QR (or copy the `sven://…` URI) a node prints via
-    /// `sven node pair`, then:
-    ///
-    ///   sven connect "sven://<node-id>/<addr>?t=<token>"
-    ///
-    /// The first connection redeems the one-time token to pair this device
-    /// (its key is added to the node's allowlist); afterwards reconnect with the
-    /// same `--identity` and no token. You see the conversation on connect and
-    /// can send messages; `--message` sends one turn and exits.
-    #[cfg(feature = "network")]
-    Connect {
-        /// The `sven://…` pairing URI from the node's QR code.
-        uri: String,
-        /// Persist this client's identity keypair here so reconnects
-        /// authenticate as the same paired device.
-        #[arg(long)]
-        identity: Option<PathBuf>,
-        /// Send a single message and exit (non-interactive; for demos/scripts).
-        #[arg(long)]
-        message: Option<String>,
-    },
-
-    /// Peer: list agents, chat, and search conversation history.
-    ///
-    /// Starts an ephemeral P2P connection - no running node required.
-    ///
-    ///   sven peer list                              - discover connected peers
-    ///   sven peer chat backend-agent                - interactive chat session
-    ///   sven peer search backend-agent "auth"       - grep conversation history
-    ///   sven peer search --all "(?i)out.of.memory"  - search across all peers
-    #[cfg(feature = "network")]
-    Peer {
-        #[command(subcommand)]
-        command: PeerCommands,
-    },
-
     /// Manage agent teams.
     ///
     ///   sven team list                     - list all teams
@@ -372,57 +309,6 @@ pub enum Commands {
     Team {
         #[command(subcommand)]
         command: TeamCommands,
-    },
-
-    /// Operate the managed-agents cloud control plane.
-    ///
-    ///   sven cloud tenant create Acme               - create a tenant
-    ///   sven cloud token mint --tenant acme --role companion
-    ///   sven cloud serve                            - start the tether endpoint
-    ///   sven cloud session start --tenant acme --prompt "..."
-    #[cfg(feature = "network")]
-    Cloud {
-        #[command(subcommand)]
-        command: CloudCommands,
-    },
-
-    /// Share this workspace's local session so a remote consultant can steer it.
-    ///
-    /// "Local brain, remote steer": builds a persistent kernel here (like
-    /// `sven node start`) and bridges it onto a control plane's `/share`
-    /// endpoint. A consultant attaches with
-    /// `sven cloud session attach --share-id <id>` and drives the session
-    /// against YOUR machine — tools run locally, credentials never leave.
-    ///
-    ///   sven -c sven.yaml share --url https://cloud.example.com \
-    ///     --token "$(cat tenant.token)" --tenant-id acme --share-id debug-1
-    #[cfg(feature = "network")]
-    Share {
-        /// Control-plane base URL, e.g. `https://cloud.example.com`.
-        #[arg(long, env = "SVEN_CLOUD_URL", default_value = "https://localhost:8443")]
-        url: String,
-        /// Tenant bearer token (any valid token of the tenant).
-        #[arg(long, env = "SVEN_CLOUD_TOKEN")]
-        token: String,
-        /// Tenant that owns this share (must match the token's tenant).
-        #[arg(long, env = "SVEN_CLOUD_TENANT")]
-        tenant_id: String,
-        /// Stable id a consultant attaches by. Defaults to a random id (printed
-        /// on startup).
-        #[arg(long)]
-        share_id: Option<String>,
-        /// Human-readable label shown to the consultant.
-        #[arg(long, default_value = "shared sven session")]
-        title: String,
-        /// Agent mode for the shared kernel.
-        #[arg(long, default_value = "agent")]
-        mode: String,
-        /// Extra CA certificate PEM to trust (for a self-signed control plane).
-        #[arg(long, value_name = "PEM")]
-        ca_cert: Option<PathBuf>,
-        /// Disable TLS verification — local testing only.
-        #[arg(long)]
-        insecure: bool,
     },
 
     /// Generate shell completion script
