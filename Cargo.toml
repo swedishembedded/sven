@@ -23,7 +23,6 @@ members = [
     "crates/tools-ctx",
     "crates/tools-agent",
     "crates/tools-web",
-    "crates/tools-p2p",
     "crates/tools-gdb",
     "crates/turn",
     "crates/machines",
@@ -35,9 +34,6 @@ members = [
     "crates/tui",
     "crates/tui-nvim",
     "crates/frontend",
-    "crates/sven-p2p",
-    "crates/sven-node",
-    "crates/sven-node-client",
     "crates/mcp",
     "crates/mcp-client",
     "crates/acp",
@@ -52,29 +48,6 @@ members = [
     "crates/executors",
     # Transport-agnostic operator control protocol + kernel mappings
     "crates/control",
-    # Cloud tether protocol (control plane <-> companion)
-    "crates/wire",
-    # Customer-side companion binary (remote hands)
-    "crates/companion",
-    # Cloud control plane: companion registry + tether routing
-    "crates/cloud",
-    # Cloud control-plane persistence (Phase 5 split of sven-cloud's `store`).
-    "crates/cloud-store",
-    # Cloud identity: token minting/authentication/authorisation + companion
-    # bearer-token auth (Phase 5 split of sven-cloud's `identity`/`auth`).
-    "crates/cloud-identity",
-    # Cloud tether routing core: CompanionRegistry (Phase 5 split of
-    # sven-cloud's `registry`).
-    "crates/cloud-tether",
-    # Cloud LLM metering gateway + session gate (Phase 5 split of
-    # sven-cloud's `metering`/`gate`).
-    "crates/cloud-metering",
-    # Cloud human portal, live session feed, Slack/Telegram approval routing,
-    # and the cloud session runtime (Phase 5 split of sven-cloud's
-    # `portal`/`feed`/`channels`/`runtime`).
-    "crates/cloud-portal",
-    # LLM metering: pricing catalog, credit ledger, statements
-    "crates/metering",
     # ATIF v1.7 trajectory format (standalone; not yet wired into sven)
     "crates/atif",
     # Workspace tooling: `cargo run -p xtask -- arch` enforces architecture.toml
@@ -160,21 +133,11 @@ sven-bootstrap   = { path = "crates/bootstrap", default-features = false }
 sven-ci          = { path = "crates/ci" }
 # ── Optional surfaces, gated by the `tui`/`network` cargo features below ──────
 sven-tui         = { path = "crates/tui", optional = true }
-# `network` bundles p2p/node/acp/mcp/cloud/team rather than toggling them
-# independently: sven-acp/sven-mcp/sven-cloud's `--node` proxy submodes all
-# pull in sven-node/sven-p2p, so they can't be split further without removing
-# that functionality (see the Phase 6 plan-correction CHANGELOG entry).
-# sven-p2p/sven-node-client/sven-metering are pulled in transitively (via
-# sven-node/sven-cloud, which own the code that used to live in `src/run/`
-# and call into them directly - Phase 6.2 moved it into those crates) and so
-# are deliberately NOT declared here: xtask's dead-dependency check flags a
-# direct declared-but-unreferenced edge.
+# `network` bundles the ACP/MCP servers and the team surface behind one
+# feature flag rather than toggling them independently.
 sven-team        = { path = "crates/team", optional = true }
-sven-node        = { path = "crates/sven-node", optional = true }
 sven-mcp         = { path = "crates/mcp", optional = true }
 sven-acp         = { path = "crates/acp", optional = true }
-# Cloud control plane (`sven cloud` subcommand): tenants, tokens, tether, gating.
-sven-cloud       = { path = "crates/cloud", optional = true }
 anyhow      = { workspace = true }
 humantime   = { workspace = true }
 tokio       = { workspace = true }
@@ -203,22 +166,18 @@ tui = ["dep:sven-tui", "dep:ratatui"]
 # doesn't request this feature) truly excludes gdbmi, rather than getting it
 # back via feature unification with sven-ci's own (always-on) bootstrap edge.
 gdb = ["sven-bootstrap/gdb"]
-# P2P node, cloud control plane, and every command that dials or proxies
-# through them (`sven node`, `sven mcp`/`sven acp --node`, `sven cloud`,
-# `sven connect`, `sven peer`, `sven team`, `sven share`). Bundled rather
-# than split further - see the Phase 6 plan-correction CHANGELOG entry.
+# Networked surfaces: the ACP and MCP servers (`sven acp`, `sven mcp`) and
+# the team task surface (`sven team`).
 network = [
-    "dep:sven-node",
     "dep:sven-acp",
     "dep:sven-mcp",
-    "dep:sven-cloud",
     "dep:sven-team",
 ]
 # Portable headless-only build: `sven`/`sven -f workflow.md` (CI mode),
-# `sven tool`, `sven map`/`tee`/`reduce`, `sven index`. No TUI, no P2P/libp2p,
-# no cloud control plane, no HTTP server. The `xtask arch --profile minimal`
-# check (Phase 6.3) asserts this excludes ratatui/libp2p/git2/webauthn-rs/
-# rusqlite/axum/gdbmi from the resolved dependency closure.
+# `sven tool`, `sven map`/`tee`/`reduce`, `sven index`. No TUI, no HTTP
+# server. The `xtask arch --profile minimal` check asserts this excludes
+# ratatui/libp2p/git2/webauthn-rs/rusqlite/axum/gdbmi from the resolved
+# dependency closure.
 minimal = []
 
 [dev-dependencies]
