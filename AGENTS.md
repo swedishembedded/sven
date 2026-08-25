@@ -1,10 +1,9 @@
 # Sven - AI Coding Agent
 
 Sven is a keyboard-driven AI coding agent built in Rust. It runs as an
-interactive TUI (`sven`), a headless CI runner, a networked P2P node, and a
-**managed-agents cloud platform** ("cloud brain, local hands") - all from the
-same multi-crate workspace. (A Slint desktop GUI, `crates/gui`, existed
-briefly and was removed - the TUI is the only interactive local surface.)
+interactive TUI (`sven`) and as a headless CI runner - both from the same
+multi-crate workspace. (A Slint desktop GUI, `crates/gui`, existed briefly
+and was removed - the TUI is the only interactive local surface.)
 
 ## For AI Agents Working on This Codebase
 
@@ -12,7 +11,7 @@ briefly and was removed - the TUI is the only interactive local surface.)
 - **The single execution engine is the HSM kernel.** There is exactly one agent
   loop: the Hierarchical State Machine in `sven-hsm`, assembled by
   `sven-bootstrap::RuntimeBuilder`. Every surface (headless CI, interactive
-  TUI, P2P node, ACP, cloud) drives that kernel. There is **no** second
+  TUI, ACP, MCP) drives that kernel. There is **no** second
   "agent loop".
 - **Key principle**: The HSM is the deterministic process kernel; the LLM is an
   untrusted reasoning service; tools are invoked exclusively through typed
@@ -30,16 +29,13 @@ briefly and was removed - the TUI is the only interactive local surface.)
   that section's caveat).
 - **The architecture is mechanically enforced.** `architecture.toml` at the
   repo root is the **authoritative** tier assignment and dependency-legality
-  list for all 60+ workspace crates - not this document. `cargo run -p xtask
+  list for every workspace crate - not this document. `cargo run -p xtask
   -- arch` (wired into `make check`) fails the build on an illegal
   cross-tier edge, an unused declared dependency, or a file over the 800-line
   ratchet. Read `architecture.toml` directly for "what tier is crate X in" or
   "what can X legally depend on"; the crate table below is a human-readable
   summary of the same data; when they disagree, `architecture.toml` wins. See
   `.claude/skills/programming/rust/architecture.md` for the layering method.
-- **Cloud model**: the kernel (the "brain") can run in the cloud while tools
-  (the "hands") execute on customer premises via a `RemoteToolExecutor` over an
-  outbound WSS tether. Credentials never leave the customer boundary.
 - **Skills** (load before writing code): Rust → `.cursor/skills/programming/rust/SKILL.md`;
   public API changes → `.cursor/skills/programming/rust-semver/SKILL.md`;
   TUI → `.cursor/skills/programming/ratatui/SKILL.md`.
@@ -49,8 +45,7 @@ briefly and was removed - the TUI is the only interactive local surface.)
   was deleted - see `docs/adr/0001-delete-graph-dsl.md`.)
 - **Tests**: `make test` (unit/integration), `make check` (`xtask arch` +
   clippy `-D warnings`, zero-warning policy), `make tests/e2e/basic` (bats
-  E2E; needs `bats-core`), `make tests/e2e/cloud` (managed-agents platform E2E;
-  needs `bats-core` + `gdb-multiarch`).
+  E2E; needs `bats-core`).
 - **Before any sweeping/cross-cutting change, read "Making cross-cutting
   changes" below** - it is the canonical map of every place each kind of
   change must touch.
@@ -71,24 +66,20 @@ repo history). When a task is finished, move its file into `.todo/completed/`
 | `make check` | `xtask arch` (architecture ratchet) + clippy, `-D warnings` |
 | `make fmt` | Format |
 | `make tests/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour) |
-| `make tests/e2e/cloud` | Bats end-to-end suite (managed-agents platform) |
 | `make docs` | Single-file user guide → `target/docs/sven-user-guide.md` |
 
 ## Binaries and cargo features
 
 | Binary | Crate | Default? | Description |
 |--------|-------|----------|-------------|
-| `sven` | `sven` (root) | yes | Interactive TUI, headless CI runner, P2P node client, CLI - everything |
-| `sven-companion` | `sven-companion` | n/a (own crate) | Customer-premises "local hands": dials out to the cloud, executes constrained tools locally |
-| `svend` | `sven-node` | n/a (own crate) | Standalone node daemon - the same `sven node` subcommand tree, without the TUI/MCP/ACP/cloud closure |
-| `sven-cloudd` | `sven-cloud` | n/a (own crate) | Standalone cloud control-plane daemon - `serve`/`tenant`/`token`/`session`/`demo-seed`; `connect`'s interactive mode needs the full `sven` binary (see `sven_cloud::cli`'s doc comment) |
+| `sven` | `sven` (root) | yes | Interactive TUI, headless CI runner, CLI - everything |
 | `sven-mcp` | `sven-mcp` | n/a (own crate) | Standalone MCP server - the same `sven mcp serve` |
 | `sven-acp` | `sven-acp` | n/a (own crate) | Standalone ACP agent server - the same `sven acp serve` |
 
 The `sven` binary itself has cargo features controlling what's linked in:
-`tui` (ratatui + the interactive UI), `network` (P2P node, cloud, ACP, MCP,
-team - bundled together because they share a `--node` proxy/dial mode, not
-independently toggleable), `gdb` (the GDB/MI tool suite), and `minimal`
+`tui` (ratatui + the interactive UI), `network` (ACP, MCP, team - bundled
+together, not independently toggleable), `gdb` (the GDB/MI tool suite), and
+`minimal`
 (none of the above - headless CI + `tool`/`index`/`map`/`tee`/`reduce` only,
 the portability target). `default = ["tui", "network", "gdb"]`, so a plain
 `cargo build` is unchanged from before these existed. `cargo run -p xtask --
@@ -96,17 +87,11 @@ arch --profile minimal` asserts the `minimal` build's resolved dependency
 closure excludes `ratatui`/`libp2p`/`git2`/`webauthn-rs`/`portable-pty`/
 `gdbmi`/`axum`/`rusqlite`/`nvim-rs`/`slint`.
 
-The cloud **control plane** is not only a separate binary — it is also the
-`sven cloud` subcommand of the main `sven` binary: `sven cloud serve` (control
-plane), `sven cloud tenant`/`token`/`demo-seed` (admin), `sven cloud session
-start` (operator client). See `deploy/` for the docker-compose quickstart and
-`docs/cloud/` for scenario walkthroughs.
-
 ## Crate table
 
 The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) →
 { `sven-machines` (machines), `sven-executors` (I/O), `sven-model` (LLM),
-`sven-tool-api`/`sven-tool-registry`/`sven-tools` }. 61 workspace crates total,
+`sven-tool-api`/`sven-tool-registry`/`sven-tools` }. Every workspace crate is
 organized into 10 tiers (`foundation` < `kernel` < `services` < `domain` <
 `machines` < `assembly` < `wiring` < `surface` < `composite` < `binary`) -
 **`architecture.toml` is authoritative**; this table groups the same crates by
@@ -118,19 +103,14 @@ append-only JSONL) · `sven-config` (config schema + loader) · `sven-hsm`
 (HSM kernel types) · `sven-image` (image reading) · `sven-audio` (WAV
 decoding, resampling, audio data-URL helpers) · `sven-workspace`
 (project/skill/agent/knowledge discovery) · `atif` (ATIF v1.7 trajectory
-format) · `sven-p2p` (libp2p transport) · `sven-node-client` (WS client for a
-running node) · `sven-node-config` (node config schema) · `sven-node-web`
-(WebAuthn + PTY web-terminal types) · `sven-tui-nvim` (embedded Neovim
-client, ratatui-rendered)
+format) · `sven-tui-nvim` (embedded Neovim client, ratatui-rendered)
 
 ### kernel
 `sven-model` (`ModelProvider` trait, request/response vocab, driver metadata
-registry) · `sven-model-catalog` (static model catalog data) · `sven-wire`
-(cloud tether protocol DTOs) · `sven-control` (transport-agnostic control
-protocol + kernel mappings) · `sven-session-model` (`SessionFold`,
-`ChatSegment`, tool-view formatting - the one `## User`/`## Sven` codec) ·
-`sven-tool-api` (`Tool` trait + `ToolDisplay`) · `sven-cloud-identity`
-(token roles/scopes types)
+registry) · `sven-model-catalog` (static model catalog data) · `sven-control`
+(transport-agnostic control protocol + kernel mappings) · `sven-session-model`
+(`SessionFold`, `ChatSegment`, tool-view formatting - the one `## User`/`##
+Sven` codec) · `sven-tool-api` (`Tool` trait + `ToolDisplay`)
 
 ### services
 `sven-session-store` (ATIF trajectory-backed session store, legacy YAML chat
@@ -139,8 +119,7 @@ import, `sven migrate-sessions`) · `sven-llm` (`ThreadStore` + fence helper)
 - **not** where tool implementations live, see below) · `sven-tool-registry`
 (`ToolRegistry`, `ApprovalPolicy`, fs_root jail) · `sven-mcp-client` (MCP
 client: stdio + Streamable HTTP, OAuth) · `sven-kernel` (`ErasedRuntime`,
-`EffectExecutor`, `EventSink`, `ChildSpawner`) · `sven-node-chat` (ephemeral
-P2P for `sven peer`, no HTTP/TLS/agent loop) · `sven-model-drivers` (34
+`EffectExecutor`, `EventSink`, `ChildSpawner`) · `sven-model-drivers` (34
 provider driver impls, `openai_compat`) · `sven-model-mock` (`--model mock`
 test/dev providers)
 
@@ -150,42 +129,30 @@ test/dev providers)
 `memory`) · `sven-tools-agent` (`system`, `todo`, `ask_question`, `skill` -
 agent self-management) · `sven-tools-web` (`web_fetch`/`web_search`, `grep`,
 `search_codebase`, `read_lints`) · `sven-tools-gdb` (GDB/MI debugging, unix
-only) · `sven-tools-p2p` (`delegate_task`, `list_peers`, room/session
-collaboration) · `sven-turn` (impure turn primitives: `stream_turn`,
+only) · `sven-turn` (impure turn primitives: `stream_turn`,
 `compact`/`smart_truncate`, prompt assembly) · `sven-team` (agent-team
-coordination) · `sven-metering` (pricing catalog, credit ledger) ·
-`sven-channels`/`sven-integrations`/`sven-memory`/`sven-scheduler`
+coordination) · `sven-channels`/`sven-integrations`/`sven-memory`/`sven-scheduler`
 (optional integration tool providers, feature-gated in `sven-bootstrap`)
 
 ### machines
 `sven-machines` (pure `Machine` impls: `ReactiveAgentMachine`, `SdlcMachine`,
 `TaskMachine`, `ModeRegistry`, `loop_core`) · `sven-executors` (the real I/O
-layer: `CompositeExecutor` + its executor slots) · `sven-cloud-metering`
-(`UsageMeter`/`SessionGate`)
+layer: `CompositeExecutor` + its executor slots)
 
 ### assembly
 `sven-bootstrap` (`RuntimeBuilder` - the one kernel-assembly point) ·
-`sven-commands` (`SlashCommand` trait + builtins) · `sven-companion` (local
-hands: dials out over WSS, constrained tool manifest) · `sven-cloud-tether`
-(`CompanionRegistry`, tool-call routing)
+`sven-commands` (`SlashCommand` trait + builtins)
 
 ### wiring
-`sven-frontend` (shared frontend layer: `agent`/`node_agent`/`operator`
-tasks, `SessionEvent` consumption) · `sven-node-control` (`ControlService`) ·
-`sven-node-http` (HTTP/WS router assembly) · `sven-node-p2p`
-(`p2p_kernel`, `headless_policy`)
+`sven-frontend` (shared frontend layer: the `agent` session task and
+`SessionEvent` consumption)
 
 ### surface
 `sven-ci` (headless runner: `RuntimeRunner` + workflow orchestration) ·
-`sven-mcp` (MCP server; node-proxy mode forwards to a node) · `sven-node`
-(startup orchestrator, ~400 LOC, composing `node-{config,control,http,p2p,
-chat,web}`) · `sven-tui` (ratatui TUI)
+`sven-mcp` (MCP server) · `sven-tui` (ratatui TUI)
 
 ### composite
-`sven-acp` (ACP server for IDEs) · `sven-cloud` (control plane: `CloudServer`,
-`IdentityService`, `SessionGate`, portal/feed; composes `cloud-{store,
-identity,tether,portal,metering}`) · `sven-cloud-portal` (`PortalState`,
-`CloudSessionLauncher`, `SessionFeed`)
+`sven-acp` (ACP server for IDEs)
 
 ### binary
 `sven` (the root crate: CLI parsing + dispatch into `run::*`/`cli::*`
@@ -194,24 +161,23 @@ modules, one per subcommand group)
 ## Architecture
 
 ```
- sven (CLI/TUI)        sven-cloud (control plane)   sven node (P2P/WS)
-      │                        │                        │
- sven-tui                portal/feed +            ControlService
-      │  SessionEvent      CompanionRegistry             │
-      └──── sven-frontend ───────┘                      │
-                  │                                      │
+ sven (CLI/TUI)          sven-ci (headless)        sven-acp / sven-mcp
+      │                        │                          │
+ sven-tui                RuntimeRunner              per-session kernel
+      │  SessionEvent          │                          │
+      └──── sven-frontend ─────┴──────────────────────────┘
+                  │
               sven-bootstrap (RuntimeBuilder)  ◄─── one assembly point
                   │
             sven-hsm (kernel: pure transitions → Vec<Effect>)
-           /        |          \                    \
+           /        |          \
      sven-machines  sven-model  sven-executors ──────► sven-tools
-     (machines) (LLM svc)   (ONLY I/O layer)     RemoteToolExecutor ──WSS──► sven-companion
-                                                                            (customer premises)
+     (machines)   (LLM svc)   (ONLY I/O layer)
 ```
 
 Everything above `EffectExecutor::execute` is pure and deterministic; everything
 below it is I/O. `Effect` and `SessionEvent` are `serde`-serializable, which is
-what makes the cloud split (remote tools, replay, audit ledger) possible.
+what makes replay and the audit ledger possible.
 
 ## Frontend architecture
 
@@ -255,21 +221,17 @@ now only a thin re-export shim over `sven-tool-api`/`sven-tool-registry`.
 2. Register it: `sven-bootstrap`'s tool-registry assembly
    (`crates/bootstrap/src/registry.rs`).
 3. If exposed over MCP: `mcp/src/registry.rs`'s `DEFAULT_TOOL_NAMES` -
-   deliberately a curated allowlist (stateful/TUI-dependent/P2P tools are
+   deliberately a curated allowlist (stateful/TUI-dependent tools are
    intentionally excluded), not something to auto-derive from linked crates.
 4. If it needs a new capability: see "Add a `ToolCapability`".
-5. Constrained-hands profile: `sven-companion`'s hand-registered tool set in
-   its `main.rs` - also a deliberate least-privilege allowlist, same reasoning.
-6. Tests: unit test + a bats case in `tests/e2e/basic/` if it has headless output.
+5. Tests: unit test + a bats case in `tests/e2e/basic/` if it has headless output.
 
 ### Add a `ToolCapability` (permission bucket)
 1. `hsm/src/permissions.rs` - the `ToolCapability` enum,
    `is_inherently_dangerous`, and the classify path.
 2. Every machine's `permission_policy()` in `sven-machines` (`reactive_agent.rs`,
    `sdlc/mod.rs`) - decide allow/approval per state.
-3. `node-p2p/src/p2p_kernel.rs::headless_policy()` and any cloud
-   `SessionGate`/policy that enumerates capabilities.
-4. The tool's own `kernel_capability()` in its `sven-tools-*` crate.
+3. The tool's own `kernel_capability()` in its `sven-tools-*` crate.
 
 ### Add a new HSM machine / mode
 1. `machines/src/machines/…` - implement `Machine`, reusing `loop_core` for the
@@ -285,8 +247,7 @@ now only a thin re-export shim over `sven-tool-api`/`sven-tool-registry`.
    concrete implementations live in `sven-model-drivers`.
 2. A driver module in `sven-model-drivers` (usually reuse `openai_compat`;
    bespoke only if the wire format differs).
-3. `model-catalog/src/catalog.rs` - model metadata; **and pricing in
-   `sven-metering`** if it should be billable.
+3. `model-catalog/src/catalog.rs` - model metadata.
 
 ### Change what a session/agent run looks like on a SURFACE
 The kernel is one; the surfaces that drive it are the ones you must keep in sync.
@@ -296,10 +257,7 @@ must be applied to **each surface that constructs a kernel via
 1. **Headless** - `sven-ci` (`RuntimeRunner` + workflow orchestration).
 2. **Interactive TUI** - `frontend/src/agent.rs` (`kernel_session_task`/
    `run_kernel_session_task`; the TUI consumes `SessionEvent` as `AgentEvent`).
-3. **P2P node** - `sven-node-control` (`service.rs`), `sven-node`
-   (`agent_builder.rs`, `node.rs`), `sven-node-p2p` (`p2p_kernel.rs`).
-4. **Local ACP** - `acp/src/agent.rs`.
-5. **Cloud** - `sven-cloud` session path (+ `RemoteToolExecutor`).
+3. **Local ACP** - `acp/src/agent.rs`.
    Grep guard: `grep -rn "RuntimeBuilder" crates` finds every construction site.
 
 ### Add a new `SessionEvent` variant (aliased `AgentEvent`/`UiEvent`)
@@ -311,8 +269,7 @@ types requiring a translator.
    enum pushed up).
 2. Every renderer that matches on it: `sven-frontend` (projection +
    renderers), `sven-tui`, `sven-ci` output (`runner/event.rs`,
-   `conversation.rs` trace tokens), `sven-acp` notification mapping,
-   `sven-node-control`'s `ui_event_to_control`.
+   `conversation.rs` trace tokens), and `sven-acp` notification mapping.
    **Missing one silently drops the event on that surface - check all.** The
    plan originally intended `#[deny(clippy::wildcard_enum_match_arm)]` on
    `sven-tui`/`sven-ci`/`sven-acp`/`sven-frontend` to make this a compile
@@ -326,26 +283,12 @@ types requiring a translator.
 
 ### Add identity / tenancy / auth
 1. `hsm/src/context.rs` `Principal`; stamped into `AuditRecord`.
-2. `sven-bootstrap` `SessionSupervisor` (tenant→session ownership).
-3. `sven-cloud-identity` (token roles/scopes) and `sven-cloud`'s
-   `SessionGate`.
-4. `sven-node-control`'s auth if the surface is network-facing.
+2. `sven-bootstrap` `SessionSupervisor` (principal→session ownership).
 
 ### Add a config field
 1. `config/src/schema.rs` (+ `#[serde(default)]` for back-compat).
 2. `loader.rs` if it needs env expansion or layering rules.
 3. The consumer crate; document in `docs/` and the config example.
-
-### Add metering / billing surface
-1. `sven-metering` (pricing catalog, ledger event, statement).
-2. The LLM gateway interception point (`sven-model` `base_url` override /
-   `sven-cloud` metered provider) and `sven-cloud-metering`'s `SessionGate`.
-
-### Cloud tether protocol change
-1. `sven-wire` (versioned - bump the protocol version constant).
-2. Both ends: `sven-cloud`/`sven-cloud-tether` (tether handler) and
-   `sven-companion` (`tether.rs`/`service.rs`). Keep back-compat or gate on
-   version.
 
 ### Golden rules
 - **One assembly point**: kernels are built by `RuntimeBuilder`. `grep -rn
@@ -366,8 +309,8 @@ types requiring a translator.
 
 ## Documentation
 - [README.md](README.md), [docs/00-introduction.md](docs/00-introduction.md)
-- [docs/technical/](docs/technical/) - HSM architecture, ACP, skill system, P2P,
-  session protocol, cloud platform.
+- [docs/technical/](docs/technical/) - HSM architecture, ACP, skill system,
+  state machines, and the deliberation engine.
 - [docs/adr/](docs/adr/) - architecture decision records.
 - `architecture.toml` - authoritative crate tiers, dependency legality, file-size
   ratchet. `.claude/skills/programming/rust/architecture.md` - the layering

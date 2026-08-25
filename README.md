@@ -1,9 +1,8 @@
 # Agent Sven
 
 **A keyboard-driven AI agent for the terminal.** Built in Rust, sven works as
-an interactive TUI, a headless CI runner, a networked node that teams up with
-other sven instances, and a managed-agents cloud platform - one HSM kernel
-behind every surface.
+an interactive TUI and as a headless CI runner - one HSM kernel behind every
+surface.
 
 [![CI](https://github.com/swedishembedded/sven/actions/workflows/ci.yml/badge.svg)](https://github.com/swedishembedded/sven/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -12,7 +11,7 @@ behind every surface.
 ![sven TUI showing a live chat session with streamed markdown response and vim-style navigation](docs/sven-landing.png)
 
 Give sven a task in plain English. It reads your code, runs commands, writes
-files, searches the web, and delegates subtasks to peer agents - all
+files, searches the web, and delegates subtasks to sub-agents - all
 autonomously, all in your terminal. Beyond interactive sessions, sven runs 24/7
 as a proactive agent: checking email and calendar, sending briefings via
 Telegram, making voice calls, and running scheduled workflows.
@@ -23,9 +22,9 @@ Telegram, making voice calls, and running scheduled workflows.
 - **Interactive TUI** - Full-screen Ratatui interface with scrollable markdown chat, vim-style navigation, and live-streamed responses. Swap to an embedded Neovim buffer with `--nvim`.
 - **Headless / CI** - Reads from stdin or a markdown workflow file, writes clean text to stdout. Pipeable: chain sven instances to build multi-agent pipelines.
 - **Markdown workflow files** - `##`-headed steps, YAML frontmatter, per-step directives, and variable templating make `.md` files first-class agent programs (unique to sven).
-- **Agent networking** - Multiple sven nodes discover each other via mDNS (or a relay), and the LLM gains `list_peers` and `delegate_task` tools to route work across machines.
+- **Teams of agents** - Spawn a team of teammates from one session, break work into tasks on a shared board, and let each teammate claim, execute, and report back, each in its own git worktree.
 - **GDB hardware debugging** - First AI agent with native GDB integration: connects to a target, loads firmware, sets breakpoints, and inspects registers, all autonomously.
-- **Proactive automation** - Scheduler, email (IMAP/Gmail), calendar (CalDAV/Google), voice (TTS/STT/calls), semantic memory, and 6 messaging channels run 24/7 as a node.
+- **Proactive automation** - Scheduler, email (IMAP/Gmail), calendar (CalDAV/Google), voice (TTS/STT/calls), semantic memory, and 6 messaging channels run 24/7.
 - **Skills system** - Markdown instruction files the agent loads on demand for coding standards, project conventions, or multi-step procedures.
 - **32 model providers** - OpenAI, Anthropic, Gemini, Ollama, and 28 more - no external gateway, pure Rust.
 - **MCP - server and client** - Expose sven's tools to Cursor, Claude Desktop, and other MCP hosts; or connect sven to external MCP servers (including OAuth-protected ones) and use their tools directly inside any session.
@@ -100,30 +99,21 @@ terminal.
 
 See [Example 11](docs/06-examples.md#example-11--embedded-gdb-debugging-session) and the [GDB section of the User Guide](docs/03-user-guide.md#gdb-debugging-tools).
 
-## Agent-to-agent task routing
-
-Multiple sven nodes find each other on a local network via mDNS - or across
-networks via a relay - and each node automatically gains two tools the LLM can
-use during any session:
-
-| Tool | What it does |
-|------|-------------|
-| `list_peers` | List connected peer agents with their name, description, and capabilities |
-| `delegate_task` | Send a task to a named peer; the remote agent runs it through its own model+tool loop and returns the full result |
+## Agent teams
 
 **Declarative agent teams** are defined in `.sven/teams/*.yaml`. Manage them with:
 
 ```sh
 sven team start --file .sven/teams/myteam.yaml   # spawn all team members
 sven team status myteam                           # show live task board
-sven peer chat backend-agent                      # interactive session with any peer
 ```
 
-See [docs/08-node.md](docs/08-node.md) for setup, relay configuration, and security.
+See [docs/11-teams-and-tasks.md](docs/11-teams-and-tasks.md) for the full
+task board, worktree isolation, and tool reference.
 
 ## Proactive agent capabilities
 
-When running as a node (`sven node start`), sven gains a full automation stack:
+sven ships a full automation stack:
 
 | Integration | What it does | Docs |
 |-------------|--------------|------|
@@ -248,8 +238,8 @@ See [docs/technical/hsm-architecture.md](docs/technical/hsm-architecture.md) for
 | **Images** | `read_image` |
 | **Sub-agents** | `task` - spawn a focused sub-agent for a self-contained subtask |
 | **GDB / hardware** | `gdb_start_server`, `gdb_connect`, `gdb_command`, `gdb_interrupt`, `gdb_wait_stopped`, `gdb_status`, `gdb_stop` |
-| **Agent networking** | `list_peers`, `delegate_task` *(node mode only)* |
 | **Messaging** | `send_message` - send to any configured channel |
+| **Teams** | `create_team`, `list_team`, `spawn_teammate`, `create_task`, `claim_task`, `complete_task`, `list_tasks`, `assign_task` |
 | **Scheduler** | `schedule` - create, list, enable, disable, delete jobs |
 | **Email** | `email` - list, read, send, reply to, and search email |
 | **Calendar** | `calendar` - query schedule, create/update/delete events |
@@ -258,7 +248,6 @@ See [docs/technical/hsm-architecture.md](docs/technical/hsm-architecture.md) for
 | **Large content** | `context_open`, `context_read`, `context_grep`, `context_query`, `context_reduce` - memory-map files/dirs and analyse content larger than the context window |
 | **Streaming buffers** | `buf_status`, `buf_read`, `buf_grep` - inspect live output from running sub-agents or shell commands |
 | **Knowledge** | `list_knowledge`, `search_knowledge` - query `.sven/knowledge/` project knowledge documents |
-| **Collaboration** | `send_message` (peer), `wait_for_message`, `search_conversation`, `list_conversations`, `post_to_room`, `read_room_history` *(node mode only)* |
 | **Session** | `switch_mode`, `todo`, `update_memory`, `ask_question`†, `read_lints`, `load_skill` |
 
 †`ask_question` is only available in interactive TUI sessions.
@@ -349,8 +338,6 @@ mcp_servers:
 | [Configuration](docs/05-configuration.md) | All config options explained |
 | [Examples](docs/06-examples.md) | Real-world use cases |
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
-| [Node / P2P](docs/08-node.md) | Remote access, device pairing, agent networking |
-| [Agent Collaboration](docs/09-collaboration.md) | Peer conversations, rooms, and gossipsub broadcast |
 | [Large-Content Analysis](docs/10-large-content.md) | RLM context tools for files larger than the context window |
 | [Teams and Tasks](docs/11-teams-and-tasks.md) | Declarative agent teams, task board, git worktree isolation |
 | [Messaging Channels](docs/12-channels.md) | Telegram, Discord, WhatsApp, Signal, Matrix, IRC |
@@ -368,8 +355,6 @@ mcp_servers:
 | [Parallel Submachine Fan-out](docs/technical/parallel-submachines.md) | Concurrent child kernels: ChildSpawner, TaskMachine, isolated contexts, Execution fan-out |
 | [ACP](docs/technical/acp.md) | Agent Client Protocol reference |
 | [Skill system](docs/technical/skill-system.md) | Skill discovery, loading, and frontmatter reference |
-| [P2P / Node](docs/technical/node.md) | libp2p wiring, mDNS, relay, gossipsub |
-| [Session Room Protocol](docs/technical/session-room-protocol.md) | Wire protocol for agent rooms |
 
 Build the full user guide locally:
 
