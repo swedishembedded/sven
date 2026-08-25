@@ -981,6 +981,85 @@ mod tests {
         );
     }
 
+    /// A minimal tool-slot executor: records every effect it receives (there
+    /// should only ever be `CallTool`, since the composite routes everything
+    /// else elsewhere) and answers with a synthetic `ToolSucceeded` so the
+    /// turn loop can continue to its second round.
+    struct MockToolExecutor {
+        tx: mpsc::UnboundedSender<Effect>,
+    }
+
+    #[async_trait::async_trait]
+    impl EffectExecutor for MockToolExecutor {
+        async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
+            let Effect::CallTool { call_id, .. } = &effect else {
+                let _ = self.tx.send(effect);
+                return;
+            };
+            let call_id = *call_id;
+            let _ = self.tx.send(effect);
+            let _ = sink
+                .emit(Event::ToolSucceeded {
+                    call_id,
+                    observation: serde_json::Value::String("mock tool ran".into()),
+                })
+                .await;
+        }
+    }
+
+    /// `with_tool_executor_override` installs a custom executor as just the
+    /// composite's **tool slot** — `CallTool` reaches it, but the rest of the
+    /// default composite (turn/user/timer/checkpoint/audit) stays wired, so a
+    /// scripted tool-then-text turn still completes its second round.
+    #[tokio::test]
+    async fn tool_executor_override_owns_call_tool_rest_stays_on_default_composite() {
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<Effect>();
+        let provider = sven_model_mock::ScriptedMockProvider::tool_then_text(
+            "call-1",
+            "write_file",
+            "{\"path\":\"/tmp/mock_probe.txt\",\"text\":\"x\",\"append\":false}",
+            "done",
+        );
+        let last_request = provider.last_request.clone();
+
+        let (runtime, handle, _channels, _mcp_manager, _mcp_event_rx) =
+            RuntimeBuilder::new(Arc::new(config), "chat")
+                .with_model_provider(Box::new(provider))
+                .with_tool_executor_override(Box::new(|_store, _call_id_to_thread| {
+                    Box::new(MockToolExecutor { tx })
+                }))
+                .build()
+                .await
+                .expect("runtime should build with a tool-executor override");
+
+        handle.send_user_message("hello".into()).await;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let effect = tokio::time::timeout_at(deadline, rx.recv())
+            .await
+            .ok()
+            .flatten();
+        assert!(
+            matches!(effect, Some(Effect::CallTool { .. })),
+            "tool-slot override must receive CallTool, got {effect:?}"
+        );
+
+        // The default TurnExecutor is still wired: after the tool result, it
+        // sends the continuation call that produces round 2 ("done").
+        while tokio::time::Instant::now() < deadline && last_request.lock().unwrap().is_none() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        runtime.abort();
+        assert!(
+            last_request.lock().unwrap().is_some(),
+            "default turn executor never sent the continuation call after the tool result"
+        );
+    }
+
     #[tokio::test]
     async fn injected_model_provider_replaces_config_construction() {
         // A config whose provider `from_config` cannot build: if the build
