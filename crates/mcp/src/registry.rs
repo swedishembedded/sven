@@ -5,12 +5,11 @@
 //! Default MCP-safe tool registry for the sven MCP server.
 //!
 //! Not every sven tool makes sense to expose via MCP.  Tools that require a
-//! live TUI session (`ask_question`, `switch_mode`, `todo`), tools that
-//! modify internal agent state (`update_memory`), and tools that need the P2P
-//! stack (`delegate`, `list_peers`) are intentionally omitted.
+//! live TUI session (`ask_question`, `switch_mode`, `todo`) and tools that
+//! modify internal agent state (`update_memory`) are intentionally omitted.
 //!
 //! The tools registered here are stateless from the MCP client's perspective
-//! and work without any running sven node or TUI.
+//! and work without a TUI.
 
 use sven_tools::ToolRegistry;
 use sven_tools_exec::{RunTerminalCommandTool, ShellTool};

@@ -390,35 +390,6 @@ pub use sven_session_model::format_collab_event;
 /// without adding them to the LLM context.
 pub use sven_vocab::CollabEvent;
 
-/// Guidelines injected into the system prompt when an agent is executing a
-/// task that was **delegated to it by a peer** over the P2P swarm.
-///
-/// The goal is to prevent reflexive re-delegation: receiving a task and
-/// immediately routing it back out without attempting any local work.
-pub fn p2p_task_guidelines() -> &'static str {
-    "## P2P Task Execution Guidelines\n\n\
-     You have received this task from a peer agent in the swarm.  **Your job is \
-     to execute it - not to route it.**\n\n\
-     Rules you MUST follow:\n\
-     - **Attempt the task locally first.**  Use your own tools (files, shell, \
-       web search, etc.) before considering delegation.\n\
-     - **Only use `delegate_task` as an absolute last resort** - specifically \
-       when the task requires a capability or resource that is provably only \
-       available on a different peer AND you have already attempted local \
-       execution and confirmed it is impossible.\n\
-     - **Never delegate back to the peer that sent you this task.**  Doing so \
-       creates a circular chain; the request will be rejected with a cycle error.\n\
-     - **Never use `delegate_task` as your first tool call.**  Always try at \
-       least one local approach first.\n\
-     - **Be aware of the unified hop budget.**  The system enforces a single \
-       maximum depth across all message channels (task delegation, session \
-       messages, and room posts).  If you receive an error stating the hop-depth \
-       limit is reached, you MUST complete the task with locally available \
-       information - further routing is impossible.\n\
-     - If you genuinely cannot complete the task with any local approach, \
-       respond with a clear failure message explaining what is missing."
-}
-
 // ─── Knowledge section ────────────────────────────────────────────────────────
 
 /// Maximum total characters for the `<knowledge_base>` block.

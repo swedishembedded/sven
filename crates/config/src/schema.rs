@@ -1236,7 +1236,7 @@ pub struct VoiceConfig {
     /// Twilio phone number to call from (E.164 format, e.g. `+1234567890`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub twilio_phone_number: Option<String>,
-    /// Public base URL of this sven node, used for Twilio webhooks.
+    /// Public base URL of this sven instance, used for Twilio webhooks.
     /// Example: `https://myagent.example.com`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook_base_url: Option<String>,

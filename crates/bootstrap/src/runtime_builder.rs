@@ -87,9 +87,8 @@ impl KernelChannels {
     /// an empty string for every `AskUser`, `true` (approve) for every
     /// `RequestHumanApproval`. Returns once both channels close.
     ///
-    /// This is the unattended path -- CI runs, the P2P node's reactive-mode
-    /// sessions (which gate tool execution through the tool registry instead
-    /// of these HSM-level effects), one-shot test/demo wiring. Typically
+    /// This is the unattended path -- CI runs and one-shot test/demo
+    /// wiring. Typically
     /// driven with `tokio::spawn(channels.auto_approve())`.
     pub async fn auto_approve(mut self) {
         loop {

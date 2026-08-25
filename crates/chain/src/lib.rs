@@ -339,7 +339,7 @@ fn lock_path_for(log_path: &Path) -> PathBuf {
 /// for records whose duplication doesn't change meaning; callers appending
 /// entries whose duplication would change meaning (e.g. monetary ledger
 /// entries) must **not** blindly retry on error — see a ledger's
-/// `CreditLedger::append`.
+/// another chained writer's append path.
 pub fn append_chain(path: &Path, entries: Vec<serde_json::Value>) -> std::io::Result<usize> {
     if entries.is_empty() {
         return Ok(0);
@@ -616,7 +616,7 @@ mod tests {
     /// Appending must cost time proportional to the **batch**, not to the
     /// history already on disk.
     ///
-    /// `AuditExecutor` appends on every audited effect and `CreditLedger` on
+    /// `AuditExecutor` appends on every audited effect and other writers on
     /// every billing debit, for the whole life of a long-running server. If
     /// finding the chain tip re-reads and re-parses the entire log, those
     /// paths degrade quadratically in the number of records and the resident

@@ -272,7 +272,7 @@ pub struct HistoryEntry {
 pub struct PeerListEntry {
     /// Human-readable name from the peer's agent card.
     pub name: String,
-    /// Libp2p peer ID as a string.
+    /// Stable peer id as a string.
     pub peer_id: String,
     /// Whether the peer is currently connected.
     pub connected: bool,
@@ -378,8 +378,7 @@ pub struct WebDeviceSummary {
 // ── Kernel mappings ───────────────────────────────────────────────────────────
 
 /// Wraps a kernel [`UiEvent`](sven_hsm::UiEvent) from the observation bus as
-/// a [`ControlEvent::Session`] for broadcasting to WebSocket / P2P / share
-/// operator clients.
+/// a [`ControlEvent::Session`] for broadcasting to operator clients.
 ///
 /// Total (no longer `Option`-returning): every variant is forwarded
 /// verbatim, not just the handful a hand-maintained translator special-cased.
@@ -593,7 +592,7 @@ mod tests {
     fn attach_command_and_history_event_round_trip() {
         let sid = Uuid::new_v4();
 
-        // Attach travels over the P2P (CBOR) transport.
+        // Attach travels over the CBOR transport.
         let cmd = ControlCommand::Attach { session_id: sid };
         let back = decode_command(&encode_command(&cmd).unwrap()).unwrap();
         assert!(matches!(back, ControlCommand::Attach { session_id } if session_id == sid));
@@ -632,7 +631,7 @@ mod tests {
         let cmd = ControlCommand::Pair {
             token: "one-time-secret".into(),
         };
-        // CBOR (P2P transport) round-trip.
+        // CBOR transport round-trip.
         let back = decode_command(&encode_command(&cmd).unwrap()).unwrap();
         assert!(matches!(back, ControlCommand::Pair { token } if token == "one-time-secret"));
         // Pairing is a transport-layer concern, never a kernel event, and has

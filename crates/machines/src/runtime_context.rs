@@ -68,10 +68,9 @@ pub struct AgentRuntimeContext {
     pub knowledge_drift_note: Option<String>,
     /// Prior conversation messages to pre-load into the session history.
     ///
-    /// Used by the session executor when resuming a P2P conversation session:
-    /// the tail of the local conversation store is loaded and injected here so
-    /// the agent has context from previous turns without requiring the remote
-    /// peer to retransmit history.
+    /// Used when resuming a stored conversation: the tail of the local
+    /// conversation store is loaded and injected here so the agent has
+    /// context from previous turns.
     pub prior_messages: Vec<Message>,
 }
 

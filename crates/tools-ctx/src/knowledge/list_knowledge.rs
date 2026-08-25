@@ -146,11 +146,11 @@ mod tests {
     async fn lists_documents_with_metadata() {
         let docs = vec![
             KnowledgeInfo {
-                subsystem: "P2P Networking".to_string(),
-                files: vec!["crates/p2p/**".to_string()],
+                subsystem: "HSM Kernel".to_string(),
+                files: vec!["crates/hsm/**".to_string()],
                 updated: Some("2026-01-15".to_string()),
                 path: std::path::PathBuf::from(".sven/knowledge/sven-hsm.md"),
-                body: "P2P body.".to_string(),
+                body: "HSM body.".to_string(),
             },
             KnowledgeInfo {
                 subsystem: "Tool System".to_string(),
@@ -166,7 +166,7 @@ mod tests {
         };
         let out = t.execute(&call()).await;
         assert!(!out.is_error, "{}", out.content);
-        assert!(out.content.contains("P2P Networking"));
+        assert!(out.content.contains("HSM Kernel"));
         assert!(out.content.contains("Tool System"));
         assert!(out.content.contains("2026-01-15"));
         assert!(out.content.contains("sven-hsm.md"));

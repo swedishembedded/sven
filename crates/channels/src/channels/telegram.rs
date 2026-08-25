@@ -17,7 +17,6 @@
 //!        bot_token: "${TELEGRAM_BOT_TOKEN}"
 //!        allowed_users: []   # empty = allow all
 //!    ```
-//! 3. Start the node: `sven node start`
 //! 4. Message your bot - sven will respond.
 
 use async_trait::async_trait;

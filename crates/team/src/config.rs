@@ -77,7 +77,7 @@ impl std::fmt::Display for MemberStatus {
 /// A single team member record stored in the team config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamMember {
-    /// libp2p peer ID (base58).
+    /// Stable agent id for this member.
     pub peer_id: String,
     /// Human-readable name of the agent.
     pub name: String,
@@ -159,7 +159,7 @@ pub fn find_teams_by_lead(lead_peer: &str) -> Vec<TeamConfig> {
 /// (which re-uses the same ID on registration).  Using the same ID prevents
 /// duplicate roster entries when the process starts.
 ///
-/// The format is intentionally different from base58-encoded libp2p peer IDs
+/// The format is intentionally different from a base58-encoded network peer id
 /// so it can be identified at a glance in logs and the team config.
 pub fn teammate_stable_peer_id(team_name: &str, agent_name: &str) -> String {
     use std::collections::hash_map::DefaultHasher;

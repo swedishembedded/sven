@@ -4,7 +4,7 @@
 //! Integration tests for the sven ACP server.
 //!
 //! These tests drive the ACP layer directly at the bridge / agent level
-//! without requiring a running sven node or real LLM provider.
+//! without requiring a real LLM provider.
 
 use agent_client_protocol::SessionUpdate;
 use sven_acp::bridge::{

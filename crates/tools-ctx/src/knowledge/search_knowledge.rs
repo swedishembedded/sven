@@ -275,8 +275,8 @@ mod tests {
     async fn no_match_returns_informative_message() {
         let t = SearchKnowledgeTool {
             knowledge: SharedKnowledge::new(vec![make_doc(
-                "P2P",
-                "## Architecture\n\nThe node uses mDNS for discovery.",
+                "HSM",
+                "## Architecture\n\nThe kernel dispatches effects to executors.",
             )]),
         };
         let out = t.execute(&call("raft")).await;
@@ -289,11 +289,11 @@ mod tests {
     async fn finds_match_with_context() {
         let body = "line 1\nline 2\nThe relay handles routing\nline 4\nline 5";
         let t = SearchKnowledgeTool {
-            knowledge: SharedKnowledge::new(vec![make_doc("P2P", body)]),
+            knowledge: SharedKnowledge::new(vec![make_doc("HSM", body)]),
         };
         let out = t.execute(&call("relay")).await;
         assert!(!out.is_error, "{}", out.content);
-        assert!(out.content.contains("P2P"));
+        assert!(out.content.contains("HSM"));
         assert!(out.content.contains("relay"));
         assert!(out.content.contains("1 match"));
     }
@@ -302,11 +302,11 @@ mod tests {
     async fn case_insensitive_search() {
         let body = "The RELAY_TIMEOUT constant controls reconnect backoff.";
         let t = SearchKnowledgeTool {
-            knowledge: SharedKnowledge::new(vec![make_doc("P2P", body)]),
+            knowledge: SharedKnowledge::new(vec![make_doc("HSM", body)]),
         };
         let out = t.execute(&call("relay_timeout")).await;
         assert!(!out.is_error, "{}", out.content);
-        assert!(out.content.contains("P2P"));
+        assert!(out.content.contains("HSM"));
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Standalone `sven-acp` binary (refactor plan Phase 6.2): the same ACP
-//! agent server as `sven acp`, without linking the TUI/P2P/cloud closure of
+//! agent server as `sven acp`, without linking the TUI closure of
 //! the monolithic `sven` binary.
 
 use clap::Parser;

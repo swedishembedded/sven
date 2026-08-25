@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Reusable HSM-kernel → [`AgentEvent`] adapter.
 //!
-//! Every consumer-facing surface (headless CI, interactive TUI/GUI, P2P node,
-//! local ACP) historically drove the legacy `sven_machines::Agent` loop and
+//! Every consumer-facing surface (headless CI, interactive TUI, local ACP)
+//! historically drove the legacy `sven_machines::Agent` loop and
 //! consumed its [`AgentEvent`] stream. The kernel ([`RuntimeBuilder`] /
 //! [`SessionBundle`]) instead exposes an outward observation plane of
 //! [`UiEvent`]s plus inward [`KernelChannels`] for user-question / approval

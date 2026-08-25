@@ -392,8 +392,7 @@ pub fn cmd_init(project_root: &Path, name: &str, goal: Option<&str>) -> anyhow::
 ///
 /// This is a simple polling dashboard that prints status lines to stderr
 /// (diagnostics) and emits structured event lines to stdout for downstream
-/// processing.  For full P2P event streaming, run a `sven node` and subscribe
-/// via the P2P gossipsub room.
+/// processing.
 pub fn cmd_watch(team_name: &str, interval_secs: u64, timeout_secs: u64) -> anyhow::Result<()> {
     use std::collections::HashMap;
     use std::time::{Duration, Instant};

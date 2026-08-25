@@ -64,7 +64,7 @@ const LEGACY_PROBE_BYTES: u64 = 1024 * 1024;
 /// Both probes read a **bounded** slice of the file — a prefix for the legacy
 /// check, a tail window for the tip — so an append costs time proportional to
 /// its own batch rather than to the history already on disk. `AuditExecutor`
-/// and `CreditLedger` append for the whole life of a server; re-reading the
+/// and other chained writers append for the whole life of a server; re-reading the
 /// entire log per append made those paths quadratic in record count and gave
 /// a single append unbounded resident memory.
 pub(crate) fn prepare_chain_tip(path: &Path) -> std::io::Result<String> {

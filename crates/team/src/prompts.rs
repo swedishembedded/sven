@@ -99,7 +99,7 @@ pub fn architect_prompt() -> &'static str {
      4. Write a detailed specification (the \"editor prompt\") describing every change \
         the editor must make.  Be precise: include file paths, function names, and \
         the expected behaviour after the change.\n\
-     5. Delegate to the editor using `delegate_task` with your specification as the task.\n\
+     5. Hand the specification to the editor as a task on the shared task board.\n\
      6. Review the editor's result.  If incorrect, revise the specification and re-delegate.\n\n\
      **Rules:**\n\
      - Do NOT use file-editing tools (write, edit_file, etc.) yourself.\n\

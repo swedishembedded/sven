@@ -12,7 +12,7 @@
 //! # Concurrency
 //!
 //! All mutations use an exclusive advisory file lock on the tasks file, so
-//! multiple sven node processes in the same team can safely claim and update
+//! multiple sven processes in the same team can safely claim and update
 //! tasks without races.  The lock is held only for the duration of a
 //! read-modify-write cycle (typically a few microseconds).
 

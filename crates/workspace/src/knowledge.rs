@@ -12,9 +12,9 @@
 //!
 //! ```markdown
 //! ---
-//! subsystem: P2P Networking
+//! subsystem: HSM Kernel
 //! files:
-//!   - crates/p2p/**
+//!   - crates/hsm/**
 //!   - crates/node/**
 //! updated: 2026-03-01
 //! ---
@@ -354,11 +354,11 @@ mod tests {
 
     #[test]
     fn parse_knowledge_file_valid() {
-        let raw = "---\nsubsystem: P2P Networking\nfiles:\n  - crates/p2p/**\nupdated: 2026-01-15\n---\n\n## Core Architecture\n\nDetail here.";
+        let raw = "---\nsubsystem: HSM Kernel\nfiles:\n  - crates/hsm/**\nupdated: 2026-01-15\n---\n\n## Core Architecture\n\nDetail here.";
         let path = PathBuf::from("/tmp/sven-hsm.md");
         let info = parse_knowledge_file(raw, &path).expect("should parse");
-        assert_eq!(info.subsystem, "P2P Networking");
-        assert_eq!(info.files, vec!["crates/p2p/**"]);
+        assert_eq!(info.subsystem, "HSM Kernel");
+        assert_eq!(info.files, vec!["crates/hsm/**"]);
         assert_eq!(info.updated.as_deref(), Some("2026-01-15"));
         assert!(info.body.contains("Core Architecture"));
     }
@@ -410,8 +410,8 @@ mod tests {
         let dir = knowledge_dir(&tmp);
         write_doc(
             &dir,
-            "p2p",
-            "---\nsubsystem: P2P\nfiles:\n  - crates/p2p/**\n---\n\nP2P body.",
+            "hsm",
+            "---\nsubsystem: HSM\nfiles:\n  - crates/hsm/**\n---\n\nHSM body.",
         );
         write_doc(&dir, "core", "---\nsubsystem: Core\n---\n\nCore body.");
 
@@ -419,7 +419,7 @@ mod tests {
         assert_eq!(docs.len(), 2);
         // sorted by subsystem
         assert_eq!(docs[0].subsystem, "Core");
-        assert_eq!(docs[1].subsystem, "P2P");
+        assert_eq!(docs[1].subsystem, "HSM");
     }
 
     #[test]
@@ -453,17 +453,17 @@ mod tests {
     #[test]
     fn format_drift_warnings_single() {
         let warnings = vec![DriftWarning {
-            subsystem: "P2P Networking".to_string(),
+            subsystem: "HSM Kernel".to_string(),
             knowledge_file: "sven-hsm.md".to_string(),
             updated: "2026-01-15".to_string(),
-            changed_files: vec!["crates/p2p/src/node.rs".to_string()],
+            changed_files: vec!["crates/hsm/src/lib.rs".to_string()],
         }];
         let text = format_drift_warnings(&warnings).unwrap();
         assert!(text.contains("Knowledge Drift Detected"));
         assert!(text.contains("sven-hsm.md"));
-        assert!(text.contains("P2P Networking"));
+        assert!(text.contains("HSM Kernel"));
         assert!(text.contains("2026-01-15"));
-        assert!(text.contains("crates/p2p/src/node.rs"));
+        assert!(text.contains("crates/hsm/src/lib.rs"));
         assert!(text.contains("search_knowledge"));
     }
 }

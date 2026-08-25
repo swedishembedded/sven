@@ -522,9 +522,9 @@ impl Tool for RegisterTeammateTool {
     }
 
     fn description(&self) -> &str {
-        "Register an externally-discovered P2P peer as a teammate in the team config. \
-         Use this ONLY when a peer has joined the P2P room on its own and you have its \
-         real libp2p peer ID from list_peers. \
+        "Register an already-running sven process as a teammate in the team config. \
+         Use this ONLY when a process joined the team on its own and you have its \
+         agent id. \
          DO NOT call this after spawn_teammate - spawning already handles registration \
          automatically using a stable synthetic peer ID. \
          Calling register_teammate after spawn_teammate will create duplicate roster entries."
@@ -629,15 +629,13 @@ impl Tool for RegisterTeammateTool {
 
 /// Launch a new `sven` process as a teammate and register it in the team.
 ///
-/// The spawned process runs in CI/headless mode and joins the same P2P room
-/// as the lead.  The tool registers the teammate in the config so the lead
-/// can track its progress.
+/// The spawned process runs in CI/headless mode and shares the lead's team
+/// config and task board.  The tool registers the teammate in the config so
+/// the lead can track its progress.
 ///
 /// The spawned process receives:
 /// - `--team-name <name>` - the team to join
 /// - `--team-role <role>` - the role to adopt
-/// - `--team-lead-peer <peer_id>` - the lead's peer ID
-/// - `--room <room>` - gossipsub room to join
 /// - `--model <model>` - model override (optional)
 /// - `--headless` - run without a TUI
 pub struct SpawnTeammateTool {
@@ -660,7 +658,7 @@ impl Tool for SpawnTeammateTool {
 
     fn description(&self) -> &str {
         "Spawn a new sven agent as a teammate in the current team. \
-         The teammate runs as a separate process and joins the same P2P room. \
+         The teammate runs as a separate process sharing the team's task board. \
          You must be the team lead to spawn teammates. \
          Use list_team to monitor the new teammate's status. \
          Use shutdown_teammate to stop a running teammate cleanly."
@@ -673,7 +671,7 @@ impl Tool for SpawnTeammateTool {
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Name for the new teammate (used in team roster and P2P discovery)"
+                    "description": "Name for the new teammate (used in the team roster)"
                 },
                 "role": {
                     "type": "string",
@@ -880,9 +878,8 @@ impl Tool for SpawnTeammateTool {
 /// Mark a teammate as closed in the team config (graceful shutdown signal).
 ///
 /// The teammate itself is responsible for actually shutting down when it
-/// receives this signal (via a gossipsub `TeamLeave` event or by polling the
-/// config).  This tool updates the config so the lead's roster reflects the
-/// change immediately.
+/// polls the config and sees the signal.  This tool updates the config so the
+/// lead's roster reflects the change immediately.
 pub struct ShutdownTeammateTool {
     pub config: TeamConfigHandle,
     pub agent_peer_id: String,
