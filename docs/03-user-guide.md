@@ -485,12 +485,11 @@ for both command names and their arguments.
 | `/refresh` | Re-scan skill directories and register any newly added skills as commands. |
 | `/skills` | Open the skills inspector - a browsable tree of all loaded skills. |
 | `/subagents` | Show all configured subagents with their descriptions, models, and paths. |
-| `/peers` | Show active subagent subprocess buffers and configured peer agents. |
+| `/peers` | Show active subagent subprocess buffers and configured team agents. |
 | `/context` | Show the current agent context: project root, skill and agent counts, output buffer handles. |
 | `/tools` | Show all available tools with descriptions and parameter counts. |
 | `/approve [task_id]` | Approve a teammate's pending plan (team mode). |
 | `/reject [task_id] [reason]` | Reject a plan with feedback (team mode). |
-| `/share [share-id]` | Share this running session so a remote consultant can steer it ("local brain, remote steer"). One-tap when a broker is configured via `SVEN_SHARE_URL`/`SVEN_SHARE_TOKEN`/`SVEN_SHARE_TENANT`; otherwise (or with `--print`) shows the scriptable `sven share` invocation. |
 | `/agents` | Show the team members overlay (also `Ctrl+A`). |
 | `/tasks` | Show the current team task list (also `Alt+T`). |
 | `/quit` | Exit sven. In the Neovim buffer, use `:q` or `:qa`. |
@@ -735,7 +734,7 @@ or agent first.
 
 | File pattern              | Before changes: load              |
 |---------------------------|-----------------------------------|
-| crates/p2p/**        | `/p2p-specialist`                 |
+| crates/hsm/**        | `/hsm-specialist`                 |
 | crates/model/**      | `/model-integrator`               |
 | .sven/knowledge/**        | update `updated:` date when done  |
 | src/auth/**               | `/security-auditor` (readonly)    |
@@ -750,12 +749,12 @@ touching matching files.
 
 ### Tips
 
-- **Use glob patterns.** `crates/p2p/**` matches any file under that
+- **Use glob patterns.** `crates/hsm/**` matches any file under that
   directory; `src/**/*.rs` matches all Rust source files.
 - **Cross-reference with knowledge docs.** If a subsystem has a knowledge doc,
   note it in the routing table:
   ```markdown
-  | crates/p2p/**  | search_knowledge "P2P Networking" before changes |
+  | crates/hsm/**  | search_knowledge "HSM Kernel" before changes |
   ```
 - **Combine with skills.** Skills can themselves contain routing sub-tables
   for their own sub-components.
@@ -819,32 +818,6 @@ Open **Settings → Tools → ACP Agents** and create a new entry:
 | Name      | Sven            |
 | Command   | `sven`          |
 | Arguments | `acp serve`     |
-
-### Using a shared sven node
-
-If a `sven node` is already running (e.g. a team server or CI orchestrator),
-point the IDE at it instead of spawning a local agent:
-
-```json
-{
-  "agent_servers": {
-    "sven-node": {
-      "type": "custom",
-      "command": "sven",
-      "args": ["acp", "serve", "--node-url", "wss://localhost:8443"],
-      "env": {
-        "SVEN_NODE_TOKEN": "<token printed by sven node start>"
-      }
-    }
-  }
-}
-```
-
-The token can also be exported in your shell profile instead of hardcoding it:
-
-```sh
-export SVEN_NODE_TOKEN=<token>
-```
 
 ### What the IDE sees
 

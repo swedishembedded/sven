@@ -21,8 +21,7 @@ constructed nowhere outside its own `#[cfg(test)]` blocks. No `.graph` asset
 files exist anywhere in the repository. `ModeRegistry::default_registry()`
 (`crates/core/src/mode.rs`) registers only `ReactiveAgentMachine` (`agent`/
 `reactive`/`chat`) and `SdlcMachine` (`sdlc`) — never a graph. In a codebase that
-shipped 34 crates, 79 tools, and a cloud control plane in the time this
-infrastructure existed, it never acquired a second production consumer.
+shipped 34 crates and 79 tools in the time this infrastructure existed, it never acquired a second production consumer.
 
 **It doesn't work.** `crates/graph/src/template.rs` renders `{{ path }}`
 substitutions with `bytes[i] as char` — a byte pushed directly as `char` is a

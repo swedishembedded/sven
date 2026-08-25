@@ -33,42 +33,40 @@ Each knowledge document is a plain Markdown file with YAML frontmatter:
 
 ```markdown
 ---
-subsystem: P2P Networking
+subsystem: HSM Kernel
 files:
-  - crates/p2p/**
-  - crates/node/**
+  - crates/hsm/**
+  - crates/kernel/**
 updated: 2026-03-01
 ---
 
 ## Core Architecture
 
-The node uses libp2p with Noise (Ed25519), mDNS for local discovery, and
-circuit relay for cross-network connectivity.  All connections are encrypted
-in transit; there is no plaintext path.
+The kernel drives a hierarchical state machine: every LLM turn and every tool
+call is a transition, so control flow is deterministic and replayable rather
+than emergent from the model's output.
 
 ## Correctness Invariants
 
-- `Swarm::dial()` MUST always use a `DialOpts::peer_id()` guard.  Omitting
-  the guard causes duplicate connections under mDNS re-announcement.
-- Relay reservation MUST be renewed before expiry (default 1 hour).  A lapsed
-  reservation silently drops all relayed inbound connections.
+- A transition MUST NOT perform I/O.  Machines emit `Effect`s; only the
+  executor layer touches the outside world.
+- Every dispatched `Effect::CallTool` MUST produce a terminal event
+  (`ToolSucceeded` or `ToolFailed`), even on timeout, or the kernel hangs.
 
 ## Known Failure Modes
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| No peers on local network | mDNS multicast blocked | Use relay-only mode |
-| Connection drops after 60 s | Keep-alive not configured | Set `SwarmConfig::keep_alive` |
-| dcutr never upgrades | Hole-punch race on NAT | Ensure both sides wait for `RelayReservationRenewed` |
+| Session hangs after a tool call | Executor dropped without emitting a terminal event | Synthesize `ToolFailed` on every error path |
+| Approval never resolves | Approval id minted instead of derived | Derive the id from the tool call |
+| Runtime outlives its handle | Handle dropped rather than detached | Call `detach()` explicitly |
 
 ## Critical Patterns
 
-Always check `is_relayed()` before assuming a direct connection:
+Always derive an approval id from the call it guards:
 
 ```rust
-if addr.is_relayed() {
-    // do not count this as a direct peer for quorum purposes
-}
+let approval_id = approval_id_for(&tool_call);
 ```
 ```
 
@@ -109,8 +107,8 @@ Found 3 knowledge document(s):
 
 Subsystem                      Covers                                   Updated      File
 ----------------------------------------------------------------------------------------------------
-Agent Loop & Compaction        crates/core/**                      2026-03-01   sven-core.md
-P2P Networking                 crates/p2p/**, crates/node/**  2026-03-01   sven-p2p.md
+Agent Loop & Compaction        crates/turn/**                      2026-03-01   sven-turn.md
+HSM Kernel                     crates/hsm/**, crates/kernel/**     2026-03-01   sven-hsm.md
 Tool System                    crates/tools/**                     2026-03-01   sven-tools.md
 
 Use `search_knowledge "<query>"` to find relevant content across all docs.
@@ -125,17 +123,17 @@ Keyword search across all knowledge document bodies.  Returns matching
 excerpts with context lines, sorted by match count:
 
 ```
-search_knowledge("relay")
+search_knowledge("effect")
 
-## Knowledge Search: `relay`
+## Knowledge Search: `effect`
 Found 3 match(es) in 1 of 2 document(s):
 
-### P2P Networking - `sven-p2p.md` (updated 2026-03-01)  [3 match(es)]
+### HSM Kernel - `sven-hsm.md` (updated 2026-03-01)  [3 match(es)]
 
 ```
-   5 │ The node uses libp2p with Noise (Ed25519), mDNS for local discovery, and
->  6 │ circuit relay for cross-network connectivity.
-   7 │ All connections are encrypted in transit.
+   5 │ A transition MUST NOT perform I/O.  Machines emit `Effect`s;
+>  6 │ only the executor layer touches the outside world.
+   7 │ Every dispatched effect produces a terminal event.
 ```
 ...
 ```
@@ -150,7 +148,7 @@ To load a complete knowledge document, use `read_file` with the absolute path
 (which `list_knowledge` displays in the file column):
 
 ```
-read_file(".sven/knowledge/sven-p2p.md")
+read_file(".sven/knowledge/sven-hsm.md")
 ```
 
 ---
@@ -164,9 +162,9 @@ date.  If drift is detected, a warning appears in the system prompt:
 ```
 ## Knowledge Drift Detected
 
-⚠ `.sven/knowledge/sven-p2p.md` covers `P2P Networking` - last updated 2026-01-15.
-  Files committed since then: crates/p2p/src/node.rs
-  Before editing these files, call `search_knowledge "P2P Networking"` and update the doc after changes.
+⚠ `.sven/knowledge/sven-hsm.md` covers `HSM Kernel` - last updated 2026-01-15.
+  Files committed since then: crates/kernel/src/lib.rs
+  Before editing these files, call `search_knowledge "HSM Kernel"` and update the doc after changes.
 ```
 
 The check uses `git log --since=<updated>` with the `files:` patterns as
@@ -236,10 +234,10 @@ knowledge documents it depends on:
 
 ```markdown
 ---
-name: p2p-specialist
-description: P2P networking expert. Use when modifying sven-p2p or sven-node.
+name: hsm-specialist
+description: HSM kernel expert. Use when modifying sven-hsm or sven-kernel.
 knowledge:
-  - sven-p2p.md
+  - sven-hsm.md
 ---
 
 ... system prompt body ...

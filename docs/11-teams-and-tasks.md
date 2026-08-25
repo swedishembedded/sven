@@ -69,7 +69,7 @@ reporting results back to you.
 ### The simplest approach: one prompt
 
 ```
-sven node exec "Refactor the auth module in src/auth/ to use PASETO instead of JWT.
+sven "Refactor the auth module in src/auth/ to use PASETO instead of JWT.
 
 Use a team:
 1. Create a team called 'auth-refactor'.
@@ -91,8 +91,8 @@ The agent will:
 
 ## Interactive walkthrough
 
-The following prompts show how to drive a team step by step, as you would in
-the `sven node start` web UI or via `sven node exec`.
+The following prompts show how to drive a team step by step, as you would type
+them into an interactive sven session.
 
 ### Step 1: Create the team
 
@@ -199,18 +199,12 @@ You can also use any custom string: `role: "documentation-writer"` or
 ## How to direct teammate work
 
 The **only** correct way to give a teammate work is through the task system.
-`send_message` and `delegate_task` are for communicating with *separate sven
-nodes* (other machines configured in `swarm.peers`). They do not work with
-locally spawned teammates and the model should never attempt to use them for
-intra-team coordination.
 
 | What you want | Correct tool |
 |---|---|
 | Give a teammate a specific piece of work | `create_task` with `assigned_to` |
 | Re-point a task to a different teammate | `assign_task` |
 | See what everyone is working on | `list_tasks` + `list_team` |
-| Send a note to a peer on another machine | `send_message` / `wait_for_message` |
-| Offload a task to a peer on another machine | `delegate_task` |
 
 Prompt pattern that reliably works:
 
@@ -320,9 +314,8 @@ sven team definitions
 
 ## Prompting the lead agent effectively
 
-The lead agent is the node's interactive agent - the one you talk to via the
-web UI or `sven node exec`.  It has access to all team tools plus the full
-standard toolset.
+The lead agent is your interactive sven session.  It has access to all team
+tools plus the full standard toolset.
 
 ### Be explicit about the outcome
 
@@ -365,17 +358,14 @@ Once that works, add more teammates and tasks.
 
 ---
 
-## `sven node exec` examples
+## Prompt examples
 
-These commands can be run from any terminal where the node is reachable.  Set
-`SVEN_NODE_TOKEN` first (printed on first startup; rotate with
-`sven node regenerate-token`).
+These are prompts you type into an interactive sven session (or pass on the
+command line as `sven "..."`).
 
 ```sh
-export SVEN_NODE_TOKEN=<your-token>
-
 # Create a team and start a multi-step workflow in one shot
-sven node exec "
+sven "
 Create a team called 'audit' with goal 'Security audit of the authentication module'.
 Spawn two teammates:
   - explorer named 'code-reader' to read src/auth/ and list every place that
@@ -389,13 +379,13 @@ security-report.md.
 "
 
 # Check team status on a running team
-sven node exec "List the current team status and show all tasks with their statuses."
+sven "List the current team status and show all tasks with their statuses."
 
 # Shutdown and clean up a team
-sven node exec "Shut down all teammates in team 'audit' and clean up the team."
+sven "Shut down all teammates in team 'audit' and clean up the team."
 
 # Assign a specific task to a named teammate
-sven node exec "
+sven "
 Find the task titled 'Review findings' in the task list and assign it to
 sec-reviewer using assign_task."
 ```
@@ -406,7 +396,7 @@ sec-reviewer using assign_task."
 
 When a teammate starts, it receives:
 
-- Its team name, role, and lead's peer ID from command-line arguments
+- Its team name and role from command-line arguments
 - A system prompt that tells it to claim tasks from the shared list, work on
   them, and mark them complete with a summary
 - The same standard toolset as the lead agent (file read/write, terminal,
@@ -432,12 +422,6 @@ sven enforces hard limits to prevent runaway agent chains:
 - **Subprocess depth** - a teammate spawned by `TaskTool` (the local subprocess
   spawner) cannot itself spawn further sub-agents.  The maximum depth is 3
   levels.
-- **P2P hop depth** - tasks delegated over the network cannot chain more than 4
-  hops.  A node that receives a delegated task does not get team tools, so it
-  cannot create new teams or spawn new teammates.
-- **Cycle detection** - the delegation chain is tracked by peer ID.  If a task
-  would loop back to a node already in the chain, it is rejected before the
-  model is even invoked.
 - **SpawnTeammateTool** - only the team lead can spawn teammates.  A teammate
   cannot spawn sub-teams.
 
@@ -449,7 +433,7 @@ can override them.
 ## Monitoring without a running session
 
 The task store and team config are plain files on disk.  You can inspect them
-at any time without a running node:
+at any time without a running session:
 
 ```sh
 # See all tasks for team 'release-prep'
@@ -467,10 +451,8 @@ Team definitions (YAML files) live in `.sven/teams/` inside your project.
 
 ### Teammate appears in logs but not in `list_team`
 
-The teammate process has started but has not yet connected to the P2P mesh and
-registered itself.  Wait a few seconds and call `list_team` again.  If it
-never appears, check that both nodes have each other in `swarm.peers` and that
-the swarm port is reachable.
+The teammate process has started but has not yet registered itself in the
+shared team config.  Wait a few seconds and call `list_team` again.
 
 ### Task stuck in `in_progress` with no activity
 
@@ -501,7 +483,7 @@ Or call `cleanup_team` with `force: true` from the lead agent.
 
 ## Reference - team and task tools
 
-These tools are available to the node's interactive (lead) agent.
+These tools are available to the interactive (lead) agent.
 
 ### Team lifecycle
 
@@ -511,9 +493,8 @@ These tools are available to the node's interactive (lead) agent.
 | `list_team` | Show all members with their role, status, and current task. |
 | `spawn_teammate` | Start a new sven process as a teammate.  Only the lead can do this. |
 | `shutdown_teammate` | Signal a teammate to finish its current task and exit. |
-| `register_teammate` | Register an already-running peer as a team member (for manually started nodes). |
+| `register_teammate` | Register an already-running sven process as a team member (for manually started teammates). |
 | `merge_teammate_branch` | Merge a teammate's Git worktree branch into the current branch. |
-| `broadcast_abort` | Signal all teammates to abort immediately. |
 | `cleanup_team` | Remove the team directory.  Requires all teammates to be shut down first. |
 
 ### Task management

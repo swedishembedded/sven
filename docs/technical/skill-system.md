@@ -297,17 +297,17 @@ following sections after the procedural instructions:
 
 ### Correctness Invariants
 - List the properties that must always hold.  Frame as "MUST" / "MUST NOT".
-- Example: "All relay pathspecs MUST use the `:(glob)` prefix on non-Linux platforms."
+- Example: "All git pathspecs MUST use the `:(glob)` prefix on non-Linux platforms."
 
 ### Known Failure Modes
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Connection drops after 30 s | KEEP_ALIVE not sent | Enable `SwarmConfig::keep_alive` |
-| mDNS silent in Docker | Multicast routing disabled | Use relay-only discovery mode |
+| Session hangs after a tool call | No terminal event emitted | Synthesize `ToolFailed` on every error path |
+| Approval never resolves | Approval id minted, not derived | Derive the id from the tool call |
 
 ### Critical Patterns
 - Specific code patterns that must be followed and why.
-- Example: "Always call `Swarm::dial()` with a `DialOpts::peer_id()` guard to avoid duplicate dials."
+- Example: "Always derive an approval id from the tool call it guards, never mint a fresh one."
 ```
 
 ### Relationship with the knowledge base
@@ -318,11 +318,11 @@ an optional `knowledge:` frontmatter field:
 
 ```markdown
 ---
-name: p2p-specialist
-description: P2P networking expert. Use when modifying sven-p2p or sven-node.
+name: hsm-specialist
+description: HSM kernel expert. Use when modifying sven-hsm or sven-kernel.
 knowledge:
-  - sven-p2p.md
-  - sven-node.md
+  - sven-hsm.md
+  - sven-kernel.md
 ---
 
 ... procedural instructions ...
@@ -336,8 +336,8 @@ When an agent spec declares `knowledge:` files, `load_skill` appends a hint:
 
 ```
 Relevant knowledge docs (use search_knowledge or read_file to load):
-  - .sven/knowledge/sven-p2p.md  (P2P Networking)
-  - .sven/knowledge/sven-node.md (Node Gateway)
+  - .sven/knowledge/sven-hsm.md    (HSM Kernel)
+  - .sven/knowledge/sven-kernel.md (Active Object Runtime)
 ```
 
 **Guideline:** embed the core correctness invariants and most-common failure

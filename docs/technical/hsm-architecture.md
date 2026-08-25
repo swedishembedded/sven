@@ -564,7 +564,6 @@ E2E bats tests use `--model mock` so no real API key is required.
 | `sven-bootstrap` | `RuntimeBuilder` (per-session factory), `SessionSupervisor`, `SdlcChildSpawner` |
 | `sven-frontend` | Bridges kernel `UiEvent`s to renderer events for TUI/GUI |
 | `sven-ci` | `RuntimeRunner` - headless kernel driver for batch/CI runs |
-| `sven-node` | Routes operator commands to the kernel; `ui_event` bridges |
 | `sven-acp` | ACP server backed by a per-session kernel |
 
 ---

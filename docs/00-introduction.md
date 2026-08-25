@@ -59,31 +59,6 @@ environment. Cycle the legacy read/plan/agent trio inside the TUI with `F4`.
 
 ---
 
-## Running as a node - talking to other agents
-
-`sven` by itself is a local session: one agent, one conversation.
-
-`sven node start` is the peer-enabled form: the same agent runs a P2P stack
-alongside its normal session, discovers other sven nodes on the network (or via
-a relay), and gains a set of collaboration tools - `send_message`,
-`wait_for_message`, `search_conversation`, `post_to_room`, and more.
-
-```sh
-# Start the node (runs until Ctrl-C)
-sven node start
-
-# From another terminal - ask the node's agent to talk to a peer
-sven node exec "Ask backend-agent to explain the auth module, wait for its reply."
-
-# Or open an interactive TUI session directly with a remote peer
-sven peer chat backend-agent
-```
-
-See [Sven Node](08-node.md) and
-[Agent Collaboration](09-collaboration.md) for the full setup guide.
-
----
-
 ## How sven works
 
 Sven's agent runtime is built on a formally-specified **Hierarchical State
@@ -150,8 +125,6 @@ Fan-out](technical/parallel-submachines.md)**.
 - **[Configuration](05-configuration.md)** - customise model, tools, and appearance
 - **[Examples](06-examples.md)** - real-world use cases
 - **[Troubleshooting](07-troubleshooting.md)** - common issues and fixes
-- **[Sven Node](08-node.md)** - expose agents over HTTPS/P2P, pair devices, route tasks between agents
-- **[Agent Collaboration](09-collaboration.md)** - persistent peer conversations, rooms, and the `sven peer chat` command
 - **[Teams and Tasks](11-teams-and-tasks.md)** - form a team of agents, break work into tasks, and orchestrate parallel workstreams
 - **[HSM Architecture](technical/hsm-architecture.md)** - full technical reference for the hierarchical state machine kernel
 - **[Deliberation Engine](technical/deliberation-engine.md)** - how each SDLC phase runs a scoped LLM↔tool loop and returns a decision that drives the machine
