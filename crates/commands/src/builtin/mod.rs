@@ -12,7 +12,5 @@ pub mod new;
 pub mod provider;
 pub mod quit;
 pub mod refresh;
-pub mod share;
 pub mod team;
-pub mod tenant;
 pub mod think_limit;

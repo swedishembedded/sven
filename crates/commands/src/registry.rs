@@ -56,20 +56,6 @@ impl CommandRegistry {
         self.commands.insert(cmd.name().to_string(), cmd);
     }
 
-    /// Register the operator-console commands (`/tenant`).
-    ///
-    /// Deliberately **not** part of [`CommandRegistry::with_builtins`]:
-    /// these commands emit operator-console actions
-    /// ([`super::ImmediateAction::SelectTenant`]) that only a frontend with
-    /// a running operator console (`sven_frontend::operator`) consumes.
-    /// Registered unconditionally they would show up in completion and
-    /// silently no-op in a plain chat frontend. Call this when wiring
-    /// `sven_frontend::operator::operator_console_task` into a frontend.
-    pub fn register_operator_commands(&mut self) {
-        use super::builtin;
-        self.register(Arc::new(builtin::tenant::TenantCommand));
-    }
-
     /// Look up a command by exact name.
     pub fn get(&self, name: &str) -> Option<Arc<dyn SlashCommand>> {
         self.commands.get(name).cloned()
@@ -116,16 +102,6 @@ mod tests {
         assert!(reg.get("abort").is_some());
         assert!(reg.get("clear").is_some());
         assert!(reg.get("think-limit").is_some());
-    }
-
-    #[test]
-    fn operator_commands_are_opt_in() {
-        // No frontend without an operator console consumes SelectTenant;
-        // /tenant must not appear as a silently no-op default command.
-        let mut reg = CommandRegistry::with_builtins();
-        assert!(reg.get("tenant").is_none());
-        reg.register_operator_commands();
-        assert!(reg.get("tenant").is_some());
     }
 
     #[test]

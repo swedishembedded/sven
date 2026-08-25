@@ -17,13 +17,11 @@ pub mod completion;
 pub mod mcp;
 pub mod parser;
 pub mod registry;
-pub mod share_options;
 pub mod skill;
 
 pub use completion::{CompletionItem, CompletionManager};
 pub use parser::{parse, ParsedCommand};
 pub use registry::CommandRegistry;
-pub use share_options::FrontendShareOptions;
 
 use std::sync::Arc;
 use sven_config::{AgentMode, Config};
@@ -101,23 +99,10 @@ pub enum ImmediateAction {
     McpAuth {
         server: String,
     },
-    /// Switch the operator console's tenant scope; `None` = all tenants.
-    SelectTenant {
-        tenant: Option<String>,
-    },
-    /// Surface share/handoff instructions to the user (a notice, not a message
-    /// to the agent). Emitted by `/share --print` or when no broker is
-    /// configured; the frontend shows `text`.
-    ShareInstructions {
+    /// Surface a block of text to the user as a notice (shown in the
+    /// frontend's pager), rather than sending it to the agent as a message.
+    Notice {
         text: String,
-    },
-    /// One-tap `/share`: expose THIS running session to the configured broker.
-    /// The frontend forwards these options to the live session's agent task as
-    /// an `AgentRequest::ShareSession`, which starts the in-process share
-    /// bridge. Carries the broker URL/token/tenant resolved from the
-    /// environment plus the (optional) share id and title.
-    ShareSession {
-        options: Box<crate::FrontendShareOptions>,
     },
     /// `/think-limit <args>`: set (`Some`) or clear (`None`, reverting to the
     /// `agent.max_thinking_tokens`/`agent.thinking_timeout_secs` config

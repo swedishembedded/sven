@@ -51,7 +51,7 @@ impl SlashCommand for ThinkLimitCommand {
     fn execute(&self, args: Vec<String>) -> CommandResult {
         if args.is_empty() {
             return CommandResult {
-                immediate_action: Some(ImmediateAction::ShareInstructions {
+                immediate_action: Some(ImmediateAction::Notice {
                     text: current_status_text(),
                 }),
                 ..Default::default()
@@ -68,7 +68,7 @@ impl SlashCommand for ThinkLimitCommand {
         let max_thinking_tokens = args.first().and_then(|s| s.parse::<u32>().ok());
         if max_thinking_tokens.is_none() {
             return CommandResult {
-                immediate_action: Some(ImmediateAction::ShareInstructions {
+                immediate_action: Some(ImmediateAction::Notice {
                     text: "Usage: /think-limit [<max_tokens> [<timeout_secs>]] | off".to_string(),
                 }),
                 ..Default::default()
@@ -87,7 +87,7 @@ impl SlashCommand for ThinkLimitCommand {
 }
 
 /// Render the currently active watchdog state as a local notice (never sent
-/// to the model - see `ImmediateAction::ShareInstructions`'s doc comment).
+/// to the model - see `ImmediateAction::Notice`'s doc comment).
 fn current_status_text() -> String {
     match sven_machines::thinking_budget_override() {
         Some(b) => format!(
@@ -118,7 +118,7 @@ mod tests {
         let result = ThinkLimitCommand.execute(vec![]);
         assert!(matches!(
             result.immediate_action,
-            Some(ImmediateAction::ShareInstructions { .. })
+            Some(ImmediateAction::Notice { .. })
         ));
     }
 
@@ -171,7 +171,7 @@ mod tests {
         let result = ThinkLimitCommand.execute(vec!["not-a-number".into()]);
         assert!(matches!(
             result.immediate_action,
-            Some(ImmediateAction::ShareInstructions { .. })
+            Some(ImmediateAction::Notice { .. })
         ));
     }
 }
