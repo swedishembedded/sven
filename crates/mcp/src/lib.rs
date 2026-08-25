@@ -29,19 +29,6 @@
 //! }
 //! ```
 //!
-//! ## Proxy to a running sven node (all node tools available)
-//!
-//! ```json
-//! {
-//!   "mcpServers": {
-//!     "sven": {
-//!       "command": "sven",
-//!       "args": ["mcp", "serve", "--node-url", "wss://127.0.0.1:18790/ws", "--token", "<token>"]
-//!     }
-//!   }
-//! }
-//! ```
-//!
 //! ## Custom tool subset (local mode)
 //!
 //! ```text
@@ -50,7 +37,6 @@
 //!
 //! # Architecture
 //!
-//! ## Local mode
 //! ```text
 //! MCP client (Cursor, Claude Desktop, ...)
 //!       │  stdin/stdout (line-delimited JSON-RPC)
@@ -60,25 +46,12 @@
 //!       ▼
 //! ToolRegistry  ──►  Tool::execute()
 //! ```
-//!
-//! ## Node-proxy mode
-//! ```text
-//! MCP client (Cursor, Claude Desktop, ...)
-//!       │  stdin/stdout (line-delimited JSON-RPC)
-//!       ▼
-//! NodeProxyServer (rmcp ServerHandler)
-//!       │  wss:// (ListTools / CallTool commands)
-//!       ▼
-//! sven node (full tool registry incl. list_peers, delegate_task)
-//! ```
 
 pub mod bridge;
 pub mod cli;
-pub mod node_proxy;
 pub mod registry;
 pub mod server;
 
-pub use node_proxy::NodeProxyServer;
 pub use registry::{build_mcp_registry, DEFAULT_TOOL_NAMES};
 pub use server::SvenMcpServer;
 
@@ -109,42 +82,5 @@ pub async fn serve_stdio(registry: Arc<ToolRegistry>) -> Result<()> {
         .waiting()
         .await
         .map_err(|e| anyhow::anyhow!("MCP server error: {e}"))?;
-    Ok(())
-}
-
-/// Start an MCP stdio server that **proxies** every tool call to a running
-/// `sven node` over WebSocket.
-///
-/// `ws_url` must point to the node's `/ws` endpoint, e.g.
-/// `wss://127.0.0.1:18790/ws`.  `token` is the raw bearer token printed by
-/// `sven node start` on first launch.
-///
-/// All tools registered on the node - including P2P tools like `list_peers`
-/// and `delegate_task` - are exposed to the MCP client transparently.
-///
-/// This function blocks until stdin closes or a fatal error occurs.
-pub async fn serve_stdio_node_proxy(ws_url: String, token: String) -> Result<()> {
-    serve_stdio_node_proxy_with_options(ws_url, token, sven_node_client::ConnectOptions::default())
-        .await
-}
-
-/// Like [`serve_stdio_node_proxy`], with explicit TLS/connection options
-/// (extra CA file, or the `insecure_dev` local-testing mode).
-pub async fn serve_stdio_node_proxy_with_options(
-    ws_url: String,
-    token: String,
-    options: sven_node_client::ConnectOptions,
-) -> Result<()> {
-    eprintln!("sven mcp: node-proxy mode - forwarding tools from {ws_url}");
-    eprintln!("sven mcp: waiting for MCP client on stdin...");
-    let server = NodeProxyServer::new(ws_url, token).with_connect_options(options);
-    let running = server
-        .serve((tokio::io::stdin(), tokio::io::stdout()))
-        .await
-        .map_err(|e| anyhow::anyhow!("MCP node-proxy server init error: {e}"))?;
-    running
-        .waiting()
-        .await
-        .map_err(|e| anyhow::anyhow!("MCP node-proxy server error: {e}"))?;
     Ok(())
 }
