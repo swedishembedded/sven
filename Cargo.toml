@@ -156,7 +156,7 @@ ratatui     = { workspace = true, optional = true }
 chrono      = { workspace = true }
 
 [features]
-default = ["tui", "network", "gdb"]
+default = ["tui", "network", "gdb", "memory"]
 # Interactive terminal UI (the default when `sven` is run with no subcommand
 # and a TTY is attached). Pulls in ratatui + sven-tui-nvim (nvim-rs).
 tui = ["dep:sven-tui", "dep:ratatui"]
@@ -166,6 +166,10 @@ tui = ["dep:sven-tui", "dep:ratatui"]
 # doesn't request this feature) truly excludes gdbmi, rather than getting it
 # back via feature unification with sven-ci's own (always-on) bootstrap edge.
 gdb = ["sven-bootstrap/gdb"]
+# Semantic memory (`semantic_memory` tool, SQLite + FTS5). Forwarded
+# explicitly for the same reason `gdb` is above: sven-bootstrap is depended
+# on with `default-features = false` here.
+memory = ["sven-bootstrap/memory"]
 # Networked surfaces: the ACP and MCP servers (`sven acp`, `sven mcp`) and
 # the team task surface (`sven team`).
 network = [

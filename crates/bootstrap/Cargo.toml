@@ -37,14 +37,18 @@ agent-client-protocol = { version = "0.10", features = ["unstable_session_usage"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [features]
-default = ["gdb"]
+default = ["gdb", "memory"]
 # Enable all integration tools at once
 integrations = [
     "dep:sven-channels",
     "dep:sven-scheduler",
     "dep:sven-integrations",
-    "dep:sven-memory",
 ]
+# Semantic memory (SQLite + FTS5 `semantic_memory` tool). Split out of the
+# `integrations` bundle above because `rusqlite` is in xtask's
+# FORBIDDEN_IN_MINIMAL list (`xtask/src/main.rs`) - the `minimal` build must
+# be able to exclude it while every other default build keeps it on.
+memory = ["dep:sven-memory"]
 # GDB/MI debugging tools (unix only regardless of this flag - see the
 # target-gated dependency below). Kept separately toggleable so a portable
 # headless build can exclude gdbmi and its transitive closure entirely.

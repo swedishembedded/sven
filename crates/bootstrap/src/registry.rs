@@ -84,7 +84,7 @@ pub struct IntegrationProviders {
     pub calls: Option<Arc<dyn sven_integrations::voice::VoiceCallProvider>>,
 
     /// Semantic memory store for the `semantic_memory` tool.
-    #[cfg(feature = "integrations")]
+    #[cfg(feature = "memory")]
     pub memory_store: Option<Arc<dyn sven_memory::VectorStore>>,
 }
 
@@ -240,6 +240,12 @@ fn register_integration_tools(_reg: &mut ToolRegistry, _providers: IntegrationPr
                 _providers.calls,
             ));
         }
+    }
+    // `memory` is a separate feature from `integrations` (see this crate's
+    // Cargo.toml) precisely so a `minimal` build can exclude `rusqlite`
+    // while every other build keeps semantic memory on by default.
+    #[cfg(feature = "memory")]
+    {
         if let Some(store) = _providers.memory_store {
             _reg.register(sven_memory::SemanticMemoryTool::new(store));
         }
