@@ -33,7 +33,7 @@
 //! email to info@swedishembedded.com.
 
 use std::ops::Range;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -189,30 +189,63 @@ impl FactSource {
 /// by the `assimilate_fact` tool. A boolean the model can set in its own
 /// tool-call arguments is a suggestion; this is the gate.
 ///
+/// # Each approval is single-use
+///
+/// An approval is *consumed* by the admission it pays for
+/// ([`Self::consume_approval`]), so one human act admits exactly one
+/// agent-initiated fact. A latch would be a far weaker gate than it looks: the
+/// human is shown one specific thing, and everything the agent fetched
+/// afterwards - from URLs and digests no human ever saw - would ride in on that
+/// single click for the rest of the session.
+///
+/// This is deliberately *not* the same shape as
+/// [`crate::provenance::FactSource::UserProvidedDocument`]'s rule. That one is
+/// admissible without a per-fact approval precisely because it is scoped to a
+/// digest a human handed over; a web fetch has no such scope, so it pays per
+/// fact. Binding an approval to the *specific* source it was granted for would
+/// be stronger still, but the approval request carries only a capability and a
+/// description today - the milestone that mints an `AssimilateKnowledge`
+/// approval request is the one that can add that scope.
+///
 /// Shared as an `Arc` between the executor and the tool.
 #[derive(Debug, Default)]
 pub struct KnowledgeApprovals {
-    approved: AtomicBool,
+    /// Approvals observed but not yet spent on an admission.
+    unspent: AtomicUsize,
 }
 
 impl KnowledgeApprovals {
-    /// A fresh, unapproved handle.
+    /// A fresh handle with no approvals.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Records that a human approved knowledge assimilation.
+    /// Records that a human approved one knowledge assimilation.
     ///
     /// Call sites are limited to the executor that observed the approval.
     pub fn record_human_approval(&self) {
-        self.approved.store(true, Ordering::SeqCst);
+        self.unspent.fetch_add(1, Ordering::SeqCst);
     }
 
-    /// `true` once a human approval has been observed this session.
+    /// Spends one unspent approval, returning `true` if there was one.
+    ///
+    /// The caller may admit exactly one fact per `true`. Racing callers each
+    /// get their own approval or none: the decrement is atomic.
+    #[must_use]
+    pub fn consume_approval(&self) -> bool {
+        self.unspent
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+    }
+
+    /// `true` while an approval is available to spend.
+    ///
+    /// A query only - it does not spend anything. Use
+    /// [`Self::consume_approval`] to gate an admission.
     #[must_use]
     pub fn human_approved(&self) -> bool {
-        self.approved.load(Ordering::SeqCst)
+        self.unspent.load(Ordering::SeqCst) > 0
     }
 }
 
@@ -257,6 +290,27 @@ mod tests {
         assert!(!approvals.human_approved());
         approvals.record_human_approval();
         assert!(approvals.human_approved());
+    }
+
+    #[test]
+    fn an_approval_is_spent_by_the_admission_it_pays_for() {
+        let approvals = KnowledgeApprovals::new();
+        assert!(!approvals.consume_approval(), "nothing to spend");
+
+        approvals.record_human_approval();
+        assert!(approvals.consume_approval(), "the one approval is spendable");
+        assert!(
+            !approvals.consume_approval(),
+            "one human act must not pay for a second admission"
+        );
+        assert!(!approvals.human_approved());
+
+        // Approvals accumulate: two human acts pay for two admissions.
+        approvals.record_human_approval();
+        approvals.record_human_approval();
+        assert!(approvals.consume_approval());
+        assert!(approvals.consume_approval());
+        assert!(!approvals.consume_approval());
     }
 
     #[test]

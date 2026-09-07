@@ -19,9 +19,11 @@
 //!   evidence handle the resolution path minted - a `source` field in the
 //!   tool-call arguments is not read at all, and an unknown or absent handle
 //!   resolves to [`FactSource::AgentInferred`], which never reaches the ledger;
-//! * human confirmation is read from [`KnowledgeApprovals`], which only the
+//! * human confirmation is taken from [`KnowledgeApprovals`], which only the
 //!   effect executor that observed a real `HumanApproved` event writes - a
-//!   `confirmed` field in the tool-call arguments is not read at all.
+//!   `confirmed` field in the tool-call arguments is not read at all. Each
+//!   approval is *spent* by the one fact it admits, so a single human act
+//!   never ungates the rest of the session.
 //!
 //! The fact is *always* written to semantic memory (instant recall this
 //! session). Only the durable ledger - what later feeds training - is gated.
@@ -109,10 +111,14 @@ impl AssimilateFactTool {
         }
     }
 
-    /// Decides whether a fact with this provenance may become durable.
+    /// Decides whether a fact with this provenance may become durable, and
+    /// spends whatever human approval that decision rests on.
     ///
     /// Returns `Ok(())` when it may, or `Err(reason)` explaining the refusal in
-    /// terms the model can act on.
+    /// terms the model can act on. An `Ok` for a source that needed an approval
+    /// has already consumed it, so a later failure to append loses the
+    /// approval - the safe direction: the human is asked again rather than the
+    /// grant lingering for the next fact.
     fn admit(&self, source: &FactSource) -> Result<(), String> {
         match source.ledger_admission() {
             LedgerAdmission::Admissible => Ok(()),
@@ -131,11 +137,15 @@ impl AssimilateFactTool {
                 }
             }
             LedgerAdmission::RequiresHumanApproval => {
-                if self.approvals.human_approved() {
+                // Spent, not merely observed: one human act admits one
+                // agent-initiated fact. Otherwise the first approval would
+                // ungate every page fetched after it for the rest of the
+                // session, including ones no human ever saw.
+                if self.approvals.consume_approval() {
                     Ok(())
                 } else {
                     Err("web-sourced content needs a human approval before it can \
-                         become durable knowledge"
+                         become durable knowledge, and each approval covers one fact"
                         .to_string())
                 }
             }
