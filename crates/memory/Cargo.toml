@@ -20,6 +20,8 @@ dirs         = { workspace = true }
 chrono       = { workspace = true }
 uuid         = { workspace = true }
 reqwest      = { workspace = true }
+sha2         = { workspace = true }
+hex          = { workspace = true }
 
 # SQLite for persistent memory storage with FTS5
 rusqlite     = { version = "0.31", features = ["bundled", "load_extension"] }

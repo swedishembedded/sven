@@ -276,6 +276,13 @@ fn register_integration_tools(_reg: &mut ToolRegistry, _providers: IntegrationPr
             // registered at all rather than silently degrading to a second
             // ungated memory writer.
             if let Some(ledger) = _providers.fact_ledger {
+                // `ingest_document` is the entry point for learning from a
+                // document the user hands over: it records the digest that
+                // makes `assimilate_fact`'s `UserProvidedDocument` check
+                // admit facts extracted from it. Registered alongside
+                // `assimilate_fact`, on the same ledger, since one is
+                // pointless without the other.
+                _reg.register(sven_memory::IngestDocumentTool::new(ledger.clone()));
                 _reg.register(
                     sven_memory::AssimilateFactTool::new(
                         store,

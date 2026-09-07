@@ -52,6 +52,7 @@
 //! ```
 
 pub mod assimilate;
+pub mod ingest;
 pub mod ledger;
 pub mod recall;
 pub mod sqlite;
@@ -59,6 +60,7 @@ pub mod store;
 pub mod tool;
 
 pub use assimilate::{AssimilateFactTool, ProvenanceIndex};
+pub use ingest::IngestDocumentTool;
 pub use ledger::{DocumentRecord, LedgerEntry, LedgerError, PendingFactRecord, PendingFactsLedger};
 pub use recall::SessionScope;
 pub use sqlite::SqliteMemoryStore;
