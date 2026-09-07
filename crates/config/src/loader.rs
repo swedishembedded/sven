@@ -87,7 +87,21 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<Config> {
     {
         Config::default()
     } else {
-        serde_yaml::from_value(merged).unwrap_or_default()
+        // Falling back to defaults is deliberate - one bad value must not stop
+        // sven starting - but it is not something to do in silence. Before
+        // this warning existed, a config the schema could not decode was
+        // discarded *whole*, with no way for the user to tell that the file
+        // they had just edited was being ignored entirely.
+        match serde_yaml::from_value(merged) {
+            Ok(config) => config,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "config could not be decoded and is being IGNORED IN FULL; using defaults"
+                );
+                Config::default()
+            }
+        }
     };
 
     // When no model has been explicitly configured, auto-select the best
@@ -634,6 +648,33 @@ mod tests {
     /// in `load`, so any two of them running concurrently can observe each
     /// other's env vars mid-test.
     static AUTODETECT_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A config file names the two or three settings its author cares about
+    /// and says nothing about the rest. That has to keep working, and until
+    /// now it silently did not: `load` deserialises the merged document with
+    /// `unwrap_or_default()`, and a section whose struct had no serde defaults
+    /// failed to deserialise the moment it was PRESENT but incomplete - so
+    /// `tui: {theme: light}` did not merely fail to set the theme, it threw
+    /// the user's entire config file away, without a word in the log.
+    #[test]
+    fn a_partially_specified_section_does_not_discard_the_whole_file() {
+        let cfg: Config = serde_yaml::from_value(val(
+            "tui:\n  theme: light\ntools:\n  memory:\n    learning:\n      submitter: none\n",
+        ))
+        .expect("a config naming two settings must load, not fail whole");
+
+        assert_eq!(cfg.tui.theme, "light", "the setting the file named");
+        assert_eq!(cfg.tools.memory.learning.submitter, "none");
+        assert_eq!(
+            cfg.tools.memory.learning.batch_size,
+            crate::LearningConfig::default().batch_size,
+            "and everything it did not name keeps its default"
+        );
+        assert!(
+            !cfg.tools.auto_approve_patterns.is_empty(),
+            "a sibling field in a section the file touched is defaulted, not dropped"
+        );
+    }
 
     #[test]
     fn merge_scalar_src_wins() {

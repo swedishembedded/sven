@@ -69,6 +69,7 @@ impl Default for McpTransport {
 ///     oauth: {}
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct McpOAuthConfig {
     /// OAuth scopes to request.  Leave empty to have sven discover them
     /// automatically from the server (recommended).
@@ -124,6 +125,7 @@ fn default_mcp_timeout() -> u64 {
 ///     enabled: true
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct McpServerConfig {
     /// Transport to use for this MCP server.
     pub transport: McpTransport,
@@ -157,6 +159,7 @@ impl Default for McpServerConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     #[serde(default)]
     pub model: ModelConfig,
@@ -233,6 +236,7 @@ pub struct Config {
 /// defaults defined in [`ProviderEntry`], which in turn fall back to the
 /// [`ModelConfig`] defaults.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ModelParams {
     /// Total context window in tokens (input + output combined).
     ///
@@ -293,6 +297,7 @@ pub struct ModelParams {
 /// Represents a single API endpoint (e.g. a local LLM server, a cloud
 /// provider account) together with all the models available on that endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ProviderEntry {
     /// Driver identifier that speaks this endpoint's protocol.
     /// Run `sven list-providers` for the full list.
@@ -450,6 +455,7 @@ impl ProviderEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ModelConfig {
     /// Provider identifier.  Run `sven list-providers` for the full list.
     /// Common values: "openai" | "anthropic" | "google" | "azure" | "aws" |
@@ -687,6 +693,7 @@ impl std::fmt::Display for CompactionStrategy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AgentConfig {
     /// Default mode when none is specified on the CLI
     #[serde(default = "default_agent_mode")]
@@ -806,6 +813,7 @@ impl Default for AgentConfig {
 pub use sven_vocab::AgentMode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ToolsConfig {
     /// Automatically approve shell commands matching these glob patterns
     pub auto_approve_patterns: Vec<String>,
@@ -915,6 +923,7 @@ impl Default for ToolsConfig {
 /// LLM context window by keeping content memory-mapped and providing the model
 /// with symbolic handles and structured access operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ContextConfig {
     /// Maximum number of concurrent sub-agent queries for `context_query`.
     pub max_parallel: usize,
@@ -942,12 +951,14 @@ impl Default for ContextConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WebSearchConfig {
     /// Brave Search API key (also checked via BRAVE_API_KEY env var)
     pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WebConfig {
     /// Search backend configuration
     #[serde(default)]
@@ -966,6 +977,7 @@ impl Default for WebConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MemoryConfig {
     /// Path to the memory JSON file (default: ~/.config/sven/memory.json)
     pub memory_file: Option<String>,
@@ -983,6 +995,7 @@ pub struct MemoryConfig {
 /// shipping". Turning it on is a consent decision, and nothing but the user's
 /// own config can make it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LearningConfig {
     /// Hand admitted pending facts to the configured fact submitter.
     /// **Off unless explicitly enabled.**
@@ -1077,6 +1090,7 @@ impl Default for LearningConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GdbConfig {
     /// Path to gdb-multiarch (or gdb) executable
     #[serde(default = "GdbConfig::default_gdb_path")]
@@ -1121,6 +1135,7 @@ impl Default for GdbConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LintsConfig {
     /// Override the lint command for Rust projects
     pub rust_command: Option<String>,
@@ -1131,6 +1146,7 @@ pub struct LintsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TuiConfig {
     /// Colour theme: "dark" | "light" | "solarized"
     pub theme: String,
@@ -1194,6 +1210,7 @@ pub enum EmailBackend {
 ///     oauth_client_secret: "${GMAIL_CLIENT_SECRET}"
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct EmailConfig {
     /// Email backend driver.
     #[serde(default)]
@@ -1271,6 +1288,7 @@ pub enum CalendarBackend {
 ///     oauth_client_secret: "${GCAL_CLIENT_SECRET}"
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CalendarConfig {
     /// Calendar backend driver.
     #[serde(default)]
@@ -1313,6 +1331,7 @@ pub struct CalendarConfig {
 ///     twilio_phone_number: "+1234567890"
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VoiceConfig {
     /// Text-to-speech provider: `elevenlabs` | `openai` | `system`.
     #[serde(skip_serializing_if = "Option::is_none")]
