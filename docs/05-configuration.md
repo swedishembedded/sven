@@ -247,6 +247,16 @@ tools:
     # Defaults to ~/.config/sven/memory.json
     # memory_file: /path/to/memory.json
 
+    learning:
+      # Hand facts sven recorded as durable knowledge to a training pipeline.
+      # OFF unless you turn it on: this is the one setting that lets knowledge
+      # you stated in private leave this machine.
+      # submit_facts: true
+
+      # Facts handed over per pass, and seconds between passes.
+      # batch_size: 16
+      # interval_secs: 300
+
 
 # ── Lints ──────────────────────────────────────────────────────────────────
 
@@ -506,6 +516,18 @@ tools:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `memory_file` | `~/.config/sven/memory.json` | Where persistent memory is stored |
+| `learning.submit_facts` | `false` | Hand admitted pending facts to a training pipeline |
+| `learning.batch_size` | `16` | Facts handed over per drain pass |
+| `learning.interval_secs` | `300` | Seconds between drain passes (minimum 1) |
+
+`learning.submit_facts` is the only setting that lets knowledge off this
+machine, so it is off until you set it and an absent `learning:` section means
+off. When it is on, sven periodically hands the facts it recorded as durable
+knowledge - only those; a fact the agent merely inferred, or fetched from the
+web without your approval, never qualifies - to the
+configured submitter, and reports back per fact whether each one was promoted,
+turned down, or failed. Exactly one process drains a given ledger: if you have
+a second sven open, it sees the first one holds the drain and leaves it alone.
 
 ---
 

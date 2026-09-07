@@ -969,6 +969,51 @@ impl Default for WebConfig {
 pub struct MemoryConfig {
     /// Path to the memory JSON file (default: ~/.config/sven/memory.json)
     pub memory_file: Option<String>,
+    /// Continuous learning: what happens to facts the agent recorded as
+    /// durable knowledge.
+    #[serde(default)]
+    pub learning: LearningConfig,
+}
+
+/// Whether, and how fast, admitted facts are handed to a training pipeline.
+///
+/// Draining the pending-facts ledger is the one place where knowledge the
+/// user stated in private leaves this machine, so the flag defaults to off
+/// and an absent section means off - never "use a sensible default and start
+/// shipping". Turning it on is a consent decision, and nothing but the user's
+/// own config can make it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LearningConfig {
+    /// Hand admitted pending facts to the configured fact submitter.
+    /// **Off unless explicitly enabled.**
+    #[serde(default)]
+    pub submit_facts: bool,
+    /// Facts handed over per drain pass.
+    #[serde(default = "LearningConfig::default_batch_size")]
+    pub batch_size: usize,
+    /// Seconds between drain passes. The first pass runs immediately.
+    #[serde(default = "LearningConfig::default_interval_secs")]
+    pub interval_secs: u64,
+}
+
+impl LearningConfig {
+    fn default_batch_size() -> usize {
+        16
+    }
+
+    fn default_interval_secs() -> u64 {
+        300
+    }
+}
+
+impl Default for LearningConfig {
+    fn default() -> Self {
+        Self {
+            submit_facts: false,
+            batch_size: Self::default_batch_size(),
+            interval_secs: Self::default_interval_secs(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -425,7 +425,10 @@ const WEB_CONFIG_KEYS: &[&str] = &["search", "fetch_max_chars"];
 const WEB_SEARCH_CONFIG_KEYS: &[&str] = &["api_key"];
 
 /// Known keys in [`crate::MemoryConfig`].
-const MEMORY_CONFIG_KEYS: &[&str] = &["memory_file"];
+const MEMORY_CONFIG_KEYS: &[&str] = &["memory_file", "learning"];
+
+/// Known keys in [`crate::LearningConfig`].
+const LEARNING_CONFIG_KEYS: &[&str] = &["submit_facts", "batch_size", "interval_secs"];
 
 /// Known keys in [`crate::LintsConfig`].
 const LINTS_CONFIG_KEYS: &[&str] = &["rust_command", "typescript_command", "python_command"];
@@ -477,6 +480,8 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
         (WEB_SEARCH_CONFIG_KEYS, "tools.web.search")
     } else if path == "tools.memory" {
         (MEMORY_CONFIG_KEYS, "tools.memory")
+    } else if path == "tools.memory.learning" {
+        (LEARNING_CONFIG_KEYS, "tools.memory.learning")
     } else if path == "tools.lints" {
         (LINTS_CONFIG_KEYS, "tools.lints")
     } else if path == "tools.gdb" {
@@ -559,7 +564,9 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
                 | ("tools", "lints")
                 | ("tools", "gdb")
                 | ("tools", "asr") => validate_unknown_fields(val, &child_path),
-                ("tools.web", "search") => validate_unknown_fields(val, &child_path),
+                ("tools.web", "search") | ("tools.memory", "learning") => {
+                    validate_unknown_fields(val, &child_path)
+                }
                 ("provider entry", "models") => {
                     // Each key is a model name; validate its params.
                     if let serde_yaml::Value::Mapping(models_map) = val {
