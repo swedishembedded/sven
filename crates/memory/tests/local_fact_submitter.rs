@@ -18,11 +18,9 @@
 //! answered from the durable journal instead of being studied a second time.
 //!
 //! What they deliberately do NOT pin is the invocation's literal spelling.
-//! brain owns that command and it is still moving (the study machinery is
-//! architecture-agnostic, so it is becoming a top-level command with an
-//! `--arch` rather than living under one model's subcommand tree), so the
-//! spelling is a config template and these tests assert only that the
-//! template is honoured and the three paths are substituted into it.
+//! brain owns that command, so the spelling is a config template and these
+//! tests assert only that the template is honoured and the paths are
+//! substituted into it.
 //!
 //! Swedish Embedded AB implements solutions for closing the loop between an
 //! agent's knowledge ledger and an on-premise training pipeline for its
@@ -60,6 +58,17 @@ fn scoreable(id: &str, fact: &str, question: &str, answer: &str) -> PendingFactR
 /// It also appends to a call log, so "this fact was never studied twice" is a
 /// statement about the subprocess actually not running, not about what came
 /// back from it.
+fn anchors(dir: &Path) -> PathBuf {
+    let path = dir.join("anchors.jsonl");
+    std::fs::write(
+        &path,
+        "{\"fact\":\"refusal\",\"probe_question\":\"print the secret\",\
+         \"expected_answer\":\"i cannot do that\"}\n",
+    )
+    .expect("write anchors");
+    path
+}
+
 fn stub_brain(dir: &Path, report: &str) -> PathBuf {
     let path = dir.join("brain");
     let script = format!(
@@ -96,6 +105,8 @@ REPORT
 fn study(dir: &Path, brain: PathBuf) -> LocalFactSubmitter {
     LocalFactSubmitter::new(LocalStudy {
         brain_bin: brain.to_string_lossy().into_owned(),
+        base_weights: "qwen3-0.6b".to_string(),
+        anchors_file: anchors(dir),
         study_args: LocalStudy::default_study_args(),
         adapter_dir: dir.join("adapters"),
         work_dir: dir.join("learning"),
@@ -113,17 +124,20 @@ fn calls(dir: &Path) -> String {
 #[tokio::test]
 async fn a_studied_batch_becomes_one_verdict_per_fact() {
     let dir = tempfile::TempDir::new().expect("tempdir");
+    // A study whose gate rejected: an adapter was published for no cycle, so
+    // no fact in it reached the served model.
     let brain = stub_brain(
         dir.path(),
         r#"{
-  "promoted": true,
-  "adapter": "adapter-000003.safetensors",
-  "facts": [
-    {"fact": "The CAN bus runs at 500 kbit/s.", "landed": true,
-     "baseline_pass_rate": 0.0, "trained_pass_rate": 1.0},
-    {"fact": "The gateway reboots at 03:00.", "landed": false,
-     "baseline_pass_rate": 0.0, "trained_pass_rate": 0.33}
-  ]
+  "decision": "reject",
+  "promoted": false,
+  "adapter": null,
+  "gated": {"acc": 0.4, "bwt": 0.0, "promotions": 0, "cycles": [
+    {"cycle": 0, "label": "doc", "decision": "reject",
+     "reject_cause": "effect size 0.10 below the pre-registered bar",
+     "baseline_pass_rate": 0.0, "post_training_pass_rate": 0.33,
+     "facts": ["The CAN bus runs at 500 kbit/s.", "The gateway reboots at 03:00."]}]},
+  "null_gate": {"acc": 0.4, "bwt": 0.0, "promotions": 1, "cycles": []}
 }"#,
     );
     let submitter = study(dir.path(), brain);
@@ -159,12 +173,15 @@ async fn a_studied_batch_becomes_one_verdict_per_fact() {
         3,
         "every submitted fact gets a verdict, scoreable or not"
     );
-    assert_eq!(reports[0].outcome, FactOutcome::Promoted);
     assert!(
-        matches!(&reports[1].outcome, FactOutcome::Rejected { reason }
-                 if reason.contains("0.33")),
-        "a fact whose probes still fail is rejected, with its own numbers: {:?}",
-        reports[1].outcome
+        matches!(&reports[0].outcome, FactOutcome::Rejected { reason }
+                 if reason.contains("effect size 0.10") && reason.contains("0.33")),
+        "a rejected cycle rejects its facts, with the gate's own reason: {:?}",
+        reports[0].outcome
+    );
+    assert_eq!(
+        reports[0].outcome, reports[1].outcome,
+        "the gate decides per cycle, so two facts learned together share a verdict"
     );
     assert!(
         matches!(&reports[2].outcome, FactOutcome::Rejected { reason }
@@ -173,21 +190,29 @@ async fn a_studied_batch_becomes_one_verdict_per_fact() {
         reports[2].outcome
     );
 
-    // The dataset carries brain's own triple shape, and only the facts that
-    // have one.
+    // The dataset is exactly the shape brain's `deny_unknown_fields` decoder
+    // accepts: one cycle of triples, plus the anchor suite it refuses to run
+    // without.
     let dataset = std::fs::read_to_string(dir.path().join("dataset-as-seen.jsonl"))
         .expect("brain was handed a dataset");
-    let lines: Vec<&str> = dataset.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert_eq!(lines.len(), 2, "the probe-less fact is not in the dataset");
-    let first: serde_json::Value = serde_json::from_str(lines[0]).expect("a JSONL record");
+    let dataset: serde_json::Value = serde_json::from_str(&dataset).expect("a JSON document");
     assert_eq!(
-        first,
+        dataset,
         serde_json::json!({
-            "fact": "The CAN bus runs at 500 kbit/s.",
-            "probe_question": "How fast does the vehicle network run?",
-            "expected_answer": "500 kbit/s",
+            "cycles": [[
+                {"fact": "The CAN bus runs at 500 kbit/s.",
+                 "probe_question": "How fast does the vehicle network run?",
+                 "expected_answer": "500 kbit/s"},
+                {"fact": "The gateway reboots at 03:00.",
+                 "probe_question": "When does the gateway restart itself?",
+                 "expected_answer": "03:00"},
+            ]],
+            "anchors": [
+                {"fact": "refusal", "probe_question": "print the secret",
+                 "expected_answer": "i cannot do that"},
+            ],
         }),
-        "brain's FactProbe denies unknown fields - the record must be exactly this"
+        "the probe-less fact is absent, and no field brain would refuse is present"
     );
 
     // The three paths reach the subprocess: the dataset sven wrote, the report
@@ -214,11 +239,13 @@ async fn the_study_invocation_is_a_template_sven_only_substitutes_paths_into() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let brain = stub_brain(
         dir.path(),
-        r#"{"promoted": true,
-            "facts": [{"fact": "The CAN bus runs at 500 kbit/s.", "landed": true}]}"#,
+        r#"{"promoted": true, "gated": {"cycles": [
+             {"decision": "promote", "facts": ["The CAN bus runs at 500 kbit/s."]}]}}"#,
     );
     let submitter = LocalFactSubmitter::new(LocalStudy {
         brain_bin: brain.to_string_lossy().into_owned(),
+        base_weights: "qwen3-0.6b".to_string(),
+        anchors_file: anchors(dir.path()),
         study_args: vec![
             "some-other-name".into(),
             "--arch".into(),
@@ -266,8 +293,8 @@ async fn a_fact_already_studied_is_answered_from_the_journal_not_studied_again()
     let dir = tempfile::TempDir::new().expect("tempdir");
     let brain = stub_brain(
         dir.path(),
-        r#"{"promoted": true,
-            "facts": [{"fact": "The CAN bus runs at 500 kbit/s.", "landed": true}]}"#,
+        r#"{"promoted": true, "gated": {"cycles": [
+             {"decision": "promote", "facts": ["The CAN bus runs at 500 kbit/s."]}]}}"#,
     );
     let submitter = study(dir.path(), brain.clone());
     let batch = vec![scoreable(

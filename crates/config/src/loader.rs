@@ -449,6 +449,8 @@ const LEARNING_CONFIG_KEYS: &[&str] = &[
     "submitter",
     "brain_bin",
     "study_args",
+    "base_weights",
+    "anchors_file",
     "adapter_dir",
     "work_dir",
     "study_timeout_secs",

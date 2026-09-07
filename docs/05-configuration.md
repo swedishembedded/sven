@@ -268,13 +268,20 @@ tools:
       # Config rather than built in, because the subcommand's final spelling
       # is brain's to decide - what sven depends on is the shape.
       # study_args: [document-study, --arch, qwen3,
+      #              --weights, "{weights}",
       #              --dataset, "{dataset}",
       #              --adapter-dir, "{adapter_dir}",
       #              --report, "{report}"]
 
-      # Required by the "local" submitter: the SAME directory this machine's
-      # `brain serve --watch-adapters DIR` polls. Sven cannot guess it.
+      # Required by the "local" submitter, and none of the three is guessable.
+      # adapter_dir must be the SAME directory this machine's `brain serve
+      # --watch-adapters DIR` polls; base_weights must be the base checkpoint
+      # the served model was built from; anchors_file is a JSONL file of
+      # {fact, probe_question, expected_answer} triples naming the behaviours
+      # every study has to preserve while it learns a document.
       # adapter_dir: ~/.local/state/brain/adapters
+      # base_weights: qwen3-0.6b
+      # anchors_file: ~/.config/sven/memory/anchors.jsonl
 
       # Where datasets, reports and the outcome journal are kept, and how long
       # one study may run before it is killed.
@@ -545,7 +552,9 @@ tools:
 | `learning.interval_secs` | `300` | Seconds between drain passes (minimum 1) |
 | `learning.submitter` | `local` | Who receives the facts: `local` (brain on this machine) or `none` |
 | `learning.brain_bin` | `brain` | The `brain` executable (resolved on `PATH` when a bare name) |
-| `learning.study_args` | `document-study --arch qwen3 …` | How the study is invoked; `{dataset}`/`{adapter_dir}`/`{report}` are substituted |
+| `learning.study_args` | `document-study --arch qwen3 …` | How the study is invoked; `{weights}`/`{dataset}`/`{adapter_dir}`/`{report}` are substituted |
+| `learning.base_weights` | - | The base checkpoint the study trains a LoRA adapter over |
+| `learning.anchors_file` | - | JSONL of triples naming the behaviours every study must preserve |
 | `learning.adapter_dir` | - | Where a promoted adapter is published; must match `brain serve --watch-adapters DIR` |
 | `learning.work_dir` | `~/.config/sven/memory/learning` | Datasets, study reports and the outcome journal |
 | `learning.study_timeout_secs` | `3600` | How long one document study may run |
@@ -564,6 +573,10 @@ and the probes it froze for them as a dataset, runs brain's gated document
 study, and reads back the report brain writes - promoted, or turned down with
 the gate's own reason. The exact command is `study_args`, so a renamed
 subcommand on brain's side is a config edit rather than a sven upgrade.
+
+The gate decides per study cycle, not per fact, so facts handed over in one
+drain pass share a verdict - and when it is a rejection, the reason names which
+of the gate's checks stopped it and what the probe pass rates were.
 
 Facts normally drain on the interval above. `sven learn flush` drains every
 pending fact now and blocks until each one has a real outcome - for a script

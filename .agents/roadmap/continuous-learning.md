@@ -258,12 +258,15 @@ Three things this milestone had to decide, all of them stated in the code:
   study, and whether it already published an adapter is not knowable from
   here — so it is `Failed`, not retried. Conservative against the
   double-training the ledger exists to prevent.
-- **brain's command is still moving** (the study machinery is
-  architecture-agnostic, so it is becoming a top-level `--arch` command
-  rather than living under one model's subcommand tree). sven depends on the
-  *shape* — dataset in, adapter dir and report out — and keeps the spelling
-  in `tools.memory.learning.study_args`, a template with `{dataset}`,
-  `{adapter_dir}` and `{report}`. Catching up is a config line.
+- **The invocation is a config template, not a literal.** sven depends on
+  the *shape* — a base checkpoint and a dataset in, an adapter directory and
+  a report out — and keeps the spelling in
+  `tools.memory.learning.study_args` (`{weights}`, `{dataset}`,
+  `{adapter_dir}`, `{report}`), so a renamed subcommand or one of brain's
+  optional study knobs (`--lora`, `--steps`, `--lr`, `--eval-per-cycle`,
+  `--seed`) is a config line rather than a sven release. The default is read
+  off brain's own `document-study` usage: it is top-level and `--arch`-driven
+  because the study machinery is generic over the model.
 
 **The synchronous flush.** The drain's background task is right for an open
 TUI session and useless for `sven --headless "learn from this document"` in
@@ -290,11 +293,33 @@ spawn_default_fact_drain` is the background half of the same selection.
 **Commit boundary: three** — (i) probe capture, (ii) the submitter + its
 config, (iii) `drain_all` + `sven learn flush` + the default wiring.
 
-**Still open:** no test has run against brain's *real* command, because it
-has not landed yet. The end-to-end integration test is written against a
-stub `brain` that pins sven's half of the contract only. When brain's
-command lands: verify the default `study_args`, the report's field names,
-and add the real end-to-end case.
+Three inputs the `local` submitter refuses to guess, each with its own
+error naming the config key: `adapter_dir` (a wrong one trains a model
+nothing serves), `base_weights` (an adapter trained over a different base is
+not applicable to what is running), and `anchors_file` — the behavioural
+anchor suite `Regime::Sft` mixes into every cycle's draw, which brain
+refuses to run without and which is the operator's to state, since what a
+deployment must never forget is a property of that deployment.
+
+**Still open:** no test has run against a real `brain` binary. sven's
+dataset shape, argv and report parsing were written against brain's actual
+`document-study` source (top-level, `--arch`-driven, the
+`{cycles, anchors}` dataset its `deny_unknown_fields` decoder accepts, and
+the `gated.cycles[]` report it writes), but that command was still
+uncommitted in brain's working tree — so the integration test drives a stub
+`brain` and pins sven's half of the contract only. When it lands: re-check
+the default `study_args` and the report field names against the committed
+version, and add a real end-to-end case.
+
+**Per-fact granularity is a cycle-level verdict, deliberately.** brain
+reports per-CYCLE numbers, because the gate's decision IS a per-cycle
+measurement and reconstructing per-fact verdicts would need a second decode
+pass — a different measurement from the gate's, presented as if it were the
+gate's. So facts handed over in one drain pass share a verdict, and a
+rejection carries the gate's own cause and the cycle's probe pass rates
+rather than invented per-fact ones. brain's roadmap `B8`
+(`promote::document::fact_verdicts`) is the finer-grained answer when it
+reaches the report.
 
 ### S7 — document ingestion + preference-choice capture
 Two related but separable additions:

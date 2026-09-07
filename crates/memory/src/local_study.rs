@@ -91,9 +91,22 @@ pub struct LocalStudy {
     /// The `brain` executable. A bare name is resolved on `PATH`, matching how
     /// this workspace already invokes `gdb`, `rg` and `cargo`.
     pub brain_bin: String,
+    /// The base checkpoint the study trains a LoRA adapter over - brain's
+    /// `--weights`, and the same base the served model was built from.
+    pub base_weights: String,
+    /// A JSONL file of `{fact, probe_question, expected_answer}` triples: the
+    /// behavioural anchor suite (system-prompt adherence, refusal, tool-call
+    /// format) every cycle rehearses.
+    ///
+    /// brain refuses a study without one, and rightly: `Regime::Sft` mixes the
+    /// anchors into every cycle's draw, and without them a cycle trains on one
+    /// document alone and forgets how to behave. It is the operator's suite,
+    /// not sven's to invent - what a given deployment must never lose is a
+    /// property of that deployment.
+    pub anchors_file: PathBuf,
     /// The argument vector handed to [`Self::brain_bin`], with
-    /// [`DATASET_PLACEHOLDER`], [`ADAPTER_DIR_PLACEHOLDER`] and
-    /// [`REPORT_PLACEHOLDER`] substituted.
+    /// [`WEIGHTS_PLACEHOLDER`], [`DATASET_PLACEHOLDER`],
+    /// [`ADAPTER_DIR_PLACEHOLDER`] and [`REPORT_PLACEHOLDER`] substituted.
     ///
     /// A template rather than a literal invocation because the subcommand's
     /// final spelling is brain's to decide and is still moving - the study
@@ -115,6 +128,8 @@ pub struct LocalStudy {
     pub timeout: Duration,
 }
 
+/// Stands for the base checkpoint, in [`LocalStudy::study_args`].
+pub const WEIGHTS_PLACEHOLDER: &str = "{weights}";
 /// Stands for the dataset sven writes, in [`LocalStudy::study_args`].
 pub const DATASET_PLACEHOLDER: &str = "{dataset}";
 /// Stands for the directory a promoted adapter is published into.
@@ -125,17 +140,19 @@ pub const REPORT_PLACEHOLDER: &str = "{report}";
 impl LocalStudy {
     /// The invocation sven assumes when config names none.
     ///
-    /// **Unverified against a landed brain command.** It is sven's best
-    /// reading of the interface brain is building - a top-level,
-    /// architecture-agnostic `document-study` following brain's existing
-    /// `bench eval --arch <name>` pattern - and it is a default rather than a
-    /// constant precisely so that being wrong costs one config line.
+    /// Read off brain's own `document-study` usage line. Still a default
+    /// rather than a constant: brain owns that command, and the optional
+    /// study knobs it also accepts (`--lora`, `--steps`, `--lr`,
+    /// `--eval-per-cycle`, `--seed`, `--models-dir`) are set by replacing
+    /// this list, not by growing a sven config field per brain flag.
     #[must_use]
     pub fn default_study_args() -> Vec<String> {
         [
             "document-study",
             "--arch",
             "qwen3",
+            "--weights",
+            WEIGHTS_PLACEHOLDER,
             "--dataset",
             DATASET_PLACEHOLDER,
             "--adapter-dir",
@@ -153,7 +170,8 @@ impl LocalStudy {
         self.study_args
             .iter()
             .map(|arg| {
-                arg.replace(DATASET_PLACEHOLDER, &dataset.to_string_lossy())
+                arg.replace(WEIGHTS_PLACEHOLDER, &self.base_weights)
+                    .replace(DATASET_PLACEHOLDER, &dataset.to_string_lossy())
                     .replace(ADAPTER_DIR_PLACEHOLDER, &self.adapter_dir.to_string_lossy())
                     .replace(REPORT_PLACEHOLDER, &report.to_string_lossy())
             })
@@ -275,8 +293,11 @@ impl FactSubmitter for LocalFactSubmitter {
                 .work_dir
                 .join(format!("study-{}", uuid::Uuid::new_v4().simple()));
             std::fs::create_dir_all(&dir)?;
-            let dataset = dir.join("dataset.jsonl");
-            std::fs::write(&dataset, dataset_bytes(&scoreable)?)?;
+            let dataset = dir.join("dataset.json");
+            std::fs::write(
+                &dataset,
+                dataset_bytes(&scoreable, &read_anchors(&self.study.anchors_file)?)?,
+            )?;
 
             // Durable before the subprocess starts, so a crash mid-study is
             // recoverable through `outcomes_for` rather than invisible.
@@ -389,26 +410,73 @@ fn unscoreable() -> FactOutcome {
     }
 }
 
-/// brain's dataset: one `{fact, probe_question, expected_answer}` object per
-/// line.
+/// brain's dataset: one JSON object carrying the study's cycles and the
+/// behavioural anchor suite every cycle rehearses.
 ///
-/// brain decodes it into a `FactProbe` with `deny_unknown_fields` and no
-/// optional members, so an extra key here is a loud parse failure there. That
-/// is deliberate on brain's side and it is why this writes exactly three
-/// fields and no identifier - the report is matched back by fact text.
-fn dataset_bytes(facts: &[&PendingFactRecord]) -> anyhow::Result<Vec<u8>> {
+/// brain decodes it with `deny_unknown_fields` and no optional members, so an
+/// extra key or an absent one is a loud, named parse failure there rather than
+/// a plausible default that trains on the wrong thing. That is deliberate on
+/// brain's side and it is why this writes exactly the fields it decodes, and
+/// no identifier - the report is matched back by fact text.
+///
+/// One batch is one cycle. A drain pass hands over the facts that accumulated
+/// since the last one, and "these facts were learned together" is what a cycle
+/// means.
+fn dataset_bytes(facts: &[&PendingFactRecord], anchors: &[Triple]) -> anyhow::Result<Vec<u8>> {
+    let cycle: Vec<Triple> = facts
+        .iter()
+        .filter_map(|fact| {
+            fact.probe.as_ref().map(|probe| Triple {
+                fact: fact.fact.clone(),
+                probe_question: probe.question.clone(),
+                expected_answer: probe.expected_answer.clone(),
+            })
+        })
+        .collect();
+    Ok(serde_json::to_vec(&serde_json::json!({
+        "cycles": [cycle],
+        "anchors": anchors,
+    }))?)
+}
+
+/// One `{fact, probe_question, expected_answer}` triple, brain's `FactProbe`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Triple {
+    fact: String,
+    probe_question: String,
+    expected_answer: String,
+}
+
+/// The operator's anchor suite, one triple per non-empty line.
+///
+/// Read on every submission rather than cached: an operator who adds an anchor
+/// after noticing a regression should not have to restart sven for the next
+/// study to rehearse it.
+fn read_anchors(path: &Path) -> anyhow::Result<Vec<Triple>> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        anyhow::anyhow!(
+            "tools.memory.learning.anchors_file {}: {e}. It must be a JSONL file of \
+             {{fact, probe_question, expected_answer}} triples - the behaviours every study \
+             has to preserve. brain refuses a study without one.",
+            path.display()
+        )
+    })?;
     let mut out = Vec::new();
-    for fact in facts {
-        let Some(probe) = &fact.probe else { continue };
-        serde_json::to_writer(
-            &mut out,
-            &serde_json::json!({
-                "fact": fact.fact,
-                "probe_question": probe.question,
-                "expected_answer": probe.expected_answer,
-            }),
-        )?;
-        out.push(b'\n');
+    for (i, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        out.push(serde_json::from_str(line).map_err(|e| {
+            anyhow::anyhow!("{}: line {}: {e}", path.display(), i + 1)
+        })?);
+    }
+    if out.is_empty() {
+        anyhow::bail!(
+            "tools.memory.learning.anchors_file {} is empty. Regime::Sft mixes the anchor \
+             suite into every cycle's draw, so without it a cycle trains on one document \
+             alone and forgets how to behave.",
+            path.display()
+        );
     }
     Ok(out)
 }
@@ -420,90 +488,105 @@ fn read_report(path: &Path) -> anyhow::Result<StudyReport> {
         .map_err(|e| anyhow::anyhow!("study report at {} is malformed: {e}", path.display()))
 }
 
-/// What `brain qwen3 document-study --report PATH` writes.
+/// What brain's `document-study --report PATH` writes.
 ///
 /// Every field is `#[serde(default)]` and unknown ones are ignored: brain owns
-/// this format and will grow it (gate statistics, the null-gate arm, the
-/// retention matrix), and a sven that refuses to parse a report because brain
-/// added a field would take the whole loop down for a cosmetic change. What
-/// sven actually needs is the promote/reject decision and the per-fact rows.
+/// this format and will grow it, and a sven that refused to parse a report
+/// because brain added a field would take the whole loop down for a cosmetic
+/// change. What sven actually needs is the promote/reject decision and, per
+/// cycle, which facts that cycle was about.
 #[derive(Debug, Default, Deserialize)]
 struct StudyReport {
-    /// Whether the candidate adapter cleared the pre-registered gate and was
-    /// published into the watched directory.
+    /// Whether the gate promoted at least one cycle, which is exactly when an
+    /// adapter was published into the watched directory.
     #[serde(default)]
     promoted: bool,
-    /// Why the gate turned the study down, when it did.
+    /// The real gate's arm. The `null_gate` arm beside it is the control that
+    /// licenses believing this one; it says nothing about a specific fact and
+    /// is deliberately not read here.
     #[serde(default)]
-    reason: Option<String>,
-    /// One row per distinct fact in the dataset.
-    #[serde(default)]
-    facts: Vec<ReportedFact>,
+    gated: ArmReport,
 }
 
-/// One fact's row in the report: brain's own `FactVerdict`, plus the two rates
-/// that make the verdict legible to a human.
 #[derive(Debug, Default, Deserialize)]
-struct ReportedFact {
+struct ArmReport {
     #[serde(default)]
-    fact: String,
-    /// `true` iff every one of this fact's frozen probes passed on the
-    /// candidate arm. Not a mean - a fact with one failing probe has not
-    /// landed.
+    cycles: Vec<CycleRow>,
+}
+
+/// One cycle of the study: the facts it trained on, and what the gate said.
+///
+/// Note what is NOT here: a per-fact pass rate. brain reports per-CYCLE
+/// numbers because the gate's decision is a per-cycle measurement, and
+/// reconstructing per-fact verdicts would need a second decode pass - a
+/// different measurement from the gate's, presented as if it were the gate's.
+/// So a fact's verdict is its cycle's verdict, and the reason sven reports
+/// carries the cycle's own numbers rather than inventing per-fact ones.
+#[derive(Debug, Default, Deserialize)]
+struct CycleRow {
+    /// The distinct fact statements this cycle trained on.
     #[serde(default)]
-    landed: bool,
+    facts: Vec<String>,
+    /// The incumbent arm on this cycle's frozen probes.
     #[serde(default)]
     baseline_pass_rate: Option<f64>,
+    /// The candidate arm on the same probes, after training.
     #[serde(default)]
-    trained_pass_rate: Option<f64>,
+    post_training_pass_rate: Option<f64>,
+    /// `"promote"` or `"reject"`.
+    #[serde(default)]
+    decision: String,
+    /// Which of the gate's checks rejected, with the numbers that decided it.
+    #[serde(default)]
+    reject_cause: Option<String>,
 }
 
 impl StudyReport {
     /// This report's verdict on one submitted fact.
     ///
     /// Matched by normalised fact text, because brain's dataset format carries
-    /// no identifier to match on and brain itself collapses training rows under
-    /// exactly this identity.
+    /// no identifier to match on and brain itself collapses training rows
+    /// under exactly this identity.
     fn outcome_for(&self, fact: &str) -> FactOutcome {
         let identity = normalized(fact);
-        let Some(row) = self.facts.iter().find(|r| normalized(&r.fact) == identity) else {
+        let Some(cycle) = self
+            .gated
+            .cycles
+            .iter()
+            .find(|c| c.facts.iter().any(|f| normalized(f) == identity))
+        else {
             return FactOutcome::Failed {
                 reason: "the study report said nothing about this fact".to_string(),
             };
         };
-        if !self.promoted {
-            return FactOutcome::Rejected {
-                reason: format!(
-                    "the study did not clear its gate, so no adapter was published{}{}",
-                    self.reason
-                        .as_deref()
-                        .map(|r| format!(": {r}"))
-                        .unwrap_or_default(),
-                    row.rates()
-                ),
-            };
-        }
-        if row.landed {
+        // Both halves are required: a cycle the gate promoted still trained
+        // nothing servable if no adapter was published.
+        if self.promoted && cycle.decision == "promote" {
             return FactOutcome::Promoted;
         }
         FactOutcome::Rejected {
             reason: format!(
-                "the adapter was promoted, but this fact's own frozen probes still fail{}",
-                row.rates()
+                "the gate did not promote the study this fact was learned in{}{}",
+                cycle
+                    .reject_cause
+                    .as_deref()
+                    .map(|c| format!(": {c}"))
+                    .unwrap_or_default(),
+                cycle.rates()
             ),
         }
     }
 }
 
-impl ReportedFact {
-    /// ` (probe pass rate: baseline X, trained Y)`, or nothing when the report
-    /// carried no rates.
+impl CycleRow {
+    /// ` (probe pass rate: baseline X, after training Y)`, or nothing when the
+    /// report carried no rates.
     fn rates(&self) -> String {
-        match (self.baseline_pass_rate, self.trained_pass_rate) {
+        match (self.baseline_pass_rate, self.post_training_pass_rate) {
             (Some(base), Some(trained)) => {
-                format!(" (probe pass rate: baseline {base}, trained {trained})")
+                format!(" (probe pass rate: baseline {base}, after training {trained})")
             }
-            (None, Some(trained)) => format!(" (probe pass rate: trained {trained})"),
+            (None, Some(trained)) => format!(" (probe pass rate after training: {trained})"),
             _ => String::new(),
         }
     }
@@ -547,8 +630,9 @@ struct ClaimedFact {
 ///
 /// # Errors
 ///
-/// An unknown submitter name, or `local` without the `adapter_dir` it cannot
-/// guess.
+/// An unknown submitter name, or `local` without one of the three paths it
+/// cannot guess: where the promoted adapter must be published, which base
+/// checkpoint to train over, and which behaviours every study must preserve.
 pub fn submitter_from_config(
     config: &sven_config::Config,
 ) -> anyhow::Result<Option<Arc<dyn FactSubmitter>>> {
@@ -563,8 +647,26 @@ pub fn submitter_from_config(
                      sven cannot guess it, and a wrong one trains a model nothing serves."
                 )
             })?;
+            let base_weights = learning.base_weights.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "tools.memory.learning.base_weights is not set. The study trains a LoRA \
+                     adapter OVER a base checkpoint, and it has to be the base the served \
+                     model was built from - an adapter trained over a different one is not \
+                     applicable to what is running."
+                )
+            })?;
+            let anchors_file = learning.anchors_file.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "tools.memory.learning.anchors_file is not set. It is the behavioural \
+                     anchor suite every study rehearses, and brain refuses a study without \
+                     one: what this deployment must never forget is the operator's to state, \
+                     not sven's to invent."
+                )
+            })?;
             Ok(Some(Arc::new(LocalFactSubmitter::new(LocalStudy {
                 brain_bin: learning.brain_bin.clone(),
+                base_weights,
+                anchors_file: expand(anchors_file),
                 study_args: learning
                     .study_args
                     .clone()
@@ -605,32 +707,48 @@ mod tests {
         serde_json::from_str(json).expect("report decodes")
     }
 
-    /// brain owns the report format and will grow it. A sven that refused to
-    /// parse a report over a field it never asked for would take the loop down
-    /// for a cosmetic change on the other side.
+    /// brain owns the report format and will grow it - it already carries a
+    /// whole null-gate arm, per-cycle gate statistics and a retention matrix
+    /// sven never reads. A sven that refused to parse a report over a field it
+    /// never asked for would take the loop down for a cosmetic change on the
+    /// other side.
     #[test]
     fn a_report_carrying_fields_sven_never_asked_for_still_decodes() {
         let r = report(
-            r#"{"promoted": true, "gate": {"n": 60, "p_value": 0.001},
-                "null_gate": {"decision": "reject"}, "bwt": -0.02,
-                "facts": [{"fact": "f", "landed": true, "probes": 3}]}"#,
+            r#"{"arch": "qwen3", "base": "qwen3-0.6b", "cycles": 1, "preregistered": true,
+                "baseline_untrained": 0.02, "arm_separation": 0.31, "decision": "promote",
+                "promoted": true, "adapter": "adapter-000003.safetensors",
+                "gated": {"acc": 0.9, "bwt": -0.01, "promotions": 1, "cycles": [
+                  {"cycle": 0, "label": "doc", "facts": ["The bus runs at 500 kbit/s."],
+                   "baseline_pass_rate": 0.0, "post_training_pass_rate": 1.0,
+                   "decision": "promote", "reject_cause": null, "applied_promote": true,
+                   "p_value": 0.001, "effect_size": 1.0, "n_discordant": 12, "k_wins": 12,
+                   "anchor_delta": 0.0, "entropy_ratio": 0.98, "retention_row": [1.0]}]},
+                "null_gate": {"acc": 0.5, "bwt": 0.0, "promotions": 0, "cycles": []}}"#,
         );
-        assert!(r.promoted);
-        assert_eq!(r.facts.len(), 1);
+        assert_eq!(
+            r.outcome_for("the bus runs at   500 KBIT/S."),
+            FactOutcome::Promoted,
+            "a fact is matched by normalised text, exactly as brain collapses its own rows"
+        );
     }
 
-    /// A study that failed its gate published no adapter, so nothing in it
-    /// landed - regardless of what the per-fact rows say about probe scores.
+    /// A study whose gate rejected published no adapter, so nothing in it
+    /// reached the served model - and the user is owed the gate's own reason
+    /// rather than a bare "no".
     #[test]
-    fn a_rejected_study_rejects_every_fact_in_it_even_the_ones_whose_probes_passed() {
+    fn a_rejected_cycle_rejects_its_facts_and_carries_the_gates_reason() {
         let r = report(
-            r#"{"promoted": false, "reason": "the null-gate arm fired",
-                "facts": [{"fact": "The bus runs at 500 kbit/s.", "landed": true}]}"#,
+            r#"{"promoted": false, "decision": "reject",
+                "gated": {"cycles": [{"facts": ["The bus runs at 500 kbit/s."],
+                  "baseline_pass_rate": 0.0, "post_training_pass_rate": 0.33,
+                  "decision": "reject", "reject_cause": "anchor suite regressed by 0.08"}]}}"#,
         );
         assert!(
-            matches!(r.outcome_for("the bus runs at   500 KBIT/S."),
-                     FactOutcome::Rejected { reason } if reason.contains("null-gate")),
-            "a fact is matched by normalised text, and a failed gate is the reason"
+            matches!(r.outcome_for("The bus runs at 500 kbit/s."),
+                     FactOutcome::Rejected { reason }
+                     if reason.contains("anchor suite regressed") && reason.contains("0.33")),
+            "the cause and the cycle's own numbers must both reach the user"
         );
     }
 
@@ -639,10 +757,27 @@ mod tests {
     /// the user acts on.
     #[test]
     fn a_fact_the_report_never_mentions_is_failed_never_guessed_at() {
-        let r = report(r#"{"promoted": true, "facts": []}"#);
+        let r = report(r#"{"promoted": true, "gated": {"cycles": []}}"#);
         assert!(matches!(
             r.outcome_for("The bus runs at 500 kbit/s."),
             FactOutcome::Failed { .. }
         ));
+    }
+
+    /// The anchor suite is the operator's, and brain refuses a study without
+    /// one - so an unreadable or empty file is a named error naming the config
+    /// key, not a study that quietly rehearses nothing.
+    #[test]
+    fn an_absent_or_empty_anchor_suite_is_refused_by_name() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let missing = read_anchors(&dir.path().join("nope.jsonl")).expect_err("absent");
+        assert!(missing.to_string().contains("anchors_file"));
+
+        let empty = dir.path().join("empty.jsonl");
+        std::fs::write(&empty, "\n\n").expect("write");
+        assert!(read_anchors(&empty)
+            .expect_err("empty")
+            .to_string()
+            .contains("is empty"));
     }
 }

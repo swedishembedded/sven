@@ -1031,6 +1031,21 @@ pub struct LearningConfig {
     /// line here rather than a sven release.
     #[serde(default)]
     pub study_args: Option<Vec<String>>,
+    /// The base checkpoint a study trains its LoRA adapter over - brain's
+    /// `--weights`, and necessarily the same base the served model was built
+    /// from. Required by the `local` submitter.
+    #[serde(default)]
+    pub base_weights: Option<String>,
+    /// A JSONL file of `{fact, probe_question, expected_answer}` triples: the
+    /// behavioural anchor suite (system-prompt adherence, refusal, tool-call
+    /// format) every study cycle rehearses so it does not forget how to
+    /// behave while learning a document.
+    ///
+    /// Required by the `local` submitter, because brain refuses a study
+    /// without one and because what a given deployment must never lose is a
+    /// property of that deployment, not something sven can invent.
+    #[serde(default)]
+    pub anchors_file: Option<String>,
     /// The directory this machine's `brain serve --watch-adapters DIR` polls.
     ///
     /// Required by the `local` submitter and deliberately not defaulted: a
@@ -1082,6 +1097,8 @@ impl Default for LearningConfig {
             submitter: Self::default_submitter(),
             brain_bin: Self::default_brain_bin(),
             study_args: None,
+            base_weights: None,
+            anchors_file: None,
             adapter_dir: None,
             work_dir: None,
             study_timeout_secs: Self::default_study_timeout_secs(),
