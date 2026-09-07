@@ -62,6 +62,7 @@ fn a_fact(id: &str) -> PendingFactRecord {
     PendingFactRecord {
         id: FactId::new(id),
         fact: format!("Fact {id}."),
+        probe: None,
         source: FactSource::UserStated,
         recorded_at: 7,
     }

@@ -490,6 +490,7 @@ mod tests {
         LedgerEntry::PendingFact(PendingFactRecord {
             id: FactId::new(id),
             fact: format!("Fact {id}."),
+            probe: None,
             source: FactSource::UserStated,
             recorded_at: 1,
         })

@@ -21,8 +21,8 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use sven_memory::{
-    AssimilateFactTool, DocId, DocSummary, Document, DocumentRecord, PendingFactsLedger,
-    ProvenanceIndex, SearchResult, VectorStore,
+    AssimilateFactTool, DocId, DocSummary, Document, DocumentRecord, FrozenProbe,
+    PendingFactsLedger, ProvenanceIndex, SearchResult, VectorStore,
 };
 use sven_tools::tool::{Tool, ToolCall};
 use sven_vocab::provenance::{ContentDigest, FactSource, KnowledgeApprovals};
@@ -415,5 +415,97 @@ async fn a_model_supplied_source_field_is_ignored() {
         fx.ledger.pending_facts().expect("read ledger").is_empty(),
         "an unsourced fact is AgentInferred: memory only, never the ledger: {}",
         out.content
+    );
+}
+
+/// A fact only reaches training if something can score whether the model
+/// actually learned it, and the only honest scorer is a probe the extractor
+/// froze *while reading the document* - never one invented afterwards from
+/// the fact itself. So the probe travels in the ledger beside the fact it
+/// belongs to, or the fact travels with no probe at all and the submitter
+/// says so.
+#[tokio::test]
+async fn a_frozen_probe_travels_into_the_ledger_beside_its_fact() {
+    let fx = fixture();
+    fx.provenance.record("ev-user", FactSource::UserStated);
+
+    let out = fx
+        .tool
+        .execute(&call(json!({
+            "fact": "The CAN bus runs at 500 kbit/s.",
+            "evidence": "ev-user",
+            "probe_question": "At what rate does the vehicle bus operate?",
+            "expected_answer": "500 kbit/s",
+        })))
+        .await;
+
+    assert!(!out.is_error, "assimilation should succeed: {}", out.content);
+    let facts = fx.ledger.pending_facts().expect("read ledger");
+    assert_eq!(facts.len(), 1);
+    assert_eq!(
+        facts[0].probe,
+        Some(FrozenProbe {
+            question: "At what rate does the vehicle bus operate?".to_string(),
+            expected_answer: "500 kbit/s".to_string(),
+        }),
+        "the probe must reach the ledger verbatim, not be re-derived later"
+    );
+
+    // A fact with no probe is still a fact: it is recorded, and it is the
+    // submitter's job to report that it cannot be scored - not this tool's
+    // job to refuse the knowledge.
+    fx.tool
+        .execute(&call(json!({
+            "fact": "The gateway reboots nightly.",
+            "evidence": "ev-user",
+        })))
+        .await;
+    let facts = fx.ledger.pending_facts().expect("read ledger");
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[1].probe, None);
+}
+
+/// Half a probe is not a probe, and a probe question sitting inside the fact
+/// it is meant to test is a memorisation test wearing a generalisation test's
+/// clothes - brain refuses such a batch outright, so refusing it here is the
+/// difference between a clear tool error and an opaque failure four
+/// subprocesses later.
+#[tokio::test]
+async fn a_half_written_or_leaking_probe_is_refused_never_silently_dropped() {
+    let fx = fixture();
+    fx.provenance.record("ev-user", FactSource::UserStated);
+
+    let out = fx
+        .tool
+        .execute(&call(json!({
+            "fact": "The CAN bus runs at 500 kbit/s.",
+            "evidence": "ev-user",
+            "probe_question": "At what rate does the vehicle bus operate?",
+        })))
+        .await;
+    assert!(out.is_error, "half a probe must be a loud error");
+
+    let out = fx
+        .tool
+        .execute(&call(json!({
+            "fact": "At what rate does the vehicle bus operate? It runs at 500 kbit/s.",
+            "evidence": "ev-user",
+            "probe_question": "At what rate does the vehicle bus operate?",
+            "expected_answer": "500 kbit/s",
+        })))
+        .await;
+    assert!(
+        out.is_error,
+        "a probe question inside its own training row must be refused"
+    );
+
+    assert!(
+        fx.ledger.pending_facts().expect("read ledger").is_empty(),
+        "neither malformed call may reach the ledger"
+    );
+    assert_eq!(
+        fx.store.len(),
+        0,
+        "and neither may be remembered: a refused call writes nothing at all"
     );
 }

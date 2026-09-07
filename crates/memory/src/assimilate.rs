@@ -52,10 +52,68 @@ use sven_tools::{
 use sven_vocab::provenance::{FactId, FactSource, KnowledgeApprovals, LedgerAdmission, ProvenanceSink};
 
 use crate::{
-    ledger::{PendingFactRecord, PendingFactsLedger},
+    ledger::{FrozenProbe, PendingFactRecord, PendingFactsLedger},
     recall::{SessionScope, PROVENANCE_KEY, SESSION_SCOPE_KEY},
     store::{Document, VectorStore},
 };
+
+/// The probe this call froze for `fact`, if it froze one.
+///
+/// Three outcomes, and the middle one is the point: no probe at all is fine
+/// (the fact is knowledge that simply cannot be scored, and the submitter says
+/// so), a *complete* probe is taken verbatim, and anything in between is an
+/// error rather than a silently dropped half. Half a probe is almost always a
+/// model that meant to write one, and dropping it would send an unscoreable
+/// fact to training under the impression it was scoreable.
+///
+/// The containment rule mirrors brain's own `FactBatch` validation, which
+/// refuses such a batch outright. Catching it here turns an opaque failure
+/// several subprocesses later into a tool error the model can act on
+/// immediately.
+fn frozen_probe(args: &Value, fact: &str) -> Result<Option<FrozenProbe>, String> {
+    let field = |name: &str| {
+        args.get(name)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    match (field("probe_question"), field("expected_answer")) {
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(
+            "assimilate_fact: 'probe_question' needs an 'expected_answer' - a question \
+             nothing can be scored against is not a probe"
+                .to_string(),
+        ),
+        (None, Some(_)) => Err(
+            "assimilate_fact: 'expected_answer' needs a 'probe_question' - an answer to \
+             no question cannot be asked of the model"
+                .to_string(),
+        ),
+        (Some(question), Some(expected_answer)) => {
+            if normalized(fact).contains(&normalized(question)) {
+                return Err(format!(
+                    "assimilate_fact: the probe question {question:?} appears inside the fact \
+                     it is meant to test, so answering it needs no knowledge of the fact. \
+                     Ask something the fact ANSWERS, in different words."
+                ));
+            }
+            Ok(Some(FrozenProbe {
+                question: question.to_string(),
+                expected_answer: expected_answer.to_string(),
+            }))
+        }
+    }
+}
+
+/// Case- and whitespace-insensitive text, matching the normalisation brain
+/// applies before it makes the same containment check. Two spellings of one
+/// leak are one leak.
+fn normalized(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+        .to_lowercase()
+}
 
 /// Session-scoped map from an evidence handle to the provenance the resolution
 /// path recorded for it.
@@ -229,6 +287,18 @@ impl Tool for AssimilateFactTool {
                 "entity": {
                     "type": "string",
                     "description": "Person, component, or topic this fact is about"
+                },
+                "probe_question": {
+                    "type": "string",
+                    "description": "A question that can only be answered by knowing \
+                                    this fact, written now, while you have the source \
+                                    in front of you. Its wording must not appear in \
+                                    the fact itself. Requires `expected_answer`"
+                },
+                "expected_answer": {
+                    "type": "string",
+                    "description": "The exact answer `probe_question` must elicit, as \
+                                    short as it can be and still be correct"
                 }
             },
             "required": ["fact"],
@@ -248,6 +318,15 @@ impl Tool for AssimilateFactTool {
         let fact = match call.args.get("fact").and_then(|v| v.as_str()) {
             Some(f) if !f.trim().is_empty() => f.trim().to_string(),
             _ => return ToolOutput::err(&call.id, "assimilate_fact requires a non-empty 'fact'"),
+        };
+
+        // Rejected before anything is written, memory included: a malformed
+        // probe is a defect in the extraction the caller can fix and retry,
+        // and remembering half of it would leave the ledger's scoring story
+        // silently incomplete.
+        let probe = match frozen_probe(&call.args, &fact) {
+            Ok(probe) => probe,
+            Err(reason) => return ToolOutput::err(&call.id, reason),
         };
 
         // Provenance is resolved, never asserted: a `source` (or `confirmed`)
@@ -320,6 +399,7 @@ impl Tool for AssimilateFactTool {
         let record = PendingFactRecord {
             id: FactId::new(uuid::Uuid::new_v4().to_string()),
             fact,
+            probe,
             source,
             recorded_at,
         };

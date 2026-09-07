@@ -47,6 +47,28 @@ pub struct DocumentRecord {
     pub ingested_at: u64,
 }
 
+/// The question a fact is scored by, frozen when the fact was extracted.
+///
+/// Training on a fact is only defensible if something can afterwards decide
+/// whether the model *learned* it, and the only honest decider is a question
+/// the extractor wrote while reading the source - never one derived later from
+/// the fact itself, which tests the derivation rather than the knowledge. So
+/// the probe is captured at the same moment as the fact and travels with it.
+///
+/// The question must not appear inside the fact it belongs to: a probe whose
+/// own question sits in the row the model is trained on is a memorisation test
+/// wearing a generalisation test's clothes. The *answer* deliberately may -
+/// "the 3rd relay closes at 13 volts" is exactly the row that has to teach the
+/// answer "13 volts", so an answer-absence rule would reject every batch that
+/// could ever work.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrozenProbe {
+    /// What the trained model is asked. Never trained on.
+    pub question: String,
+    /// The answer `question` must elicit, verbatim.
+    pub expected_answer: String,
+}
+
 /// A fact accepted into the ledger as a candidate for training.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingFactRecord {
@@ -54,6 +76,14 @@ pub struct PendingFactRecord {
     pub id: FactId,
     /// The assertion itself - what would be trained on.
     pub fact: String,
+    /// How the fact is scored, if the extractor froze a probe for it.
+    ///
+    /// `#[serde(default)]`, so a ledger written before probes existed still
+    /// reads: those facts are knowledge with no way to score it, and a
+    /// submitter that needs a probe reports exactly that rather than guessing
+    /// one up.
+    #[serde(default)]
+    pub probe: Option<FrozenProbe>,
     /// Where it came from. Attached by the resolution path, never by the model.
     pub source: FactSource,
     /// Unix seconds at which it was recorded.
@@ -207,6 +237,10 @@ mod tests {
         PendingFactRecord {
             id: FactId::new(id),
             fact: "The CAN bus runs at 500 kbit/s.".to_string(),
+            probe: Some(FrozenProbe {
+                question: "How fast does the vehicle network run?".to_string(),
+                expected_answer: "500 kbit/s".to_string(),
+            }),
             source: FactSource::UserStated,
             recorded_at: 7,
         }
@@ -238,5 +272,19 @@ mod tests {
             HashSet::from([ContentDigest::from_hex("abc123")])
         );
         assert_eq!(ledger.pending_facts().expect("facts"), vec![a_fact("f-1")]);
+    }
+
+    /// The ledger is append-only and hash-chained: entries written before
+    /// probes existed can never be rewritten to carry one, so they have to
+    /// keep reading. A fact with no probe is knowledge that cannot be scored,
+    /// not a corrupt entry.
+    #[test]
+    fn a_fact_recorded_before_probes_existed_still_reads_as_one_without_a_probe() {
+        let record: PendingFactRecord = serde_json::from_str(
+            r#"{"id":"f-1","fact":"The CAN bus runs at 500 kbit/s.",
+                "source":{"kind":"user_stated"},"recorded_at":7}"#,
+        )
+        .expect("a pre-probe ledger entry must still decode");
+        assert_eq!(record.probe, None);
     }
 }
