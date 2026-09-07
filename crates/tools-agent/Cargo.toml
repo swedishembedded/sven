@@ -9,6 +9,7 @@ license     = "Apache-2.0"
 sven-tool-api  = { path = "../tool-api" }
 sven-config    = { path = "../config" }
 sven-hsm       = { path = "../hsm" }
+sven-vocab     = { path = "../vocab" }
 sven-workspace = { path = "../workspace" }
 anyhow         = { workspace = true }
 async-trait    = { workspace = true }

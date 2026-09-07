@@ -28,6 +28,8 @@ use serde_json::Value;
 
 pub mod provenance;
 
+use provenance::FactSource;
+
 /// A single tool invocation requested by the model.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ToolCall {
@@ -75,6 +77,20 @@ pub struct ToolOutput {
     pub parts: Vec<ToolOutputPart>,
     /// If true, the tool execution failed non-fatally (returned error message).
     pub is_error: bool,
+    /// Where this result came from, when the tool itself resolved information
+    /// rather than just acting on model-supplied arguments.
+    ///
+    /// Set only by resolving tools (`web_fetch`, `web_search`, `ask_question`,
+    /// `ingest_document`) - never by the model, and never a place `assimilate_
+    /// fact` reads directly. It exists so the impure I/O layer that runs the
+    /// tool (never the tool itself, and never a `Machine`) can record it into
+    /// the shared provenance index the model later cites by this call's own
+    /// id. See [`provenance::ProvenanceSink`].
+    ///
+    /// Boxed: `FactSource` carries several `String`s and a `Range`, and every
+    /// `ToolOutput` (most of which never attach provenance at all) would
+    /// otherwise pay for the largest variant's size.
+    pub provenance: Option<Box<FactSource>>,
 }
 
 impl ToolOutput {
@@ -87,6 +103,7 @@ impl ToolOutput {
             content: text.clone(),
             parts: vec![ToolOutputPart::Text(text)],
             is_error: false,
+            provenance: None,
         }
     }
 
@@ -99,7 +116,16 @@ impl ToolOutput {
             content: text.clone(),
             parts: vec![ToolOutputPart::Text(text)],
             is_error: true,
+            provenance: None,
         }
+    }
+
+    /// Attaches this result's provenance. Only a resolving tool's own
+    /// construction site should call this - see [`Self::provenance`].
+    #[must_use]
+    pub fn with_provenance(mut self, source: FactSource) -> Self {
+        self.provenance = Some(Box::new(source));
+        self
     }
 
     /// Result with arbitrary parts (text and/or images).
@@ -119,6 +145,7 @@ impl ToolOutput {
             content: text,
             parts,
             is_error: false,
+            provenance: None,
         }
     }
 
@@ -134,6 +161,26 @@ impl ToolOutput {
         self.parts
             .iter()
             .any(|p| matches!(p, ToolOutputPart::Audio(_)))
+    }
+}
+
+#[cfg(test)]
+mod tool_output_tests {
+    use super::*;
+
+    #[test]
+    fn ok_err_and_with_parts_carry_no_provenance_by_default() {
+        assert!(ToolOutput::ok("c1", "hi").provenance.is_none());
+        assert!(ToolOutput::err("c1", "boom").provenance.is_none());
+        assert!(ToolOutput::with_parts("c1", vec![ToolOutputPart::Text("hi".into())])
+            .provenance
+            .is_none());
+    }
+
+    #[test]
+    fn with_provenance_attaches_the_given_fact_source() {
+        let out = ToolOutput::ok("c1", "hi").with_provenance(FactSource::UserStated);
+        assert_eq!(out.provenance, Some(Box::new(FactSource::UserStated)));
     }
 }
 

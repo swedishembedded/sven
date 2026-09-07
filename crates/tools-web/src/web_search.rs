@@ -10,6 +10,8 @@ use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
+use crate::provenance::{attach_web_provenance, now_unix};
+
 #[derive(Default)]
 pub struct WebSearchTool {
     /// Optional API key override (falls back to env BRAVE_API_KEY)
@@ -84,27 +86,38 @@ impl Tool for WebSearchTool {
             );
         };
 
-        match brave_search(&query, count, &api_key).await {
-            Ok(results) => ToolOutput::ok(&call.id, results),
+        let url = search_url(&query, count);
+        match brave_search(&url, count, &api_key).await {
+            // Provenance names the actual API URL queried - this tool never
+            // writes memory or the ledger itself (see `assimilate_fact`), it
+            // only attaches the claim a later evidence lookup can resolve.
+            Ok(results) => {
+                attach_web_provenance(ToolOutput::ok(&call.id, results), &url, now_unix())
+            }
             Err(e) => ToolOutput::err(&call.id, format!("search error: {e}")),
         }
     }
 }
 
-async fn brave_search(query: &str, count: usize, api_key: &str) -> anyhow::Result<String> {
+/// The Brave Search API URL a query actually resolves to - the "url" this
+/// tool's provenance names. A pure function so it can be pinned by a test
+/// without a network call.
+fn search_url(query: &str, count: usize) -> String {
+    format!(
+        "https://api.search.brave.com/res/v1/web/search?q={}&count={}",
+        urlencoding(query),
+        count
+    )
+}
+
+async fn brave_search(url: &str, count: usize, api_key: &str) -> anyhow::Result<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .user_agent("sven-agent/0.1")
         .build()?;
 
-    let url = format!(
-        "https://api.search.brave.com/res/v1/web/search?q={}&count={}",
-        urlencoding(query),
-        count
-    );
-
     let resp = client
-        .get(&url)
+        .get(url)
         .header("Accept", "application/json")
         .header("Accept-Encoding", "gzip")
         .header("X-Subscription-Token", api_key)
@@ -203,5 +216,19 @@ mod tests {
         let out = t.execute(&call).await;
         assert!(out.is_error);
         assert!(out.content.contains("BRAVE_API_KEY"));
+        assert!(
+            out.provenance.is_none(),
+            "no API key means nothing was actually fetched"
+        );
+    }
+
+    /// The URL this tool's provenance names must be the exact API URL a
+    /// search would query - not a placeholder, and not the raw query text.
+    #[test]
+    fn search_url_names_the_real_brave_api_endpoint_and_query() {
+        let url = search_url("rust async traits", 3);
+        assert!(url.starts_with("https://api.search.brave.com/res/v1/web/search?q="));
+        assert!(url.contains("rust+async+traits"));
+        assert!(url.ends_with("&count=3"));
     }
 }

@@ -21,6 +21,7 @@
 //! same shape as `grep`/`search_codebase`: a read-only, subprocess-backed
 //! diagnostic tool with no state and no self-modification of the agent.
 pub mod grep;
+mod provenance;
 pub mod read_lints;
 pub mod search_codebase;
 pub mod web_fetch;

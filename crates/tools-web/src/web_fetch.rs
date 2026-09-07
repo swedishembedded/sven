@@ -10,6 +10,8 @@ use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
+use crate::provenance::{attach_web_provenance, now_unix};
+
 /// Default character ceiling for fetched page content.
 /// 20 K chars ≈ 5,000 tokens - fits comfortably within a 40 K-token context window.
 const DEFAULT_MAX_CHARS: usize = 20_000;
@@ -86,7 +88,12 @@ impl Tool for WebFetchTool {
         debug!(url = %url, "web_fetch tool");
 
         match fetch_url(&url, max_chars).await {
-            Ok(content) => ToolOutput::ok(&call.id, content),
+            // Provenance names exactly what was fetched: this tool never
+            // writes memory or the ledger itself (see `assimilate_fact`) - it
+            // only attaches the claim a later evidence lookup can resolve.
+            Ok(content) => {
+                attach_web_provenance(ToolOutput::ok(&call.id, content), &url, now_unix())
+            }
             Err(e) => ToolOutput::err(&call.id, format!("fetch error: {e}")),
         }
     }
@@ -175,5 +182,23 @@ mod tests {
         let schema = t.parameters_schema();
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v.as_str() == Some("url")));
+    }
+
+    /// A failed fetch carries no provenance claim - there is nothing this
+    /// tool can honestly say it fetched. Uses a malformed URL so the failure
+    /// happens at request construction, before any real network I/O.
+    #[tokio::test]
+    async fn a_failed_fetch_attaches_no_provenance() {
+        use sven_tool_api::tool::ToolCall;
+
+        let t = WebFetchTool::default();
+        let call = ToolCall {
+            id: "call-1".into(),
+            name: "web_fetch".into(),
+            args: json!({"url": "not a url", "max_chars": 100}),
+        };
+        let out = t.execute(&call).await;
+        assert!(out.is_error, "a malformed URL must fail: {}", out.content);
+        assert!(out.provenance.is_none());
     }
 }

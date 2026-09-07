@@ -10,6 +10,7 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
+use sven_vocab::provenance::FactSource;
 
 /// A single structured question with multiple-choice options.
 #[derive(Debug, Clone)]
@@ -211,7 +212,11 @@ impl Tool for AskQuestionTool {
                 return ToolOutput::err(&call.id, "TUI question channel closed unexpectedly");
             }
             return match answer_rx.await {
-                Ok(answer) => ToolOutput::ok(&call.id, answer),
+                // The user answered: this is `FactSource::UserStated`, the
+                // user's own words, this session. `assimilate_fact` is the
+                // only writer into memory or the ledger - this tool only
+                // attaches the claim.
+                Ok(answer) => ToolOutput::ok(&call.id, answer).with_provenance(FactSource::UserStated),
                 Err(_) => ToolOutput::err(&call.id, "Question was cancelled by the user"),
             };
         }
@@ -272,7 +277,7 @@ impl Tool for AskQuestionTool {
         }
         eprintln!();
 
-        ToolOutput::ok(&call.id, answers.join("\n\n"))
+        ToolOutput::ok(&call.id, answers.join("\n\n")).with_provenance(FactSource::UserStated)
     }
 }
 
@@ -440,5 +445,41 @@ mod tests {
         assert!(out.content.contains("What language?"));
         assert!(out.content.contains("What framework?"));
         assert!(out.content.contains("best judgement"));
+        assert!(
+            out.provenance.is_none(),
+            "no answer was ever given, so there is nothing to attribute to the user"
+        );
+    }
+
+    /// A real user answer, delivered over the TUI question channel, is
+    /// `FactSource::UserStated` - the user's own words, this session. This
+    /// tool never writes memory or the ledger itself; it only attaches the
+    /// claim `assimilate_fact` may later resolve.
+    #[tokio::test]
+    async fn a_tui_answer_attaches_user_stated_provenance() {
+        use serde_json::json;
+        use sven_tool_api::tool::ToolCall;
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let t = AskQuestionTool::new_tui(tx);
+        let call = ToolCall {
+            id: "1".into(),
+            name: "ask_question".into(),
+            args: json!({
+                "questions": [
+                    { "prompt": "Which framework?", "options": ["Axum", "Actix"] },
+                ]
+            }),
+        };
+
+        let execute = tokio::spawn(async move { t.execute(&call).await });
+        let req = rx.recv().await.expect("question request sent");
+        req.answer_tx
+            .send("Axum".to_string())
+            .expect("answer channel open");
+
+        let out = execute.await.expect("execute task joins");
+        assert!(!out.is_error);
+        assert_eq!(out.provenance, Some(Box::new(FactSource::UserStated)));
     }
 }
