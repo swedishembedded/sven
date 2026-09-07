@@ -203,6 +203,7 @@ impl Tool for AskQuestionTool {
         // ── TUI mode ─────────────────────────────────────────────────────────
         if let Some(tx) = &self.question_tx {
             let (answer_tx, answer_rx) = oneshot::channel();
+            let questions_for_provenance = questions.clone();
             let req = QuestionRequest {
                 id: call.id.clone(),
                 questions,
@@ -212,11 +213,14 @@ impl Tool for AskQuestionTool {
                 return ToolOutput::err(&call.id, "TUI question channel closed unexpectedly");
             }
             return match answer_rx.await {
-                // The user answered: this is `FactSource::UserStated`, the
-                // user's own words, this session. `assimilate_fact` is the
-                // only writer into memory or the ledger - this tool only
-                // attaches the claim.
-                Ok(answer) => ToolOutput::ok(&call.id, answer).with_provenance(FactSource::UserStated),
+                // The user answered. `assimilate_fact` is the only writer
+                // into memory or the ledger - this tool only attaches the
+                // claim, as either `UserChoice` (a genuine pick between named
+                // alternatives) or `UserStated` (the user's own words).
+                Ok(answer) => {
+                    let source = choice_or_stated(&call.id, &questions_for_provenance, &answer);
+                    ToolOutput::ok(&call.id, answer).with_provenance(source)
+                }
                 Err(_) => ToolOutput::err(&call.id, "Question was cancelled by the user"),
             };
         }
@@ -269,15 +273,51 @@ impl Tool for AskQuestionTool {
         eprintln!("╚══════════════════════════════════════════════════╝");
 
         let mut answers: Vec<String> = Vec::new();
+        let mut raw_answers: Vec<String> = Vec::new();
         for (i, q) in questions.iter().enumerate() {
             eprint!("  Answer {}: ", i + 1);
             let input = read_stdin_line().await;
             let answer = parse_stdin_answer(&input, &q.options, q.allow_multiple);
             answers.push(format!("Q: {}\nA: {}", q.prompt, answer));
+            raw_answers.push(answer);
         }
         eprintln!();
 
-        ToolOutput::ok(&call.id, answers.join("\n\n")).with_provenance(FactSource::UserStated)
+        // Only the single-question case can name a genuine choice; see
+        // `choice_or_stated` for why that is the only shape `FactSource::
+        // UserChoice` can honestly represent.
+        let source = raw_answers
+            .first()
+            .map(|answer| choice_or_stated(&call.id, &questions, answer))
+            .unwrap_or(FactSource::UserStated);
+        ToolOutput::ok(&call.id, answers.join("\n\n")).with_provenance(source)
+    }
+}
+
+/// Decides whether an answer names a genuine choice between offered
+/// alternatives ([`FactSource::UserChoice`]) or is just the user's own words
+/// ([`FactSource::UserStated`]).
+///
+/// Only a single question whose answer names exactly one of its own options
+/// counts as a choice: a `ToolOutput` carries at most one [`FactSource`], so a
+/// multi-question exchange, or a free-form "Other" answer, cannot be honestly
+/// split into a chosen/not_chosen pair and is recorded as the user's own
+/// statement instead. Capturing what was picked *and* what was rejected is
+/// the entire point of this variant - a ledger holding only the chosen answer
+/// is worthless for preference-pair training later.
+fn choice_or_stated(question_id: &str, questions: &[Question], answer: &str) -> FactSource {
+    match questions {
+        [only] if only.options.iter().any(|opt| opt == answer) => FactSource::UserChoice {
+            question_id: question_id.to_string(),
+            chosen: answer.to_string(),
+            not_chosen: only
+                .options
+                .iter()
+                .filter(|opt| opt.as_str() != answer)
+                .cloned()
+                .collect(),
+        },
+        _ => FactSource::UserStated,
     }
 }
 
@@ -451,12 +491,14 @@ mod tests {
         );
     }
 
-    /// A real user answer, delivered over the TUI question channel, is
-    /// `FactSource::UserStated` - the user's own words, this session. This
-    /// tool never writes memory or the ledger itself; it only attaches the
-    /// claim `assimilate_fact` may later resolve.
+    /// A free-form answer - one that does not name any of the offered
+    /// options, e.g. "Other" text the user typed themselves - is
+    /// `FactSource::UserStated`: the user's own words, this session, but not
+    /// a choice between named alternatives. This tool never writes memory or
+    /// the ledger itself; it only attaches the claim `assimilate_fact` may
+    /// later resolve.
     #[tokio::test]
-    async fn a_tui_answer_attaches_user_stated_provenance() {
+    async fn a_free_form_tui_answer_attaches_user_stated_provenance() {
         use serde_json::json;
         use sven_tool_api::tool::ToolCall;
 
@@ -475,11 +517,55 @@ mod tests {
         let execute = tokio::spawn(async move { t.execute(&call).await });
         let req = rx.recv().await.expect("question request sent");
         req.answer_tx
-            .send("Axum".to_string())
+            .send("Other: gRPC".to_string())
             .expect("answer channel open");
 
         let out = execute.await.expect("execute task joins");
         assert!(!out.is_error);
         assert_eq!(out.provenance, Some(Box::new(FactSource::UserStated)));
+    }
+
+    /// A genuine pick between offered alternatives - the answer names exactly
+    /// one of a single question's options - is `FactSource::UserChoice`,
+    /// recording both what was chosen and what was rejected. An uncaptured
+    /// choice is gone forever the moment the session ends; a later DPO
+    /// objective needs both sides of the pair, not just the winner.
+    #[tokio::test]
+    async fn a_user_choice_records_both_the_chosen_and_the_not_chosen_options() {
+        use serde_json::json;
+        use sven_tool_api::tool::ToolCall;
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let t = AskQuestionTool::new_tui(tx);
+        let call = ToolCall {
+            id: "call-42".into(),
+            name: "ask_question".into(),
+            args: json!({
+                "questions": [
+                    { "prompt": "Which framework?", "options": ["Axum", "Actix", "Rocket"] },
+                ]
+            }),
+        };
+
+        let execute = tokio::spawn(async move { t.execute(&call).await });
+        let req = rx.recv().await.expect("question request sent");
+        req.answer_tx
+            .send("Axum".to_string())
+            .expect("answer channel open");
+
+        let out = execute.await.expect("execute task joins");
+        assert!(!out.is_error);
+        match out.provenance.map(|b| *b) {
+            Some(FactSource::UserChoice {
+                question_id,
+                chosen,
+                not_chosen,
+            }) => {
+                assert_eq!(question_id, "call-42");
+                assert_eq!(chosen, "Axum");
+                assert_eq!(not_chosen, vec!["Actix".to_string(), "Rocket".to_string()]);
+            }
+            other => panic!("expected UserChoice provenance, got {other:?}"),
+        }
     }
 }
