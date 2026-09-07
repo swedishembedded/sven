@@ -6,6 +6,11 @@ description = "Semantic (vector + BM25) memory store for sven agents"
 
 [dependencies]
 sven-tools   = { path = "../tools" }
+# The learning submitter is selected by config value (`local`, `none`, and a
+# remote one later), so the config->submitter factory lives beside the
+# submitters rather than being re-derived at every call site. domain ->
+# foundation, the same edge the other tool crates take for their own settings.
+sven-config  = { path = "../config" }
 sven-vocab   = { path = "../vocab" }
 sven-chain   = { path = "../chain" }
 
@@ -21,6 +26,7 @@ chrono       = { workspace = true }
 uuid         = { workspace = true }
 reqwest      = { workspace = true }
 sha2         = { workspace = true }
+shellexpand  = { workspace = true }
 hex          = { workspace = true }
 
 # SQLite for persistent memory storage with FTS5

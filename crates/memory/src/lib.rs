@@ -27,6 +27,13 @@
 //!                                                │    PendingFactsDrain     │
 //!                                                │ batch → FactSubmitter →  │
 //!                                                │ per-fact outcomes        │
+//!                                                └────────────┬─────────────┘
+//!                                                             ▼
+//!                                                ┌──────────────────────────┐
+//!                                                │   LocalFactSubmitter     │
+//!                                                │ brain's document study,  │
+//!                                                │ on this machine, and     │
+//!                                                │ nowhere else             │
 //!                                                └──────────────────────────┘
 //!                                                  what actually gets trained
 //! ```
@@ -63,6 +70,7 @@ pub mod assimilate;
 pub mod drain;
 pub mod ingest;
 pub mod ledger;
+pub mod local_study;
 pub mod recall;
 pub mod sqlite;
 pub mod store;
@@ -73,6 +81,10 @@ pub use drain::{DrainError, FactOutcome, FactReport, FactSubmitter, PendingFacts
 pub use ingest::IngestDocumentTool;
 pub use ledger::{
     DocumentRecord, FrozenProbe, LedgerEntry, LedgerError, PendingFactRecord, PendingFactsLedger,
+};
+pub use local_study::{
+    submitter_from_config, LocalFactSubmitter, LocalStudy, ADAPTER_DIR_PLACEHOLDER,
+    DATASET_PLACEHOLDER, REPORT_PLACEHOLDER,
 };
 pub use recall::SessionScope;
 pub use sqlite::SqliteMemoryStore;

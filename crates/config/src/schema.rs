@@ -994,6 +994,44 @@ pub struct LearningConfig {
     /// Seconds between drain passes. The first pass runs immediately.
     #[serde(default = "LearningConfig::default_interval_secs")]
     pub interval_secs: u64,
+    /// Which submitter receives the facts.
+    ///
+    /// `"local"` (the default) runs brain's gated document study on this
+    /// machine and publishes a promoted adapter into [`Self::adapter_dir`];
+    /// nothing leaves the host. `"none"` disables submission even when
+    /// [`Self::submit_facts`] is on, which is what a machine with no brain
+    /// wants. The name is config rather than a compile-time choice so a
+    /// later remote submitter can be selected without touching the drain.
+    #[serde(default = "LearningConfig::default_submitter")]
+    pub submitter: String,
+    /// The `brain` executable. A bare name is resolved on `PATH`.
+    #[serde(default = "LearningConfig::default_brain_bin")]
+    pub brain_bin: String,
+    /// The arguments the local submitter runs `brain` with, as a template:
+    /// `{dataset}`, `{adapter_dir}` and `{report}` are substituted with the
+    /// paths sven writes and reads.
+    ///
+    /// A config value rather than a literal in the source because the study
+    /// subcommand's final spelling is brain's to decide and is still moving.
+    /// What sven depends on is the shape - a dataset in, an adapter directory
+    /// and a report out - so catching up with a renamed subcommand is one
+    /// line here rather than a sven release.
+    #[serde(default)]
+    pub study_args: Option<Vec<String>>,
+    /// The directory this machine's `brain serve --watch-adapters DIR` polls.
+    ///
+    /// Required by the `local` submitter and deliberately not defaulted: a
+    /// guess that lands one directory over trains a model nothing ever
+    /// serves, silently and forever.
+    #[serde(default)]
+    pub adapter_dir: Option<String>,
+    /// Where the local submitter keeps datasets, reports and its outcome
+    /// journal. Defaults to `~/.config/sven/memory/learning`.
+    #[serde(default)]
+    pub work_dir: Option<String>,
+    /// Seconds one document study may run before it is killed.
+    #[serde(default = "LearningConfig::default_study_timeout_secs")]
+    pub study_timeout_secs: u64,
 }
 
 impl LearningConfig {
@@ -1004,6 +1042,22 @@ impl LearningConfig {
     fn default_interval_secs() -> u64 {
         300
     }
+
+    fn default_submitter() -> String {
+        "local".to_string()
+    }
+
+    fn default_brain_bin() -> String {
+        "brain".to_string()
+    }
+
+    /// An hour: a document study trains and then evaluates a frozen probe set
+    /// on real hardware, which is minutes at this model scale and much longer
+    /// on a busy machine - but a study still running after an hour is stuck,
+    /// not slow.
+    fn default_study_timeout_secs() -> u64 {
+        3600
+    }
 }
 
 impl Default for LearningConfig {
@@ -1012,6 +1066,12 @@ impl Default for LearningConfig {
             submit_facts: false,
             batch_size: Self::default_batch_size(),
             interval_secs: Self::default_interval_secs(),
+            submitter: Self::default_submitter(),
+            brain_bin: Self::default_brain_bin(),
+            study_args: None,
+            adapter_dir: None,
+            work_dir: None,
+            study_timeout_secs: Self::default_study_timeout_secs(),
         }
     }
 }

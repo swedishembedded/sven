@@ -428,7 +428,17 @@ const WEB_SEARCH_CONFIG_KEYS: &[&str] = &["api_key"];
 const MEMORY_CONFIG_KEYS: &[&str] = &["memory_file", "learning"];
 
 /// Known keys in [`crate::LearningConfig`].
-const LEARNING_CONFIG_KEYS: &[&str] = &["submit_facts", "batch_size", "interval_secs"];
+const LEARNING_CONFIG_KEYS: &[&str] = &[
+    "submit_facts",
+    "batch_size",
+    "interval_secs",
+    "submitter",
+    "brain_bin",
+    "study_args",
+    "adapter_dir",
+    "work_dir",
+    "study_timeout_secs",
+];
 
 /// Known keys in [`crate::LintsConfig`].
 const LINTS_CONFIG_KEYS: &[&str] = &["rust_command", "typescript_command", "python_command"];
