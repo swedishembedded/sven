@@ -564,6 +564,11 @@ impl RuntimeBuilder {
         // tool.
         #[allow(unused_mut)]
         let mut integration_providers = IntegrationProviders::default();
+        // Observations of real `HumanApproved` events for
+        // `ToolCapability::AssimilateKnowledge`. The kernel's `UserExecutor`
+        // writes it, `assimilate_fact` reads it; sharing the one handle here is
+        // what keeps human confirmation out of the model's reach.
+        let knowledge_approvals = Arc::new(sven_vocab::provenance::KnowledgeApprovals::new());
         #[cfg(feature = "memory")]
         {
             integration_providers.memory_store =
@@ -577,6 +582,11 @@ impl RuntimeBuilder {
                         None
                     }
                 };
+            integration_providers.fact_ledger =
+                Some(sven_memory::PendingFactsLedger::at_default_path());
+            integration_providers.provenance_index =
+                Some(Arc::new(sven_memory::ProvenanceIndex::new()));
+            integration_providers.knowledge_approvals = Some(Arc::clone(&knowledge_approvals));
         }
 
         let mut tool_registry = build_tool_registry_with_integrations(
@@ -733,7 +743,10 @@ impl RuntimeBuilder {
             Some(custom) => custom,
             None => {
                 let base = CompositeExecutorBuilder::default()
-                    .with_user(question_tx, approval_tx)
+                    .with_user_slot(Box::new(
+                        sven_executors::UserExecutor::new(question_tx, approval_tx)
+                            .with_knowledge_approvals(knowledge_approvals),
+                    ))
                     .with_timers(Arc::new(sven_kernel::SystemClock::new()))
                     .with_checkpoints(checkpoint_dir)
                     .with_audit_trail(audit_log_path, audit_trail.clone())

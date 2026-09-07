@@ -152,6 +152,7 @@ impl ReactiveAgentMachine {
                 ToolCapability::NetworkAccess,
                 ToolCapability::GitOperation,
                 ToolCapability::ExecuteShell,
+                ToolCapability::AssimilateKnowledge,
             ])
             .require_approval([ToolCapability::Rollback])
             .build()
@@ -165,6 +166,11 @@ impl ReactiveAgentMachine {
     /// turned into a `ToolFailed` without ever reaching the executor. This is
     /// what makes plan mode structurally read-only: the guarantee holds even if
     /// the model ignores the (write-free) tool schemas and emits a write anyway.
+    ///
+    /// [`ToolCapability::AssimilateKnowledge`] *is* granted here: research and
+    /// planning are precisely when the agent learns, and assimilation writes
+    /// nothing into the user's workspace. What reaches durable storage is
+    /// gated by the fact's provenance, not by the mode.
     #[must_use]
     pub fn plan_permission_policy() -> PermissionPolicy {
         PermissionPolicy::builder()
@@ -173,6 +179,7 @@ impl ReactiveAgentMachine {
                 ToolCapability::NetworkAccess,
                 ToolCapability::GitOperation,
                 ToolCapability::ExecuteShell,
+                ToolCapability::AssimilateKnowledge,
             ])
             .require_approval([ToolCapability::Rollback])
             .build()

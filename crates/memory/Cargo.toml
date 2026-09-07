@@ -6,6 +6,8 @@ description = "Semantic (vector + BM25) memory store for sven agents"
 
 [dependencies]
 sven-tools   = { path = "../tools" }
+sven-vocab   = { path = "../vocab" }
+sven-chain   = { path = "../chain" }
 
 anyhow       = { workspace = true }
 thiserror    = { workspace = true }

@@ -18,8 +18,15 @@
 //! `sven_machines::AgentEvent` and `sven_hsm::UiEvent`) and its payload types
 //! ([`AgentMode`], [`TodoItem`], [`SubagentUpdate`], [`CollabEvent`],
 //! [`PeerInfo`], [`CompactionStrategyUsed`]) live here for the same reason.
+//!
+//! [`provenance`] holds the origin vocabulary of the continuous-learning loop
+//! ([`FactSource`](provenance::FactSource) and friends) - here, and not beside
+//! the tool that consumes it, because the crates on both ends of that loop are
+//! siblings that cannot depend on one another. See the module's own docs.
 
 use serde_json::Value;
+
+pub mod provenance;
 
 /// A single tool invocation requested by the model.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

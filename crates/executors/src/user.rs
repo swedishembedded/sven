@@ -13,10 +13,22 @@
 //!   a `reply_tx` oneshot) to the `approval_tx` channel. A background task
 //!   awaits the reply (`true` = approved) and posts `Event::HumanApproved`
 //!   or `Event::HumanRejected`.
+//!
+//! # Knowledge assimilation
+//!
+//! This executor is the only place in the process that sees a human answer an
+//! approval request, so it is where an approval for
+//! [`ToolCapability::AssimilateKnowledge`] is recorded into the shared
+//! [`KnowledgeApprovals`] handle the `assimilate_fact` tool consults. Deriving
+//! it from the real `HumanApproved` event here - rather than from a flag in a
+//! tool call - is what makes the gate a gate.
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use sven_hsm::{ApprovalId, Effect, Event, ObservationSink, ToolCapability};
 use sven_kernel::{EffectExecutor, EventSink};
+use sven_vocab::provenance::KnowledgeApprovals;
 use tokio::sync::{mpsc, oneshot};
 
 // ── Channel message types ─────────────────────────────────────────────────────
@@ -47,6 +59,7 @@ pub struct ApprovalRequest {
 pub struct UserExecutor {
     question_tx: mpsc::Sender<UserQuestion>,
     approval_tx: mpsc::Sender<ApprovalRequest>,
+    knowledge_approvals: Option<Arc<KnowledgeApprovals>>,
 }
 
 impl UserExecutor {
@@ -66,7 +79,17 @@ impl UserExecutor {
         Self {
             question_tx,
             approval_tx,
+            knowledge_approvals: None,
         }
+    }
+
+    /// Records approvals for [`ToolCapability::AssimilateKnowledge`] into
+    /// `approvals`, which the `assimilate_fact` tool reads before letting
+    /// web-sourced content become durable knowledge.
+    #[must_use]
+    pub fn with_knowledge_approvals(mut self, approvals: Arc<KnowledgeApprovals>) -> Self {
+        self.knowledge_approvals = Some(approvals);
+        self
     }
 
     /// Creates both ends of the question channel. Returns the executor side
@@ -136,9 +159,17 @@ impl EffectExecutor for UserExecutor {
                     return;
                 }
                 let sink = sink.clone();
+                let knowledge_approvals = self.knowledge_approvals.clone();
                 tokio::spawn(async move {
                     match reply_rx.await {
                         Ok(true) => {
+                            // The only place a human approval is observed, so
+                            // the only honest place to record one.
+                            if capability == ToolCapability::AssimilateKnowledge {
+                                if let Some(approvals) = &knowledge_approvals {
+                                    approvals.record_human_approval();
+                                }
+                            }
                             let _ = sink.emit(Event::HumanApproved { approval_id }).await;
                         }
                         Ok(false) => {

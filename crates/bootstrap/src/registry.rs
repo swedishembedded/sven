@@ -86,6 +86,20 @@ pub struct IntegrationProviders {
     /// Semantic memory store for the `semantic_memory` tool.
     #[cfg(feature = "memory")]
     pub memory_store: Option<Arc<dyn sven_memory::VectorStore>>,
+
+    /// Durable pending-facts ledger for the `assimilate_fact` tool.
+    #[cfg(feature = "memory")]
+    pub fact_ledger: Option<sven_memory::PendingFactsLedger>,
+
+    /// Session-scoped provenance the `assimilate_fact` tool resolves evidence
+    /// handles against.
+    #[cfg(feature = "memory")]
+    pub provenance_index: Option<Arc<sven_memory::ProvenanceIndex>>,
+
+    /// Human approvals observed by the kernel's user executor, read by the
+    /// `assimilate_fact` tool before admitting web-sourced content.
+    #[cfg(feature = "memory")]
+    pub knowledge_approvals: Option<Arc<sven_vocab::provenance::KnowledgeApprovals>>,
 }
 
 /// Converts the model catalog into the slice-of-fields `SystemTool`'s
@@ -247,7 +261,20 @@ fn register_integration_tools(_reg: &mut ToolRegistry, _providers: IntegrationPr
     #[cfg(feature = "memory")]
     {
         if let Some(store) = _providers.memory_store {
-            _reg.register(sven_memory::SemanticMemoryTool::new(store));
+            _reg.register(sven_memory::SemanticMemoryTool::new(Arc::clone(&store)));
+            // `assimilate_fact` is the single writer into durable knowledge:
+            // it needs the same memory store plus the ledger it gates writes
+            // into. Without a ledger there is nothing to gate, so it is not
+            // registered at all rather than silently degrading to a second
+            // ungated memory writer.
+            if let Some(ledger) = _providers.fact_ledger {
+                _reg.register(sven_memory::AssimilateFactTool::new(
+                    store,
+                    ledger,
+                    _providers.provenance_index.unwrap_or_default(),
+                    _providers.knowledge_approvals.unwrap_or_default(),
+                ));
+            }
         }
     }
 }

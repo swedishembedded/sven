@@ -20,6 +20,7 @@ sven-hsm           = { path = "../hsm" }
 sven-kernel        = { path = "../kernel" }
 sven-executors     = { path = "../executors" }
 sven-llm           = { path = "../llm" }
+sven-vocab         = { path = "../vocab" }
 # New integration crates - optional at bootstrap level
 sven-channels      = { path = "../channels", optional = true }
 sven-scheduler     = { path = "../scheduler", optional = true }

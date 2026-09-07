@@ -206,8 +206,8 @@ impl SdlcMachine {
         Self { id: MachineId::new() }
     }
 
-    /// Permission policy: reads everywhere; writes/shell during execution and
-    /// verification.  The kernel gates capabilities per state.
+    /// Permission policy: kernel-gated per state - reads and provenance-gated
+    /// assimilation everywhere; writes/shell during execution and verification.
     ///
     /// Because each phase now owns its tool loop (no more shared `RunningTools`),
     /// `CallTool` effects are always gated against the *real* phase state,
@@ -216,9 +216,9 @@ impl SdlcMachine {
     #[must_use]
     pub fn permission_policy() -> PermissionPolicy {
         use SdlcState::{Delivery, Discovery, Execution, Planning, Verification};
-        use ToolCapability::{ExecuteShell, GitOperation, ReadFile, WriteFile};
+        use ToolCapability::{AssimilateKnowledge, ExecuteShell, GitOperation, ReadFile, WriteFile};
         PermissionPolicy::builder()
-            .allow_globally([ReadFile])
+            .allow_globally([ReadFile, AssimilateKnowledge])
             .allow_in(Discovery, [GitOperation])
             .allow_in(Planning, [GitOperation])
             .allow_in(Execution, [WriteFile, GitOperation, ExecuteShell])

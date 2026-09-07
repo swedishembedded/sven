@@ -10,16 +10,17 @@
 //! # Design
 //!
 //! ```text
-//! ┌─────────────────────────────────────────────────────────┐
-//! │                    SemanticMemoryTool                   │
-//! │         remember | recall | forget | list | get         │
-//! └────────────────────────┬────────────────────────────────┘
-//!                          │
-//!                          ▼
-//! ┌─────────────────────────────────────────────────────────┐
-//! │                  SqliteMemoryStore                      │
-//! │   SQLite + FTS5 (BM25) + cosine-similarity vectors      │
-//! └─────────────────────────────────────────────────────────┘
+//! ┌──────────────────────────┐   ┌──────────────────────────┐
+//! │    SemanticMemoryTool    │   │    AssimilateFactTool    │
+//! │ remember|recall|forget…  │   │ the one knowledge writer │
+//! └────────────┬─────────────┘   └───────┬──────────┬───────┘
+//!              │                         │          │
+//!              ▼                         ▼          ▼
+//! ┌──────────────────────────────────────────┐ ┌──────────────────────┐
+//! │             SqliteMemoryStore            │ │  PendingFactsLedger  │
+//! │  SQLite + FTS5 (BM25) + cosine vectors   │ │ hash-chained, gated  │
+//! └──────────────────────────────────────────┘ └──────────────────────┘
+//!            session recall, always                durable, provenance-gated
 //! ```
 //!
 //! # Quick start
@@ -50,10 +51,14 @@
 //! # }
 //! ```
 
+pub mod assimilate;
+pub mod ledger;
 pub mod sqlite;
 pub mod store;
 pub mod tool;
 
+pub use assimilate::{AssimilateFactTool, ProvenanceIndex};
+pub use ledger::{DocumentRecord, LedgerEntry, LedgerError, PendingFactRecord, PendingFactsLedger};
 pub use sqlite::SqliteMemoryStore;
 pub use store::{DocId, DocSummary, Document, SearchResult, VectorStore};
 pub use tool::SemanticMemoryTool;

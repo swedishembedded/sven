@@ -38,11 +38,28 @@ pub enum ToolCapability {
     GitOperation,
     /// Roll back to a checkpoint (destructive: discards work).
     Rollback,
+    /// Write a fact into the agent's own durable knowledge: semantic memory
+    /// now, and - when the fact's provenance is admissible - the pending-facts
+    /// ledger that later feeds training.
+    ///
+    /// Its own bucket rather than [`ToolCapability::WriteFile`] because the
+    /// risk is categorically different: nothing in the user's workspace is
+    /// touched, but untrusted content can become durable knowledge. This is
+    /// also the bucket a human approval for assimilating *web-sourced* content
+    /// is requested and observed under.
+    AssimilateKnowledge,
 }
 
 impl ToolCapability {
     /// Capabilities considered inherently dangerous; using them always requires
     /// a granted approval regardless of the per-state allow-set.
+    ///
+    /// [`ToolCapability::AssimilateKnowledge`] is deliberately **not** here:
+    /// assimilating a fact the user stated, or one extracted from a document
+    /// the user handed over, must not prompt - the human act behind those
+    /// facts already happened. The per-source gate lives where it can see the
+    /// provenance (the `assimilate_fact` tool), not in this coarse bucket,
+    /// which cannot distinguish a handed-over document from a fetched page.
     #[must_use]
     pub fn is_inherently_dangerous(self) -> bool {
         matches!(
@@ -191,6 +208,7 @@ pub fn classify<S: Debug>(
 #[must_use]
 pub fn capability_for_tool_name(name: &str) -> ToolCapability {
     match name {
+        n if n.starts_with("assimilate_") => ToolCapability::AssimilateKnowledge,
         n if n.starts_with("delete_") => ToolCapability::DeleteFile,
         n if n.starts_with("write_") || n.starts_with("edit_") => ToolCapability::WriteFile,
         n if n.starts_with("read_") || n.starts_with("find_") || n.starts_with("search_")
