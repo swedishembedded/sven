@@ -214,6 +214,21 @@ pub fn label_recalls_as_untrusted(label: &str) -> bool {
     matches!(label, "web_sourced" | "agent_inferred")
 }
 
+/// Where a resolving tool's attached provenance is recorded, keyed by a
+/// handle the model can later cite as `assimilate_fact`'s `evidence`
+/// argument - in practice, that tool call's own id, which the model already
+/// knows because it minted it.
+///
+/// Implemented by `sven-memory`'s `ProvenanceIndex`. Named here, in
+/// foundation tier, rather than used directly by name, because the impure
+/// I/O layer that runs a resolving tool (`sven-executors`, machines tier)
+/// must record into it without depending on the SQLite-linking `sven-memory`
+/// crate, which is kept out of the `minimal` build's dependency closure.
+pub trait ProvenanceSink: Send + Sync {
+    /// Records the provenance a resolving tool call established for `handle`.
+    fn record_provenance(&self, handle: &str, source: FactSource);
+}
+
 /// Session-scoped record of human approvals for knowledge assimilation.
 ///
 /// Written **only** by the effect executor that emits a real

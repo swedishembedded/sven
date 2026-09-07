@@ -49,7 +49,7 @@ use sven_tools::{
     tool::{Tool, ToolCall, ToolDisplay, ToolOutput},
     ToolCapability,
 };
-use sven_vocab::provenance::{FactId, FactSource, KnowledgeApprovals, LedgerAdmission};
+use sven_vocab::provenance::{FactId, FactSource, KnowledgeApprovals, LedgerAdmission, ProvenanceSink};
 
 use crate::{
     ledger::{PendingFactRecord, PendingFactsLedger},
@@ -75,7 +75,20 @@ impl ProvenanceIndex {
     }
 
     /// Records the provenance a resolution step established for `handle`.
+    ///
+    /// A `WebSourced` record naming no URL is refused outright - never
+    /// inserted, not even as a claim to be caught by the admissibility check
+    /// later - because there is nothing here a human could have been shown.
+    /// This is a fabricated or missing provenance claim, not a default to
+    /// fall back on: refusing to store it means the handle later resolves to
+    /// nothing, which `AssimilateFactTool` already treats as `AgentInferred`
+    /// (memory only, never the ledger).
     pub fn record(&self, handle: impl Into<String>, source: FactSource) {
+        if let FactSource::WebSourced { url, .. } = &source {
+            if url.trim().is_empty() {
+                return;
+            }
+        }
         if let Ok(mut entries) = self.entries.lock() {
             entries.insert(handle.into(), source);
         }
@@ -88,6 +101,12 @@ impl ProvenanceIndex {
             .lock()
             .ok()
             .and_then(|entries| entries.get(handle).cloned())
+    }
+}
+
+impl ProvenanceSink for ProvenanceIndex {
+    fn record_provenance(&self, handle: &str, source: FactSource) {
+        self.record(handle, source);
     }
 }
 

@@ -588,6 +588,21 @@ impl RuntimeBuilder {
                 Some(Arc::new(sven_memory::ProvenanceIndex::new()));
             integration_providers.knowledge_approvals = Some(Arc::clone(&knowledge_approvals));
         }
+        // Where `web_fetch`/`web_search`/`ask_question`'s attached provenance
+        // is recorded, keyed by their own call id, so a later `assimilate_
+        // fact` call citing that id as `evidence` resolves to a real
+        // `FactSource`. Read from `integration_providers` before it moves
+        // into `build_tool_registry_with_integrations` below, and typed as
+        // the foundation-tier `ProvenanceSink` trait object so `ToolExecutor`
+        // (machines tier) never has to name the SQLite-linking memory crate.
+        #[cfg(feature = "memory")]
+        let provenance_sink: Option<Arc<dyn sven_vocab::provenance::ProvenanceSink>> =
+            integration_providers
+                .provenance_index
+                .as_ref()
+                .map(|idx| Arc::clone(idx) as Arc<dyn sven_vocab::provenance::ProvenanceSink>);
+        #[cfg(not(feature = "memory"))]
+        let provenance_sink: Option<Arc<dyn sven_vocab::provenance::ProvenanceSink>> = None;
 
         let mut tool_registry = build_tool_registry_with_integrations(
             &self.config,
@@ -764,7 +779,8 @@ impl RuntimeBuilder {
                             Arc::clone(&conv_store),
                         )
                         .with_no_tools(runtime.no_tools)
-                        .with_tool_result_token_cap(self.config.agent.tool_result_token_cap),
+                        .with_tool_result_token_cap(self.config.agent.tool_result_token_cap)
+                        .with_provenance_sink(provenance_sink),
                     ),
                 };
                 Box::new(composed.build())
