@@ -48,6 +48,16 @@ pub enum ToolCapability {
     /// also the bucket a human approval for assimilating *web-sourced* content
     /// is requested and observed under.
     AssimilateKnowledge,
+    /// Record an artifact as one a human handed the agent to learn from.
+    ///
+    /// Separate from [`ToolCapability::ReadFile`] because reading a file and
+    /// declaring it handed-over are different acts with different
+    /// consequences: the declaration is what makes every fact later extracted
+    /// from that artifact admissible to the pending-facts ledger *without* a
+    /// per-fact approval. It is the human act the whole `UserProvidedDocument`
+    /// rule stands on, which makes it the one step in the loop the agent must
+    /// not be able to perform for itself.
+    IngestDocument,
 }
 
 impl ToolCapability {
@@ -60,11 +70,23 @@ impl ToolCapability {
     /// facts already happened. The per-source gate lives where it can see the
     /// provenance (the `assimilate_fact` tool), not in this coarse bucket,
     /// which cannot distinguish a handed-over document from a fetched page.
+    ///
+    /// [`ToolCapability::IngestDocument`] **is** here, and it is what makes the
+    /// paragraph above true: it is the step where "the human act already
+    /// happened" is *made* to have happened. Nothing else in the loop
+    /// establishes it, and everything an agent would need to manufacture its
+    /// own handed-over document - fetch a page, write it to a file, ingest that
+    /// file - is granted globally in the default mode. Stating it here rather
+    /// than in each machine's approval set means a machine added later cannot
+    /// reopen the hole by forgetting a line.
     #[must_use]
     pub fn is_inherently_dangerous(self) -> bool {
         matches!(
             self,
-            ToolCapability::ExecuteShell | ToolCapability::DeleteFile | ToolCapability::Rollback
+            ToolCapability::ExecuteShell
+                | ToolCapability::DeleteFile
+                | ToolCapability::Rollback
+                | ToolCapability::IngestDocument
         )
     }
 }
@@ -209,6 +231,7 @@ pub fn classify<S: Debug>(
 pub fn capability_for_tool_name(name: &str) -> ToolCapability {
     match name {
         n if n.starts_with("assimilate_") => ToolCapability::AssimilateKnowledge,
+        n if n.starts_with("ingest_") => ToolCapability::IngestDocument,
         n if n.starts_with("delete_") => ToolCapability::DeleteFile,
         n if n.starts_with("write_") || n.starts_with("edit_") => ToolCapability::WriteFile,
         n if n.starts_with("read_") || n.starts_with("find_") || n.starts_with("search_")

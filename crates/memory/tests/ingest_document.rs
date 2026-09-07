@@ -21,7 +21,9 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use sven_memory::{IngestDocumentTool, PendingFactsLedger};
+use sven_tools::policy::ApprovalPolicy;
 use sven_tools::tool::{Tool, ToolCall};
+use sven_tools::ToolCapability;
 use sven_vocab::provenance::{ContentDigest, FactSource};
 
 fn real_digest(bytes: &[u8]) -> ContentDigest {
@@ -100,5 +102,46 @@ async fn ingest_document_requires_a_path() {
             .expect("read ledger")
             .is_empty(),
         "no path means nothing should ever have been recorded"
+    );
+}
+
+/// The whole document half of `assimilate_fact`'s gate rests on one claim:
+/// that a human handed this artifact over, which is why a fact extracted from
+/// an ingested digest is admissible with no per-fact approval at all.
+///
+/// Nothing about `ingest_document` establishes that claim on its own. It is a
+/// tool the *model* calls, on a path the *model* chooses, and every capability
+/// it needs to manufacture its own evidence is granted by default in the agent
+/// mode: fetch a page (`NetworkAccess`), write it to a file (`WriteFile`),
+/// ingest that file, then assimilate facts from it citing the ingest call as
+/// evidence. That is the laundering path S4's `RequiresHumanApproval` rule
+/// exists to close, walked end to end with no human act anywhere in it - and an
+/// injected page is exactly what steers an agent through it.
+///
+/// So the human act has to be real, and the only channel in this architecture
+/// that produces one is the kernel's approval gate. This pins the tool's half
+/// of that: the capability it declares must be one no policy can wave through,
+/// and the unattended entry points must refuse it rather than run it.
+#[tokio::test]
+async fn ingesting_a_document_always_costs_a_granted_human_approval() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let ledger = PendingFactsLedger::new(dir.path().join("pending-facts.jsonl"));
+    let tool = IngestDocumentTool::new(ledger);
+
+    assert_eq!(
+        tool.kernel_capability(),
+        ToolCapability::IngestDocument,
+        "declaring an artifact handed-over is its own act, not a file read"
+    );
+    assert!(
+        tool.kernel_capability().is_inherently_dangerous(),
+        "recording a document as handed-over must always require a granted \
+         human approval, whatever the mode's allow-set says"
+    );
+    assert_eq!(
+        tool.default_policy(),
+        ApprovalPolicy::Ask,
+        "an unattended entry point with no requester must deny the ingest, \
+         not run it"
     );
 }

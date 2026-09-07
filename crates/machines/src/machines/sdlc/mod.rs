@@ -218,7 +218,7 @@ impl SdlcMachine {
         use SdlcState::{Delivery, Discovery, Execution, Planning, Verification};
         use ToolCapability::{AssimilateKnowledge, ExecuteShell, GitOperation, ReadFile, WriteFile};
         PermissionPolicy::builder()
-            .allow_globally([ReadFile, AssimilateKnowledge])
+            .allow_globally([ReadFile, AssimilateKnowledge, ToolCapability::IngestDocument])
             .allow_in(Discovery, [GitOperation])
             .allow_in(Planning, [GitOperation])
             .allow_in(Execution, [WriteFile, GitOperation, ExecuteShell])

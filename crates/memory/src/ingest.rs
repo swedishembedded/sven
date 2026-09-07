@@ -79,12 +79,31 @@ impl Tool for IngestDocumentTool {
         })
     }
 
+    /// Ask, never auto.
+    ///
+    /// The kernel's [`ToolCapability::IngestDocument`] gate protects the
+    /// surfaces that drive an HSM; this protects the ones that do not.
+    /// `ToolRegistry::execute_with_requester` - the unattended entry point -
+    /// denies an `Ask` tool outright when no requester is available, which is
+    /// the right answer here: an ingest with nobody to ask is an ingest with
+    /// no human behind it.
     fn default_policy(&self) -> ApprovalPolicy {
-        ApprovalPolicy::Auto
+        ApprovalPolicy::Ask
     }
 
+    /// Not [`ToolCapability::ReadFile`].
+    ///
+    /// Reading the bytes is the incidental part; what this call does is
+    /// *declare* the artifact handed-over, and that declaration is the entire
+    /// basis on which `assimilate_fact` admits facts extracted from it to the
+    /// pending-facts ledger with no per-fact approval. `ReadFile` is granted
+    /// globally in every mode, so under it the agent can manufacture its own
+    /// evidence - fetch a page, write it to a file, ingest that file - and walk
+    /// untrusted content into training data with no human act anywhere.
+    /// `IngestDocument` is inherently dangerous, so the kernel requires a real
+    /// human approval first.
     fn kernel_capability(&self) -> ToolCapability {
-        ToolCapability::ReadFile
+        ToolCapability::IngestDocument
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
