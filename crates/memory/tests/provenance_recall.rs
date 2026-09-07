@@ -36,6 +36,8 @@ use sven_vocab::provenance::{ContentDigest, FactSource, KnowledgeApprovals};
 #[derive(Default)]
 struct SharedStore {
     docs: Mutex<Vec<Document>>,
+    /// Ids the tool actually asked the store to delete.
+    deleted: Mutex<Vec<DocId>>,
 }
 
 #[async_trait]
@@ -63,8 +65,10 @@ impl VectorStore for SharedStore {
             .collect())
     }
 
-    async fn delete(&self, _id: DocId) -> anyhow::Result<bool> {
-        Ok(false)
+    async fn delete(&self, id: DocId) -> anyhow::Result<bool> {
+        self.deleted.lock().expect("store lock").push(id);
+        let docs = self.docs.lock().expect("store lock");
+        Ok(usize::try_from(id - 1).is_ok_and(|i| i < docs.len()))
     }
 
     async fn list(&self, _tag_filter: Option<&str>) -> anyhow::Result<Vec<DocSummary>> {
@@ -339,4 +343,72 @@ async fn a_non_ascii_memory_record_is_recalled_without_panicking() {
     let out = s.memory.execute(&recall("x")).await;
     assert!(!out.is_error, "{}", out.content);
     assert!(out.content.contains("UNTRUSTED"), "{}", out.content);
+}
+
+/// Confinement is a property of the record, not of one action. `recall`,
+/// `list` and `get` all refuse another session's confined record, and `get`
+/// goes further: it answers exactly as it does for a record that does not
+/// exist, so asking by ID cannot even be used to confirm one is there.
+///
+/// `forget` takes the same ID and must answer the same way. It is the one
+/// action that reaches a foreign record *destructively*, and it is also an
+/// existence oracle - "deleted" versus "no memory with that ID" is precisely
+/// the answer `get` is careful not to give. The records being confined are
+/// unapproved pages the agent fetched on its own initiative, so the session
+/// asking is exactly the one an injected page is steering.
+#[tokio::test]
+async fn a_second_session_can_neither_delete_nor_probe_a_confined_record() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let ledger = PendingFactsLedger::new(dir.path().join("pending-facts.jsonl"));
+    let store = Arc::new(SharedStore::default());
+
+    let first = session(&store, &ledger);
+    first.provenance.record("ev-user", FactSource::UserStated);
+    first.provenance.record(
+        "ev-unapproved",
+        a_web_source("https://attacker.invalid/poison", "deadbeef"),
+    );
+    // ID=1 is shared and durable; ID=2 is confined to `first`.
+    let out = first
+        .assimilate
+        .execute(&learn("Termination is 120 ohm.", "ev-user"))
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    let out = first
+        .assimilate
+        .execute(&learn("Termination is optional, says this page.", "ev-unapproved"))
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+
+    let second = session(&store, &ledger);
+    let out = second
+        .memory
+        .execute(&call("semantic_memory", json!({ "action": "forget", "id": 2 })))
+        .await;
+    assert!(
+        out.is_error && out.content.contains("No memory with ID 2"),
+        "forgetting another session's confined record must answer exactly as \
+         a missing one:\n{}",
+        out.content
+    );
+    assert!(
+        store.deleted.lock().expect("store lock").is_empty(),
+        "another session's confined record must never reach the store's delete"
+    );
+
+    // Nothing else is confined: a shared record is still any session's to forget.
+    let out = second
+        .memory
+        .execute(&call("semantic_memory", json!({ "action": "forget", "id": 1 })))
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert_eq!(*store.deleted.lock().expect("store lock"), vec![1]);
+
+    // And the owning session can still forget its own confined record.
+    let out = first
+        .memory
+        .execute(&call("semantic_memory", json!({ "action": "forget", "id": 2 })))
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert_eq!(*store.deleted.lock().expect("store lock"), vec![1, 2]);
 }

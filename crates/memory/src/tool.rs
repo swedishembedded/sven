@@ -248,6 +248,18 @@ impl SemanticMemoryTool {
             None => return ToolOutput::err(&call.id, "forget requires 'id'"),
         };
 
+        // Another session's confined record answers exactly as a missing one,
+        // the same as `get`: deleting it would reach across the confinement
+        // boundary, and even the reply distinguishing "deleted" from "no such
+        // memory" is the existence oracle `get` deliberately refuses to be.
+        match self.store.get(id).await {
+            Ok(Some(doc)) if !recall::is_visible(&doc.metadata, &self.scope) => {
+                return ToolOutput::err(&call.id, format!("No memory with ID {id}."));
+            }
+            Ok(_) => {}
+            Err(e) => return ToolOutput::err(&call.id, format!("forget failed: {e}")),
+        }
+
         match self.store.delete(id).await {
             Ok(true) => ToolOutput::ok(&call.id, format!("Memory {id} deleted.")),
             Ok(false) => ToolOutput::err(&call.id, format!("No memory with ID {id}.")),
