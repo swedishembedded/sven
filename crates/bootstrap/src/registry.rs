@@ -261,19 +261,30 @@ fn register_integration_tools(_reg: &mut ToolRegistry, _providers: IntegrationPr
     #[cfg(feature = "memory")]
     {
         if let Some(store) = _providers.memory_store {
-            _reg.register(sven_memory::SemanticMemoryTool::new(Arc::clone(&store)));
+            // One scope per assembled registry - that is, per session. Both
+            // memory tools share it: `assimilate_fact` stamps it onto records
+            // that must not outlive this session (an unapproved web fetch),
+            // and `semantic_memory` is the only tool that can then recall them.
+            let scope = sven_memory::SessionScope::new();
+            _reg.register(
+                sven_memory::SemanticMemoryTool::new(Arc::clone(&store))
+                    .with_session_scope(scope.clone()),
+            );
             // `assimilate_fact` is the single writer into durable knowledge:
             // it needs the same memory store plus the ledger it gates writes
             // into. Without a ledger there is nothing to gate, so it is not
             // registered at all rather than silently degrading to a second
             // ungated memory writer.
             if let Some(ledger) = _providers.fact_ledger {
-                _reg.register(sven_memory::AssimilateFactTool::new(
-                    store,
-                    ledger,
-                    _providers.provenance_index.unwrap_or_default(),
-                    _providers.knowledge_approvals.unwrap_or_default(),
-                ));
+                _reg.register(
+                    sven_memory::AssimilateFactTool::new(
+                        store,
+                        ledger,
+                        _providers.provenance_index.unwrap_or_default(),
+                        _providers.knowledge_approvals.unwrap_or_default(),
+                    )
+                    .with_session_scope(scope),
+                );
             }
         }
     }

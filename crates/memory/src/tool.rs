@@ -17,6 +17,7 @@ use sven_tools::{
 };
 
 use crate::{
+    recall::{self, SessionScope},
     store::{Document, VectorStore},
     DocId,
 };
@@ -38,11 +39,25 @@ use crate::{
 /// - **Action items**: Save meeting notes → recall before calls
 pub struct SemanticMemoryTool {
     store: Arc<dyn VectorStore>,
+    scope: SessionScope,
 }
 
 impl SemanticMemoryTool {
     pub fn new(store: Arc<dyn VectorStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            scope: SessionScope::new(),
+        }
+    }
+
+    /// Shares the session's [`SessionScope`] with this tool.
+    ///
+    /// Pass the same scope the session's `assimilate_fact` tool was built with,
+    /// or this tool will not recall the session-scoped records that tool wrote.
+    #[must_use]
+    pub fn with_session_scope(mut self, scope: SessionScope) -> Self {
+        self.scope = scope;
+        self
     }
 }
 
@@ -188,26 +203,38 @@ impl SemanticMemoryTool {
 
         match self.store.search(&query, limit).await {
             Ok(results) => {
-                if results.is_empty() {
+                // Filtered here rather than in the store's query so no
+                // `VectorStore` implementation can forget the rule.
+                let visible: Vec<_> = results
+                    .into_iter()
+                    .filter(|r| recall::is_visible(&r.metadata, &self.scope))
+                    .collect();
+                if visible.is_empty() {
                     return ToolOutput::ok(&call.id, "No memories found for that query.");
                 }
-                let mut lines = vec![format!("Found {} memories:", results.len())];
-                for r in &results {
+                let mut lines = vec![format!("Found {} memories:", visible.len())];
+                for r in &visible {
                     let entity = r
                         .metadata
                         .get("entity")
                         .map(|s| format!(" [{s}]"))
                         .unwrap_or_default();
-                    let source = r
-                        .metadata
-                        .get("source")
-                        .map(|s| format!(" (via {s})"))
-                        .unwrap_or_default();
-                    lines.push(format!(
-                        "- ID={}{entity}{source}: {}",
-                        r.id,
-                        truncate(&r.content, 120)
-                    ));
+                    let body = truncate(&r.content, 120);
+                    lines.push(match recall::untrusted_label(&r.metadata) {
+                        Some(label) => format!(
+                            "- ID={}{entity}: {}",
+                            r.id,
+                            recall::quote_untrusted(label, &body)
+                        ),
+                        None => {
+                            let source = r
+                                .metadata
+                                .get("source")
+                                .map(|s| format!(" (via {s})"))
+                                .unwrap_or_default();
+                            format!("- ID={}{entity}{source}: {body}", r.id)
+                        }
+                    });
                 }
                 ToolOutput::ok(&call.id, lines.join("\n"))
             }
@@ -233,6 +260,10 @@ impl SemanticMemoryTool {
 
         match self.store.list(tag_filter).await {
             Ok(summaries) => {
+                let summaries: Vec<_> = summaries
+                    .into_iter()
+                    .filter(|s| recall::is_visible(&s.metadata, &self.scope))
+                    .collect();
                 if summaries.is_empty() {
                     return ToolOutput::ok(&call.id, "No memories stored.");
                 }
@@ -248,7 +279,14 @@ impl SemanticMemoryTool {
                         .get("entity")
                         .map(|e| format!(" [{e}]"))
                         .unwrap_or_default();
-                    lines.push(format!("- ID={}{entity}: {}", s.id, s.snippet));
+                    lines.push(match recall::untrusted_label(&s.metadata) {
+                        Some(label) => format!(
+                            "- ID={}{entity}: {}",
+                            s.id,
+                            recall::quote_untrusted(label, &s.snippet)
+                        ),
+                        None => format!("- ID={}{entity}: {}", s.id, s.snippet),
+                    });
                 }
                 ToolOutput::ok(&call.id, lines.join("\n"))
             }
@@ -263,6 +301,11 @@ impl SemanticMemoryTool {
         };
 
         match self.store.get(id).await {
+            // Another session's confined record answers exactly as a missing
+            // one: asking by ID must not even confirm that it exists.
+            Ok(Some(doc)) if !recall::is_visible(&doc.metadata, &self.scope) => {
+                ToolOutput::err(&call.id, format!("No memory with ID {id}."))
+            }
             Ok(Some(doc)) => {
                 let meta_display: String = doc
                     .metadata
@@ -270,9 +313,13 @@ impl SemanticMemoryTool {
                     .map(|(k, v)| format!("{k}: {v}"))
                     .collect::<Vec<_>>()
                     .join(", ");
+                let body = match recall::untrusted_label(&doc.metadata) {
+                    Some(label) => recall::quote_untrusted(label, &doc.content),
+                    None => doc.content.clone(),
+                };
                 ToolOutput::ok(
                     &call.id,
-                    format!("Memory {id}:\n{}\n\n[{meta_display}]", doc.content),
+                    format!("Memory {id}:\n{body}\n\n[{meta_display}]"),
                 )
             }
             Ok(None) => ToolOutput::err(&call.id, format!("No memory with ID {id}.")),

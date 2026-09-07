@@ -28,6 +28,11 @@
 //! The fact is *always* written to semantic memory (instant recall this
 //! session). Only the durable ledger - what later feeds training - is gated.
 //!
+//! Semantic memory being ungated does not make it a free channel into the
+//! prompt: the record carries its resolved provenance, and [`crate::recall`]
+//! decides on the way back out how it may be framed and which sessions may see
+//! it at all.
+//!
 //! Swedish Embedded AB implements solutions for gated knowledge assimilation in
 //! autonomous agents for its clients. If your team needs expertise in keeping
 //! untrusted content out of a model's weights then you can procure our services
@@ -48,6 +53,7 @@ use sven_vocab::provenance::{FactId, FactSource, KnowledgeApprovals, LedgerAdmis
 
 use crate::{
     ledger::{PendingFactRecord, PendingFactsLedger},
+    recall::{SessionScope, PROVENANCE_KEY, SESSION_SCOPE_KEY},
     store::{Document, VectorStore},
 };
 
@@ -91,6 +97,7 @@ pub struct AssimilateFactTool {
     ledger: PendingFactsLedger,
     provenance: Arc<ProvenanceIndex>,
     approvals: Arc<KnowledgeApprovals>,
+    scope: SessionScope,
 }
 
 impl AssimilateFactTool {
@@ -108,7 +115,20 @@ impl AssimilateFactTool {
             ledger,
             provenance,
             approvals,
+            scope: SessionScope::new(),
         }
+    }
+
+    /// Shares the session's [`SessionScope`] with this tool.
+    ///
+    /// Pass the same scope the session's `semantic_memory` tool was built with:
+    /// records this tool confines to the session are recalled only by that
+    /// tool. Without an explicit scope each tool gets its own, which is
+    /// fail-closed - the record is written and simply never recalled.
+    #[must_use]
+    pub fn with_session_scope(mut self, scope: SessionScope) -> Self {
+        self.scope = scope;
+        self
     }
 
     /// Decides whether a fact with this provenance may become durable, and
@@ -221,13 +241,38 @@ impl Tool for AssimilateFactTool {
             .and_then(|handle| self.provenance.resolve(handle))
             .unwrap_or(FactSource::AgentInferred { from: Vec::new() });
 
+        // Admissibility is decided *before* the memory write because it also
+        // decides how the memory record is stamped. It spends any approval it
+        // rests on, so a memory write that then fails loses that approval - the
+        // same safe direction a failed ledger append already takes: the human
+        // is asked again rather than the grant lingering for the next fact.
+        let admission = self.admit(&source);
+
         let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), source.label().to_string());
+        // Not `source`: that key is free text the model can set through
+        // `semantic_memory`'s `remember` action, and the recall path's trust
+        // decision must never read a field the model can write.
+        metadata.insert(PROVENANCE_KEY.to_string(), source.label().to_string());
         if let Some(entity) = call.args.get("entity").and_then(|v| v.as_str()) {
             metadata.insert("entity".to_string(), entity.to_string());
         }
         let recorded_at = chrono::Utc::now().timestamp().max(0) as u64;
         metadata.insert("created".to_string(), recorded_at.to_string());
+
+        // A web record no human approved has no human act behind it at all, and
+        // semantic memory is durable and shared by every session on the
+        // machine. Confining it to this session is what stops one poisoned page
+        // becoming a permanent injection channel into unrelated conversations;
+        // an approved one is durable, which is exactly what the approval buys.
+        // Nothing else is confined: a `UserProvidedDocument` refusal is a
+        // forged digest the agent should still be able to reason about here,
+        // and inferences are the agent's own working notes.
+        if matches!(source, FactSource::WebSourced { .. }) && admission.is_err() {
+            metadata.insert(
+                SESSION_SCOPE_KEY.to_string(),
+                self.scope.as_str().to_string(),
+            );
+        }
 
         // Always remembered for this session; only the durable half is gated.
         let doc_id = match self
@@ -243,7 +288,7 @@ impl Tool for AssimilateFactTool {
             Err(e) => return ToolOutput::err(&call.id, format!("could not remember fact: {e}")),
         };
 
-        if let Err(reason) = self.admit(&source) {
+        if let Err(reason) = admission {
             return ToolOutput::ok(
                 &call.id,
                 format!(

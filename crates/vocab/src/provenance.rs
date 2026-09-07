@@ -180,6 +180,38 @@ impl FactSource {
             FactSource::UserChoice { .. } => "user_choice",
         }
     }
+
+    /// Whether content with this origin must be recalled into the model's
+    /// prompt as quoted, explicitly-untrusted material rather than as a plain
+    /// assertion.
+    ///
+    /// Admissibility ([`Self::ledger_admission`]) and recall framing are
+    /// deliberately separate questions: the ledger asks "may this become
+    /// training input", this asks "may the model read it as ground truth".
+    /// `AgentInferred` never reaches the ledger yet is the agent's own
+    /// reasoning over untrusted material, and an *approved* `WebSourced` fact
+    /// is admissible yet is still a quotation of a page, not testimony.
+    #[must_use]
+    pub fn recalls_as_untrusted(&self) -> bool {
+        match self {
+            FactSource::WebSourced { .. } | FactSource::AgentInferred { .. } => true,
+            FactSource::UserStated
+            | FactSource::UserProvidedDocument { .. }
+            | FactSource::UserChoice { .. } => false,
+        }
+    }
+}
+
+/// [`FactSource::recalls_as_untrusted`], decided from the stored
+/// [`FactSource::label`] alone.
+///
+/// The recall path only ever has the label: provenance crosses into the memory
+/// store as a metadata string. Keeping both spellings of the rule in this one
+/// module - and pinning that they agree, for every variant, in this module's
+/// own tests - is what stops them drifting apart.
+#[must_use]
+pub fn label_recalls_as_untrusted(label: &str) -> bool {
+    matches!(label, "web_sourced" | "agent_inferred")
 }
 
 /// Session-scoped record of human approvals for knowledge assimilation.
@@ -282,6 +314,36 @@ mod tests {
             .ledger_admission(),
             LedgerAdmission::RequiresIngestedDocument(ContentDigest::from_hex("ab"))
         );
+    }
+
+    #[test]
+    fn the_label_spelling_of_the_recall_rule_agrees_with_the_typed_one() {
+        for source in [
+            FactSource::UserStated,
+            FactSource::UserProvidedDocument {
+                digest: ContentDigest::from_hex("ab"),
+                uri: "file:///x".into(),
+                ingested_at: 0,
+                span: 0..1,
+            },
+            FactSource::WebSourced {
+                url: "https://example.invalid".into(),
+                fetched_at: 0,
+                digest: ContentDigest::from_hex("00"),
+            },
+            FactSource::AgentInferred { from: Vec::new() },
+            FactSource::UserChoice {
+                question_id: "q1".into(),
+                chosen: "a".into(),
+                not_chosen: vec!["b".into()],
+            },
+        ] {
+            assert_eq!(
+                label_recalls_as_untrusted(source.label()),
+                source.recalls_as_untrusted(),
+                "the two spellings disagree for {source:?}"
+            );
+        }
     }
 
     #[test]
