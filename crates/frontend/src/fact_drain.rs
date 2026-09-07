@@ -52,6 +52,43 @@ use sven_memory::{FactOutcome, FactSubmitter, PendingFactsDrain, PendingFactsLed
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
+/// Spawns the pending-facts drain with the submitter `config` selects.
+///
+/// This is the ordinary entry point: a frontend has no opinion about where
+/// facts go, and the selection is a config value
+/// (`tools.memory.learning.submitter`, `local` by default) so that a later
+/// remote submitter can be swapped in without the drain - generic over
+/// [`FactSubmitter`] precisely for this - changing at all. Use
+/// [`spawn_fact_drain`] directly to inject a submitter, which is what the
+/// tests do.
+///
+/// Returns `None` and spawns nothing whenever [`spawn_fact_drain`] would, and
+/// additionally when no submitter is configured or the configured one cannot
+/// be built - a misconfigured submitter is logged and skipped rather than
+/// taken as a reason to fail the session it is a background task of.
+pub fn spawn_default_fact_drain(
+    config: &Config,
+    ledger: PendingFactsLedger,
+) -> Option<JoinHandle<()>> {
+    // Checked before building anything: an unset flag means no submitter is
+    // constructed at all, so a machine that never opted in is never even asked
+    // for an `adapter_dir`.
+    if !config.tools.memory.learning.submit_facts {
+        return None;
+    }
+    match sven_memory::submitter_from_config(config) {
+        Ok(Some(submitter)) => spawn_fact_drain(config, ledger, submitter),
+        Ok(None) => {
+            info!("pending-facts drain: no submitter configured; facts stay in the ledger");
+            None
+        }
+        Err(e) => {
+            warn!(error = %e, "pending-facts drain: submitter is misconfigured; not started");
+            None
+        }
+    }
+}
+
 /// Spawns the pending-facts drain, if the user asked for it.
 ///
 /// Returns `None` - and spawns nothing - unless

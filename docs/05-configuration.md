@@ -563,7 +563,14 @@ The `local` submitter is the whole loop on one machine: sven writes the facts
 and the probes it froze for them as a dataset, runs brain's gated document
 study, and reads back the report brain writes - promoted, or turned down with
 the gate's own reason. The exact command is `study_args`, so a renamed
-subcommand on brain's side is a config edit rather than a sven upgrade. A promoted adapter is published into
+subcommand on brain's side is a config edit rather than a sven upgrade.
+
+Facts normally drain on the interval above. `sven learn flush` drains every
+pending fact now and blocks until each one has a real outcome - for a script
+that has to finish learning before the process exits. It prints one line per
+fact and exits non-zero only when a fact `failed`: a rejection means the study
+ran and the model did not learn the fact, which is an answer, not a build
+failure. A promoted adapter is published into
 `adapter_dir`, and a `brain serve --watch-adapters` pointed at that same
 directory hot-swaps it into the running model with no restart. A fact recorded
 without a frozen probe is reported as turned down: nothing can score whether

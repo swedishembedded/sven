@@ -222,6 +222,80 @@ cursor logic neither double-submits nor drops the eventual result.
 bidirectional `FactSubmitter` trait, (ii) wiring it into `sven-frontend`
 behind a config flag.
 
+**Done** (`c7d697e`, `0422ec1`). Both halves landed as specified. What they
+left open is that nothing implemented the trait, which `S8` closes.
+
+### S8 — the local submitter, and a synchronous flush
+`S6′` left a generic trait with no implementation: whale's (`W7`) was the
+only one planned, and whale is now a deliberately paused optional scale-out
+rather than the path the loop runs on. So the primary submitter is a local
+one — sven and brain on one machine, nothing leaving it — and the drain
+finally has something to submit to.
+
+**`LocalFactSubmitter`** (`crates/memory/src/local_study.rs`) writes the
+batch as brain's `{fact, probe_question, expected_answer}` JSONL, runs
+brain's gated document study as a subprocess with `--adapter-dir` pointed at
+the directory this machine's `brain serve --watch-adapters DIR` polls, and
+parses the JSON report back into the drain's per-fact verdicts. A promoted
+adapter therefore reaches the *running* model with no restart — brain's
+watcher is the other half.
+
+Three things this milestone had to decide, all of them stated in the code:
+
+- **Facts had no probes.** `S7`'s extraction discipline says the fact is
+  trained and the probe is scored, but `PendingFactRecord` carried only the
+  fact, so nothing could score anything. `assimilate_fact` now captures an
+  optional frozen `probe_question`/`expected_answer` pair (half a probe, or
+  a probe question that appears inside its own training row, is a loud
+  refusal — the second mirrors brain's own `FactBatch` validation). A fact
+  with no probe is still recorded and comes back `Rejected` for being
+  unscoreable; inventing a probe from the fact would test the invention.
+- **The trait is bidirectional, so the submitter needs durable memory.** A
+  journal beside the datasets: the claim (which facts, which study
+  directory) is fsynced before the subprocess starts, every verdict before
+  it is returned. `outcomes_for` answers from it and never runs a second
+  study. **Honest limitation:** a claim with no report is an interrupted
+  study, and whether it already published an adapter is not knowable from
+  here — so it is `Failed`, not retried. Conservative against the
+  double-training the ledger exists to prevent.
+- **brain's command is still moving** (the study machinery is
+  architecture-agnostic, so it is becoming a top-level `--arch` command
+  rather than living under one model's subcommand tree). sven depends on the
+  *shape* — dataset in, adapter dir and report out — and keeps the spelling
+  in `tools.memory.learning.study_args`, a template with `{dataset}`,
+  `{adapter_dir}` and `{report}`. Catching up is a config line.
+
+**The synchronous flush.** The drain's background task is right for an open
+TUI session and useless for `sven --headless "learn from this document"` in
+a shell script, which exits before the next tick. `PendingFactsDrain::
+drain_all` keeps passing until the ledger is genuinely settled — *not* until
+a pass returns no reports, since the pass that clears a stranded in-flight
+marker settles nothing and stopping there would silently skip the fact it
+just disclaimed — and `sven learn flush` is its CLI surface: blocks on real
+outcomes, never a sleep, one line per fact, non-zero exit only when a fact
+`failed` (a rejection is a real answer). Additive: the periodic drain is
+untouched and the interactive path is byte-identical.
+
+**Selection is config**, not a compile-time choice —
+`tools.memory.learning.submitter` (`local` by default, `none`), which is the
+concrete point of `S6′`'s trait being generic. `sven-frontend::
+spawn_default_fact_drain` is the background half of the same selection.
+
+**Test-first:** `a_frozen_probe_travels_into_the_ledger_beside_its_fact`,
+`a_studied_batch_becomes_one_verdict_per_fact`,
+`a_fact_already_studied_is_answered_from_the_journal_not_studied_again`,
+`the_study_invocation_is_a_template_sven_only_substitutes_paths_into`,
+`a_flush_settles_every_pending_fact_before_it_returns`,
+`a_flush_does_not_mistake_a_disclaimed_batch_for_an_empty_ledger`.
+**Commit boundary: three** — (i) probe capture, (ii) the submitter + its
+config, (iii) `drain_all` + `sven learn flush` + the default wiring.
+
+**Still open:** no test has run against brain's *real* command, because it
+has not landed yet. The end-to-end integration test is written against a
+stub `brain` that pins sven's half of the contract only. When brain's
+command lands: verify the default `study_args`, the report's field names,
+and add the real end-to-end case.
+
 ### S7 — document ingestion + preference-choice capture
 Two related but separable additions:
 

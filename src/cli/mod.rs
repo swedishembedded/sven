@@ -8,6 +8,8 @@
 //! for each of these groups — this module only declares the clap grammar.
 
 mod index;
+#[cfg(feature = "memory")]
+mod learn;
 #[cfg(feature = "network")]
 mod team;
 mod tool;
@@ -18,6 +20,8 @@ mod tool;
 #[cfg(feature = "network")]
 pub use sven_acp::cli::AcpCommands;
 pub use index::IndexCommands;
+#[cfg(feature = "memory")]
+pub use learn::LearnCommands;
 #[cfg(feature = "network")]
 pub use sven_mcp::cli::McpCommands;
 #[cfg(feature = "network")]
@@ -369,6 +373,20 @@ pub enum Commands {
     Index {
         #[command(subcommand)]
         command: IndexCommands,
+    },
+
+    /// Drive the continuous-learning drain by hand.
+    ///
+    /// Facts sven recorded as durable knowledge normally reach training on a
+    /// timer, in the background of an open session. `sven learn flush` is the
+    /// version for a script that has no next tick: it submits everything
+    /// pending and blocks until every fact has a real outcome.
+    ///
+    ///   sven learn flush          - drain now, block, report per fact
+    #[cfg(feature = "memory")]
+    Learn {
+        #[command(subcommand)]
+        command: LearnCommands,
     },
 
     /// Map: run one sven agent per stdin line in parallel.

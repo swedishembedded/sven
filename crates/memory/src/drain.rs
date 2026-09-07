@@ -310,6 +310,51 @@ impl PendingFactsDrain {
         self.settle(&in_flight, reports).await
     }
 
+    /// Drains until nothing is left, and returns every outcome it settled.
+    ///
+    /// [`Self::drain_once`] is bounded to one batch because the background
+    /// task that calls it has a next tick. A one-shot, non-interactive run
+    /// does not: `sven --mode agent "learn from this document"` in a shell
+    /// script exits when the prompt is answered, and a fact still sitting in
+    /// the ledger at that moment is a fact nothing will ever come back for. So
+    /// this keeps passing until the ledger is genuinely settled, and blocks on
+    /// the submitter's real outcomes throughout - never on a timer, which
+    /// would be a guess about how long training takes.
+    ///
+    /// "Genuinely settled" is not "a pass returned no reports": the pass that
+    /// clears a stranded in-flight marker settles nothing and reports nothing,
+    /// and stopping there would leave the fact it just disclaimed unsubmitted
+    /// while reporting success. The loop therefore ends only when a pass both
+    /// reports nothing *and* leaves the cursor untouched - the one state that
+    /// means there was no work, rather than work that produced no verdict.
+    ///
+    /// Additive: the periodic drain is unchanged and both may be used, though
+    /// not at the same time - the single-drain lock in `sven-frontend` is what
+    /// keeps two of them off one cursor.
+    ///
+    /// # Errors
+    ///
+    /// The first [`DrainError`] any pass hits, with everything settled up to
+    /// that point discarded from the return value but *not* from the cursor:
+    /// those outcomes are recorded on disk and a later pass will not redo them.
+    /// Callers that need the partial list should call [`Self::drain_once`] in
+    /// their own loop.
+    pub async fn drain_all(
+        &self,
+        submitter: &dyn FactSubmitter,
+    ) -> Result<Vec<FactReport>, DrainError> {
+        let mut all = Vec::new();
+        loop {
+            let before = self.read_cursor().await?;
+            let reports = self.drain_once(submitter).await?;
+            let settled_something = !reports.is_empty();
+            all.extend(reports);
+            if !settled_something && self.read_cursor().await? == before {
+                return Ok(all);
+            }
+        }
+    }
+
     /// Resolves a batch the previous run left in flight, without ever
     /// re-submitting a fact the submitter took responsibility for.
     ///

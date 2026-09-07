@@ -8,6 +8,8 @@
 pub(crate) mod chats;
 pub(crate) mod ci;
 pub(crate) mod index;
+#[cfg(feature = "memory")]
+pub(crate) mod learn;
 pub(crate) mod logging;
 pub(crate) mod models;
 pub(crate) mod oauth;

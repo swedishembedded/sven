@@ -139,3 +139,38 @@ async fn a_second_drain_over_the_same_ledger_refuses_to_start() {
     assert_eq!(wait_for(&submitter, 1).await, vec![FactId::new("f-1")]);
     first.abort();
 }
+
+/// The submitter the drain uses is a config value, not a compile-time choice -
+/// which is the whole reason `FactSubmitter` is generic. `local` is the
+/// default because sven + brain on one machine is now the primary learning
+/// loop, but the one thing it cannot guess is where `brain serve
+/// --watch-adapters` is pointed, so a `local` submitter without that directory
+/// declines to start rather than training a model nothing serves.
+#[tokio::test]
+async fn the_default_drain_selects_its_submitter_from_config_and_refuses_a_broken_one() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let ledger = PendingFactsLedger::new(dir.path().join("pending-facts.jsonl"));
+    ledger.record_fact(&a_fact("f-1")).expect("record fact");
+
+    let mut config = Config::default();
+    assert_eq!(
+        config.tools.memory.learning.submitter, "local",
+        "the sven+brain path is the default one, not whale's"
+    );
+    assert!(
+        sven_frontend::spawn_default_fact_drain(&config, ledger.clone()).is_none(),
+        "the consent flag still gates everything: off means no task at all"
+    );
+
+    config.tools.memory.learning.submit_facts = true;
+    assert!(
+        sven_frontend::spawn_default_fact_drain(&config, ledger.clone()).is_none(),
+        "a local submitter with no adapter_dir must decline, not guess a directory"
+    );
+
+    config.tools.memory.learning.submitter = "none".to_string();
+    assert!(
+        sven_frontend::spawn_default_fact_drain(&config, ledger).is_none(),
+        "and an explicitly empty selection spawns nothing"
+    );
+}

@@ -12,6 +12,8 @@ use cli::{Cli, Commands};
 use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
 use run::index::run_index_command;
+#[cfg(feature = "memory")]
+use run::learn::run_learn_command;
 use run::logging::init_logging;
 use run::models::{list_models_cmd, list_providers_cmd};
 // `run_acp_command`/`run_mcp_command` live in `sven-acp`/`sven-mcp`, shared
@@ -132,6 +134,11 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::Index { command } => {
                 return run_index_command(command);
+            }
+            #[cfg(feature = "memory")]
+            Commands::Learn { command } => {
+                let config = sven_config::load(cli.config.as_deref())?;
+                return run_learn_command(command, &config).await;
             }
             Commands::ListModels {
                 provider,

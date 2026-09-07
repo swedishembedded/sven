@@ -260,3 +260,69 @@ async fn the_drain_hands_over_at_most_one_batch_per_pass_and_resumes_after_it() 
         "each fact goes out exactly once"
     );
 }
+
+/// A one-shot, non-interactive run (`sven --mode agent "learn from this
+/// document"` in a shell script) has to finish learning before the process
+/// exits: there is no next tick. `drain_all` is that entry point - it keeps
+/// passing until the ledger is genuinely settled and returns every verdict it
+/// collected, rather than the one batch `drain_once` is bounded to.
+#[tokio::test]
+async fn a_flush_settles_every_pending_fact_before_it_returns() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let ledger = PendingFactsLedger::new(dir.path().join("pending-facts.jsonl"));
+    for id in ["f-1", "f-2", "f-3"] {
+        ledger.record_fact(&a_fact(id)).expect("record fact");
+    }
+    let cursor = dir.path().join("pending-facts.cursor.json");
+    let submitter = FlakySubmitter::default();
+
+    // One fact per batch, so a flush that stopped after the first pass - the
+    // bound `drain_once` deliberately has - would come back with one report.
+    let drain = PendingFactsDrain::new(ledger.clone(), &cursor, 1);
+    let reports = drain.drain_all(&submitter).await.expect("flush");
+
+    assert_eq!(
+        reports,
+        vec![
+            verdict_for(&FactId::new("f-1")),
+            verdict_for(&FactId::new("f-2")),
+            verdict_for(&FactId::new("f-3")),
+        ],
+        "a flush returns every fact's real outcome, in ledger order"
+    );
+    assert_eq!(
+        submitter.accepted(),
+        vec![FactId::new("f-1"), FactId::new("f-2"), FactId::new("f-3")],
+        "and still submits each fact exactly once"
+    );
+    assert!(
+        drain.drain_all(&submitter).await.expect("idle flush").is_empty(),
+        "a settled ledger flushes to nothing"
+    );
+}
+
+/// The pass that clears a stranded in-flight marker settles nothing and
+/// returns no reports - so a flush that stopped at the first empty pass would
+/// leave the fact it disclaimed behind, unsubmitted, and report success.
+#[tokio::test]
+async fn a_flush_does_not_mistake_a_disclaimed_batch_for_an_empty_ledger() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let ledger = PendingFactsLedger::new(dir.path().join("pending-facts.jsonl"));
+    ledger.record_fact(&a_fact("f-1")).expect("record fact");
+    let cursor = dir.path().join("pending-facts.cursor.json");
+    let submitter = FlakySubmitter::default();
+    submitter.refuse_next_submit();
+
+    let drain = PendingFactsDrain::new(ledger.clone(), &cursor, 8);
+    drain
+        .drain_all(&submitter)
+        .await
+        .expect_err("a refused submission is still an error");
+
+    let reports = drain.drain_all(&submitter).await.expect("flush");
+    assert_eq!(
+        reports,
+        vec![verdict_for(&FactId::new("f-1"))],
+        "the flush must clear the stranded marker AND then send the fact"
+    );
+}
