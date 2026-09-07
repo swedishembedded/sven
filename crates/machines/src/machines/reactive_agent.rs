@@ -42,8 +42,9 @@
 //! the tool loop.
 //!
 //! The check is deliberately evidence-based and never inventive: it fires only
-//! when the model **itself** asked the user a question and **itself** listed the
-//! alternatives (see [`clarification_question`]). The machine supplies neither.
+//! when the model **itself** asked the user a question and **itself** listed,
+//! *after asking*, the alternatives that answer it (see
+//! [`clarification_question`]). The machine supplies neither.
 //! Anything else — a plain answer, a rhetorical question, a bare "I'm not sure"
 //! with no alternatives — is left byte-identical to the previous behaviour,
 //! because this path is on every turn of the default mode.
@@ -282,25 +283,35 @@ fn derive_call_id(thread: &str, round: u32) -> ToolCallId {
 /// one that happens to contain a rhetorical question, or a bullet list of work
 /// done — untouched.
 fn clarification_question(text: &str) -> Option<(String, Vec<String>)> {
-    let prompt = user_directed_question(text)?;
-    let options = enumerated_alternatives(text);
+    // Only what the model enumerated *after* asking counts. A list is the
+    // answer set to a question when it follows one; a list that precedes a
+    // question is the far more ordinary shape "here is what I did, shall I go
+    // on", where the items answer nothing and the question is a yes/no with no
+    // options at all. The two are indistinguishable by content, so the
+    // conservative reading is the only honest one: this check sits on every
+    // turn of the default mode, and its whole licence is that it invents
+    // nothing.
+    let (prompt, after_question) = user_directed_question(text)?;
+    let options = enumerated_alternatives(&text[after_question..]);
     if !(MIN_ALTERNATIVES..=MAX_ALTERNATIVES).contains(&options.len()) {
         return None;
     }
     Some((prompt, options))
 }
 
-/// The first question sentence that is addressed to the user, if any.
-fn user_directed_question(text: &str) -> Option<String> {
+/// The first question sentence that is addressed to the user, and the byte
+/// offset just past it.
+fn user_directed_question(text: &str) -> Option<(String, usize)> {
     let mut start = 0;
     for (i, ch) in text.char_indices() {
         match ch {
             '?' => {
-                let sentence = text[start..i + ch.len_utf8()].trim();
+                let end = i + ch.len_utf8();
+                let sentence = text[start..end].trim();
                 if is_user_directed(sentence) {
-                    return Some(sentence.to_string());
+                    return Some((sentence.to_string(), end));
                 }
-                start = i + ch.len_utf8();
+                start = end;
             }
             '.' | '!' | '\n' => start = i + ch.len_utf8(),
             _ => {}
@@ -322,6 +333,10 @@ fn is_user_directed(sentence: &str) -> bool {
 
 /// The alternatives the model enumerated as a `-`/`*`/`N.` list, in order and
 /// deduplicated.
+///
+/// Called with only the text that follows the question, so a list of work
+/// already done - which precedes its closing question - is never mistaken for
+/// a set of answers to it.
 fn enumerated_alternatives(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for line in text.lines() {
@@ -531,6 +546,34 @@ mod tests {
         }
     }
 
+    /// The post-check sits on every turn of the default mode, so it fires only
+    /// on evidence the model itself supplied: a question it addressed to the
+    /// user, and the alternatives it offered as answers to that question.
+    ///
+    /// A bullet list of work already done is not a set of alternatives, and the
+    /// closing "should I ...?" it precedes is a yes/no question with no options
+    /// at all. Treating the two as a pair turns the most ordinary final answer
+    /// there is into a multiple-choice prompt whose options are unrelated to
+    /// its own question, and holds a turn open that should have ended.
+    #[test]
+    fn a_list_of_work_done_before_a_closing_question_is_not_a_set_of_alternatives() {
+        let (mut hsm, mut ctx) = make_hsm();
+        hsm.dispatch(&Event::user_message("fix the parser"), &mut ctx);
+        let out = hsm.dispatch(&final_answer(WORK_DONE_THEN_A_CLOSING_QUESTION), &mut ctx);
+
+        assert!(
+            out.effects.is_empty(),
+            "a resolved answer must finish the turn exactly as it did before \
+             the post-check existed, got {:?}",
+            out.effects
+        );
+        assert_eq!(hsm.state(), ReactiveState::Idle);
+        assert_eq!(
+            ctx.fact("last_response"),
+            Some(&json!(WORK_DONE_THEN_A_CLOSING_QUESTION)),
+        );
+    }
+
     #[test]
     fn initial_state_is_idle() {
         let (hsm, _) = make_hsm();
@@ -657,6 +700,18 @@ mod tests {
          \n\
          - Rewrite the parser in place\n\
          - Add a second parser behind a feature flag\n";
+
+    /// A resolved answer in the single most common shape a coding agent's
+    /// final answer takes: what it did, as a list, and a closing yes/no
+    /// question. The list enumerates work done, not alternatives to the
+    /// question - nothing in it is an answer to "should I run the tests".
+    const WORK_DONE_THEN_A_CLOSING_QUESTION: &str = "I fixed the off-by-one in \
+         parser.rs. Changes:\n\
+         \n\
+         - renamed the token enum\n\
+         - added a span field\n\
+         \n\
+         Should I run the full test suite?";
 
     /// A plain, resolved final answer: no question to the user, no alternatives.
     const UNAMBIGUOUS_ANSWER: &str =
