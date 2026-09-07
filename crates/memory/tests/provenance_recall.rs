@@ -313,3 +313,30 @@ async fn an_unconfirmed_web_record_is_not_visible_to_a_second_session() {
         out.content
     );
 }
+
+/// Recall renders a snippet of each record, and the record's content is
+/// whatever a page or a user actually wrote - `sven-memory` has no say in it.
+/// Cutting that content at a fixed *byte* budget splits any multi-byte
+/// character that straddles the budget, which panics. Reached by ordinary
+/// non-ASCII prose and, worse, by any attacker-controlled page the agent
+/// fetched: one such record poisons every later recall whose query matches it.
+#[tokio::test]
+async fn a_non_ascii_memory_record_is_recalled_without_panicking() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let ledger = PendingFactsLedger::new(dir.path().join("pending-facts.jsonl"));
+    let store = Arc::new(SharedStore::default());
+    let s = session(&store, &ledger);
+
+    s.provenance.record(
+        "ev-web",
+        a_web_source("https://attacker.invalid/page", "f00dbabe"),
+    );
+    // 141 bytes: byte offset 120 falls *inside* the 60th 'é'.
+    let content = format!("x{}", "é".repeat(70));
+    let out = s.assimilate.execute(&learn(&content, "ev-web")).await;
+    assert!(!out.is_error, "{}", out.content);
+
+    let out = s.memory.execute(&recall("x")).await;
+    assert!(!out.is_error, "{}", out.content);
+    assert!(out.content.contains("UNTRUSTED"), "{}", out.content);
+}

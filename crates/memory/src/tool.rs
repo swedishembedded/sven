@@ -328,11 +328,18 @@ impl SemanticMemoryTool {
     }
 }
 
+/// Cuts `s` down to at most `max` **bytes**, never inside a character.
+///
+/// What is being cut is a memory record's content: whatever a user typed or a
+/// fetched page contained, so a fixed byte budget routinely lands in the middle
+/// of a multi-byte character and `&s[..max]` panics there. Every recall, list
+/// and remember goes through here, which makes a single non-ASCII record enough
+/// to break recall for every query that matches it.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}...", &s[..max])
+        format!("{}...", &s[..s.floor_char_boundary(max)])
     }
 }
 
