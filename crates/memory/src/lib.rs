@@ -21,6 +21,14 @@
 //! │  SQLite + FTS5 (BM25) + cosine vectors   │ │ hash-chained, gated  │
 //! └──────────────────────────────────────────┘ └──────────────────────┘
 //!            session recall, always                durable, provenance-gated
+//!                                                             │
+//!                                                             ▼
+//!                                                ┌──────────────────────────┐
+//!                                                │    PendingFactsDrain     │
+//!                                                │ batch → FactSubmitter →  │
+//!                                                │ per-fact outcomes        │
+//!                                                └──────────────────────────┘
+//!                                                  what actually gets trained
 //! ```
 //!
 //! # Quick start
@@ -52,6 +60,7 @@
 //! ```
 
 pub mod assimilate;
+pub mod drain;
 pub mod ingest;
 pub mod ledger;
 pub mod recall;
@@ -60,6 +69,7 @@ pub mod store;
 pub mod tool;
 
 pub use assimilate::{AssimilateFactTool, ProvenanceIndex};
+pub use drain::{DrainError, FactOutcome, FactReport, FactSubmitter, PendingFactsDrain};
 pub use ingest::IngestDocumentTool;
 pub use ledger::{DocumentRecord, LedgerEntry, LedgerError, PendingFactRecord, PendingFactsLedger};
 pub use recall::SessionScope;
