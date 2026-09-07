@@ -514,6 +514,28 @@ responses:
     pattern: "trigger provider error"
     error: "the model failed to process the request"
 
+  # ── Semantic memory (persisted SQLite store, sven-memory) ────────────────────
+
+  - match_type: contains
+    pattern: "remember the launch code"
+    tool_calls:
+      - id: tc-mem-remember
+        tool: semantic_memory
+        args:
+          action: remember
+          content: "sven-e2e-marker: the launch code is bats-9182"
+    after_tool_reply: "Got it, I will remember that."
+
+  - match_type: contains
+    pattern: "recall the launch code"
+    tool_calls:
+      - id: tc-mem-recall
+        tool: semantic_memory
+        args:
+          action: recall
+          query: "launch code"
+    after_tool_reply: "Here is what I recall about the launch code."
+
   # ── Default fallback ─────────────────────────────────────────────────────────
 
   - match_type: default
