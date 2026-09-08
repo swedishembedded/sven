@@ -13,7 +13,7 @@ use sven_model::{MessageContent, Role};
 use tracing::debug;
 
 use crate::{
-    app::App,
+    app::{session_subagents, App},
     chat::{
         markdown::{
             apply_bar_and_dim, collapsed_preview, format_conversation, parse_markdown_to_messages,
@@ -439,63 +439,16 @@ impl App {
         path
     }
 
-    /// Build the ATIF [`atif::Trajectory`] for the active session from its
-    /// current chat segments.
+    /// Build the ATIF [`atif::Trajectory`] for the active session, embedding
+    /// any subagent children (see `session_subagents::build_active_trajectory`).
     fn active_session_trajectory(&self) -> atif::Trajectory {
-        let model = Some(self.session.model_display.clone());
-        let mode = Some(self.session.mode.to_string());
-        let active_id = self.sessions.active_id.clone();
-        if let Some(entry) = self.sessions.get(&active_id) {
-            entry.to_trajectory(&self.chat, model, mode)
-        } else {
-            // Fallback for the rare case where the active entry isn't found.
-            let records: Vec<sven_session_store::ConversationRecord> = self
-                .chat
-                .segments
-                .iter()
-                .filter_map(|seg| match seg {
-                    ChatSegment::Message(m) => {
-                        Some(sven_session_store::ConversationRecord::Message(m.clone()))
-                    }
-                    ChatSegment::Thinking { content } => {
-                        Some(sven_session_store::ConversationRecord::Thinking {
-                            content: content.clone(),
-                        })
-                    }
-                    ChatSegment::ContextCompacted {
-                        tokens_before,
-                        tokens_after,
-                        strategy,
-                        turn,
-                    } => Some(sven_session_store::ConversationRecord::ContextCompacted {
-                        tokens_before: *tokens_before,
-                        tokens_after: *tokens_after,
-                        strategy: Some(strategy.to_string()),
-                        turn: Some(*turn),
-                    }),
-                    _ => None,
-                })
-                .collect();
-            let steps = sven_session_store::conversation_records_to_steps(&records);
-            let mut agent = sven_session_store::default_agent_profile();
-            if let Some(m) = &model {
-                agent = agent.with_model(m.clone());
-            }
-            let mut trajectory =
-                atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
-            trajectory.session_id = Some(active_id.as_str().to_string());
-            trajectory.steps = steps;
-            let meta = sven_session_store::SvenSessionMeta {
-                title: self.chat_title.clone(),
-                status: sven_session_store::ChatStatus::Active,
-                mode,
-                parent_session_id: None,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            };
-            meta.apply_to_trajectory(&mut trajectory);
-            trajectory
-        }
+        session_subagents::build_active_trajectory(
+            &self.sessions,
+            &self.chat,
+            &self.chat_title,
+            Some(self.session.model_display.clone()),
+            Some(self.session.mode.to_string()),
+        )
     }
 
     /// `true` iff the active chat has anything worth persisting (mirrors the

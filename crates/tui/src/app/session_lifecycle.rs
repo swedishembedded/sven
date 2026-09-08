@@ -300,6 +300,20 @@ impl App {
                 entry.total_cost_usd = refreshed.total_cost_usd;
             }
         }
+
+        // Restore any subagent children embedded in the trajectory. Lazy
+        // (here, not in `SessionManager::load_from_disk`) because listing
+        // reads only cheap headers, which deliberately exclude
+        // `subagent_trajectories` - loading them for every session on disk
+        // would defeat that optimisation.
+        if let Some(children) = &trajectory.subagent_trajectories {
+            crate::app::session_subagents::restore_subagent_children(
+                &mut self.sessions,
+                target_id,
+                children,
+            );
+        }
+
         let mut chat = ChatState::new();
         chat.segments = segments;
         Some((chat, messages))
@@ -480,8 +494,16 @@ mod tests {
             .load_chat_and_history_from_disk(&id)
             .expect("trajectory on disk must load");
 
-        assert_eq!(chat.segments.len(), 2, "both messages must be in the display chat");
-        assert_eq!(messages.len(), 2, "both messages must be seedable LLM history");
+        assert_eq!(
+            chat.segments.len(),
+            2,
+            "both messages must be in the display chat"
+        );
+        assert_eq!(
+            messages.len(),
+            2,
+            "both messages must be seedable LLM history"
+        );
         assert_eq!(messages[0].role, sven_model::Role::User);
         assert_eq!(messages[0].as_text(), Some("what is 2+2?"));
         assert_eq!(messages[1].role, sven_model::Role::Assistant);

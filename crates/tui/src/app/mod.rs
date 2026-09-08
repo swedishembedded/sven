@@ -20,6 +20,7 @@ pub(crate) mod render;
 pub(crate) mod run;
 pub(crate) mod session_lifecycle;
 pub(crate) mod session_manager;
+pub(crate) mod session_subagents;
 pub(crate) mod term_events;
 #[cfg(test)]
 pub(crate) mod test_support;
