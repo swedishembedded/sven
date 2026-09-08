@@ -148,41 +148,6 @@
         );
     }
 
-    #[test]
-    fn record_subagent_spawn_appends_forward_ref_and_validates() {
-        let mut parent = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
-        parent.session_id = Some("root-session-1".to_string());
-        parent
-            .steps
-            .push(TraceStep::new(1, StepOrigin::User, "Do the subtask"));
-
-        record_subagent_spawn(
-            &mut parent,
-            "child-session-1",
-            Path::new("/data/sessions/child-session-1.json"),
-        );
-
-        assert_eq!(parent.steps.len(), 2);
-        let step = &parent.steps[1];
-        assert_eq!(step.step_id, 2);
-        assert_eq!(step.source, StepOrigin::System);
-        let obs = step.observation.as_ref().expect("observation present");
-        let refs = obs.results[0]
-            .subagent_trajectory_ref
-            .as_ref()
-            .expect("refs present");
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].session_id.as_deref(), Some("child-session-1"));
-        assert_eq!(
-            refs[0].trajectory_path.as_deref(),
-            Some("/data/sessions/child-session-1.json")
-        );
-        assert!(refs[0].trajectory_id.is_none());
-        assert!(!refs[0].is_unresolvable());
-
-        assert!(atif::validate_trajectory(&parent).is_ok());
-    }
-
     // ── agent.version ─────────────────────────────────────────────────────
 
     #[test]

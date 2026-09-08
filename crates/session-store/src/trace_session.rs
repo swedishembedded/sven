@@ -91,12 +91,8 @@ pub fn default_agent_profile() -> AgentProfile {
 ///
 /// ATIF's own native mechanism for this relationship points the *other*
 /// way: a parent references its children via `subagent_trajectories` +
-/// `SubagentTrajectoryRef` (see [`record_subagent_spawn`]), designed for
-/// single-file embedding. That doesn't fit sven's one-file-per-session
-/// layout, so both are provided: this cheap reverse-lookup field for sven's
-/// own UI, and the spec-native forward ref (best-effort, via
-/// [`record_subagent_spawn`]) for interop with other ATIF tooling that
-/// walks trajectories forward from the root.
+/// `SubagentTrajectoryRef`, designed for single-file embedding (see
+/// [`StepAssembler::push_subagent_embedded`], used by the CI runner today).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SvenSessionMeta {
     /// Human-readable title, generated from first user message or model API.
@@ -220,41 +216,6 @@ pub fn final_metrics_to_chat_usage(metrics: &FinalMetrics) -> ChatUsage {
 /// for this — no separate ID newtype is introduced here.
 pub fn new_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
-}
-
-// ── Subagent forward reference (best-effort helper) ─────────────────────────
-
-/// Best-effort helper: record on the *parent* trajectory that a subagent
-/// session was spawned, using ATIF's native `SubagentTrajectoryRef`
-/// mechanism (forward reference, parent → child). Appends a new `System`
-/// step to `parent.steps` (sequential `step_id`) carrying an observation
-/// with a single [`SubagentRef`] pointing at the child by both
-/// `trajectory_path` (file location) and `session_id` (informational).
-///
-/// This is deliberately *not* wired into every session-creation code path —
-/// later milestones' callers (CI runner / TUI / GUI) invoke it explicitly
-/// when they create a subagent session. See [`SvenSessionMeta::parent_session_id`]
-/// for the cheap reverse-lookup counterpart kept on the child.
-pub fn record_subagent_spawn(
-    parent: &mut Trajectory,
-    child_session_id: &str,
-    child_trajectory_path: &Path,
-) {
-    let step_id = parent.steps.len() as u64 + 1;
-    let mut step = TraceStep::new(
-        step_id,
-        StepOrigin::System,
-        format!("subagent spawned: session_id={child_session_id}"),
-    );
-    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(
-        vec![SubagentRef {
-            trajectory_id: None,
-            trajectory_path: Some(child_trajectory_path.to_string_lossy().to_string()),
-            session_id: Some(child_session_id.to_string()),
-            extra: None,
-        }],
-    )));
-    parent.steps.push(step);
 }
 
 // ── Context-compaction structured details (extra.sven on a System step) ────
@@ -479,8 +440,8 @@ impl StepAssembler {
     /// # Why attach instead of closing the step
     ///
     /// The obvious-looking alternative — flush whatever's pending and push a
-    /// standalone `System` marker step, mirroring [`record_subagent_spawn`]'s
-    /// shape — is wrong for a *streaming* caller: the `task` tool call that
+    /// standalone `System` marker step instead — is wrong for a *streaming*
+    /// caller: the `task` tool call that
     /// spawned the subagent is itself part of the currently-pending step
     /// (its `ToolCallStarted` always arrives before the subagent's own
     /// completion signal), and that tool call's own result observation
@@ -875,9 +836,8 @@ fn message_body_to_text(body: &MessageBody) -> Option<String> {
 ///   open→save round trip permanently deletes them.
 /// - `System`-source steps are skipped, except a context-compaction step
 ///   (detected via [`ContextCompactionDetails::from_step_extra`]), which
-///   becomes `TurnRecord::ContextCompacted`. Any other `System` step (e.g. a
-///   [`record_subagent_spawn`] marker) has no `TurnRecord` analog and is
-///   dropped.
+///   becomes `TurnRecord::ContextCompacted`. Any other `System` step has no
+///   `TurnRecord` analog and is dropped.
 /// - An agent step's `reasoning_content`, if present, becomes a leading
 ///   `TurnRecord::Thinking`.
 /// - `tool_calls` are emitted next (each its own `TurnRecord::ToolCall`, in
