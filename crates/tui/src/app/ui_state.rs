@@ -71,10 +71,6 @@ pub enum FocusPane {
     Input,
     /// The compact queue panel shown above the input when there are pending messages.
     Queue,
-    /// The right-side chat list sidebar.
-    ChatList,
-    /// The right-side peers pane (below chat list in sidebar).
-    Peers,
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────

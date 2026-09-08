@@ -159,38 +159,9 @@ pub enum Action {
     /// Close the session picker without switching (Esc).
     SessionPickerClose,
 
-    // Chat list (multi-session sidebar)
-    /// Toggle the right-side chat list pane (Ctrl+b).
-    ToggleChatList,
-    /// Move focus to the chat list pane.
-    FocusChatList,
-    /// Move selection down in the chat list.
-    ChatListSelectNext,
-    /// Move selection up in the chat list.
-    ChatListSelectPrev,
-    /// Activate (switch to) the selected chat in the list.
-    ChatListActivate,
-    /// Create a new chat session.
-    NewChat,
-    /// Delete the selected chat session (with confirmation).
-    DeleteChat,
-    /// Archive the selected chat session.
-    ArchiveChat,
-    /// Grow the chat list pane width.
-    ResizeChatListGrow,
-    /// Shrink the chat list pane width.
-    ResizeChatListShrink,
-
     // ── Mouse-originated actions ──────────────────────────────────────────────
     // These are produced by `App::mouse_to_action` and dispatched like any
     // keyboard action so that all state mutations live in `dispatch.rs`.
-    /// Click on a row in the chat-list sidebar.
-    /// `inner_row` is the 0-based visual row; `chat_list_scroll_offset()` must
-    /// be added in the dispatch handler to obtain the actual item index.
-    ChatListClick {
-        inner_row: usize,
-    },
-
     /// Click on a row in the queue panel.
     QueueClick {
         index: usize,
@@ -239,7 +210,6 @@ pub enum Action {
 /// resolved.  In that state only j/k/+/- (and Esc to cancel) are meaningful.
 /// `in_edit_mode` - true when editing a queued message; Enter/Esc confirm/cancel.
 /// `in_queue` - true when the queue panel has keyboard focus.
-/// `in_chat_list` - true when the chat list sidebar has keyboard focus.
 /// `in_chat_pane` - true when the chat pane has keyboard focus (so j/k move highlight, Enter shows help).
 #[allow(clippy::too_many_arguments)]
 pub fn map_key(
@@ -249,7 +219,6 @@ pub fn map_key(
     pending_nav: bool,
     in_edit_mode: bool,
     in_queue: bool,
-    in_chat_list: bool,
     in_chat_pane: bool,
 ) -> Option<Action> {
     let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
@@ -334,30 +303,6 @@ pub fn map_key(
         };
     }
 
-    // ── Chat list sidebar focus ───────────────────────────────────────────────
-    if in_chat_list {
-        return match event.code {
-            KeyCode::Up | KeyCode::Char('k') => Some(Action::ChatListSelectPrev),
-            KeyCode::Down | KeyCode::Char('j') => Some(Action::ChatListSelectNext),
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => Some(Action::ChatListActivate),
-            KeyCode::Char('n') => Some(Action::NewChat),
-            KeyCode::Char('d') | KeyCode::Delete => Some(Action::DeleteChat),
-            KeyCode::Char('a') => Some(Action::ArchiveChat),
-            KeyCode::Char('+') | KeyCode::Char('=') => Some(Action::ResizeChatListGrow),
-            KeyCode::Char('-') => Some(Action::ResizeChatListShrink),
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') | KeyCode::Left => {
-                Some(Action::FocusInput)
-            }
-            KeyCode::Char('w') if event.modifiers.contains(KeyModifiers::CONTROL) => {
-                Some(Action::NavPrefix)
-            }
-            KeyCode::Char('b') if event.modifiers.contains(KeyModifiers::CONTROL) => {
-                Some(Action::ToggleChatList)
-            }
-            _ => None,
-        };
-    }
-
     match event.code {
         // ── Input-pane overrides come FIRST ───────────────────────────────────
         KeyCode::Char('c') if ctrl && in_input => Some(Action::InterruptAgent),
@@ -374,9 +319,6 @@ pub fn map_key(
         KeyCode::F(1) => Some(Action::Help),
         KeyCode::F(4) => Some(Action::CycleMode),
         KeyCode::Char('t') if ctrl => Some(Action::OpenPager),
-        // Chat list sidebar: show + focus (Ctrl+b).  When already focused,
-        // Ctrl+b hides the pane (handled in the in_chat_list block above).
-        KeyCode::Char('b') if ctrl => Some(Action::FocusChatList),
         // Team / multi-agent controls
         KeyCode::Char('a') if ctrl => Some(Action::OpenTeamPicker),
         KeyCode::Down if shift => Some(Action::CycleTeammateForward),
@@ -511,7 +453,7 @@ mod tests {
         key(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
-    // Helper: call map_key with in_chat_list=false, in_chat_pane as given (default false).
+    // Helper: call map_key with in_chat_pane as given (default false).
     fn mk(
         ev: KeyEvent,
         in_search: bool,
@@ -528,7 +470,6 @@ mod tests {
             pending_nav,
             in_edit,
             in_queue,
-            false,
             in_chat_pane,
         )
     }
@@ -889,15 +830,6 @@ mod tests {
         let ev = key(KeyCode::PageUp, KeyModifiers::NONE);
         assert_eq!(
             mk(ev, false, false, false, false, true, false),
-            Some(Action::ScrollFullPageUp)
-        );
-    }
-
-    #[test]
-    fn page_up_scrolls_chat_while_chat_list_focused() {
-        let ev = key(KeyCode::PageUp, KeyModifiers::NONE);
-        assert_eq!(
-            map_key(ev, false, false, false, false, false, true, false),
             Some(Action::ScrollFullPageUp)
         );
     }

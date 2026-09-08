@@ -157,7 +157,6 @@ impl App {
 
                 let in_edit_mode =
                     self.edit.message_index.is_some() || self.edit.queue_index.is_some();
-                let in_chat_list = self.ui.focus == FocusPane::ChatList;
                 let in_chat_pane = self.ui.focus == FocusPane::Chat;
                 if let Some(action) = map_key(
                     k,
@@ -166,7 +165,6 @@ impl App {
                     self.ui.pending_nav,
                     in_edit_mode,
                     in_queue,
-                    in_chat_list,
                     in_chat_pane,
                 ) {
                     if action == Action::NavPrefix {
@@ -221,49 +219,15 @@ impl App {
                             self.chat.scroll_offset,
                             self.queue.messages.len(),
                         );
-                        match hit {
-                            HitArea::ChatListBorder => {
-                                let anchor =
-                                    mouse.column as i16 - self.layout.chat_list_pane.x as i16;
-                                self.layout.resize_drag = Some(ResizeDrag::ChatListWidth {
-                                    anchor_offset: anchor,
-                                });
-                                return false;
-                            }
-                            HitArea::PeersSplitBorder => {
-                                let anchor = mouse.row as i16 - self.layout.peers_pane.y as i16;
-                                self.layout.resize_drag = Some(ResizeDrag::PeersSplit {
-                                    anchor_offset: anchor,
-                                });
-                                return false;
-                            }
-                            HitArea::InputBorder => {
-                                let anchor = mouse.row as i16 - self.layout.input_pane.y as i16;
-                                self.layout.resize_drag = Some(ResizeDrag::InputHeight {
-                                    anchor_offset: anchor,
-                                });
-                                return false;
-                            }
-                            _ => {}
+                        if hit == HitArea::InputBorder {
+                            let anchor = mouse.row as i16 - self.layout.input_pane.y as i16;
+                            self.layout.resize_drag = Some(ResizeDrag::InputHeight {
+                                anchor_offset: anchor,
+                            });
+                            return false;
                         }
                     }
                     MouseEventKind::Drag(MouseButton::Left) => match self.layout.resize_drag {
-                        Some(ResizeDrag::ChatListWidth { anchor_offset }) => {
-                            self.prefs.drag_chat_list_width(
-                                mouse.column,
-                                anchor_offset,
-                                &self.layout,
-                            );
-                            return false;
-                        }
-                        Some(ResizeDrag::PeersSplit { anchor_offset }) => {
-                            self.prefs.drag_peers_pane_height(
-                                mouse.row,
-                                anchor_offset,
-                                &self.layout,
-                            );
-                            return false;
-                        }
                         Some(ResizeDrag::InputHeight { anchor_offset }) => {
                             self.prefs
                                 .drag_input_height(mouse.row, anchor_offset, &self.layout);
@@ -307,8 +271,6 @@ impl App {
                     self.ui.search.active,
                     self.queue.messages.len(),
                     desired_input_height,
-                    self.prefs.effective_chat_list_width(),
-                    self.prefs.effective_peers_pane_height(),
                 );
                 // Open-border panes (TOP+BOTTOM only) - no left/right `│` chars.
                 self.layout.chat_inner_width = layout.chat_pane.width.max(20);
@@ -319,8 +281,6 @@ impl App {
                 self.layout.chat_pane = layout.chat_pane;
                 self.layout.input_pane = layout.input_pane;
                 self.layout.queue_pane = layout.queue_pane;
-                self.layout.chat_list_pane = layout.chat_list_pane;
-                self.layout.peers_pane = layout.peers_pane;
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let chat_width = layout.chat_pane.width.saturating_sub(2);
                     let chat_height = layout.chat_inner_height();
@@ -411,11 +371,6 @@ impl App {
         );
 
         match (mouse.kind, area) {
-            // ── Chat list sidebar ─────────────────────────────────────────────
-            (MouseEventKind::Down(MouseButton::Left), HitArea::ChatList { inner_row }) => {
-                Some(Action::ChatListClick { inner_row })
-            }
-
             // ── Input pane ────────────────────────────────────────────────────
             (MouseEventKind::Down(MouseButton::Left), HitArea::InputPane) => {
                 Some(Action::FocusInput)
@@ -702,26 +657,6 @@ impl App {
                                 self.dispatch(Action::RemoveChatSegment).await;
                                 if self.chat.focused_segment.is_some() {
                                     self.chat.focused_segment = saved;
-                                }
-                            }
-                            ConfirmedAction::DeleteChat(id) => {
-                                if id == self.sessions.active_id {
-                                    let other = self
-                                        .sessions
-                                        .display_order
-                                        .iter()
-                                        .find(|x| *x != &id)
-                                        .cloned();
-                                    if let Some(other_id) = other {
-                                        self.switch_session(other_id).await;
-                                    } else {
-                                        self.new_session().await;
-                                    }
-                                }
-                                if self.sessions.delete(&id) {
-                                    self.ui.push_toast(crate::app::ui_state::Toast::info(
-                                        "Chat deleted",
-                                    ));
                                 }
                             }
                         }

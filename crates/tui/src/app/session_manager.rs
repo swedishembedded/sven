@@ -812,21 +812,6 @@ impl SessionManager {
             .any(|e| e.id != self.active_id && e.busy)
     }
 
-    /// Select the previous row in the sidebar (tree order).
-    pub fn select_prev(&mut self) {
-        if self.list_selected > 0 {
-            self.list_selected -= 1;
-        }
-    }
-
-    /// Select the next row in the sidebar (tree order).
-    pub fn select_next(&mut self) {
-        let rows = self.tree_rows();
-        if !rows.is_empty() && self.list_selected < rows.len() - 1 {
-            self.list_selected += 1;
-        }
-    }
-
     /// Set `list_selected` to the index of the active session in the sidebar.
     pub fn sync_list_selection_to_active(&mut self) {
         let rows = self.tree_rows();
@@ -848,55 +833,6 @@ impl SessionManager {
             self.display_order.insert(0, id.clone());
         }
         self.sync_list_selection_to_active();
-    }
-
-    /// Mark a session as archived (but keep it in memory).
-    pub fn archive(&mut self, id: &SessionId) {
-        if let Some(entry) = self.entries.get_mut(id) {
-            entry.status = ChatStatus::Archived;
-        }
-    }
-
-    /// Remove a session from the manager and delete its YAML file.
-    /// If the session has children, they are removed too (but they have no YAML).
-    pub fn delete(&mut self, id: &SessionId) -> bool {
-        if *id == self.active_id {
-            return false; // can't delete the active session
-        }
-        if let Some(entry) = self.entries.remove(id) {
-            if entry.parent_id.is_some() {
-                if let Some(pid) = &entry.parent_id {
-                    if let Some(sibs) = self.children.get_mut(pid) {
-                        sibs.retain(|x| x != id);
-                    }
-                }
-            } else {
-                self.display_order.retain(|x| x != id);
-            }
-            // Remove any children (collect first so we don't hold refs during delete).
-            let child_ids: Vec<SessionId> = self.children.remove(id).unwrap_or_default();
-            for cid in child_ids {
-                let _ = self.delete(&cid);
-            }
-            let rows = self.tree_rows();
-            if !rows.is_empty() && self.list_selected >= rows.len() {
-                self.list_selected = rows.len() - 1;
-            }
-            if let Some(path) = entry.session_path {
-                // Removes the atomic-writer `.lock`/temp sidecars too.
-                if let Err(e) = atif::persist::remove_trajectory(&path) {
-                    tracing::warn!(path = %path.display(), "failed to delete session file: {e}");
-                }
-            }
-            if let Some(path) = entry.legacy_path {
-                if let Err(e) = std::fs::remove_file(&path) {
-                    tracing::warn!(path = %path.display(), "failed to delete legacy chat file: {e}");
-                }
-            }
-            true
-        } else {
-            false
-        }
     }
 
     /// Find the first session entry whose `buffer_handle` matches `handle`.

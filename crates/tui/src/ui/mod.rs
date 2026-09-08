@@ -12,14 +12,12 @@ use ratatui::{
     widgets::{Scrollbar, ScrollbarOrientation},
 };
 
-pub(crate) mod chat_list_pane;
 pub(crate) mod chat_pane;
 pub(crate) mod completion_menu;
 pub(crate) mod help_overlay;
 pub(crate) mod input_pane;
 pub(crate) mod inspector;
 pub(crate) mod modals;
-pub(crate) mod peers_pane;
 pub(crate) mod queue_panel;
 pub(crate) mod search_bar;
 pub(crate) mod session_picker;
@@ -34,14 +32,12 @@ pub(crate) mod width_utils;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
-pub(crate) use chat_list_pane::{build_chat_list_items, ChatListPane};
 pub(crate) use chat_pane::{nvim_cursor_screen_pos, ChatPane};
 pub(crate) use completion_menu::CompletionMenu;
 pub(crate) use help_overlay::HelpOverlay;
 pub(crate) use input_pane::{input_cursor_screen_pos, InputEditMode, InputPane};
 pub(crate) use inspector::{InspectorKind, InspectorOverlay};
 pub(crate) use modals::{ConfirmModalView, QuestionModalView};
-pub(crate) use peers_pane::{PeerListItem, PeersPane};
 pub(crate) use queue_panel::{QueueItem, QueuePanel};
 pub(crate) use search_bar::SearchBar;
 pub(crate) use session_picker::{SessionPickerOverlay, SessionPickerState};

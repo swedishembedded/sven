@@ -156,8 +156,6 @@ impl App {
                     false,
                     self.queue.messages.len(),
                     self.prefs.input_height,
-                    self.prefs.effective_chat_list_width(),
-                    self.prefs.effective_peers_pane_height(),
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
             }
@@ -171,8 +169,6 @@ impl App {
                     false,
                     0,
                     self.prefs.input_height,
-                    self.prefs.effective_chat_list_width(),
-                    self.prefs.effective_peers_pane_height(),
                 );
                 (
                     layout.chat_pane.width.saturating_sub(2),
@@ -257,8 +253,6 @@ impl App {
                     self.ui.search.active,
                     self.queue.messages.len(),
                     desired_input_height,
-                    self.prefs.effective_chat_list_width(),
-                    self.prefs.effective_peers_pane_height(),
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
                 let max_scroll =
@@ -274,8 +268,6 @@ impl App {
                 self.layout.input_inner_height = layout.input_pane.height.saturating_sub(2);
                 self.layout.input_pane = layout.input_pane;
                 self.layout.queue_pane = layout.queue_pane;
-                self.layout.chat_list_pane = layout.chat_list_pane;
-                self.layout.peers_pane = layout.peers_pane;
             }
 
             // ── Cursor scroll adjustment ──────────────────────────────────────

@@ -165,8 +165,6 @@ impl Widget for StatusBar<'_> {
                 }
                 FocusPane::Chat => "",
                 FocusPane::Queue => "↑↓ select · Enter send · Esc close",
-                FocusPane::ChatList => "j/k nav · Enter switch · n new · d del · ^b hide",
-                FocusPane::Peers => "j/k nav · Enter delegate · ← back",
             }
         };
 

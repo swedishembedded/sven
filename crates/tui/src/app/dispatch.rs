@@ -6,7 +6,7 @@
 //! and the chat-pane interaction keys (segment ops, scrolling, search,
 //! mouse) live in `dispatch_chat.rs`; this file is the top-level router plus
 //! everything else - focus/navigation, the message queue, slash-command
-//! completion, submit, the team picker, and the chat-list sidebar.
+//! completion, submit, and the team picker.
 
 use sven_model::Message;
 
@@ -16,7 +16,6 @@ use crate::{
     commands::{completion::CompletionItem, parse, CommandContext, ParsedCommand},
     keys::Action,
     overlay::completion::CompletionOverlay,
-    overlay::confirm::{ConfirmModal, ConfirmedAction},
     pager::PagerOverlay,
 };
 
@@ -124,10 +123,10 @@ impl App {
                     self.ui.focus = FocusPane::Chat;
                     self.recompute_focused_segment();
                 }
-                FocusPane::Chat | FocusPane::ChatList | FocusPane::Peers => {}
+                FocusPane::Chat => {}
             },
             Action::NavDown => match self.ui.focus {
-                FocusPane::Chat | FocusPane::ChatList => {
+                FocusPane::Chat => {
                     if !self.queue.messages.is_empty() {
                         if self.queue.selected.is_none() {
                             self.queue.selected = Some(0);
@@ -140,23 +139,12 @@ impl App {
                 FocusPane::Queue => {
                     self.ui.focus = FocusPane::Input;
                 }
-                FocusPane::Input | FocusPane::Peers => {}
+                FocusPane::Input => {}
             },
-            Action::NavLeft => {
-                if self.ui.focus == FocusPane::ChatList {
-                    self.ui.focus = FocusPane::Chat;
-                    self.recompute_focused_segment();
-                }
-            }
-            Action::NavRight => {
-                if self.ui.focus != FocusPane::ChatList {
-                    if !self.prefs.chat_list_visible {
-                        self.prefs.chat_list_visible = true;
-                    }
-                    self.ui.focus = FocusPane::ChatList;
-                    self.sessions.sync_list_selection_to_active();
-                }
-            }
+            // No horizontal neighbour pane exists any more (the sidebar is
+            // gone); Ctrl+w h/l are now no-ops, same as vim's own Ctrl-w h/l
+            // with no window in that direction.
+            Action::NavLeft | Action::NavRight => {}
             Action::FocusQueue => {
                 if !self.queue.messages.is_empty() {
                     if self.queue.selected.is_none() {
@@ -441,146 +429,7 @@ impl App {
                 }
             }
 
-            // ── Chat list sidebar actions ─────────────────────────────────────
-            Action::ToggleChatList => {
-                self.prefs.chat_list_visible = !self.prefs.chat_list_visible;
-                // When hiding, move focus away from the now-invisible pane.
-                if !self.prefs.chat_list_visible && self.ui.focus == FocusPane::ChatList {
-                    self.ui.focus = FocusPane::Input;
-                }
-            }
-
-            Action::FocusChatList => {
-                if !self.prefs.chat_list_visible {
-                    // Show the pane first, then focus it.
-                    self.prefs.chat_list_visible = true;
-                }
-                self.ui.focus = FocusPane::ChatList;
-                self.sessions.sync_list_selection_to_active();
-            }
-
-            Action::ChatListSelectNext => {
-                self.sessions.select_next();
-            }
-
-            Action::ChatListSelectPrev => {
-                self.sessions.select_prev();
-            }
-
-            Action::ChatListActivate => {
-                if let Some(id) = self
-                    .sessions
-                    .tree_rows()
-                    .get(self.sessions.list_selected)
-                    .map(|(id, _)| id.clone())
-                {
-                    if id != self.sessions.active_id {
-                        self.switch_session(id).await;
-                    }
-                    self.ui.focus = FocusPane::Input;
-                }
-            }
-
-            Action::NewChat => {
-                self.new_session().await;
-            }
-
-            Action::DeleteChat => {
-                if let Some(id) = self
-                    .sessions
-                    .tree_rows()
-                    .get(self.sessions.list_selected)
-                    .map(|(id, _)| id.clone())
-                {
-                    let title = self
-                        .sessions
-                        .get(&id)
-                        .map(|e| e.title.as_str())
-                        .unwrap_or("Untitled");
-                    let is_active = id == self.sessions.active_id;
-                    let message = if is_active {
-                        format!(
-                            "Delete \"{}\"? You will be switched to another chat.",
-                            title
-                        )
-                    } else {
-                        format!("Delete \"{}\"?", title)
-                    };
-                    self.ui.confirm_modal = Some(
-                        ConfirmModal::new("Delete chat", message, ConfirmedAction::DeleteChat(id))
-                            .labels(" Delete ", " Cancel "),
-                    );
-                }
-            }
-
-            Action::ArchiveChat => {
-                if let Some(id) = self
-                    .sessions
-                    .tree_rows()
-                    .get(self.sessions.list_selected)
-                    .map(|(id, _)| id.clone())
-                {
-                    self.sessions.archive(&id);
-                    // Save the updated status to disk (native ATIF sessions
-                    // only; a legacy-only entry is archived in memory and
-                    // picks up the status on its next real save, which also
-                    // migrates it off the YAML format - see `resolve_session_path`).
-                    if let Some(entry) = self.sessions.get(&id) {
-                        if let Some(path) = entry.session_path.clone() {
-                            if path.exists() {
-                                if let Ok(mut trajectory) =
-                                    sven_session_store::load_session_from(&path)
-                                {
-                                    if let Some(mut meta) =
-                                        sven_session_store::SvenSessionMeta::from_trajectory(
-                                            &trajectory,
-                                        )
-                                    {
-                                        meta.status = sven_session_store::ChatStatus::Archived;
-                                        meta.touch();
-                                        meta.apply_to_trajectory(&mut trajectory);
-                                        let _ = atif::persist::write_trajectory_atomic(
-                                            &path,
-                                            &trajectory,
-                                            None,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    self.ui
-                        .push_toast(crate::app::ui_state::Toast::info("Chat archived"));
-                }
-            }
-
-            Action::ResizeChatListGrow => {
-                self.prefs.chat_list_grow();
-            }
-
-            Action::ResizeChatListShrink => {
-                self.prefs.chat_list_shrink();
-            }
-
             // ── Mouse-originated actions ──────────────────────────────────────
-            Action::ChatListClick { inner_row } => {
-                // `inner_row` is the 0-based visual row; add the scroll offset
-                // that was in effect at render time to get the item index.
-                let scroll_offset = self.chat_list_scroll_offset();
-                let rows = self.sessions.tree_rows();
-                let max_idx = rows.len().saturating_sub(1);
-                let actual_idx = (inner_row + scroll_offset).min(max_idx);
-                self.sessions.list_selected = actual_idx;
-                if let Some((id, _)) = rows.get(actual_idx) {
-                    if *id != self.sessions.active_id {
-                        self.switch_session(id.clone()).await;
-                    }
-                }
-                // Focus the chat list so it accepts input keys (k/j, Enter, etc.)
-                // just as when switching via Ctrl+w h / Ctrl+w l.
-                self.ui.focus = FocusPane::ChatList;
-            }
-
             Action::QueueClick { index } => {
                 // Clear selection (click is outside chat content).
                 self.chat.selection_anchor = None;

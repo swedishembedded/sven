@@ -120,8 +120,6 @@ impl App {
             self.ui.search.active,
             self.queue.messages.len(),
             desired_input_height,
-            self.prefs.effective_chat_list_width(),
-            self.prefs.effective_peers_pane_height(),
         );
         // Clean up expired toasts every frame.
         self.ui.prune_toasts();
@@ -346,63 +344,6 @@ impl App {
             );
         }
 
-        // ── Chat list pane (right side) ───────────────────────────────────────
-        if self.prefs.chat_list_visible && layout.chat_list_pane.width > 0 {
-            let tree_rows = self.sessions.tree_rows();
-            let items = crate::ui::build_chat_list_items(
-                &tree_rows,
-                &self.sessions.entries,
-                &self.sessions.active_id,
-                self.agent.anim_frame,
-                self.agent.busy,
-            );
-            let cl_focused = self.ui.focus == FocusPane::ChatList;
-            let chat_list_scroll_offset = self.chat_list_scroll_offset();
-            frame.render_widget(
-                crate::ui::ChatListPane {
-                    items: &items,
-                    selected: self.sessions.list_selected,
-                    focused: cl_focused,
-                    ascii,
-                    scroll_offset: chat_list_scroll_offset,
-                    is_resizing: matches!(
-                        self.layout.resize_drag,
-                        Some(crate::app::layout_cache::ResizeDrag::ChatListWidth { .. })
-                    ),
-                },
-                layout.chat_list_pane,
-            );
-        }
-        // ── Peers pane (right side, below chat list) ───────────────────────────
-        if layout.peers_pane.height > 0 && layout.peers_pane.width > 0 {
-            let items: Vec<crate::ui::PeerListItem<'_>> = self
-                .ui
-                .peers
-                .iter()
-                .map(|peer| crate::ui::PeerListItem {
-                    name: &peer.name,
-                    connected: peer.connected,
-                    can_delegate: peer.can_delegate,
-                })
-                .collect();
-            let peers_focused = self.ui.focus == FocusPane::Peers;
-            let peers_scroll_offset = self.peers_scroll_offset();
-            frame.render_widget(
-                crate::ui::PeersPane {
-                    items: &items,
-                    selected: self.ui.peers_selected,
-                    focused: peers_focused,
-                    ascii,
-                    scroll_offset: peers_scroll_offset,
-                    is_resizing: matches!(
-                        self.layout.resize_drag,
-                        Some(crate::app::layout_cache::ResizeDrag::PeersSplit { .. })
-                    ),
-                },
-                layout.peers_pane,
-            );
-        }
-
         // ── Completion overlay ────────────────────────────────────────────────
         if let Some(ref mut overlay) = self.ui.completion {
             frame.render_widget(
@@ -495,40 +436,6 @@ impl App {
                 },
                 frame.area(),
             );
-        }
-    }
-
-    // ── Chat list scroll offset ───────────────────────────────────────────────
-
-    /// Compute the scroll offset that was used (or will be used) to render the
-    /// chat list, so that visual row → item index conversions are consistent
-    /// between click handling and rendering.
-    ///
-    /// When the pane is focused the last inner row is reserved for the "[enter]
-    /// hint", reducing the number of visible items by 1.
-    pub(crate) fn chat_list_scroll_offset(&self) -> usize {
-        let cl = self.layout.chat_list_pane;
-        let focused = self.ui.focus == FocusPane::ChatList;
-        let hint_rows = if focused && cl.height >= 3 { 1usize } else { 0 };
-        let visible = (cl.height as usize).saturating_sub(2 + hint_rows);
-        if self.sessions.list_selected >= visible {
-            self.sessions.list_selected + 1 - visible
-        } else {
-            0
-        }
-    }
-
-    /// Compute scroll offset for the peers pane.
-    pub(crate) fn peers_scroll_offset(&self) -> usize {
-        let pp = self.layout.peers_pane;
-        let focused = self.ui.focus == FocusPane::Peers;
-        let hint_rows = if focused && pp.height >= 3 { 1usize } else { 0 };
-        let visible = (pp.height as usize).saturating_sub(2 + hint_rows);
-        let selected = self.ui.peers_selected;
-        if selected >= visible {
-            selected + 1 - visible
-        } else {
-            0
         }
     }
 }
