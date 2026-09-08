@@ -22,7 +22,6 @@ use crate::{
         },
         segment::{segment_at_line, ChatSegment},
     },
-    history_save, history_save_to,
     markdown::render_markdown,
     ui::theme::{BAR_AGENT, BAR_THINKING},
     ui::tool_renderer,
@@ -358,21 +357,6 @@ impl App {
 
     // ── History persistence ───────────────────────────────────────────────────
 
-    /// Collect the current chat's non-display-only messages, for the separate
-    /// markdown `history_save`/`history_save_to` archive (an orthogonal,
-    /// unrelated feature from ATIF session persistence - see module docs on
-    /// `sven_session_store::history`).
-    fn active_chat_messages(&self) -> Vec<sven_model::Message> {
-        self.chat
-            .segments
-            .iter()
-            .filter_map(|seg| match seg {
-                ChatSegment::Message(m) => Some(m.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
     /// Resolve (and, if this is the session's first save, assign) the ATIF
     /// session path: an explicit `--trace`/`--output-trace` path if one was
     /// given at startup, otherwise the canonical `session_dir()/<id>.json`
@@ -453,32 +437,6 @@ impl App {
                 tracing::debug!("failed to save session trajectory: {e}");
             }
         });
-
-        // Separately, append to the plain markdown conversation history
-        // archive (`sven_session_store::history`) - an orthogonal, unrelated feature
-        // (used by `sven chats` / headless `--resume`) from ATIF session
-        // persistence above.
-        let messages = self.active_chat_messages();
-        if messages.is_empty() {
-            return;
-        }
-        let path_opt = self.history_path.clone();
-        match path_opt {
-            None => match history_save(&messages) {
-                Ok(path) => {
-                    debug!(path = %path.display(), "conversation saved to history");
-                    self.history_path = Some(path);
-                }
-                Err(e) => debug!("failed to save conversation to history: {e}"),
-            },
-            Some(path) => {
-                tokio::spawn(async move {
-                    if let Err(e) = history_save_to(&path, &messages) {
-                        debug!("failed to update conversation history: {e}");
-                    }
-                });
-            }
-        }
     }
 
     // ── Neovim sync ───────────────────────────────────────────────────────────

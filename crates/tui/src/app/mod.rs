@@ -36,7 +36,6 @@ use tokio::sync::mpsc;
 
 use sven_bootstrap::OutputBufferStore;
 
-use crate::chat::segment::ChatSegment;
 use crate::commands::{CommandRegistry, CompletionManager};
 
 pub(crate) use agent_conn::AgentConn;
@@ -60,7 +59,6 @@ pub use sven_frontend::{ModelDirective, NodeBackend, QueuedMessage};
 pub struct AppOptions {
     pub mode: AgentMode,
     pub initial_prompt: Option<String>,
-    pub initial_history: Option<(Vec<ChatSegment>, PathBuf)>,
     pub no_nvim: bool,
     pub model_override: Option<String>,
     /// Combined load+output ATIF trace path (`--trace`), or the output-only
@@ -68,7 +66,8 @@ pub struct AppOptions {
     /// document (`trace_session::load_session_from` /
     /// `atif::persist::write_trajectory_atomic`) - this is now the ONE
     /// session-persistence path for the TUI; there is no separate YAML/JSONL
-    /// branch.
+    /// branch. `--resume <id>` resolves to this same field (see
+    /// `src/run/tui.rs`) rather than a separate history-loading path.
     pub trace_path: Option<PathBuf>,
     /// Load-only ATIF trace path (`--load-trace`).
     pub load_trace_path: Option<PathBuf>,
@@ -76,6 +75,8 @@ pub struct AppOptions {
     /// When `Some`, connect the TUI to a running node instead of running a
     /// local agent.  Gives the TUI full access to the node's P2P tools.
     pub node_backend: Option<NodeBackend>,
+    /// Open the `/resume` session picker at startup (bare `--resume`, no id).
+    pub open_resume_picker: bool,
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -121,7 +122,6 @@ pub struct App {
     /// Tool display registry - set by the runtime builder after the registry is built.
     /// Used for chat view (collapsed summary, display name) when present.
     pub(crate) shared_tool_displays: sven_tools::SharedToolDisplays,
-    pub(crate) history_path: Option<PathBuf>,
     /// Set to `true` after a tool call completes - triggers a terminal-state
     /// recovery pass before the next draw.
     pub(crate) needs_terminal_recover: bool,

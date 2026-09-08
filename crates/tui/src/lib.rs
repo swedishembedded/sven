@@ -21,4 +21,3 @@ pub use app::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
 pub use chat::segment::ChatSegment;
 // Re-export sven-frontend types for downstream crates that depend on sven-tui.
 pub use sven_frontend::{AgentRequest, FrontendOptions, SessionMeta};
-pub use sven_session_store::history::{save as history_save, save_to as history_save_to};

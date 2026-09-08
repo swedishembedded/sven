@@ -28,22 +28,19 @@ use crate::{
 
 impl App {
     pub fn new(config: Arc<sven_config::Config>, opts: AppOptions) -> Self {
-        let (initial_segments, history_path) = opts
-            .initial_history
-            .map(|(segs, path)| (segs, Some(path)))
-            .unwrap_or_else(|| (Vec::new(), None));
-
         // ── Load an ATIF trajectory (if --trace / --load-trace was given) ──────
         // `--trace PATH` is both the load source and the sync-after-every-turn
         // save target; `--load-trace PATH` alone only seeds history (matching
         // the headless runner's "load doesn't imply write-back" convention -
-        // see `CiOptions::load_trace`'s doc comment).
+        // see `CiOptions::load_trace`'s doc comment). `--resume <id>` resolves
+        // to `trace_path` before this point (see `src/run/tui.rs`), so it
+        // needs no separate handling here.
         let trace_load_path = opts
             .trace_path
             .clone()
             .or_else(|| opts.load_trace_path.clone());
         let mut loaded_trajectory: Option<atif::Trajectory> = None;
-        let initial_segments = if let Some(ref path) = trace_load_path {
+        let initial_segments: Vec<ChatSegment> = if let Some(ref path) = trace_load_path {
             if path.exists() {
                 match sven_session_store::load_session_from(path) {
                     Ok(trajectory) => {
@@ -57,14 +54,14 @@ impl App {
                     }
                     Err(e) => {
                         debug!("failed to load ATIF trajectory {}: {e}", path.display());
-                        initial_segments
+                        Vec::new()
                     }
                 }
             } else {
-                initial_segments
+                Vec::new()
             }
         } else {
-            initial_segments
+            Vec::new()
         };
 
         let initial_model_cfg = if let Some(ref mo) = opts.model_override {
@@ -166,7 +163,6 @@ impl App {
             mcp_manager: None,
             mcp_prompt_commands: std::collections::HashMap::new(),
             mcp_refresh_tx: None,
-            history_path,
             needs_terminal_recover: false,
             buffer_store,
             chat,
@@ -209,6 +205,15 @@ impl App {
                     app.chat.expand_level.insert(i, 0);
                 }
             }
+        }
+
+        // Bare `--resume` (no id): open the session picker immediately instead
+        // of starting a normal empty chat - mirrors the `/resume` slash-command
+        // handler in `submit.rs`.
+        if opts.open_resume_picker {
+            app.ui.session_picker_entries =
+                sven_session_store::list_all_sessions(Some(200)).unwrap_or_default();
+            app.ui.show_session_picker = true;
         }
         app
     }

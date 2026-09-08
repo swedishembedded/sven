@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Kernel-backed drop-in for the small slice of the legacy `sven_machines::Agent`
-//! API that the headless runners ([`CiRunner`](crate::CiRunner) and
-//! [`ConversationRunner`](crate::ConversationRunner)) depend on.
+//! API that the headless runner ([`CiRunner`](crate::CiRunner)) depends on.
 //!
 //! Instead of driving the retired `sven_machines::Agent` loop, [`KernelAgent`]
 //! runs each turn on the HSM kernel built by [`RuntimeBuilder`]. It preserves

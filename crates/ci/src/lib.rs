@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 pub mod context;
-mod conversation;
 pub mod index;
 mod kernel_agent;
 mod output;
@@ -13,7 +12,6 @@ pub mod template;
 mod tests;
 pub mod toolcall_replay;
 
-pub use conversation::{ConversationOptions, ConversationRunner};
 pub use pipe::{MapOptions, ReduceOptions, TeeOptions};
 pub use runner::{
     runtime_runner::{RuntimeRunner, RuntimeRunnerOptions},

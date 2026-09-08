@@ -7,9 +7,8 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use crate::cli::Cli;
-use crate::run::chats::pick_chat_with_fzf;
 use sven_config::AgentMode;
-use sven_session_store::{history, parse_frontmatter, parse_workflow};
+use sven_session_store::{parse_frontmatter, parse_workflow};
 use sven_tui::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
 
 /// Whether the Kitty keyboard-enhancement flags were actually pushed for this
@@ -24,7 +23,7 @@ use sven_tui::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
 static KEYBOARD_ENHANCEMENT_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-pub(crate) async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
+pub(crate) async fn run_tui(mut cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
     use ratatui::crossterm::{
         event::{
             DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
@@ -33,27 +32,18 @@ pub(crate) async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyho
         execute,
     };
 
-    let initial_history = match &cli.resume {
-        None => None,
+    // `--resume <id>` resolves to the same `--trace PATH` semantics as an
+    // explicit `--trace` flag (both load source and sync-after-every-turn
+    // target - see `AppOptions::trace_path`'s doc comment). Bare `--resume`
+    // (no id) instead opens the in-TUI session picker at startup.
+    let open_resume_picker = match &cli.resume {
+        None => false,
+        Some(id) if id.is_empty() => true,
         Some(id) => {
-            let actual_id = if id.is_empty() {
-                match pick_chat_with_fzf()? {
-                    Some(picked) => picked,
-                    None => return Ok(()),
-                }
-            } else {
-                id.clone()
-            };
-
-            let (parsed, path) = history::load(&actual_id)
-                .with_context(|| format!("loading conversation '{actual_id}'"))?;
-
-            let segments: Vec<sven_tui::ChatSegment> = parsed
-                .history
-                .into_iter()
-                .map(sven_tui::ChatSegment::Message)
-                .collect();
-            Some((segments, path))
+            let path = sven_session_store::resolve_session_id(id)
+                .with_context(|| format!("resolving session id '{id}'"))?;
+            cli.trace = Some(path);
+            false
         }
     };
 
@@ -282,13 +272,13 @@ pub(crate) async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyho
     let opts = AppOptions {
         mode: cli.mode,
         initial_prompt: cli.prompt,
-        initial_history,
         no_nvim: !cli.nvim,
         model_override: cli.model,
         trace_path: trace_save_path,
         load_trace_path: trace_load_path,
         initial_queue,
         node_backend,
+        open_resume_picker,
     };
 
     let app = App::new(config, opts);

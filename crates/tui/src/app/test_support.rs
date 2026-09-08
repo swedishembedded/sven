@@ -19,13 +19,13 @@ impl App {
         let opts = AppOptions {
             mode: sven_config::AgentMode::Agent,
             initial_prompt: None,
-            initial_history: None,
             no_nvim: true,
             model_override: None,
             trace_path: None,
             load_trace_path: None,
             initial_queue: Vec::new(),
             node_backend: None,
+            open_resume_picker: false,
         };
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut app = Self::new(config, opts);

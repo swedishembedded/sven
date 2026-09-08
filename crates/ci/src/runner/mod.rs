@@ -23,7 +23,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use tokio::sync::mpsc;
-use tracing::debug;
 
 use atif::{TraceStep, Trajectory};
 use sven_bootstrap::RuntimeContext;
@@ -32,7 +31,7 @@ use sven_machines::AgentEvent;
 use sven_model::{ContentPart, Message, MessageContent, Role};
 use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
 use sven_session_store::{
-    apply_reward_to_trajectory, history, parse_conversation, parse_frontmatter, parse_workflow,
+    apply_reward_to_trajectory, parse_conversation, parse_frontmatter, parse_workflow,
     OutcomeFold, RunConclusion, SessionReward, Step, StepQueue,
 };
 use sven_workspace::resolve_auto_log_path;
@@ -569,15 +568,23 @@ impl CiRunner {
         // A missing `--load-trace`/`--trace` path is treated as "nothing to
         // load yet", not an error, so `--trace PATH` on a fresh path creates
         // the file on first write rather than failing the run.
-        let (mut existing_steps, existing_session_id, existing_meta): (
+        let (mut existing_steps, existing_session_id, existing_meta, loaded_subagents): (
             Vec<TraceStep>,
             Option<String>,
             Option<SvenSessionMeta>,
+            Vec<Trajectory>,
         ) = match &opts.load_trace {
             Some(tpath) if tpath.exists() => match trace_session::load_session_from(tpath) {
                 Ok(trajectory) => {
                     let meta = SvenSessionMeta::from_trajectory(&trajectory);
-                    (trajectory.steps, trajectory.session_id, meta)
+                    // Preserve embedded children across a resume: `flush_trace`
+                    // below only ever rebuilds `subagent_trajectories` from
+                    // *this run's* `completed_subagents`, so a loaded
+                    // trajectory's own children must be seeded into it up
+                    // front or the very first flush of a resumed session
+                    // silently drops every subagent it had.
+                    let subagents = trajectory.subagent_trajectories.unwrap_or_default();
+                    (trajectory.steps, trajectory.session_id, meta, subagents)
                 }
                 Err(e) => {
                     write_stderr(&format!(
@@ -587,7 +594,7 @@ impl CiRunner {
                     std::process::exit(EXIT_VALIDATION_ERROR);
                 }
             },
-            _ => (Vec::new(), None, None),
+            _ => (Vec::new(), None, None, Vec::new()),
         };
 
         // Resolve timeouts (CLI > config)
@@ -671,8 +678,21 @@ impl CiRunner {
         // only advances when `output_format == Jsonl`, see `event::stream_new_steps`.
         let mut emitted_steps: usize = 0;
         // Session identity for the trajectory this run writes: reuse the
-        // loaded session (continuing it) or start a fresh one.
-        let run_session_id = existing_session_id.unwrap_or_else(trace_session::new_session_id);
+        // loaded session (continuing it), or - for a fresh session with an
+        // explicit --output-trace/--trace path - adopt the file's own stem.
+        // `session_resolve::resolve_session_id` (which `sven chats`/`--resume`
+        // use) matches on filename, not this field, so a session_id that
+        // disagrees with its own filename would make `sven chats` print an id
+        // `--resume` can never resolve back to this file. Falls back to a
+        // fresh UUID only when there is no explicit output path to derive one
+        // from (e.g. the auto-log path, which is not meant to be looked up).
+        let run_session_id = existing_session_id.unwrap_or_else(|| {
+            opts.output_trace
+                .as_ref()
+                .and_then(|p| p.file_stem())
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(trace_session::new_session_id)
+        });
 
         // ── Set up Ctrl+C handler ────────────────────────────────────────────
         let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
@@ -727,7 +747,7 @@ impl CiRunner {
         // a later one still resolves correctly. See `event::SubagentChildState`
         // and `StepState::completed_subagents`.
         let mut subagent_children: HashMap<String, SubagentChildState> = HashMap::new();
-        let mut completed_subagents: Vec<Trajectory> = Vec::new();
+        let mut completed_subagents: Vec<Trajectory> = loaded_subagents;
 
         // Write the combined ATIF trajectory (existing steps ++ new steps
         // accumulated so far) to `path`, atomically (temp file + rename; see
@@ -1012,9 +1032,6 @@ impl CiRunner {
                                     "[sven:error] Step {step_idx} ({label:?}) timed out after {}s",
                                     step_timeout_secs.unwrap_or(0)
                                 ));
-                                if !collected.is_empty() {
-                                    let _ = history::save(&collected);
-                                }
                                 if let Some(ref path) = effective_output_trace {
                                     flush_trace(
                                         path,
@@ -1029,9 +1046,6 @@ impl CiRunner {
 
                         _ = cancel_rx.recv() => {
                             write_stderr("[sven:interrupted] Ctrl+C received - saving partial conversation");
-                            if !collected.is_empty() {
-                                let _ = history::save(&collected);
-                            }
                             if let Some(ref path) = effective_output_trace {
                                 flush_trace(
                                     path,
@@ -1072,9 +1086,6 @@ impl CiRunner {
                             // partial document when this fires — see
                             // `StepState::budget_exhausted`'s doc comment.
                             if budget_exhausted {
-                                if !collected.is_empty() {
-                                    let _ = history::save(&collected);
-                                }
                                 if let Some(ref path) = effective_output_trace {
                                     flush_trace(
                                         path,
@@ -1098,9 +1109,6 @@ impl CiRunner {
                                      This often indicates the model is using wrong parameter names \
                                      or is confused. Consider using a more capable model."
                                 ));
-                                if !collected.is_empty() {
-                                    let _ = history::save(&collected);
-                                }
                                 if let Some(ref path) = effective_output_trace {
                                     flush_trace(
                                         path,
@@ -1159,9 +1167,6 @@ impl CiRunner {
                                 }
                             }
                             if budget_exhausted {
-                                if !collected.is_empty() {
-                                    let _ = history::save(&collected);
-                                }
                                 if let Some(ref path) = effective_output_trace {
                                     flush_trace(
                                         path,
@@ -1284,9 +1289,6 @@ impl CiRunner {
                 write_stderr(&format!(
                     "[sven:error] Step {step_idx} ({label:?}) reported an error. Aborting."
                 ));
-                if !collected.is_empty() {
-                    let _ = history::save(&collected);
-                }
                 if let Some(ref path) = effective_output_trace {
                     flush_trace(
                         path,
@@ -1406,13 +1408,6 @@ impl CiRunner {
         // ── Save artifacts metadata ──────────────────────────────────────────
         if let Some(dir) = &opts.artifacts_dir {
             write_conversation_artifact(dir, &collected);
-        }
-
-        // ── Persist conversation to history ──────────────────────────────────
-        if !collected.is_empty() {
-            if let Err(e) = history::save(&collected) {
-                debug!("failed to save conversation to history: {e}");
-            }
         }
 
         // ── Exit with tool-warning code if any non-fatal tool errors occurred ─

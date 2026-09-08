@@ -12,44 +12,28 @@ use crate::cli::{Cli, OutputFormatArg};
 use crate::run::logging::is_stdin_tty;
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_config::AgentMode;
-use sven_session_store::history;
 
-pub(crate) async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
+pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
     // ── Detect project root ──────────────────────────────────────────────────
     let project_root = find_project_root().ok();
 
     // ── --resume in headless mode ────────────────────────────────────────────
+    // Maps onto the same semantics as an explicit `--trace PATH`: the
+    // resolved session file becomes both the load source and the
+    // write-back target, so a headless resume appends to the same session
+    // rather than forking a new one under an auto-log path. `--load-trace`
+    // alone does NOT imply write-back (see `CiOptions::load_trace`'s doc
+    // comment), so `--resume` must map onto `--trace`, never `--load-trace`.
     if let Some(id) = &cli.resume {
         if id.is_empty() {
             anyhow::bail!(
                 "--resume requires an explicit ID in headless mode.\n\
-                 Use 'sven chats' to list available conversations."
+                 Use 'sven chats' to list available sessions."
             );
         }
-        let file_path =
-            history::resolve(id).with_context(|| format!("resolving conversation id '{id}'"))?;
-
-        if let Some(prompt) = &cli.prompt {
-            use std::fmt::Write as _;
-            let current = std::fs::read_to_string(&file_path)
-                .with_context(|| format!("reading {}", file_path.display()))?;
-            let mut updated = current.trim_end().to_string();
-            let _ = write!(updated, "\n\n## User\n\n{}\n", prompt.trim());
-            std::fs::write(&file_path, &updated)
-                .with_context(|| format!("appending user message to {}", file_path.display()))?;
-        }
-
-        // Legacy: resume via ConversationRunner for markdown conversation files.
-        use sven_ci::{ConversationOptions, ConversationRunner};
-        let content = std::fs::read_to_string(&file_path)
-            .with_context(|| format!("reading {}", file_path.display()))?;
-        let opts = ConversationOptions {
-            mode: cli.mode,
-            model_override: cli.model,
-            file_path,
-            content,
-        };
-        return ConversationRunner::new(config).run(opts).await;
+        let path = sven_session_store::resolve_session_id(id)
+            .with_context(|| format!("resolving session id '{id}'"))?;
+        cli.trace = Some(path);
     }
 
     // ── Resolve effective trace I/O paths ─────────────────────────────────────
