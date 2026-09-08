@@ -77,7 +77,7 @@ use serde::{Deserialize, Serialize};
 
 use sven_vocab::provenance::FactId;
 
-use crate::drain::{FactOutcome, FactReport, FactSubmitter};
+use crate::drain::{FactOutcome, FactReport, FactSubmitter, GateNumbers};
 use crate::ledger::PendingFactRecord;
 
 /// Where the local study runs and what it runs with.
@@ -407,6 +407,7 @@ fn unscoreable() -> FactOutcome {
         reason: "no frozen probe was captured with this fact, so no study can decide \
                  whether the model learned it"
             .to_string(),
+        numbers: GateNumbers::default(),
     }
 }
 
@@ -539,6 +540,25 @@ struct CycleRow {
     /// Which of the gate's checks rejected, with the numbers that decided it.
     #[serde(default)]
     reject_cause: Option<String>,
+    /// The gate's sign-test p-value for this cycle.
+    #[serde(default)]
+    p_value: Option<f64>,
+    /// The gate's effect size for this cycle.
+    #[serde(default)]
+    effect_size: Option<f64>,
+}
+
+impl CycleRow {
+    /// This cycle's evidence, in the machine-readable shape
+    /// [`FactOutcome::Promoted`]/[`FactOutcome::Rejected`] carry.
+    fn numbers(&self) -> GateNumbers {
+        GateNumbers {
+            baseline_pass_rate: self.baseline_pass_rate,
+            post_training_pass_rate: self.post_training_pass_rate,
+            p_value: self.p_value,
+            effect_size: self.effect_size,
+        }
+    }
 }
 
 impl StudyReport {
@@ -555,14 +575,29 @@ impl StudyReport {
             .iter()
             .find(|c| c.facts.iter().any(|f| normalized(f) == identity))
         else {
-            return FactOutcome::Failed {
-                reason: "the study report said nothing about this fact".to_string(),
+            // Two different failures read alike from one fact's point of
+            // view, but a human diagnosing them needs to tell them apart: a
+            // report with SOME cycles that simply doesn't mention this fact
+            // is (per the doc comment above) unreachable in practice: a
+            // wholly EMPTY report is far more likely brain's shape having
+            // moved under a field this decoder still reads by the old name
+            // - `#[serde(default)]` tolerates a genuinely new field, not a
+            // renamed one it depended on.
+            let reason = if self.gated.cycles.is_empty() {
+                "the study report has no cycles at all - either the study trained on \
+                 nothing, or brain's report format no longer matches what this decoder \
+                 reads (check for a renamed field, not just a new one)"
+                    .to_string()
+            } else {
+                "the study report's cycles do not mention this fact".to_string()
             };
+            return FactOutcome::Failed { reason };
         };
+        let numbers = cycle.numbers();
         // Both halves are required: a cycle the gate promoted still trained
         // nothing servable if no adapter was published.
         if self.promoted && cycle.decision == "promote" {
-            return FactOutcome::Promoted;
+            return FactOutcome::Promoted { numbers };
         }
         FactOutcome::Rejected {
             reason: format!(
@@ -574,6 +609,7 @@ impl StudyReport {
                     .unwrap_or_default(),
                 cycle.rates()
             ),
+            numbers,
         }
     }
 }
@@ -728,8 +764,16 @@ mod tests {
         );
         assert_eq!(
             r.outcome_for("the bus runs at   500 KBIT/S."),
-            FactOutcome::Promoted,
-            "a fact is matched by normalised text, exactly as brain collapses its own rows"
+            FactOutcome::Promoted {
+                numbers: GateNumbers {
+                    baseline_pass_rate: Some(0.0),
+                    post_training_pass_rate: Some(1.0),
+                    p_value: Some(0.001),
+                    effect_size: Some(1.0),
+                }
+            },
+            "a fact is matched by normalised text, exactly as brain collapses its own rows, \
+             and the gate's own numbers ride along with the verdict"
         );
     }
 
@@ -746,18 +790,36 @@ mod tests {
         );
         assert!(
             matches!(r.outcome_for("The bus runs at 500 kbit/s."),
-                     FactOutcome::Rejected { reason }
+                     FactOutcome::Rejected { reason, .. }
                      if reason.contains("anchor suite regressed") && reason.contains("0.33")),
             "the cause and the cycle's own numbers must both reach the user"
         );
     }
 
-    /// The report is the only thing that can settle a fact. A fact brain never
-    /// mentioned has no verdict, and inventing one either way would be a lie
-    /// the user acts on.
+    /// A wholly empty report is far more likely a broken/renamed field on
+    /// brain's side than a real study that trained on nothing - `outcome_for`
+    /// must say so distinctly, not blend it with the "this one fact wasn't
+    /// mentioned" case below.
     #[test]
-    fn a_fact_the_report_never_mentions_is_failed_never_guessed_at() {
+    fn an_empty_report_is_failed_with_a_reason_naming_the_report_not_the_fact() {
         let r = report(r#"{"promoted": true, "gated": {"cycles": []}}"#);
+        assert!(
+            matches!(r.outcome_for("The bus runs at 500 kbit/s."),
+                FactOutcome::Failed { reason } if reason.contains("no cycles at all")),
+            "an empty report must be distinguishable from a fact simply absent \
+             from an otherwise-populated one"
+        );
+    }
+
+    /// The report is the only thing that can settle a fact. A fact brain never
+    /// mentioned - among cycles that DO exist - has no verdict, and inventing
+    /// one either way would be a lie the user acts on.
+    #[test]
+    fn a_fact_absent_from_a_nonempty_report_is_failed_never_guessed_at() {
+        let r = report(
+            r#"{"promoted": true, "gated": {"cycles": [
+                 {"facts": ["A wholly different fact."], "decision": "promote"}]}}"#,
+        );
         assert!(matches!(
             r.outcome_for("The bus runs at 500 kbit/s."),
             FactOutcome::Failed { .. }

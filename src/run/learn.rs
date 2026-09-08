@@ -23,14 +23,30 @@
 //! services by sending an email to info@swedishembedded.com.
 
 use sven_config::Config;
-use sven_memory::{FactOutcome, FactReport, PendingFactsDrain, PendingFactsLedger};
+use sven_memory::{FactOutcome, FactReport, GateNumbers, PendingFactsDrain, PendingFactsLedger};
 
 use crate::cli::LearnCommands;
 
 pub(crate) async fn run_learn_command(cmd: &LearnCommands, config: &Config) -> anyhow::Result<()> {
     match cmd {
         LearnCommands::Flush { json } => flush(config, *json).await,
+        LearnCommands::ExportTrajectories { runs, min_reward, out } => export_trajectories(runs, *min_reward, out),
     }
+}
+
+/// Blocking on purpose: this is a small, local, file-to-file operation - no
+/// submitter, no subprocess, nothing to await.
+fn export_trajectories(runs: &std::path::Path, min_reward: f64, out: &std::path::Path) -> anyhow::Result<()> {
+    let summary = sven_memory::export_trajectories(runs, min_reward, out)?;
+    println!(
+        "scanned {}, exported {}, no reward {}, below threshold {} -> {}",
+        summary.scanned,
+        summary.exported,
+        summary.no_reward,
+        summary.below_threshold,
+        out.display()
+    );
+    Ok(())
 }
 
 /// Drains every pending fact and blocks until each has an outcome.
@@ -87,8 +103,14 @@ fn print_reports(reports: &[FactReport]) {
     }
     for report in reports {
         match &report.outcome {
-            FactOutcome::Promoted => println!("promoted  {}", report.id.as_str()),
-            FactOutcome::Rejected { reason } => {
+            FactOutcome::Promoted { numbers } => {
+                println!(
+                    "promoted  {}{}",
+                    report.id.as_str(),
+                    rates_suffix(numbers)
+                );
+            }
+            FactOutcome::Rejected { reason, .. } => {
                 println!("rejected  {}  {reason}", report.id.as_str());
             }
             FactOutcome::Failed { reason } => {
@@ -98,7 +120,17 @@ fn print_reports(reports: &[FactReport]) {
     }
     let promoted = reports
         .iter()
-        .filter(|r| matches!(r.outcome, FactOutcome::Promoted))
+        .filter(|r| matches!(r.outcome, FactOutcome::Promoted { .. }))
         .count();
     println!("{promoted}/{} fact(s) promoted.", reports.len());
+}
+
+/// `" (probe pass rate: baseline X -> Y)"`, or nothing when the gate's report
+/// carried no numbers for this promotion (e.g. a mock run).
+fn rates_suffix(numbers: &GateNumbers) -> String {
+    match (numbers.baseline_pass_rate, numbers.post_training_pass_rate) {
+        (Some(base), Some(trained)) => format!(" (probe pass rate: baseline {base} -> {trained})"),
+        (None, Some(trained)) => format!(" (probe pass rate after training: {trained})"),
+        _ => String::new(),
+    }
 }

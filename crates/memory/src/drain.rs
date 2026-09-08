@@ -69,19 +69,59 @@ use sven_vocab::provenance::FactId;
 
 use crate::ledger::{LedgerEntry, LedgerError, PendingFactRecord, PendingFactsLedger};
 
+/// The gate's own numbers for the cycle a fact was decided in, when the study
+/// ran far enough to produce them. Every field is optional: a study that
+/// crashed before scoring, or a brain report that has not grown a field yet,
+/// still produces a verdict - just not every number behind it.
+///
+/// Carried on both [`FactOutcome::Promoted`] and [`FactOutcome::Rejected`] so
+/// a caller (a script, `sven learn flush --json`, `F1`'s own before/after
+/// measurement) can read the gate's evidence directly instead of parsing it
+/// back out of a human-readable `reason` string.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct GateNumbers {
+    /// The incumbent (pre-training) arm's pass rate on this cycle's frozen
+    /// probes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_pass_rate: Option<f64>,
+    /// The candidate (post-training) arm's pass rate on the same probes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_training_pass_rate: Option<f64>,
+    /// The gate's sign-test p-value for this cycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p_value: Option<f64>,
+    /// The gate's effect size for this cycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_size: Option<f64>,
+}
+
 /// What became of one submitted fact.
 ///
 /// Reported per fact, never per batch: a batch routinely lands partially, and
 /// "the batch was accepted" is not an answer the user can act on.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Does not derive `Eq`: [`GateNumbers`] carries `f64`, which has none. Use
+/// `PartialEq`/`assert_eq!` as before - `f64: PartialEq` is enough for every
+/// existing comparison, none of which compares against `NaN`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum FactOutcome {
-    /// Trained on and promoted - the model now knows it.
-    Promoted,
+    /// Trained on and promoted - the model now knows it. Carries the gate's
+    /// own numbers for the cycle that promoted, when the study reported them.
+    Promoted {
+        /// The gate's evidence for this promotion.
+        #[serde(default)]
+        numbers: GateNumbers,
+    },
     /// Evaluated and deliberately not promoted (e.g. it failed the gate).
     Rejected {
         /// Why it was turned down, for the user.
         reason: String,
+        /// The gate's evidence for this rejection, when the study reported
+        /// it - the same numbers `reason`'s free text already describes, in
+        /// a form a machine reader does not have to parse back out.
+        #[serde(default)]
+        numbers: GateNumbers,
     },
     /// The pipeline itself failed for this fact; nothing was decided.
     Failed {
@@ -91,7 +131,7 @@ pub enum FactOutcome {
 }
 
 /// One fact's reported outcome.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FactReport {
     /// The fact this verdict is about.
     pub id: FactId,

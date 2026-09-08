@@ -193,10 +193,15 @@ async fn drain_loop(
             Ok(reports) => {
                 for report in reports {
                     match &report.outcome {
-                        FactOutcome::Promoted => {
-                            info!(fact = report.id.as_str(), "fact promoted into the model")
+                        FactOutcome::Promoted { numbers } => {
+                            info!(
+                                fact = report.id.as_str(),
+                                baseline_pass_rate = ?numbers.baseline_pass_rate,
+                                post_training_pass_rate = ?numbers.post_training_pass_rate,
+                                "fact promoted into the model"
+                            )
                         }
-                        FactOutcome::Rejected { reason } => info!(
+                        FactOutcome::Rejected { reason, .. } => info!(
                             fact = report.id.as_str(),
                             reason = reason.as_str(),
                             "fact was not promoted"

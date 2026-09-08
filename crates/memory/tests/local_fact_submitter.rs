@@ -34,7 +34,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sven_memory::{
-    FactOutcome, FactSubmitter, FrozenProbe, LocalFactSubmitter, LocalStudy, PendingFactRecord,
+    FactOutcome, FactSubmitter, FrozenProbe, GateNumbers, LocalFactSubmitter, LocalStudy,
+    PendingFactRecord,
 };
 use sven_vocab::provenance::{FactId, FactSource};
 
@@ -174,7 +175,7 @@ async fn a_studied_batch_becomes_one_verdict_per_fact() {
         "every submitted fact gets a verdict, scoreable or not"
     );
     assert!(
-        matches!(&reports[0].outcome, FactOutcome::Rejected { reason }
+        matches!(&reports[0].outcome, FactOutcome::Rejected { reason, .. }
                  if reason.contains("effect size 0.10") && reason.contains("0.33")),
         "a rejected cycle rejects its facts, with the gate's own reason: {:?}",
         reports[0].outcome
@@ -184,7 +185,7 @@ async fn a_studied_batch_becomes_one_verdict_per_fact() {
         "the gate decides per cycle, so two facts learned together share a verdict"
     );
     assert!(
-        matches!(&reports[2].outcome, FactOutcome::Rejected { reason }
+        matches!(&reports[2].outcome, FactOutcome::Rejected { reason, .. }
                  if reason.contains("probe")),
         "an unscoreable fact is turned down for being unscoreable: {:?}",
         reports[2].outcome
@@ -271,7 +272,12 @@ async fn the_study_invocation_is_a_template_sven_only_substitutes_paths_into() {
         )])
         .await
         .expect("study runs");
-    assert_eq!(reports[0].outcome, FactOutcome::Promoted);
+    assert_eq!(
+        reports[0].outcome,
+        FactOutcome::Promoted {
+            numbers: GateNumbers::default()
+        }
+    );
 
     let invocation = calls(dir.path());
     assert!(
@@ -317,7 +323,12 @@ async fn a_fact_already_studied_is_answered_from_the_journal_not_studied_again()
 
     assert_eq!(recovered.len(), 1, "a fact never accepted must be omitted");
     assert_eq!(recovered[0].id, FactId::new("f-1"));
-    assert_eq!(recovered[0].outcome, FactOutcome::Promoted);
+    assert_eq!(
+        recovered[0].outcome,
+        FactOutcome::Promoted {
+            numbers: GateNumbers::default()
+        }
+    );
     assert_eq!(
         calls(dir.path()),
         after_submit,

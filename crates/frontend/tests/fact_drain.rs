@@ -22,7 +22,7 @@ use async_trait::async_trait;
 use sven_config::Config;
 use sven_frontend::spawn_fact_drain;
 use sven_memory::{
-    FactOutcome, FactReport, FactSubmitter, PendingFactRecord, PendingFactsLedger,
+    FactOutcome, FactReport, FactSubmitter, GateNumbers, PendingFactRecord, PendingFactsLedger,
 };
 use sven_vocab::provenance::{FactId, FactSource};
 
@@ -48,7 +48,9 @@ impl FactSubmitter for CountingSubmitter {
             .iter()
             .map(|f| FactReport {
                 id: f.id.clone(),
-                outcome: FactOutcome::Promoted,
+                outcome: FactOutcome::Promoted {
+                    numbers: GateNumbers::default(),
+                },
             })
             .collect())
     }

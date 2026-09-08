@@ -24,7 +24,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use sven_memory::{
-    FactOutcome, FactReport, FactSubmitter, PendingFactRecord, PendingFactsDrain,
+    FactOutcome, FactReport, FactSubmitter, GateNumbers, PendingFactRecord, PendingFactsDrain,
     PendingFactsLedger,
 };
 use sven_vocab::provenance::{FactId, FactSource};
@@ -43,9 +43,12 @@ fn a_fact(id: &str) -> PendingFactRecord {
 /// *which* outcome came back, not merely how many did.
 fn verdict_for(id: &FactId) -> FactReport {
     let outcome = match id.as_str() {
-        "f-1" => FactOutcome::Promoted,
+        "f-1" => FactOutcome::Promoted {
+            numbers: GateNumbers::default(),
+        },
         "f-2" => FactOutcome::Rejected {
             reason: "no improvement over the frozen probes".into(),
+            numbers: GateNumbers::default(),
         },
         _ => FactOutcome::Failed {
             reason: "training job crashed".into(),
