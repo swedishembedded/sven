@@ -667,23 +667,6 @@ impl App {
             }
 
             // ── Mouse-originated actions ──────────────────────────────────────
-            Action::ChatScrollbarClick { rel_row } => {
-                let chat_inner_h = self.layout.chat_pane.height.saturating_sub(2);
-                let total_chat_lines = self.chat.lines.len() as u16;
-                if chat_inner_h > 0 && total_chat_lines > chat_inner_h {
-                    let new_offset = (rel_row as u32 * (total_chat_lines - chat_inner_h) as u32
-                        / chat_inner_h.saturating_sub(1).max(1) as u32)
-                        as u16;
-                    self.chat.scroll_offset =
-                        new_offset.min(total_chat_lines.saturating_sub(chat_inner_h));
-                    self.chat.auto_scroll = false;
-                }
-                // Scrollbar click clears any in-progress selection.
-                self.chat.selection_anchor = None;
-                self.chat.selection_end = None;
-                self.chat.is_selecting = false;
-            }
-
             Action::ChatContentClick {
                 abs_line,
                 inner_col,

@@ -232,7 +232,6 @@ impl App {
                     search_current: self.ui.search.current,
                     search_regex: self.ui.search.regex.as_ref(),
                     editing_line_range: editing_range,
-                    no_nvim: self.nvim.disabled,
                     segment_count: self.chat.segments.len(),
                     auto_scroll_paused,
                     selection: self.chat.normalized_selection(),

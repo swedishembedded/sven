@@ -123,3 +123,23 @@ impl AppLayout {
         self.chat_pane.height.saturating_sub(2)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// With the sidebar hidden, the chat pane must span the entire terminal
+    /// width - no columns held back for a gutter or a scrollbar.
+    #[test]
+    fn chat_pane_spans_the_full_terminal_width_with_no_sidebar() {
+        for (w, h) in [(40, 20), (80, 24), (120, 40), (200, 60)] {
+            let area = Rect::new(0, 0, w, h);
+            let layout = AppLayout::compute(area, false, 0, 4, 0, 0);
+            assert_eq!(
+                layout.chat_pane.width, w,
+                "chat_pane width must equal the terminal width at {w}x{h}"
+            );
+            assert_eq!(layout.chat_pane.x, 0);
+        }
+    }
+}

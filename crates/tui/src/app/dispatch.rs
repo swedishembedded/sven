@@ -94,7 +94,6 @@ impl App {
             | Action::SearchNextMatch
             | Action::SearchPrevMatch
             | Action::ToggleDelegateSummary
-            | Action::ChatScrollbarClick { .. }
             | Action::ChatContentClick { .. }
             | Action::SelectionExtend { .. }
             | Action::SelectionFinish

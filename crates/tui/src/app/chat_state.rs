@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Chat pane state: conversation segments, rendered display lines, scroll, and labels.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{chat::segment::ChatSegment, markdown::StyledLines};
 
@@ -35,14 +35,6 @@ pub(crate) struct ChatState {
     /// Per-segment expand level (ratatui-only mode).
     /// Segments not in this map use the default level for their type.
     pub expand_level: HashMap<usize, ExpandLevel>,
-    /// Absolute `lines` indices that carry an `[Edit]` label overlay.
-    pub edit_labels: HashSet<usize>,
-    /// Absolute `lines` indices that carry a `[x]` (remove) label overlay.
-    pub remove_labels: HashSet<usize>,
-    /// Absolute `lines` indices that carry a `[r]` (rerun) label overlay.
-    pub rerun_labels: HashSet<usize>,
-    /// Absolute `lines` indices that carry a `[y]` (copy) label overlay.
-    pub copy_labels: HashSet<usize>,
     /// The segment index closest to the vertical centre of the chat viewport.
     pub focused_segment: Option<usize>,
     /// `call_id → tool_name` lookup used when rendering tool results.
@@ -80,10 +72,6 @@ impl ChatState {
             scroll_offset: 0,
             auto_scroll: true,
             expand_level: HashMap::new(),
-            edit_labels: HashSet::new(),
-            remove_labels: HashSet::new(),
-            rerun_labels: HashSet::new(),
-            copy_labels: HashSet::new(),
             focused_segment: None,
             tool_args: HashMap::new(),
             tool_durations: HashMap::new(),

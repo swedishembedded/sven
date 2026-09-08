@@ -11,20 +11,16 @@ use std::collections::HashSet;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
-    prelude::StatefulWidget,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph, ScrollbarState, Widget},
+    widgets::{Clear, Paragraph, Widget},
 };
 
 use crate::markdown::StyledLines;
 use crate::pager::{highlight_match_in_line, tint_match_line};
 
+use super::theme::{open_pane_block, BG};
 use super::width_utils::truncate_to_width_exact;
-use super::{
-    sven_scrollbar,
-    theme::{open_pane_block, BG},
-};
 
 // ── ChatPane widget ───────────────────────────────────────────────────────────
 
@@ -41,7 +37,6 @@ pub struct ChatPane<'a> {
     pub search_current: usize,
     pub search_regex: Option<&'a regex::Regex>,
     pub editing_line_range: Option<(usize, usize)>,
-    pub no_nvim: bool,
     /// Total number of conversation segments (for the title counter).
     pub segment_count: usize,
     /// True when the user has scrolled up and auto-scroll is paused.
@@ -79,16 +74,7 @@ impl Widget for ChatPane<'_> {
             0
         };
         let content_height = inner.height.saturating_sub(banner_reserved);
-        let total_lines = self.lines.len();
-        let visible_height = content_height as usize;
-        let show_scrollbar = self.no_nvim && inner.width > 1 && total_lines > visible_height;
-        // When scrollbar is visible, keep content one column left so the scrollbar
-        // column is never overwritten by paragraph/content (avoids stuck thumb/track).
-        let content_width = if show_scrollbar {
-            inner.width.saturating_sub(1)
-        } else {
-            inner.width
-        };
+        let content_width = inner.width;
 
         let visible: Vec<Line<'static>> = self
             .lines
@@ -188,21 +174,11 @@ impl Widget for ChatPane<'_> {
             }
         }
 
-        // ── Scrollbar (rightmost column) ──────────────────────────────────────
-        if show_scrollbar {
-            let sb_x = inner.x + inner.width - 1;
-            let sb_area = Rect::new(sb_x, inner.y, 1, content_height);
-            // Clear the scrollbar column before drawing so previous thumb/track
-            // positions don't persist (avoids "stuck" scrollbar bits).
-            Clear.render(sb_area, buf);
-            let scrollable_range = total_lines.saturating_sub(visible_height) + 1;
-            let mut sb_state = ScrollbarState::new(scrollable_range)
-                .position(self.scroll_offset as usize)
-                .viewport_content_length(visible_height);
-            sven_scrollbar().render(sb_area, buf, &mut sb_state);
-        }
-
         // ── Auto-scroll paused banner ─────────────────────────────────────────
+        // The only scroll-position affordance, by design - no scrollbar glyph:
+        // a visible scrollbar would sit inside the pane's right edge, which
+        // the "no controls on either side" redesign specifically avoids (see
+        // module docs above and `.todo/terminal-ui.md`'s original brief).
         if self.auto_scroll_paused && banner_reserved > 0 {
             let banner_y = inner.y + content_height;
             let msg = if self.ascii {
@@ -248,4 +224,64 @@ pub fn nvim_cursor_screen_pos(
         inner.x + cursor_col.min(inner.width.saturating_sub(1)),
         inner.y + visible_row,
     ))
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(n: usize) -> StyledLines {
+        (0..n).map(|i| Line::from(format!("line {i}"))).collect()
+    }
+
+    fn pane<'a>(styled_lines: &'a StyledLines, count: usize) -> ChatPane<'a> {
+        ChatPane {
+            lines: styled_lines,
+            scroll_offset: 0,
+            focused: true,
+            ascii: false,
+            search_query: "",
+            search_matches: &[],
+            search_current: 0,
+            search_regex: None,
+            editing_line_range: None,
+            segment_count: count,
+            auto_scroll_paused: false,
+            selection: None,
+            highlight_line_range: None,
+        }
+    }
+
+    #[test]
+    fn text_starts_at_column_zero_with_no_left_edge_gutter() {
+        let area = Rect::new(0, 0, 40, 8);
+        let mut buf = Buffer::empty(area);
+        let styled_lines = lines(3);
+        pane(&styled_lines, 3).render(area, &mut buf);
+
+        // Row 1 is the first content row (row 0 is the top border/title).
+        assert_eq!(
+            buf[(0, 1)].symbol(),
+            "l",
+            "the first character of the first line must be its own text, \
+             not a role-colour bar glyph"
+        );
+    }
+
+    #[test]
+    fn no_scrollbar_glyph_even_when_content_overflows_the_pane() {
+        let area = Rect::new(0, 0, 40, 6); // 4 content rows, well under 20 lines
+        let mut buf = Buffer::empty(area);
+        let styled_lines = lines(20);
+        pane(&styled_lines, 20).render(area, &mut buf);
+
+        let right_col = area.width - 1;
+        for row in 1..area.height - 1 {
+            let sym = buf[(right_col, row)].symbol();
+            assert_ne!(sym, "|", "no scrollbar thumb glyph at row {row}");
+            assert_ne!(sym, "░", "no scrollbar track glyph at row {row}");
+        }
+    }
 }

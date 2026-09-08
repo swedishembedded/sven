@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::sync::{Arc, RwLock};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
@@ -290,69 +290,38 @@ pub fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
     }
 }
 
-/// Prepend a coloured bar to every line and optionally apply `DIM` to content.
-pub fn apply_bar_and_dim(
-    lines: StyledLines,
-    bar_style: Option<Style>,
-    dim: bool,
-    bar_char: &str,
-) -> StyledLines {
+/// Apply a segment's role-derived colour as each line's fallback foreground,
+/// and optionally `DIM` the whole segment.
+///
+/// Replaces the left-edge colour bar this used to prepend: a segment's role
+/// (user/agent/tool/thinking/...) is legible from the text's own colour
+/// instead of a glyph, so a multi-line mouse selection never captures a
+/// non-text character at the start of a line. Spans that already carry their
+/// own foreground (markdown syntax highlighting, inline code, etc.) keep it -
+/// `bar_style`'s colour only fills in where a span left its foreground unset.
+pub fn apply_role_style(lines: StyledLines, bar_style: Option<Style>, dim: bool) -> StyledLines {
     let modifier = if dim {
         Modifier::DIM
     } else {
         Modifier::empty()
     };
+    let role_fg = bar_style.and_then(|s| s.fg);
     lines
         .into_iter()
         .map(|line| {
-            let mut spans = Vec::new();
-            if let Some(style) = bar_style {
-                spans.push(Span::styled(bar_char.to_string(), style));
-            }
-            for s in line.spans {
-                spans.push(Span::styled(
-                    s.content.to_string(),
-                    s.style.patch(Style::default().add_modifier(modifier)),
-                ));
-            }
+            let spans: Vec<Span<'static>> = line
+                .spans
+                .into_iter()
+                .map(|s| {
+                    let with_dim = s.style.patch(Style::default().add_modifier(modifier));
+                    let style = match role_fg {
+                        Some(fg) => Style::default().fg(fg).patch(with_dim),
+                        None => with_dim,
+                    };
+                    Span::styled(s.content.to_string(), style)
+                })
+                .collect();
             Line::from(spans)
-        })
-        .collect()
-}
-
-/// Highlight the bar character of a focused segment (make it brighter/bold).
-/// (Unused when the chat pane uses full-line highlight instead.)
-#[allow(dead_code)]
-pub fn apply_focused_bar(lines: StyledLines, bar_char: &str) -> StyledLines {
-    lines
-        .into_iter()
-        .enumerate()
-        .map(|(i, line)| {
-            if i == 0 {
-                // Only highlight the bar on the first line of the segment.
-                let mut spans: Vec<Span<'static>> = Vec::new();
-                let mut chars = line.spans.iter();
-                if let Some(first) = chars.next() {
-                    if first.content.as_ref() == bar_char {
-                        // Replace the first span (bar) with a bright/bold version.
-                        spans.push(Span::styled(
-                            first.content.to_string(),
-                            first
-                                .style
-                                .add_modifier(Modifier::BOLD)
-                                .patch(Style::default().fg(Color::White)),
-                        ));
-                    } else {
-                        spans.push(first.clone());
-                    }
-                }
-                for s in chars {
-                    spans.push(s.clone());
-                }
-                Line::from(spans)
-            } else {
-                line
-            }
         })
         .collect()
 }
@@ -668,6 +637,7 @@ fn extract_tool_name_from_previous_lines(lines: &[&str], current: usize) -> Resu
 mod tests {
     use std::collections::HashMap;
 
+    use ratatui::style::Color;
     use sven_model::{FunctionCall, Message, MessageContent, Role};
 
     use super::*;
@@ -1181,5 +1151,54 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].as_text(), Some("keep this"));
         assert_eq!(parsed[1].as_text(), Some("keep this too"));
+    }
+
+    // ── apply_role_style ──────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_role_style_never_prepends_a_bar_span() {
+        // The chat pane no longer has a left-edge gutter: role colour must be
+        // applied to the existing text spans, never as an extra leading span.
+        let lines: StyledLines = vec![Line::from(vec![Span::raw("hello")])];
+        let before_span_count = lines[0].spans.len();
+        let styled = apply_role_style(lines, Some(Style::default().fg(BAR_USER)), false);
+        assert_eq!(styled.len(), 1);
+        assert_eq!(
+            styled[0].spans.len(),
+            before_span_count,
+            "must restyle the existing span, not add a bar span in front of it"
+        );
+        assert_eq!(styled[0].spans[0].content.as_ref(), "hello");
+    }
+
+    #[test]
+    fn apply_role_style_uses_role_colour_as_fallback_fg_only() {
+        let lines: StyledLines = vec![Line::from(vec![Span::raw("plain")])];
+        let styled = apply_role_style(lines, Some(Style::default().fg(BAR_USER)), false);
+        assert_eq!(styled[0].spans[0].style.fg, Some(BAR_USER));
+    }
+
+    #[test]
+    fn apply_role_style_preserves_a_spans_own_colour() {
+        // A span that already carries its own foreground (e.g. markdown
+        // syntax highlighting) must keep it rather than being overridden by
+        // the role colour.
+        let own_color = Color::Rgb(1, 2, 3);
+        let lines: StyledLines = vec![Line::from(vec![Span::styled(
+            "code",
+            Style::default().fg(own_color),
+        )])];
+        let styled = apply_role_style(lines, Some(Style::default().fg(BAR_USER)), false);
+        assert_eq!(styled[0].spans[0].style.fg, Some(own_color));
+    }
+
+    #[test]
+    fn apply_role_style_applies_dim_modifier() {
+        let lines: StyledLines = vec![Line::from(vec![Span::raw("dimmed")])];
+        let styled = apply_role_style(lines, None, true);
+        assert!(styled[0].spans[0]
+            .style
+            .add_modifier
+            .contains(Modifier::DIM));
     }
 }

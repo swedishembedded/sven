@@ -219,7 +219,6 @@ impl App {
                             mouse.column,
                             mouse.row,
                             self.chat.scroll_offset,
-                            self.chat.lines.len(),
                             self.queue.messages.len(),
                         );
                         match hit {
@@ -408,7 +407,6 @@ impl App {
             mouse.column,
             mouse.row,
             self.chat.scroll_offset,
-            self.chat.lines.len(),
             self.queue.messages.len(),
         );
 
@@ -434,12 +432,6 @@ impl App {
             (MouseEventKind::ScrollDown, _) => Some(Action::ScrollDown),
 
             // ── Interactions that require ratatui (nvim disabled) ─────────────
-            (MouseEventKind::Down(MouseButton::Left), HitArea::ChatScrollbar { rel_row })
-                if self.nvim.disabled =>
-            {
-                Some(Action::ChatScrollbarClick { rel_row })
-            }
-
             (MouseEventKind::Down(MouseButton::Left), HitArea::QueueItem { index })
                 if self.nvim.disabled =>
             {

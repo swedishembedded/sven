@@ -191,12 +191,6 @@ pub enum Action {
         inner_row: usize,
     },
 
-    /// Click on the chat-pane scrollbar.
-    /// `rel_row` is 0-based from the top of the content area.
-    ChatScrollbarClick {
-        rel_row: u16,
-    },
-
     /// Click on a row in the queue panel.
     QueueClick {
         index: usize,

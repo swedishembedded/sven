@@ -24,12 +24,6 @@ pub enum HitArea {
     /// `chat_list_scroll_offset()` to obtain the actual item index.
     ChatList { inner_row: usize },
 
-    /// The scrollbar column of the chat pane.
-    ///
-    /// `rel_row` is 0-based from the top of the content area (first row after
-    /// the top border).
-    ChatScrollbar { rel_row: u16 },
-
     /// A click inside the chat content area (body text).
     ///
     /// `abs_line` already has `chat.scroll_offset` added, so it is an index
@@ -66,14 +60,12 @@ pub enum HitArea {
 /// - `layout`   - cached pane rectangles for the current frame
 /// - `col`,`row` - 0-based terminal coordinates from the mouse event
 /// - `chat_scroll_offset` - current `chat.scroll_offset`
-/// - `total_chat_lines`   - current `chat.lines.len()`
 /// - `queue_len`      - number of items in `queue.messages`
 pub fn hit_test(
     layout: &LayoutCache,
     col: u16,
     row: u16,
     chat_scroll_offset: u16,
-    total_chat_lines: usize,
     queue_len: usize,
 ) -> HitArea {
     // ── Resize borders (checked before pane interiors so a drag that drifts ──
@@ -140,21 +132,15 @@ pub fn hit_test(
     let cp = layout.chat_pane;
     let content_start = cp.y + 1; // skip top border
     let chat_inner_h = cp.height.saturating_sub(2);
-    // The scrollbar occupies the rightmost column of the content area.
-    let scrollbar_col = cp.x + cp.width.saturating_sub(1);
-    let total_lines = total_chat_lines as u16;
 
     if row >= content_start && row < content_start + chat_inner_h {
         let rel_row = row - content_start;
         let abs_line = rel_row as usize + chat_scroll_offset as usize;
 
-        // Scrollbar column (only visible when content overflows the pane)
-        if col == scrollbar_col && chat_inner_h > 0 && total_lines > chat_inner_h {
-            return HitArea::ChatScrollbar { rel_row };
-        }
-
         // Content click (expand/collapse, selection anchor). Segment actions
-        // (yank, edit, rerun, delete) are keyboard-first via y/e/r/x.
+        // (yank, edit, rerun, delete) are keyboard-first via y/e/r/x. No
+        // scrollbar column to special-case any more - the pane has no
+        // visible scroll affordance (see `ui::chat_pane`'s module docs).
         let inner_col = col.saturating_sub(cp.x).min(cp.width.saturating_sub(1));
         return HitArea::ChatContent {
             abs_line,

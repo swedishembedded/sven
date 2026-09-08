@@ -16,14 +16,11 @@ use crate::{
     app::{session_subagents, App},
     chat::{
         markdown::{
-            apply_bar_and_dim, collapsed_preview, format_conversation, parse_markdown_to_messages,
+            apply_role_style, collapsed_preview, format_conversation, parse_markdown_to_messages,
             partial_content, segment_bar_style, segment_to_markdown, strip_display_anchors,
             ToolDisplayRegistryRef, SYM_THINK, SYM_TOOL,
         },
-        segment::{
-            segment_at_line, segment_editable_text, segment_is_removable, segment_is_rerunnable,
-            ChatSegment,
-        },
+        segment::{segment_at_line, ChatSegment},
     },
     history_save, history_save_to,
     markdown::render_markdown,
@@ -43,21 +40,9 @@ impl App {
     pub(crate) fn build_display_from_segments(&mut self) {
         let mut all_lines = Vec::new();
         let mut ranges = Vec::new();
-        let mut edit_labels: std::collections::HashSet<usize> = Default::default();
-        let mut remove_labels: std::collections::HashSet<usize> = Default::default();
-        let mut rerun_labels: std::collections::HashSet<usize> = Default::default();
-        let mut copy_labels: std::collections::HashSet<usize> = Default::default();
         let mut line_start = 0usize;
         let ascii = self.ascii();
-        let bar_char = if ascii { "| " } else { "▌ " };
-        let bar_cols: u16 = unicode_width::UnicodeWidthStr::width(bar_char) as u16;
-        // Reserve space for action labels: ↻ ✎ ✕ y  = 9 chars (+ 1 spare)
-        let label_reserve: u16 = if self.nvim.disabled { 10 } else { 0 };
-        let effective_width = self
-            .layout
-            .chat_inner_width
-            .saturating_sub(bar_cols + label_reserve)
-            .max(20);
+        let effective_width = self.layout.chat_inner_width.max(20);
         let render_width = if self.config.tui.wrap_width == 0 {
             effective_width
         } else {
@@ -123,7 +108,6 @@ impl App {
                 ascii,
                 tool_display_registry.clone(),
                 render_width,
-                bar_char,
             );
 
             let styled = if let Some(rich) = rich_lines_opt {
@@ -182,27 +166,10 @@ impl App {
 
                 let lines = render_markdown(&s, render_width, ascii);
                 let (bar_style, dim) = segment_bar_style(seg);
-                apply_bar_and_dim(lines, bar_style, dim, bar_char)
+                apply_role_style(lines, bar_style, dim)
             };
 
             let n = styled.len();
-
-            // Only insert action labels when the segment is expanded (tier ≥ 1)
-            // or is the currently focused segment.  Collapsed tier-0 segments
-            // should not show icons - clicking them cycles expand level instead.
-            let is_focused = self.chat.focused_segment == Some(i);
-            if self.nvim.disabled && (expand >= 1 || is_focused) {
-                if segment_editable_text(&self.chat.segments, i).is_some() {
-                    edit_labels.insert(line_start);
-                }
-                if segment_is_removable(seg) {
-                    remove_labels.insert(line_start);
-                }
-                if segment_is_rerunnable(seg) {
-                    rerun_labels.insert(line_start);
-                }
-                copy_labels.insert(line_start);
-            }
 
             all_lines.extend(styled);
             ranges.push((line_start, line_start + n));
@@ -222,12 +189,8 @@ impl App {
                 // (no backticks, no 80-char clip - stream full thought in real-time)
                 let header = format!("{sep}{SYM_THINK} **Seasoning**  {dot}\n");
                 let header_lines = render_markdown(&header, render_width, ascii);
-                let header_styled = apply_bar_and_dim(
-                    header_lines,
-                    Some(Style::default().fg(BAR_THINKING)),
-                    false,
-                    bar_char,
-                );
+                let header_styled =
+                    apply_role_style(header_lines, Some(Style::default().fg(BAR_THINKING)), false);
                 // Render thinking content on next line, styled with DIM modifier
                 let thinking = format!("{}\n", self.chat.streaming_buffer);
                 let thinking_lines = render_markdown(&thinking, render_width, ascii);
@@ -240,12 +203,8 @@ impl App {
                         line
                     })
                     .collect();
-                let thinking_styled = apply_bar_and_dim(
-                    dim_thinking,
-                    Some(Style::default().fg(BAR_THINKING)),
-                    false,
-                    bar_char,
-                );
+                let thinking_styled =
+                    apply_role_style(dim_thinking, Some(Style::default().fg(BAR_THINKING)), false);
                 let mut combined = header_styled;
                 combined.extend(thinking_styled);
                 all_lines.extend(combined);
@@ -259,18 +218,13 @@ impl App {
                 };
                 let text = format!("{sep}**Agent:** {}{}", self.chat.streaming_buffer, cursor);
                 let lines = render_markdown(&text, render_width, ascii);
-                let styled =
-                    apply_bar_and_dim(lines, Some(Style::default().fg(BAR_AGENT)), false, bar_char);
+                let styled = apply_role_style(lines, Some(Style::default().fg(BAR_AGENT)), false);
                 all_lines.extend(styled);
             }
         }
 
         self.chat.lines = all_lines;
         self.chat.segment_line_ranges = ranges;
-        self.chat.edit_labels = edit_labels;
-        self.chat.remove_labels = remove_labels;
-        self.chat.rerun_labels = rerun_labels;
-        self.chat.copy_labels = copy_labels;
         // Keep existing highlight if still valid; otherwise set from center (e.g. first load).
         if self.chat.focused_segment.is_none_or(|i| i >= segs_len) {
             self.recompute_focused_segment();
@@ -963,12 +917,7 @@ fn render_segment_rich(
     _ascii: bool,
     tool_display_registry: ToolDisplayRegistryRef,
     render_width: u16,
-    bar_char: &str,
 ) -> Option<crate::markdown::StyledLines> {
-    use crate::ui::theme::BAR_TOOL;
-
-    let bar_style = Style::default().fg(BAR_TOOL);
-
     match seg {
         // ── Tool call ─────────────────────────────────────────────────────────
         ChatSegment::Message(m) if m.role == Role::Assistant => {
@@ -1010,9 +959,7 @@ fn render_segment_rich(
                         spans
                     };
 
-                    let mut line_spans = vec![Span::styled(bar_char.to_string(), bar_style)];
-                    line_spans.extend(spans);
-                    return Some(vec![Line::from(line_spans)]);
+                    return Some(vec![Line::from(spans)]);
                 } else {
                     // ── Tier 1/2: expanded view ───────────────────────────────
                     let mut raw_lines = tool_renderer::render_tool_call_expanded(
@@ -1030,7 +977,6 @@ fn render_segment_rich(
                         .unwrap_or_else(|| function.name.clone());
                     let accent = tool_renderer_accent(display, &function.name);
                     let header = Line::from(vec![
-                        Span::styled(bar_char.to_string(), bar_style),
                         Span::styled(
                             format!("{icon} "),
                             Style::default()
@@ -1045,11 +991,7 @@ fn render_segment_rich(
                         ),
                     ]);
                     let mut result: crate::markdown::StyledLines = vec![header];
-                    for l in raw_lines.drain(..) {
-                        let mut spans = vec![Span::styled(bar_char.to_string(), bar_style)];
-                        spans.extend(l.spans);
-                        result.push(Line::from(spans));
-                    }
+                    result.append(&mut raw_lines);
                     // If this has a paired result in tier 1/2, append it.
                     // Paired results don't need the "Tool Result:" prefix since the
                     // parent tool call header already provides context.
@@ -1061,8 +1003,6 @@ fn render_segment_rich(
                             tool_display_registry.clone(),
                             expand,
                             render_width,
-                            bar_char,
-                            bar_style,
                             None,
                         ));
                     }
@@ -1100,9 +1040,7 @@ fn render_segment_rich(
                         Some(standalone_label.clone()),
                     );
                     spans.push(Span::raw("  ▶"));
-                    let mut line_spans = vec![Span::styled(bar_char.to_string(), bar_style)];
-                    line_spans.extend(spans);
-                    return Some(vec![Line::from(line_spans)]);
+                    return Some(vec![Line::from(spans)]);
                 } else {
                     let lines = render_tool_result_lines(
                         seg,
@@ -1111,8 +1049,6 @@ fn render_segment_rich(
                         tool_display_registry,
                         expand,
                         render_width,
-                        bar_char,
-                        bar_style,
                         Some(standalone_label),
                     );
                     return Some(lines);
@@ -1198,8 +1134,6 @@ fn render_tool_result_lines(
     tool_display_registry: ToolDisplayRegistryRef,
     expand: u8,
     render_width: u16,
-    bar_char: &str,
-    bar_style: Style,
     label_override: Option<String>,
 ) -> crate::markdown::StyledLines {
     if let ChatSegment::Message(m) = seg {
@@ -1228,9 +1162,7 @@ fn render_tool_result_lines(
                     label_override,
                 )
             };
-            let mut header_spans = vec![Span::styled(bar_char.to_string(), bar_style)];
-            header_spans.extend(result_spans);
-            let mut lines: crate::markdown::StyledLines = vec![Line::from(header_spans)];
+            let mut lines: crate::markdown::StyledLines = vec![Line::from(result_spans)];
 
             if expand >= 1 {
                 // Show output body.
@@ -1246,11 +1178,7 @@ fn render_tool_result_lines(
                 if !body.is_empty() {
                     body.remove(0);
                 }
-                for l in body {
-                    let mut spans = vec![Span::styled(bar_char.to_string(), bar_style)];
-                    spans.extend(l.spans);
-                    lines.push(Line::from(spans));
-                }
+                lines.extend(body);
             }
             return lines;
         }
