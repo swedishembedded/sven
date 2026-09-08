@@ -92,6 +92,11 @@ pub enum ImmediateAction {
         feedback: String,
     },
     OpenTeamPicker,
+    /// `/resume`: open the full-screen session picker so the user can reload
+    /// a saved conversation. Payload-free - the frontend lists sessions
+    /// itself (`sven_session_store::list_all_sessions`), keeping this crate
+    /// free of a session-store dependency.
+    OpenSessionPicker,
     ToggleTaskList,
     OpenInspector {
         kind: InspectorKind,
@@ -259,6 +264,16 @@ mod dispatch_tests {
             Some(ImmediateAction::OpenInspector {
                 kind: InspectorKind::Skills
             })
+        ));
+    }
+
+    #[test]
+    fn resume_triggers_open_session_picker() {
+        let (name, result) = try_dispatch("/resume", &registry()).unwrap();
+        assert_eq!(name, "resume");
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::OpenSessionPicker)
         ));
     }
 

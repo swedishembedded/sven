@@ -401,6 +401,25 @@ impl App {
                 self.ui.show_team_picker = false;
             }
 
+            // ── Session picker actions (`/resume`) ────────────────────────────
+            Action::SessionPickerNext => {
+                self.ui.session_picker_next();
+            }
+            Action::SessionPickerPrev => {
+                self.ui.session_picker_prev();
+            }
+            Action::SessionPickerSelect => {
+                let selected = self.ui.session_picker_selected().cloned();
+                self.ui.show_session_picker = false;
+                if let Some(unified) = selected {
+                    let id = self.sessions.ensure_registered(unified);
+                    self.switch_session(id).await;
+                }
+            }
+            Action::SessionPickerClose => {
+                self.ui.show_session_picker = false;
+            }
+
             Action::CycleTeammateForward => {
                 self.ui.cycle_teammate_view_forward();
             }

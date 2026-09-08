@@ -149,6 +149,16 @@ pub enum Action {
     /// Expand or collapse a DelegateSummary segment at cursor (Space / Enter).
     ToggleDelegateSummary,
 
+    // Session picker (`/resume`)
+    /// Navigate down in the session picker list.
+    SessionPickerNext,
+    /// Navigate up in the session picker list.
+    SessionPickerPrev,
+    /// Reload the selected session and close the picker (Enter).
+    SessionPickerSelect,
+    /// Close the session picker without switching (Esc).
+    SessionPickerClose,
+
     // Chat list (multi-session sidebar)
     /// Toggle the right-side chat list pane (Ctrl+b).
     ToggleChatList,
@@ -468,6 +478,17 @@ pub(crate) fn map_search_key(event: KeyEvent) -> Option<Action> {
         KeyCode::Char('n') if !shift => Some(Action::SearchNextMatch),
         KeyCode::Char('N') | KeyCode::Char('n') if shift => Some(Action::SearchPrevMatch),
         KeyCode::Char(c) => Some(Action::SearchInput(c)),
+        _ => None,
+    }
+}
+
+/// Map a raw key to a `SessionPicker*` action while the `/resume` overlay is open.
+pub(crate) fn map_session_picker_key(code: KeyCode) -> Option<Action> {
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') => Some(Action::SessionPickerClose),
+        KeyCode::Down | KeyCode::Char('j') => Some(Action::SessionPickerNext),
+        KeyCode::Up | KeyCode::Char('k') => Some(Action::SessionPickerPrev),
+        KeyCode::Enter => Some(Action::SessionPickerSelect),
         _ => None,
     }
 }

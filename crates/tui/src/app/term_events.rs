@@ -87,6 +87,13 @@ impl App {
                     }
                     return false;
                 }
+                // Session picker overlay (`/resume`) intercepts keys the same way.
+                if self.ui.show_session_picker {
+                    if let Some(a) = crate::keys::map_session_picker_key(k.code) {
+                        return self.dispatch(a).await;
+                    }
+                    return false;
+                }
                 if self.ui.question_modal.is_some() {
                     return self.handle_modal_key(k);
                 }

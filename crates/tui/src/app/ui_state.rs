@@ -14,6 +14,7 @@ use crate::{
     overlay::{completion::CompletionOverlay, confirm::ConfirmModal, question::QuestionModal},
     pager::PagerOverlay,
     ui::{
+        session_picker::SessionPickerState,
         team_picker::{TeamPickerEntry, TeamPickerState},
         InspectorOverlay,
     },
@@ -153,6 +154,13 @@ pub(crate) struct UiState {
     pub peers: Vec<PeerInfo>,
     /// Selected index in the peers list.
     pub peers_selected: usize,
+    /// Session picker overlay (shown when `show_session_picker` is true),
+    /// opened by `/resume`.
+    pub show_session_picker: bool,
+    /// Sessions listed in the picker (most recent first).
+    pub session_picker_entries: Vec<sven_session_store::UnifiedSessionEntry>,
+    /// Selection state for the session picker list.
+    pub session_picker_state: SessionPickerState,
 }
 
 #[allow(dead_code)]
@@ -177,6 +185,9 @@ impl UiState {
             active_session_peer: None,
             peers: Vec::new(),
             peers_selected: 0,
+            show_session_picker: false,
+            session_picker_entries: Vec::new(),
+            session_picker_state: SessionPickerState::default(),
         }
     }
 
@@ -215,6 +226,24 @@ impl UiState {
     pub fn team_picker_selected_peer(&self) -> Option<&str> {
         self.team_picker_state
             .selected_peer_id(&self.team_picker_entries)
+    }
+
+    /// Move selection down in the session picker.
+    pub fn session_picker_next(&mut self) {
+        let len = self.session_picker_entries.len();
+        self.session_picker_state.select_next(len);
+    }
+
+    /// Move selection up in the session picker.
+    pub fn session_picker_prev(&mut self) {
+        let len = self.session_picker_entries.len();
+        self.session_picker_state.select_prev(len);
+    }
+
+    /// Return the entry currently selected in the session picker.
+    pub fn session_picker_selected(&self) -> Option<&sven_session_store::UnifiedSessionEntry> {
+        self.session_picker_state
+            .selected(&self.session_picker_entries)
     }
 
     /// Cycle to the next teammate view (wraps around).

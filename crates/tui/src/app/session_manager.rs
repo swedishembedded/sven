@@ -676,6 +676,28 @@ impl SessionManager {
         self.entries.insert(id, entry);
     }
 
+    /// Ensure a session named by a [`UnifiedSessionEntry`] (e.g. one picked
+    /// from `/resume`, which may be older than the 50 most recent sessions
+    /// [`Self::load_from_disk`] preloads) is present in this manager,
+    /// registering it as a root if it is not already known.
+    ///
+    /// Idempotent by construction: unlike calling [`Self::register`] directly,
+    /// calling this twice for the same session id is a no-op on the second
+    /// call. That matters because `register` does not itself dedupe -
+    /// re-registering an existing child would push a duplicate id into
+    /// `children[parent_id]`, and `tree_rows()` would then render it twice.
+    ///
+    /// Callers should call this (or otherwise confirm the id is already
+    /// registered) before [`crate::App::switch_session`] - switching to an
+    /// unknown id is a deliberate no-op there, not a session restore.
+    pub fn ensure_registered(&mut self, unified: UnifiedSessionEntry) -> SessionId {
+        let id = SessionId::from_string(unified.session_id.clone());
+        if !self.entries.contains_key(&id) {
+            self.register(session_entry_from_unified(unified, None));
+        }
+        id
+    }
+
     /// Create a new blank session, register it as a root, and return its ID.
     pub fn create_session(&mut self, title: impl Into<String>) -> SessionId {
         let entry = SessionEntry::new_blank(title);
@@ -1138,5 +1160,48 @@ mod tests {
         let fresh_path = sven_session_store::session_path(legacy_id.as_str());
         assert!(fresh_path.extension().and_then(|e| e.to_str()) == Some("json"));
         assert_ne!(fresh_path, PathBuf::from("/chats/legacy.yaml"));
+    }
+
+    fn unified_entry(session_id: &str) -> UnifiedSessionEntry {
+        UnifiedSessionEntry {
+            session_id: session_id.to_string(),
+            path: PathBuf::from(format!("/sessions/{session_id}.json")),
+            title: "Some session".to_string(),
+            status: ChatStatus::Active,
+            parent_session_id: None,
+            usage: None,
+            updated_at: Utc::now(),
+            is_legacy: false,
+        }
+    }
+
+    #[test]
+    fn ensure_registered_registers_an_unknown_session_as_root() {
+        let (mut mgr, _initial) = SessionManager::new();
+        let id = mgr.ensure_registered(unified_entry("picked-session"));
+        assert!(mgr.entries.contains_key(&id));
+        assert!(mgr.display_order.contains(&id));
+    }
+
+    #[test]
+    fn ensure_registered_is_idempotent_for_an_already_known_session() {
+        // Calling `register` twice for the same id would push a duplicate
+        // into `display_order` were it not for the guard there; more
+        // importantly, `ensure_registered` must not clobber the entry (e.g.
+        // its live `stored_chat`) on a second call.
+        let (mut mgr, _initial) = SessionManager::new();
+        let id = mgr.ensure_registered(unified_entry("picked-session"));
+        mgr.get_mut(&id).unwrap().stored_chat = Some(ChatState::new());
+        let id_again = mgr.ensure_registered(unified_entry("picked-session"));
+        assert_eq!(id, id_again);
+        assert!(
+            mgr.get(&id).unwrap().stored_chat.is_some(),
+            "re-registering an already-known session must not overwrite it"
+        );
+        assert_eq!(
+            mgr.display_order.iter().filter(|r| **r == id).count(),
+            1,
+            "must not be registered twice in display_order"
+        );
     }
 }

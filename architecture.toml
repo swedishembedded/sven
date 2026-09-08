@@ -275,7 +275,7 @@ path = "crates/tools-ctx/src/context/store.rs"
 lines = 1012
 [[allow.large_file]]
 path = "crates/tui/src/app/term_events.rs"
-lines = 880
+lines = 887
 [[allow.large_file]]
 path = "tests/context_pipeline_test.rs"
 lines = 850

@@ -79,6 +79,18 @@ impl App {
             }
             return;
         }
+        // ── Full-screen session picker (early return) ──────────────────────────
+        if self.ui.show_session_picker {
+            frame.render_widget(
+                crate::ui::SessionPickerOverlay {
+                    entries: &self.ui.session_picker_entries,
+                    state: &mut self.ui.session_picker_state,
+                    ascii,
+                },
+                frame.area(),
+            );
+            return;
+        }
 
         // Compute a dynamic input height that expands with content up to 50% of
         // the screen, but never shrinks below the user-preferred minimum.

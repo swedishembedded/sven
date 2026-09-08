@@ -140,6 +140,20 @@ impl App {
 
                     if matches!(
                         result.immediate_action,
+                        Some(ImmediateAction::OpenSessionPicker)
+                    ) {
+                        // Header-only reads (`list_sessions`'s doc comment), so this
+                        // stays synchronous unlike e.g. the MCP-status fetch below.
+                        self.ui.session_picker_entries =
+                            sven_session_store::list_all_sessions(Some(200)).unwrap_or_default();
+                        self.ui.session_picker_state = crate::ui::SessionPickerState::default();
+                        self.ui.show_help = false;
+                        self.ui.show_session_picker = true;
+                        return false;
+                    }
+
+                    if matches!(
+                        result.immediate_action,
                         Some(ImmediateAction::ToggleTaskList)
                     ) {
                         use crate::pager::PagerOverlay;
@@ -156,8 +170,7 @@ impl App {
                         return false;
                     }
 
-                    if let Some(ImmediateAction::Notice { ref text }) = result.immediate_action
-                    {
+                    if let Some(ImmediateAction::Notice { ref text }) = result.immediate_action {
                         use crate::markdown::StyledLines;
                         use crate::pager::PagerOverlay;
                         let lines = StyledLines::from(
@@ -1007,5 +1020,56 @@ mod submit_integration_tests {
             0,
             "queue should be empty after force-submit"
         );
+    }
+
+    // ── /resume ───────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn resume_command_opens_the_session_picker() {
+        let (mut app, _rx) = App::for_testing();
+        assert!(!app.ui.show_session_picker);
+
+        app.inject_input("/resume");
+        app.dispatch_action(Action::Submit).await;
+
+        assert!(app.ui.show_session_picker);
+    }
+
+    #[tokio::test]
+    async fn session_picker_navigation_and_close() {
+        let (mut app, _rx) = App::for_testing();
+        app.ui.session_picker_entries =
+            vec![unified_entry("session-a"), unified_entry("session-b")];
+        app.ui.session_picker_state = crate::ui::SessionPickerState::default();
+        app.ui.show_session_picker = true;
+
+        assert_eq!(
+            app.ui
+                .session_picker_selected()
+                .map(|e| e.session_id.as_str()),
+            Some("session-a")
+        );
+        app.dispatch_action(Action::SessionPickerNext).await;
+        assert_eq!(
+            app.ui
+                .session_picker_selected()
+                .map(|e| e.session_id.as_str()),
+            Some("session-b")
+        );
+        app.dispatch_action(Action::SessionPickerClose).await;
+        assert!(!app.ui.show_session_picker);
+    }
+
+    fn unified_entry(id: &str) -> sven_session_store::UnifiedSessionEntry {
+        sven_session_store::UnifiedSessionEntry {
+            session_id: id.to_string(),
+            path: std::path::PathBuf::from(format!("/sessions/{id}.json")),
+            title: id.to_string(),
+            status: sven_session_store::ChatStatus::Completed,
+            parent_session_id: None,
+            usage: None,
+            updated_at: chrono::Utc::now(),
+            is_legacy: false,
+        }
     }
 }
