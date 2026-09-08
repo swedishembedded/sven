@@ -56,7 +56,24 @@ impl App {
     }
 
     /// Switch to a different session.
+    ///
+    /// A no-op (with a warning) if `target_id` is not already known to the
+    /// session manager. This used to fall through and rebuild a *blank*
+    /// chat under that id, which the next autosave would then write over the
+    /// real on-disk session (see the regression test
+    /// `switch_session_to_unregistered_id_does_not_truncate_disk`) - callers
+    /// that want to switch to a session found on disk but not yet loaded
+    /// (e.g. `/resume` picking a session older than the ones already loaded
+    /// into the sidebar) must first register it with the session manager.
     pub(crate) async fn switch_session(&mut self, target_id: sven_session_store::SessionId) {
+        if !self.sessions.entries.contains_key(&target_id) {
+            tracing::warn!(
+                "switch_session: ignoring unknown session id {}",
+                target_id.as_str()
+            );
+            return;
+        }
+
         // Save active state.
         self.save_active_to_session_entry();
 
@@ -71,51 +88,17 @@ impl App {
         // session) a legacy YAML chat via the read-only importer. Also
         // refresh session entry metadata (title, status, created_at) from
         // the full trajectory - load_from_disk only has header approximations.
+        //
+        // The returned messages are the same trajectory's steps as LLM
+        // messages (not the display `ChatSegment`s), captured so the freshly
+        // spawned agent below can be seeded with them - without this,
+        // switching to a session whose agent has never run in this process
+        // restores the visible transcript while the model itself starts with
+        // no memory of it at all.
+        let mut loaded_messages: Option<Vec<sven_model::Message>> = None;
         let target_chat = target_chat.or_else(|| {
-            let entry = self.sessions.get(&target_id)?;
-            let trajectory = if let Some(path) = entry.session_path.clone() {
-                sven_session_store::load_session_from(&path).ok()
-            } else if let Some(legacy_path) = entry.legacy_path.clone() {
-                let doc = sven_session_store::load_chat_from(&legacy_path).ok()?;
-                Some(sven_session_store::import_legacy_chat_document(&doc))
-            } else {
-                None
-            }?;
-
-            let segments: Vec<crate::chat::segment::ChatSegment> =
-                sven_session_store::steps_to_conversation_records(&trajectory.steps)
-                    .into_iter()
-                    .filter_map(conversation_record_to_chat_segment)
-                    .collect();
-
-            // Refresh entry metadata from the full trajectory.
-            if let Some(entry) = self.sessions.get_mut(&target_id) {
-                let is_legacy = entry.is_legacy;
-                let legacy_path = entry.legacy_path.clone();
-                let refreshed = SessionEntry::from_trajectory_into(
-                    &trajectory,
-                    target_id.clone(),
-                    None,
-                    is_legacy,
-                );
-                entry.title = refreshed.title;
-                entry.status = refreshed.status;
-                entry.created_at = refreshed.created_at;
-                entry.updated_at = refreshed.updated_at;
-                entry.legacy_path = legacy_path;
-                // The chat view omits copied-context steps: carry them on the
-                // entry so the next save doesn't delete them from the file.
-                entry.copied_context_steps = refreshed.copied_context_steps;
-                // Restore persisted usage only when the entry has no live data yet
-                // (i.e. this session has never been active in this process run).
-                if entry.total_output_tokens == 0 && entry.total_cost_usd == 0.0 {
-                    entry.total_context_tokens = refreshed.total_context_tokens;
-                    entry.total_output_tokens = refreshed.total_output_tokens;
-                    entry.total_cost_usd = refreshed.total_cost_usd;
-                }
-            }
-            let mut chat = ChatState::new();
-            chat.segments = segments;
+            let (chat, messages) = self.load_chat_and_history_from_disk(&target_id)?;
+            loaded_messages = Some(messages);
             Some(chat)
         });
 
@@ -201,6 +184,18 @@ impl App {
                 self.agent.context_pct = entry.context_pct;
                 self.agent.current_tool = entry.current_tool.clone();
             }
+            // Seed the freshly spawned agent's thread with the messages just
+            // loaded from disk. Restricted to this branch (a brand new agent
+            // for a session that has never run in this process) so a live
+            // background session's already-accumulated thread is never
+            // clobbered by re-seeding it from a stale on-disk snapshot.
+            if let Some(messages) = loaded_messages.take() {
+                if !messages.is_empty() {
+                    if let Some(tx) = self.agent.tx.clone() {
+                        let _ = tx.send(AgentRequest::LoadHistory(messages)).await;
+                    }
+                }
+            }
         } else {
             self.agent.tx = target_tx;
             self.agent.cancel = target_cancel;
@@ -251,6 +246,63 @@ impl App {
         self.sessions.sync_list_selection_to_active();
         self.rerender_chat().await;
         self.scroll_to_bottom();
+    }
+
+    /// Load `target_id`'s trajectory from disk (native ATIF session file, or
+    /// a legacy YAML chat via the read-only importer), refresh the session
+    /// entry's metadata from it, and return both the display chat and the
+    /// same steps as LLM messages.
+    ///
+    /// Returns `None` when the entry is unknown or has no backing file.
+    /// Pulled out of [`Self::switch_session`] as its own method so the
+    /// disk-load-and-refresh behaviour can be unit tested without driving a
+    /// real agent spawn.
+    fn load_chat_and_history_from_disk(
+        &mut self,
+        target_id: &sven_session_store::SessionId,
+    ) -> Option<(ChatState, Vec<sven_model::Message>)> {
+        let entry = self.sessions.get(target_id)?;
+        let trajectory = if let Some(path) = entry.session_path.clone() {
+            sven_session_store::load_session_from(&path).ok()
+        } else if let Some(legacy_path) = entry.legacy_path.clone() {
+            let doc = sven_session_store::load_chat_from(&legacy_path).ok()?;
+            Some(sven_session_store::import_legacy_chat_document(&doc))
+        } else {
+            None
+        }?;
+
+        let segments: Vec<crate::chat::segment::ChatSegment> =
+            sven_session_store::steps_to_conversation_records(&trajectory.steps)
+                .into_iter()
+                .filter_map(conversation_record_to_chat_segment)
+                .collect();
+        let messages = sven_session_store::steps_to_messages(&trajectory.steps);
+
+        // Refresh entry metadata from the full trajectory.
+        if let Some(entry) = self.sessions.get_mut(target_id) {
+            let is_legacy = entry.is_legacy;
+            let legacy_path = entry.legacy_path.clone();
+            let refreshed =
+                SessionEntry::from_trajectory_into(&trajectory, target_id.clone(), None, is_legacy);
+            entry.title = refreshed.title;
+            entry.status = refreshed.status;
+            entry.created_at = refreshed.created_at;
+            entry.updated_at = refreshed.updated_at;
+            entry.legacy_path = legacy_path;
+            // The chat view omits copied-context steps: carry them on the
+            // entry so the next save doesn't delete them from the file.
+            entry.copied_context_steps = refreshed.copied_context_steps;
+            // Restore persisted usage only when the entry has no live data yet
+            // (i.e. this session has never been active in this process run).
+            if entry.total_output_tokens == 0 && entry.total_cost_usd == 0.0 {
+                entry.total_context_tokens = refreshed.total_context_tokens;
+                entry.total_output_tokens = refreshed.total_output_tokens;
+                entry.total_cost_usd = refreshed.total_cost_usd;
+            }
+        }
+        let mut chat = ChatState::new();
+        chat.segments = segments;
+        Some((chat, messages))
     }
 
     /// Snapshot the current active session's chat state into its SessionEntry.
@@ -354,5 +406,91 @@ impl App {
             shared_agents,
             None, // mcp_manager_tx - not needed for sub-session restarts
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use sven_session_store::SessionId;
+
+    /// Write a two-message ATIF trajectory to `path` under `session_id`,
+    /// mirroring how `SessionEntry::to_trajectory` + `write_trajectory_atomic`
+    /// persist a session in production.
+    fn write_test_trajectory(path: &std::path::Path, session_id: &str, user_text: &str) {
+        let mut entry = SessionEntry::new_blank("Test session");
+        entry.id = SessionId::from_string(session_id.to_string());
+        let mut chat = ChatState::new();
+        chat.segments = vec![
+            crate::chat::segment::ChatSegment::Message(sven_model::Message::user(user_text)),
+            crate::chat::segment::ChatSegment::Message(sven_model::Message::assistant("ok")),
+        ];
+        let trajectory = entry.to_trajectory(&chat, None, None);
+        atif::persist::write_trajectory_atomic(path, &trajectory, None)
+            .expect("write test trajectory");
+    }
+
+    #[tokio::test]
+    async fn switch_session_to_unregistered_id_does_not_truncate_disk() {
+        // Regression test for a bug where switching to a session id that was
+        // never registered with the SessionManager fell through to a blank
+        // ChatState under that id - which the next autosave would then write
+        // back over the real file the id happens to name.
+        let (mut app, _rx) = App::for_testing();
+        let original_active = app.sessions.active_id.clone();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("victim.json");
+        write_test_trajectory(&path, "victim-session", "do not touch me");
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        // Deliberately not registered via `ensure_registered` or `register` -
+        // simulates an id arriving from somewhere outside the currently-known
+        // session set.
+        let unknown_id = SessionId::from_string("victim-session".to_string());
+        app.switch_session(unknown_id.clone()).await;
+
+        assert_eq!(
+            app.sessions.active_id, original_active,
+            "switch_session must not adopt an unknown id as active"
+        );
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            before, after,
+            "switch_session must not touch a file for an id it never registered"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_chat_and_history_from_disk_returns_both_display_chat_and_messages() {
+        let (mut app, _rx) = App::for_testing();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resumed.json");
+        write_test_trajectory(&path, "resumed-session", "what is 2+2?");
+
+        let id = SessionId::from_string("resumed-session".to_string());
+        let mut entry = SessionEntry::new_blank("Resumed session");
+        entry.id = id.clone();
+        entry.session_path = Some(path);
+        app.sessions.register(entry);
+
+        let (chat, messages) = app
+            .load_chat_and_history_from_disk(&id)
+            .expect("trajectory on disk must load");
+
+        assert_eq!(chat.segments.len(), 2, "both messages must be in the display chat");
+        assert_eq!(messages.len(), 2, "both messages must be seedable LLM history");
+        assert_eq!(messages[0].role, sven_model::Role::User);
+        assert_eq!(messages[0].as_text(), Some("what is 2+2?"));
+        assert_eq!(messages[1].role, sven_model::Role::Assistant);
+    }
+
+    #[tokio::test]
+    async fn load_chat_and_history_from_disk_is_none_for_unknown_id() {
+        let (mut app, _rx) = App::for_testing();
+        let id = SessionId::from_string("nonexistent".to_string());
+        assert!(app.load_chat_and_history_from_disk(&id).is_none());
     }
 }

@@ -106,12 +106,21 @@ impl App {
         // If we loaded a trajectory, restore its title/status/timestamps into
         // the initial session entry so the sidebar shows the correct metadata.
         if let Some(ref trajectory) = loaded_trajectory {
-            initial_session_entry = SessionEntry::from_trajectory_into(
-                trajectory,
-                initial_session_entry.id.clone(),
-                None,
-                false,
-            );
+            // Adopt the trajectory's own `session_id` rather than the fresh id
+            // `SessionManager::new()` just generated. `SessionEntry::to_trajectory`
+            // always writes `self.id` back into `trajectory.session_id` on the
+            // next save; keeping a different in-memory id here would silently
+            // rewrite the loaded file's `session_id` away from its filename on
+            // the very first save, after which `list_sessions` (keyed on
+            // `header.session_id`) and `session_path(session_id)` no longer
+            // agree on which file this session lives in.
+            let restored_id = trajectory
+                .session_id
+                .clone()
+                .map(sven_session_store::SessionId::from_string)
+                .unwrap_or_else(|| initial_session_entry.id.clone());
+            initial_session_entry =
+                SessionEntry::from_trajectory_into(trajectory, restored_id, None, false);
         }
         let active_session_id = initial_session_entry.id.clone();
         // `--trace PATH` is kept in sync after every turn; `--load-trace`-only
