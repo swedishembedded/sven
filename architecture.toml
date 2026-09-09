@@ -36,6 +36,7 @@ order = [
 
 [crates]
 # foundation
+sven-audio       = "foundation"
 sven-chain       = "foundation"
 sven-config      = "foundation"
 sven-hsm         = "foundation"
@@ -219,66 +220,65 @@ dependencies of its own, so this can never become a cycle.
 # Regenerate with `cargo run -p xtask -- arch --bless`. Seeded from the
 # measured tree at the start of the refactor (2026-08-13).
 [[allow.large_file]]
-path = "crates/mcp-client/src/oauth.rs"
-lines = 2137
-[[allow.large_file]]
 path = "crates/model-drivers/tests/wire_format_tests.rs"
 lines = 1706
 [[allow.large_file]]
-path = "crates/config/src/schema.rs"
-lines = 1550
+path = "crates/mcp-client/src/oauth.rs"
+lines = 1430
 [[allow.large_file]]
-path = "crates/team/src/spawn.rs"
-lines = 1506
+path = "crates/ci/src/runner/mod.rs"
+lines = 1423
 [[allow.large_file]]
 path = "crates/tools-ctx/tests/context_integration.rs"
 lines = 1418
 [[allow.large_file]]
+path = "crates/config/src/schema.rs"
+lines = 1387
+[[allow.large_file]]
 path = "crates/session-store/src/trace_session.rs"
-lines = 1331
-[[allow.large_file]]
-path = "crates/tui/src/app/chat_ops.rs"
-lines = 1325
-[[allow.large_file]]
-path = "crates/ci/src/runner/mod.rs"
-lines = 1322
+lines = 1288
 [[allow.large_file]]
 path = "crates/session-store/src/trace_session_tests.rs"
-lines = 1287
+lines = 1252
 [[allow.large_file]]
-path = "crates/workspace/src/skills.rs"
-lines = 1238
+path = "crates/team/src/spawn.rs"
+lines = 1232
 [[allow.large_file]]
-path = "crates/bootstrap/src/runtime_builder.rs"
-lines = 1196
-[[allow.large_file]]
-path = "crates/bootstrap/src/task_tool.rs"
-lines = 1155
-[[allow.large_file]]
-path = "crates/tui/src/app/session_manager.rs"
-lines = 1142
+path = "crates/tui/src/app/chat_ops.rs"
+lines = 1164
 [[allow.large_file]]
 path = "crates/executors/tests/pipeline_integration.rs"
 lines = 1122
 [[allow.large_file]]
-# 1030 -> 1052: session teardown used to leak its whole object graph, so
-# dropping a runtime now aborts its task, and the callers that deliberately
-# outlive their handle say `detach()`. Adds the `abort_on_drop` module wiring
-# and `detach` on both runtimes. The guard itself lives in its own file.
 path = "crates/kernel/src/lib.rs"
 lines = 1054
 [[allow.large_file]]
 path = "crates/mcp-client/src/manager.rs"
 lines = 1016
 [[allow.large_file]]
-path = "crates/tools-ctx/src/context/store.rs"
-lines = 1012
+path = "crates/bootstrap/src/task_tool.rs"
+lines = 1013
 [[allow.large_file]]
-path = "crates/tui/src/app/term_events.rs"
-lines = 887
+path = "crates/bootstrap/src/runtime_builder.rs"
+lines = 978
+[[allow.large_file]]
+path = "crates/tools-ctx/src/context/store.rs"
+lines = 885
+[[allow.large_file]]
+path = "crates/tui/src/app/session_manager.rs"
+lines = 856
 [[allow.large_file]]
 path = "tests/context_pipeline_test.rs"
 lines = 850
+[[allow.large_file]]
+path = "crates/workspace/src/skills.rs"
+lines = 825
+[[allow.large_file]]
+path = "crates/tui/src/app/term_events.rs"
+lines = 814
+[[allow.large_file]]
+path = "crates/model-drivers/src/lib.rs"
+lines = 810
 [[allow.large_file]]
 path = "crates/executors/src/turn.rs"
 lines = 809

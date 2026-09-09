@@ -133,14 +133,14 @@ impl RuntimeRunner {
         // it is only ever consumed by the built-in system prompt (see
         // `AgentRuntimeContext::build_system_message`), which `--no-system`
         // bypasses entirely, so reading and logging it would be pure waste.
-        let project_context = if opts.no_system {
+        let project_context_file = if opts.no_system {
             None
         } else {
             opts.project_root
                 .as_ref()
                 .and_then(|r| sven_workspace::find_project_context_file(r))
         };
-        if let Some(path) = &project_context {
+        if let Some(path) = &project_context_file {
             write_stderr(&format!(
                 "[sven:info] Project context file found at {} (referenced, not auto-loaded)",
                 path.display()
@@ -148,7 +148,7 @@ impl RuntimeRunner {
         }
 
         let runtime_ctx = RuntimeContext {
-            project_context_file: project_context,
+            project_context_file,
             append_system_prompt: opts.append_system_prompt.clone(),
             system_prompt_override: self.config.agent.system_prompt.clone(),
             no_system: opts.no_system,

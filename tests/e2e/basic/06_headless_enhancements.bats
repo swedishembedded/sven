@@ -546,7 +546,7 @@ EOF
 
 # ── Project context file (AGENTS.md) ─────────────────────────────────────────
 
-@test "06.49 AGENTS.md in project root is loaded and reported on stderr" {
+@test "06.49 AGENTS.md in project root is found and reported on stderr" {
     local tmpdir
     tmpdir="$(mktemp -d)"
     # Create a minimal git repo so find_project_root resolves here
@@ -555,7 +555,7 @@ EOF
     run_split_output bash -c \
         'cd "$1" && echo "context file test" | "$BIN" --headless --model mock' \
         -- "${tmpdir}"
-    [[ "${STDERR_OUT}" == *"Project context file loaded"* ]]
+    [[ "${STDERR_OUT}" == *"Project context file found at"* ]]
     rm -rf "${tmpdir}"
 }
 
@@ -570,8 +570,8 @@ EOF
         'cd "$1" && echo "context file test" | "$BIN" --headless --model mock' \
         -- "${tmpdir}"
     [ "${EXIT_CODE}" -eq 0 ]
-    # Both should be reported with the same "Project context file loaded" message
-    [[ "${STDERR_OUT}" == *"Project context file loaded"* ]]
+    # Both should be reported with the same "Project context file found at" message
+    [[ "${STDERR_OUT}" == *"Project context file found at"* ]]
     rm -rf "${tmpdir}"
 }
 

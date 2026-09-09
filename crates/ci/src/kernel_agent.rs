@@ -97,6 +97,15 @@ impl KernelAgent {
         self.model_cfg = cfg;
     }
 
+    /// The model config the next turn will run against. Callers that need to
+    /// know the *current* model's capabilities (e.g. `--attach` deciding
+    /// native vs. transcribed audio) build a throwaway provider from this
+    /// with `sven_model_drivers::from_config` rather than being handed a live
+    /// one, since [`KernelAgent`] rebuilds its provider fresh on every turn.
+    pub fn model_config(&self) -> &ModelConfig {
+        &self.model_cfg
+    }
+
     /// Seed prior conversation history (resumed JSONL / YAML chat / piped
     /// markdown). Replaces any existing accumulated history, mirroring the
     /// legacy `Agent::seed_history` used once before the step loop.
@@ -281,6 +290,43 @@ impl KernelAgent {
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
             }
         }
+    }
+
+    /// Like [`submit`](Self::submit), but for a turn built from `--attach`
+    /// content parts instead of plain text.
+    ///
+    /// `sven_hsm::Event::UserMessage` (the only way to post a user turn to
+    /// the kernel) carries `text` alone -- there is no multimodal event yet.
+    /// Text parts are joined verbatim; image/audio parts (kept native rather
+    /// than transcribed because the model reported support for them, see
+    /// `build_attachment_parts`) degrade to a placeholder note here, the same
+    /// way a provider with no native audio block degrades an audio part
+    /// (`crates/model-drivers/src/anthropic.rs`). Native delivery of those
+    /// parts still works through the `attach_file` tool call path, which
+    /// carries them as real `ContentPart`s all the way to the provider.
+    pub async fn submit_with_parts(
+        &mut self,
+        parts: Vec<sven_model::ContentPart>,
+        tx: mpsc::Sender<AgentEvent>,
+    ) -> anyhow::Result<()> {
+        let text = parts
+            .iter()
+            .map(|p| match p {
+                sven_model::ContentPart::Text { text } => text.clone(),
+                sven_model::ContentPart::Image { .. } => {
+                    "[image attached - not deliverable to the model via --attach in headless \
+                     mode; use the attach_file tool instead]"
+                        .to_string()
+                }
+                sven_model::ContentPart::Audio { .. } => {
+                    "[audio attached - not deliverable to the model via --attach in headless \
+                     mode; use the attach_file tool instead]"
+                        .to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        self.submit(&text, tx).await
     }
 }
 
