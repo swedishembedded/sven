@@ -71,6 +71,7 @@ pub mod drain;
 pub mod ingest;
 pub mod ledger;
 pub mod local_study;
+pub mod question_ledger;
 pub mod recall;
 pub mod sqlite;
 pub mod store;
@@ -87,6 +88,10 @@ pub use ledger::{
 pub use local_study::{
     submitter_from_config, LocalFactSubmitter, LocalStudy, ADAPTER_DIR_PLACEHOLDER,
     DATASET_PLACEHOLDER, REPORT_PLACEHOLDER,
+};
+pub use question_ledger::{
+    QuestionAnsweredRecord, QuestionAskedRecord, QuestionLedger, QuestionLedgerEntry,
+    QuestionLedgerError,
 };
 pub use recall::SessionScope;
 pub use sqlite::SqliteMemoryStore;

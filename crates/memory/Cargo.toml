@@ -13,6 +13,9 @@ sven-tools   = { path = "../tools" }
 sven-config  = { path = "../config" }
 sven-vocab   = { path = "../vocab" }
 sven-chain   = { path = "../chain" }
+# QuestionId/ToolCallId for the parked-question ledger - domain -> foundation,
+# the same edge sven-vocab/sven-chain already take.
+sven-hsm     = { path = "../hsm" }
 # The ATIF trajectory format itself (foundation tier) and the reward-stamping
 # wire contract built on it (services tier) - both legal downward edges from
 # domain. Used by `trajectory_export` to turn a session's own recorded runs
