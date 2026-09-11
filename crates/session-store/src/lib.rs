@@ -29,7 +29,8 @@ pub use frontmatter::{parse_frontmatter, WorkflowMetadata};
 pub use markdown::{parse_workflow, ParsedWorkflow};
 pub use queue::{Step, StepOptions, StepQueue};
 pub use reward::{
-    apply_reward_to_trajectory, trajectory_reward, OutcomeFold, RunConclusion, SessionReward,
+    apply_outcome_to_trajectory, trajectory_reward, OutcomeFold, RunConclusion, SessionOutcome,
+    SessionReward, Verdict,
 };
 pub use session_resolve::resolve_session_id;
 pub use title::{make_title, sanitize_llm_title};

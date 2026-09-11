@@ -29,22 +29,35 @@
 use atif::{FinalMetrics, Trajectory};
 use serde_json::{Map, Value};
 
-pub use sven_session_model::{OutcomeFold, RunConclusion, SessionReward};
+pub use sven_session_model::{OutcomeFold, RunConclusion, SessionOutcome, SessionReward, Verdict};
 
 /// The key the reward is read from, inside `final_metrics.extra`.
 pub const REWARD_KEY: &str = "reward";
+/// Where an [`SessionOutcome::Unknown`] reason is recorded, for a human
+/// debugging why a trajectory carries no reward - never read by the trainer.
+pub const UNKNOWN_REASON_KEY: &str = "sven_outcome_unknown_reason";
 
-/// Insert (or replace) `reward`, `outcome` and the tool counters inside
-/// `trajectory.final_metrics.extra`, creating `final_metrics` and/or `extra`
-/// if absent and coercing a non-object `extra` to an object.
+/// Stamps a session's concluded outcome onto its trajectory.
 ///
-/// Sibling keys already under `extra` are preserved — mirrors
+/// [`SessionOutcome::Scored`] inserts (or replaces) `reward`, `outcome` and
+/// the tool counters inside `trajectory.final_metrics.extra`, creating
+/// `final_metrics`/`extra` if absent and coercing a non-object `extra` to an
+/// object. Sibling keys already under `extra` are preserved — mirrors
 /// [`crate::SvenSessionMeta::apply_to_trajectory`], which does the same for
 /// `Trajectory.extra`.
 ///
-/// Call this **only when a session has concluded**: a stamped trajectory
-/// asserts "this outcome is final".
-pub fn apply_reward_to_trajectory(trajectory: &mut Trajectory, reward: &SessionReward) {
+/// [`SessionOutcome::Unknown`] does the opposite: it **removes** any
+/// existing `reward` key (recording the reason as telemetry instead) rather
+/// than leaving a stale one in place. This is load-bearing — an incremental
+/// autosave or a `--load-trace` resume does not always rebuild the
+/// trajectory from scratch, so a session that once looked concluded but
+/// isn't anymore (a park, a policy swap once that exists) must not leave a
+/// reward behind that no longer applies. The wire contract already treats
+/// an absent reward as "outcome unknown, skip" (see the module doc).
+///
+/// Call this **only when a session has concluded** (including "concluded
+/// unknown", e.g. parked): a stamped trajectory asserts "this is final".
+pub fn apply_outcome_to_trajectory(trajectory: &mut Trajectory, outcome: &SessionOutcome) {
     let metrics = trajectory
         .final_metrics
         .get_or_insert_with(FinalMetrics::default);
@@ -55,10 +68,19 @@ pub fn apply_reward_to_trajectory(trajectory: &mut Trajectory, reward: &SessionR
         *extra = Value::Object(Map::new());
     }
     let obj = extra.as_object_mut().expect("just ensured object");
-    obj.insert(REWARD_KEY.to_string(), Value::from(reward.reward));
-    obj.insert("outcome".to_string(), Value::from(reward.outcome));
-    obj.insert("tool_calls".to_string(), Value::from(reward.tool_calls));
-    obj.insert("tool_errors".to_string(), Value::from(reward.tool_errors));
+    match outcome {
+        SessionOutcome::Scored(reward) => {
+            obj.remove(UNKNOWN_REASON_KEY);
+            obj.insert(REWARD_KEY.to_string(), Value::from(reward.reward));
+            obj.insert("outcome".to_string(), Value::from(reward.outcome));
+            obj.insert("tool_calls".to_string(), Value::from(reward.tool_calls));
+            obj.insert("tool_errors".to_string(), Value::from(reward.tool_errors));
+        }
+        SessionOutcome::Unknown { reason } => {
+            obj.remove(REWARD_KEY);
+            obj.insert(UNKNOWN_REASON_KEY.to_string(), Value::from(*reason));
+        }
+    }
 }
 
 /// Read the stamped reward back, using the same lookup the external trainer
@@ -86,13 +108,13 @@ mod tests {
         Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile())
     }
 
-    fn reward(value: f64) -> SessionReward {
-        SessionReward {
+    fn scored(value: f64) -> SessionOutcome {
+        SessionOutcome::Scored(SessionReward {
             reward: value,
-            outcome: "success",
+            outcome: "verified_success",
             tool_calls: 3,
             tool_errors: 0,
-        }
+        })
     }
 
     #[test]
@@ -101,7 +123,7 @@ mod tests {
         // has to be able to conjure the whole nest.
         let mut t = trajectory();
         assert!(t.final_metrics.is_none());
-        apply_reward_to_trajectory(&mut t, &reward(1.0));
+        apply_outcome_to_trajectory(&mut t, &scored(1.0));
         assert_eq!(trajectory_reward(&t), Some(1.0));
     }
 
@@ -117,7 +139,7 @@ mod tests {
         let mut t = trajectory();
         t.final_metrics = Some(chat_usage_to_final_metrics(&usage));
 
-        apply_reward_to_trajectory(&mut t, &reward(0.75));
+        apply_outcome_to_trajectory(&mut t, &scored(0.75));
 
         let metrics = t.final_metrics.as_ref().expect("metrics");
         assert_eq!(trajectory_reward(&t), Some(0.75));
@@ -135,7 +157,7 @@ mod tests {
             total_steps: Some(3),
             ..Default::default()
         });
-        apply_reward_to_trajectory(&mut t, &reward(1.0));
+        apply_outcome_to_trajectory(&mut t, &scored(1.0));
         let m = t.final_metrics.as_ref().expect("metrics");
         assert_eq!(m.total_prompt_tokens, Some(1120));
         assert_eq!(m.total_cost_usd, Some(0.25));
@@ -149,15 +171,15 @@ mod tests {
             extra: Some(Value::from("garbage")),
             ..Default::default()
         });
-        apply_reward_to_trajectory(&mut t, &reward(0.5));
+        apply_outcome_to_trajectory(&mut t, &scored(0.5));
         assert_eq!(trajectory_reward(&t), Some(0.5));
     }
 
     #[test]
     fn stamp_is_idempotent_and_last_write_wins() {
         let mut t = trajectory();
-        apply_reward_to_trajectory(&mut t, &reward(1.0));
-        apply_reward_to_trajectory(&mut t, &reward(0.5));
+        apply_outcome_to_trajectory(&mut t, &scored(1.0));
+        apply_outcome_to_trajectory(&mut t, &scored(0.5));
         let extra = t
             .final_metrics
             .as_ref()
@@ -169,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn brain_contract_read_path() {
+    fn brain_contract_read_path_for_a_verified_success() {
         // The contract test: navigate the serialized JSON exactly the way the
         // external trainer does, with no `atif` types on the read side. This
         // is what fails if a field is renamed or the number goes non-finite
@@ -177,7 +199,10 @@ mod tests {
         let mut t = trajectory();
         let mut fold = OutcomeFold::default();
         fold.observe(&sven_vocab::SessionEvent::TurnComplete);
-        apply_reward_to_trajectory(&mut t, &fold.conclude(RunConclusion::Success));
+        apply_outcome_to_trajectory(
+            &mut t,
+            &fold.conclude(RunConclusion::Success, Some(Verdict::Passed)),
+        );
 
         let json = serde_json::to_string(&t).expect("serialize");
         let value: Value = serde_json::from_str(&json).expect("parse");
@@ -189,8 +214,45 @@ mod tests {
         assert_eq!(r, Some(1.0));
         assert_eq!(
             value["final_metrics"]["extra"]["outcome"].as_str(),
-            Some("success")
+            Some("verified_success")
         );
+    }
+
+    /// The clearest statement of the whole point of this rework: what used
+    /// to score a confident 1.0 (a claimed success, no verifier consulted)
+    /// must now carry **no** `reward` key at all on the wire - not `0.0`,
+    /// not `null` read as a number, absent - so the external trainer's
+    /// documented "missing key -> skip" path is what actually happens.
+    #[test]
+    fn brain_contract_read_path_for_an_unverified_success_has_no_reward() {
+        let mut t = trajectory();
+        let mut fold = OutcomeFold::default();
+        fold.observe(&sven_vocab::SessionEvent::TurnComplete);
+        apply_outcome_to_trajectory(&mut t, &fold.conclude(RunConclusion::Success, None));
+
+        let json = serde_json::to_string(&t).expect("serialize");
+        let value: Value = serde_json::from_str(&json).expect("parse");
+        assert!(
+            value["final_metrics"]["extra"].get("reward").is_none(),
+            "an unverified success must not carry a reward key at all: {value}"
+        );
+        assert_eq!(
+            value["final_metrics"]["extra"]["sven_outcome_unknown_reason"].as_str(),
+            Some("no_verifier")
+        );
+    }
+
+    #[test]
+    fn a_reward_is_removed_when_a_later_stamp_turns_out_unknown() {
+        // Not a hypothetical: an incremental autosave can stamp a trajectory
+        // that later needs to be reconcluded (see the module doc). A stale
+        // reward left behind would silently outlive the outcome it scored.
+        let mut t = trajectory();
+        apply_outcome_to_trajectory(&mut t, &scored(1.0));
+        assert_eq!(trajectory_reward(&t), Some(1.0));
+
+        apply_outcome_to_trajectory(&mut t, &SessionOutcome::Unknown { reason: "no_verifier" });
+        assert_eq!(trajectory_reward(&t), None);
     }
 
     #[test]
@@ -211,7 +273,7 @@ mod tests {
         let path = dir.path().join("session.json");
         let mut t = trajectory();
         t.session_id = Some("s1".to_string());
-        apply_reward_to_trajectory(&mut t, &reward(0.9));
+        apply_outcome_to_trajectory(&mut t, &scored(0.9));
 
         atif::persist::write_trajectory_atomic(&path, &t, None).expect("write");
         let loaded = crate::trace_session::load_session_from(&path).expect("load");
