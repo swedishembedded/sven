@@ -174,13 +174,102 @@ impl KernelAgent {
             anyhow::bail!("kernel event queue closed before UserMessage was delivered");
         }
 
+        Self::drain_turn(&mut obs_rx, &mut self.history, &tx).await;
+
+        // Keep the runtime alive until the turn is fully drained so the audit
+        // log flushes; dropping it shuts the session down.
+        bundle.runtime.detach();
+        Ok(())
+    }
+
+    /// Multimodal variant of [`Self::submit`] for `--attach`-preloaded
+    /// content parts (image/audio) that can't be expressed as plain text.
+    ///
+    /// The kernel event vocabulary (`sven_hsm::Event::UserMessage`) only
+    /// carries a text payload — there is no parts-carrying variant, and
+    /// adding one is a cross-cutting change (new `Event` variant, every
+    /// machine/executor that reads it) out of scope for a single attach
+    /// flow. Instead this seeds the parts message directly into the fresh
+    /// session's conversation thread via `with_initial_history` (which
+    /// accepts full `Message`s, parts included) and then emits
+    /// `Event::UserMessage` with an *empty* text: `TurnExecutor` only
+    /// appends its `instruction` to the thread `if !req.instruction.is_empty()`
+    /// (`crates/executors/src/turn.rs`), so the empty text drives the turn
+    /// without appending a second, duplicate plain-text message.
+    pub async fn submit_with_parts(
+        &mut self,
+        parts: Vec<sven_model::ContentPart>,
+        tx: mpsc::Sender<AgentEvent>,
+    ) -> anyhow::Result<()> {
+        let user_msg = Message::user_with_parts(parts);
+        let mut seeded_history = self.history.clone();
+        seeded_history.push(user_msg.clone());
+
+        let ctx = self.runtime_ctx.clone();
+        let bundle = RuntimeBuilder::new(self.config.clone(), self.mode.clone())
+            .with_runtime_context(ctx)
+            .with_agent_mode(self.agent_mode)
+            .with_model_config(self.model_cfg.clone())
+            .with_allow_interactive_oauth(false)
+            .with_wait_for_mcp_tools(self.wait_for_mcp_ms)
+            .with_initial_history(seeded_history)
+            .build_session()
+            .await
+            .context("failed to build kernel session")?;
+
+        // Auto-approve all human gates (headless CI is non-interactive).
+        tokio::spawn(bundle.channels.auto_approve());
+
+        let sink = bundle.handle.sink();
+        let mut obs_rx = bundle.handle.subscribe_observations();
+
+        // Record the user turn in the accumulated history before posting.
+        self.history.push(user_msg);
+
+        if !sink
+            .emit(Event::UserMessage {
+                text: String::new(),
+            })
+            .await
+        {
+            anyhow::bail!("kernel event queue closed before UserMessage was delivered");
+        }
+
+        Self::drain_turn(&mut obs_rx, &mut self.history, &tx).await;
+
+        // Keep the runtime alive until the turn is fully drained so the audit
+        // log flushes; dropping it shuts the session down.
+        bundle.runtime.detach();
+        Ok(())
+    }
+
+    /// Build an [`sven_model::ModelProvider`] for the agent's *current*
+    /// model config, for callers that need to inspect its modality support
+    /// (`--attach`'s native-vs-transcribed decision) before submitting a
+    /// turn. Mirrors the construction [`Self::build_tool_registry`] already
+    /// does for the same config.
+    pub fn model(&self) -> anyhow::Result<Arc<dyn sven_model::ModelProvider>> {
+        let model = sven_model_drivers::from_config(&self.model_cfg)
+            .context("failed to initialise model provider")?;
+        Ok(Arc::from(model))
+    }
+
+    /// Drain one turn's kernel observation stream into `tx`, growing
+    /// `history` via [`reduce_history`] as events arrive, until a terminal
+    /// event ([`UiEvent::TurnComplete`]/[`UiEvent::Aborted`]) or the channel
+    /// closes. Shared by [`Self::submit`] and [`Self::submit_with_parts`].
+    async fn drain_turn(
+        obs_rx: &mut tokio::sync::broadcast::Receiver<UiEvent>,
+        history: &mut Vec<Message>,
+        tx: &mpsc::Sender<AgentEvent>,
+    ) {
         loop {
             match obs_rx.recv().await {
                 Ok(ev) => {
                     let terminal = matches!(ev, UiEvent::TurnComplete | UiEvent::Aborted { .. });
                     // Grow the internal history so the next turn is seeded
                     // with this turn's output (mirrors the legacy session).
-                    reduce_history(&ev, &mut self.history);
+                    reduce_history(&ev, history);
                     if tx.send(ev).await.is_err() {
                         break;
                     }
@@ -192,11 +281,6 @@ impl KernelAgent {
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
             }
         }
-
-        // Keep the runtime alive until the turn is fully drained so the audit
-        // log flushes; dropping it shuts the session down.
-        bundle.runtime.detach();
-        Ok(())
     }
 }
 

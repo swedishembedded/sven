@@ -918,19 +918,13 @@ impl CiRunner {
                     None
                 } else {
                     let paths = std::mem::take(&mut pending_attachments);
-                    Some(
-                        build_attachment_parts(
-                            &step_content,
-                            &paths,
-                            // The agent's *current* model: a per-step override
-                            // may already have replaced the initial one, and
-                            // its modalities are what decide native vs.
-                            // transcribed audio.
-                            &Arc::clone(agent.model()),
-                            &self.config.tools.asr,
-                        )
-                        .await?,
-                    )
+                    // The agent's *current* model: a per-step override may
+                    // already have replaced the initial one, and its
+                    // modalities are what decide native vs. transcribed audio.
+                    let model = agent
+                        .model()
+                        .context("failed to initialise model provider for --attach")?;
+                    Some(build_attachment_parts(&step_content, &paths, &model, &self.config.tools.asr).await?)
                 };
 
             // Record the user turn before submitting. A user message always
