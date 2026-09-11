@@ -32,10 +32,10 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sven_hsm::{
-    context::{Context, PendingApproval},
+    context::{Context, PendingApproval, PendingQuestion},
     effect::Effect,
     event::Event,
-    ids::{ApprovalId, ToolCallId},
+    ids::{ApprovalId, QuestionId, ToolCallId},
     status::Reaction,
     ProposedToolCall,
 };
@@ -71,6 +71,11 @@ pub struct LoopState {
     /// tool-loop events (stay in phase); those without it are decision-level
     /// approvals the phase handles itself.
     pub awaiting_tool_approval: Option<ApprovalId>,
+    /// When set, a tool call is parked awaiting a human answer under this
+    /// `QuestionId` (see [`Event::QuestionAsked`]). A run with this set is
+    /// not idle and not failed - it is waiting, possibly indefinitely.
+    #[serde(default)]
+    pub awaiting_answer: Option<QuestionId>,
 }
 
 impl LoopState {
@@ -89,10 +94,13 @@ impl LoopState {
         }
     }
 
-    /// `true` when there are no pending tool calls and no approval in flight.
+    /// `true` when there are no pending tool calls and no approval or
+    /// question in flight.
     #[must_use]
     pub fn is_idle(&self) -> bool {
-        self.pending.is_empty() && self.awaiting_tool_approval.is_none()
+        self.pending.is_empty()
+            && self.awaiting_tool_approval.is_none()
+            && self.awaiting_answer.is_none()
     }
 
     /// Build a continuation `CallLlm { kind:"turn" }` from the current state.
@@ -183,6 +191,7 @@ pub fn init_loop(
         max_rounds,
         pending: HashSet::new(),
         awaiting_tool_approval: None,
+        awaiting_answer: None,
     };
     ls.store(ctx);
 }
@@ -401,6 +410,58 @@ pub fn handle_tool_event<S>(
                 }
             } else {
                 // Decision-level rejection — let phase handle it.
+                None
+            }
+        }
+
+        // ── Question parked: remove from pending, wait for a human ────────────
+        Event::QuestionAsked {
+            call_id,
+            prompt,
+            options,
+        } => {
+            let mut ls = LoopState::load(ctx);
+            // Remove from pending — it won't produce a ToolSucceeded on its
+            // own; HumanAnswered (or a stale run simply never resuming) is
+            // its only way out.
+            ls.pending.remove(call_id);
+            // Derived from the call it parks, never minted fresh — see
+            // `ToolApprovalRequired`'s identical reasoning: replay must
+            // reproduce the same id the live run chose.
+            let question_id = QuestionId::from_uuid(call_id.as_uuid());
+            ls.awaiting_answer = Some(question_id);
+            ctx.set_pending_question(PendingQuestion {
+                question_id,
+                call_id: *call_id,
+                prompt: prompt.clone(),
+                options: options.clone(),
+            });
+            ls.store(ctx);
+            Some(Reaction::effects(vec![Effect::RequestHumanAnswer {
+                question_id,
+                call_id: *call_id,
+                prompt: prompt.clone(),
+                options: options.clone(),
+            }]))
+        }
+
+        // ── Question answered: resume the loop, no capability to grant ────────
+        Event::HumanAnswered { question_id, .. } => {
+            let mut ls = LoopState::load(ctx);
+            if ls.awaiting_answer == Some(*question_id) {
+                ctx.resolve_question(*question_id);
+                ls.awaiting_answer = None;
+                if ls.is_idle() {
+                    let cont = make_turn(&ls);
+                    ls.store(ctx);
+                    Some(Reaction::effects(vec![cont]))
+                } else {
+                    ls.store(ctx);
+                    Some(Reaction::handled())
+                }
+            } else {
+                // Stale/duplicate answer (already resolved, or for a
+                // different loop entirely) — ignore.
                 None
             }
         }
@@ -641,5 +702,109 @@ mod tests {
         let reaction: Option<Reaction<u8>> =
             handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &event);
         assert!(reaction.is_none());
+    }
+
+    #[test]
+    fn question_asked_parks_the_call_and_leaves_the_loop_not_idle() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "", 16);
+        let call_id = ToolCallId::new();
+        {
+            let mut ls = LoopState::load(&ctx);
+            ls.pending.insert(call_id);
+            ls.store(&mut ctx);
+        }
+        let asked = Event::QuestionAsked {
+            call_id,
+            prompt: "Which framework?".into(),
+            options: vec!["Axum".into(), "Actix".into()],
+        };
+        let reaction: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &asked);
+        assert!(matches!(
+            reaction,
+            Some(Reaction::Handled(effs)) if matches!(effs.as_slice(), [Effect::RequestHumanAnswer { .. }])
+        ));
+        let ls = LoopState::load(&ctx);
+        assert!(!ls.pending.contains(&call_id), "parked call leaves the pending set");
+        assert!(!ls.is_idle(), "a parked question must not read as idle");
+        assert!(ls.awaiting_answer.is_some());
+        assert!(ctx.pending_question.is_some());
+    }
+
+    #[test]
+    fn human_answered_roundtrip_resumes_the_loop() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "", 16);
+        let call_id = ToolCallId::new();
+        {
+            let mut ls = LoopState::load(&ctx);
+            ls.pending.insert(call_id);
+            ls.store(&mut ctx);
+        }
+        let asked = Event::QuestionAsked {
+            call_id,
+            prompt: "Which framework?".into(),
+            options: vec![],
+        };
+        let _: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &asked);
+        let question_id = LoopState::load(&ctx)
+            .awaiting_answer
+            .expect("question parked");
+
+        let answered = Event::HumanAnswered {
+            question_id,
+            answer: "Axum".into(),
+        };
+        let reaction: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &answered);
+        assert!(reaction.is_some(), "resolving the last pending question must resume the loop");
+        let ls = LoopState::load(&ctx);
+        assert!(ls.awaiting_answer.is_none());
+        assert!(ls.is_idle());
+        assert!(ctx.pending_question.is_none());
+    }
+
+    #[test]
+    fn human_answered_with_stale_id_is_ignored() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "", 16);
+        let answered = Event::HumanAnswered {
+            question_id: QuestionId::new(),
+            answer: "whatever".into(),
+        };
+        let reaction: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &answered);
+        assert!(reaction.is_none());
+    }
+
+    /// Same replay-safety property as `replaying_an_approval_grants_the_same_capability`:
+    /// the question id must be derived from the call id, not minted fresh, or
+    /// a replayed `HumanAnswered` (carrying the id the live run chose) would
+    /// never match and the replayed session would hang parked forever.
+    #[test]
+    fn replaying_a_question_reproduces_the_same_id() {
+        let call_id = ToolCallId::new();
+        let asked = Event::QuestionAsked {
+            call_id,
+            prompt: "x".into(),
+            options: vec![],
+        };
+
+        let mut live = make_ctx();
+        init_loop(&mut live, "chat", &[], "", 16);
+        let _: Option<Reaction<u8>> = handle_tool_event(&mut live, |ls| ls.continuation_turn(), &asked);
+        let recorded = LoopState::load(&live).awaiting_answer.expect("parked");
+
+        let mut replayed = make_ctx();
+        init_loop(&mut replayed, "chat", &[], "", 16);
+        let _: Option<Reaction<u8>> =
+            handle_tool_event(&mut replayed, |ls| ls.continuation_turn(), &asked);
+        assert_eq!(
+            LoopState::load(&replayed).awaiting_answer,
+            Some(recorded),
+            "replay must derive the same question id, not mint a fresh one"
+        );
     }
 }

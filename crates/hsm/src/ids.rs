@@ -94,6 +94,11 @@ uuid_newtype!(
     /// Identifies a scheduled timer so its timeout/cancellation can be matched.
     TimerId
 );
+uuid_newtype!(
+    /// Identifies a question parked awaiting a human answer, so a later
+    /// [`crate::event::Event::HumanAnswered`] can be matched back to it.
+    QuestionId
+);
 
 #[cfg(test)]
 mod tests {

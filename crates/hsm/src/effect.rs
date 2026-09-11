@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ids::{ApprovalId, MachineId, TimerId, ToolCallId};
+use crate::ids::{ApprovalId, MachineId, QuestionId, TimerId, ToolCallId};
 use crate::permissions::ToolCapability;
 
 /// A requested side effect. Pure data; carries no behaviour.
@@ -49,6 +49,19 @@ pub enum Effect {
         capability: ToolCapability,
         /// Human-readable description of what is being approved.
         description: String,
+    },
+    /// Park a question for a human to answer whenever they get to it - unlike
+    /// [`Effect::AskUser`], the caller must not assume an imminent reply.
+    /// Requires no capability: asking is never itself dangerous.
+    RequestHumanAnswer {
+        /// Identifies this question so the reply can be matched.
+        question_id: QuestionId,
+        /// Matches the [`ToolCallId`] of the pending `CallTool` effect.
+        call_id: ToolCallId,
+        /// The question text shown to the human.
+        prompt: String,
+        /// Offered choices, if any (empty for a free-form question).
+        options: Vec<String>,
     },
     /// Schedule a one-shot timer that posts `Timeout { timer_id }` when elapsed.
     ScheduleTimeout {
@@ -100,6 +113,7 @@ impl Effect {
             Effect::CallTool { .. } => EffectKind::CallTool,
             Effect::AskUser { .. } => EffectKind::AskUser,
             Effect::RequestHumanApproval { .. } => EffectKind::RequestHumanApproval,
+            Effect::RequestHumanAnswer { .. } => EffectKind::RequestHumanAnswer,
             Effect::ScheduleTimeout { .. } => EffectKind::ScheduleTimeout,
             Effect::CancelTimeout { .. } => EffectKind::CancelTimeout,
             Effect::CreateCheckpoint { .. } => EffectKind::CreateCheckpoint,
@@ -134,6 +148,8 @@ pub enum EffectKind {
     AskUser,
     /// See [`Effect::RequestHumanApproval`].
     RequestHumanApproval,
+    /// See [`Effect::RequestHumanAnswer`].
+    RequestHumanAnswer,
     /// See [`Effect::ScheduleTimeout`].
     ScheduleTimeout,
     /// See [`Effect::CancelTimeout`].

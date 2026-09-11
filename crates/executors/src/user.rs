@@ -1,8 +1,9 @@
 //! User interaction effect executors.
 //!
-//! Handles [`Effect::AskUser`] and [`Effect::RequestHumanApproval`] by
-//! forwarding them to a caller-supplied channel.  The other end of the
-//! channel is held by the TUI, GUI, CI headless runner, or any frontend.
+//! Handles [`Effect::AskUser`], [`Effect::RequestHumanApproval`] and
+//! [`Effect::RequestHumanAnswer`] by forwarding them to a caller-supplied
+//! channel.  The other end of the channel is held by the TUI, GUI, CI
+//! headless runner, or any frontend.
 //!
 //! # Protocol
 //!
@@ -13,6 +14,19 @@
 //!   a `reply_tx` oneshot) to the `approval_tx` channel. A background task
 //!   awaits the reply (`true` = approved) and posts `Event::HumanApproved`
 //!   or `Event::HumanRejected`.
+//! * [`Effect::RequestHumanAnswer`] → sends a [`ParkedQuestion`] to the
+//!   `parked_tx` channel and returns immediately - **no reply is awaited
+//!   here**. Unlike the two effects above, the run may sit parked for a long
+//!   time (the point of parking rather than blocking), so nothing in this
+//!   process holds a `oneshot` open waiting for it. Resolution happens out of
+//!   band, in a wholly separate flow: whatever durably records the question
+//!   (a queue, a ledger) later resolves it and posts `Event::HumanAnswered`
+//!   directly to the kernel sink, from code that may not even be running in
+//!   this process. Configuring no `parked_tx` at all is a valid, honest
+//!   configuration (a deployment with no async-escalation sink yet) - the
+//!   question is logged and dropped, exactly like any other unconfigured
+//!   [`CompositeExecutor`](crate::composite::CompositeExecutor) slot; the run
+//!   simply stays parked forever rather than being answered on its behalf.
 //!
 //! # Knowledge assimilation
 //!
@@ -26,7 +40,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{ApprovalId, Effect, Event, ObservationSink, ToolCapability};
+use sven_hsm::{ApprovalId, Effect, Event, ObservationSink, QuestionId, ToolCallId, ToolCapability};
 use sven_kernel::{EffectExecutor, EventSink};
 use sven_vocab::provenance::KnowledgeApprovals;
 use tokio::sync::{mpsc, oneshot};
@@ -39,6 +53,20 @@ pub struct UserQuestion {
     pub prompt: String,
     /// Send the user's reply back here.
     pub reply_tx: oneshot::Sender<String>,
+}
+
+/// A question parked awaiting a human answer, forwarded to whatever durably
+/// records it. Deliberately carries no `reply_tx` - see the module doc for
+/// why this is not a request/reply exchange.
+pub struct ParkedQuestion {
+    /// Identifies this question; a later `Event::HumanAnswered` must match it.
+    pub question_id: QuestionId,
+    /// The tool call this question was asked on behalf of.
+    pub call_id: ToolCallId,
+    /// The question text shown to the human.
+    pub prompt: String,
+    /// Offered choices, if any (empty for a free-form question).
+    pub options: Vec<String>,
 }
 
 /// An approval request forwarded to the frontend.
@@ -59,6 +87,7 @@ pub struct ApprovalRequest {
 pub struct UserExecutor {
     question_tx: mpsc::Sender<UserQuestion>,
     approval_tx: mpsc::Sender<ApprovalRequest>,
+    parked_tx: Option<mpsc::Sender<ParkedQuestion>>,
     knowledge_approvals: Option<Arc<KnowledgeApprovals>>,
 }
 
@@ -79,6 +108,7 @@ impl UserExecutor {
         Self {
             question_tx,
             approval_tx,
+            parked_tx: None,
             knowledge_approvals: None,
         }
     }
@@ -89,6 +119,16 @@ impl UserExecutor {
     #[must_use]
     pub fn with_knowledge_approvals(mut self, approvals: Arc<KnowledgeApprovals>) -> Self {
         self.knowledge_approvals = Some(approvals);
+        self
+    }
+
+    /// Routes [`Effect::RequestHumanAnswer`] to `tx` instead of dropping it.
+    /// Without this, a parked question is logged and discarded - the run
+    /// still parks (nothing resumes it), but no durable record exists to
+    /// resume it from later.
+    #[must_use]
+    pub fn with_parked_questions(mut self, tx: mpsc::Sender<ParkedQuestion>) -> Self {
+        self.parked_tx = Some(tx);
         self
     }
 
@@ -107,6 +147,17 @@ impl UserExecutor {
     ) -> (
         mpsc::Sender<ApprovalRequest>,
         mpsc::Receiver<ApprovalRequest>,
+    ) {
+        mpsc::channel(cap)
+    }
+
+    /// Creates both ends of the parked-question channel. Returns the executor
+    /// side and the durable-recording side (`mpsc::Receiver<ParkedQuestion>`).
+    pub fn parked_channel(
+        cap: usize,
+    ) -> (
+        mpsc::Sender<ParkedQuestion>,
+        mpsc::Receiver<ParkedQuestion>,
     ) {
         mpsc::channel(cap)
     }
@@ -183,6 +234,36 @@ impl EffectExecutor for UserExecutor {
                         }
                     }
                 });
+            }
+
+            Effect::RequestHumanAnswer {
+                question_id,
+                call_id,
+                prompt,
+                options,
+            } => {
+                if let Some(tx) = &self.parked_tx {
+                    let parked = ParkedQuestion {
+                        question_id,
+                        call_id,
+                        prompt,
+                        options,
+                    };
+                    if tx.send(parked).await.is_err() {
+                        tracing::warn!(
+                            ?question_id,
+                            "UserExecutor: parked-question channel closed; question dropped, run stays parked"
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        ?question_id,
+                        "UserExecutor: no parked-question sink configured; question dropped, run stays parked"
+                    );
+                }
+                // Deliberately no event posted and no task spawned: unlike
+                // AskUser/RequestHumanApproval, nothing here waits for the
+                // reply. See the module doc.
             }
 
             _ => {}
@@ -278,6 +359,31 @@ mod tests {
             .unwrap_or_else(|| "no event received".into())
     }
 
+    /// Runs `effect` and asserts the machine is **never** driven to a
+    /// terminal state - i.e. no kernel event ever arrives for it. Unlike
+    /// [`run_user_effect`] (which awaits `wait_done()` unconditionally and
+    /// would hang forever here), this races the wait against a short timeout,
+    /// since a real absence-of-event is indistinguishable from "still
+    /// pending" without one.
+    async fn assert_no_kernel_event(exec: &mut UserExecutor, effect: Effect) {
+        let rt = Runtime::spawn(
+            Hsm::new(OneShotMachine::new()),
+            Context::new(),
+            PermissionPolicy::builder().build(),
+            NoOpExec,
+            16,
+        );
+        let sink = rt.sink();
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
+            .await;
+        let outcome = tokio::time::timeout(std::time::Duration::from_millis(200), rt.wait_done()).await;
+        rt.abort();
+        assert!(
+            outcome.is_err(),
+            "no kernel event should ever be posted for this effect, but the machine reached a terminal state"
+        );
+    }
+
     #[tokio::test]
     async fn ask_user_emits_user_message_with_reply() {
         let (q_tx, mut q_rx) = mpsc::channel::<UserQuestion>(4);
@@ -341,6 +447,53 @@ mod tests {
 
         let kind = run_user_effect(&mut exec, effect).await;
         assert_eq!(kind, "HumanRejected");
+    }
+
+    #[tokio::test]
+    async fn request_human_answer_forwards_to_the_parked_sink_and_posts_no_event() {
+        use sven_hsm::QuestionId;
+
+        let (q_tx, _q_rx) = mpsc::channel::<UserQuestion>(4);
+        let (a_tx, _a_rx) = mpsc::channel::<ApprovalRequest>(4);
+        let (p_tx, mut p_rx) = UserExecutor::parked_channel(4);
+        let mut exec = UserExecutor::new(q_tx, a_tx).with_parked_questions(p_tx);
+
+        let question_id = QuestionId::new();
+        let call_id = sven_hsm::ToolCallId::new();
+        let effect = Effect::RequestHumanAnswer {
+            question_id,
+            call_id,
+            prompt: "Which framework?".into(),
+            options: vec!["Axum".into(), "Actix".into()],
+        };
+
+        // No kernel event should ever arrive for this effect - the answer is
+        // wholly out of band.
+        assert_no_kernel_event(&mut exec, effect).await;
+
+        let parked = p_rx.recv().await.expect("parked question forwarded");
+        assert_eq!(parked.question_id, question_id);
+        assert_eq!(parked.call_id, call_id);
+        assert_eq!(parked.prompt, "Which framework?");
+        assert_eq!(parked.options, vec!["Axum".to_string(), "Actix".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn request_human_answer_with_no_sink_configured_drops_without_panicking() {
+        use sven_hsm::QuestionId;
+
+        let (q_tx, _q_rx) = mpsc::channel::<UserQuestion>(4);
+        let (a_tx, _a_rx) = mpsc::channel::<ApprovalRequest>(4);
+        let mut exec = UserExecutor::new(q_tx, a_tx); // no with_parked_questions
+
+        let effect = Effect::RequestHumanAnswer {
+            question_id: QuestionId::new(),
+            call_id: sven_hsm::ToolCallId::new(),
+            prompt: "x".into(),
+            options: vec![],
+        };
+        // Must not panic (no sink configured) and must still post no event.
+        assert_no_kernel_event(&mut exec, effect).await;
     }
 
     #[tokio::test]

@@ -67,12 +67,12 @@ pub mod submachine;
 // ---- Curated public API re-exports ----
 
 pub use audit::{replay, AuditOutcome, AuditRecord, ToolAuditOutcome, ToolAuditRecord};
-pub use context::{Context, PendingApproval, PermissionState, Principal, SafetyState};
+pub use context::{Context, PendingApproval, PendingQuestion, PermissionState, Principal, SafetyState};
 pub use dispatch::{DispatchOutcome, Hsm};
 pub use effect::{Effect, EffectKind};
 pub use error::{MachineError, Result};
 pub use event::{Event, EventKind, InternalEvent, ProposedToolCall};
-pub use ids::{ApprovalId, CorrelationId, MachineId, TaskId, TimerId, ToolCallId};
+pub use ids::{ApprovalId, CorrelationId, MachineId, QuestionId, TaskId, TimerId, ToolCallId};
 pub use machine::Machine;
 pub use observation::{CompactionStrategyUsed, ObservationSink, UiEvent};
 pub use permissions::{

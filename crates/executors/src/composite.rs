@@ -101,7 +101,9 @@ impl EffectExecutor for CompositeExecutor {
                 }
             }
 
-            EffectKind::AskUser | EffectKind::RequestHumanApproval => {
+            EffectKind::AskUser
+            | EffectKind::RequestHumanApproval
+            | EffectKind::RequestHumanAnswer => {
                 if let Some(exec) = &mut self.user {
                     exec.execute(effect, sink, obs).await;
                 } else {

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::audit::{AuditRecord, ToolAuditRecord};
-use crate::ids::ApprovalId;
+use crate::ids::{ApprovalId, QuestionId, ToolCallId};
 use crate::permissions::ToolCapability;
 
 /// The identity on whose behalf a session runs.
@@ -62,6 +62,24 @@ pub struct PendingApproval {
     pub description: String,
 }
 
+/// A question parked awaiting a human answer, recorded while the machine
+/// waits. Unlike [`PendingApproval`], resolving it does not itself grant
+/// anything - the caller (an executor, outside the kernel) is responsible for
+/// appending the answer as a tool-result message to the thread before posting
+/// the matching [`crate::event::Event::HumanAnswered`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PendingQuestion {
+    /// The question being awaited.
+    pub question_id: QuestionId,
+    /// The tool call this question was asked on behalf of, so the caller
+    /// resuming it knows which call to append a result for.
+    pub call_id: ToolCallId,
+    /// The question text shown to the human.
+    pub prompt: String,
+    /// Offered choices, if any (empty for a free-form question).
+    pub options: Vec<String>,
+}
+
 /// Safety-related flags.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SafetyState {
@@ -97,6 +115,11 @@ pub struct Context {
     pub checkpoints: Vec<String>,
     /// The approval currently being awaited, if any.
     pub pending_approval: Option<PendingApproval>,
+    /// The question currently parked awaiting a human answer, if any. A
+    /// session with a pending question is not stalled and not failed - see
+    /// [`crate::event::Event::QuestionAsked`] for the parking contract.
+    #[serde(default)]
+    pub pending_question: Option<PendingQuestion>,
     /// Safety flags.
     pub safety: SafetyState,
     /// Granted-capability tracking consulted by the permission gate.
@@ -183,6 +206,24 @@ impl Context {
         }
     }
 
+    /// Records a parked question.
+    pub fn set_pending_question(&mut self, pending: PendingQuestion) {
+        self.pending_question = Some(pending);
+    }
+
+    /// Resolves a parked question by id, clearing it. Returns the
+    /// [`ToolCallId`] it was asked on behalf of, or `None` if the id did not
+    /// match (a stale/duplicate answer arriving after resolution).
+    pub fn resolve_question(&mut self, question_id: QuestionId) -> Option<ToolCallId> {
+        match self.pending_question.take() {
+            Some(q) if q.question_id == question_id => Some(q.call_id),
+            other => {
+                self.pending_question = other;
+                None
+            }
+        }
+    }
+
     /// `true` if `capability` has been granted by the human.
     #[must_use]
     pub fn has_granted(&self, capability: ToolCapability) -> bool {
@@ -226,6 +267,34 @@ mod tests {
         });
         assert_eq!(ctx.approve(ApprovalId::new()), None);
         assert!(ctx.pending_approval.is_some());
+    }
+
+    #[test]
+    fn resolve_question_matching_id_returns_the_call_id_and_clears() {
+        let mut ctx = Context::new();
+        let question_id = QuestionId::new();
+        let call_id = ToolCallId::new();
+        ctx.set_pending_question(PendingQuestion {
+            question_id,
+            call_id,
+            prompt: "Which framework?".into(),
+            options: vec!["Axum".into(), "Actix".into()],
+        });
+        assert_eq!(ctx.resolve_question(question_id), Some(call_id));
+        assert!(ctx.pending_question.is_none());
+    }
+
+    #[test]
+    fn resolve_question_wrong_id_keeps_pending() {
+        let mut ctx = Context::new();
+        ctx.set_pending_question(PendingQuestion {
+            question_id: QuestionId::new(),
+            call_id: ToolCallId::new(),
+            prompt: "x".into(),
+            options: vec![],
+        });
+        assert_eq!(ctx.resolve_question(QuestionId::new()), None);
+        assert!(ctx.pending_question.is_some());
     }
 
     #[test]

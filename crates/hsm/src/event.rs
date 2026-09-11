@@ -20,7 +20,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ids::{ApprovalId, TimerId, ToolCallId};
+use crate::ids::{ApprovalId, QuestionId, TimerId, ToolCallId};
 use crate::permissions::ToolCapability;
 
 /// A single tool call proposed by the LLM in a `LlmTurnComplete` event.
@@ -158,6 +158,35 @@ pub enum Event {
         approval_id: ApprovalId,
     },
 
+    /// A tool call cannot be resolved without asking a human, and the answer
+    /// may not arrive for a while - the run must park rather than block.
+    ///
+    /// Emitted by an executor in place of `ToolSucceeded`/`ToolFailed` when a
+    /// tool (e.g. `ask_question`) has no conclusive answer of its own. The
+    /// machine removes `call_id` from its pending set (it will not produce a
+    /// `ToolSucceeded`), records a [`crate::context::PendingQuestion`], and
+    /// emits `Effect::RequestHumanAnswer`. Unlike tool approval, resolving
+    /// this does **not** re-run anything: the answer *is* the tool result, so
+    /// the executor that later posts `HumanAnswered` is responsible for
+    /// appending it as the tool-result message before posting the event -
+    /// the machine only resumes the loop.
+    QuestionAsked {
+        /// Matches the [`ToolCallId`] of the pending `CallTool` effect.
+        call_id: ToolCallId,
+        /// The question text shown to the human.
+        prompt: String,
+        /// Offered choices, if any (empty for a free-form question).
+        options: Vec<String>,
+    },
+    /// A human answered a previously parked question.
+    HumanAnswered {
+        /// Matches the [`QuestionId`] of the originating `QuestionAsked`.
+        question_id: QuestionId,
+        /// The human's answer, already appended to the thread as this call's
+        /// tool-result message by whoever posts this event.
+        answer: String,
+    },
+
     /// A scheduled timer elapsed.
     Timeout {
         /// Matches the [`TimerId`] of the originating `ScheduleTimeout` effect.
@@ -268,6 +297,8 @@ impl Event {
             Event::ToolApprovalRequired { .. } => EventKind::ToolApprovalRequired,
             Event::HumanApproved { .. } => EventKind::HumanApproved,
             Event::HumanRejected { .. } => EventKind::HumanRejected,
+            Event::QuestionAsked { .. } => EventKind::QuestionAsked,
+            Event::HumanAnswered { .. } => EventKind::HumanAnswered,
             Event::Timeout { .. } => EventKind::Timeout,
             Event::Internal(InternalEvent::Entry) => EventKind::Entry,
             Event::Internal(InternalEvent::Exit) => EventKind::Exit,
@@ -317,6 +348,10 @@ pub enum EventKind {
     HumanApproved,
     /// See [`Event::HumanRejected`].
     HumanRejected,
+    /// See [`Event::QuestionAsked`].
+    QuestionAsked,
+    /// See [`Event::HumanAnswered`].
+    HumanAnswered,
     /// See [`Event::Timeout`].
     Timeout,
     /// Reserved entry signal.
