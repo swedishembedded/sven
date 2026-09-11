@@ -27,6 +27,7 @@
 use serde_json::Value;
 
 pub mod provenance;
+pub mod verify;
 
 use provenance::FactSource;
 
