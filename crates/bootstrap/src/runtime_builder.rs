@@ -679,6 +679,35 @@ impl RuntimeBuilder {
         // ── User/approval channels ────────────────────────────────────────────
         let (question_tx, question_rx) = mpsc::channel::<UserQuestion>(16);
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalRequest>(16);
+        // A parked question's durable record is the same regardless of which
+        // surface is driving this session (TUI, headless, ACP), unlike
+        // question_tx/approval_tx above (which need a UI to actually collect
+        // a reply) - so the drain lives here, once, rather than being pushed
+        // out to every surface to wire up itself.
+        #[cfg(feature = "memory")]
+        let (parked_tx, mut parked_rx) = sven_executors::UserExecutor::parked_channel(16);
+        #[cfg(feature = "memory")]
+        tokio::spawn(async move {
+            let ledger = sven_memory::QuestionLedger::at_default_path();
+            while let Some(q) = parked_rx.recv().await {
+                let asked_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                if let Err(err) = ledger.record_asked(&sven_memory::QuestionAskedRecord {
+                    question_id: q.question_id,
+                    call_id: q.call_id,
+                    prompt: q.prompt,
+                    options: q.options,
+                    asked_at,
+                }) {
+                    tracing::warn!(
+                        error = %err,
+                        "failed to record a parked question; it will not appear in `sven questions list`"
+                    );
+                }
+            }
+        });
 
         // ── Audit log path ────────────────────────────────────────────────────
         let audit_log_path: PathBuf = self
@@ -757,11 +786,12 @@ impl RuntimeBuilder {
         let executor: Box<dyn EffectExecutor> = match self.effect_executor {
             Some(custom) => custom,
             None => {
+                let user_executor = sven_executors::UserExecutor::new(question_tx, approval_tx)
+                    .with_knowledge_approvals(knowledge_approvals);
+                #[cfg(feature = "memory")]
+                let user_executor = user_executor.with_parked_questions(parked_tx);
                 let base = CompositeExecutorBuilder::default()
-                    .with_user_slot(Box::new(
-                        sven_executors::UserExecutor::new(question_tx, approval_tx)
-                            .with_knowledge_approvals(knowledge_approvals),
-                    ))
+                    .with_user_slot(Box::new(user_executor))
                     .with_timers(Arc::new(sven_kernel::SystemClock::new()))
                     .with_checkpoints(checkpoint_dir)
                     .with_audit_trail(audit_log_path, audit_trail.clone())
