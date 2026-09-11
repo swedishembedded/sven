@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use sven_config::AgentMode;
 use sven_hsm::ToolCapability;
-pub use sven_vocab::{OutputCategory, ToolCall, ToolOutput, ToolOutputPart};
+pub use sven_vocab::{OutputCategory, ParkedAnswer, ToolCall, ToolOutput, ToolOutputPart};
 
 use crate::policy::ApprovalPolicy;
 

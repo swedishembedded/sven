@@ -32,7 +32,8 @@ pub struct QuestionRequest {
 ///
 /// In TUI mode a `question_tx` channel is provided; the tool sends a
 /// [`QuestionRequest`] and awaits the answer from the UI.  In plain terminal
-/// mode stdin must be a TTY; in headless/CI mode the tool returns an error.
+/// mode stdin must be a TTY; in headless/CI mode the tool parks instead of
+/// blocking or guessing - see [`sven_vocab::ParkedAnswer`].
 pub struct AskQuestionTool {
     /// When set, routes questions to the TUI instead of reading from stdin.
     question_tx: Option<mpsc::Sender<QuestionRequest>>,
@@ -82,7 +83,8 @@ impl Tool for AskQuestionTool {
         "Present structured multiple-choice questions to the user and collect responses.\n\
          Each question: prompt, options (≥2). allow_multiple: false by default.\n\
          Do NOT include 'Other' in options - it is always appended automatically.\n\
-         Unavailable in headless/CI/piped mode - returns an error there.\n\
+         In headless/CI/piped mode this parks rather than answering immediately:\n\
+         the run pauses until a human answers out of band, however long that takes.\n\
          Use for decisions requiring explicit choice; for yes/no just ask directly in text."
     }
 
@@ -226,36 +228,32 @@ impl Tool for AskQuestionTool {
         }
 
         // ── Plain terminal / headless mode ────────────────────────────────────
+        // Cannot be answered synchronously - and must not be guessed at either
+        // (a fabricated "proceed with your best judgement" answer is exactly
+        // the self-grading failure mode this tool must not enable). Park it:
+        // the run stops advancing on this call, `Event::QuestionAsked` records
+        // why, and it resumes only from a real `Event::HumanAnswered`, however
+        // long that takes. See `sven_hsm::event::Event::QuestionAsked`.
         if self.force_headless || !stdin_is_tty() {
-            let question_list = questions
-                .iter()
-                .enumerate()
-                .map(|(i, q)| {
-                    let opts = q
-                        .options
+            // The parking primitive carries one prompt/one option set (see
+            // `Effect::RequestHumanAnswer`) - the same reasoning
+            // `choice_or_stated` already applies to provenance: only a single
+            // question can honestly carry its own options through. Multiple
+            // questions are combined into one free-form prompt instead of
+            // silently answering only the first.
+            let (prompt, options) = match questions.as_slice() {
+                [only] => (only.prompt.clone(), only.options.clone()),
+                many => {
+                    let combined = many
                         .iter()
                         .enumerate()
-                        .map(|(j, opt)| format!("    {}. {}", j + 1, opt))
+                        .map(|(i, q)| format!("{}. {}", i + 1, q.prompt))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    format!(
-                        "  {}. {}\n{}\n    {}. Other",
-                        i + 1,
-                        q.prompt,
-                        opts,
-                        q.options.len() + 1
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            return ToolOutput::err(
-                &call.id,
-                format!(
-                    "ask_question is unavailable in non-interactive (headless/CI/piped) mode.\n\
-                     The following questions could not be answered:\n{question_list}\n\
-                     Proceed with your best judgement and state your assumptions clearly."
-                ),
-            );
+                    (combined, Vec::new())
+                }
+            };
+            return ToolOutput::parked(&call.id, prompt, options);
         }
 
         eprintln!();
@@ -458,10 +456,12 @@ mod tests {
         assert!(out.content.contains("at most 3"));
     }
 
-    /// In headless/CI mode the tool must return a descriptive error rather than
-    /// blocking forever waiting for interactive input.
+    /// In headless/CI mode the tool must park rather than block forever
+    /// waiting for interactive input - and, just as importantly, rather than
+    /// fabricate an answer. A single question keeps its own options through
+    /// the park.
     #[tokio::test]
-    async fn headless_mode_returns_error_with_question_list() {
+    async fn headless_mode_parks_a_single_question_with_its_options() {
         use sven_tool_api::tool::ToolCall;
         use serde_json::json;
 
@@ -474,20 +474,47 @@ mod tests {
             args: json!({
                 "questions": [
                     { "prompt": "What language?", "options": ["Rust", "Python", "Go"] },
+                ]
+            }),
+        };
+        let out = t.execute(&call).await;
+        assert!(!out.is_error, "a parked call has not failed - it has not concluded");
+        let parked = out.parked.expect("headless mode must park, not guess");
+        assert_eq!(parked.prompt, "What language?");
+        assert_eq!(parked.options, vec!["Rust".to_string(), "Python".to_string(), "Go".to_string()]);
+        assert!(
+            out.provenance.is_none(),
+            "no answer was ever given, so there is nothing to attribute to the user"
+        );
+    }
+
+    /// Multiple questions cannot each keep their own options through a single
+    /// parked call (the primitive carries one prompt/one option set) - they
+    /// are combined into one free-form prompt instead of silently answering
+    /// only the first and discarding the rest.
+    #[tokio::test]
+    async fn headless_mode_parks_multiple_questions_as_one_combined_free_form_prompt() {
+        use sven_tool_api::tool::ToolCall;
+        use serde_json::json;
+
+        let t = AskQuestionTool::new_headless();
+        let call = ToolCall {
+            id: "1".into(),
+            name: "ask_question".into(),
+            args: json!({
+                "questions": [
+                    { "prompt": "What language?", "options": ["Rust", "Python", "Go"] },
                     { "prompt": "What framework?", "options": ["Axum", "Actix", "Rocket"] },
                 ]
             }),
         };
         let out = t.execute(&call).await;
-        // In non-TTY (test) environments the tool must fail gracefully.
-        assert!(out.is_error);
-        assert!(out.content.contains("non-interactive"));
-        assert!(out.content.contains("What language?"));
-        assert!(out.content.contains("What framework?"));
-        assert!(out.content.contains("best judgement"));
+        let parked = out.parked.expect("headless mode must park, not guess");
+        assert!(parked.prompt.contains("What language?"));
+        assert!(parked.prompt.contains("What framework?"));
         assert!(
-            out.provenance.is_none(),
-            "no answer was ever given, so there is nothing to attribute to the user"
+            parked.options.is_empty(),
+            "a combined multi-question prompt cannot honestly carry either question's own options"
         );
     }
 

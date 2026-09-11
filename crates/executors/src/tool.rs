@@ -281,6 +281,23 @@ impl EffectExecutor for ToolExecutor {
                 }
             };
 
+            // A parked output has not concluded - it must not be treated as a
+            // result at all. No UiEvent, no provenance, no thread-append: the
+            // call is still pending, exactly as if it had never returned.
+            // `Event::QuestionAsked` is where `loop_core` removes it from the
+            // pending set and parks the loop; only `Event::HumanAnswered`,
+            // arriving out of band, can move it forward from here.
+            if let Some(parked) = output.parked {
+                let _ = sink
+                    .emit(Event::QuestionAsked {
+                        call_id,
+                        prompt: parked.prompt,
+                        options: parked.options,
+                    })
+                    .await;
+                return;
+            }
+
             // Emit the outward completion observation so headless / UI observers
             // can render the tool result. This mirrors `UiEvent::ToolStarted`
             // (emitted by the turn stream) and carries no inward semantics — the
@@ -537,6 +554,63 @@ mod tests {
         let kind = run_tool_effect(&mut exec, effect).await;
         assert_eq!(kind, "ToolSucceeded");
         assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    // ── parked outputs ───────────────────────────────────────────────────────
+
+    /// A registered tool that always parks instead of answering.
+    struct ParkingTool;
+
+    #[async_trait::async_trait]
+    impl sven_tools::Tool for ParkingTool {
+        fn name(&self) -> &str {
+            "parking"
+        }
+        fn description(&self) -> &str {
+            "test-only tool that always parks"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        fn default_policy(&self) -> sven_tools::ApprovalPolicy {
+            sven_tools::ApprovalPolicy::Auto
+        }
+        async fn execute(&self, call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
+            sven_tools::ToolOutput::parked(call.id.clone(), "Which framework?", vec!["Axum".into()])
+        }
+    }
+
+    #[tokio::test]
+    async fn a_parked_output_emits_question_asked_not_tool_succeeded() {
+        let mut registry = ToolRegistry::new();
+        registry.register(ParkingTool);
+        let mut exec = ToolExecutor::unrestricted(Arc::new(registry));
+
+        let effect = Effect::CallTool {
+            call_id: ToolCallId::new(),
+            name: "parking".into(),
+            capability: ToolCapability::ReadFile,
+            args: serde_json::Value::Null,
+        };
+        let kind = run_tool_effect(&mut exec, effect).await;
+        assert_eq!(kind, "QuestionAsked");
+    }
+
+    #[tokio::test]
+    async fn a_parked_output_is_not_appended_to_the_conversation_thread() {
+        let mut registry = ToolRegistry::new();
+        registry.register(ParkingTool);
+        let mut exec = ToolExecutor::unrestricted(Arc::new(registry));
+        let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
+        let call_id = ToolCallId::new();
+
+        let content =
+            run_tool_effect_and_get_stored_content(&mut exec, Arc::clone(&store), "chat", call_id, "parking")
+                .await;
+        assert_eq!(
+            content, "",
+            "a parked call has not concluded and must not appear as a tool result yet: {content:?}"
+        );
     }
 
     // ── provenance_sink wiring ────────────────────────────────────────────────

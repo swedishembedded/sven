@@ -91,6 +91,28 @@ pub struct ToolOutput {
     /// `ToolOutput` (most of which never attach provenance at all) would
     /// otherwise pay for the largest variant's size.
     pub provenance: Option<Box<FactSource>>,
+    /// Set instead of a real result when the tool cannot produce one without
+    /// asking a human, and the answer may not arrive soon - see
+    /// [`Self::parked`]. `content`/`is_error` carry no meaning on a parked
+    /// output; a caller must check this field first.
+    ///
+    /// Boxed for the same reason as `provenance`: most `ToolOutput`s are
+    /// never parked, so they shouldn't pay for `ParkedAnswer`'s size (it
+    /// pushed the unboxed struct over clippy's `result_large_err` threshold).
+    pub parked: Option<Box<ParkedAnswer>>,
+}
+
+/// A question a tool could not answer itself, parked for a human.
+///
+/// Distinct from returning an error: an error says the call failed, while a
+/// parked output says the call has not concluded *yet* and must not be
+/// scored, retried, or treated as a completed turn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParkedAnswer {
+    /// The question text shown to the human.
+    pub prompt: String,
+    /// Offered choices, if any (empty for a free-form question).
+    pub options: Vec<String>,
 }
 
 impl ToolOutput {
@@ -104,6 +126,7 @@ impl ToolOutput {
             parts: vec![ToolOutputPart::Text(text)],
             is_error: false,
             provenance: None,
+            parked: None,
         }
     }
 
@@ -117,6 +140,24 @@ impl ToolOutput {
             parts: vec![ToolOutputPart::Text(text)],
             is_error: true,
             provenance: None,
+            parked: None,
+        }
+    }
+
+    /// The call cannot be answered without a human, and the answer may not
+    /// arrive soon. `content`/`parts`/`is_error` are set to an explanatory
+    /// placeholder for any caller that has not been updated to check
+    /// [`Self::parked`] first (never read on the parking path itself).
+    pub fn parked(call_id: impl Into<String>, prompt: impl Into<String>, options: Vec<String>) -> Self {
+        let prompt = prompt.into();
+        let placeholder = format!("(parked pending a human answer: {prompt})");
+        Self {
+            call_id: call_id.into(),
+            content: placeholder.clone(),
+            parts: vec![ToolOutputPart::Text(placeholder)],
+            is_error: false,
+            provenance: None,
+            parked: Some(Box::new(ParkedAnswer { prompt, options })),
         }
     }
 
@@ -146,6 +187,7 @@ impl ToolOutput {
             parts,
             is_error: false,
             provenance: None,
+            parked: None,
         }
     }
 
@@ -181,6 +223,28 @@ mod tool_output_tests {
     fn with_provenance_attaches_the_given_fact_source() {
         let out = ToolOutput::ok("c1", "hi").with_provenance(FactSource::UserStated);
         assert_eq!(out.provenance, Some(Box::new(FactSource::UserStated)));
+    }
+
+    #[test]
+    fn parked_carries_the_question_and_is_not_an_error() {
+        let out = ToolOutput::parked("c1", "Which framework?", vec!["Axum".into(), "Actix".into()]);
+        assert!(!out.is_error, "a parked call has not failed - it has not concluded");
+        assert_eq!(
+            out.parked,
+            Some(Box::new(ParkedAnswer {
+                prompt: "Which framework?".into(),
+                options: vec!["Axum".into(), "Actix".into()],
+            }))
+        );
+    }
+
+    #[test]
+    fn ok_err_and_with_parts_are_never_parked() {
+        assert!(ToolOutput::ok("c1", "hi").parked.is_none());
+        assert!(ToolOutput::err("c1", "boom").parked.is_none());
+        assert!(ToolOutput::with_parts("c1", vec![ToolOutputPart::Text("hi".into())])
+            .parked
+            .is_none());
     }
 }
 

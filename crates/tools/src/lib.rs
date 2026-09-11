@@ -37,6 +37,7 @@ pub use policy::{ApprovalPolicy, PermissionRequester, RolePolicy, ToolPolicy};
 pub use registry::{SharedToolDisplays, SharedTools, ToolRegistry, ToolSchema};
 pub use sven_hsm::ToolCapability;
 pub use tool::{
-    OutputCategory, Tool, ToolCall, ToolDisplay, ToolDisplayRegistry, ToolOutput, ToolOutputPart,
+    OutputCategory, ParkedAnswer, Tool, ToolCall, ToolDisplay, ToolDisplayRegistry, ToolOutput,
+    ToolOutputPart,
 };
 pub use tool_summary::{shorten_path, tool_category, tool_icon, tool_smart_summary};
