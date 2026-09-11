@@ -48,6 +48,7 @@ pub mod timer;
 pub mod tool;
 pub mod turn;
 pub mod user;
+pub mod verify;
 
 // Re-exports
 pub use audit::{

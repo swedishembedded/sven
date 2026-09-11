@@ -21,6 +21,10 @@ tokio         = { workspace = true }
 chrono        = { workspace = true }
 async-trait   = { workspace = true }
 tracing       = { workspace = true }
+# VerifierSpec::{FileHash, HttpPredicate} evaluation.
+sha2          = { workspace = true }
+hex           = { workspace = true }
+reqwest       = { workspace = true }
 
 [dev-dependencies]
 tokio      = { workspace = true }
