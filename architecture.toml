@@ -227,7 +227,7 @@ path = "crates/mcp-client/src/oauth.rs"
 lines = 1430
 [[allow.large_file]]
 path = "crates/ci/src/runner/mod.rs"
-lines = 1418
+lines = 1423
 [[allow.large_file]]
 path = "crates/tools-ctx/tests/context_integration.rs"
 lines = 1418

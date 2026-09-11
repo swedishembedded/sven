@@ -35,7 +35,9 @@ use crate::output::{
     finalise_stdout, format_token_usage_line, tool_output_snippet, write_progress, write_stderr,
     write_stdout,
 };
-use crate::runner::{EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_SUCCESS, EXIT_TIMEOUT};
+use crate::runner::{
+    EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_NEEDS_HUMAN, EXIT_SUCCESS, EXIT_TIMEOUT,
+};
 
 // ── RuntimeRunner ─────────────────────────────────────────────────────────────
 
@@ -361,6 +363,14 @@ fn conclusion_for(exit: i32) -> RunConclusion {
     }
 }
 
+/// `false` only for [`EXIT_NEEDS_HUMAN`]: a parked run must leave
+/// `final_metrics.extra.reward` absent (unknown), never stamp a reward -
+/// including `0.0`, which would read back as a real failure rather than
+/// "still pending". Every other exit code concludes normally.
+fn should_stamp_reward(exit: i32) -> bool {
+    exit != EXIT_NEEDS_HUMAN
+}
+
 /// Write this run's ATIF trajectory to the project auto-log, stamped with the
 /// reward its outcome earned.
 ///
@@ -377,7 +387,6 @@ fn write_trajectory(state: CiOutState, exit: i32, config: &Config, mode: &str) {
     let Some(path) = sven_workspace::resolve_auto_log_path() else {
         return;
     };
-    let reward = state.outcome.conclude(conclusion_for(exit));
 
     let agent = trace_session::default_agent_profile()
         .with_model(format!("{}/{}", config.model.provider, config.model.name));
@@ -388,7 +397,19 @@ fn write_trajectory(state: CiOutState, exit: i32, config: &Config, mode: &str) {
     let mut meta = SvenSessionMeta::new(make_title(&state.prompt));
     meta.mode = Some(mode.to_string());
     meta.apply_to_trajectory(&mut trajectory);
-    apply_reward_to_trajectory(&mut trajectory, &reward);
+
+    // A parked run has not concluded - it is neither a success nor a
+    // failure, it is still pending. Stamping any reward here (even 0.0)
+    // would be indistinguishable from a real failure to the trainer that
+    // reads it; leaving `final_metrics.extra.reward` absent is what the
+    // wire contract already treats as "outcome unknown, skip" (see
+    // `sven_session_store::reward`'s module doc). The steps recorded so far
+    // are still written, so `--resume` has the full history to continue
+    // from once a human answers.
+    if should_stamp_reward(exit) {
+        let reward = state.outcome.conclude(conclusion_for(exit));
+        apply_reward_to_trajectory(&mut trajectory, &reward);
+    }
 
     match atif::persist::write_trajectory_atomic(&path, &trajectory, None) {
         Ok(()) => write_progress(&format!("[sven:trace] Trace written to {}", path.display())),
@@ -707,14 +728,28 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                 "[sven:subagent:delegate_summary] to=\"{to_name}\" task={task_title:?} status=\"{status}\" duration_ms={duration_ms} result_preview={result_preview:?}"
             ));
         }
-        // Question/QuestionAnswer never fire in headless mode (the session
-        // runs under an auto-approve gate); TitleGenerated has no headless
-        // stdout/stderr representation.
-        UiEvent::CollabEvent(_)
-        | UiEvent::PeerList(_)
-        | UiEvent::Question { .. }
-        | UiEvent::QuestionAnswer { .. }
-        | UiEvent::TitleGenerated(_) => {}
+        // A tool call parked awaiting a human answer (see
+        // `ToolExecutor`'s parking branch). Not a failure and not a
+        // success - the run stops here, unscored, so it can be resumed
+        // once a human answers (see `sven questions` / `EXIT_NEEDS_HUMAN`).
+        // `id`/`questions` are already in `[sven:questions]`-shaped text on
+        // stderr for a human watching the run live; the ledger record (with
+        // the matching `question_id` to answer by) is written separately by
+        // whatever drains `UserExecutor`'s parked-question channel.
+        UiEvent::Question { id, questions } => {
+            write_stderr(&format!(
+                "[sven:questions:parked] id={id} {}",
+                questions.join(" | ")
+            ));
+            close_sven_section(state);
+            finalise_stdout(&state.streamed_text);
+            print_total_usage(state);
+            return Some(EXIT_NEEDS_HUMAN);
+        }
+        // QuestionAnswer never fires in headless mode (nothing here ever
+        // posts an answer back through this event); TitleGenerated has no
+        // headless stdout/stderr representation.
+        UiEvent::CollabEvent(_) | UiEvent::PeerList(_) | UiEvent::QuestionAnswer { .. } | UiEvent::TitleGenerated(_) => {}
     }
     None
 }
@@ -990,6 +1025,37 @@ mod tests {
         assert_eq!(conclusion_for(EXIT_AGENT_ERROR), RunConclusion::AgentError);
         // Anything unexpected is a failure, never a silent success.
         assert_eq!(conclusion_for(42), RunConclusion::AgentError);
+    }
+
+    #[test]
+    fn only_needs_human_skips_reward_stamping() {
+        assert!(!should_stamp_reward(EXIT_NEEDS_HUMAN));
+        for exit in [
+            EXIT_SUCCESS,
+            EXIT_AGENT_ERROR,
+            EXIT_TIMEOUT,
+            EXIT_BUDGET_EXHAUSTED,
+            42,
+        ] {
+            assert!(should_stamp_reward(exit), "exit {exit} must still conclude normally");
+        }
+    }
+
+    #[test]
+    fn a_parked_question_stops_the_run_unscored_not_failed() {
+        let mut st = state(0);
+        let r = handle_ui_event(
+            UiEvent::Question {
+                id: "call-1".into(),
+                questions: vec!["Which framework?".into()],
+            },
+            &mut st,
+        );
+        assert_eq!(
+            r,
+            Some(EXIT_NEEDS_HUMAN),
+            "a parked question must stop the run distinctly from success or failure"
+        );
     }
 
     #[test]

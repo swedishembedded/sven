@@ -288,6 +288,16 @@ impl EffectExecutor for ToolExecutor {
             // pending set and parks the loop; only `Event::HumanAnswered`,
             // arriving out of band, can move it forward from here.
             if let Some(parked) = output.parked {
+                // Outward signal first: `UiEvent::Question` (a variant that
+                // has otherwise never been constructed - see its match arms
+                // across the TUI/CI/ACP frontends, all currently no-ops)
+                // already reaches every consumer, so reusing it is what lets
+                // a headless run recognise "parked" and stop waiting instead
+                // of running until its timeout, with zero new frontend wiring.
+                obs.emit(UiEvent::Question {
+                    id: display_id,
+                    questions: vec![parked.prompt.clone()],
+                });
                 let _ = sink
                     .emit(Event::QuestionAsked {
                         call_id,

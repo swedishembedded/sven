@@ -51,6 +51,11 @@ pub const EXIT_VALIDATION_ERROR: i32 = 2;
 pub const EXIT_TOOL_WARNINGS: i32 = 3;
 /// The token budget set via `--max-tokens` was exhausted before all steps completed.
 pub const EXIT_BUDGET_EXHAUSTED: i32 = 4;
+/// A tool call parked awaiting a human answer that did not arrive during this
+/// run (see `Event::QuestionAsked`). Not a failure: the trajectory is left
+/// unscored (no reward stamped) rather than concluded, so it can be resumed
+/// once a human answers - see `sven questions`.
+pub const EXIT_NEEDS_HUMAN: i32 = 5;
 pub const EXIT_TIMEOUT: i32 = 124;
 pub const EXIT_INTERRUPT: i32 = 130;
 
