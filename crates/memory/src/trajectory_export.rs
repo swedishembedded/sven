@@ -9,7 +9,7 @@
 //! facts. Nothing trains it to get better at completing tasks - and sven
 //! already records exactly the data that would: every headless/CI run is
 //! stamped, on conclusion, with a real outcome
-//! (`sven_session_store::reward::apply_reward_to_trajectory`,
+//! (`sven_session_store::reward::apply_outcome_to_trajectory`,
 //! `final_metrics.extra.reward`), and every step already carries the
 //! trainable/context mask a fact-only curriculum never needed
 //! (`atif::Trajectory::sft_steps`, `TraceStep::is_excluded_from_sft`).
@@ -270,9 +270,11 @@ mod tests {
         agent_step.observation = Some(StepObservation::single(atif::ObservationEntry::for_call("call-1", "a.txt\nb.txt")));
         t.steps.push(agent_step);
         if let Some(r) = reward {
-            sven_session_store::reward::apply_reward_to_trajectory(
+            sven_session_store::reward::apply_outcome_to_trajectory(
                 &mut t,
-                &sven_session_store::reward::SessionReward { reward: r, outcome: "success", tool_calls: 1, tool_errors: 0 },
+                &sven_session_store::reward::SessionOutcome::Scored(
+                    sven_session_store::reward::SessionReward { reward: r, outcome: "verified_success", tool_calls: 1, tool_errors: 0 },
+                ),
             );
         }
         t

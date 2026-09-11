@@ -28,7 +28,7 @@ use sven_hsm::{Event, UiEvent};
 use sven_kernel::EventSink;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
-use sven_session_store::{apply_reward_to_trajectory, make_title, OutcomeFold, RunConclusion};
+use sven_session_store::{apply_outcome_to_trajectory, make_title, OutcomeFold, RunConclusion};
 use sven_tools::ToolCall;
 
 use crate::output::{
@@ -405,10 +405,19 @@ fn write_trajectory(state: CiOutState, exit: i32, config: &Config, mode: &str) {
     // wire contract already treats as "outcome unknown, skip" (see
     // `sven_session_store::reward`'s module doc). The steps recorded so far
     // are still written, so `--resume` has the full history to continue
-    // from once a human answers.
+    // from once a human answers. `conclusion_for` has no mapping for
+    // EXIT_NEEDS_HUMAN (it would otherwise fall into the `AgentError`
+    // bucket, a *confident* failure - wrong for a run that is merely
+    // pending), so this guard stays even though `conclude` below already
+    // treats an unverified claim as unknown on its own.
+    //
+    // No verifier exists yet (a real `Verdict` is Stage 3's job), so every
+    // claimed success here is honestly unverified - `conclude` reflects
+    // that as `SessionOutcome::Unknown` rather than the mechanical `1.0`
+    // this runner used to stamp.
     if should_stamp_reward(exit) {
-        let reward = state.outcome.conclude(conclusion_for(exit));
-        apply_reward_to_trajectory(&mut trajectory, &reward);
+        let outcome = state.outcome.conclude(conclusion_for(exit), None);
+        apply_outcome_to_trajectory(&mut trajectory, &outcome);
     }
 
     match atif::persist::write_trajectory_atomic(&path, &trajectory, None) {
@@ -1004,14 +1013,19 @@ mod tests {
         assert!(!st.had_error);
         let r = handle_ui_event(UiEvent::TurnComplete, &mut st);
         assert_eq!(r, Some(EXIT_SUCCESS));
-        // ... but it does grade the reward down, without changing the verdict.
-        let reward = st.outcome.conclude(conclusion_for(EXIT_SUCCESS));
+        // ... but it does grade a verified success's reward down.
+        let outcome = st
+            .outcome
+            .conclude(conclusion_for(EXIT_SUCCESS), Some(sven_session_store::Verdict::Passed));
+        let sven_session_store::SessionOutcome::Scored(reward) = outcome else {
+            panic!("expected Scored, got {outcome:?}");
+        };
         assert!(
             reward.reward > 0.0 && reward.reward < 1.0,
             "graded reward expected, got {}",
             reward.reward
         );
-        assert_eq!(reward.outcome, "success_with_tool_errors");
+        assert_eq!(reward.outcome, "verified_success");
     }
 
     #[test]
@@ -1070,7 +1084,10 @@ mod tests {
             &mut st,
         );
         assert_eq!(r, Some(EXIT_SUCCESS));
-        let reward = st.outcome.conclude(conclusion_for(EXIT_SUCCESS));
+        let outcome = st.outcome.conclude(conclusion_for(EXIT_SUCCESS), None);
+        let sven_session_store::SessionOutcome::Scored(reward) = outcome else {
+            panic!("an observed abort must score confidently, got {outcome:?}");
+        };
         assert_eq!(reward.reward, 0.0);
         assert_eq!(reward.outcome, "cancelled");
     }

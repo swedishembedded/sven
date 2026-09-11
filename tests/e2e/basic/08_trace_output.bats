@@ -319,10 +319,18 @@ assert child_id in resolved, (child_id, resolved)
 # ── Reward stamping ───────────────────────────────────────────────────────────
 # A concluded trajectory carries `final_metrics.extra.reward`, the per-session
 # training weight an external trajectory consumer reads. Absent means "outcome
-# unknown" and the trajectory is skipped, so these tests pin PRESENCE as much
-# as value.
+# unknown" and the trajectory is skipped, so these tests pin PRESENCE (and,
+# just as importantly, ABSENCE) as much as value.
+#
+# A run the surface itself observed to fail (agent error, timeout, budget
+# exhausted) is scored confidently - see 08.37 and 06.* below. A *claimed*
+# success is different: with no verifier to back it up (none exists yet),
+# `sven` cannot honestly tell a real success from an agent that just said
+# "Done!" - so it stamps no reward at all, only a diagnostic reason. This is
+# the actual point of the rework, not a regression: a claimed success used to
+# score a confident 1.0 with nothing behind it.
 
-@test "08.33 a concluded trace stamps final_metrics.extra.reward" {
+@test "08.33 an unverified success stamps no reward, only the unknown reason" {
     local trace_file
     trace_file="$(tmp_file)"
     run bash -c 'echo "ping" | "$BIN" --headless --model mock --output-trace "$1"' -- "${trace_file}"
@@ -330,18 +338,16 @@ assert child_id in resolved, (child_id, resolved)
 import json, sys
 d = json.load(open(sys.argv[1]))
 extra = d['final_metrics']['extra']
-r = extra['reward']
-assert isinstance(r, (int, float)) and not isinstance(r, bool), type(r)
-assert 0.0 <= r <= 1.0, r
-assert r == 1.0, r
-assert extra['outcome'] == 'success', extra
+assert 'reward' not in extra, extra
+assert extra['sven_outcome_unknown_reason'] == 'no_verifier', extra
 " "${trace_file}"
     [ "${status}" -eq 0 ]
     rm -f "${trace_file}"
 }
 
-@test "08.34 tool errors grade the reward below 1.0 rather than zeroing it" {
-    # The run still reached its conclusion, so it is scored - just worth less.
+@test "08.34 tool errors do not change an unverified success's unscored outcome" {
+    # A claimed success is unscored regardless of how it went - the missing
+    # verifier, not the tool-error count, is what makes it unknown.
     # Exit 3 is EXIT_TOOL_WARNINGS: a warning, not an agent failure.
     local trace_file
     trace_file="$(tmp_file)"
@@ -350,9 +356,8 @@ assert extra['outcome'] == 'success', extra
     run python3 -c "
 import json, sys
 extra = json.load(open(sys.argv[1]))['final_metrics']['extra']
-assert 0.0 < extra['reward'] < 1.0, extra
-assert extra['outcome'] == 'success_with_tool_errors', extra
-assert extra['tool_errors'] >= 1, extra
+assert 'reward' not in extra, extra
+assert extra['sven_outcome_unknown_reason'] == 'no_verifier', extra
 " "${trace_file}"
     [ "${status}" -eq 0 ]
     rm -f "${trace_file}"
@@ -361,10 +366,13 @@ assert extra['tool_errors'] >= 1, extra
 @test "08.35 the reward reads back through the exact consumer lookup path" {
     # Mirrors the consumer's reader byte-for-byte: four plain key lookups and a
     # float coercion, with no schema types involved. A renamed key or a
-    # non-finite number (which serialises as null) fails here.
+    # non-finite number (which serialises as null) fails here. Needs a
+    # scenario that actually produces a Scored outcome - an observed failure,
+    # since a claimed success alone (see 08.33) is never scored without a
+    # verifier. `--max-tokens 1` reuses 08.37's reliable budget-exhausted path.
     local trace_file
     trace_file="$(tmp_file)"
-    run bash -c 'echo "ping" | "$BIN" --headless --model mock --output-trace "$1"' -- "${trace_file}"
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --max-tokens 1 --output-trace "$1"' -- "${trace_file}"
     run python3 -c "
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -375,10 +383,12 @@ sys.exit(0 if isinstance(r, float) else 1)
     rm -f "${trace_file}"
 }
 
-@test "08.36 a plain headless run auto-logs a stamped trajectory into .sven/logs" {
+@test "08.36 a plain headless run auto-logs an unscored trajectory into .sven/logs" {
     # The default headless path (no --output-trace, no workflow flags) routes
     # to RuntimeRunner. It writes the project auto-log, so ordinary runs are
-    # recorded and ingestable, not just explicitly-traced ones.
+    # recorded and ingestable, not just explicitly-traced ones - "recorded"
+    # does not mean "scored": a plain claimed success has no verifier, so the
+    # auto-logged trajectory carries the full step history but no reward.
     local work_dir
     work_dir="$(tmp_file)"
     mkdir -p "${work_dir}/.sven"
@@ -389,7 +399,7 @@ import glob, json, sys
 files = glob.glob(sys.argv[1] + '/.sven/logs/*.atif.json')
 assert len(files) == 1, files
 d = json.load(open(files[0]))
-assert d['final_metrics']['extra']['reward'] == 1.0, d['final_metrics']
+assert 'reward' not in d['final_metrics']['extra'], d['final_metrics']
 assert any(s.get('message') == 'ping' for s in d['steps']), d['steps']
 " "${work_dir}"
     [ "${status}" -eq 0 ]
