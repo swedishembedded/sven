@@ -563,8 +563,11 @@ impl EffectExecutor for TurnExecutor {
                 let msg = format!(
                     "prompt (~{estimate} tokens) leaves no room for a response in this model's context \
                      (context {ctx} tokens, usable input budget {budget} tokens after reserving a minimal \
-                     response); reduce context or raise the server's capacity",
+                     response); reduce context or raise the server's capacity \
+                     [provider={provider} model={model}]",
                     ctx = context_window.unwrap_or(0),
+                    provider = model.name(),
+                    model = model.model_name(),
                 );
                 obs.emit(UiEvent::Error(msg.clone()));
                 let _ = sink.emit(Event::LlmFailed { error: msg }).await;

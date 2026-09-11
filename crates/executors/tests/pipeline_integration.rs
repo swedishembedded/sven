@@ -563,6 +563,15 @@ async fn oversized_prompt_fails_before_any_network_call() {
         events.iter().any(|e| matches!(e, UiEvent::Error(msg) if msg.contains("usable input budget"))),
         "an Error describing the budget rejection must be emitted: {events:?}"
     );
+    // The rejection must name which provider/model it came from - without
+    // this, "reduce context or raise the server's capacity" gives the user
+    // no way to know *which* server to act on, especially once more than one
+    // is configured (a `providers:` map, or a per-state model override).
+    assert!(
+        events.iter().any(|e| matches!(e, UiEvent::Error(msg)
+            if msg.contains("provider=capped") && msg.contains("model=capped"))),
+        "the budget error must name the provider and model it was rejected against: {events:?}"
+    );
     assert!(
         events.contains(&UiEvent::TurnComplete),
         "the turn must still terminate (not hang) after the budget rejection: {events:?}"

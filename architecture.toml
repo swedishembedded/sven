@@ -248,7 +248,7 @@ path = "crates/tui/src/app/chat_ops.rs"
 lines = 1164
 [[allow.large_file]]
 path = "crates/executors/tests/pipeline_integration.rs"
-lines = 1122
+lines = 1131
 [[allow.large_file]]
 path = "crates/kernel/src/lib.rs"
 lines = 1054
@@ -277,8 +277,8 @@ lines = 825
 path = "crates/tui/src/app/term_events.rs"
 lines = 814
 [[allow.large_file]]
+path = "crates/executors/src/turn.rs"
+lines = 812
+[[allow.large_file]]
 path = "crates/model-drivers/src/lib.rs"
 lines = 810
-[[allow.large_file]]
-path = "crates/executors/src/turn.rs"
-lines = 809
