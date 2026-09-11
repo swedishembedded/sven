@@ -138,17 +138,17 @@ impl RuntimeRunner {
         } else {
             opts.project_root
                 .as_ref()
-                .and_then(|r| sven_workspace::load_project_context_file_with_path(r))
+                .and_then(|r| sven_workspace::find_project_context_file(r))
         };
-        if let Some((path, _)) = &project_context {
+        if let Some(path) = &project_context {
             write_stderr(&format!(
-                "[sven:info] Project context file loaded from {}",
+                "[sven:info] Project context file found at {} (referenced, not auto-loaded)",
                 path.display()
             ));
         }
 
         let runtime_ctx = RuntimeContext {
-            project_context_file: project_context.map(|(_, content)| content),
+            project_context_file: project_context,
             append_system_prompt: opts.append_system_prompt.clone(),
             system_prompt_override: self.config.agent.system_prompt.clone(),
             no_system: opts.no_system,
