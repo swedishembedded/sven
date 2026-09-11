@@ -16,7 +16,7 @@ mod projection;
 pub use projection::{projection_to_session_state, MachineProjection};
 
 mod outcome;
-pub use outcome::{OutcomeFold, RunConclusion, SessionReward};
+pub use outcome::{OutcomeFold, RunConclusion, SessionOutcome, SessionReward, Verdict};
 
 mod conversation;
 pub use conversation::{

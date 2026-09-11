@@ -10,17 +10,31 @@
 //! SKIPPED — never defaulted — so a half-finished session is simply left
 //! unstamped rather than mis-scored.
 //!
-//! Two halves live here, both pure (no I/O, no clock):
+//! A run the surface or the event stream itself observed to have failed
+//! (an agent-error event, an abort, a non-success exit) is scored
+//! confidently — it does not need corroborating - but a *claimed* success
+//! proves nothing on its own: an agent that says "Done!" is not evidence the
+//! task was actually done. So a claimed success is only ever scored when a
+//! verifier's [`Verdict`] backs it up; absent one, [`OutcomeFold::conclude`]
+//! returns [`SessionOutcome::Unknown`] rather than a mechanically-assumed
+//! `1.0`. That is the actual fix here: the previous formula stamped a
+//! confident reward for a claim nothing had checked.
+//!
+//! Three parts live here, all pure (no I/O, no clock):
 //!
 //! * [`OutcomeFold`] — counts the outcome-bearing events a surface already
 //!   streams ([`SessionEvent::ToolCallFinished`], [`SessionEvent::Error`],
 //!   [`SessionEvent::Aborted`], …).
-//! * [`OutcomeFold::conclude`] — combines those counts with the
-//!   [`RunConclusion`] the *surface* knows (its exit code, essentially) into
-//!   a [`SessionReward`].
+//! * [`OutcomeFold::conclude`] — combines those counts, the [`RunConclusion`]
+//!   the *surface* knows (its exit code, essentially), and an optional
+//!   [`Verdict`] into a [`SessionOutcome`].
+//! * [`SessionOutcome`] — either a real, trainable [`SessionReward`], or an
+//!   honest [`SessionOutcome::Unknown`] admission that none is possible yet.
 //!
-//! Stamping the result onto a trajectory is deliberately NOT here: this crate
-//! knows nothing about ATIF. See `sven_session_store::apply_reward_to_trajectory`.
+//! Producing a [`Verdict`] (running an actual verifier) and stamping the
+//! result onto a trajectory are deliberately NOT here: this crate knows
+//! nothing about verification mechanics or ATIF. See
+//! `sven_session_store::apply_outcome_to_trajectory` for the latter.
 
 use sven_vocab::SessionEvent;
 
@@ -74,9 +88,40 @@ pub struct SessionReward {
     pub tool_errors: u32,
 }
 
-/// Weight of the tool-error ratio in a successful run's score: a run whose
-/// every tool call failed still scores `1.0 - TOOL_ERROR_WEIGHT`, because it
-/// did reach a successful conclusion.
+/// The result of concluding a session: either a real score, or an honest
+/// admission that none is possible yet.
+///
+/// [`Self::Unknown`] is not a failure - it means the outcome cannot be
+/// trusted either way. The wire contract already treats an absent reward
+/// this way (see the module doc); this type makes that the only way to
+/// express it, rather than a caller having to remember to skip stamping.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SessionOutcome {
+    /// A real, trainable score.
+    Scored(SessionReward),
+    /// No reward should be stamped. `reason` is a human-facing diagnostic,
+    /// never read programmatically - callers branch on the variant, not the
+    /// string.
+    Unknown { reason: &'static str },
+}
+
+/// What a verifier concluded about a run that otherwise claims success.
+///
+/// Deliberately minimal: this is the seam [`OutcomeFold::conclude`] scores
+/// against, not the verifier's own vocabulary (spec shape, origin, per-leaf
+/// detail) - that lives wherever the verifier itself is implemented and
+/// collapses to one of these two before it ever reaches this crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// The verifier confirmed the claimed outcome.
+    Passed,
+    /// The verifier found the claimed outcome false.
+    Failed,
+}
+
+/// Weight of the tool-error ratio in a verified-success run's score: a run
+/// whose every tool call failed still scores `1.0 - TOOL_ERROR_WEIGHT`,
+/// because it did reach a verified conclusion.
 const TOOL_ERROR_WEIGHT: f64 = 0.5;
 
 impl OutcomeFold {
@@ -101,14 +146,21 @@ impl OutcomeFold {
         }
     }
 
-    /// Score the session, combining the surface's verdict with what the event
-    /// stream actually showed.
+    /// Score the session, combining the surface's verdict, what the event
+    /// stream actually showed, and - only when the first two amount to a
+    /// claimed success - a verifier's [`Verdict`], if one ran.
     ///
-    /// The stream can veto a [`RunConclusion::Success`] but never rescue a
-    /// failure: a surface that reports success while having streamed an
-    /// `Error` (or an `Aborted`, which `RuntimeRunner` reports as exit 0)
-    /// scores zero.
-    pub fn conclude(&self, conclusion: RunConclusion) -> SessionReward {
+    /// A failure the surface or the event stream itself observed is scored
+    /// confidently: it does not need a verifier to know it failed, and the
+    /// stream can veto a [`RunConclusion::Success`] but never rescue a
+    /// failure (a surface that reports success while having streamed an
+    /// `Error`, or an `Aborted`, which `RuntimeRunner` reports as exit 0,
+    /// scores zero). A *claimed* success is the only case a verifier's
+    /// absence turns into [`SessionOutcome::Unknown`] rather than a
+    /// mechanically-assumed `1.0`: an agent that reports success proves
+    /// nothing on its own, and stamping a confident reward for an unverified
+    /// claim is exactly the defect this type exists to stop.
+    pub fn conclude(&self, conclusion: RunConclusion, verdict: Option<Verdict>) -> SessionOutcome {
         let observed_failure = if self.agent_errors > 0 {
             Some("agent_error")
         } else if self.aborted {
@@ -117,39 +169,47 @@ impl OutcomeFold {
             None
         };
 
-        let outcome = match conclusion {
-            RunConclusion::AgentError => "agent_error",
-            RunConclusion::Cancelled => "cancelled",
-            RunConclusion::Timeout => "timeout",
-            RunConclusion::BudgetExhausted => "budget_exhausted",
-            RunConclusion::Success => match observed_failure {
-                Some(label) => label,
-                None if self.tool_errors > 0 => "success_with_tool_errors",
-                None => "success",
-            },
+        let confident_failure = match conclusion {
+            RunConclusion::AgentError => Some("agent_error"),
+            RunConclusion::Cancelled => Some("cancelled"),
+            RunConclusion::Timeout => Some("timeout"),
+            RunConclusion::BudgetExhausted => Some("budget_exhausted"),
+            RunConclusion::Success => observed_failure,
         };
+        if let Some(outcome) = confident_failure {
+            return SessionOutcome::Scored(SessionReward {
+                reward: 0.0,
+                outcome,
+                tool_calls: self.tool_calls,
+                tool_errors: self.tool_errors,
+            });
+        }
 
-        let succeeded = conclusion == RunConclusion::Success && observed_failure.is_none();
-        let reward = if succeeded {
-            1.0 - TOOL_ERROR_WEIGHT * self.tool_error_ratio()
-        } else {
-            0.0
-        };
-        // Belt and braces: a non-finite reward serializes as JSON `null`, which
-        // reads back as "no reward" and silently turns a scored session into a
-        // skipped one. `tool_error_ratio` already guards the division, so this
-        // only ever fires if someone changes the formula above.
-        let reward = if reward.is_finite() {
-            reward.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-
-        SessionReward {
-            reward,
-            outcome,
-            tool_calls: self.tool_calls,
-            tool_errors: self.tool_errors,
+        // A claimed success with no observed failure - the only case that
+        // needs a verifier's word before it can be trusted either way.
+        match verdict {
+            None => SessionOutcome::Unknown { reason: "no_verifier" },
+            Some(Verdict::Failed) => SessionOutcome::Scored(SessionReward {
+                reward: 0.0,
+                outcome: "verification_failed",
+                tool_calls: self.tool_calls,
+                tool_errors: self.tool_errors,
+            }),
+            Some(Verdict::Passed) => {
+                let reward = 1.0 - TOOL_ERROR_WEIGHT * self.tool_error_ratio();
+                // Belt and braces: a non-finite reward serializes as JSON
+                // `null`, which reads back as "no reward" and silently turns
+                // a scored session into a skipped one. `tool_error_ratio`
+                // already guards the division, so this only ever fires if
+                // someone changes the formula above.
+                let reward = if reward.is_finite() { reward.clamp(0.0, 1.0) } else { 0.0 };
+                SessionOutcome::Scored(SessionReward {
+                    reward,
+                    outcome: "verified_success",
+                    tool_calls: self.tool_calls,
+                    tool_errors: self.tool_errors,
+                })
+            }
         }
     }
 
@@ -198,18 +258,59 @@ mod tests {
     }
 
     #[test]
-    fn clean_success_scores_one() {
+    fn an_unverified_success_is_unknown_not_scored() {
+        // The defect this whole rework fixes: a run that merely *claims*
+        // success (no tool errors, no agent-error event) used to score a
+        // confident 1.0 with nothing behind it - the exact shape of "opened
+        // a browser, failed to download the file, said Done!". Absent a
+        // verifier's verdict, the honest answer is "we don't know", not "it
+        // worked".
         let mut f = OutcomeFold::default();
         f.observe(&SessionEvent::TurnComplete);
-        let r = f.conclude(RunConclusion::Success);
-        assert_eq!(r.reward, 1.0);
-        assert_eq!(r.outcome, "success");
+        let outcome = f.conclude(RunConclusion::Success, None);
+        assert_eq!(outcome, SessionOutcome::Unknown { reason: "no_verifier" });
     }
 
     #[test]
-    fn every_failure_conclusion_scores_zero() {
-        // Even a fold full of perfectly successful tool calls must not rescue
-        // a run the surface reports as failed.
+    fn a_verifier_confirmed_success_scores_one() {
+        let mut f = OutcomeFold::default();
+        f.observe(&SessionEvent::TurnComplete);
+        let outcome = f.conclude(RunConclusion::Success, Some(Verdict::Passed));
+        let SessionOutcome::Scored(r) = outcome else {
+            panic!("expected Scored, got {outcome:?}");
+        };
+        assert_eq!(r.reward, 1.0);
+        assert_eq!(r.outcome, "verified_success");
+    }
+
+    #[test]
+    fn a_verifier_that_disagrees_with_a_claimed_success_scores_zero() {
+        // The other half of the same defect: the surface says success, the
+        // verifier says otherwise. The verifier must win.
+        let mut f = OutcomeFold::default();
+        f.observe(&SessionEvent::TurnComplete);
+        let outcome = f.conclude(RunConclusion::Success, Some(Verdict::Failed));
+        let SessionOutcome::Scored(r) = outcome else {
+            panic!("expected Scored, got {outcome:?}");
+        };
+        assert_eq!(r.reward, 0.0);
+        assert_eq!(r.outcome, "verification_failed");
+    }
+
+    /// Unwraps a `Scored` outcome, panicking with the actual value otherwise.
+    fn scored(outcome: SessionOutcome) -> SessionReward {
+        match outcome {
+            SessionOutcome::Scored(r) => r,
+            other => panic!("expected Scored, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_failure_conclusion_scores_zero_confidently_with_no_verdict_needed() {
+        // A failure the surface itself observed does not need a verifier to
+        // know it failed - only a *claimed* success is suspect. Even a fold
+        // full of perfectly successful tool calls must not rescue a run the
+        // surface reports as failed.
         let f = fold_with_tools(5, 0);
         for (conclusion, label) in [
             (RunConclusion::AgentError, "agent_error"),
@@ -217,30 +318,35 @@ mod tests {
             (RunConclusion::Timeout, "timeout"),
             (RunConclusion::BudgetExhausted, "budget_exhausted"),
         ] {
-            let r = f.conclude(conclusion);
+            let r = scored(f.conclude(conclusion, None));
             assert_eq!(r.reward, 0.0, "{conclusion:?} must score 0.0");
             assert_eq!(r.outcome, label);
         }
     }
 
     #[test]
-    fn tool_errors_grade_success_downward() {
-        assert_eq!(fold_with_tools(10, 0).conclude(RunConclusion::Success).reward, 1.0);
-        assert_eq!(fold_with_tools(10, 2).conclude(RunConclusion::Success).reward, 0.9);
-        assert_eq!(fold_with_tools(10, 10).conclude(RunConclusion::Success).reward, 0.5);
+    fn tool_errors_grade_a_verified_success_downward() {
+        let verified = |calls, errors| {
+            scored(fold_with_tools(calls, errors).conclude(RunConclusion::Success, Some(Verdict::Passed))).reward
+        };
+        assert_eq!(verified(10, 0), 1.0);
+        assert_eq!(verified(10, 2), 0.9);
+        assert_eq!(verified(10, 10), 0.5);
 
         // Strictly monotone decreasing in the error count.
         let mut prev = f64::MAX;
         for errors in 0..=10 {
-            let r = fold_with_tools(10, errors).conclude(RunConclusion::Success).reward;
+            let r = verified(10, errors);
             assert!(r < prev, "reward must decrease as errors grow: {r} !< {prev}");
             prev = r;
         }
 
-        // Any tool error relabels the outcome, however small the penalty.
+        // Any tool error relabels the outcome, however small the penalty -
+        // but the verified label wins over the mechanical one, since
+        // verification is now what earned the score at all.
         assert_eq!(
-            fold_with_tools(10, 1).conclude(RunConclusion::Success).outcome,
-            "success_with_tool_errors"
+            scored(fold_with_tools(10, 1).conclude(RunConclusion::Success, Some(Verdict::Passed))).outcome,
+            "verified_success"
         );
     }
 
@@ -249,12 +355,15 @@ mod tests {
         // Load-bearing: a NaN/inf `f64` serializes as JSON `null`, which the
         // trainer reads as "no reward" and silently skips. `(0, 5)` is the
         // degenerate divide-by-zero shape (errors without a matching start).
-        for conclusion in [
-            RunConclusion::Success,
-            RunConclusion::AgentError,
-            RunConclusion::Cancelled,
-            RunConclusion::Timeout,
-            RunConclusion::BudgetExhausted,
+        // `Success` is tested with a verdict on both sides (a `None` verdict
+        // never produces a `Scored` at all - see `an_unverified_success_is_unknown_not_scored`).
+        for (conclusion, verdict) in [
+            (RunConclusion::Success, Some(Verdict::Passed)),
+            (RunConclusion::Success, Some(Verdict::Failed)),
+            (RunConclusion::AgentError, None),
+            (RunConclusion::Cancelled, None),
+            (RunConclusion::Timeout, None),
+            (RunConclusion::BudgetExhausted, None),
         ] {
             for (calls, errors) in [(0, 0), (0, 5), (1, 0), (1, 1), (10, 3), (1000, 999)] {
                 let mut f = fold_with_tools(calls, errors);
@@ -264,34 +373,34 @@ mod tests {
                         f.observe(&tool_result(&format!("orphan{i}"), true));
                     }
                 }
-                let r = f.conclude(conclusion).reward;
+                let r = scored(f.conclude(conclusion, verdict)).reward;
                 assert!(
                     r.is_finite() && (0.0..=1.0).contains(&r),
-                    "{conclusion:?} with {calls}/{errors} produced {r}"
+                    "{conclusion:?}/{verdict:?} with {calls}/{errors} produced {r}"
                 );
             }
         }
     }
 
     #[test]
-    fn agent_error_event_overrides_a_success_conclusion() {
+    fn agent_error_event_overrides_a_success_conclusion_with_no_verdict_needed() {
         let mut f = OutcomeFold::default();
         f.observe(&SessionEvent::Error("boom".to_string()));
         f.observe(&SessionEvent::TurnComplete);
-        let r = f.conclude(RunConclusion::Success);
+        let r = scored(f.conclude(RunConclusion::Success, None));
         assert_eq!(r.reward, 0.0);
         assert_eq!(r.outcome, "agent_error");
     }
 
     #[test]
-    fn aborted_event_overrides_a_success_conclusion() {
+    fn aborted_event_overrides_a_success_conclusion_with_no_verdict_needed() {
         // `RuntimeRunner` returns EXIT_SUCCESS for an aborted run, so the fold
         // is the only thing that knows the run was actually cancelled.
         let mut f = OutcomeFold::default();
         f.observe(&SessionEvent::Aborted {
             partial_text: "half".to_string(),
         });
-        let r = f.conclude(RunConclusion::Success);
+        let r = scored(f.conclude(RunConclusion::Success, None));
         assert_eq!(r.reward, 0.0);
         assert_eq!(r.outcome, "cancelled");
     }
