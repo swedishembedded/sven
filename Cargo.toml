@@ -134,6 +134,11 @@ sven-bootstrap   = { path = "crates/bootstrap", default-features = false }
 # and gated on the same `memory` feature as the tool itself, so the `minimal`
 # profile keeps excluding rusqlite.
 sven-memory      = { path = "crates/memory", optional = true }
+# `sven questions`: QuestionId, for parsing/printing the ids QuestionLedger
+# uses. Gated the same as sven-memory - `sven questions` has nothing to read
+# without it.
+sven-hsm         = { path = "crates/hsm", optional = true }
+uuid             = { workspace = true, optional = true }
 sven-ci          = { path = "crates/ci" }
 # ── Optional surfaces, gated by the `tui`/`network` cargo features below ──────
 sven-tui         = { path = "crates/tui", optional = true }
@@ -173,7 +178,7 @@ gdb = ["sven-bootstrap/gdb"]
 # Semantic memory (`semantic_memory` tool, SQLite + FTS5). Forwarded
 # explicitly for the same reason `gdb` is above: sven-bootstrap is depended
 # on with `default-features = false` here.
-memory = ["sven-bootstrap/memory", "dep:sven-memory"]
+memory = ["sven-bootstrap/memory", "dep:sven-memory", "dep:sven-hsm", "dep:uuid"]
 # Networked surfaces: the ACP and MCP servers (`sven acp`, `sven mcp`) and
 # the team task surface (`sven team`).
 network = [

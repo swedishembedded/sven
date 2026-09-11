@@ -10,6 +10,8 @@
 mod index;
 #[cfg(feature = "memory")]
 mod learn;
+#[cfg(feature = "memory")]
+mod questions;
 #[cfg(feature = "network")]
 mod team;
 mod tool;
@@ -22,6 +24,8 @@ pub use sven_acp::cli::AcpCommands;
 pub use index::IndexCommands;
 #[cfg(feature = "memory")]
 pub use learn::LearnCommands;
+#[cfg(feature = "memory")]
+pub use questions::QuestionsCommands;
 #[cfg(feature = "network")]
 pub use sven_mcp::cli::McpCommands;
 #[cfg(feature = "network")]
@@ -387,6 +391,20 @@ pub enum Commands {
     Learn {
         #[command(subcommand)]
         command: LearnCommands,
+    },
+
+    /// See and answer questions a headless run parked instead of guessing.
+    ///
+    /// A run that cannot answer a question itself exits with code 5 rather
+    /// than block or fabricate an answer. `sven questions list` shows what is
+    /// waiting; `sven questions answer` durably records a human's reply.
+    ///
+    ///   sven questions list
+    ///   sven questions answer <id> "Axum"
+    #[cfg(feature = "memory")]
+    Questions {
+        #[command(subcommand)]
+        command: QuestionsCommands,
     },
 
     /// Map: run one sven agent per stdin line in parallel.

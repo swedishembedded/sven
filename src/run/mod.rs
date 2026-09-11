@@ -14,6 +14,8 @@ pub(crate) mod logging;
 pub(crate) mod models;
 pub(crate) mod oauth;
 pub(crate) mod pipeline;
+#[cfg(feature = "memory")]
+pub(crate) mod questions;
 #[cfg(feature = "network")]
 pub(crate) mod team;
 pub(crate) mod tool;
