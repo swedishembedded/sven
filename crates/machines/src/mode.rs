@@ -9,7 +9,9 @@ use std::collections::HashMap;
 
 use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
-use crate::machines::{reactive_agent::ReactiveAgentMachine, sdlc::SdlcMachine};
+use crate::machines::{
+    reactive_agent::ReactiveAgentMachine, sdlc::SdlcMachine, verified_task::VerifiedTaskMachine,
+};
 
 /// A factory that creates a type-erased running machine.
 pub type MachineFactory = Box<dyn Fn() -> Box<dyn ErasedMachine> + Send + Sync>;
@@ -39,6 +41,8 @@ impl ModeRegistry {
     ///   (streaming, native-tool-calling agent — ChatGPT-style)
     /// - `"sdlc"` → [`SdlcMachine`]
     ///   (multi-phase software-development lifecycle with in-state tool loops)
+    /// - `"verified-task"` → [`VerifiedTaskMachine`]
+    ///   (freeze-before-attempt, externally-verified single task with retry)
     pub fn default_registry() -> Self {
         let mut reg = Self {
             factories: HashMap::new(),
@@ -57,6 +61,10 @@ impl ModeRegistry {
         reg.register(
             "sdlc",
             Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(SdlcMachine::new())) }),
+        );
+        reg.register(
+            "verified-task",
+            Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(VerifiedTaskMachine::new())) }),
         );
         reg
     }
@@ -88,6 +96,15 @@ mod tests {
         assert!(reg.get("chat").is_some(), "chat mode must be registered");
         assert!(reg.get("sdlc").is_some(), "sdlc mode must be registered");
         assert!(reg.get("unknown").is_none());
+    }
+
+    #[test]
+    fn default_registry_has_verified_task() {
+        let reg = ModeRegistry::default_registry();
+        let factory = reg.get("verified-task").expect("verified-task mode must be registered");
+        let mut machine = factory();
+        let mut ctx = Context::new();
+        let _ = machine.init(&mut ctx);
     }
 
     #[test]
