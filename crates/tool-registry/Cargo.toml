@@ -2,7 +2,7 @@
 name        = "sven-tool-registry"
 version.workspace = true
 edition     = "2021"
-description = "The concrete tool registry: ToolRegistry (lookup/execute/schema listing, MCP hot-swap, approval gating), plus the config-driven policy engines that decide an ApprovalPolicy for a command (ToolPolicy) and enforce a per-role fs_root jail on top of it (RolePolicy). Services tier: builds on sven-tool-api's trait/type vocabulary."
+description = "The concrete tool registry: ToolRegistry (lookup/execute/schema listing, MCP hot-swap, approval gating), plus the config-driven policy engine that decides an ApprovalPolicy for a command (ToolPolicy). Services tier: builds on sven-tool-api's trait/type vocabulary."
 license     = "Apache-2.0"
 
 [dependencies]

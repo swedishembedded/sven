@@ -1,8 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-use std::path::{Path, PathBuf};
-
 use regex::Regex;
 use sven_config::ToolsConfig;
 use sven_tool_api::ApprovalPolicy;
@@ -42,106 +40,6 @@ impl ToolPolicy {
     }
 }
 
-// ── RolePolicy ────────────────────────────────────────────────────────────────
-
-/// Per-role policy overlay applied on top of the global [`ToolPolicy`].
-///
-/// Used by agent teams to enforce role-specific restrictions without
-/// touching the global tool configuration.  For example, a `reviewer` role
-/// should not be able to call `write_file`, `edit_file`, or `delete_file`.
-///
-/// Policy resolution order:
-/// 1. Role `deny_tools` - if the tool name is in this list, always deny.
-/// 2. Filesystem scope - if `fs_root` is set, file-path arguments that
-///    resolve outside the root are denied.
-/// 3. Fall through to the global [`ToolPolicy`].
-#[derive(Debug, Clone, Default)]
-pub struct RolePolicy {
-    /// Tool names that are always denied for this role.
-    deny_tools: Vec<String>,
-    /// Optional filesystem root.  File tools with paths outside this root
-    /// are denied.  Typically set to the agent's Git worktree path.
-    fs_root: Option<PathBuf>,
-}
-
-impl RolePolicy {
-    /// Build a role policy from a list of denied tool names and an optional
-    /// filesystem root restriction.
-    pub fn new(deny_tools: impl IntoIterator<Item = String>, fs_root: Option<PathBuf>) -> Self {
-        Self {
-            deny_tools: deny_tools.into_iter().collect(),
-            fs_root,
-        }
-    }
-
-    /// Return `true` if the tool name is explicitly denied for this role.
-    pub fn is_tool_denied(&self, tool_name: &str) -> bool {
-        self.deny_tools.iter().any(|d| {
-            d == tool_name || (d.ends_with('*') && tool_name.starts_with(d.trim_end_matches('*')))
-        })
-    }
-
-    /// Return `true` if the given file path is allowed under the filesystem
-    /// root restriction, or if no restriction is set.
-    pub fn is_path_allowed(&self, path: &Path) -> bool {
-        match &self.fs_root {
-            None => true,
-            Some(root) => {
-                // Canonicalize both to resolve symlinks and `..` traversal.
-                // When the path does not yet exist `canonicalize` fails, so fall
-                // back to a *lexical* normalization (resolving `..`/`.`
-                // components without touching disk) rather than the raw path —
-                // a raw `<root>/../../etc/x` textually `starts_with` the root and
-                // would otherwise slip a not-yet-existing traversal past the jail.
-                let canonical_path = std::fs::canonicalize(path)
-                    .unwrap_or_else(|_| lexical_normalize(path));
-                let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
-                canonical_path.starts_with(&canonical_root)
-            }
-        }
-    }
-
-    /// Combine role-level denial check with the global policy.
-    ///
-    /// Returns `Deny` if the role denies the tool; otherwise delegates to the
-    /// global `ToolPolicy`.
-    pub fn decide_with_global(&self, tool_name: &str, global: &ToolPolicy) -> ApprovalPolicy {
-        if self.is_tool_denied(tool_name) {
-            return ApprovalPolicy::Deny;
-        }
-        global.decide(tool_name)
-    }
-
-    /// The filesystem root restriction, if any.
-    pub fn fs_root(&self) -> Option<&Path> {
-        self.fs_root.as_deref()
-    }
-}
-
-/// Resolves `.` and `..` components lexically (without touching the
-/// filesystem), so a jail check can reject a not-yet-existing traversal path
-/// that `canonicalize` cannot resolve. A `..` that would climb above the root
-/// is kept (never popped past root), producing a path that can never satisfy a
-/// `starts_with(root)` check.
-fn lexical_normalize(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                let popped =
-                    matches!(out.components().next_back(), Some(Component::Normal(_))) && out.pop();
-                if !popped {
-                    out.push("..");
-                }
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
-}
-
 /// Convert a simple shell glob pattern to a [`Regex`].
 /// Only `*` (match anything) and `?` (match one char) are supported.
 fn glob_to_regex(pattern: &str) -> Option<Regex> {
@@ -167,65 +65,6 @@ fn glob_to_regex(pattern: &str) -> Option<Regex> {
 mod tests {
     use super::*;
     use sven_config::ToolsConfig;
-
-    // ── RolePolicy ────────────────────────────────────────────────────────────
-
-    #[test]
-    fn role_policy_denies_listed_tool() {
-        let rp = RolePolicy::new(
-            vec!["write_file".to_string(), "edit_file".to_string()],
-            None,
-        );
-        assert!(rp.is_tool_denied("write_file"));
-        assert!(rp.is_tool_denied("edit_file"));
-        assert!(!rp.is_tool_denied("read_file"));
-    }
-
-    #[test]
-    fn role_policy_path_allowed_without_restriction() {
-        let rp = RolePolicy::default();
-        assert!(rp.is_path_allowed(Path::new("/any/path")));
-    }
-
-    #[test]
-    fn role_policy_path_allowed_within_root() {
-        let rp = RolePolicy::new(Vec::new(), Some(PathBuf::from("/repo/worktree")));
-        assert!(rp.is_path_allowed(Path::new("/repo/worktree/src/main.rs")));
-    }
-
-    #[test]
-    fn role_policy_path_denied_outside_root() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        // Create a real path outside root
-        let outside = std::env::temp_dir().join("outside_file.txt");
-        std::fs::write(&outside, "x").unwrap();
-
-        let rp = RolePolicy::new(Vec::new(), Some(root));
-        assert!(!rp.is_path_allowed(&outside));
-    }
-
-    #[test]
-    fn role_policy_decide_with_global_deny_overrides() {
-        let global = policy_with(&["read_file"], &[]);
-        let rp = RolePolicy::new(vec!["read_file".to_string()], None);
-        // Role denies read_file even though global would auto-approve
-        assert_eq!(
-            rp.decide_with_global("read_file", &global),
-            ApprovalPolicy::Deny
-        );
-    }
-
-    #[test]
-    fn role_policy_decide_falls_through_to_global() {
-        let global = policy_with(&["read_file"], &[]);
-        let rp = RolePolicy::new(vec!["write_file".to_string()], None);
-        // read_file not in deny list → global auto-approve
-        assert_eq!(
-            rp.decide_with_global("read_file", &global),
-            ApprovalPolicy::Auto
-        );
-    }
 
     fn policy_with(auto: &[&str], deny: &[&str]) -> ToolPolicy {
         ToolPolicy::from_config(&ToolsConfig {
@@ -370,45 +209,5 @@ mod tests {
     fn adversarial_deny_pattern_with_invalid_glob_does_not_panic() {
         let p = policy_with(&[], &["*["]);
         let _ = p.decide("rm -rf /");
-    }
-
-    #[test]
-    fn adversarial_role_policy_wildcard_denies_prefix() {
-        let rp = RolePolicy::new(vec!["file_*".to_string()], None);
-        assert!(rp.is_tool_denied("file_write"));
-        assert!(rp.is_tool_denied("file_read"));
-        assert!(!rp.is_tool_denied("shell"));
-    }
-
-    #[test]
-    fn adversarial_path_with_dotdot_is_denied_when_outside_root() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        // /tmp/<root>/../../etc/passwd resolves outside root
-        let outside = root.join("../../etc/passwd");
-        let rp = RolePolicy::new(Vec::new(), Some(root));
-        assert!(!rp.is_path_allowed(&outside));
-    }
-
-    #[test]
-    fn adversarial_path_allowed_with_no_fs_root() {
-        let rp = RolePolicy::default();
-        assert!(rp.is_path_allowed(Path::new("/etc/passwd")));
-        assert!(rp.is_path_allowed(Path::new("/root/.ssh/id_rsa")));
-    }
-
-    #[test]
-    fn is_path_allowed_denies_nonexistent_traversal() {
-        // The target does NOT exist, so `canonicalize` fails and the old raw-path
-        // textual `starts_with` fallback let a `..` escape through. The primitive
-        // must lexically resolve `..`/`.` before the jail check.
-        let dir = tempfile::TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        let escape = root.join("../../etc/definitely-not-here-xyz");
-        let rp = RolePolicy::new(Vec::new(), Some(root));
-        assert!(
-            !rp.is_path_allowed(&escape),
-            "non-existent traversal path must be denied at the primitive"
-        );
     }
 }

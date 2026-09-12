@@ -20,20 +20,20 @@
 pub use sven_tool_api::{display, events, tool, tool_summary};
 
 /// Merged view of the approval-decision vocabulary
-/// ([`sven_tool_api::policy`]) and the config-driven engines that decide it
+/// ([`sven_tool_api::policy`]) and the config-driven engine that decides it
 /// ([`sven_tool_registry::policy`]). The two halves are disjoint (no name
 /// collisions) -- see `sven-tool-api::policy`'s module docs for why
 /// `ApprovalPolicy` had to move down a tier from where the original,
 /// pre-split plan placed it.
 pub mod policy {
     pub use sven_tool_api::policy::{ApprovalPolicy, PermissionRequester};
-    pub use sven_tool_registry::policy::{RolePolicy, ToolPolicy};
+    pub use sven_tool_registry::policy::ToolPolicy;
 }
 pub use sven_tool_registry::registry;
 
 pub use display::format_tools_list;
 pub use events::{TodoItem, TodoStatus, ToolEvent};
-pub use policy::{ApprovalPolicy, PermissionRequester, RolePolicy, ToolPolicy};
+pub use policy::{ApprovalPolicy, PermissionRequester, ToolPolicy};
 pub use registry::{SharedToolDisplays, SharedTools, ToolRegistry, ToolSchema};
 pub use sven_hsm::ToolCapability;
 pub use tool::{

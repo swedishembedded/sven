@@ -5,11 +5,11 @@
 //! its `default_policy()`, plus the trait bridging a gated call out to an
 //! external approval mechanism.
 //!
-//! The config-driven policy *engines* that decide which [`ApprovalPolicy`] a
-//! given command gets (`ToolPolicy`, `RolePolicy` and the `fs_root` jail) live
-//! one tier up, in `sven-tool-registry` -- they need `sven-config`'s
-//! `ToolsConfig` and a compiled pattern set, which is registry-shaped state,
-//! not part of the `Tool` trait's interface. `ApprovalPolicy` itself has to
+//! The config-driven policy *engine* that decides which [`ApprovalPolicy`] a
+//! given command gets (`ToolPolicy`) lives one tier up, in
+//! `sven-tool-registry` -- it needs `sven-config`'s `ToolsConfig` and a
+//! compiled pattern set, which is registry-shaped state, not part of the
+//! `Tool` trait's interface. `ApprovalPolicy` itself has to
 //! live here rather than there: `Tool::default_policy(&self) -> ApprovalPolicy`
 //! is part of the trait signature, so the type it names cannot sit at a higher
 //! tier than the trait without creating an illegal upward edge from every
