@@ -509,3 +509,125 @@ async fn a_half_written_or_leaking_probe_is_refused_never_silently_dropped() {
         "and neither may be remembered: a refused call writes nothing at all"
     );
 }
+
+/// The batch form: many facts sharing one evidence handle, each still going
+/// through the exact same per-fact gate - this is the shape Stage 5's
+/// generator needs to admit dozens of extracted facts without a tool call
+/// per fact, without becoming a second, looser writer.
+#[tokio::test]
+async fn a_batch_of_facts_shares_one_evidence_handle_and_all_reach_the_ledger() {
+    let fx = fixture();
+    let digest = ContentDigest::from_hex("abc123");
+    fx.ledger.record_document(&a_document(&digest)).expect("record document");
+    fx.provenance.record("ev-doc", a_document_source(&digest));
+
+    let out = fx
+        .tool
+        .execute(&call(json!({
+            "evidence": "ev-doc",
+            "facts": [
+                {"fact": "The budget floor is EUR 7,500."},
+                {"fact": "The Architecture Review costs EUR 7,500.", "entity": "Architecture Review"},
+                {
+                    "fact": "The Architecture Review takes one week.",
+                    "probe_question": "How long does the Architecture Review take?",
+                    "expected_answer": "one week",
+                },
+            ],
+        })))
+        .await;
+
+    assert!(!out.is_error, "a fully-admissible batch should succeed: {}", out.content);
+    assert_eq!(fx.store.len(), 3, "every fact in the batch is remembered");
+    let facts = fx.ledger.pending_facts().expect("read ledger");
+    assert_eq!(facts.len(), 3, "every fact in the batch reaches the ledger");
+    assert!(facts.iter().all(|f| matches!(f.source, FactSource::UserProvidedDocument { .. })));
+    assert_eq!(
+        facts.iter().filter(|f| f.probe.is_some()).count(),
+        1,
+        "only the one item that supplied a probe should carry one"
+    );
+}
+
+/// A single bad item does not sink the whole batch, and the summary names
+/// which item failed and why - partial success, not all-or-nothing.
+#[tokio::test]
+async fn a_batch_partial_failure_still_admits_the_good_items() {
+    let fx = fixture();
+    let digest = ContentDigest::from_hex("abc123");
+    fx.ledger.record_document(&a_document(&digest)).expect("record document");
+    fx.provenance.record("ev-doc", a_document_source(&digest));
+
+    let out = fx
+        .tool
+        .execute(&call(json!({
+            "evidence": "ev-doc",
+            "facts": [
+                {"fact": "The budget floor is EUR 7,500."},
+                {"fact": ""},
+                {"fact": "The offer is fixed-price."},
+            ],
+        })))
+        .await;
+
+    assert!(!out.is_error, "at least one item succeeded, so the call itself is not an error");
+    assert!(out.content.contains("2."), "the summary should be per-item, numbered");
+    assert_eq!(fx.store.len(), 2, "only the two well-formed facts are remembered");
+    let facts = fx.ledger.pending_facts().expect("read ledger");
+    assert_eq!(facts.len(), 2);
+}
+
+/// Giving both 'fact' and 'facts' is refused outright, never silently
+/// resolved by preferring one - an ambiguous call should not guess.
+#[tokio::test]
+async fn assimilate_fact_refuses_both_fact_and_facts_together() {
+    let fx = fixture();
+    fx.provenance.record("ev-user", FactSource::UserStated);
+
+    let out = fx
+        .tool
+        .execute(&call(json!({
+            "evidence": "ev-user",
+            "fact": "The CAN bus runs at 500 kbit/s.",
+            "facts": [{"fact": "Another fact."}],
+        })))
+        .await;
+
+    assert!(out.is_error);
+    assert_eq!(fx.store.len(), 0, "an ambiguous call must write nothing");
+}
+
+/// A web-sourced batch still spends one approval per fact - batching the call
+/// does not batch the approval economics. The third item in a two-approval
+/// batch must be memory-only, exactly as a third single call would be.
+#[tokio::test]
+async fn a_web_sourced_batch_still_spends_one_approval_per_fact() {
+    let fx = fixture();
+    fx.provenance.record(
+        "ev-web",
+        FactSource::WebSourced {
+            url: "https://example.com/page".to_string(),
+            fetched_at: 1_700_000_000,
+            digest: ContentDigest::from_hex("abc123"),
+        },
+    );
+    fx.approvals.record_human_approval();
+    fx.approvals.record_human_approval();
+
+    let out = fx
+        .tool
+        .execute(&call(json!({
+            "evidence": "ev-web",
+            "facts": [
+                {"fact": "Fact one."},
+                {"fact": "Fact two."},
+                {"fact": "Fact three."},
+            ],
+        })))
+        .await;
+
+    assert!(!out.is_error, "the first two items succeeded");
+    let facts = fx.ledger.pending_facts().expect("read ledger");
+    assert_eq!(facts.len(), 2, "only the two approved facts reach the ledger");
+    assert_eq!(fx.store.len(), 3, "all three are still remembered for this session");
+}

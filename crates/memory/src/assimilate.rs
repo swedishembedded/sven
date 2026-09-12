@@ -277,12 +277,14 @@ impl Tool for AssimilateFactTool {
             "properties": {
                 "fact": {
                     "type": "string",
-                    "description": "One self-contained assertion, in plain language"
+                    "description": "One self-contained assertion, in plain language. \
+                                    Exactly one of 'fact'/'facts'."
                 },
                 "evidence": {
                     "type": "string",
-                    "description": "Handle of the resolved evidence this fact comes \
-                                    from, as reported by the tool that resolved it"
+                    "description": "Handle of the resolved evidence this fact (or, for \
+                                    'facts', every fact in the batch) comes from, as \
+                                    reported by the tool that resolved it"
                 },
                 "entity": {
                     "type": "string",
@@ -299,9 +301,29 @@ impl Tool for AssimilateFactTool {
                     "type": "string",
                     "description": "The exact answer `probe_question` must elicit, as \
                                     short as it can be and still be correct"
+                },
+                "facts": {
+                    "type": "array",
+                    "description": "A batch of facts sharing one 'evidence' handle - \
+                                    for extracting many facts from one already-ingested \
+                                    document without a call per fact. Exactly one of \
+                                    'fact'/'facts'. Each item takes the same \
+                                    'fact'/'entity'/'probe_question'/'expected_answer' \
+                                    shape as the top level; per-fact gating still \
+                                    applies to every item individually.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "fact": {"type": "string"},
+                            "entity": {"type": "string"},
+                            "probe_question": {"type": "string"},
+                            "expected_answer": {"type": "string"}
+                        },
+                        "required": ["fact"],
+                        "additionalProperties": false
+                    }
                 }
             },
-            "required": ["fact"],
             "additionalProperties": false
         })
     }
@@ -315,23 +337,15 @@ impl Tool for AssimilateFactTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let fact = match call.args.get("fact").and_then(|v| v.as_str()) {
-            Some(f) if !f.trim().is_empty() => f.trim().to_string(),
-            _ => return ToolOutput::err(&call.id, "assimilate_fact requires a non-empty 'fact'"),
-        };
+        let single = call.args.get("fact").is_some();
+        let batch = call.args.get("facts").is_some();
 
-        // Rejected before anything is written, memory included: a malformed
-        // probe is a defect in the extraction the caller can fix and retry,
-        // and remembering half of it would leave the ledger's scoring story
-        // silently incomplete.
-        let probe = match frozen_probe(&call.args, &fact) {
-            Ok(probe) => probe,
-            Err(reason) => return ToolOutput::err(&call.id, reason),
-        };
-
-        // Provenance is resolved, never asserted: a `source` (or `confirmed`)
-        // field in `call.args` is deliberately not read. An unknown handle is
-        // not an error - it just makes the fact the agent's own inference.
+        // Provenance is resolved once, from the shared 'evidence' handle at
+        // the top level - never asserted, and never re-read per batch item
+        // (there is nothing per-item to read: a `source` field on a batch
+        // entry would not be looked at either). An unknown handle is not an
+        // error - it just makes every fact in this call the agent's own
+        // inference.
         let source = call
             .args
             .get("evidence")
@@ -339,19 +353,85 @@ impl Tool for AssimilateFactTool {
             .and_then(|handle| self.provenance.resolve(handle))
             .unwrap_or(FactSource::AgentInferred { from: Vec::new() });
 
+        match (single, batch) {
+            (true, true) => {
+                ToolOutput::err(&call.id, "assimilate_fact takes exactly one of 'fact'/'facts', not both")
+            }
+            (false, false) => {
+                ToolOutput::err(&call.id, "assimilate_fact requires either 'fact' or 'facts'")
+            }
+            (true, false) => {
+                let (message, is_error) = self.assimilate_one(&call.args, &source).await;
+                if is_error {
+                    ToolOutput::err(&call.id, message)
+                } else {
+                    ToolOutput::ok(&call.id, message)
+                }
+            }
+            (false, true) => {
+                let items = match call.args.get("facts").and_then(Value::as_array) {
+                    Some(items) if !items.is_empty() => items,
+                    _ => return ToolOutput::err(&call.id, "'facts' must be a non-empty array"),
+                };
+                let mut lines = Vec::with_capacity(items.len());
+                let mut any_ok = false;
+                for (idx, item) in items.iter().enumerate() {
+                    let (message, is_error) = self.assimilate_one(item, &source).await;
+                    any_ok |= !is_error;
+                    lines.push(format!("{}. {message}", idx + 1));
+                }
+                let summary = lines.join("\n");
+                if any_ok {
+                    ToolOutput::ok(&call.id, summary)
+                } else {
+                    ToolOutput::err(&call.id, summary)
+                }
+            }
+        }
+    }
+}
+
+impl AssimilateFactTool {
+    /// Assimilates one fact from `args` (either the call's own top-level
+    /// arguments, for a single-fact call, or one entry of `facts`, for a
+    /// batch call), against the already-resolved `source`. Returns the
+    /// human-facing result message and whether it represents a failure.
+    ///
+    /// This is the entire single-fact body `execute` used to be, extracted
+    /// unchanged so a batch call runs it N times rather than duplicating it -
+    /// per-fact gating (probe validation, admissibility, approval spending)
+    /// is identical either way.
+    async fn assimilate_one(&self, args: &Value, source: &FactSource) -> (String, bool) {
+        let fact = match args.get("fact").and_then(|v| v.as_str()) {
+            Some(f) if !f.trim().is_empty() => f.trim().to_string(),
+            _ => return ("assimilate_fact requires a non-empty 'fact'".to_string(), true),
+        };
+
+        // Rejected before anything is written, memory included: a malformed
+        // probe is a defect in the extraction the caller can fix and retry,
+        // and remembering half of it would leave the ledger's scoring story
+        // silently incomplete.
+        let probe = match frozen_probe(args, &fact) {
+            Ok(probe) => probe,
+            Err(reason) => return (reason, true),
+        };
+
         // Admissibility is decided *before* the memory write because it also
         // decides how the memory record is stamped. It spends any approval it
         // rests on, so a memory write that then fails loses that approval - the
         // same safe direction a failed ledger append already takes: the human
         // is asked again rather than the grant lingering for the next fact.
-        let admission = self.admit(&source);
+        // Re-evaluated per fact even within a batch sharing one `source` value:
+        // a `RequiresHumanApproval` source still spends one approval per fact,
+        // exactly as a batch of single calls would have.
+        let admission = self.admit(source);
 
         let mut metadata = HashMap::new();
         // Not `source`: that key is free text the model can set through
         // `semantic_memory`'s `remember` action, and the recall path's trust
         // decision must never read a field the model can write.
         metadata.insert(PROVENANCE_KEY.to_string(), source.label().to_string());
-        if let Some(entity) = call.args.get("entity").and_then(|v| v.as_str()) {
+        if let Some(entity) = args.get("entity").and_then(|v| v.as_str()) {
             metadata.insert("entity".to_string(), entity.to_string());
         }
         let recorded_at = chrono::Utc::now().timestamp().max(0) as u64;
@@ -383,16 +463,16 @@ impl Tool for AssimilateFactTool {
             .await
         {
             Ok(id) => id,
-            Err(e) => return ToolOutput::err(&call.id, format!("could not remember fact: {e}")),
+            Err(e) => return (format!("could not remember fact: {e}"), true),
         };
 
         if let Err(reason) = admission {
-            return ToolOutput::ok(
-                &call.id,
+            return (
                 format!(
                     "Remembered for this session (ID={doc_id}); not recorded as durable \
                      knowledge: {reason}"
                 ),
+                false,
             );
         }
 
@@ -400,25 +480,16 @@ impl Tool for AssimilateFactTool {
             id: FactId::new(uuid::Uuid::new_v4().to_string()),
             fact,
             probe,
-            source,
+            source: source.clone(),
             recorded_at,
         };
         let ledger = self.ledger.clone();
         // The ledger does blocking filesystem I/O under an advisory lock.
         let written = tokio::task::spawn_blocking(move || ledger.record_fact(&record)).await;
         match written {
-            Ok(Ok(())) => ToolOutput::ok(
-                &call.id,
-                format!("Remembered (ID={doc_id}) and recorded as durable knowledge."),
-            ),
-            Ok(Err(e)) => ToolOutput::err(
-                &call.id,
-                format!("Remembered (ID={doc_id}), but the ledger append failed: {e}"),
-            ),
-            Err(e) => ToolOutput::err(
-                &call.id,
-                format!("Remembered (ID={doc_id}), but the ledger append panicked: {e}"),
-            ),
+            Ok(Ok(())) => (format!("Remembered (ID={doc_id}) and recorded as durable knowledge."), false),
+            Ok(Err(e)) => (format!("Remembered (ID={doc_id}), but the ledger append failed: {e}"), true),
+            Err(e) => (format!("Remembered (ID={doc_id}), but the ledger append panicked: {e}"), true),
         }
     }
 }
@@ -434,6 +505,9 @@ impl ToolDisplay for AssimilateFactTool {
         "memory"
     }
     fn collapsed_summary(&self, args: &Value) -> String {
+        if let Some(items) = args.get("facts").and_then(Value::as_array) {
+            return format!("{} facts", items.len());
+        }
         let fact = args.get("fact").and_then(|v| v.as_str()).unwrap_or("");
         if fact.chars().count() <= 60 {
             fact.to_string()
