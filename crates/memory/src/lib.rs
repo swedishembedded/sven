@@ -73,6 +73,7 @@ pub mod ledger;
 pub mod local_study;
 pub mod question_ledger;
 pub mod recall;
+pub mod rule_expander;
 pub mod sqlite;
 pub mod store;
 pub mod tool;
@@ -95,6 +96,7 @@ pub use question_ledger::{
     QuestionLedgerError,
 };
 pub use recall::SessionScope;
+pub use rule_expander::{expand, Instance, Split};
 pub use sqlite::SqliteMemoryStore;
 pub use store::{DocId, DocSummary, Document, SearchResult, VectorStore};
 pub use tool::SemanticMemoryTool;
