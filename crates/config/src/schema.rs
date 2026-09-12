@@ -1002,6 +1002,15 @@ pub struct LearningConfig {
     #[serde(default)]
     pub submit_facts: bool,
     /// Facts handed over per drain pass.
+    ///
+    /// One drain batch becomes one brain training cycle, and brain *asserts*
+    /// a cycle has at least 48 probe-carrying triples (its
+    /// `MIN_HELD_OUT_PROBES` - a held-out floor the gate's statistics need to
+    /// mean anything). A value below that is not a smaller batch, it is a
+    /// broken one: brain panics rather than rejects it. The floor is
+    /// discovered from brain at submission time (see the `local` submitter's
+    /// preflight), never hard-coded here - only the default needs to clear it
+    /// comfortably so a fresh install does not fail on the first flush.
     #[serde(default = "LearningConfig::default_batch_size")]
     pub batch_size: usize,
     /// Seconds between drain passes. The first pass runs immediately.
@@ -1064,7 +1073,7 @@ pub struct LearningConfig {
 
 impl LearningConfig {
     fn default_batch_size() -> usize {
-        16
+        64
     }
 
     fn default_interval_secs() -> u64 {
