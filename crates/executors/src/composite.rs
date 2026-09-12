@@ -36,6 +36,7 @@ use crate::timer::TimerExecutor;
 use crate::tool::ToolExecutor;
 use crate::turn::TurnExecutor;
 use crate::user::{ApprovalRequest, UserExecutor, UserQuestion};
+use crate::verify::VerifyExecutor;
 
 /// All sub-executors collected into one structure.
 ///
@@ -52,6 +53,7 @@ pub struct CompositeExecutor {
     checkpoint: Option<Box<dyn EffectExecutor>>,
     audit: Option<Box<dyn EffectExecutor>>,
     internal: Box<dyn EffectExecutor>,
+    verify: Option<Box<dyn EffectExecutor>>,
 }
 
 impl CompositeExecutor {
@@ -147,6 +149,16 @@ impl EffectExecutor for CompositeExecutor {
             EffectKind::InstantiateSubmachine => {
                 tracing::warn!("CompositeExecutor: InstantiateSubmachine not yet wired; ignored");
             }
+
+            EffectKind::Verify => {
+                if let Some(exec) = &mut self.verify {
+                    exec.execute(effect, sink, obs).await;
+                } else {
+                    tracing::warn!(
+                        "CompositeExecutor: no Verify executor configured; dropping Verify effect"
+                    );
+                }
+            }
         }
     }
 }
@@ -167,6 +179,7 @@ pub struct CompositeExecutorBuilder {
     checkpoint: Option<Box<dyn EffectExecutor>>,
     audit: Option<Box<dyn EffectExecutor>>,
     internal: Option<Box<dyn EffectExecutor>>,
+    verify: Option<Box<dyn EffectExecutor>>,
 }
 
 impl CompositeExecutorBuilder {
@@ -224,6 +237,12 @@ impl CompositeExecutorBuilder {
     /// Attach the checkpoint executor operating in `repo_dir`.
     pub fn with_checkpoints(mut self, repo_dir: impl Into<PathBuf>) -> Self {
         self.checkpoint = Some(Box::new(CheckpointExecutor::new(repo_dir)));
+        self
+    }
+
+    /// Attach the verifier executor, jailing every `Effect::Verify` to `root`.
+    pub fn with_verify(mut self, root: impl Into<PathBuf>) -> Self {
+        self.verify = Some(Box::new(VerifyExecutor::new(root)));
         self
     }
 
@@ -293,6 +312,12 @@ impl CompositeExecutorBuilder {
         self
     }
 
+    /// Substitute a custom executor into the verify slot (`Verify`).
+    pub fn with_verify_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
+        self.verify = Some(exec);
+        self
+    }
+
     /// Substitute a custom executor into the internal slot (`EmitInternal`).
     /// Defaults to [`InternalExecutor`] when not set.
     pub fn with_internal_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
@@ -312,6 +337,7 @@ impl CompositeExecutorBuilder {
             internal: self
                 .internal
                 .unwrap_or_else(|| Box::new(InternalExecutor::new())),
+            verify: self.verify,
         }
     }
 }

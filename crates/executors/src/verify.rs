@@ -178,9 +178,46 @@ fn jail(root: &Path, path: &str) -> Option<PathBuf> {
     Some(root.join(candidate))
 }
 
+/// Executes `Effect::Verify` by calling [`evaluate`] against a fixed `root`
+/// and posting the verdict back as `Event::VerificationComplete`.
+///
+/// `root` is owned by the executor (constructed once, at assembly time) for
+/// the same reason `CheckpointExecutor` owns `repo_dir`: a transition cannot
+/// supply a filesystem path itself without ceasing to be pure, so the
+/// environment it resolves against is injected at the boundary instead.
+pub struct VerifyExecutor {
+    root: PathBuf,
+}
+
+impl VerifyExecutor {
+    /// Creates an executor that jails every verification to `root`.
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+}
+
+#[async_trait::async_trait]
+impl sven_kernel::EffectExecutor for VerifyExecutor {
+    async fn execute(
+        &mut self,
+        effect: sven_hsm::Effect,
+        sink: &sven_kernel::EventSink,
+        _obs: &sven_hsm::ObservationSink,
+    ) {
+        let sven_hsm::Effect::Verify { spec } = effect else {
+            return;
+        };
+        let verdict = evaluate(&spec, &self.root).await;
+        let _ = sink
+            .emit(sven_hsm::Event::VerificationComplete { verdict })
+            .await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sven_kernel::EffectExecutor;
 
     fn tempdir() -> tempfile::TempDir {
         tempfile::TempDir::new().expect("tempdir")
@@ -452,5 +489,134 @@ mod tests {
             body_contains: None,
         };
         assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Unknown { .. }));
+    }
+
+    // ── VerifyExecutor ──────────────────────────────────────────────────────
+
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    enum TS {
+        Top,
+        Idle,
+        Done,
+    }
+    struct OneShotMachine(sven_hsm::MachineId);
+    impl OneShotMachine {
+        fn new() -> Self {
+            Self(sven_hsm::MachineId::new())
+        }
+    }
+    impl sven_hsm::Machine for OneShotMachine {
+        type State = TS;
+        fn id(&self) -> sven_hsm::MachineId {
+            self.0
+        }
+        fn top(&self) -> TS {
+            TS::Top
+        }
+        fn initial(&self) -> TS {
+            TS::Idle
+        }
+        fn superstate(&self, _s: TS) -> TS {
+            TS::Top
+        }
+        fn is_terminal(&self, s: TS) -> bool {
+            s == TS::Done
+        }
+        fn dispatch_state(
+            &mut self,
+            s: TS,
+            e: &sven_hsm::Event,
+            ctx: &mut sven_hsm::Context,
+        ) -> sven_hsm::Reaction<TS> {
+            match s {
+                TS::Top => sven_hsm::Reaction::Handled(vec![]),
+                TS::Idle => {
+                    if e.is_lifecycle() {
+                        return sven_hsm::Reaction::Handled(vec![]);
+                    }
+                    if let sven_hsm::Event::VerificationComplete { verdict } = e {
+                        ctx.set_fact("verdict", serde_json::to_value(verdict).unwrap());
+                    }
+                    sven_hsm::Reaction::Transition {
+                        target: TS::Done,
+                        effects: vec![],
+                        rationale: "got event".into(),
+                    }
+                }
+                TS::Done => sven_hsm::Reaction::Handled(vec![]),
+            }
+        }
+    }
+
+    struct NoOpExec;
+    #[async_trait::async_trait]
+    impl sven_kernel::EffectExecutor for NoOpExec {
+        async fn execute(
+            &mut self,
+            _: sven_hsm::Effect,
+            _: &sven_kernel::EventSink,
+            _: &sven_hsm::ObservationSink,
+        ) {
+        }
+    }
+
+    async fn run_verify_effect(exec: &mut VerifyExecutor, spec: VerifierSpec) -> VerifierVerdict {
+        let rt = sven_kernel::Runtime::spawn(
+            sven_hsm::Hsm::new(OneShotMachine::new()),
+            sven_hsm::Context::new(),
+            sven_hsm::PermissionPolicy::builder().build(),
+            NoOpExec,
+            16,
+        );
+        let sink = rt.sink();
+        exec.execute(
+            sven_hsm::Effect::Verify { spec },
+            &sink,
+            &sven_hsm::ObservationSink::default(),
+        )
+        .await;
+        rt.wait_done().await;
+        let report = rt.join().await.unwrap();
+        let verdict = report.ctx.fact("verdict").cloned().expect("verdict fact set");
+        serde_json::from_value(verdict).unwrap()
+    }
+
+    #[tokio::test]
+    async fn verify_executor_posts_verification_complete() {
+        let dir = tempdir();
+        std::fs::write(dir.path().join("out.txt"), "hi").unwrap();
+        let mut exec = VerifyExecutor::new(dir.path());
+        let spec = VerifierSpec::FileExists { path: "out.txt".into(), min_bytes: None };
+        assert_eq!(run_verify_effect(&mut exec, spec).await, VerifierVerdict::Passed);
+    }
+
+    #[tokio::test]
+    async fn verify_executor_jails_to_its_own_root_not_a_spec_supplied_one() {
+        let dir = tempdir();
+        let mut exec = VerifyExecutor::new(dir.path());
+        let spec = VerifierSpec::FileExists { path: "/etc/passwd".into(), min_bytes: None };
+        assert!(matches!(
+            run_verify_effect(&mut exec, spec).await,
+            VerifierVerdict::Unknown { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn verify_executor_ignores_non_verify_effects() {
+        let dir = tempdir();
+        let mut exec = VerifyExecutor::new(dir.path());
+        let rt = sven_kernel::Runtime::spawn(
+            sven_hsm::Hsm::new(OneShotMachine::new()),
+            sven_hsm::Context::new(),
+            sven_hsm::PermissionPolicy::builder().build(),
+            NoOpExec,
+            16,
+        );
+        let sink = rt.sink();
+        exec.execute(sven_hsm::Effect::PersistAudit, &sink, &sven_hsm::ObservationSink::default())
+            .await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(!rt.status().done, "a non-Verify effect must not post anything");
+        rt.abort();
     }
 }

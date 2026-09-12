@@ -18,6 +18,7 @@
 //! | [`checkpoint`] | `CreateCheckpoint`, `RollbackToCheckpoint` | `Internal::Custom` |
 //! | [`audit`] | `PersistAudit` | *(none — appends to log file)* |
 //! | [`internal`] | `EmitInternal` | `Internal::Custom` |
+//! | [`verify`] | `Verify` | `VerificationComplete` |
 //! | [`composite`] | all of the above | delegates |
 //!
 //! # Quickstart
@@ -61,3 +62,4 @@ pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
 pub use turn::{CompactionConfig, TurnExecutor};
 pub use user::{ApprovalRequest, UserExecutor, UserQuestion};
+pub use verify::VerifyExecutor;
