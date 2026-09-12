@@ -31,4 +31,11 @@ pub enum LearnCommands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Check everything the local learning pipeline needs before it can run
+    /// real work, naming every problem at once rather than stopping at the
+    /// first one `sven learn flush` happens to hit.
+    ///
+    ///   sven learn doctor
+    Doctor,
 }

@@ -67,6 +67,7 @@
 //! ```
 
 pub mod assimilate;
+pub mod doctor;
 pub mod drain;
 pub mod ingest;
 pub mod ledger;
@@ -79,6 +80,7 @@ pub mod store;
 pub mod tool;
 
 pub use assimilate::{AssimilateFactTool, ProvenanceIndex};
+pub use doctor::{diagnose, format_report, CheckStatus, DoctorCheck, DoctorReport};
 pub use drain::{
     claim_sole_drain, DrainError, FactOutcome, FactReport, FactSubmitter, GateNumbers,
     PendingFactsDrain,

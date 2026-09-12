@@ -34,6 +34,21 @@ use crate::cli::LearnCommands;
 pub(crate) async fn run_learn_command(cmd: &LearnCommands, config: &Config) -> anyhow::Result<()> {
     match cmd {
         LearnCommands::Flush { json } => flush(config, *json).await,
+        LearnCommands::Doctor => doctor(config),
+    }
+}
+
+/// Runs every preflight check and prints one report naming every problem at
+/// once. Exits non-zero only if at least one check actually failed - a
+/// warning (e.g. `submitter: "none"`, or too few facts so far) is not a
+/// reason to fail a script that is only checking readiness.
+fn doctor(config: &Config) -> anyhow::Result<()> {
+    let report = sven_memory::diagnose(config);
+    println!("{}", sven_memory::format_report(&report));
+    if report.is_healthy() {
+        Ok(())
+    } else {
+        anyhow::bail!("one or more checks failed; see [fail] lines above")
     }
 }
 
