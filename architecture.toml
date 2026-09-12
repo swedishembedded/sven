@@ -233,7 +233,7 @@ path = "crates/tools-ctx/tests/context_integration.rs"
 lines = 1418
 [[allow.large_file]]
 path = "crates/config/src/schema.rs"
-lines = 1387
+lines = 1396
 [[allow.large_file]]
 path = "crates/session-store/src/trace_session.rs"
 lines = 1288
