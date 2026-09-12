@@ -282,7 +282,6 @@ impl KernelAgent {
             }
         }
     }
-
 }
 
 /// Map a caller [`AgentMode`] to a registered kernel mode. Coding-family modes
