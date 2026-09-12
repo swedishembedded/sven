@@ -58,6 +58,17 @@ pub enum ToolCapability {
     /// rule stands on, which makes it the one step in the loop the agent must
     /// not be able to perform for itself.
     IngestDocument,
+    /// Evaluate a declarative `VerifierSpec` (`Effect::Verify`) against the
+    /// real world.
+    ///
+    /// Not inherently dangerous: v1's declarative shapes are read-only
+    /// (`FileExists`, `FileHash`, `JsonPredicate`, path-jailed; `HttpPredicate`
+    /// is a `GET`). There is no `Command`/`UnitTests` shape, so no process
+    /// spawning and no write surface - see the verifier vocabulary's module
+    /// doc (`sven_vocab::verify`). Still its own bucket, allow-listed only for
+    /// the verified-task machine's `Verifying` state: nothing else in the
+    /// system has any reason to trigger a verification.
+    RunVerifier,
 }
 
 impl ToolCapability {

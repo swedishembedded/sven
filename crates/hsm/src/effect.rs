@@ -13,6 +13,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use sven_vocab::verify::VerifierSpec;
+
 use crate::ids::{ApprovalId, MachineId, QuestionId, TimerId, ToolCallId};
 use crate::permissions::ToolCapability;
 
@@ -101,6 +103,16 @@ pub enum Effect {
         /// Opaque descriptor naming which machine to build (a factory key).
         descriptor: Value,
     },
+    /// Evaluate a declarative predicate against the real world and report the
+    /// verdict as `Event::VerificationComplete`.
+    ///
+    /// Grading-out-of-band: this is the *only* way a claimed completion turns
+    /// into a verdict. No machine parses model text as a decision here - see
+    /// `sven_machines::machines::verified_task`'s module doc.
+    Verify {
+        /// The predicate to check.
+        spec: VerifierSpec,
+    },
 }
 
 impl Effect {
@@ -121,6 +133,7 @@ impl Effect {
             Effect::PersistAudit => EffectKind::PersistAudit,
             Effect::EmitInternal { .. } => EffectKind::EmitInternal,
             Effect::InstantiateSubmachine { .. } => EffectKind::InstantiateSubmachine,
+            Effect::Verify { .. } => EffectKind::Verify,
         }
     }
 
@@ -164,6 +177,8 @@ pub enum EffectKind {
     EmitInternal,
     /// See [`Effect::InstantiateSubmachine`].
     InstantiateSubmachine,
+    /// See [`Effect::Verify`].
+    Verify,
 }
 
 #[cfg(test)]

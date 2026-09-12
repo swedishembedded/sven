@@ -19,6 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sven_vocab::verify::VerifierVerdict;
 
 use crate::ids::{ApprovalId, QuestionId, TimerId, ToolCallId};
 use crate::permissions::ToolCapability;
@@ -193,6 +194,18 @@ pub enum Event {
         timer_id: TimerId,
     },
 
+    /// An `Effect::Verify` finished evaluating.
+    ///
+    /// The *only* way a verdict reaches a machine - see `Effect::Verify`'s
+    /// doc. Carries no correlating id: today at most one verification is ever
+    /// in flight per machine instance (the verified-task machine's
+    /// `Verifying` state), so there is nothing to correlate against yet. A
+    /// second concurrent consumer would need one added, not assumed.
+    VerificationComplete {
+        /// What the verifier concluded.
+        verdict: VerifierVerdict,
+    },
+
     /// A kernel-internal event (lifecycle signals + composition signals).
     Internal(InternalEvent),
 }
@@ -300,6 +313,7 @@ impl Event {
             Event::QuestionAsked { .. } => EventKind::QuestionAsked,
             Event::HumanAnswered { .. } => EventKind::HumanAnswered,
             Event::Timeout { .. } => EventKind::Timeout,
+            Event::VerificationComplete { .. } => EventKind::VerificationComplete,
             Event::Internal(InternalEvent::Entry) => EventKind::Entry,
             Event::Internal(InternalEvent::Exit) => EventKind::Exit,
             Event::Internal(InternalEvent::Init) => EventKind::Init,
@@ -354,6 +368,8 @@ pub enum EventKind {
     HumanAnswered,
     /// See [`Event::Timeout`].
     Timeout,
+    /// See [`Event::VerificationComplete`].
+    VerificationComplete,
     /// Reserved entry signal.
     Entry,
     /// Reserved exit signal.
