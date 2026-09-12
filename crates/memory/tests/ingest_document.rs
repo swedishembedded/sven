@@ -80,9 +80,10 @@ async fn ingest_document_computes_its_own_digest_never_trusts_a_model_supplied_o
     }
 }
 
-/// A missing `path` is a descriptive error, not a panic or a silent no-op.
+/// Neither `path` nor `url` is a descriptive error, not a panic or a silent
+/// no-op.
 #[tokio::test]
-async fn ingest_document_requires_a_path() {
+async fn ingest_document_requires_a_path_or_url() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let ledger = PendingFactsLedger::new(dir.path().join("pending-facts.jsonl"));
     let tool = IngestDocumentTool::new(ledger.clone());
@@ -101,8 +102,98 @@ async fn ingest_document_requires_a_path() {
             .ingested_document_digests()
             .expect("read ledger")
             .is_empty(),
-        "no path means nothing should ever have been recorded"
+        "neither path nor url means nothing should ever have been recorded"
     );
+}
+
+/// Giving both is refused, not silently resolved by picking one - an
+/// ambiguous call should never guess which artifact the human meant.
+#[tokio::test]
+async fn ingest_document_refuses_both_path_and_url_together() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let file_path = dir.path().join("spec.md");
+    std::fs::write(&file_path, b"content").expect("write fixture file");
+    let ledger = PendingFactsLedger::new(dir.path().join("pending-facts.jsonl"));
+    let tool = IngestDocumentTool::new(ledger.clone());
+
+    let out = tool
+        .execute(&ToolCall {
+            id: "call-1".to_string(),
+            name: "ingest_document".to_string(),
+            args: json!({
+                "path": file_path.to_string_lossy(),
+                "url": "http://127.0.0.1:1/unreachable",
+            }),
+        })
+        .await;
+
+    assert!(out.is_error);
+    assert!(
+        ledger.ingested_document_digests().expect("read ledger").is_empty(),
+        "an ambiguous call must record nothing"
+    );
+}
+
+/// Starts a one-shot local HTTP/1.1 server on an ephemeral port, replies once
+/// with `body` (as `text/plain`), and returns the URL to fetch it from. No
+/// mocking of `reqwest` itself - `fetch_document` hits a real socket, the same
+/// discipline `sven-executors::verify`'s `HttpPredicate` tests use.
+async fn serve_once(body: &'static str) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        if let Ok((mut socket, _)) = listener.accept().await {
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    });
+    format!("http://{addr}/")
+}
+
+/// The URL path: no local file at all, yet the ingested digest is real (over
+/// the fetched bytes) and the returned message carries the fetched text
+/// directly, since there is no file for the model to re-read afterward.
+#[tokio::test]
+async fn ingest_document_from_a_url_fetches_and_returns_readable_text() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let ledger = PendingFactsLedger::new(dir.path().join("pending-facts.jsonl"));
+    let tool = IngestDocumentTool::new(ledger.clone());
+    let url = serve_once("The CAN bus runs at 500 kbit/s.").await;
+
+    let out = tool
+        .execute(&ToolCall {
+            id: "call-1".to_string(),
+            name: "ingest_document".to_string(),
+            args: json!({"url": url}),
+        })
+        .await;
+
+    assert!(!out.is_error, "ingest_document should succeed: {}", out.content);
+    assert!(
+        out.content.contains("The CAN bus runs at 500 kbit/s."),
+        "the fetched text must be in the tool's own output, since there is no \
+         local file for the model to re-read: {}",
+        out.content
+    );
+
+    let real = real_digest(b"The CAN bus runs at 500 kbit/s.");
+    let ingested = ledger.ingested_document_digests().expect("read ledger");
+    assert_eq!(ingested, HashSet::from([real.clone()]));
+
+    match out.provenance.map(|b| *b) {
+        Some(FactSource::UserProvidedDocument { digest, uri, .. }) => {
+            assert_eq!(digest, real);
+            assert_eq!(uri, url);
+        }
+        other => panic!("expected UserProvidedDocument provenance, got {other:?}"),
+    }
 }
 
 /// The whole document half of `assimilate_fact`'s gate rests on one claim:

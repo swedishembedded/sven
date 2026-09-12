@@ -31,6 +31,10 @@ reqwest      = { workspace = true }
 sha2         = { workspace = true }
 shellexpand  = { workspace = true }
 hex          = { workspace = true }
+# `ingest_document`'s URL path renders fetched HTML into the readable text it
+# hands back to the model - same conversion `sven-tools-web::web_fetch` uses,
+# duplicated rather than depended on to avoid a same-tier domain->domain edge.
+html2text    = { workspace = true }
 
 # SQLite for persistent memory storage with FTS5
 rusqlite     = { version = "0.31", features = ["bundled", "load_extension"] }
