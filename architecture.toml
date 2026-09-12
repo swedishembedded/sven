@@ -265,6 +265,9 @@ lines = 1015
 path = "crates/tools-ctx/src/context/store.rs"
 lines = 885
 [[allow.large_file]]
+path = "crates/ci/src/runner/runtime_runner.rs"
+lines = 860
+[[allow.large_file]]
 path = "crates/tui/src/app/session_manager.rs"
 lines = 856
 [[allow.large_file]]

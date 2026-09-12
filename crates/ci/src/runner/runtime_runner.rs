@@ -24,11 +24,15 @@ use tokio::sync::broadcast::error::RecvError;
 use atif::Trajectory;
 use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config};
+use sven_hsm::context::Context as KernelContext;
 use sven_hsm::{Event, UiEvent};
 use sven_kernel::EventSink;
+use sven_machines::{ERROR_FACT, NEEDS_HUMAN_FACT, VERDICT_FACT};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
-use sven_session_store::{apply_outcome_to_trajectory, make_title, OutcomeFold, RunConclusion};
+use sven_session_store::{
+    apply_outcome_to_trajectory, make_title, OutcomeFold, RunConclusion, Verdict,
+};
 use sven_tools::ToolCall;
 
 use crate::output::{
@@ -109,6 +113,7 @@ impl RuntimeRunner {
         match mode {
             "chat" => "chat",
             "sdlc" => "sdlc",
+            "verified-task" => "verified-task",
             _ => "agent",
         }
     }
@@ -248,27 +253,72 @@ impl RuntimeRunner {
             .or(opts.step_timeout_secs)
             .map(|t| started + Duration::from_secs(t));
 
+        // `TurnExecutor` emits `UiEvent::TurnComplete` whenever a turn
+        // produces neither tool calls nor an empty response - a heuristic
+        // that means "hand control back" for chat/agent/sdlc, but is a false
+        // positive for verified-task: a tool-free final turn there only
+        // means the model *claims* to be done, and `Attempting` reacts by
+        // emitting `Effect::Verify`, not by ending the run. Treating that
+        // first claim as `TurnComplete` would exit before verification (and
+        // any retry) ever ran. So for this mode alone, that signal is
+        // swallowed instead.
+        //
+        // That leaves the real question open: what *does* signal completion?
+        // Not the observation channel closing - `bundle.runtime` (the
+        // `ErasedRuntime` this function still owns at this point) holds its
+        // own `ObservationSink` clone for its entire lifetime, including
+        // through the `join()` call below, so the broadcast channel's sender
+        // count never reaches zero while this function is still running:
+        // relying on `Err(RecvError::Closed)` here would deadlock forever.
+        // The kernel's status watch has no such problem - `status_rx` is an
+        // independent `watch::Receiver` - so for this mode alone the loop
+        // also races it and treats `RuntimeStatus.done` (set exactly when
+        // `VerifiedTaskMachine::is_terminal` does) as the real end. `result`
+        // from that branch is only a placeholder; the actual exit code is
+        // computed from the joined `Context` after the loop (see below).
+        let is_verified_task = kernel_mode == "verified-task";
+        let mut status_rx = bundle.runtime.status_watch();
+
         let result = loop {
+            if is_verified_task && status_rx.borrow().done {
+                break EXIT_SUCCESS;
+            }
             let received = match deadline {
                 Some(dl) => {
                     let remaining = dl.saturating_duration_since(Instant::now());
-                    match tokio::time::timeout(remaining, obs_rx.recv()).await {
-                        Ok(r) => r,
-                        Err(_) => {
-                            write_stderr(&format!(
-                                "[sven:error] RuntimeRunner timed out after {}s",
-                                (dl - started).as_secs()
-                            ));
-                            break EXIT_TIMEOUT;
+                    tokio::select! {
+                        r = tokio::time::timeout(remaining, obs_rx.recv()) => match r {
+                            Ok(r) => r,
+                            Err(_) => {
+                                write_stderr(&format!(
+                                    "[sven:error] RuntimeRunner timed out after {}s",
+                                    (dl - started).as_secs()
+                                ));
+                                break EXIT_TIMEOUT;
+                            }
+                        },
+                        _ = status_rx.wait_for(|s| s.done), if is_verified_task => {
+                            break EXIT_SUCCESS;
                         }
                     }
                 }
-                None => obs_rx.recv().await,
+                None => {
+                    tokio::select! {
+                        r = obs_rx.recv() => r,
+                        _ = status_rx.wait_for(|s| s.done), if is_verified_task => {
+                            break EXIT_SUCCESS;
+                        }
+                    }
+                }
             };
             match received {
                 Ok(ev) => {
+                    let suppress_turn_complete =
+                        is_verified_task && matches!(ev, UiEvent::TurnComplete);
                     if let Some(done) = handle_ui_event(ev, &mut state) {
-                        break done;
+                        if !suppress_turn_complete {
+                            break done;
+                        }
                     }
                 }
                 // The session ended and dropped the sender; treat as done.
@@ -291,6 +341,34 @@ impl RuntimeRunner {
             }
         };
 
+        // The verified-task machine's `Done`/`Parked` states are terminal
+        // (unlike chat/agent/sdlc, which idle forever awaiting the next
+        // prompt), so its kernel task actually returns once the run
+        // concludes and `join` is safe - it is also the only way to read the
+        // verdict the machine recorded in its final `Context`, since neither
+        // `RuntimeStatus` nor the UI-event stream carries facts. `result`
+        // from the loop above is only a placeholder for this mode (the
+        // observation stream carries no exit-code-worthy signal once
+        // `TurnComplete` is suppressed - see the loop's comment); the real
+        // exit code is derived from the joined context below. Every other
+        // mode keeps the existing detach-and-forget behaviour and its
+        // loop-derived `result` unchanged.
+        let (result, verdict) = if is_verified_task {
+            match bundle.runtime.join().await {
+                Ok(report) => (exit_code_for_verified_task(&report.ctx), verdict_from_context(&report.ctx)),
+                Err(e) => {
+                    write_stderr(&format!(
+                        "[sven:warn] verified-task kernel task did not join cleanly: {e}"
+                    ));
+                    (EXIT_AGENT_ERROR, None)
+                }
+            }
+        } else {
+            // Keep the runtime alive until here so the audit log flushes.
+            bundle.runtime.detach();
+            (result, None)
+        };
+
         write_progress(&format!(
             "[sven:step:complete] 1/1 duration_ms={} tools={} success={}",
             started.elapsed().as_millis(),
@@ -298,10 +376,8 @@ impl RuntimeRunner {
             result == EXIT_SUCCESS
         ));
 
-        write_trajectory(state, result, &self.config, &opts.mode);
+        write_trajectory(state, result, &self.config, &opts.mode, verdict);
 
-        // Keep the runtime alive until here so the audit log flushes.
-        bundle.runtime.detach();
         Ok(result)
     }
 }
@@ -383,7 +459,50 @@ fn should_stamp_reward(exit: i32) -> bool {
 /// failed trace write warns and leaves the run's exit code alone. Unlike
 /// `CiRunner`, this runner embeds no `subagent_trajectories` — it keeps no
 /// child assemblers.
-fn write_trajectory(state: CiOutState, exit: i32, config: &Config, mode: &str) {
+/// Reads the terminal verdict the verified-task machine recorded in its
+/// final `Context`, if any.
+///
+/// Deliberately reads only [`VERDICT_FACT`] - a plain `{"passed": bool}` the
+/// machine sets exactly once, at `Done`, only after a real
+/// `Event::VerificationComplete`. A run that ended any other way (parked at
+/// `Parked`, or a setup error recorded under [`ERROR_FACT`]) has no such fact,
+/// so this returns `None` and `OutcomeFold::conclude` honestly reports
+/// `SessionOutcome::Unknown` rather than a guessed pass or fail.
+fn verdict_from_context(ctx: &KernelContext) -> Option<Verdict> {
+    if let Some(reason) = ctx.fact(ERROR_FACT).and_then(|v| v.as_str()) {
+        write_stderr(&format!("[sven:warn] verified-task run ended without a verdict: {reason}"));
+    }
+    if let Some(needs_human) = ctx.fact(NEEDS_HUMAN_FACT) {
+        write_progress(&format!(
+            "[sven:info] verified-task run parked, needs a human: {needs_human}"
+        ));
+    }
+    match ctx.fact(VERDICT_FACT).and_then(|v| v.get("passed")).and_then(|v| v.as_bool()) {
+        Some(true) => Some(Verdict::Passed),
+        Some(false) => Some(Verdict::Failed),
+        None => None,
+    }
+}
+
+/// The exit code for a finished verified-task run, from its final `Context`.
+///
+/// `Parked` reuses [`EXIT_NEEDS_HUMAN`] exactly as an `Event::QuestionAsked`
+/// park would - both mean "a human must decide, do not score this run yet".
+/// A recorded verdict (pass or fail) is [`EXIT_SUCCESS`] either way, matching
+/// `sven learn flush`'s philosophy: the *run* completed and produced a real,
+/// stamped answer, and the stamped reward - not the process exit code - is
+/// what carries whether that answer was a pass.
+fn exit_code_for_verified_task(ctx: &KernelContext) -> i32 {
+    if ctx.fact(NEEDS_HUMAN_FACT).is_some() {
+        EXIT_NEEDS_HUMAN
+    } else if ctx.fact(VERDICT_FACT).is_some() {
+        EXIT_SUCCESS
+    } else {
+        EXIT_AGENT_ERROR
+    }
+}
+
+fn write_trajectory(state: CiOutState, exit: i32, config: &Config, mode: &str, verdict: Option<Verdict>) {
     let Some(path) = sven_workspace::resolve_auto_log_path() else {
         return;
     };
@@ -411,12 +530,13 @@ fn write_trajectory(state: CiOutState, exit: i32, config: &Config, mode: &str) {
     // pending), so this guard stays even though `conclude` below already
     // treats an unverified claim as unknown on its own.
     //
-    // No verifier exists yet (a real `Verdict` is Stage 3's job), so every
-    // claimed success here is honestly unverified - `conclude` reflects
-    // that as `SessionOutcome::Unknown` rather than the mechanical `1.0`
-    // this runner used to stamp.
+    // Only the verified-task machine ever produces a real `verdict` (via
+    // `verdict_from_context`, above); every other mode passes `None` here, so
+    // a claimed success is honestly unverified and `conclude` reflects that
+    // as `SessionOutcome::Unknown` rather than the mechanical `1.0` this
+    // runner used to stamp.
     if should_stamp_reward(exit) {
-        let outcome = state.outcome.conclude(conclusion_for(exit), None);
+        let outcome = state.outcome.conclude(conclusion_for(exit), verdict);
         apply_outcome_to_trajectory(&mut trajectory, &outcome);
     }
 
@@ -795,6 +915,54 @@ mod tests {
         assert_eq!(RuntimeRunner::kernel_mode("research"), "agent");
         assert_eq!(RuntimeRunner::kernel_mode("chat"), "chat");
         assert_eq!(RuntimeRunner::kernel_mode("sdlc"), "sdlc");
+        assert_eq!(RuntimeRunner::kernel_mode("verified-task"), "verified-task");
+    }
+
+    #[test]
+    fn verdict_from_context_reads_only_the_verdict_fact() {
+        let mut ctx = KernelContext::new();
+        assert_eq!(verdict_from_context(&ctx), None, "no verdict fact yet -> unknown");
+
+        ctx.set_fact(VERDICT_FACT, serde_json::json!({"passed": true}));
+        assert_eq!(verdict_from_context(&ctx), Some(Verdict::Passed));
+
+        ctx.set_fact(VERDICT_FACT, serde_json::json!({"passed": false}));
+        assert_eq!(verdict_from_context(&ctx), Some(Verdict::Failed));
+    }
+
+    #[test]
+    fn exit_code_for_verified_task_maps_parked_to_needs_human() {
+        let mut ctx = KernelContext::new();
+        ctx.set_fact(NEEDS_HUMAN_FACT, serde_json::json!({"question": "?", "options": []}));
+        assert_eq!(exit_code_for_verified_task(&ctx), EXIT_NEEDS_HUMAN);
+    }
+
+    #[test]
+    fn exit_code_for_verified_task_maps_a_recorded_verdict_to_success_either_way() {
+        let mut ctx = KernelContext::new();
+        ctx.set_fact(VERDICT_FACT, serde_json::json!({"passed": false}));
+        assert_eq!(
+            exit_code_for_verified_task(&ctx),
+            EXIT_SUCCESS,
+            "a real failed verdict is a completed run, not a process error"
+        );
+    }
+
+    #[test]
+    fn exit_code_for_verified_task_with_neither_fact_is_an_agent_error() {
+        let ctx = KernelContext::new();
+        assert_eq!(exit_code_for_verified_task(&ctx), EXIT_AGENT_ERROR);
+    }
+
+    #[test]
+    fn verdict_from_context_ignores_a_parked_run() {
+        let mut ctx = KernelContext::new();
+        ctx.set_fact(NEEDS_HUMAN_FACT, serde_json::json!({"question": "?", "options": []}));
+        assert_eq!(
+            verdict_from_context(&ctx),
+            None,
+            "a parked run must never be read as a graded outcome"
+        );
     }
 
     fn state(trace: u8) -> CiOutState {
