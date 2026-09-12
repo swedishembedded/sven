@@ -793,9 +793,15 @@ impl RuntimeBuilder {
                 let base = CompositeExecutorBuilder::default()
                     .with_user_slot(Box::new(user_executor))
                     .with_timers(Arc::new(sven_kernel::SystemClock::new()))
-                    .with_checkpoints(checkpoint_dir)
+                    .with_checkpoints(checkpoint_dir.clone())
                     .with_audit_trail(audit_log_path, audit_trail.clone())
-                    .with_turn(turn_executor);
+                    .with_turn(turn_executor)
+                    // Same root every other effect that touches the
+                    // filesystem uses; only the verified-task machine's
+                    // `Verifying` state ever emits `Effect::Verify` (see its
+                    // `permission_policy`), so wiring it here unconditionally
+                    // is harmless for every other mode.
+                    .with_verify(checkpoint_dir);
                 let composed = match self.tool_executor_override.take() {
                     Some(factory) => base.with_tool_slot(factory(
                         Arc::clone(&conv_store),
@@ -822,6 +828,7 @@ impl RuntimeBuilder {
         // restrictions per state (e.g. SDLC disallows writes outside Execution).
         let policy = match self.mode.as_str() {
             "sdlc" => SdlcMachine::permission_policy(),
+            "verified-task" => sven_machines::VerifiedTaskMachine::permission_policy(),
             // Read-only planning modes get a policy that withholds `WriteFile`
             // so the kernel forbids file mutations even if the model proposes
             // one; all other modes keep the full reactive-agent policy.
