@@ -26,6 +26,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+
+use crate::provenance::ContentDigest;
 
 /// A declarative task-success predicate.
 ///
@@ -126,7 +129,12 @@ pub enum JsonCmpOp {
 /// Deliberately has no `Passed`-shaped path that does not require an actual
 /// check to have run and succeeded - `NeedsHuman` and `Unknown` are both
 /// distinct from, and must never collapse into, `Passed`.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// `Serialize`/`Deserialize` so it can travel as an [`crate::provenance`]-style
+/// kernel event payload (`Event::VerificationComplete`) - event-sourcing
+/// replay requires every event to round-trip through JSON.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "verdict", rename_all = "snake_case")]
 pub enum VerifierVerdict {
     /// The predicate held.
     Passed,
@@ -150,6 +158,137 @@ pub enum VerifierVerdict {
         /// Why no verdict could be reached.
         reason: String,
     },
+}
+
+/// Canonicalizes `value` so its JSON serialization is stable regardless of
+/// object-key insertion order (recursively re-sorts every object's keys).
+fn canonicalize(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let sorted: std::collections::BTreeMap<String, Value> =
+                map.iter().map(|(k, v)| (k.clone(), canonicalize(v))).collect();
+            Value::Object(sorted.into_iter().collect())
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize).collect()),
+        other => other.clone(),
+    }
+}
+
+/// A content digest of `spec`, stable under key reordering.
+///
+/// This is the hash a [`FrozenVerifier`] pins and that `Verifying` later
+/// recomputes to detect tampering - see [`FrozenVerifier`]'s doc. Pure
+/// computation (no I/O), so it is safe to call from inside a machine
+/// transition, not just from an executor.
+#[must_use]
+pub fn spec_hash(spec: &VerifierSpec) -> ContentDigest {
+    let value = serde_json::to_value(spec).expect("VerifierSpec always serializes");
+    let canonical = canonicalize(&value);
+    let bytes = serde_json::to_vec(&canonical).expect("a canonicalized Value always serializes");
+    ContentDigest::from_hex(hex::encode(Sha256::digest(&bytes)))
+}
+
+/// Where a [`FrozenVerifier`] came from.
+///
+/// Never constructible from a model-supplied argument - see the module doc's
+/// note on `AskHuman`, and [`crate::provenance`]'s identical rule for
+/// [`crate::provenance::FactSource`]. `Authored` is the only variant today:
+/// a task's verifier is always written by the human/operator who authored the
+/// task file, never derived from a document the agent fetched.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "origin", rename_all = "snake_case")]
+pub enum VerifierOrigin {
+    /// Written by a human into a task file. `digest` is the content digest of
+    /// that file's raw bytes, computed by whatever read it (never taken from
+    /// a caller-supplied argument) - so the origin is traceable to exactly
+    /// which bytes produced this verifier, not to a runtime claim.
+    Authored {
+        /// Content digest of the task file's raw bytes.
+        digest: ContentDigest,
+    },
+}
+
+/// A [`VerifierSpec`] pinned at the moment a task was frozen, with the hash
+/// that lets `Verifying` detect if it was ever rewritten.
+///
+/// # Why this exists
+///
+/// Freeze-before-attempt only means something if what got frozen cannot
+/// quietly change before it is used to grade. `spec_hash` is recomputed from
+/// `spec` at verification time and compared to the hash stored here at freeze
+/// time; today nothing in the attempt loop can touch a frozen fact (no tool
+/// writes `Context` facts directly), so a mismatch should never occur - but
+/// the check is defense in depth against a future bug reintroducing that
+/// possibility, not decoration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FrozenVerifier {
+    /// The pinned predicate.
+    pub spec: VerifierSpec,
+    /// Content digest of `spec`'s canonical JSON, computed once at freeze time.
+    pub spec_hash: ContentDigest,
+    /// Who is answerable for this verifier existing.
+    pub origin: VerifierOrigin,
+}
+
+impl FrozenVerifier {
+    /// Freezes `spec`, computing its hash now.
+    #[must_use]
+    pub fn freeze(spec: VerifierSpec, origin: VerifierOrigin) -> Self {
+        let spec_hash = spec_hash(&spec);
+        Self { spec, spec_hash, origin }
+    }
+
+    /// `true` if `spec`'s current hash still matches the one pinned at freeze
+    /// time - see the struct doc.
+    #[must_use]
+    pub fn still_matches(&self) -> bool {
+        spec_hash(&self.spec) == self.spec_hash
+    }
+}
+
+/// A unit of agentic work with a verifier pinned before any attempt starts.
+///
+/// Pure data - authored by a human (typically as a `.task.toml` file, parsed
+/// at the impure CLI/wiring boundary, never inside a machine transition) and
+/// handed to the verified-task machine already complete. The machine itself
+/// never invents a `Task`; it only ever receives one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Task {
+    /// Stable identifier, used to key per-task splits/retention (e.g. Stage 6's
+    /// curator) and to label episode provenance.
+    pub id: String,
+    /// The instruction shown to the model attempting this task.
+    pub prompt: String,
+    /// How a claimed completion is checked. Frozen before the first attempt -
+    /// see [`FrozenVerifier`].
+    pub verifier: VerifierSpec,
+    /// Attempts allowed before giving up without a passing verdict.
+    #[serde(default = "Task::default_max_attempts")]
+    pub max_attempts: u32,
+}
+
+impl Task {
+    /// Default retry budget when a task file omits `max_attempts`.
+    #[must_use]
+    pub const fn default_max_attempts() -> u32 {
+        2
+    }
+}
+
+/// The whole payload the verified-task machine's `Freeze` state parses out of
+/// its first `Event::UserMessage` - a [`Task`] plus the content digest of the
+/// bytes it was read from.
+///
+/// This is the wire shape between the impure loader (which reads the task
+/// file, hashes it, and posts this as JSON) and the machine (which only ever
+/// parses already-provided text - see the module's `Freeze` state doc for why
+/// that keeps the transition pure).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VerifiedTaskSeed {
+    /// The task to attempt.
+    pub task: Task,
+    /// Content digest of the raw file bytes `task` was parsed from.
+    pub source_digest: ContentDigest,
 }
 
 #[cfg(test)]
@@ -208,5 +347,73 @@ mod tests {
             }
             other => panic!("expected AskHuman, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn spec_hash_is_stable_under_key_reordering() {
+        // The same predicate, serialized with fields in a different order,
+        // must hash identically - otherwise a harmless refactor of the
+        // serializer would look like tampering to `FrozenVerifier::still_matches`.
+        let a = VerifierSpec::FileExists { path: "out.txt".into(), min_bytes: Some(1) };
+        let value = serde_json::to_value(&a).unwrap();
+        let reordered = serde_json::json!({
+            "min_bytes": value["min_bytes"],
+            "path": value["path"],
+            "kind": value["kind"],
+        });
+        let b: VerifierSpec = serde_json::from_value(reordered).unwrap();
+        assert_eq!(a, b, "sanity: still the same spec");
+        assert_eq!(spec_hash(&a), spec_hash(&b));
+    }
+
+    #[test]
+    fn spec_hash_differs_for_different_specs() {
+        let a = VerifierSpec::FileExists { path: "a".into(), min_bytes: None };
+        let b = VerifierSpec::FileExists { path: "b".into(), min_bytes: None };
+        assert_ne!(spec_hash(&a), spec_hash(&b));
+    }
+
+    #[test]
+    fn frozen_verifier_still_matches_until_the_spec_changes() {
+        let spec = VerifierSpec::FileExists { path: "out.txt".into(), min_bytes: None };
+        let frozen = FrozenVerifier::freeze(
+            spec,
+            VerifierOrigin::Authored { digest: ContentDigest::from_hex("deadbeef") },
+        );
+        assert!(frozen.still_matches());
+
+        let mut tampered = frozen.clone();
+        tampered.spec = VerifierSpec::FileExists { path: "different.txt".into(), min_bytes: None };
+        assert!(
+            !tampered.still_matches(),
+            "a spec that no longer matches its pinned hash must be detectable"
+        );
+    }
+
+    #[test]
+    fn task_without_max_attempts_defaults_to_two() {
+        let json = serde_json::json!({
+            "id": "t1",
+            "prompt": "do the thing",
+            "verifier": {"kind": "file_exists", "path": "out.txt"},
+        });
+        let task: Task = serde_json::from_value(json).unwrap();
+        assert_eq!(task.max_attempts, 2);
+    }
+
+    #[test]
+    fn verified_task_seed_round_trips_through_json() {
+        let seed = VerifiedTaskSeed {
+            task: Task {
+                id: "t1".into(),
+                prompt: "do the thing".into(),
+                verifier: VerifierSpec::FileExists { path: "out.txt".into(), min_bytes: None },
+                max_attempts: 3,
+            },
+            source_digest: ContentDigest::from_hex("abc123"),
+        };
+        let json = serde_json::to_value(&seed).unwrap();
+        let back: VerifiedTaskSeed = serde_json::from_value(json).unwrap();
+        assert_eq!(seed, back);
     }
 }

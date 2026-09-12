@@ -9,3 +9,7 @@ license     = "Apache-2.0"
 clap       = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
+# `verify::spec_hash` - a canonical-JSON content digest, pure computation
+# (no I/O), so it belongs at the same tier as the type it hashes.
+sha2       = { workspace = true }
+hex        = { workspace = true }
