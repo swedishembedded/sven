@@ -76,12 +76,10 @@ pub mod recall;
 pub mod sqlite;
 pub mod store;
 pub mod tool;
-pub mod trajectory_export;
 
 pub use assimilate::{AssimilateFactTool, ProvenanceIndex};
 pub use drain::{DrainError, FactOutcome, FactReport, FactSubmitter, GateNumbers, PendingFactsDrain};
 pub use ingest::IngestDocumentTool;
-pub use trajectory_export::{export_trajectories, ExportSummary};
 pub use ledger::{
     DocumentRecord, FrozenProbe, LedgerEntry, LedgerError, PendingFactRecord, PendingFactsLedger,
 };

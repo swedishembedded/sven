@@ -31,30 +31,4 @@ pub enum LearnCommands {
         #[arg(long)]
         json: bool,
     },
-
-    /// Export recorded trajectories whose stamped outcome cleared a reward
-    /// threshold into brain's training-chat JSONL format - the procedural
-    /// (task-completion) counterpart to the fact/document loop above.
-    ///
-    /// A trajectory with no stamped reward at all (unconcluded, or never
-    /// scored) is skipped, never treated as a zero. Overwrites `--out`
-    /// rather than appending, so a repeated export over the same runs
-    /// directory is idempotent.
-    ///
-    /// Example: export every successful headless run's own trajectory log
-    /// into a dataset for a future trajectory-based study:
-    ///
-    ///   sven learn export-trajectories --runs .sven/logs --min-reward 0.8 --out dataset.jsonl
-    ExportTrajectories {
-        /// Directory to scan for `*.atif.json` trajectory files.
-        #[arg(long)]
-        runs: std::path::PathBuf,
-        /// Minimum stamped reward (`final_metrics.extra.reward`) a
-        /// trajectory must have to be exported.
-        #[arg(long, default_value_t = 1.0)]
-        min_reward: f64,
-        /// Where to write the JSONL dataset.
-        #[arg(long)]
-        out: std::path::PathBuf,
-    },
 }
