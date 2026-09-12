@@ -18,6 +18,7 @@ use run::logging::init_logging;
 use run::models::{list_models_cmd, list_providers_cmd};
 #[cfg(feature = "memory")]
 use run::questions::run_questions_command;
+use run::task::run_task_command;
 // `run_acp_command`/`run_mcp_command` live in `sven-acp`/`sven-mcp`, shared
 // verbatim with the standalone binaries.
 #[cfg(feature = "network")]
@@ -145,6 +146,10 @@ async fn main() -> anyhow::Result<()> {
             #[cfg(feature = "memory")]
             Commands::Questions { command } => {
                 return run_questions_command(command);
+            }
+            Commands::Task { command } => {
+                let config = sven_config::load(cli.config.as_deref())?;
+                return run_task_command(command, &config).await;
             }
             Commands::ListModels {
                 provider,

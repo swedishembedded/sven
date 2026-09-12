@@ -12,6 +12,7 @@ mod index;
 mod learn;
 #[cfg(feature = "memory")]
 mod questions;
+mod task;
 #[cfg(feature = "network")]
 mod team;
 mod tool;
@@ -26,6 +27,7 @@ pub use index::IndexCommands;
 pub use learn::LearnCommands;
 #[cfg(feature = "memory")]
 pub use questions::QuestionsCommands;
+pub use task::TaskCommands;
 #[cfg(feature = "network")]
 pub use sven_mcp::cli::McpCommands;
 #[cfg(feature = "network")]
@@ -405,6 +407,15 @@ pub enum Commands {
     Questions {
         #[command(subcommand)]
         command: QuestionsCommands,
+    },
+
+    /// Attempt a task whose completion a declarative verifier checks, not
+    /// the model's own claim of being done.
+    ///
+    ///   sven task run my-task.task.toml
+    Task {
+        #[command(subcommand)]
+        command: TaskCommands,
     },
 
     /// Map: run one sven agent per stdin line in parallel.

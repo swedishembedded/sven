@@ -16,6 +16,7 @@ pub(crate) mod oauth;
 pub(crate) mod pipeline;
 #[cfg(feature = "memory")]
 pub(crate) mod questions;
+pub(crate) mod task;
 #[cfg(feature = "network")]
 pub(crate) mod team;
 pub(crate) mod tool;
