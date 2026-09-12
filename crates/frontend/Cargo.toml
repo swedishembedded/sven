@@ -15,12 +15,6 @@ sven-session-model = { path = "../session-model" }
 sven-tools       = { path = "../tools" }
 sven-tools-agent = { path = "../tools-agent" }
 sven-machines        = { path = "../machines" }
-# The pending-facts ledger and its drain. Depended on unconditionally: unlike
-# sven-bootstrap's optional `memory` feature (which exists so the `minimal`
-# profile can exclude rusqlite), sven-frontend is not in the `minimal`
-# binary's dependency closure at all - `cargo tree -p sven
-# --no-default-features --features minimal` does not reach it.
-sven-memory      = { path = "../memory" }
 sven-bootstrap   = { path = "../bootstrap" }
 sven-mcp-client  = { path = "../mcp-client" }
 sven-workspace     = { path = "../workspace" }
@@ -46,4 +40,3 @@ tungstenite       = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tempfile = { workspace = true }
 async-trait = { workspace = true }
 sven-model-mock = { path = "../model-mock" }
-sven-vocab = { path = "../vocab" }

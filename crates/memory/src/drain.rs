@@ -59,6 +59,7 @@
 //! procure our services by sending an email to info@swedishembedded.com.
 
 use std::collections::HashSet;
+use std::fs::File;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -470,6 +471,40 @@ impl PendingFactsDrain {
     }
 }
 
+/// Takes the exclusive advisory lock on `<cursor_path>.lock`.
+///
+/// A cursor file has a single owner: two callers draining (or flushing) the
+/// same cursor concurrently would race its writes, corrupting the settle
+/// point or submitting the same batch twice - precisely what this crate's
+/// exactly-once guarantee exists to prevent. `Ok(None)` means another live
+/// drain already holds it and the caller must not proceed. The returned file
+/// must outlive the drain: dropping it releases the lock.
+///
+/// # Errors
+///
+/// Any I/O failure other than the lock being held (e.g. the lock file's
+/// parent directory cannot be created, or the lock file cannot be opened).
+pub fn claim_sole_drain(cursor_path: &Path) -> std::io::Result<Option<File>> {
+    let mut os = cursor_path.as_os_str().to_owned();
+    os.push(".lock");
+    let path = PathBuf::from(os);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    }
+}
+
 /// Runs blocking filesystem work off the async runtime's worker threads.
 async fn blocking<T, F>(work: F) -> Result<T, DrainError>
 where
@@ -644,5 +679,27 @@ mod tests {
             })
         ));
         assert!(guard_cursor(2, 2).is_ok(), "a fully drained ledger is fine");
+    }
+
+    #[test]
+    fn a_second_claim_over_the_same_cursor_is_refused_while_the_first_holds_it() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cursor_path = dir.path().join("pending-facts.jsonl.cursor.json");
+
+        let first = claim_sole_drain(&cursor_path)
+            .expect("lock io")
+            .expect("an unheld lock is claimable");
+        assert!(
+            claim_sole_drain(&cursor_path)
+                .expect("lock io")
+                .is_none(),
+            "a second, concurrent claimant must not also acquire the lock"
+        );
+
+        drop(first);
+        assert!(
+            claim_sole_drain(&cursor_path).expect("lock io").is_some(),
+            "the lock is claimable again once the holder releases it"
+        );
     }
 }

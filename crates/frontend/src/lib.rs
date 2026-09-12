@@ -8,9 +8,6 @@
 //!
 //! - `AgentRequest` / `kernel_session_task` - the background task that drives
 //!   the HSM-kernel session and forwards its `AgentEvent` stream
-//! - `spawn_default_fact_drain` / `spawn_fact_drain` - the background task
-//!   that hands admitted pending facts to a training pipeline, off unless the
-//!   user's config enables it
 //! - `node_agent_task` - WebSocket bridge to a remote agent session, speaking
 //!   the canonical control protocol from [`sven_control`]
 //! - `ChatSegment` - the display-layer chat data model
@@ -35,7 +32,6 @@
 //! (`pub use sven_commands as commands`) so `sven-tui` is unaffected.
 
 pub mod agent;
-pub mod fact_drain;
 pub mod markdown;
 pub mod node_agent;
 pub mod projection;
@@ -55,7 +51,6 @@ pub use sven_commands as commands;
 // ── Convenience re-exports ────────────────────────────────────────────────────
 
 pub use agent::{kernel_session_task, AgentRequest};
-pub use fact_drain::{spawn_default_fact_drain, spawn_fact_drain};
 pub use node_agent::{fetch_node_tools, node_agent_task};
 pub use projection::{
     projection_channel, projection_to_session_state, MachineProjection, ProjectionRx, ProjectionTx,

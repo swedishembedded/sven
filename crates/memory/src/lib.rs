@@ -78,14 +78,17 @@ pub mod store;
 pub mod tool;
 
 pub use assimilate::{AssimilateFactTool, ProvenanceIndex};
-pub use drain::{DrainError, FactOutcome, FactReport, FactSubmitter, GateNumbers, PendingFactsDrain};
+pub use drain::{
+    claim_sole_drain, DrainError, FactOutcome, FactReport, FactSubmitter, GateNumbers,
+    PendingFactsDrain,
+};
 pub use ingest::IngestDocumentTool;
 pub use ledger::{
     DocumentRecord, FrozenProbe, LedgerEntry, LedgerError, PendingFactRecord, PendingFactsLedger,
 };
 pub use local_study::{
     submitter_from_config, LocalFactSubmitter, LocalStudy, ADAPTER_DIR_PLACEHOLDER,
-    DATASET_PLACEHOLDER, REPORT_PLACEHOLDER,
+    DATASET_PLACEHOLDER, REPORT_PLACEHOLDER, WEIGHTS_PLACEHOLDER,
 };
 pub use question_ledger::{
     QuestionAnsweredRecord, QuestionAskedRecord, QuestionLedger, QuestionLedgerEntry,
