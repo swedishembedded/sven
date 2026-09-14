@@ -338,6 +338,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
         Arc::clone(&p.buffer_store),
         p.tool_event_tx,
         Some(model_id),
+        p.runtime.agents.clone(),
     ));
 
     reg
@@ -385,6 +386,7 @@ fn build_profile_research(
         buffer_store,
         tool_event_tx,
         Some(format!("{}/{}", model.name(), model.model_name())),
+        runtime.agents.clone(),
     ));
 
     reg

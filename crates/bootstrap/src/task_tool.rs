@@ -73,6 +73,7 @@ use sven_tools::{
     tool::{Tool, ToolCall, ToolOutput},
 };
 use sven_tools_fs::{BufGrepTool, BufReadTool, BufStatusTool, BufferSource, OutputBufferStore};
+use sven_workspace::{AgentInfo, SharedAgents};
 
 /// Environment variable set when running as a subagent (depth 0).
 const DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
@@ -164,6 +165,11 @@ pub struct TaskTool {
     buffer_store: Arc<Mutex<OutputBufferStore>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     default_model: Option<String>,
+    /// Discovered subagent personas (`.sven/agents/*.md` etc).  `mode` accepts
+    /// any of these names in addition to the three built-ins, giving each
+    /// persona its own system prompt (persona `content`) and tool profile
+    /// (`readonly` selects the ACP session mode - see [`resolve_mode_and_prompt`]).
+    agents: SharedAgents,
 }
 
 impl TaskTool {
@@ -171,13 +177,47 @@ impl TaskTool {
         buffer_store: Arc<Mutex<OutputBufferStore>>,
         tool_event_tx: mpsc::Sender<ToolEvent>,
         default_model: Option<String>,
+        agents: SharedAgents,
     ) -> Self {
         Self {
             buffer_store,
             tool_event_tx,
             default_model,
+            agents,
         }
     }
+}
+
+/// Resolve a requested `mode` against the three built-in modes and any
+/// discovered subagent persona, returning the effective ACP session mode and
+/// the prompt actually sent to the sub-agent.
+///
+/// A persona match prepends its `content` (system prompt) to `prompt` and
+/// maps `readonly` to an ACP mode: `true` -> `research` (read-only tool
+/// profile), `false` -> `agent` (full read/write tool profile). Built-in
+/// mode names always take priority over a same-named persona.
+fn resolve_mode_and_prompt(
+    mode: &str,
+    prompt: &str,
+    agents: &[AgentInfo],
+) -> Result<(String, String), String> {
+    if matches!(mode, "research" | "plan" | "agent") {
+        return Ok((mode.to_string(), prompt.to_string()));
+    }
+
+    if let Some(persona) = agents.iter().find(|a| a.name == mode) {
+        let effective_mode = if persona.readonly { "research" } else { "agent" };
+        let effective_prompt =
+            format!("{}\n\n---\n\n## Task\n\n{prompt}", persona.content.trim());
+        return Ok((effective_mode.to_string(), effective_prompt));
+    }
+
+    let mut valid: Vec<&str> = vec!["research", "plan", "agent"];
+    valid.extend(agents.iter().map(|a| a.name.as_str()));
+    Err(format!(
+        "unknown mode '{mode}'. Valid options: {}",
+        valid.join(", ")
+    ))
 }
 
 #[async_trait]
@@ -196,6 +236,10 @@ impl Tool for TaskTool {
          **When to spawn:**\n\
          - Exploration and research of large unfamiliar areas.\n\
          - Tasks that searching through a lot of context but we are only interested in the final findings. \n\
+         **Modes:** `research`/`plan`/`agent` are built in. `mode` also accepts the name of any\n\
+         discovered subagent persona (see the Subagents section of your system prompt) - the\n\
+         persona's own instructions become the sub-agent's system prompt and its `readonly`\n\
+         flag picks the tool profile.\n\n\
          **Important:**\n\
          - Do not use for anything you can easily do with shell.\n\
          - Do not spawn tasks for simple single step commands.\n\
@@ -204,6 +248,9 @@ impl Tool for TaskTool {
     }
 
     fn parameters_schema(&self) -> Value {
+        let mut mode_enum: Vec<String> = vec!["research".into(), "plan".into(), "agent".into()];
+        mode_enum.extend(self.agents.get().iter().map(|a| a.name.clone()));
+
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -222,8 +269,8 @@ impl Tool for TaskTool {
                 },
                 "mode": {
                     "type": "string",
-                    "enum": ["research", "plan", "agent"],
-                    "description": "[action=spawn] Operating mode for the sub-agent (default: agent)"
+                    "enum": mode_enum,
+                    "description": "[action=spawn] Operating mode, or the name of a discovered subagent persona (default: agent)"
                 },
                 "workdir": {
                     "type": "string",
@@ -402,7 +449,7 @@ impl Tool for TaskTool {
             .unwrap_or(&prompt[..prompt.len().min(60)])
             .to_string();
 
-        let mode = call
+        let requested_mode = call
             .args
             .get("mode")
             .and_then(|v| v.as_str())
@@ -424,6 +471,15 @@ impl Tool for TaskTool {
             .map(str::to_string)
             .or_else(|| self.default_model.clone());
 
+        // `acp_mode` is the built-in ACP session mode a persona maps onto;
+        // `requested_mode` (kept for the TUI buffer label) may be a persona
+        // name such as "knowledge-extract".
+        let (acp_mode, prompt) =
+            match resolve_mode_and_prompt(&requested_mode, &prompt, &self.agents.get()) {
+                Ok(v) => v,
+                Err(e) => return ToolOutput::err(&call.id, e),
+            };
+
         // Subagents (DEPTH_ENV set) cannot spawn further sub-agents.
         if std::env::var(DEPTH_ENV).is_ok() {
             return ToolOutput::err(&call.id, "sub-agents cannot spawn further sub-agents");
@@ -441,7 +497,7 @@ impl Tool for TaskTool {
             let mut store = self.buffer_store.lock().await;
             store.create(BufferSource::Subagent {
                 prompt: prompt.clone(),
-                mode: mode.clone(),
+                mode: requested_mode.clone(),
                 description: description.clone(),
             })
         };
@@ -460,7 +516,8 @@ impl Tool for TaskTool {
         debug!(
             handle = %handle_id,
             prompt = %prompt,
-            mode = %mode,
+            mode = %requested_mode,
+            acp_mode = %acp_mode,
             "task: spawning ACP sub-agent"
         );
 
@@ -474,7 +531,7 @@ impl Tool for TaskTool {
             exe,
             prompt,
             description: description.clone(),
-            mode,
+            mode: acp_mode,
             workdir,
             model_override,
             handle_id: handle_id.clone(),
@@ -1019,13 +1076,31 @@ mod tests {
 
     use sven_tools::tool::{Tool, ToolCall};
     use sven_tools_fs::OutputBufferStore;
+    use sven_workspace::{AgentInfo, SharedAgents};
 
-    use super::TaskTool;
+    use super::{resolve_mode_and_prompt, TaskTool};
 
     fn make_task() -> TaskTool {
+        make_task_with_agents(SharedAgents::empty())
+    }
+
+    fn make_task_with_agents(agents: SharedAgents) -> TaskTool {
         let (tx, _rx) = mpsc::channel(8);
         let store = Arc::new(Mutex::new(OutputBufferStore::new()));
-        TaskTool::new(store, tx, None)
+        TaskTool::new(store, tx, None, agents)
+    }
+
+    fn persona(name: &str, content: &str, readonly: bool) -> AgentInfo {
+        AgentInfo {
+            name: name.to_string(),
+            description: format!("{name} persona"),
+            model: None,
+            readonly,
+            is_background: false,
+            content: content.to_string(),
+            agent_md_path: std::path::PathBuf::from(format!("/tmp/{name}.md")),
+            knowledge: vec![],
+        }
     }
 
     fn call(args: serde_json::Value) -> ToolCall {
@@ -1151,5 +1226,69 @@ mod tests {
             "error should mention sub-agent: {}",
             out.content
         );
+    }
+
+    #[test]
+    fn resolve_builtin_modes_pass_through_unchanged() {
+        for m in ["research", "plan", "agent"] {
+            let (mode, prompt) = resolve_mode_and_prompt(m, "do it", &[]).unwrap();
+            assert_eq!(mode, m);
+            assert_eq!(prompt, "do it");
+        }
+    }
+
+    #[test]
+    fn resolve_unknown_mode_without_personas_is_error() {
+        let err = resolve_mode_and_prompt("bogus", "do it", &[]).unwrap_err();
+        assert!(err.contains("bogus"));
+        assert!(err.contains("research"));
+    }
+
+    #[test]
+    fn resolve_persona_readonly_maps_to_research_and_prepends_content() {
+        let agents = [persona("knowledge-extract", "You extract knowledge.", true)];
+        let (mode, prompt) =
+            resolve_mode_and_prompt("knowledge-extract", "learn from doc.md", &agents).unwrap();
+        assert_eq!(mode, "research");
+        assert!(prompt.starts_with("You extract knowledge."));
+        assert!(prompt.contains("learn from doc.md"));
+    }
+
+    #[test]
+    fn resolve_persona_writable_maps_to_agent() {
+        let agents = [persona("implementer", "You write code.", false)];
+        let (mode, _prompt) =
+            resolve_mode_and_prompt("implementer", "fix the bug", &agents).unwrap();
+        assert_eq!(mode, "agent");
+    }
+
+    #[test]
+    fn resolve_unknown_mode_lists_persona_names_as_suggestions() {
+        let agents = [persona("knowledge-extract", "You extract knowledge.", true)];
+        let err = resolve_mode_and_prompt("typo-mode", "x", &agents).unwrap_err();
+        assert!(err.contains("knowledge-extract"));
+    }
+
+    #[test]
+    fn parameters_schema_mode_enum_includes_discovered_personas() {
+        let agents = SharedAgents::new(vec![persona("knowledge-extract", "body", true)]);
+        let t = make_task_with_agents(agents);
+        let schema = t.parameters_schema();
+        let mode_enum = schema["properties"]["mode"]["enum"]
+            .as_array()
+            .expect("mode enum present");
+        let names: Vec<&str> = mode_enum.iter().filter_map(|v| v.as_str()).collect();
+        assert!(names.contains(&"agent"));
+        assert!(names.contains(&"knowledge-extract"));
+    }
+
+    #[tokio::test]
+    async fn spawn_with_unknown_mode_returns_error_before_spawning() {
+        let t = make_task();
+        let out = t
+            .execute(&call(json!({"prompt": "do something", "mode": "not-a-real-mode"})))
+            .await;
+        assert!(out.is_error);
+        assert!(out.content.contains("not-a-real-mode"));
     }
 }
