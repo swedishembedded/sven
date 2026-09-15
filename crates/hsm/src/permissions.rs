@@ -69,6 +69,20 @@ pub enum ToolCapability {
     /// the verified-task machine's `Verifying` state: nothing else in the
     /// system has any reason to trigger a verification.
     RunVerifier,
+    /// Drive an external physical/virtual device (e.g. an Android phone over
+    /// ADB) through a narrow, typed operation set: screenshot, tap, type,
+    /// launch/stop an app.
+    ///
+    /// Deliberately its own bucket rather than [`ToolCapability::ExecuteShell`]:
+    /// the risk profile is different (no shell metacharacter injection, no
+    /// filesystem/process access on the controlling host - only the specific
+    /// verbs a device-control tool exposes reach the device), and a machine
+    /// that drives a device should be able to allow this without also
+    /// granting arbitrary shell execution. Not inherently dangerous by
+    /// itself - the device-control tool's own `default_policy()` still asks
+    /// for approval by default; a headless caller (e.g. CI) auto-approves it
+    /// explicitly rather than this bucket being globally trusted.
+    ControlDevice,
 }
 
 impl ToolCapability {

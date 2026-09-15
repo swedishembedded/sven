@@ -1,0 +1,19 @@
+[package]
+name        = "sven-tools-android"
+version.workspace = true
+edition     = "2021"
+description = "Typed Android device control over ADB: screenshot, tap, swipe, type, key events, app launch/stop. Domain tier. A narrow verb set only, never raw shell - see ToolCapability::ControlDevice."
+license     = "Apache-2.0"
+
+[dependencies]
+sven-tool-api = { path = "../tool-api" }
+sven-hsm      = { path = "../hsm" }
+sven-image    = { path = "../image" }
+image         = { workspace = true }
+async-trait   = { workspace = true }
+serde_json    = { workspace = true }
+tokio         = { workspace = true }
+tracing       = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
