@@ -16,7 +16,19 @@ gap), phase 5 done (whale): the "workflow blocks until a human physically
 acts" node Phase 4's own update deliberately deferred is now real -
 `NodeKind::HumanAction`, a resume RPC, `whale run --local`'s own
 cross-invocation resume socket, and `ui-login.yaml`'s `confirm_code`
-step - see Phase 5's own update below for the exact contract.**
+step - see Phase 5's own update below for the exact contract. Phase 6 (whale)
+closes the LAST open gap this whole initiative was scoped around: a codified
+`crates/whale/tests/live_ui_test_e2e.rs` now drives the REAL `sven
+agent-dispatch` binary (not the smoke script) through the FULL flow -
+`launch` -> `login` -> `confirm_code` (pause) -> `whale resume` from a
+second process -> `get_started` -> `add_card` -> `run_completed`. Building
+it surfaced and fixed a real, load-bearing bug (a resumed `HumanAction`
+node's output was never written into the shared node-output store, so any
+downstream node's `Link` past it could never resolve) - see Phase 6's own
+update below for the exact contract, what was verified for real in this
+sandbox (the whole flow against the generic smoke dispatcher, including the
+fix), and what remains genuinely unverified (a real run against real
+hardware/checkpoint, which this sandbox has neither of).**
 
 ## Goal
 
@@ -644,3 +656,125 @@ see whale's own commit history for the full detail):
   from Phase 3/4 - still genuinely open, and orthogonal to this phase: a
   `HumanAction` node never invokes `AgentDispatcher`/`sven agent-dispatch`
   at all).
+
+## Phase 6 - closes the loop: `sven agent-dispatch` for real, the full flow, one bug found and fixed (whale)
+
+This is the acceptance bar the whole initiative was scoped around: whale
+dispatching to the REAL `sven agent-dispatch` binary (not
+`agent-dispatch-smoke.sh`), driving a real device through the full flow -
+`launch` -> `login` -> `confirm_code` (pause) -> resumed from a second
+process -> `get_started` -> `add_card` -> `run_completed` - proven together
+rather than as three separately-tested pieces. All work landed on whale's
+`main` as TDD'd, self-contained commits.
+
+**The example graph now encodes the full flow, not just the pause/resume
+half.** `examples/ui-test/ui-login.yaml` (whale repo) gained two more
+`UiTestStep` nodes after `confirm_code`: `get_started` (reaching the
+post-login landing screen) and `add_card` (clicking through to INITIATE the
+add-card flow). Deliberately stops at initiating, not completing, add-card -
+typing a real card number/CVV is its own sensitive-entry concern, same
+reasoning Phase 1's own `FLAG_SECURE` constraint already established for the
+login code: automation never types financial data a human is meant to enter
+themselves. The step text is a plausible, generic guess at the real app's
+post-login screens (this initiative's own Phase 1 manual walkthrough
+confirmed a real login + add-card flow exists, but did not record exact
+button copy) - what the graph exists to prove is the STRUCTURE (automated,
+automated, human pause, automated, automated, all against the SAME leased
+device, in order) and the dispatch/leasing/Link/resume machinery underneath
+it, not a pixel-perfect script of the target app's real UI.
+
+**A real bug this extension surfaced, found and fixed the same way every
+other stage of this initiative has:** every structural `after` Link in the
+graph reads its upstream step's `passed` output - but a real `sven
+agent-dispatch` reply's own shape is `{"passed": true, "step": {...}}` (see
+`dispatch_ui_test_step`'s own doc, Phase 3's update above), which has no
+`note` field at all. The graph's Links used to read `output: note` (the
+smoke dispatcher's own fixed acknowledgement key) - harmless against the
+smoke script, but a silent, genuine break against the real dispatcher:
+`login`'s own `after` Link would have failed to resolve with an
+unresolved-output error the very first time this graph ran for real. Fixed
+by renaming every Link's `output` to `passed` and updating
+`agent-dispatch-smoke.sh` (whale repo) to also emit `"passed": true`
+alongside its existing `"note"` - both dispatchers now agree on the field a
+structural Link actually reads.
+
+**A second, deeper real bug: a resumed `HumanAction` node's output was never
+visible to a downstream `Link` at all.** `get_started`'s own `after` Link
+reads `confirm_code`'s `passed` output - but `whale::resume_local`'s resume
+handler only ever posted the kernel event and emitted `NodeCompleted`; it
+never wrote the resumed value into the shared node-output store every OTHER
+node kind's success path writes into (`whale_workflow_runner::node_finish::
+finish_success`). A downstream Link past a resumed `HumanAction` node would
+therefore ALWAYS fail, no matter what `--output` a human supplied. Fixed
+with `whale_workflow_runner::ResumeHandle` gaining two new `Option` fields
+(`outputs`/`item_outputs`, the SAME shared stores every other executor
+writes into) and a small relay task inside `run_workflow_value` that
+enriches the handle with the run's real stores before handing it to a
+resume caller - `run_workflow_with_executor`'s own public signature (which
+has other direct callers, including the p2p node-hosted path and several
+tests) is completely unchanged; only the ONE path that owns the real stores
+now threads them through. `whale::resume_local::handle_resume_connection`
+then writes the resumed `output` into that store, exactly like
+`finish_success` does for every other node kind, before posting the kernel
+event. Scoped deliberately narrow: the p2p/tenant-hosted resume paths
+(`admin_submit.rs`, `node_cmd.rs`) do NOT get this enrichment in this pass -
+a known, tracked, honestly-scoped gap (they never had it before either, so
+this is not a regression), not silently left inconsistent.
+
+This fix does not reverse the earlier, deliberate decision that a
+`HumanAction` node must never auto-relay a secret typed on the device: the
+value written is exactly, and only, whatever JSON an OPERATOR explicitly
+attached via `whale resume ... --output '<json>'` (defaulting to `{}` if
+they attach nothing) - never anything auto-captured from the screen. Nothing
+about what CAN enter the system changed; this only makes an already-optional,
+already-caller-supplied field usable by a following node, the same as every
+other node kind already allows.
+
+**The acceptance test**: `crates/whale/tests/live_ui_test_e2e.rs` (whale
+repo). Self-skips cleanly (matching `live_device.rs`/`live_ground.rs`/
+`live_ui_test_dispatch.rs`'s own convention exactly) unless a real, built
+`sven` binary (`SVEN_BIN` env var, never a hardcoded path), a single ready
+ADB device, and a real florence2 checkpoint (`BRAIN_FLORENCE2_DIR`) are ALL
+present. When they are, it spawns the real `whale` binary running the real
+example graph with `WHALE_AGENT_DISPATCH_CMD` pointed at `"$SVEN_BIN
+agent-dispatch"`, waits (bounded, never indefinitely) for `run_started` then
+`node_waiting_for_human` on `confirm_code`, resumes it from a SEPARATE
+`whale resume` process with `--output '{"passed": true}'` (required for
+THIS graph, since `get_started` Links to it), waits for `run_completed` with
+`status: succeeded`, and asserts the original process exits 0 - with a
+`RunProcessGuard` that force-kills the child on any failure path so a device
+lease or a hung process is never left behind between test runs.
+
+**What was actually verified, and what was not (read this precisely):**
+
+- Verified for real, in this sandbox: the ENTIRE mechanical flow - all five
+  nodes, the pause, the cross-process resume, the `passed`-field fix, and
+  the `NodeOutputStore` fix - end to end against the real `whale` binary and
+  the smoke-test dispatcher (`whale run` printed `run_completed`
+  `{"status":"succeeded"}`, exit code 0, `get_started`/`add_card` both
+  genuinely dispatched after resume). `whale-workflow-runner`'s and
+  `whale`'s own test suites: 480 + 18 + integration tests green (1544
+  passed, only the same 6 pre-existing, unrelated failures -
+  `admin_boundary`/`distributed_execution`/`portal_marketplace_execution`/
+  `pricing` - that predate this work), `cargo clippy -D warnings` clean on
+  the touched crates, `cargo run -p xtask -- arch` clean, the repo's own
+  SPDX/no-machine-paths/no-doc-citation gates clean.
+- NOT verified: `live_ui_test_e2e.rs` was never run against a real Android
+  device or a real florence2 checkpoint - this sandbox has neither. It was
+  confirmed to compile and self-skip cleanly (the correct, expected
+  behaviour here), but the real-hardware pass this whole initiative was
+  ultimately scoped around still needs to happen on a box with an actual
+  device attached and a real checkpoint downloaded. Say this plainly rather
+  than claiming a pass that did not happen.
+
+**Honest gaps, not swept under "done":**
+
+- The p2p/tenant-hosted resume paths still do not enrich `ResumeHandle` with
+  the real output stores (see the bug-fix note above) - a `HumanAction` node
+  resumed through `TenantRequest::ResumeNode` still cannot feed a downstream
+  `Link`. Tracked, not solved here (out of this phase's scope: only
+  `whale run --local` needed it for this acceptance test).
+- The real-hardware run itself, per above.
+- Per-step progress (Phase 4(b)) and a real multi-worker distributed demo
+  (Phase 4's own "no cross-machine distributed demo") remain unaddressed,
+  unchanged from earlier phases.
