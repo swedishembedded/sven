@@ -1,13 +1,18 @@
 # android-ui-test
 
 **Status: phase 1 done (device control), phase 2 done (brain grounding),
-phase 3 done against mocks (sven machine + tools; no real-device/real-
-checkpoint pass yet), phase 4 done for the local/single-worker dispatch
-path (whale) including real `Link`-input data-flow into Agent-node dispatch
-and real-graph orchestrator-tier device placement wiring (both closed in a
-later whale-only session, see Phase 4's own update below) - not yet
-integration-tested against a real sven UiTestMachine (phase 3's own machine
-has no CLI entry point yet).**
+phase 3 done against mocks (sven machine + tools) and now wired to a real
+CLI entry point (`sven agent-dispatch`, see this file's own update below) -
+still no real-device/real-checkpoint pass through that entry point (the new
+integration test self-skips without hardware, matching
+`live_ground.rs`/`live_device.rs`'s convention), phase 4 done for the
+local/single-worker dispatch path (whale) including real `Link`-input
+data-flow into Agent-node dispatch and real-graph orchestrator-tier device
+placement wiring (both closed in a later whale-only session, see Phase 4's
+own update below) - whale's own dispatch path is still only proven against
+the generic smoke-test dispatcher, not yet re-pointed at
+`sven agent-dispatch` end to end (a whale-side config change, not a sven-side
+gap).**
 
 ## Goal
 
@@ -109,18 +114,11 @@ touched here).
 
 Not yet done - real gaps, not swept under "mocked":
 
-- **No real-device/real-checkpoint pass.** Nothing in this phase has been
-  run against an actual attached device or a live `brain/florence2`
-  checkpoint end to end (`sven-tools-ground/tests/live_ground.rs` self-skips
-  cleanly without one, matching `tools-android/tests/live_device.rs`'s
-  existing convention - it did not run in this environment either).
-- **Not wired into `mode.rs`/`RuntimeBuilder`.** There is no `--mode
-  ui-test` registry entry or CLI verb to actually launch this machine
-  today; nothing in sven currently constructs a `UiTestMachine`. This is
-  deliberate scoping (nothing consumes it yet - Phase 4 is whale's
-  dispatch path), not an oversight, but it means the machine cannot be
-  driven end to end from any sven surface until either a CLI entry point
-  or Phase 4's dispatch lands.
+- **No real-device/real-checkpoint pass through the CLI entry point.**
+  `crates/bootstrap/tests/live_ui_test_dispatch.rs` (added by this file's own
+  CLI-wiring update below) self-skips cleanly without one, matching
+  `tools-android/tests/live_device.rs`/`tools-ground/tests/live_ground.rs`'s
+  existing convention - it did not run in this environment either.
 - **"Verify" is just the acting tool call's own success/failure**, not an
   independent post-action re-screenshot/re-ground check the roadmap's
   original "screenshot -> ground -> act -> verify -> next step" phrasing
@@ -173,6 +171,113 @@ orchestrator holds. `UiTestMachine`'s own single-device assumption is still
 fine as-is: a worker only ever hands it one device at a time (the same
 assumption `sven-tools-android`'s `SVEN_ANDROID_SERIAL`/auto-detect already
 makes) - it is simply not this machine's job to enforce exclusivity itself.
+
+### Phase 3 update - wired into `mode.rs`/`RuntimeBuilder` via `sven agent-dispatch` (this session)
+
+Closes the "not wired into `mode.rs`/`RuntimeBuilder`" gap named above and
+by Phase 4's own reconciliation note (a): `UiTestMachine` now has a real CLI
+entry point that speaks whale's real agent-dispatch stdio contract exactly
+(`whale_workflow_runner::agent_dispatch`'s own doc, cross-checked against
+`SubprocessAgentDispatcher`'s tests and `examples/ui-test/ui-login.yaml`/
+`node-types.json` in the whale repo).
+
+**The subcommand: `sven agent-dispatch`.** No arguments; one process per
+node dispatch, exactly as `sh -c "<command>"` invokes it. Reads one JSON
+object from stdin, then stdin is closed:
+
+```json
+{"mode": "ui-test", "device": {"provider_id": "local", "device_id": "phone-1"} | null, "params": {"instruction": "Launch the demo app", ...}}
+```
+
+- `mode` is branched on; only `"ui-test"` is handled - any other value
+  writes `{"ok": false, "error": "unsupported mode: <mode>"}` and exits 0
+  (a clean, well-formed refusal, not a crash).
+- `device.device_id` (when present) selects the real ADB serial, exactly
+  like `AndroidTool`'s own `SVEN_ANDROID_SERIAL` env var; falls back to that
+  env var, then auto-detection, when `device` is `null`.
+- `params.instruction` becomes the machine's one-element step list (this
+  subcommand handles exactly one instruction per invocation, matching
+  whale's per-node dispatch granularity). Every OTHER top-level `params`
+  field is seeded into `UiTestMachine`'s existing variable-binding mechanism
+  (`vars.rs`, Phase 3's own binding store) before the step compiles - a new
+  `UiTestScript.vars` field, bound in `Seeding` via the same `vars::bind`
+  Phase 3 already built for an in-run `ask_user` answer. This is the whole
+  mechanism by which a resolved upstream `Link` value (whale's own
+  `params.<name>` merge, documented in Phase 4's own update above) reaches
+  this step's `value_ref` resolution - no new sven-side plumbing. Non-string
+  JSON values are serialized to their JSON text rather than dropped, since a
+  Link's resolved value can be any JSON type.
+
+Stdout: exactly one JSON reply as the LAST line -
+`{"ok": true, "output": {...}}` on success, `{"ok": false, "error": "..."}`
+on failure (both a genuine setup failure and an ordinary failed UI-test step
+that exhausted its retry budget). `output` always carries `{"passed": true,
+"step": <the one ui_test_results entry>}`; if the step was itself an
+`ask_user` step that named a `bind` variable, its answer is ALSO a
+top-level, clearly-named field (e.g. `output.code`) - not buried in `step`
+- so a later whale node's `Link` can read it directly by name, matching
+Phase 4's own documented Link-resolution contract
+(`Outcome.outputs` keyed by name). Exit code 0 covers both `ok` values; a
+non-zero exit is reserved for a genuine subcommand-level fault (malformed
+stdin, or an internal error building/joining the kernel session).
+
+**How it's built** (`crates/bootstrap/src/ui_test_dispatch.rs`,
+`dispatch_ui_test_step`): the SAME `RuntimeBuilder`/`ModeRegistry` path
+every other sven machine uses - `mode.rs::default_registry()` now registers
+`"ui-test"` → `UiTestMachine`, and `RuntimeBuilder::build()`'s permission-
+policy match now has a `"ui-test" => UiTestMachine::permission_policy()`
+arm (it previously fell through to the reactive-agent default, which is
+wrong for this machine). Tools are wired via `RuntimeBuilder::
+with_tool_executor_override` - the real `sven-tools-android::AndroidTool`
+(device-selected per above), `sven-tools-ground::GroundTool` (unchanged,
+brain's real `ground` capability + its FLAG_SECURE local detection), and
+`sven-tools-agent::AskQuestionTool::new_headless()` for `UiTestMachine`'s
+OWN internal `ask_user`/FLAG_SECURE hand-off - untouched by this change,
+still the mechanism for sven's standalone/local multi-step runs. Since
+nothing outside this one-shot process is listening on the kernel's human-
+answer channel, it is auto-approved exactly like every other headless sven
+surface already does (`sven_ci::RuntimeRunner` spawns the identical
+`auto_approve` for CI runs) - a real per-node whale dispatch is not
+expected to hit this path at all (a workflow author routes anything needing
+literal human entry to a separate graph-level node instead, per this file's
+own FLAG_SECURE constraint and Phase 4 update's reverted human-in-the-loop
+attempt), but a step whose compiler genuinely resolves to `ask_user` still
+completes rather than hanging forever with no answerer.
+
+**Tests** (all against fakes/mocks, TDD'd red-then-green; no real device or
+checkpoint needed for the default `cargo test` run):
+- `crates/machines/src/machines/ui_test/mod.rs` - vars-seeding-from-script
+  and `ask_user_binding` accessor tests (the `ui_test` module's full test
+  suite, machine + step compiler + vars, is 50 tests).
+- `crates/machines/src/mode.rs` - `"ui-test"` registry test.
+- `crates/tool-registry/src/registry.rs` - `register_arc` tests (the seam
+  that lets a fake tool double be substituted by `Arc` rather than only a
+  concrete `impl Tool`).
+- `crates/bootstrap/src/ui_test_dispatch.rs` - 7 tests: success/output
+  shape, device-field plumbing, params-to-vars seeding (string and
+  non-string), the ask_user-answer-is-a-named-output-field contract, and a
+  retry-budget-exhausted failure.
+- `src/run/agent_dispatch.rs` - 5 tests: stdin request parsing (with/without
+  a device, with/without `params`, malformed JSON, missing `mode`).
+- `crates/bootstrap/tests/live_ui_test_dispatch.rs` - the real-device/real-
+  checkpoint integration test this file's own "not yet done" list above
+  points at; self-skips cleanly without both, matching
+  `live_ground.rs`/`live_device.rs`'s convention. Did not run in this
+  environment (no ADB device attached).
+
+All new/changed code is `cargo clippy --all-targets -- -D warnings` clean;
+`cargo run -p xtask -- arch` reports no NEW violation from this work (the
+one pre-existing `ARCH-007` on `crates/bootstrap/src/task_tool.rs` predates
+this session and was confirmed unrelated - it fails identically on an
+unmodified checkout).
+
+**Still open:** whale's own dispatch path has not been re-pointed at
+`sven agent-dispatch` (it still runs against `agent-dispatch-smoke.sh`, the
+deliberately trivial acknowledge-and-reply script Phase 4 documents) - that
+re-pointing is a whale-side `WHALE_AGENT_DISPATCH_CMD` configuration change,
+not a sven-side gap. Per-step progress (Phase 4's own open item (b)) is
+still unaddressed - this subcommand reports only the terminal outcome of
+its one step, matching what `UiTestMachine` itself exposes today.
 
 ## Phase 4 - done for the local/single-worker case; not yet integration-tested against a real sven UiTestMachine (whale)
 
