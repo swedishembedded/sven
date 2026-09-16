@@ -21,6 +21,7 @@ pub mod registry;
 pub mod runtime_builder;
 pub mod supervisor;
 pub mod task_tool;
+pub mod ui_test_dispatch;
 
 pub use kernel_bridge::{spawn_observation_bridge, spawn_question_bridge, KernelAgentSession};
 pub use context::{RuntimeContext, ToolSetProfile};
@@ -38,6 +39,7 @@ pub use runtime_builder::{
 pub use supervisor::{SessionId, SessionSupervisor};
 pub use sven_mcp_client::McpManager;
 pub use task_tool::TaskTool;
+pub use ui_test_dispatch::{dispatch_ui_test_step, UiTestDevice, UiTestDispatchOverrides};
 
 // Re-export compound tools for convenience.
 #[cfg(all(unix, feature = "gdb"))]

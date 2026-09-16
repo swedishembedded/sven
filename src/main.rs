@@ -9,6 +9,7 @@ use std::sync::Arc;
 use clap::Parser;
 use cli::{Cli, Commands};
 
+use run::agent_dispatch::run_agent_dispatch_command;
 use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
 use run::index::run_index_command;
@@ -93,6 +94,10 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::Validate { file } => {
                 return validate_workflow(file);
+            }
+            Commands::AgentDispatch => {
+                let config = Arc::new(sven_config::load(cli.config.as_deref())?);
+                return run_agent_dispatch_command(config).await;
             }
             Commands::Map {
                 template,

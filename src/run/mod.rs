@@ -5,6 +5,7 @@
 //! matching clap grammar). `main.rs` parses [`crate::cli::Cli`] and dispatches
 //! into these.
 
+pub(crate) mod agent_dispatch;
 pub(crate) mod chats;
 pub(crate) mod ci;
 pub(crate) mod index;

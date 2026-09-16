@@ -13,6 +13,8 @@ sven-tools-exec    = { path = "../tools-exec" }
 sven-tools-ctx     = { path = "../tools-ctx" }
 sven-tools-agent   = { path = "../tools-agent" }
 sven-tools-web     = { path = "../tools-web" }
+sven-tools-android = { path = "../tools-android" }
+sven-tools-ground  = { path = "../tools-ground" }
 sven-machines          = { path = "../machines" }
 sven-workspace       = { path = "../workspace" }
 sven-mcp-client    = { path = "../mcp-client" }

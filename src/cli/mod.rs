@@ -516,6 +516,25 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Handle one whale agent-dispatch stdio request.
+    ///
+    /// Reads exactly one JSON request object from stdin
+    /// (`{"mode", "device", "params"}`, per whale's real agent-dispatch
+    /// stdio contract - see `.agents/roadmap/android-ui-test.md`), then
+    /// closes stdin. Runs the matching sven machine to completion through
+    /// the same `RuntimeBuilder`/mode-registry path every other sven
+    /// machine uses, and writes exactly one JSON reply as the LAST line of
+    /// stdout: `{"ok": true, "output": <any JSON>}` on success or
+    /// `{"ok": false, "error": "<message>"}` on failure.
+    ///
+    /// Exit code 0 covers BOTH outcomes above - a failed UI-test step is
+    /// still a well-formed reply, not a process fault. A non-zero exit is
+    /// reserved for a genuine subcommand-level fault: malformed stdin, or an
+    /// internal error building/joining the kernel session.
+    ///
+    ///   WHALE_AGENT_DISPATCH_CMD="sven agent-dispatch" whale run graph.yaml --local
+    AgentDispatch,
+
     /// List all supported model providers.
     ///
     /// Shows each provider's id, name, description, and default API key

@@ -107,6 +107,21 @@ impl ToolRegistry {
         }
     }
 
+    /// Register an already-`Arc`-wrapped tool.
+    ///
+    /// [`register`](Self::register) and [`register_with_display`](Self::register_with_display)
+    /// both require a concrete `impl Tool` so they can mint the `Arc`
+    /// themselves; a caller that already holds a `Arc<dyn Tool>` - a test
+    /// double substituted for a real tool, or a tool shared across more than
+    /// one registry - has no way to hand it over without this. Mirrors how
+    /// [`replace_mcp_tools`](Self::replace_mcp_tools) already stores
+    /// `Arc<dyn Tool>` directly for MCP-sourced tools.
+    pub fn register_arc(&mut self, tool: Arc<dyn Tool>) {
+        if let Ok(mut guard) = self.tools.write() {
+            guard.insert(tool.name().to_string(), tool);
+        }
+    }
+
     /// Register a tool that also provides display metadata. The same instance
     /// is used for execution and for TUI display (collapsed summary, display name).
     pub fn register_with_display(&mut self, tool: impl Tool + sven_tool_api::tool::ToolDisplay + 'static) {
@@ -484,6 +499,27 @@ mod tests {
     fn get_unknown_returns_none() {
         let reg = ToolRegistry::new();
         assert!(reg.get("nope").is_none());
+    }
+
+    #[test]
+    fn register_arc_makes_a_pre_wrapped_tool_retrievable() {
+        let mut reg = ToolRegistry::new();
+        let tool: Arc<dyn Tool> = Arc::new(EchoTool { name: "echo" });
+        reg.register_arc(Arc::clone(&tool));
+        assert!(reg.get("echo").is_some());
+    }
+
+    #[test]
+    fn register_arc_shares_the_same_instance_a_caller_still_holds() {
+        // The point of accepting a pre-wrapped `Arc<dyn Tool>` (rather than
+        // only `impl Tool + 'static`, like `register`) is that a caller can
+        // keep its own handle to the exact same tool instance - e.g. a test
+        // that asserts against a fake tool's internal state after a run.
+        let mut reg = ToolRegistry::new();
+        let tool: Arc<dyn Tool> = Arc::new(EchoTool { name: "echo" });
+        reg.register_arc(Arc::clone(&tool));
+        let fetched = reg.get("echo").expect("registered tool must be retrievable");
+        assert!(Arc::ptr_eq(&tool, &fetched));
     }
 
     #[test]
