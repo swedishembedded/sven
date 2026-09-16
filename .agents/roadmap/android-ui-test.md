@@ -28,7 +28,20 @@ downstream node's `Link` past it could never resolve) - see Phase 6's own
 update below for the exact contract, what was verified for real in this
 sandbox (the whole flow against the generic smoke dispatcher, including the
 fix), and what remains genuinely unverified (a real run against real
-hardware/checkpoint, which this sandbox has neither of).**
+hardware/checkpoint, which this sandbox has neither of). Phase 7 fixes the
+FIRST real bug the actual user hit running this for real: whale's own
+catalog/leasing device id (e.g. `"phone-1"`) was being sent AND used as the
+literal ADB `-s` serial, so every real dispatch failed with `adb: device
+'phone-1' not found` even with a real phone attached. `whale_marketplace::
+DeviceSpec` gained a separate `serial` field (whale-side), and sven's
+`dispatch_ui_test_step` now resolves the effective serial through
+`sven-tools-android`'s own device-selection with a bounded auto-detect
+fallback (an exact `serial` match wins, a mismatched/absent one falls back
+to the sole attached device with a logged warning, only genuine ambiguity
+hard-fails) - see Phase 7's own update below for the exact contract, and
+whale's own `.agents/roadmap/android-ui-test.md` update for the whale-side
+half (`DeviceSpec::serial`, the dispatch JSON shape, `devices.json`, and a
+new `scripts/dev/run-ui-test.sh` one-command runner).**
 
 ## Goal
 
@@ -778,3 +791,103 @@ lease or a hung process is never left behind between test runs.
 - Per-step progress (Phase 4(b)) and a real multi-worker distributed demo
   (Phase 4's own "no cross-machine distributed demo") remain unaddressed,
   unchanged from earlier phases.
+
+## Phase 7 - the real user's first real bug: device_id is not a serial (sven + whale)
+
+The gap Phase 6's own "what remains genuinely unverified" note predicted -
+a real run against real hardware - happened for the actual user, and it
+failed immediately: `devices.json` names a device under the catalog key
+`"phone-1"` (whale's own stable logical/leasing identity, used for
+placement and exclusive-lease bookkeeping - never a physical address), but
+that key was sent verbatim as `device.device_id` in the JSON whale
+dispatches to `sven agent-dispatch`, and `dispatch_ui_test_step` used
+`device.device_id` directly as `AndroidTool`'s default ADB serial. Real ADB
+serials look like `ec677a50`, not `phone-1` - every real run failed with
+`adb: device 'phone-1' not found`, even with a real device genuinely
+attached and visible to `adb devices`.
+
+**Fix, sven side (this repo):**
+
+- `UiTestDevice` (`crates/bootstrap/src/ui_test_dispatch.rs`) gains a
+  `serial: Option<String>` field, kept deliberately separate from
+  `device_id` - a device can be re-plugged under the same logical role with
+  a different physical unit over time, so the two identities are never
+  conflated. `DispatchDevice` (`src/run/agent_dispatch.rs`, the `sven
+  agent-dispatch` stdin parser) gains the matching optional `serial` field,
+  `#[serde(default)]` so a request naming no serial at all still parses
+  cleanly (a real, expected state, not a malformed request).
+- New in `sven-tools-android` (`crates/tools-android/src/adb.rs`), reused
+  rather than reimplemented by `dispatch_ui_test_step`:
+  - `pick_serial(requested, ready) -> SerialPick` - the pure decision core.
+    An exact match on `requested` wins outright; otherwise, when exactly
+    one device is ready, it is used (silently if nothing was requested -
+    ordinary auto-detect; as a named `FellBackToSole` substitution if
+    something WAS requested but didn't match - a real fallback a caller
+    should log); zero or two-or-more ready devices with no exact match is
+    `NoneAttached`/`Ambiguous`, never guessed at.
+  - `DeviceLister` trait + `RealDeviceLister` (shells to real `adb
+    devices`) - the dependency-injection seam that lets
+    `resolve_serial_validated` (and any caller of it) be unit-tested
+    against a fixed, synthetic device list rather than a real `adb`
+    invocation.
+  - `resolve_serial_validated(lister, requested) -> Result<SerialPick, String>`
+    - the async wrapper: fetches the ready device list via `lister`, then
+      delegates to `pick_serial`. Deliberately a NEW entry point, not a
+      behaviour change to the existing `resolve_serial` (which
+      `AndroidTool`'s own interactive/CI callers already use and which
+      several existing tests assert never shells out to `adb` when a
+      default serial was given) - validating a caller-supplied identity
+      against reality is the right default for whale's own catalog id, but
+      would be a surprising, untested behaviour change for every other
+      existing caller of `resolve_serial`.
+- `dispatch_ui_test_step` gains `resolve_effective_serial(device, lister)`:
+  `device: None` (no whale device info at all) preserves the exact
+  pre-existing behaviour (fall back to `SVEN_ANDROID_SERIAL`, then
+  `AndroidTool`'s own per-call auto-detect). `device: Some(d)` routes
+  through `resolve_serial_validated(lister, d.serial.as_deref())` and, on a
+  `FellBackToSole` substitution, logs a `tracing::warn!` naming both the
+  catalog id and the requested/found serials (e.g. `"requested device
+  'phone-1' (serial: none) not found; falling back to the only attached
+  device 'ec677a50'"`) before proceeding - never a silent swap. Ambiguous/
+  none-attached resolve to a descriptive `Err` naming the catalog id, for
+  the same reason.
+- `UiTestDispatchOverrides` gains `device_lister: Option<Arc<dyn
+  DeviceLister>>` (defaults to the real one) - the seam the tests below use.
+
+**Tests** (all against fakes; TDD'd red-then-green; no real `adb` shelled
+out to in any unit test):
+
+- `crates/tools-android/src/adb.rs` - 8 new tests: `pick_serial`'s exact-
+  match/fallback/none-attached/ambiguous/ready-state-only cases (pure, no
+  I/O), plus `resolve_serial_validated` against a fake `DeviceLister`
+  (filters to ready before deciding; propagates a real lister failure).
+- `crates/bootstrap/src/ui_test_dispatch.rs` - 7 new tests on
+  `resolve_effective_serial` (a `PanicsIfCalled` lister proves the no-
+  device-at-all path never even touches the lister; exact match; mismatched-
+  falls-back; missing-serial-falls-back; zero-attached and two-with-no-match
+  both hard-fail naming the catalog id; two-attached-with-an-exact-match
+  still resolves) plus the existing device-plumbing test updated to inject
+  a fake lister rather than hitting real `adb`.
+- `crates/tools-android/tests/live_device.rs` - 2 NEW hardware-gated tests
+  (`resolve_serial_validated_falls_back_to_the_real_sole_attached_device`,
+  `resolve_serial_validated_uses_a_real_exact_match_directly`), same self-
+  skip convention as the rest of that file.
+
+**What was verified for real, and what was not (read this precisely):** a
+real Android device (serial `ec677a50`) was transiently attached to this
+sandbox during this session - both new `live_device.rs` tests were run
+against it for real and passed, genuinely proving `resolve_serial_validated`
+round-trips through a real `adb devices` call and substitutes correctly. The
+device was no longer attached by the time this phase's work was committed,
+so `cargo test --workspace` now self-skips that file cleanly, as designed -
+confirmed by re-running it. NOT verified: the full whale -> `sven
+agent-dispatch` -> real device path end to end with the actual bug's exact
+`device_id`/no-`serial` `devices.json` shape - that needs `brain`/a real
+florence2 checkpoint, neither present in this sandbox (see Phase 6's own
+same caveat, unchanged). The device-selection fix itself is the part this
+phase was scoped around, and that part - the actual reported bug - was
+verified against real hardware, not just mocks.
+
+`cargo test -p sven-tools-android -p sven-bootstrap -p sven` and `cargo
+clippy --all-targets -- -D warnings` on the touched crates are clean;
+`cargo run -p xtask -- arch` reports no new violation.
