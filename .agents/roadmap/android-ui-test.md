@@ -12,7 +12,11 @@ placement wiring (both closed in a later whale-only session, see Phase 4's
 own update below) - whale's own dispatch path is still only proven against
 the generic smoke-test dispatcher, not yet re-pointed at
 `sven agent-dispatch` end to end (a whale-side config change, not a sven-side
-gap).**
+gap), phase 5 done (whale): the "workflow blocks until a human physically
+acts" node Phase 4's own update deliberately deferred is now real -
+`NodeKind::HumanAction`, a resume RPC, `whale run --local`'s own
+cross-invocation resume socket, and `ui-login.yaml`'s `confirm_code`
+step - see Phase 5's own update below for the exact contract.**
 
 ## Goal
 
@@ -467,3 +471,176 @@ real `whale run`/`whale plan` invocation uses.
 **Still open, unchanged by this update:** not integration-tested against a
 real sven `UiTestMachine` (per above), per-step progress, and no
 cross-machine distributed demo - none of these were in this update's scope.
+
+## Phase 5 - done (whale): `NodeKind::HumanAction` + resume RPC
+
+Closes the gap Phase 4's own update named and deliberately deferred: "the
+right shape for a 'workflow blocks until a human physically acts' node is
+still being designed... the full flow example is future work once that
+lands." This is that node kind, its resolution mechanism, and the
+`ui-login.yaml` step demonstrating it - a whale-only change, no sven-side
+code touched. All work landed as TDD'd, self-contained commits on whale's
+`main`, verified against the real `whale` binary (not only `cargo test`) in
+this same session.
+
+**Why a distinct node kind, not another `NodeKind::Agent` mode string.** A
+secure code-entry screen (Phase 1's own `FLAG_SECURE` constraint) can never
+be automated at all - no device lease, no subprocess, no grounding call, no
+`AgentDispatcher`. This genuinely different lifecycle (dispatch nothing,
+wait indefinitely, resolved by an external human action rather than a tool
+call finishing) earned its own `whale_nodespec::NodeKind::HumanAction`
+rather than overloading `Agent`'s `mode` string with a magic value.
+
+**How it dispatches, and why it is still an ordinary `Effect::CallTool`.**
+sven-hsm already has a "park a question for a human, no timeout, resolved by
+whoever gets to it" primitive
+(`Effect::RequestHumanAnswer`/`Event::HumanAnswered`, the same one
+`sven_machines::loop_core` uses for `ask_question`) - reusing it was the
+first design tried, and reverted: its fields (`question_id`, `call_id`,
+`prompt`, `options`) carry no node identity at all, so an executor that only
+sees the bare effect has no way to know WHICH node to report as waiting,
+short of hiding the node id in the human-facing prompt text. Instead,
+`WhaleWorkflowMachine::human_action_effect` dispatches an ordinary
+`Effect::CallTool` marked `args.human_action: true`, carrying
+`args.node_id`/`args.item` exactly like every other node kind already does -
+`whale_workflow_runner::HumanActionExecutor` (the OUTERMOST executor layer,
+ahead of the agent/capability layers, since a human-action node's `args` has
+neither `agent_mode` nor `model`/`action`) checks for that marker, emits
+`NodeStarted` + a new `WorkflowProtocolEvent::NodeWaitingForHuman`, and
+returns WITHOUT ever posting a kernel event - no `Event::ToolSucceeded`, no
+background task, no timeout armed. Resolution therefore reuses the exact
+same `Event::ToolSucceeded`/`call_id_to_node` path every node kind already
+resolves through, via the deterministic id
+`whale_workflow::human_action_call_id(node_id, item)` - no second
+correlation map, no sven-hsm `Event`/`Effect` change needed at all (which
+would have meant a cross-repo change to this separate git dependency).
+
+**The prompt lives on the graph node, not the node type** - an ordinary
+`"prompt"` input (`InputValue::Value`), the same way `Agent`'s
+`instruction` does, since one `HumanAction`-kind `class_type` (e.g.
+`ConfirmOnDevice`) is meant to be reused by many graph nodes with different
+prompts, not baked into the type once.
+
+**New wire surface** (`crates/workflow` in whale):
+`NodeStatus::WaitingForHuman`,
+`WorkflowProtocolEvent::NodeWaitingForHuman { seq, at_ms, node_id, prompt,
+item }`, `NodeTypeMapping::human_action: bool` (projected to/from
+`whale_nodespec::NodeKind::HumanAction`), `RunSnapshot::from_events` folding
+the new event into `NodeStatus::WaitingForHuman`.
+
+**The resume RPC - exact contract.** Two independent resume paths, both
+resolving through the same underlying mechanism (posting
+`sven_hsm::Event::ToolSucceeded` for the node's deterministic call id,
+directly into the run's own live kernel `EventSink`), because the two
+execution shapes whale has (single-process `--local`, and a node/broker
+process running a p2p- or tenant-submitted job) have no shared IPC surface
+to route through otherwise:
+
+1. **Admin/tenant RPC**, for a node- or broker-hosted run -
+   `whale::admin::TenantRequest::ResumeNode`:
+   ```rust
+   TenantRequest::ResumeNode {
+       job_id: uuid::Uuid,
+       tenant_id: String,
+       node_id: String,
+       fan_out_item: Option<u32>,
+       output: serde_json::Value,   // defaults to {} on the wire
+   }
+   ```
+   answered by `TenantResponse::ResumeNodeResult { job_id }` (posted - not a
+   guarantee the node was actually waiting) or
+   `TenantResponse::ResumeNodeUnavailable { job_id }` (unknown job id, a
+   different tenant's job, or a job whose run has no live kernel to post
+   into - all three deliberately indistinguishable to the caller, the same
+   identity-scoping posture `RunSnapshot` already holds). Identity-scoped via
+   the SAME `JobRegistry::tenant_events_for` ownership check `RunSnapshot`
+   uses. Reaches the run via a new `JobRegistry::register_resume_sink`/
+   `resume_sink` pair, populated the moment `run_workflow_value`'s kernel
+   exists (mirroring the existing `cancel_token` bookkeeping). `whale-web`
+   exposes this as `POST /api/workflows/[workflowId]/runs/[runId]/resume`
+   (server-resolves the tenant from the Clerk session, never a
+   client-supplied one) plus a "Waiting on you" / "Mark as done" state in the
+   run dashboard.
+
+2. **`whale run --local`'s own cross-invocation resume** (single-process, no
+   admin socket at all) - a Unix domain socket at a well-known,
+   `run_id`-keyed path (`whale::resume_local::local_resume_socket_path`),
+   bound the moment the run's kernel exists, owner-only permissions
+   (`0o600`). One JSON line in (`{"node_id": "...", "output": <value>}`),
+   one JSON line out (`{"ok": true}` or `{"ok": false, "error": "..."}`).
+   CLI usage, from a SECOND, separate `whale` invocation while the first is
+   still blocked:
+   ```
+   whale resume <run-id-or-socket-path> --node <node-id> [--output '<json>']
+   ```
+   `<run-id-or-socket-path>` accepts either the run's own id (parsed as a
+   UUID, then resolved to the same socket path `--local` derived) or an
+   explicit socket path. `--output` defaults to `{}` - see below for why an
+   empty object is the correct default, not a missing feature.
+
+   Verified genuinely end to end against the real built `whale` binary in
+   this session: `whale run ui-login.yaml --local ...` blocks at
+   `confirm_code` (prints `node_waiting_for_human` then nothing further);
+   `whale resume <run-id> --node confirm_code` from a second terminal
+   resolves it; the first terminal's own process then prints
+   `confirm_code`'s `node_completed` and `run_completed{status:"succeeded"}`,
+   exit code 0.
+
+**Deliberately not modeled: relaying a typed value back for automation.**
+`HumanAction`'s `output` (both RPC paths) exists so a resume caller CAN
+attach a JSON value, but the node's job is "a human did something on the
+device," never "an automated value a downstream node consumes" - unlike
+Phase 4's own reverted `ask_user`-relay-then-automate attempt for the
+confirmation code, `confirm_code` in `ui-login.yaml` has no downstream
+consumer of its output at all. This is a deliberate scope boundary, not an
+oversight: a secure code a human enters is exactly the value whale must
+never carry through the graph.
+
+**Two real bugs this session's own live verification caught, that the unit
+tests alone had not** (both fixed, both now covered by their own tests -
+see whale's own commit history for the full detail):
+
+1. A resumed `HumanAction` node's `NodeCompleted` protocol event was never
+   emitted - `Event::ToolSucceeded` resolves the node inside the kernel, but
+   nothing else was posting the matching outward `NodeCompleted` (that
+   normally comes from the executor that made the call, and a human-action
+   resolution posts directly into the kernel from OUTSIDE any executor).
+   `whale-web`'s dashboard, folded from exactly that event stream, would
+   have shown the node stuck at "waiting on you" forever even after the run
+   actually finished. Fixed with `whale_workflow_runner::ResumeHandle`
+   (bundles the kernel `EventSink` with the run's own protocol-event sender
+   and start instant) - a resume caller now emits `NodeCompleted` itself,
+   through the same seq-numbered stream, before posting the kernel event.
+2. That fix's first version introduced a worse bug: storing a STRONG clone
+   of the protocol-event sender inside `JobRegistry` (which deliberately
+   outlives a finished job by `COMPLETED_JOB_TTL`) kept the run's own
+   protocol channel open forever, silently deadlocking the run's own
+   shutdown (`run_workflow_value` never returned, so a resumed job's status
+   never went terminal). Fixed with a weak-sender variant
+   (`whale_workflow_runner::WeakSeqEmitter`) that can still send while the
+   run is genuinely alive but never itself extends that lifetime.
+
+**Honest gaps, not swept under "done":**
+
+- **Distributed subjob relay cannot resume a `HumanAction` node.** A
+  placement spanning more than one provider (`Dispatch::RunDistributed`)
+  relays each graph node to whichever peer runs it; that peer's own
+  `HumanAction` pause lives on ITS OWN kernel, not reachable from the
+  orchestrating node's admin socket. `crate::remote_executor` forwards the
+  `NodeWaitingForHuman` event upward for visibility, but `ResumeNode` posted
+  to the orchestrating node cannot currently reach that remote peer's own
+  live run. Real, tracked, not solved by this phase.
+- **No fan-out `HumanAction` node is tested.** `fan_out_item`/`item`
+  parameters exist end to end (machine, executor, both resume paths), but
+  nothing exercises a `HumanAction` node under `each`/`content_set` - the
+  shipped example and this phase's own tests are all single-item.
+- **`ResumeNodeResult`/a socket `{"ok": true}` means "posted," never
+  "resolved a real waiting node."** An unknown or already-resolved node id
+  posts (and is silently ignored by the kernel) exactly the same way a real
+  one does, by design - a caller that wants to confirm resolution watches
+  the run's own event stream for the matching `NodeCompleted`. This is a
+  documented API property, not a race condition to fix.
+- **Not integration-tested against a real sven `UiTestMachine`** (unchanged
+  from Phase 3/4 - still genuinely open, and orthogonal to this phase: a
+  `HumanAction` node never invokes `AgentDispatcher`/`sven agent-dispatch`
+  at all).
