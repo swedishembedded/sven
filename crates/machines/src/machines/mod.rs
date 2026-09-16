@@ -7,4 +7,5 @@
 pub mod loop_core;
 pub mod reactive_agent;
 pub mod sdlc;
+pub mod ui_test;
 pub mod verified_task;
