@@ -48,6 +48,8 @@
 pub mod step;
 pub mod vars;
 
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sven_hsm::{
@@ -77,7 +79,11 @@ const INDEX_FACT: &str = "ui_test_index";
 const COMPILED_FACT: &str = "ui_test_compiled";
 const SCREENSHOT_FACT: &str = "ui_test_screenshot_path";
 const LOCATING_PHASE_FACT: &str = "ui_test_locating_phase";
-const RESULTS_FACT: &str = "ui_test_results";
+/// Ordered per-step outcome records (`{index, instruction, passed, attempts,
+/// error}`), appended to as each step concludes - public so a caller driving
+/// this machine to completion (e.g. a whale-dispatch CLI wrapper) can build
+/// its own reply shape from the real outcome instead of re-deriving it.
+pub const RESULTS_FACT: &str = "ui_test_results";
 const PENDING_CALL_FACT: &str = "ui_test_pending_call";
 const ASK_BIND_FACT: &str = "ui_test_ask_bind";
 const LAST_FAILURE_FACT: &str = "ui_test_last_failure";
@@ -91,10 +97,20 @@ pub const ERROR_FACT: &str = "ui_test_error";
 const RETRY_READY_SIGNAL: &str = "ui_test_retry_ready";
 
 /// The seed a `UserMessage` carries into [`UiTestState::Seeding`]: the fixed,
-/// declared sequence of natural-language steps.
+/// declared sequence of natural-language steps, plus any variables already
+/// known before the first step compiles.
+///
+/// `vars` is how a whale-dispatched single-step run threads a resolved
+/// upstream `Link` value into this run's `value_ref` resolution without any
+/// new plumbing: the dispatcher seeds it from every `params` field besides
+/// the instruction text, keyed by field name, and [`UiTestState::Seeding`]
+/// binds each one via [`vars::bind`] - the exact mechanism Phase 3 already
+/// built for an in-run `ask_user` answer - before compiling step 0.
 #[derive(Debug, Clone, Deserialize)]
 pub struct UiTestScript {
     pub steps: Vec<String>,
+    #[serde(default)]
+    pub vars: BTreeMap<String, String>,
 }
 
 /// States of the UI-test machine. See the module doc for the diagram.
@@ -185,6 +201,20 @@ fn append_result(ctx: &mut Context, index: u32, instruction: &str, passed: bool,
         "error": error,
     }));
     ctx.set_fact(RESULTS_FACT, Value::Array(results));
+}
+
+/// If the run's current (or just-completed) step is an `ask_user` step that
+/// named a `bind` variable, the `(bind name, answer)` pair - exactly what a
+/// downstream whale node's `Link` input should read from this run's result,
+/// per `vars.rs`'s own binding mechanism. `None` for any other verb, or when
+/// the step never got as far as binding an answer (e.g. it failed before
+/// being answered).
+#[must_use]
+pub fn ask_user_binding(ctx: &Context) -> Option<(String, String)> {
+    let compiled = load_compiled(ctx)?;
+    let name = compiled.bind?;
+    let value = vars::resolve(ctx, &name)?;
+    Some((name, value))
 }
 
 // ─── Step transitions ────────────────────────────────────────────────────────
@@ -293,6 +323,13 @@ impl Machine for UiTestMachine {
                     ctx.set_fact(STEPS_FACT, Value::Array(script.steps.iter().cloned().map(Value::String).collect()));
                     ctx.set_fact(INDEX_FACT, 0u32);
                     ctx.set_fact(RESULTS_FACT, Value::Array(Vec::new()));
+                    // Bind any variables already known before step 0 even
+                    // compiles (see `UiTestScript::vars`'s own doc) - must
+                    // happen before `begin_compile` so the step compiler's
+                    // `known_var_names` hint already includes them.
+                    for (name, value) in &script.vars {
+                        vars::bind(ctx, name, value);
+                    }
                     let effect = begin_compile(ctx, 0);
                     Reaction::transition(Compiling, vec![effect], "script seeded; compiling step 0")
                 }
@@ -502,6 +539,10 @@ mod tests {
 
     fn script(steps: &[&str]) -> String {
         json!({ "steps": steps }).to_string()
+    }
+
+    fn script_with_vars(steps: &[&str], vars: Value) -> String {
+        json!({ "steps": steps, "vars": vars }).to_string()
     }
 
     /// Effects carried by a `Reaction`, whether it transitioned or just
@@ -767,6 +808,76 @@ mod tests {
         assert_eq!(state, UiTestState::Done);
         assert_eq!(vars::resolve(&ctx, "code"), Some("654321".to_string()));
         assert!(ctx.pending_question.is_none());
+    }
+
+    // ── Variable binding: seeded from the script itself ─────────────────────
+
+    #[test]
+    fn seeding_binds_vars_supplied_in_the_script_before_compiling_step_0() {
+        let (mut m, mut ctx, mut state) = make();
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script_with_vars(&["Enter the code"], json!({ "code": "999111" })),
+            },
+        );
+        assert_eq!(state, UiTestState::Compiling);
+        assert_eq!(
+            vars::resolve(&ctx, "code"),
+            Some("999111".to_string()),
+            "a var supplied in the seed script must be bound before step 0 compiles"
+        );
+
+        let out = drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "type_text", "value_ref": "code" })));
+        assert_eq!(state, UiTestState::Acting);
+        let Effect::CallTool { args, .. } = &effects_of(&out)[0] else { panic!("expected CallTool") };
+        assert_eq!(args["text"], "999111", "a seeded var resolves through value_ref exactly like an in-run ask_user answer");
+    }
+
+    #[test]
+    fn a_script_with_no_vars_field_still_seeds_normally() {
+        // `vars` is `#[serde(default)]` - a plain `{"steps": [...]}` (every
+        // existing script in this test module, and every real pre-this-change
+        // caller) must still parse and seed with no bindings.
+        let (mut m, mut ctx, mut state) = make();
+        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
+        assert_eq!(state, UiTestState::Compiling);
+        assert!(vars::load(&ctx).is_empty());
+    }
+
+    // ── ask_user_binding: the (name, answer) pair a whale Link should read ──
+
+    #[test]
+    fn ask_user_binding_returns_none_before_any_step_runs() {
+        let ctx = Context::new();
+        assert_eq!(ask_user_binding(&ctx), None);
+    }
+
+    #[test]
+    fn ask_user_binding_returns_none_for_a_non_ask_user_step() {
+        let (mut m, mut ctx, mut state) = make();
+        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
+        drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })));
+        assert_eq!(ask_user_binding(&ctx), None);
+    }
+
+    #[test]
+    fn ask_user_binding_returns_the_bound_name_and_answer_once_the_step_succeeds() {
+        let (mut m, mut ctx, mut state) = make();
+        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Ask the user for the code"]) });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "ask_user", "target": "What is the code?", "bind": "code" })),
+        );
+        let ask_id = pending_call_id(&ctx);
+        drive(&mut m, &mut ctx, &mut state, tool_ok(ask_id, json!("123456")));
+
+        assert_eq!(state, UiTestState::Done);
+        assert_eq!(ask_user_binding(&ctx), Some(("code".to_string(), "123456".to_string())));
     }
 
     // ── Retry budget ─────────────────────────────────────────────────────────

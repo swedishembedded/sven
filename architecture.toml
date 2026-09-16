@@ -262,7 +262,7 @@ path = "crates/bootstrap/src/task_tool.rs"
 lines = 1013
 [[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
-lines = 1015
+lines = 1016
 [[allow.large_file]]
 path = "crates/tools-ctx/src/context/store.rs"
 lines = 885

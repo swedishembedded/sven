@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
 use crate::machines::{
-    reactive_agent::ReactiveAgentMachine, sdlc::SdlcMachine, verified_task::VerifiedTaskMachine,
+    reactive_agent::ReactiveAgentMachine, sdlc::SdlcMachine, ui_test::UiTestMachine,
+    verified_task::VerifiedTaskMachine,
 };
 
 /// A factory that creates a type-erased running machine.
@@ -43,6 +44,9 @@ impl ModeRegistry {
     ///   (multi-phase software-development lifecycle with in-state tool loops)
     /// - `"verified-task"` → [`VerifiedTaskMachine`]
     ///   (freeze-before-attempt, externally-verified single task with retry)
+    /// - `"ui-test"` → [`UiTestMachine`]
+    ///   (deterministic Android UI-test step runner: screenshot → ground →
+    ///   act → verify → next step; see `.agents/roadmap/android-ui-test.md`)
     pub fn default_registry() -> Self {
         let mut reg = Self {
             factories: HashMap::new(),
@@ -65,6 +69,10 @@ impl ModeRegistry {
         reg.register(
             "verified-task",
             Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(VerifiedTaskMachine::new())) }),
+        );
+        reg.register(
+            "ui-test",
+            Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(UiTestMachine::new())) }),
         );
         reg
     }
@@ -102,6 +110,15 @@ mod tests {
     fn default_registry_has_verified_task() {
         let reg = ModeRegistry::default_registry();
         let factory = reg.get("verified-task").expect("verified-task mode must be registered");
+        let mut machine = factory();
+        let mut ctx = Context::new();
+        let _ = machine.init(&mut ctx);
+    }
+
+    #[test]
+    fn default_registry_has_ui_test() {
+        let reg = ModeRegistry::default_registry();
+        let factory = reg.get("ui-test").expect("ui-test mode must be registered");
         let mut machine = factory();
         let mut ctx = Context::new();
         let _ = machine.init(&mut ctx);

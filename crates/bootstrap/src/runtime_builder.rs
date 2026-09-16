@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sven_config::{AgentMode, Config, ModelConfig};
-use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
+use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine, UiTestMachine};
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
     CompositeExecutorBuilder, ToolExecutor, TurnExecutor,
@@ -829,6 +829,7 @@ impl RuntimeBuilder {
         let policy = match self.mode.as_str() {
             "sdlc" => SdlcMachine::permission_policy(),
             "verified-task" => sven_machines::VerifiedTaskMachine::permission_policy(),
+            "ui-test" => UiTestMachine::permission_policy(),
             // Read-only planning modes get a policy that withholds `WriteFile`
             // so the kernel forbids file mutations even if the model proposes
             // one; all other modes keep the full reactive-agent policy.
