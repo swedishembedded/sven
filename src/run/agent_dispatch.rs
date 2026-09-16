@@ -33,7 +33,13 @@ use sven_config::Config;
 
 /// One whale agent-dispatch request - exactly whale's
 /// `SubprocessAgentDispatcher` writes to this process's stdin:
-/// `{"mode", "device": {"provider_id", "device_id"} | null, "params"}`.
+/// `{"mode", "device": {"provider_id", "device_id", "serial"} | null,
+/// "params"}`. `device_id` is whale's own stable catalog/leasing key (e.g.
+/// `"phone-1"`) - NOT a real ADB serial; `serial`, when whale's own
+/// `DeviceSpec` knows it, is the real physical address (`adb devices`' own
+/// serial column, e.g. `"ec677a50"`). See `UiTestDevice`'s own doc
+/// (`sven_bootstrap::ui_test_dispatch`) for why the two are never
+/// conflated.
 #[derive(Debug, Deserialize)]
 struct DispatchRequest {
     mode: String,
@@ -46,6 +52,13 @@ struct DispatchRequest {
 struct DispatchDevice {
     provider_id: String,
     device_id: String,
+    /// Absent (rather than an error) when whale's own catalog entry does
+    /// not name a real serial - a real, expected state, not a malformed
+    /// request. See `resolve_effective_serial`'s own doc
+    /// (`sven_bootstrap::ui_test_dispatch`) for how that degrades to
+    /// ordinary auto-detect.
+    #[serde(default)]
+    serial: Option<String>,
 }
 
 pub(crate) async fn run_agent_dispatch_command(config: Arc<Config>) -> anyhow::Result<()> {
@@ -67,6 +80,7 @@ pub(crate) async fn run_agent_dispatch_command(config: Arc<Config>) -> anyhow::R
             let device = request.device.map(|d| UiTestDevice {
                 provider_id: d.provider_id,
                 device_id: d.device_id,
+                serial: d.serial,
             });
             match dispatch_ui_test_step(
                 config,
@@ -94,14 +108,28 @@ mod tests {
     #[test]
     fn a_dispatch_request_parses_with_a_device() {
         let req: DispatchRequest = serde_json::from_str(
-            r#"{"mode": "ui-test", "device": {"provider_id": "local", "device_id": "phone-1"}, "params": {"instruction": "Launch the demo app"}}"#,
+            r#"{"mode": "ui-test", "device": {"provider_id": "local", "device_id": "phone-1", "serial": "ec677a50"}, "params": {"instruction": "Launch the demo app"}}"#,
         )
         .expect("a well-formed request must parse");
         assert_eq!(req.mode, "ui-test");
         let device = req.device.expect("device must be Some");
         assert_eq!(device.provider_id, "local");
         assert_eq!(device.device_id, "phone-1");
+        assert_eq!(device.serial, Some("ec677a50".to_string()));
         assert_eq!(req.params["instruction"], "Launch the demo app");
+    }
+
+    /// `serial` is optional - whale's own catalog entry may not know a real
+    /// ADB serial at all (see `DispatchDevice::serial`'s own doc), and that
+    /// must parse cleanly, not be a required-field error.
+    #[test]
+    fn a_dispatch_request_parses_with_a_device_and_no_serial() {
+        let req: DispatchRequest = serde_json::from_str(
+            r#"{"mode": "ui-test", "device": {"provider_id": "local", "device_id": "phone-1"}, "params": {}}"#,
+        )
+        .expect("a device with no serial must still parse");
+        let device = req.device.expect("device must be Some");
+        assert_eq!(device.serial, None);
     }
 
     #[test]

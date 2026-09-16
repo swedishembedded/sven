@@ -94,6 +94,15 @@ fn parse_devices(text: &str) -> Vec<DeviceEntry> {
 /// when exactly one device is in the ready (`device`) state - silently
 /// picking among several attached phones would make a test nondeterministic
 /// about which physical device it actually drove.
+///
+/// This does NOT validate `default_serial` against what is actually
+/// attached - it is trusted verbatim, exactly as it always has been, so
+/// this function's I/O-free fast path (no `adb devices` call at all when a
+/// serial was given) stays unchanged for every existing caller. A caller
+/// that wants `default_serial` validated against reality, with a bounded
+/// fallback when it does not match, wants [`resolve_serial_validated`]
+/// instead - see that function's own doc for why it is a separate entry
+/// point rather than a behaviour change here.
 pub async fn resolve_serial(
     explicit: Option<&str>,
     default_serial: Option<&str>,
@@ -120,6 +129,112 @@ pub async fn resolve_serial(
                 .join(", ")
         )),
     }
+}
+
+/// Outcome of [`pick_serial`] - which serial to use, and whether reaching it
+/// required falling back off a `requested` identity that did not match
+/// anything currently attached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SerialPick {
+    /// `requested` matched a ready device exactly, or nothing was requested
+    /// and exactly one ready device made the choice unambiguous - the
+    /// ordinary case, nothing for a caller to warn about.
+    Resolved(String),
+    /// `requested` was given but matched no ready device, and exactly one
+    /// ready device let this resolve anyway. A real substitution - a caller
+    /// should log it, not apply it silently.
+    FellBackToSole(String),
+    /// No ADB device is attached in the ready state at all.
+    NoneAttached,
+    /// Two or more ready devices, and none matches `requested` exactly (or
+    /// nothing was requested) - genuinely ambiguous, every serial seen.
+    Ambiguous(Vec<String>),
+}
+
+/// The pure decision core behind [`resolve_serial_validated`]: given what
+/// serial was `requested` (a whale dispatch's own device info, a
+/// `SVEN_ANDROID_SERIAL` value, or nothing) and the CURRENT `ready` device
+/// list, decides which serial to use.
+///
+/// - An exact match against `ready` always wins.
+/// - Otherwise, when exactly one device is ready, it is used - silently
+///   ([`SerialPick::Resolved`]) if nothing specific was requested (ordinary
+///   auto-detect), or as a named substitution
+///   ([`SerialPick::FellBackToSole`]) if something WAS requested but didn't
+///   match (the real "auto-detect instead of hard-failing on a stale/wrong
+///   identifier" behaviour this function exists for).
+/// - Zero or 2+ ready devices with no exact match is never guessed at -
+///   [`SerialPick::NoneAttached`]/[`SerialPick::Ambiguous`].
+///
+/// No I/O - pure over an already-fetched `ready` slice, so it is unit-tested
+/// directly against a synthetic device list rather than a real `adb
+/// devices` invocation, the same convention [`parse_devices`]'s own tests
+/// already use.
+#[must_use]
+pub fn pick_serial(requested: Option<&str>, ready: &[DeviceEntry]) -> SerialPick {
+    if let Some(s) = requested {
+        if ready.iter().any(|d| d.serial == s) {
+            return SerialPick::Resolved(s.to_string());
+        }
+    }
+    match ready {
+        [one] if requested.is_some() => SerialPick::FellBackToSole(one.serial.clone()),
+        [one] => SerialPick::Resolved(one.serial.clone()),
+        [] => SerialPick::NoneAttached,
+        many => SerialPick::Ambiguous(many.iter().map(|d| d.serial.clone()).collect()),
+    }
+}
+
+/// Abstraction over "list the ready ADB devices", so [`resolve_serial_validated`]
+/// (and any caller of it) can be unit-tested against a fixed, synthetic
+/// device list rather than shelling out to a real `adb devices` on every
+/// `cargo test` run. [`RealDeviceLister`] is the one production
+/// implementation.
+#[async_trait::async_trait]
+pub trait DeviceLister: Send + Sync {
+    /// Returns every currently-attached device, in whatever state `adb
+    /// devices` reports it in - not pre-filtered to `ready`, matching
+    /// [`list_devices`]'s own contract.
+    async fn list_devices(&self) -> Result<Vec<DeviceEntry>, String>;
+}
+
+/// The real [`DeviceLister`]: shells out to `adb devices`. What every
+/// production caller uses; a test substitutes a fake implementation
+/// instead.
+pub struct RealDeviceLister;
+
+#[async_trait::async_trait]
+impl DeviceLister for RealDeviceLister {
+    async fn list_devices(&self) -> Result<Vec<DeviceEntry>, String> {
+        list_devices().await
+    }
+}
+
+/// Like [`resolve_serial`], but validates `requested` against `lister`'s
+/// CURRENT view of what's attached rather than trusting it blindly, via
+/// [`pick_serial`]. Exists for a caller whose "requested" identity comes
+/// from another system's own catalog/leasing key (e.g. whale's
+/// `DeviceSpec`/`devices.json`) rather than a human directly typing an ADB
+/// serial - that identity can legitimately not be a real serial at all (a
+/// stable logical id) or point at hardware that was re-plugged since - so
+/// silently trusting it the way [`resolve_serial`]'s `default_serial` does
+/// is the wrong default here; falling back to the one attached device when
+/// that's unambiguous, and only refusing when it genuinely isn't, is.
+///
+/// # Errors
+///
+/// Only for a real I/O failure listing devices (e.g. `adb` itself is not on
+/// `PATH`) - [`SerialPick::NoneAttached`]/[`SerialPick::Ambiguous`] are
+/// returned as `Ok`, not `Err`, since deciding how to report those to a
+/// human is a caller concern (a whale-dispatch caller wants to name its own
+/// catalog id in the message; this function has no such context).
+pub async fn resolve_serial_validated(
+    lister: &dyn DeviceLister,
+    requested: Option<&str>,
+) -> Result<SerialPick, String> {
+    let devices = lister.list_devices().await?;
+    let ready: Vec<DeviceEntry> = devices.into_iter().filter(|d| d.state == "device").collect();
+    Ok(pick_serial(requested, &ready))
 }
 
 /// Parsed `wm size` output: `(width, height)` in pixels. Prefers an
@@ -254,5 +369,128 @@ mod tests {
     async fn resolve_serial_falls_back_to_default() {
         let resolved = resolve_serial(None, Some("DEFAULT")).await;
         assert_eq!(resolved, Ok("DEFAULT".to_string()));
+    }
+
+    // ─── pick_serial / resolve_serial_validated ────────────────────────────
+    // The device-fallback logic fix part 2 of the android-ui-test/device-
+    // identity work exists for: a caller-requested identity (e.g. whale's
+    // own catalog device id, mistakenly or legitimately not a real ADB
+    // serial) that doesn't match what's actually attached should fall back
+    // to the one attached device when that's unambiguous, never guess when
+    // it isn't. All against a synthetic `Vec<DeviceEntry>` - no real `adb`.
+
+    fn ready(serial: &str) -> DeviceEntry {
+        DeviceEntry {
+            serial: serial.to_string(),
+            state: "device".to_string(),
+        }
+    }
+
+    fn offline(serial: &str) -> DeviceEntry {
+        DeviceEntry {
+            serial: serial.to_string(),
+            state: "offline".to_string(),
+        }
+    }
+
+    #[test]
+    fn pick_serial_exact_match_wins_even_with_other_devices_ready() {
+        let devices = [ready("aaa"), ready("bbb")];
+        assert_eq!(
+            pick_serial(Some("bbb"), &devices),
+            SerialPick::Resolved("bbb".to_string())
+        );
+    }
+
+    #[test]
+    fn pick_serial_nothing_requested_and_one_ready_is_a_plain_resolve_not_a_fallback() {
+        let devices = [ready("ec677a50")];
+        assert_eq!(
+            pick_serial(None, &devices),
+            SerialPick::Resolved("ec677a50".to_string())
+        );
+    }
+
+    #[test]
+    fn pick_serial_mismatched_request_and_one_ready_falls_back() {
+        // The exact bug this exists for: whale's catalog id ("phone-1") was
+        // sent as if it were a real serial and matches nothing attached,
+        // but exactly one real device is - use it, but as a named
+        // substitution, not a silent resolve.
+        let devices = [ready("ec677a50")];
+        assert_eq!(
+            pick_serial(Some("phone-1"), &devices),
+            SerialPick::FellBackToSole("ec677a50".to_string())
+        );
+    }
+
+    #[test]
+    fn pick_serial_no_devices_at_all_is_none_attached() {
+        assert_eq!(pick_serial(Some("phone-1"), &[]), SerialPick::NoneAttached);
+        assert_eq!(pick_serial(None, &[]), SerialPick::NoneAttached);
+    }
+
+    #[test]
+    fn pick_serial_two_ready_with_no_exact_match_is_ambiguous() {
+        let devices = [ready("aaa"), ready("bbb")];
+        assert_eq!(
+            pick_serial(Some("phone-1"), &devices),
+            SerialPick::Ambiguous(vec!["aaa".to_string(), "bbb".to_string()])
+        );
+        assert_eq!(
+            pick_serial(None, &devices),
+            SerialPick::Ambiguous(vec!["aaa".to_string(), "bbb".to_string()])
+        );
+    }
+
+    #[test]
+    fn pick_serial_only_considers_ready_state_devices() {
+        // A second, offline device must never count toward "how many are
+        // attached" for the ambiguity decision - only `ready` (already
+        // filtered by the caller) is considered, and `pick_serial` itself
+        // takes no state field into account at all: it trusts its `ready`
+        // input is pre-filtered, exactly as `resolve_serial_validated`
+        // filters before calling it.
+        let devices = [ready("ec677a50")];
+        assert_eq!(
+            pick_serial(Some("phone-1"), &devices),
+            SerialPick::FellBackToSole("ec677a50".to_string())
+        );
+        let _ = offline("unused-in-this-slice");
+    }
+
+    /// A fake [`DeviceLister`] returning a fixed, canned device list - the
+    /// dependency-injection seam [`resolve_serial_validated`] exists to make
+    /// unit-testable without a real `adb devices` invocation.
+    struct FakeLister(Vec<DeviceEntry>);
+    #[async_trait::async_trait]
+    impl DeviceLister for FakeLister {
+        async fn list_devices(&self) -> Result<Vec<DeviceEntry>, String> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_serial_validated_filters_to_ready_before_deciding() {
+        let lister = FakeLister(vec![offline("stale"), ready("ec677a50")]);
+        let pick = resolve_serial_validated(&lister, Some("phone-1"))
+            .await
+            .expect("lister succeeded");
+        assert_eq!(pick, SerialPick::FellBackToSole("ec677a50".to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_serial_validated_propagates_a_real_lister_failure() {
+        struct FailingLister;
+        #[async_trait::async_trait]
+        impl DeviceLister for FailingLister {
+            async fn list_devices(&self) -> Result<Vec<DeviceEntry>, String> {
+                Err("adb not on PATH".to_string())
+            }
+        }
+        let err = resolve_serial_validated(&FailingLister, Some("phone-1"))
+            .await
+            .expect_err("a lister failure must propagate, not be swallowed");
+        assert!(err.contains("adb not on PATH"));
     }
 }

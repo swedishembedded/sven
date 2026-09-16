@@ -39,17 +39,34 @@ use sven_executors::ToolExecutor;
 use sven_hsm::Event;
 use sven_machines::machines::ui_test::{ask_user_binding, ERROR_FACT, RESULTS_FACT};
 use sven_tools::{Tool, ToolRegistry};
+use sven_tools_android::adb::{self, DeviceLister, RealDeviceLister, SerialPick};
 
 use crate::runtime_builder::{RuntimeBuilder, ToolExecutorFactory};
 
 /// The device a whale dispatch request resolved and leased for this step,
 /// or `None` when the node declared no device requirement - mirrors
 /// `whale_workflow_runner::agent_dispatch::AgentDispatcher::dispatch`'s own
-/// `device: Option<&DeviceKey>` parameter.
+/// `device: Option<&DeviceKey>` parameter, PLUS `serial`: the real ADB
+/// identity of the physical unit, when whale's own `DeviceSpec` knows it.
+///
+/// `device_id` is whale's stable, logical catalog/leasing key (e.g.
+/// `"phone-1"`) - it names a ROLE in whale's placement/leasing bookkeeping,
+/// not a physical device, and is never a valid ADB `-s` argument. `serial`
+/// is the actual physical address (`adb devices`' first column, e.g.
+/// `"ec677a50"`) - the two are deliberately never conflated: a device could
+/// be re-plugged under the same logical role with a different physical unit
+/// over time, and whale's own `devices.json` may legitimately not know the
+/// serial at all (see `resolve_effective_serial`'s own doc for what happens
+/// then).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UiTestDevice {
     pub provider_id: String,
     pub device_id: String,
+    /// The real ADB serial, when whale's `DeviceSpec` reported one. `None`
+    /// is a real, expected state (not every `devices.json` entry names a
+    /// serial) - see `resolve_effective_serial`'s own doc for how that
+    /// degrades to ordinary auto-detect rather than a hard failure.
+    pub serial: Option<String>,
 }
 
 /// Test-only (and otherwise advanced-use) seams: substitute the model
@@ -69,6 +86,13 @@ pub struct UiTestDispatchOverrides {
     /// Replaces the real `ask_question` tool
     /// (`sven_tools_agent::AskQuestionTool::new_headless`).
     pub ask_tool: Option<Arc<dyn Tool>>,
+    /// Replaces the real device lister
+    /// (`sven_tools_android::adb::RealDeviceLister`) [`resolve_effective_serial`]
+    /// uses to validate `device.serial` against what's actually attached.
+    /// `None` uses the real one (shells out to `adb devices`) - a test
+    /// substitutes a fake to exercise the fallback/ambiguity paths without a
+    /// real device.
+    pub device_lister: Option<Arc<dyn DeviceLister>>,
 }
 
 /// Runs one `UiTestMachine` step to completion and returns its outcome.
@@ -103,9 +127,10 @@ pub async fn dispatch_ui_test_step(
     let vars = extract_vars(params);
     let script = json!({ "steps": [instruction], "vars": vars }).to_string();
 
-    let serial = device
-        .map(|d| d.device_id.clone())
-        .or_else(|| std::env::var("SVEN_ANDROID_SERIAL").ok());
+    let lister: Arc<dyn DeviceLister> = overrides
+        .device_lister
+        .unwrap_or_else(|| Arc::new(RealDeviceLister));
+    let serial = resolve_effective_serial(device, lister.as_ref()).await?;
 
     let android_tool = overrides
         .android_tool
@@ -188,6 +213,72 @@ pub async fn dispatch_ui_test_step(
         output[name] = Value::String(value);
     }
     Ok(output)
+}
+
+/// Resolves which real ADB serial this step's `AndroidTool` should default
+/// to, given whale's own `device` info and `lister`'s current view of
+/// what's attached.
+///
+/// `device` is `None` (no device requirement on this node at all) preserves
+/// the pre-existing behaviour exactly: fall back to `SVEN_ANDROID_SERIAL`,
+/// then let `AndroidTool`'s own per-call auto-detect handle it - there is no
+/// whale-supplied identity to validate against reality here at all.
+///
+/// `device` is `Some` routes through `adb::resolve_serial_validated`
+/// (`sven-tools-android`'s own real device-selection/auto-detect - reused,
+/// not reimplemented): an exact match on `device.serial` wins outright;
+/// otherwise, when exactly one real device is attached, it is used
+/// automatically with a logged warning naming the substitution (this is the
+/// actual "auto-detect" behaviour a user hitting a stale/mismatched
+/// `device_id`-as-serial bug asked for); only genuinely ambiguous cases
+/// (zero attached, or two-or-more with no exact match) hard-fail.
+///
+/// # Errors
+///
+/// A descriptive error naming `device.device_id` (whale's own catalog
+/// identity, for a human reading the failure) when resolution is genuinely
+/// ambiguous, or when listing devices itself fails (e.g. `adb` not on
+/// `PATH`).
+async fn resolve_effective_serial(
+    device: Option<&UiTestDevice>,
+    lister: &dyn DeviceLister,
+) -> Result<Option<String>, String> {
+    let Some(d) = device else {
+        return Ok(std::env::var("SVEN_ANDROID_SERIAL").ok());
+    };
+    let requested = d.serial.as_deref();
+    match adb::resolve_serial_validated(lister, requested)
+        .await
+        .map_err(|e| format!("resolving device '{}': {e}", d.device_id))?
+    {
+        SerialPick::Resolved(s) => Ok(Some(s)),
+        SerialPick::FellBackToSole(s) => {
+            tracing::warn!(
+                requested_device_id = %d.device_id,
+                requested_serial = requested.unwrap_or("none"),
+                fallback_serial = %s,
+                "requested device '{}' (serial: {}) not found; falling back to the only attached \
+                 device '{}'",
+                d.device_id,
+                requested.unwrap_or("none"),
+                s
+            );
+            Ok(Some(s))
+        }
+        SerialPick::NoneAttached => Err(format!(
+            "requested device '{}' (serial: {}) not found, and no ADB device is attached at all",
+            d.device_id,
+            requested.unwrap_or("none")
+        )),
+        SerialPick::Ambiguous(serials) => Err(format!(
+            "requested device '{}' (serial: {}) not found, and {} ADB devices are attached with \
+             no exact match ({}); fix the configured serial to disambiguate",
+            d.device_id,
+            requested.unwrap_or("none"),
+            serials.len(),
+            serials.join(", ")
+        )),
+    }
 }
 
 /// Every top-level `params` field except `instruction`, coerced to a string
@@ -319,21 +410,43 @@ mod tests {
         assert_eq!(android.calls.lock().unwrap()[0]["package"], "com.example.demoapp");
     }
 
+    /// A fake [`DeviceLister`] returning a fixed, canned device list - so a
+    /// test can exercise the exact/fallback/ambiguous paths through
+    /// `resolve_effective_serial` without a real `adb devices` invocation.
+    struct FakeLister(Vec<adb::DeviceEntry>);
+    #[async_trait]
+    impl DeviceLister for FakeLister {
+        async fn list_devices(&self) -> Result<Vec<adb::DeviceEntry>, String> {
+            Ok(self.0.clone())
+        }
+    }
+    fn ready(serial: &str) -> adb::DeviceEntry {
+        adb::DeviceEntry {
+            serial: serial.to_string(),
+            state: "device".to_string(),
+        }
+    }
+
     #[tokio::test]
     async fn a_device_field_does_not_prevent_the_step_from_running() {
-        // `dispatch_ui_test_step` resolves `device.device_id` into
-        // `AndroidTool::new`'s default serial when using the real tool - see
-        // `sven_tools_android::tool::AndroidTool::default`'s own doc for the
-        // `SVEN_ANDROID_SERIAL` fallback this mirrors. With a fake tool
+        // `dispatch_ui_test_step` resolves `device.serial` (the real ADB
+        // identity, distinct from `device.device_id`, whale's own catalog
+        // key) into `AndroidTool::new`'s default serial when using the real
+        // tool - see `resolve_effective_serial`'s own doc. With a fake tool
         // substituted, this only proves the `device` field is accepted and
         // plumbed through without breaking the run.
         let android = FakeTool::new("android", sven_hsm::ToolCapability::ControlDevice, "ok");
         let overrides = UiTestDispatchOverrides {
             model_provider: Some(Box::new(compiled_step_reply(json!({ "verb": "key_event", "target": "HOME" })))),
             android_tool: Some(android as Arc<dyn Tool>),
+            device_lister: Some(Arc::new(FakeLister(vec![ready("ec677a50")]))),
             ..Default::default()
         };
-        let device = UiTestDevice { provider_id: "local".into(), device_id: "phone-1".into() };
+        let device = UiTestDevice {
+            provider_id: "local".into(),
+            device_id: "phone-1".into(),
+            serial: Some("ec677a50".into()),
+        };
 
         let out = dispatch_ui_test_step(
             Arc::new(test_config()),
@@ -344,6 +457,122 @@ mod tests {
         .await
         .expect("must succeed");
         assert_eq!(out["passed"], true);
+    }
+
+    // ─── resolve_effective_serial: the device-fallback logic itself ───────
+    // This is the "auto-detect instead of hard-failing on whale's own
+    // catalog id" behaviour the android-ui-test/device-identity fix exists
+    // for. Every case is a unit test against a `FakeLister`, per this
+    // repo's TDD convention for `sven-tools-android`'s own device-selection
+    // tests (no real `adb`, no real device needed).
+
+    #[tokio::test]
+    async fn no_device_at_all_falls_back_to_the_env_var_without_touching_the_lister() {
+        struct PanicsIfCalled;
+        #[async_trait]
+        impl DeviceLister for PanicsIfCalled {
+            async fn list_devices(&self) -> Result<Vec<adb::DeviceEntry>, String> {
+                panic!("must not be called when no device info was supplied at all");
+            }
+        }
+        let resolved = resolve_effective_serial(None, &PanicsIfCalled)
+            .await
+            .expect("must succeed");
+        // SVEN_ANDROID_SERIAL is not set in this test process by default.
+        assert_eq!(resolved, std::env::var("SVEN_ANDROID_SERIAL").ok());
+    }
+
+    #[tokio::test]
+    async fn an_exact_serial_match_is_used_directly() {
+        let device = UiTestDevice {
+            provider_id: "local".into(),
+            device_id: "phone-1".into(),
+            serial: Some("ec677a50".into()),
+        };
+        let lister = FakeLister(vec![ready("ec677a50")]);
+        let resolved = resolve_effective_serial(Some(&device), &lister)
+            .await
+            .expect("must succeed");
+        assert_eq!(resolved, Some("ec677a50".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_mismatched_serial_falls_back_to_the_only_attached_device() {
+        // The exact bug: whale sent its catalog id, not a real serial, and
+        // it happens not to match anything attached - but exactly one real
+        // device is, so this must succeed via fallback, not hard-fail.
+        let device = UiTestDevice {
+            provider_id: "local".into(),
+            device_id: "phone-1".into(),
+            serial: Some("phone-1".into()),
+        };
+        let lister = FakeLister(vec![ready("ec677a50")]);
+        let resolved = resolve_effective_serial(Some(&device), &lister)
+            .await
+            .expect("an unambiguous single attached device must succeed, not hard-fail");
+        assert_eq!(resolved, Some("ec677a50".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_missing_serial_falls_back_to_the_only_attached_device_too() {
+        // `serial: None` is the documented common case (devices.json need
+        // not name a real serial at all) - it must degrade to the same
+        // single-device auto-detect, not an error.
+        let device = UiTestDevice {
+            provider_id: "local".into(),
+            device_id: "phone-1".into(),
+            serial: None,
+        };
+        let lister = FakeLister(vec![ready("ec677a50")]);
+        let resolved = resolve_effective_serial(Some(&device), &lister)
+            .await
+            .expect("must succeed");
+        assert_eq!(resolved, Some("ec677a50".to_string()));
+    }
+
+    #[tokio::test]
+    async fn zero_attached_devices_is_a_hard_failure_naming_the_requested_device() {
+        let device = UiTestDevice {
+            provider_id: "local".into(),
+            device_id: "phone-1".into(),
+            serial: Some("ec677a50".into()),
+        };
+        let lister = FakeLister(vec![]);
+        let err = resolve_effective_serial(Some(&device), &lister)
+            .await
+            .expect_err("zero attached devices is genuinely ambiguous - it must fail");
+        assert!(err.contains("phone-1"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn two_attached_devices_with_no_exact_match_is_a_hard_failure() {
+        let device = UiTestDevice {
+            provider_id: "local".into(),
+            device_id: "phone-1".into(),
+            serial: Some("phone-1".into()),
+        };
+        let lister = FakeLister(vec![ready("aaa"), ready("bbb")]);
+        let err = resolve_effective_serial(Some(&device), &lister)
+            .await
+            .expect_err("two candidates with no exact match is genuinely ambiguous");
+        assert!(err.contains("phone-1"), "{err}");
+        assert!(err.contains("aaa") && err.contains("bbb"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn two_attached_devices_with_an_exact_match_still_resolves() {
+        // Ambiguity is about the DECISION, not the device count - an exact
+        // match is never ambiguous even with other devices also attached.
+        let device = UiTestDevice {
+            provider_id: "local".into(),
+            device_id: "phone-1".into(),
+            serial: Some("bbb".into()),
+        };
+        let lister = FakeLister(vec![ready("aaa"), ready("bbb")]);
+        let resolved = resolve_effective_serial(Some(&device), &lister)
+            .await
+            .expect("an exact match must resolve even with other devices attached");
+        assert_eq!(resolved, Some("bbb".to_string()));
     }
 
     #[tokio::test]

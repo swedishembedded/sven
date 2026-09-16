@@ -62,9 +62,16 @@ async fn a_real_non_destructive_step_runs_against_a_real_device_with_real_tools(
         return;
     }
 
+    // `device_id` is whale's own stable catalog/leasing key (never a real
+    // ADB serial - see `UiTestDevice`'s own doc); `serial` is the real ADB
+    // identity this test resolved above. A plain `"phone-1"` catalog id here
+    // (deliberately NOT the real serial) proves the exact-serial-match path
+    // still finds the real device even when the catalog id itself would
+    // never resolve to anything.
     let device = sven_bootstrap::UiTestDevice {
         provider_id: "local".into(),
-        device_id: serial,
+        device_id: "phone-1".into(),
+        serial: Some(serial),
     };
 
     // "Go home" is the one instruction `sven-tools-android/tests/live_device.rs`

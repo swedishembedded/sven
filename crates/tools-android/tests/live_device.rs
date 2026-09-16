@@ -127,3 +127,33 @@ async fn unknown_device_serial_is_a_clear_error() {
     let out = t.execute(&call("display_info", json!({}))).await;
     assert!(out.is_error);
 }
+
+/// [`adb::resolve_serial_validated`] against a REAL `adb devices` -
+/// self-skips without a single ready device, same as every other test in
+/// this file. This is the real-hardware half of the device-fallback fix
+/// (`sven_bootstrap::ui_test_dispatch::resolve_effective_serial`'s own unit
+/// tests cover the pure decision logic against a fake device lister; this
+/// proves the REAL `RealDeviceLister`/`adb devices` round trip actually
+/// substitutes the sole attached device when the "requested" identity
+/// (mirroring whale's own catalog device id, e.g. `"phone-1"`, sent where a
+/// real ADB serial was expected - the exact bug this fix exists for) does
+/// not match anything attached.
+#[tokio::test]
+async fn resolve_serial_validated_falls_back_to_the_real_sole_attached_device() {
+    let serial = skip_without_device!();
+    let pick = adb::resolve_serial_validated(&adb::RealDeviceLister, Some("phone-1"))
+        .await
+        .expect("a real, reachable adb must succeed");
+    assert_eq!(pick, adb::SerialPick::FellBackToSole(serial));
+}
+
+/// The companion "exact match still wins" case, against the same real
+/// device.
+#[tokio::test]
+async fn resolve_serial_validated_uses_a_real_exact_match_directly() {
+    let serial = skip_without_device!();
+    let pick = adb::resolve_serial_validated(&adb::RealDeviceLister, Some(serial.as_str()))
+        .await
+        .expect("a real, reachable adb must succeed");
+    assert_eq!(pick, adb::SerialPick::Resolved(serial));
+}
