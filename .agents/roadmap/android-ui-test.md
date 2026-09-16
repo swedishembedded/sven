@@ -3,9 +3,11 @@
 **Status: phase 1 done (device control), phase 2 done (brain grounding),
 phase 3 done against mocks (sven machine + tools; no real-device/real-
 checkpoint pass yet), phase 4 done for the local/single-worker dispatch
-path (whale) - not yet integration-tested against a real sven
-UiTestMachine (phase 3's own machine has no CLI entry point yet), and
-real-graph orchestrator-tier placement wiring is still open.**
+path (whale) including real `Link`-input data-flow into Agent-node dispatch
+and real-graph orchestrator-tier device placement wiring (both closed in a
+later whale-only session, see Phase 4's own update below) - not yet
+integration-tested against a real sven UiTestMachine (phase 3's own machine
+has no CLI entry point yet).**
 
 ## Goal
 
@@ -244,10 +246,6 @@ dry-run/broker code populates `requires_device` from a resolved
   `scripts/dev/agent-dispatch-smoke.sh`, a deliberately trivial
   acknowledge-and-reply script - proof the DISPATCH PATH works, not proof
   real UI automation works.
-- **No real-graph placement wiring**, per (c) above: `WorkloadNode::
-  requires_device` and the placement algorithm that reads it are real and
-  tested in isolation; nothing in `crates/whale`'s dry-run/dispatch code
-  yet constructs one from a real graph's `NodeTypeMapping::device`.
 - **Per-step progress** (b) is unaddressed.
 - **No cross-machine distributed demo.** Everything above is verified
   through `whale run --local` (one process, one machine) plus
@@ -255,3 +253,112 @@ dry-run/broker code populates `requires_device` from a resolved
   network). Nothing here stands up a real multi-worker cluster - correctly
   out of scope per this phase's own original "not worth building scheduling
   scaffolding around a loop that hasn't been proven end to end yet".
+
+### Phase 4 update - Link data-flow into Agent dispatch + real-graph device placement (whale, later session)
+
+Closes two of Phase 4's own named gaps: `Link`-kind inputs used to be
+silently dropped for `NodeKind::Agent` nodes (the capability path already
+resolved them), and nothing in `crates/whale`'s real graph-loading path
+populated `WorkloadNode::requires_device` from a resolved
+`NodeTypeMapping::device` - the placement ALGORITHM was real and tested,
+but never fed from a real graph. Both landed as TDD'd, self-contained
+commits on whale's `main`; the second (device-loader) is tracked as whale's
+own task #17.
+
+**Link data-flow into Agent dispatch:**
+
+- `whale_workflow::machine::WhaleWorkflowMachine::call_tool_effect_agent`
+  now builds `args.blob_refs` for a `Link` input exactly the way the
+  capability path already does (mirroring `call_tool_effect_capability`'s
+  own `Link` arm, including fan-out `item` marking) - present only when at
+  least one `Link` input exists, omitted entirely otherwise (the same
+  "absent means did not say" discipline `args.device` already holds).
+- The store lookup / fan-out item / `collect`-merge logic that used to live
+  only inline in `BrainCapabilityExecutor::execute` is now a shared
+  function, `whale_workflow_runner::call_args::resolve_link`, called by
+  BOTH `BrainCapabilityExecutor` (capability path) and the new
+  `AgentCapabilityExecutor` link-resolution step (agent path) - one lookup
+  implementation, two different policies for what a resolved value means.
+- `AgentCapabilityExecutor` now shares the SAME `NodeOutputStore`/
+  `ItemOutputStore` pair `BrainCapabilityExecutor` writes to and reads
+  `Link`s against (constructed once by `run_workflow_value`, cloned into
+  both executors before either owns it) - a successful agent dispatch's
+  whole JSON `output` is wrapped as `capability::Outcome { outputs: output,
+  blobs: {} }` (an agent dispatch never produces a binary blob today) and
+  written into that shared store via the SAME `crate::node_finish::finish_success`
+  the capability path uses, so a LATER agent node's `Link` input can read an
+  EARLIER agent (or capability) node's result exactly the way a capability
+  node's `Link` already could.
+
+**The exact contract - how a downstream agent node receives a resolved
+upstream value in its `params`** (this is what a future sven-side CLI
+subcommand consuming this needs to match):
+
+1. A graph author writes an ordinary `Link` input on an `Agent`-kind node,
+   e.g. `{in: link, node: "<upstream node id>", output: "answer"}` under
+   input name `code` (or any name; renamed per
+   `NodeTypeMapping::param_rename` exactly like a `Value` input already is)
+   - this is illustrative, not naming any node in the shipped example
+   graph, which stays two nodes (see below).
+2. At dispatch time, whale looks at the upstream node's `capability::Outcome`
+   (the same `Outcome` an agent dispatch's own successful result became, per
+   above): if `Outcome.outputs` (a JSON object) has a key matching the
+   Link's `output` name (`"answer"` in the example), THAT JSON VALUE is
+   merged into the downstream node's dispatch `params` under the Link's
+   (renamed) input name (`code`), UNCHANGED - any JSON type, not coerced to
+   a string. This is the expected path for an agent-to-agent link: an
+   upstream agent dispatch's own named result (e.g. an `ask_user` step's
+   answer), or a capability node's scalar output mirror.
+3. Only if `Outcome.outputs` has nothing under that name does whale fall
+   back to `Outcome.blobs` (a capability node's binary output channel, e.g.
+   a text blob): if a blob exists under that name AND is tagged
+   `Media::Text`, its bytes are UTF-8-decoded into a JSON string and merged
+   into `params` the same way. Any other blob media is refused (the node
+   fails with a descriptive error) rather than silently guessed at - an
+   agent dispatch's `params` is nowhere to smuggle raw bytes through.
+4. If neither yields anything, the node fails with `"node '<id>' input
+   '<name>' references unresolved output '<dep>.<output>'"` - the same
+   never-fabricate posture every other link-resolution path in whale holds.
+
+So: **a downstream agent node's dispatched `params` object gains one entry
+per resolved `Link` input, keyed by that input's (renamed) name, valued by
+the upstream node's own named JSON output verbatim** - e.g. if an upstream
+node's `AgentDispatcher::dispatch` call returns `Ok(json!({"answer":
+"1234"}))`, a downstream node Linking `{node: "<id>", output: "answer"}`
+under its own input `code` receives `params.code == "1234"` (a JSON
+string, not wrapped) in its own dispatch call. Proven end to end (real
+dispatched `params`, not just an intermediate `Effect`) by
+`whale_workflow_runner::agent_executor::tests::
+a_link_input_on_an_agent_node_carries_the_upstream_agent_nodes_resolved_value`.
+
+`examples/ui-test/ui-login.yaml` stays the small two-node
+(`launch`/`login`) dispatch-path demo it already was - `login`'s `after`
+input is a real value-carrying `Link` to `launch`'s own output (proof this
+mechanism is live in the shipped example, not just under `cargo test`), but
+a realistic multi-step login+add-card flow is deliberately NOT built into
+this file yet. An earlier pass in this same session expanded it to a
+five-node flow that relayed an `ask_user` confirmation-code answer into an
+automated "type the code" step - correctly reverted: a secure confirmation
+code has to be entered by the human on the device themselves, never
+auto-typed by relaying an `ask_user` answer back through a `Link`, per
+Phase 1's own `FLAG_SECURE` hand-off constraint. The right shape for a
+"workflow blocks until a human physically acts" node is still being
+designed (likely a distinct node kind, not an `ask_user`-relay-then-
+automate pattern) - the full flow example is future work once that lands,
+not scoped to this update.
+
+**Real-graph device placement wiring:** `crates/whale/src/plan_cmd.rs`'s
+`workload()` (reused by `dispatch::workload_from`, so both `whale run
+--dry-run` and a broker's own placement decision go through it) now reads
+each resolved `NodeTypeMapping` fully: an Agent-kind mapping
+(`agent_mode.is_some()`) produces `WorkloadNode { requires: None,
+requires_device: <mapping's device, converted into whale_marketplace's own
+DeviceRequirement> }`; an ordinary capability mapping is the reverse. Proven
+against the real loader (`dispatch::workload_from`, not a hand-built
+`WorkloadNode`) loading the repo's actual `examples/ui-test/ui-login.yaml`
++ `node-types.json` through `crate::workflow_file::load`, the same path a
+real `whale run`/`whale plan` invocation uses.
+
+**Still open, unchanged by this update:** not integration-tested against a
+real sven `UiTestMachine` (per above), per-step progress, and no
+cross-machine distributed demo - none of these were in this update's scope.
