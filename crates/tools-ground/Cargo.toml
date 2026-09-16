@@ -1,0 +1,18 @@
+[package]
+name        = "sven-tools-ground"
+version.workspace = true
+edition     = "2021"
+description = "UI-element visual grounding: calls brain's florence2 `ground` capability action (screenshot + target phrase in, normalized bounding box out) over the `brain` CLI. Domain tier. Detects a solid-black FLAG_SECURE screencap locally and never sends it to the grounding model."
+license     = "Apache-2.0"
+
+[dependencies]
+sven-tool-api = { path = "../tool-api" }
+sven-hsm      = { path = "../hsm" }
+image         = { workspace = true }
+async-trait   = { workspace = true }
+serde_json    = { workspace = true }
+tokio         = { workspace = true }
+tracing       = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

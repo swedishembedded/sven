@@ -21,6 +21,7 @@ members = [
     "crates/tools-fs",
     "crates/tools-exec",
     "crates/tools-android",
+    "crates/tools-ground",
     "crates/tools-ctx",
     "crates/tools-agent",
     "crates/tools-web",
