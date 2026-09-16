@@ -2,7 +2,10 @@
 
 **Status: phase 1 done (device control), phase 2 done (brain grounding),
 phase 3 done against mocks (sven machine + tools; no real-device/real-
-checkpoint pass yet), phase 4 not started.**
+checkpoint pass yet), phase 4 done for the local/single-worker dispatch
+path (whale) - not yet integration-tested against a real sven
+UiTestMachine (phase 3's own machine has no CLI entry point yet), and
+real-graph orchestrator-tier placement wiring is still open.**
 
 ## Goal
 
@@ -169,17 +172,86 @@ fine as-is: a worker only ever hands it one device at a time (the same
 assumption `sven-tools-android`'s `SVEN_ANDROID_SERIAL`/auto-detect already
 makes) - it is simply not this machine's job to enforce exclusivity itself.
 
-## Phase 4 - not started (whale)
+## Phase 4 - done for the local/single-worker case; not yet integration-tested against a real sven UiTestMachine (whale)
 
-Give `NodeKind::Agent { mode }` (already in `whale-nodespec`, currently
-display-only, zero execution path - see `whale-agent.md`/`crate-graph.md`
-in the whale repo) a real dispatch path in `whale-workflow`'s runner, add a
-device/resource dimension to `whale-marketplace::Catalog` (today strictly
-`(model, action)`-keyed, no way to express "node has an Android device with
-app X installed"), and enable `whale run ui-login.yaml`. Exclusivity is
-two-tier (see Phase 3's reconciliation note above): the orchestrator does
-capability-aware placement only, routing a device-needing node's task to a
-worker that declares the resource; true hard exclusivity is enforced
-locally by whichever worker owns that device, not by an orchestrator-held
-distributed lock. Deliberately last: not worth building scheduling
-scaffolding around a loop that hasn't been proven end to end yet.
+`NodeKind::Agent { mode }` (`whale-nodespec`) now has a real dispatch path,
+`whale-marketplace::Catalog` now has a device/resource dimension used by
+real placement logic, exclusive per-device leasing is implemented and
+tested (including under real concurrent contention), and `whale run
+ui-login.yaml --local` runs end to end against a real (generic,
+honestly-labelled) dispatcher subprocess - verified by actually running the
+built `whale` binary, not just `cargo test`. All work landed as
+self-contained, TDD'd commits on whale's `main`.
+
+**What's built, matched against Phase 3's own reconciliation note above:**
+
+(a) **Who constructs the seed/invocation input.** `whale-workflow-runner::
+agent_dispatch::AgentDispatcher` is exactly the worker-local dispatch
+adapter that reconciliation note calls for: one async trait,
+`dispatch(mode, device, params) -> Result<Value, String>`, no
+`UiTestMachine`/ADB/sven type anywhere in its signature. The one shipped
+implementation, `SubprocessAgentDispatcher`, spawns a configured command and
+speaks a small generic JSON-over-stdio contract (`{"mode","device",
+"params"}` in, `{"ok":true,"output":...}`/`{"ok":false,"error":...}` out) -
+deliberately NOT a fake `UiTestMachine` API. A future commit wiring the real
+`UiTestMachine` (via `sven_bootstrap::RuntimeBuilder`, once it has a mode
+registry entry - see this file's own Phase 3 "not wired into
+`mode.rs`/`RuntimeBuilder`" gap) writes a new `AgentDispatcher`
+implementation; nothing in whale's dispatch path changes to use it.
+`whale run ui-login.yaml` (no `--local`) is still the client-submits-
+to-a-broker-and-only-subscribes path this note describes, and it is
+genuinely untouched - `admin_submit.rs`/`node_cmd.rs` (the two places a
+node executes a job on a remote submitter's behalf) still pass `agent:
+None` exactly as before this phase, never constructing anything
+agent/device-shaped. `--local` is the one whale mode where "client" and
+"worker" are the same process (see whale's own `AGENTS.md`: "the same
+engine runs the graph in-process against this machine's own brain
+service") - its CLI-level `crate::agent_runtime` module (library code,
+not `main.rs`, mirroring `crate::registry_build`'s own real-vs-mock
+precedent) is that process building its own local worker config, not the
+client reaching into a remote worker's internals.
+
+(b) **Per-step progress.** Not addressed - genuinely open. Dispatch emits
+one `NodeStarted`/`NodeCompleted`/`NodeFailed` per GRAPH NODE, not per
+`UiTestMachine` step; a real integration would need either
+`UiTestMachine` to report incremental progress through
+`AgentDispatcher`'s existing (currently unused for this) progress
+channel, or accept node-level granularity as sufficient for v1.
+
+(c) **Exclusivity is two-tier**, both tiers now real and separately tested:
+worker tier is `whale_marketplace::leasing::DeviceLeases` - a plain
+`Mutex`-guarded set, in-process, no distributed lock, proven under real
+concurrent contention (16 threads racing for the same key, never more than
+one holder). Orchestrator tier is `whale_marketplace::HeadroomFirst`'s new
+`place_one_device` path: `WorkloadNode::requires_device` routes a
+device-needing node only to a provider whose `Catalog` reports a matching
+device, ranked by the same headroom rule a capability node gets - explicitly
+best-effort placement, no reservation, matching this crate's own
+long-standing "no reservation, and no model of consumption" posture. Wiring
+a REAL graph's device requirements into that placement path (today only the
+placement ALGORITHM is real and tested; nothing in `crates/whale`'s
+dry-run/broker code populates `requires_device` from a resolved
+`NodeTypeMapping::device` yet) is the next real gap in this tier.
+
+**Honest gaps, not swept under "done":**
+
+- **Not integration-tested against a real sven `UiTestMachine`.** Phase 3's
+  own machine has no CLI entry point yet (its own "not wired into
+  `mode.rs`/`RuntimeBuilder`" gap, still open) - there is nothing running
+  yet for a real `AgentDispatcher` implementation to invoke, so this
+  integration genuinely has not happened end to end. `examples/ui-test/
+  ui-login.yaml` in the whale repo runs against
+  `scripts/dev/agent-dispatch-smoke.sh`, a deliberately trivial
+  acknowledge-and-reply script - proof the DISPATCH PATH works, not proof
+  real UI automation works.
+- **No real-graph placement wiring**, per (c) above: `WorkloadNode::
+  requires_device` and the placement algorithm that reads it are real and
+  tested in isolation; nothing in `crates/whale`'s dry-run/dispatch code
+  yet constructs one from a real graph's `NodeTypeMapping::device`.
+- **Per-step progress** (b) is unaddressed.
+- **No cross-machine distributed demo.** Everything above is verified
+  through `whale run --local` (one process, one machine) plus
+  `whale-marketplace`'s own unit/integration tests (pure algorithm, no
+  network). Nothing here stands up a real multi-worker cluster - correctly
+  out of scope per this phase's own original "not worth building scheduling
+  scaffolding around a loop that hasn't been proven end to end yet".
