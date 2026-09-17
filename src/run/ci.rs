@@ -13,6 +13,51 @@ use crate::run::logging::is_stdin_tty;
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_config::AgentMode;
 
+/// How long stdin may stay silent before the wait is announced. Long enough
+/// that an ordinary pipe never prints it, short enough that a stuck run is
+/// explained before anyone concludes sven has hung.
+const STDIN_NOTICE_DELAY_MS: u64 = 2_000;
+
+/// Read stdin to end, announcing the wait if it does not finish promptly.
+///
+/// Headless runs reach here whenever stdin is not a TTY, which is the right
+/// test for `producer | sven "task"`. It is not sufficient on its own: a CI
+/// runner, a service manager or a tool harness commonly hands a child an
+/// inherited pipe that nobody ever writes to and nobody closes. At the syscall
+/// level that is indistinguishable from a slow producer which has not sent its
+/// first byte yet, so sven cannot decide to stop waiting without breaking the
+/// pipe case it is documented to support.
+///
+/// What it can do is stop being SILENT about it. After a short grace period the
+/// wait is announced on stderr, naming the fix, so an operator sees why the run
+/// is sitting there instead of watching a process that merely appears hung.
+fn read_stdin_to_end() -> anyhow::Result<String> {
+    use std::sync::mpsc;
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        let result = io::stdin().read_to_string(&mut buf).map(|_| buf);
+        let _ = tx.send(result);
+    });
+
+    let waited = rx.recv_timeout(std::time::Duration::from_millis(STDIN_NOTICE_DELAY_MS));
+    let result = match waited {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            eprintln!(
+                "[sven:info] waiting for stdin: it is redirected, but nothing has arrived yet. \
+                 If you did not mean to pipe input, run with `< /dev/null`."
+            );
+            rx.recv().context("reading stdin")?
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            anyhow::bail!("stdin reader stopped unexpectedly")
+        }
+    };
+    result.context("reading stdin")
+}
+
 pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
     // ── Detect project root ──────────────────────────────────────────────────
     let project_root = find_project_root().ok();
@@ -68,11 +113,7 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
         // The file is an ATIF trajectory document, not a workflow.  New
         // workflow input (if any) comes from stdin.
         if !is_stdin_tty() {
-            let mut buf = String::new();
-            io::stdin()
-                .read_to_string(&mut buf)
-                .context("reading stdin")?;
-            (buf, cli.prompt.clone())
+            (read_stdin_to_end()?, cli.prompt.clone())
         } else {
             (String::new(), cli.prompt.clone())
         }
@@ -81,11 +122,7 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
             .with_context(|| format!("reading input file {}", path.display()))?;
         (content, cli.prompt.clone())
     } else if !is_stdin_tty() {
-        let mut buf = String::new();
-        io::stdin()
-            .read_to_string(&mut buf)
-            .context("reading stdin")?;
-        let stdin_content = buf;
+        let stdin_content = read_stdin_to_end()?;
         // Keep positional prompt as extra_prompt so the runner can use it when
         // stdin is a piped conversation (e.g. `sven 'plan' | sven 'summarize'`).
         // The runner merges it into the step for plain-text stdin, or uses it as
