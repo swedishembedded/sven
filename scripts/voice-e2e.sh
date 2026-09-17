@@ -52,7 +52,9 @@ set -euo pipefail
 
 # ── Where everything lives ───────────────────────────────────────────────────
 
-BRAIN_REPO="${BRAIN_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../edgeai/brain" 2>/dev/null && pwd || true)}"
+# Empty when brain is not a sibling checkout; $BRAIN_BIN then has to name it.
+brain_repo_default() { cd "$(dirname "${BASH_SOURCE[0]}")/../../edgeai/brain" 2>/dev/null && pwd; }
+BRAIN_REPO="${BRAIN_REPO:-$(brain_repo_default || true)}"
 SVEN_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODELS_DIR="${MODELS_DIR:-$HOME/.local/share/brain/models}"
 
