@@ -6,42 +6,43 @@ CLI entry point (`sven agent-dispatch`, see this file's own update below) -
 still no real-device/real-checkpoint pass through that entry point (the new
 integration test self-skips without hardware, matching
 `live_ground.rs`/`live_device.rs`'s convention), phase 4 done for the
-local/single-worker dispatch path (whale) including real `Link`-input
+local/single-worker dispatch path (orchestrator) including real `Link`-input
 data-flow into Agent-node dispatch and real-graph orchestrator-tier device
-placement wiring (both closed in a later whale-only session, see Phase 4's
-own update below) - whale's own dispatch path is still only proven against
-the generic smoke-test dispatcher, not yet re-pointed at
-`sven agent-dispatch` end to end (a whale-side config change, not a sven-side
-gap), phase 5 done (whale): the "workflow blocks until a human physically
-acts" node Phase 4's own update deliberately deferred is now real -
-`NodeKind::HumanAction`, a resume RPC, `whale run --local`'s own
-cross-invocation resume socket, and `ui-login.yaml`'s `confirm_code`
-step - see Phase 5's own update below for the exact contract. Phase 6 (whale)
-closes the LAST open gap this whole initiative was scoped around: a codified
-`crates/whale/tests/live_ui_test_e2e.rs` now drives the REAL `sven
-agent-dispatch` binary (not the smoke script) through the FULL flow -
-`launch` -> `login` -> `confirm_code` (pause) -> `whale resume` from a
-second process -> `get_started` -> `add_card` -> `run_completed`. Building
-it surfaced and fixed a real, load-bearing bug (a resumed `HumanAction`
-node's output was never written into the shared node-output store, so any
-downstream node's `Link` past it could never resolve) - see Phase 6's own
-update below for the exact contract, what was verified for real in this
-sandbox (the whole flow against the generic smoke dispatcher, including the
-fix), and what remains genuinely unverified (a real run against real
-hardware/checkpoint, which this sandbox has neither of). Phase 7 fixes the
-FIRST real bug the actual user hit running this for real: whale's own
-catalog/leasing device id (e.g. `"phone-1"`) was being sent AND used as the
-literal ADB `-s` serial, so every real dispatch failed with `adb: device
-'phone-1' not found` even with a real phone attached. `whale_marketplace::
-DeviceSpec` gained a separate `serial` field (whale-side), and sven's
-`dispatch_ui_test_step` now resolves the effective serial through
-`sven-tools-android`'s own device-selection with a bounded auto-detect
-fallback (an exact `serial` match wins, a mismatched/absent one falls back
-to the sole attached device with a logged warning, only genuine ambiguity
-hard-fails) - see Phase 7's own update below for the exact contract, and
-whale's own `.agents/roadmap/android-ui-test.md` update for the whale-side
-half (`DeviceSpec::serial`, the dispatch JSON shape, `devices.json`, and a
-new `scripts/dev/run-ui-test.sh` one-command runner). Phase 8 fixed the next
+placement wiring (both closed in a later orchestrator-only session, see
+Phase 4's own update below) - the orchestrator's own dispatch path is still
+only proven against the generic smoke-test dispatcher, not yet re-pointed at
+`sven agent-dispatch` end to end (a orchestrator-side config change, not a
+sven-side gap), phase 5 done (orchestrator): the "workflow blocks until a
+human physically acts" node Phase 4's own update deliberately deferred is
+now real - `NodeKind::HumanAction`, a resume RPC, the orchestrator's `run
+--local`'s own cross-invocation resume socket, and `ui-login.yaml`'s
+`confirm_code` step - see Phase 5's own update below for the exact contract.
+Phase 6 (orchestrator) closes the LAST open gap this whole initiative was
+scoped around: a codified the orchestrator's own `tests/live_ui_test_e2e.rs`
+now drives the REAL `sven agent-dispatch` binary (not the smoke script)
+through the FULL flow - `launch` -> `login` -> `confirm_code` (pause) -> the
+orchestrator's `resume` from a second process -> `get_started` -> `add_card`
+-> `run_completed`. Building it surfaced and fixed a real, load-bearing bug
+(a resumed `HumanAction` node's output was never written into the shared
+node-output store, so any downstream node's `Link` past it could never
+resolve) - see Phase 6's own update below for the exact contract, what was
+verified for real in this sandbox (the whole flow against the generic smoke
+dispatcher, including the fix), and what remains genuinely unverified (a
+real run against real hardware/checkpoint, which this sandbox has neither
+of). Phase 7 fixes the FIRST real bug the actual user hit running this for
+real: the orchestrator's own catalog/leasing device id (e.g. `"phone-1"`)
+was being sent AND used as the literal ADB `-s` serial, so every real
+dispatch failed with `adb: device 'phone-1' not found` even with a real
+phone attached. The orchestrator's own `DeviceSpec` gained a separate
+`serial` field (orchestrator-side), and sven's `dispatch_ui_test_step` now
+resolves the effective serial through `sven-tools-android`'s own
+device-selection with a bounded auto-detect fallback (an exact `serial`
+match wins, a mismatched/absent one falls back to the sole attached device
+with a logged warning, only genuine ambiguity hard-fails) - see Phase 7's
+own update below for the exact contract, and the orchestrator's own
+`.agents/roadmap/android-ui-test.md` update for the orchestrator-side half
+(`DeviceSpec::serial`, the dispatch JSON shape, `devices.json`, and a new
+`scripts/dev/run-ui-test.sh` one-command runner). Phase 8 fixed the next
 real bug behind it (an app-name HINT is not a package name: "Launch betalo
 app" compiled to `betalo`, which `monkey -p` can never launch). Phase 9
 closes Phase 8's own "left to do" and, with it, a contract defect the whole
@@ -56,15 +57,15 @@ precedence decisions and what is left.**
 
 ## Goal
 
-A reproducible UI-test workflow: drive a real Android app through a
-declared sequence of natural-language steps (`Launch the demo app`, `Click
-"log in with password"`, `Enter the code`, ...), using a vision model as a
-bounded grounding oracle ("where is element X on this screenshot") rather
-than an open-ended reasoning agent - so a run is deterministic enough to
-gate CI on, not just an autonomous phone agent. Whale schedules it on a
-node with an attached device and reports step count/timing/failure point.
+A reproducible UI-test workflow: drive a real Android app through a declared
+sequence of natural-language steps (`Launch the demo app`, `Click "log in
+with password"`, `Enter the code`, ...), using a vision model as a bounded
+grounding oracle ("where is element X on this screenshot") rather than an
+open-ended reasoning agent - so a run is deterministic enough to gate CI on,
+not just an autonomous phone agent. The orchestrator schedules it on a node
+with an attached device and reports step count/timing/failure point.
 
-## Why sven, not just whale
+## Why sven, not just the orchestrator
 
 The step sequence is fixed by the test author; the HSM's job is executing
 it deterministically (screenshot -> ground -> act -> verify -> next),
@@ -175,31 +176,31 @@ Not yet done - real gaps, not swept under "mocked":
   matching `VerifiedTaskMachine`'s own scope, not an oversight specific to
   this machine).
 
-### Reconciling with whale's Phase 4 (parallel work)
+### Reconciling with the orchestrator's Phase 4 (parallel work)
 
-This was built while whale's Phase 4 (`NodeKind::Agent` dispatch,
-device/resource leasing in `whale-marketplace::Catalog`) was still
-unstarted, per that phase's own note. Nothing here assumes a particular
-whale dispatch shape - `UiTestMachine` is seeded by one `Event::UserMessage`
+This was built while the orchestrator's Phase 4 (`NodeKind::Agent` dispatch,
+device/resource leasing in its `Catalog`) was still unstarted, per that
+phase's own note. Nothing here assumes a particular the orchestrator
+dispatch shape - `UiTestMachine` is seeded by one `Event::UserMessage`
 carrying `{"steps": [...]}` JSON and reports its outcome entirely through
 `Context` facts (`ui_test_results`, `ui_test_error`) plus the terminal
 `Done`/`Failed` state, the same shape any `RuntimeBuilder`-constructed
 kernel already exposes. When Phase 4 lands, reconcile on:
 
-(a) **Who constructs the seed JSON.** `whale run ui-login.yaml` is a
-*client*: it submits the workflow to a whale orchestrator (broker) and only
+(a) **Who constructs the seed JSON.** the orchestrator's `run ui-login.yaml`
+is a *client*: it submits the workflow to an orchestrator (broker) and only
 subscribes to events for rendering workflow/cluster state (terminal or web
-UI) - it never constructs or serializes anything into a machine's seed
-input itself. The orchestrator schedules the `NodeKind::Agent` task onto a
-worker that has the needed device (`Catalog` gaining a device/resource
-dimension is what makes that placement possible); it is that **worker's**
-own `NodeKind::Agent` dispatch adapter that builds whatever seed/invocation
+UI) - it never constructs or serializes anything into a machine's seed input
+itself. The orchestrator schedules the `NodeKind::Agent` task onto a worker
+that has the needed device (`Catalog` gaining a device/resource dimension is
+what makes that placement possible); it is that **worker's** own
+`NodeKind::Agent` dispatch adapter that builds whatever seed/invocation
 input `UiTestMachine` needs - an entirely worker-local dispatch detail, not
 something the CLI client or the orchestrator does.
 
-(b) Whether whale wants per-step progress before the terminal state (today
-only the final `ui_test_results` fact has step-by-step detail; there is no
-incremental `SessionEvent` per step).
+(b) Whether the orchestrator wants per-step progress before the terminal
+state (today only the final `ui_test_results` fact has step-by-step detail;
+there is no incremental `SessionEvent` per step).
 
 (c) **Exclusivity is two-tier, and neither tier lives here.** The
 orchestrator does capability-aware *placement* only - never double-booking
@@ -216,10 +217,11 @@ makes) - it is simply not this machine's job to enforce exclusivity itself.
 
 Closes the "not wired into `mode.rs`/`RuntimeBuilder`" gap named above and
 by Phase 4's own reconciliation note (a): `UiTestMachine` now has a real CLI
-entry point that speaks whale's real agent-dispatch stdio contract exactly
-(`whale_workflow_runner::agent_dispatch`'s own doc, cross-checked against
-`SubprocessAgentDispatcher`'s tests and `examples/ui-test/ui-login.yaml`/
-`node-types.json` in the whale repo).
+entry point that speaks the orchestrator's real agent-dispatch stdio
+contract exactly (the orchestrator's `agent_dispatch`'s own doc,
+cross-checked against `SubprocessAgentDispatcher`'s tests and
+`examples/ui-test/ui-login.yaml`/ `node-types.json` in the orchestrator
+repo).
 
 **The subcommand: `sven agent-dispatch`.** No arguments; one process per
 node dispatch, exactly as `sh -c "<command>"` invokes it. Reads one JSON
@@ -236,17 +238,17 @@ object from stdin, then stdin is closed:
   like `AndroidTool`'s own `SVEN_ANDROID_SERIAL` env var; falls back to that
   env var, then auto-detection, when `device` is `null`.
 - `params.instruction` becomes the machine's one-element step list (this
-  subcommand handles exactly one instruction per invocation, matching
-  whale's per-node dispatch granularity). Every OTHER top-level `params`
-  field is seeded into `UiTestMachine`'s existing variable-binding mechanism
-  (`vars.rs`, Phase 3's own binding store) before the step compiles - a new
-  `UiTestScript.vars` field, bound in `Seeding` via the same `vars::bind`
-  Phase 3 already built for an in-run `ask_user` answer. This is the whole
-  mechanism by which a resolved upstream `Link` value (whale's own
-  `params.<name>` merge, documented in Phase 4's own update above) reaches
-  this step's `value_ref` resolution - no new sven-side plumbing. Non-string
-  JSON values are serialized to their JSON text rather than dropped, since a
-  Link's resolved value can be any JSON type.
+  subcommand handles exactly one instruction per invocation, matching the
+  orchestrator's per-node dispatch granularity). Every OTHER top-level
+  `params` field is seeded into `UiTestMachine`'s existing variable-binding
+  mechanism (`vars.rs`, Phase 3's own binding store) before the step compiles
+  - a new `UiTestScript.vars` field, bound in `Seeding` via the same
+  `vars::bind` Phase 3 already built for an in-run `ask_user` answer. This is
+  the whole mechanism by which a resolved upstream `Link` value (the
+  orchestrator's own `params.<name>` merge, documented in Phase 4's own update
+  above) reaches this step's `value_ref` resolution - no new sven-side
+  plumbing. Non-string JSON values are serialized to their JSON text rather
+  than dropped, since a Link's resolved value can be any JSON type.
 
 Stdout: exactly one JSON reply as the LAST line -
 `{"ok": true, "output": {...}}` on success, `{"ok": false, "error": "..."}`
@@ -255,7 +257,7 @@ that exhausted its retry budget). `output` always carries `{"passed": true,
 "step": <the one ui_test_results entry>}`; if the step was itself an
 `ask_user` step that named a `bind` variable, its answer is ALSO a
 top-level, clearly-named field (e.g. `output.code`) - not buried in `step`
-- so a later whale node's `Link` can read it directly by name, matching
+- so a later orchestrator node's `Link` can read it directly by name, matching
 Phase 4's own documented Link-resolution contract
 (`Outcome.outputs` keyed by name). Exit code 0 covers both `ok` values; a
 non-zero exit is reserved for a genuine subcommand-level fault (malformed
@@ -277,7 +279,7 @@ still the mechanism for sven's standalone/local multi-step runs. Since
 nothing outside this one-shot process is listening on the kernel's human-
 answer channel, it is auto-approved exactly like every other headless sven
 surface already does (`sven_ci::RuntimeRunner` spawns the identical
-`auto_approve` for CI runs) - a real per-node whale dispatch is not
+`auto_approve` for CI runs) - a real per-node orchestrator dispatch is not
 expected to hit this path at all (a workflow author routes anything needing
 literal human entry to a separate graph-level node instead, per this file's
 own FLAG_SECURE constraint and Phase 4 update's reverted human-in-the-loop
@@ -311,52 +313,53 @@ one pre-existing `ARCH-007` on `crates/bootstrap/src/task_tool.rs` predates
 this session and was confirmed unrelated - it fails identically on an
 unmodified checkout).
 
-**Still open:** whale's own dispatch path has not been re-pointed at
+**Still open:** the orchestrator's own dispatch path has not been re-pointed at
 `sven agent-dispatch` (it still runs against `agent-dispatch-smoke.sh`, the
 deliberately trivial acknowledge-and-reply script Phase 4 documents) - that
-re-pointing is a whale-side `WHALE_AGENT_DISPATCH_CMD` configuration change,
+re-pointing is an orchestrator-side configuration change (its agent-dispatch
+command setting),
 not a sven-side gap. Per-step progress (Phase 4's own open item (b)) is
 still unaddressed - this subcommand reports only the terminal outcome of
 its one step, matching what `UiTestMachine` itself exposes today.
 
-## Phase 4 - done for the local/single-worker case; not yet integration-tested against a real sven UiTestMachine (whale)
+## Phase 4 - done for the local/single-worker case; not yet integration-tested against a real sven UiTestMachine (orchestrator)
 
-`NodeKind::Agent { mode }` (`whale-nodespec`) now has a real dispatch path,
-`whale-marketplace::Catalog` now has a device/resource dimension used by
+`NodeKind::Agent { mode }` (its nodespec crate) now has a real dispatch path,
+its `Catalog` now has a device/resource dimension used by
 real placement logic, exclusive per-device leasing is implemented and
-tested (including under real concurrent contention), and `whale run
+tested (including under real concurrent contention), and the orchestrator's `run
 ui-login.yaml --local` runs end to end against a real (generic,
 honestly-labelled) dispatcher subprocess - verified by actually running the
-built `whale` binary, not just `cargo test`. All work landed as
-self-contained, TDD'd commits on whale's `main`.
+built orchestrator binary, not just `cargo test`. All work landed as
+self-contained, TDD'd commits on the orchestrator's `main`.
 
 **What's built, matched against Phase 3's own reconciliation note above:**
 
-(a) **Who constructs the seed/invocation input.** `whale-workflow-runner::
-agent_dispatch::AgentDispatcher` is exactly the worker-local dispatch
-adapter that reconciliation note calls for: one async trait,
-`dispatch(mode, device, params) -> Result<Value, String>`, no
-`UiTestMachine`/ADB/sven type anywhere in its signature. The one shipped
-implementation, `SubprocessAgentDispatcher`, spawns a configured command and
-speaks a small generic JSON-over-stdio contract (`{"mode","device",
-"params"}` in, `{"ok":true,"output":...}`/`{"ok":false,"error":...}` out) -
-deliberately NOT a fake `UiTestMachine` API. A future commit wiring the real
+(a) **Who constructs the seed/invocation input.** the orchestrator's own
+`AgentDispatcher` is exactly the worker-local dispatch adapter that
+reconciliation note calls for: one async trait, `dispatch(mode, device,
+params) -> Result<Value, String>`, no `UiTestMachine`/ADB/sven type anywhere
+in its signature. The one shipped implementation,
+`SubprocessAgentDispatcher`, spawns a configured command and speaks a small
+generic JSON-over-stdio contract (`{"mode","device", "params"}` in,
+`{"ok":true,"output":...}`/`{"ok":false,"error":...}` out) - deliberately
+NOT a fake `UiTestMachine` API. A future commit wiring the real
 `UiTestMachine` (via `sven_bootstrap::RuntimeBuilder`, once it has a mode
 registry entry - see this file's own Phase 3 "not wired into
 `mode.rs`/`RuntimeBuilder`" gap) writes a new `AgentDispatcher`
-implementation; nothing in whale's dispatch path changes to use it.
-`whale run ui-login.yaml` (no `--local`) is still the client-submits-
-to-a-broker-and-only-subscribes path this note describes, and it is
-genuinely untouched - `admin_submit.rs`/`node_cmd.rs` (the two places a
-node executes a job on a remote submitter's behalf) still pass `agent:
-None` exactly as before this phase, never constructing anything
-agent/device-shaped. `--local` is the one whale mode where "client" and
-"worker" are the same process (see whale's own `AGENTS.md`: "the same
-engine runs the graph in-process against this machine's own brain
-service") - its CLI-level `crate::agent_runtime` module (library code,
-not `main.rs`, mirroring `crate::registry_build`'s own real-vs-mock
-precedent) is that process building its own local worker config, not the
-client reaching into a remote worker's internals.
+implementation; nothing in the orchestrator's dispatch path changes to use
+it. The orchestrator's `run ui-login.yaml` (no `--local`) is still the
+client-submits- to-a-broker-and-only-subscribes path this note describes,
+and it is genuinely untouched - `admin_submit.rs`/`node_cmd.rs` (the two
+places a node executes a job on a remote submitter's behalf) still pass
+`agent: None` exactly as before this phase, never constructing anything
+agent/device-shaped. `--local` is the one orchestrator mode where "client"
+and "worker" are the same process (see the orchestrator's own `AGENTS.md`:
+"the same engine runs the graph in-process against this machine's own brain
+service") - its CLI-level `crate::agent_runtime` module (library code, not
+`main.rs`, mirroring `crate::registry_build`'s own real-vs-mock precedent)
+is that process building its own local worker config, not the client
+reaching into a remote worker's internals.
 
 (b) **Per-step progress.** Not addressed - genuinely open. Dispatch emits
 one `NodeStarted`/`NodeCompleted`/`NodeFailed` per GRAPH NODE, not per
@@ -366,17 +369,17 @@ one `NodeStarted`/`NodeCompleted`/`NodeFailed` per GRAPH NODE, not per
 channel, or accept node-level granularity as sufficient for v1.
 
 (c) **Exclusivity is two-tier**, both tiers now real and separately tested:
-worker tier is `whale_marketplace::leasing::DeviceLeases` - a plain
+worker tier is the orchestrator's `DeviceLeases` - a plain
 `Mutex`-guarded set, in-process, no distributed lock, proven under real
 concurrent contention (16 threads racing for the same key, never more than
-one holder). Orchestrator tier is `whale_marketplace::HeadroomFirst`'s new
+one holder). Orchestrator tier is its `HeadroomFirst`'s new
 `place_one_device` path: `WorkloadNode::requires_device` routes a
 device-needing node only to a provider whose `Catalog` reports a matching
 device, ranked by the same headroom rule a capability node gets - explicitly
 best-effort placement, no reservation, matching this crate's own
 long-standing "no reservation, and no model of consumption" posture. Wiring
 a REAL graph's device requirements into that placement path (today only the
-placement ALGORITHM is real and tested; nothing in `crates/whale`'s
+placement ALGORITHM is real and tested; nothing in the orchestrator's
 dry-run/broker code populates `requires_device` from a resolved
 `NodeTypeMapping::device` yet) is the next real gap in this tier.
 
@@ -387,32 +390,32 @@ dry-run/broker code populates `requires_device` from a resolved
   `mode.rs`/`RuntimeBuilder`" gap, still open) - there is nothing running
   yet for a real `AgentDispatcher` implementation to invoke, so this
   integration genuinely has not happened end to end. `examples/ui-test/
-  ui-login.yaml` in the whale repo runs against
+  ui-login.yaml` in the orchestrator repo runs against
   `scripts/dev/agent-dispatch-smoke.sh`, a deliberately trivial
   acknowledge-and-reply script - proof the DISPATCH PATH works, not proof
   real UI automation works.
 - **Per-step progress** (b) is unaddressed.
-- **No cross-machine distributed demo.** Everything above is verified
-  through `whale run --local` (one process, one machine) plus
-  `whale-marketplace`'s own unit/integration tests (pure algorithm, no
-  network). Nothing here stands up a real multi-worker cluster - correctly
-  out of scope per this phase's own original "not worth building scheduling
+- **No cross-machine distributed demo.** Everything above is verified through
+  the orchestrator's `run --local` (one process, one machine) plus the
+  orchestrator's marketplace's own unit/integration tests (pure algorithm, no
+  network). Nothing here stands up a real multi-worker cluster - correctly out
+  of scope per this phase's own original "not worth building scheduling
   scaffolding around a loop that hasn't been proven end to end yet".
 
-### Phase 4 update - Link data-flow into Agent dispatch + real-graph device placement (whale, later session)
+### Phase 4 update - Link data-flow into Agent dispatch + real-graph device placement (orchestrator, later session)
 
 Closes two of Phase 4's own named gaps: `Link`-kind inputs used to be
 silently dropped for `NodeKind::Agent` nodes (the capability path already
-resolved them), and nothing in `crates/whale`'s real graph-loading path
+resolved them), and nothing in the orchestrator's real graph-loading path
 populated `WorkloadNode::requires_device` from a resolved
-`NodeTypeMapping::device` - the placement ALGORITHM was real and tested,
-but never fed from a real graph. Both landed as TDD'd, self-contained
-commits on whale's `main`; the second (device-loader) is tracked as whale's
-own task #17.
+`NodeTypeMapping::device` - the placement ALGORITHM was real and tested, but
+never fed from a real graph. Both landed as TDD'd, self-contained commits on
+the orchestrator's `main`; the second (device-loader) is tracked as the
+orchestrator's own task #17.
 
 **Link data-flow into Agent dispatch:**
 
-- `whale_workflow::machine::WhaleWorkflowMachine::call_tool_effect_agent`
+- the orchestrator's workflow machine's `call_tool_effect_agent`
   now builds `args.blob_refs` for a `Link` input exactly the way the
   capability path already does (mirroring `call_tool_effect_capability`'s
   own `Link` arm, including fan-out `item` marking) - present only when at
@@ -420,18 +423,18 @@ own task #17.
   "absent means did not say" discipline `args.device` already holds).
 - The store lookup / fan-out item / `collect`-merge logic that used to live
   only inline in `BrainCapabilityExecutor::execute` is now a shared
-  function, `whale_workflow_runner::call_args::resolve_link`, called by
+  function, the orchestrator's `resolve_link`, called by
   BOTH `BrainCapabilityExecutor` (capability path) and the new
   `AgentCapabilityExecutor` link-resolution step (agent path) - one lookup
   implementation, two different policies for what a resolved value means.
 - `AgentCapabilityExecutor` now shares the SAME `NodeOutputStore`/
-  `ItemOutputStore` pair `BrainCapabilityExecutor` writes to and reads
-  `Link`s against (constructed once by `run_workflow_value`, cloned into
-  both executors before either owns it) - a successful agent dispatch's
-  whole JSON `output` is wrapped as `capability::Outcome { outputs: output,
-  blobs: {} }` (an agent dispatch never produces a binary blob today) and
-  written into that shared store via the SAME `crate::node_finish::finish_success`
-  the capability path uses, so a LATER agent node's `Link` input can read an
+  `ItemOutputStore` pair `BrainCapabilityExecutor` writes to and reads `Link`s
+  against (constructed once by `run_workflow_value`, cloned into both
+  executors before either owns it) - a successful agent dispatch's whole JSON
+  `output` is wrapped as `capability::Outcome { outputs: output, blobs: {} }`
+  (an agent dispatch never produces a binary blob today) and written into that
+  shared store via the SAME `crate::node_finish::finish_success` the
+  capability path uses, so a LATER agent node's `Link` input can read an
   EARLIER agent (or capability) node's result exactly the way a capability
   node's `Link` already could.
 
@@ -445,25 +448,25 @@ subcommand consuming this needs to match):
    `NodeTypeMapping::param_rename` exactly like a `Value` input already is)
    - this is illustrative, not naming any node in the shipped example
    graph, which stays two nodes (see below).
-2. At dispatch time, whale looks at the upstream node's `capability::Outcome`
-   (the same `Outcome` an agent dispatch's own successful result became, per
-   above): if `Outcome.outputs` (a JSON object) has a key matching the
-   Link's `output` name (`"answer"` in the example), THAT JSON VALUE is
-   merged into the downstream node's dispatch `params` under the Link's
-   (renamed) input name (`code`), UNCHANGED - any JSON type, not coerced to
-   a string. This is the expected path for an agent-to-agent link: an
+2. At dispatch time, the orchestrator looks at the upstream node's
+   `capability::Outcome` (the same `Outcome` an agent dispatch's own successful
+   result became, per above): if `Outcome.outputs` (a JSON object) has a key
+   matching the Link's `output` name (`"answer"` in the example), THAT JSON
+   VALUE is merged into the downstream node's dispatch `params` under the
+   Link's (renamed) input name (`code`), UNCHANGED - any JSON type, not coerced
+   to a string. This is the expected path for an agent-to-agent link: an
    upstream agent dispatch's own named result (e.g. an `ask_user` step's
    answer), or a capability node's scalar output mirror.
-3. Only if `Outcome.outputs` has nothing under that name does whale fall
-   back to `Outcome.blobs` (a capability node's binary output channel, e.g.
-   a text blob): if a blob exists under that name AND is tagged
+3. Only if `Outcome.outputs` has nothing under that name does the orchestrator
+   fall back to `Outcome.blobs` (a capability node's binary output channel,
+   e.g. a text blob): if a blob exists under that name AND is tagged
    `Media::Text`, its bytes are UTF-8-decoded into a JSON string and merged
-   into `params` the same way. Any other blob media is refused (the node
-   fails with a descriptive error) rather than silently guessed at - an
-   agent dispatch's `params` is nowhere to smuggle raw bytes through.
-4. If neither yields anything, the node fails with `"node '<id>' input
-   '<name>' references unresolved output '<dep>.<output>'"` - the same
-   never-fabricate posture every other link-resolution path in whale holds.
+   into `params` the same way. Any other blob media is refused (the node fails
+   with a descriptive error) rather than silently guessed at - an agent
+   dispatch's `params` is nowhere to smuggle raw bytes through.
+4. If neither yields anything, the node fails with `"node '<id>' input '<name>'
+   references unresolved output '<dep>.<output>'"` - the same never-fabricate
+   posture every other link-resolution path in the orchestrator holds.
 
 So: **a downstream agent node's dispatched `params` object gains one entry
 per resolved `Link` input, keyed by that input's (renamed) name, valued by
@@ -473,8 +476,9 @@ node's `AgentDispatcher::dispatch` call returns `Ok(json!({"answer":
 under its own input `code` receives `params.code == "1234"` (a JSON
 string, not wrapped) in its own dispatch call. Proven end to end (real
 dispatched `params`, not just an intermediate `Effect`) by
-`whale_workflow_runner::agent_executor::tests::
-a_link_input_on_an_agent_node_carries_the_upstream_agent_nodes_resolved_value`.
+the orchestrator's own
+`a_link_input_on_an_agent_node_carries_the_upstream_agent_nodes_resolved_value`
+test.
 
 `examples/ui-test/ui-login.yaml` stays the small two-node
 (`launch`/`login`) dispatch-path demo it already was - `login`'s `after`
@@ -492,39 +496,40 @@ designed (likely a distinct node kind, not an `ask_user`-relay-then-
 automate pattern) - the full flow example is future work once that lands,
 not scoped to this update.
 
-**Real-graph device placement wiring:** `crates/whale/src/plan_cmd.rs`'s
-`workload()` (reused by `dispatch::workload_from`, so both `whale run
---dry-run` and a broker's own placement decision go through it) now reads
-each resolved `NodeTypeMapping` fully: an Agent-kind mapping
-(`agent_mode.is_some()`) produces `WorkloadNode { requires: None,
-requires_device: <mapping's device, converted into whale_marketplace's own
-DeviceRequirement> }`; an ordinary capability mapping is the reverse. Proven
-against the real loader (`dispatch::workload_from`, not a hand-built
-`WorkloadNode`) loading the repo's actual `examples/ui-test/ui-login.yaml`
-+ `node-types.json` through `crate::workflow_file::load`, the same path a
-real `whale run`/`whale plan` invocation uses.
+**Real-graph device placement wiring:** the orchestrator's `plan_cmd.rs`'s
+`workload()` (reused by `dispatch::workload_from`, so both the
+orchestrator's `run --dry-run` and a broker's own placement decision go
+through it) now reads each resolved `NodeTypeMapping` fully: an Agent-kind
+mapping (`agent_mode.is_some()`) produces `WorkloadNode { requires: None,
+requires_device: <mapping's device, converted into the orchestrator's
+marketplace's own DeviceRequirement> }`; an ordinary capability mapping is
+the reverse. Proven against the real loader (`dispatch::workload_from`, not
+a hand-built `WorkloadNode`) loading the repo's actual
+`examples/ui-test/ui-login.yaml` + `node-types.json` through
+`crate::workflow_file::load`, the same path a real `run`/`plan` invocation
+uses.
 
 **Still open, unchanged by this update:** not integration-tested against a
 real sven `UiTestMachine` (per above), per-step progress, and no
 cross-machine distributed demo - none of these were in this update's scope.
 
-## Phase 5 - done (whale): `NodeKind::HumanAction` + resume RPC
+## Phase 5 - done (orchestrator): `NodeKind::HumanAction` + resume RPC
 
 Closes the gap Phase 4's own update named and deliberately deferred: "the
 right shape for a 'workflow blocks until a human physically acts' node is
 still being designed... the full flow example is future work once that
 lands." This is that node kind, its resolution mechanism, and the
-`ui-login.yaml` step demonstrating it - a whale-only change, no sven-side
-code touched. All work landed as TDD'd, self-contained commits on whale's
-`main`, verified against the real `whale` binary (not only `cargo test`) in
-this same session.
+`ui-login.yaml` step demonstrating it - a orchestrator-only change, no
+sven-side code touched. All work landed as TDD'd, self-contained commits on
+the orchestrator's `main`, verified against the real orchestrator binary
+(not only `cargo test`) in this same session.
 
 **Why a distinct node kind, not another `NodeKind::Agent` mode string.** A
 secure code-entry screen (Phase 1's own `FLAG_SECURE` constraint) can never
 be automated at all - no device lease, no subprocess, no grounding call, no
 `AgentDispatcher`. This genuinely different lifecycle (dispatch nothing,
 wait indefinitely, resolved by an external human action rather than a tool
-call finishing) earned its own `whale_nodespec::NodeKind::HumanAction`
+call finishing) earned its own `NodeKind::HumanAction`
 rather than overloading `Agent`'s `mode` string with a magic value.
 
 **How it dispatches, and why it is still an ordinary `Effect::CallTool`.**
@@ -536,10 +541,10 @@ first design tried, and reverted: its fields (`question_id`, `call_id`,
 `prompt`, `options`) carry no node identity at all, so an executor that only
 sees the bare effect has no way to know WHICH node to report as waiting,
 short of hiding the node id in the human-facing prompt text. Instead,
-`WhaleWorkflowMachine::human_action_effect` dispatches an ordinary
+its `human_action_effect` dispatches an ordinary
 `Effect::CallTool` marked `args.human_action: true`, carrying
 `args.node_id`/`args.item` exactly like every other node kind already does -
-`whale_workflow_runner::HumanActionExecutor` (the OUTERMOST executor layer,
+the orchestrator's `HumanActionExecutor` (the OUTERMOST executor layer,
 ahead of the agent/capability layers, since a human-action node's `args` has
 neither `agent_mode` nor `model`/`action`) checks for that marker, emits
 `NodeStarted` + a new `WorkflowProtocolEvent::NodeWaitingForHuman`, and
@@ -547,7 +552,7 @@ returns WITHOUT ever posting a kernel event - no `Event::ToolSucceeded`, no
 background task, no timeout armed. Resolution therefore reuses the exact
 same `Event::ToolSucceeded`/`call_id_to_node` path every node kind already
 resolves through, via the deterministic id
-`whale_workflow::human_action_call_id(node_id, item)` - no second
+the orchestrator's own `human_action_call_id(node_id, item)` - no second
 correlation map, no sven-hsm `Event`/`Effect` change needed at all (which
 would have meant a cross-repo change to this separate git dependency).
 
@@ -557,23 +562,23 @@ would have meant a cross-repo change to this separate git dependency).
 `ConfirmOnDevice`) is meant to be reused by many graph nodes with different
 prompts, not baked into the type once.
 
-**New wire surface** (`crates/workflow` in whale):
+**New wire surface** (`crates/workflow` in the orchestrator):
 `NodeStatus::WaitingForHuman`,
 `WorkflowProtocolEvent::NodeWaitingForHuman { seq, at_ms, node_id, prompt,
 item }`, `NodeTypeMapping::human_action: bool` (projected to/from
-`whale_nodespec::NodeKind::HumanAction`), `RunSnapshot::from_events` folding
+the orchestrator's `NodeKind::HumanAction`), `RunSnapshot::from_events` folding
 the new event into `NodeStatus::WaitingForHuman`.
 
 **The resume RPC - exact contract.** Two independent resume paths, both
 resolving through the same underlying mechanism (posting
 `sven_hsm::Event::ToolSucceeded` for the node's deterministic call id,
 directly into the run's own live kernel `EventSink`), because the two
-execution shapes whale has (single-process `--local`, and a node/broker
-process running a p2p- or tenant-submitted job) have no shared IPC surface
-to route through otherwise:
+execution shapes the orchestrator has (single-process `--local`, and a
+node/broker process running a p2p- or tenant-submitted job) have no shared
+IPC surface to route through otherwise:
 
 1. **Admin/tenant RPC**, for a node- or broker-hosted run -
-   `whale::admin::TenantRequest::ResumeNode`:
+   the orchestrator's `TenantRequest::ResumeNode`:
    ```rust
    TenantRequest::ResumeNode {
        job_id: uuid::Uuid,
@@ -583,44 +588,42 @@ to route through otherwise:
        output: serde_json::Value,   // defaults to {} on the wire
    }
    ```
-   answered by `TenantResponse::ResumeNodeResult { job_id }` (posted - not a
-   guarantee the node was actually waiting) or
-   `TenantResponse::ResumeNodeUnavailable { job_id }` (unknown job id, a
-   different tenant's job, or a job whose run has no live kernel to post
-   into - all three deliberately indistinguishable to the caller, the same
-   identity-scoping posture `RunSnapshot` already holds). Identity-scoped via
-   the SAME `JobRegistry::tenant_events_for` ownership check `RunSnapshot`
-   uses. Reaches the run via a new `JobRegistry::register_resume_sink`/
-   `resume_sink` pair, populated the moment `run_workflow_value`'s kernel
-   exists (mirroring the existing `cancel_token` bookkeeping). `whale-web`
-   exposes this as `POST /api/workflows/[workflowId]/runs/[runId]/resume`
-   (server-resolves the tenant from the Clerk session, never a
-   client-supplied one) plus a "Waiting on you" / "Mark as done" state in the
-   run dashboard.
+answered by `TenantResponse::ResumeNodeResult { job_id }` (posted - not a
+guarantee the node was actually waiting) or
+`TenantResponse::ResumeNodeUnavailable { job_id }` (unknown job id, a
+different tenant's job, or a job whose run has no live kernel to post into -
+all three deliberately indistinguishable to the caller, the same
+identity-scoping posture `RunSnapshot` already holds). Identity-scoped via
+the SAME `JobRegistry::tenant_events_for` ownership check `RunSnapshot`
+uses. Reaches the run via a new `JobRegistry::register_resume_sink`/
+`resume_sink` pair, populated the moment `run_workflow_value`'s kernel
+exists (mirroring the existing `cancel_token` bookkeeping). The
+orchestrator's web UI exposes this as `POST
+/api/workflows/[workflowId]/runs/[runId]/resume` (server-resolves the tenant
+from the Clerk session, never a client-supplied one) plus a "Waiting on you"
+/ "Mark as done" state in the run dashboard.
 
-2. **`whale run --local`'s own cross-invocation resume** (single-process, no
-   admin socket at all) - a Unix domain socket at a well-known,
-   `run_id`-keyed path (`whale::resume_local::local_resume_socket_path`),
-   bound the moment the run's kernel exists, owner-only permissions
-   (`0o600`). One JSON line in (`{"node_id": "...", "output": <value>}`),
-   one JSON line out (`{"ok": true}` or `{"ok": false, "error": "..."}`).
-   CLI usage, from a SECOND, separate `whale` invocation while the first is
-   still blocked:
+2. **the orchestrator's `run --local`'s own cross-invocation resume**
+   (single-process, no admin socket at all) - a Unix domain socket at a
+   well-known, `run_id`-keyed path (its `local_resume_socket_path`), bound the
+   moment the run's kernel exists, owner-only permissions (`0o600`). One JSON
+   line in (`{"node_id": "...", "output": <value>}`), one JSON line out
+   (`{"ok": true}` or `{"ok": false, "error": "..."}`). CLI usage, from a
+   SECOND, separate orchestrator invocation while the first is still blocked:
    ```
-   whale resume <run-id-or-socket-path> --node <node-id> [--output '<json>']
+   orchestrator resume <run-id-or-socket-path> --node <node-id> [--output '<json>']
    ```
    `<run-id-or-socket-path>` accepts either the run's own id (parsed as a
    UUID, then resolved to the same socket path `--local` derived) or an
    explicit socket path. `--output` defaults to `{}` - see below for why an
    empty object is the correct default, not a missing feature.
 
-   Verified genuinely end to end against the real built `whale` binary in
-   this session: `whale run ui-login.yaml --local ...` blocks at
-   `confirm_code` (prints `node_waiting_for_human` then nothing further);
-   `whale resume <run-id> --node confirm_code` from a second terminal
-   resolves it; the first terminal's own process then prints
-   `confirm_code`'s `node_completed` and `run_completed{status:"succeeded"}`,
-   exit code 0.
+Verified genuinely end to end against the real built orchestrator binary in
+this session: the orchestrator's `run ui-login.yaml --local ...` blocks at
+`confirm_code` (prints `node_waiting_for_human` then nothing further); the
+orchestrator's `resume <run-id> --node confirm_code` from a second terminal
+resolves it; the first terminal's own process then prints `confirm_code`'s
+`node_completed` and `run_completed{status:"succeeded"}`, exit code 0.
 
 **Deliberately not modeled: relaying a typed value back for automation.**
 `HumanAction`'s `output` (both RPC paths) exists so a resume caller CAN
@@ -629,31 +632,31 @@ device," never "an automated value a downstream node consumes" - unlike
 Phase 4's own reverted `ask_user`-relay-then-automate attempt for the
 confirmation code, `confirm_code` in `ui-login.yaml` has no downstream
 consumer of its output at all. This is a deliberate scope boundary, not an
-oversight: a secure code a human enters is exactly the value whale must
-never carry through the graph.
+oversight: a secure code a human enters is exactly the value the
+orchestrator must never carry through the graph.
 
 **Two real bugs this session's own live verification caught, that the unit
 tests alone had not** (both fixed, both now covered by their own tests -
-see whale's own commit history for the full detail):
+see the orchestrator's own commit history for the full detail):
 
 1. A resumed `HumanAction` node's `NodeCompleted` protocol event was never
    emitted - `Event::ToolSucceeded` resolves the node inside the kernel, but
-   nothing else was posting the matching outward `NodeCompleted` (that
-   normally comes from the executor that made the call, and a human-action
-   resolution posts directly into the kernel from OUTSIDE any executor).
-   `whale-web`'s dashboard, folded from exactly that event stream, would
-   have shown the node stuck at "waiting on you" forever even after the run
-   actually finished. Fixed with `whale_workflow_runner::ResumeHandle`
-   (bundles the kernel `EventSink` with the run's own protocol-event sender
-   and start instant) - a resume caller now emits `NodeCompleted` itself,
-   through the same seq-numbered stream, before posting the kernel event.
+   nothing else was posting the matching outward `NodeCompleted` (that normally
+   comes from the executor that made the call, and a human-action resolution
+   posts directly into the kernel from OUTSIDE any executor). The
+   orchestrator's web UI's dashboard, folded from exactly that event stream,
+   would have shown the node stuck at "waiting on you" forever even after the
+   run actually finished. Fixed with the orchestrator's `ResumeHandle` (bundles
+   the kernel `EventSink` with the run's own protocol-event sender and start
+   instant) - a resume caller now emits `NodeCompleted` itself, through the
+   same seq-numbered stream, before posting the kernel event.
 2. That fix's first version introduced a worse bug: storing a STRONG clone
    of the protocol-event sender inside `JobRegistry` (which deliberately
    outlives a finished job by `COMPLETED_JOB_TTL`) kept the run's own
    protocol channel open forever, silently deadlocking the run's own
    shutdown (`run_workflow_value` never returned, so a resumed job's status
    never went terminal). Fixed with a weak-sender variant
-   (`whale_workflow_runner::WeakSeqEmitter`) that can still send while the
+   (its `WeakSeqEmitter`) that can still send while the
    run is genuinely alive but never itself extends that lifetime.
 
 **Honest gaps, not swept under "done":**
@@ -681,18 +684,18 @@ see whale's own commit history for the full detail):
   `HumanAction` node never invokes `AgentDispatcher`/`sven agent-dispatch`
   at all).
 
-## Phase 6 - closes the loop: `sven agent-dispatch` for real, the full flow, one bug found and fixed (whale)
+## Phase 6 - closes the loop: `sven agent-dispatch` for real, the full flow, one bug found and fixed (orchestrator)
 
-This is the acceptance bar the whole initiative was scoped around: whale
-dispatching to the REAL `sven agent-dispatch` binary (not
+This is the acceptance bar the whole initiative was scoped around: the
+orchestrator dispatching to the REAL `sven agent-dispatch` binary (not
 `agent-dispatch-smoke.sh`), driving a real device through the full flow -
 `launch` -> `login` -> `confirm_code` (pause) -> resumed from a second
 process -> `get_started` -> `add_card` -> `run_completed` - proven together
-rather than as three separately-tested pieces. All work landed on whale's
-`main` as TDD'd, self-contained commits.
+rather than as three separately-tested pieces. All work landed on the
+orchestrator's `main` as TDD'd, self-contained commits.
 
 **The example graph now encodes the full flow, not just the pause/resume
-half.** `examples/ui-test/ui-login.yaml` (whale repo) gained two more
+half.** `examples/ui-test/ui-login.yaml` (orchestrator repo) gained two more
 `UiTestStep` nodes after `confirm_code`: `get_started` (reaching the
 post-login landing screen) and `add_card` (clicking through to INITIATE the
 add-card flow). Deliberately stops at initiating, not completing, add-card -
@@ -718,26 +721,26 @@ smoke script, but a silent, genuine break against the real dispatcher:
 `login`'s own `after` Link would have failed to resolve with an
 unresolved-output error the very first time this graph ran for real. Fixed
 by renaming every Link's `output` to `passed` and updating
-`agent-dispatch-smoke.sh` (whale repo) to also emit `"passed": true`
+`agent-dispatch-smoke.sh` (orchestrator repo) to also emit `"passed": true`
 alongside its existing `"note"` - both dispatchers now agree on the field a
 structural Link actually reads.
 
 **A second, deeper real bug: a resumed `HumanAction` node's output was never
 visible to a downstream `Link` at all.** `get_started`'s own `after` Link
-reads `confirm_code`'s `passed` output - but `whale::resume_local`'s resume
+reads `confirm_code`'s `passed` output - but its `resume_local`'s resume
 handler only ever posted the kernel event and emitted `NodeCompleted`; it
 never wrote the resumed value into the shared node-output store every OTHER
-node kind's success path writes into (`whale_workflow_runner::node_finish::
-finish_success`). A downstream Link past a resumed `HumanAction` node would
+node kind's success path writes into (the orchestrator's own
+`finish_success`). A downstream Link past a resumed `HumanAction` node would
 therefore ALWAYS fail, no matter what `--output` a human supplied. Fixed
-with `whale_workflow_runner::ResumeHandle` gaining two new `Option` fields
+with the orchestrator's `ResumeHandle` gaining two new `Option` fields
 (`outputs`/`item_outputs`, the SAME shared stores every other executor
 writes into) and a small relay task inside `run_workflow_value` that
 enriches the handle with the run's real stores before handing it to a
 resume caller - `run_workflow_with_executor`'s own public signature (which
 has other direct callers, including the p2p node-hosted path and several
 tests) is completely unchanged; only the ONE path that owns the real stores
-now threads them through. `whale::resume_local::handle_resume_connection`
+now threads them through. its `handle_resume_connection`
 then writes the resumed `output` into that store, exactly like
 `finish_success` does for every other node kind, before posting the kernel
 event. Scoped deliberately narrow: the p2p/tenant-hosted resume paths
@@ -748,40 +751,41 @@ this is not a regression), not silently left inconsistent.
 This fix does not reverse the earlier, deliberate decision that a
 `HumanAction` node must never auto-relay a secret typed on the device: the
 value written is exactly, and only, whatever JSON an OPERATOR explicitly
-attached via `whale resume ... --output '<json>'` (defaulting to `{}` if
-they attach nothing) - never anything auto-captured from the screen. Nothing
-about what CAN enter the system changed; this only makes an already-optional,
-already-caller-supplied field usable by a following node, the same as every
-other node kind already allows.
+attached via the orchestrator's `resume ... --output '<json>'` (defaulting
+to `{}` if they attach nothing) - never anything auto-captured from the
+screen. Nothing about what CAN enter the system changed; this only makes an
+already-optional, already-caller-supplied field usable by a following node,
+the same as every other node kind already allows.
 
-**The acceptance test**: `crates/whale/tests/live_ui_test_e2e.rs` (whale
-repo). Self-skips cleanly (matching `live_device.rs`/`live_ground.rs`/
-`live_ui_test_dispatch.rs`'s own convention exactly) unless a real, built
-`sven` binary (`SVEN_BIN` env var, never a hardcoded path), a single ready
-ADB device, and a real florence2 checkpoint (`BRAIN_FLORENCE2_DIR`) are ALL
-present. When they are, it spawns the real `whale` binary running the real
-example graph with `WHALE_AGENT_DISPATCH_CMD` pointed at `"$SVEN_BIN
+**The acceptance test**: the orchestrator's own `tests/live_ui_test_e2e.rs`
+(the orchestrator repo). Self-skips cleanly (matching
+`live_device.rs`/`live_ground.rs`/ `live_ui_test_dispatch.rs`'s own
+convention exactly) unless a real, built `sven` binary (`SVEN_BIN` env var,
+never a hardcoded path), a single ready ADB device, and a real florence2
+checkpoint (`BRAIN_FLORENCE2_DIR`) are ALL present. When they are, it spawns
+the real orchestrator binary running the real example graph with the
+orchestrator's agent-dispatch command setting pointed at `"$SVEN_BIN
 agent-dispatch"`, waits (bounded, never indefinitely) for `run_started` then
-`node_waiting_for_human` on `confirm_code`, resumes it from a SEPARATE
-`whale resume` process with `--output '{"passed": true}'` (required for
-THIS graph, since `get_started` Links to it), waits for `run_completed` with
-`status: succeeded`, and asserts the original process exits 0 - with a
+`node_waiting_for_human` on `confirm_code`, resumes it from a SEPARATE the
+orchestrator's `resume` process with `--output '{"passed": true}'` (required
+for THIS graph, since `get_started` Links to it), waits for `run_completed`
+with `status: succeeded`, and asserts the original process exits 0 - with a
 `RunProcessGuard` that force-kills the child on any failure path so a device
 lease or a hung process is never left behind between test runs.
 
 **What was actually verified, and what was not (read this precisely):**
 
 - Verified for real, in this sandbox: the ENTIRE mechanical flow - all five
-  nodes, the pause, the cross-process resume, the `passed`-field fix, and
-  the `NodeOutputStore` fix - end to end against the real `whale` binary and
-  the smoke-test dispatcher (`whale run` printed `run_completed`
+  nodes, the pause, the cross-process resume, the `passed`-field fix, and the
+  `NodeOutputStore` fix - end to end against the real orchestrator binary and
+  the smoke-test dispatcher (the orchestrator's `run` printed `run_completed`
   `{"status":"succeeded"}`, exit code 0, `get_started`/`add_card` both
-  genuinely dispatched after resume). `whale-workflow-runner`'s and
-  `whale`'s own test suites: 480 + 18 + integration tests green (1544
+  genuinely dispatched after resume). The orchestrator's workflow-runner's and
+  the orchestrator's own test suites: 480 + 18 + integration tests green (1544
   passed, only the same 6 pre-existing, unrelated failures -
   `admin_boundary`/`distributed_execution`/`portal_marketplace_execution`/
-  `pricing` - that predate this work), `cargo clippy -D warnings` clean on
-  the touched crates, `cargo run -p xtask -- arch` clean, the repo's own
+  `pricing` - that predate this work), `cargo clippy -D warnings` clean on the
+  touched crates, `cargo run -p xtask -- arch` clean, the repo's own
   SPDX/no-machine-paths/no-doc-citation gates clean.
 - NOT verified: `live_ui_test_e2e.rs` was never run against a real Android
   device or a real florence2 checkpoint - this sandbox has neither. It was
@@ -797,20 +801,20 @@ lease or a hung process is never left behind between test runs.
   the real output stores (see the bug-fix note above) - a `HumanAction` node
   resumed through `TenantRequest::ResumeNode` still cannot feed a downstream
   `Link`. Tracked, not solved here (out of this phase's scope: only
-  `whale run --local` needed it for this acceptance test).
+  the orchestrator's `run --local` needed it for this acceptance test).
 - The real-hardware run itself, per above.
 - Per-step progress (Phase 4(b)) and a real multi-worker distributed demo
   (Phase 4's own "no cross-machine distributed demo") remain unaddressed,
   unchanged from earlier phases.
 
-## Phase 7 - the real user's first real bug: device_id is not a serial (sven + whale)
+## Phase 7 - the real user's first real bug: device_id is not a serial (sven + the orchestrator)
 
 The gap Phase 6's own "what remains genuinely unverified" note predicted -
 a real run against real hardware - happened for the actual user, and it
 failed immediately: `devices.json` names a device under the catalog key
-`"phone-1"` (whale's own stable logical/leasing identity, used for
+`"phone-1"` (the orchestrator's own stable logical/leasing identity, used for
 placement and exclusive-lease bookkeeping - never a physical address), but
-that key was sent verbatim as `device.device_id` in the JSON whale
+that key was sent verbatim as `device.device_id` in the JSON the orchestrator
 dispatches to `sven agent-dispatch`, and `dispatch_ui_test_step` used
 `device.device_id` directly as `AndroidTool`'s default ADB serial. Real ADB
 serials look like `ec677a50`, not `phone-1` - every real run failed with
@@ -848,11 +852,11 @@ attached and visible to `adb devices`.
       `AndroidTool`'s own interactive/CI callers already use and which
       several existing tests assert never shells out to `adb` when a
       default serial was given) - validating a caller-supplied identity
-      against reality is the right default for whale's own catalog id, but
+      against reality is the right default for the orchestrator's own catalog id, but
       would be a surprising, untested behaviour change for every other
       existing caller of `resolve_serial`.
 - `dispatch_ui_test_step` gains `resolve_effective_serial(device, lister)`:
-  `device: None` (no whale device info at all) preserves the exact
+  `device: None` (no host device info at all) preserves the exact
   pre-existing behaviour (fall back to `SVEN_ANDROID_SERIAL`, then
   `AndroidTool`'s own per-call auto-detect). `device: Some(d)` routes
   through `resolve_serial_validated(lister, d.serial.as_deref())` and, on a
@@ -891,7 +895,7 @@ against it for real and passed, genuinely proving `resolve_serial_validated`
 round-trips through a real `adb devices` call and substitutes correctly. The
 device was no longer attached by the time this phase's work was committed,
 so `cargo test --workspace` now self-skips that file cleanly, as designed -
-confirmed by re-running it. NOT verified: the full whale -> `sven
+confirmed by re-running it. NOT verified: the full orchestrator -> `sven
 agent-dispatch` -> real device path end to end with the actual bug's exact
 `device_id`/no-`serial` `devices.json` shape - that needs `brain`/a real
 florence2 checkpoint, neither present in this sandbox (see Phase 6's own
@@ -906,10 +910,10 @@ clippy --all-targets -- -D warnings` on the touched crates are clean;
 ## Phase 8 - an app-name hint is not a package name
 
 **Found by running the exact end-to-end path Phase 7 listed as NOT
-verified**: whale -> `sven agent-dispatch` -> real device, with a real
-florence2 checkpoint and `ec677a50` attached. Phase 7's serial fix worked -
-the dispatch reached `adb` and ran a real `monkey` launch - and the step
-immediately behind it failed:
+verified**: the orchestrator -> `sven agent-dispatch` -> real device, with a
+real florence2 checkpoint and `ec677a50` attached. Phase 7's serial fix
+worked - the dispatch reached `adb` and ran a real `monkey` launch - and the
+step immediately behind it failed:
 
     launch_app failed (is 'betalo' installed?):
       args: [-p, betalo, -c, android.intent.category.LAUNCHER, 1]
@@ -926,7 +930,7 @@ compiled to `betalo` and could never launch anything.
 
 Structurally identical to Phase 7: an identifier from one naming world
 (a human's app nickname) used directly as an address in another (Android's
-package namespace), exactly as whale's catalog key was used as an ADB
+package namespace), exactly as the orchestrator's catalog key was used as an ADB
 serial.
 
 **Fix** (`crates/tools-android/src/adb.rs`), mirroring

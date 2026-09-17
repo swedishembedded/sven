@@ -2,14 +2,14 @@
 
 **Status: planned, not started. This is sven's half of a cross-repo
 initiative — the entry point and the full cross-repo picture (MVP cut,
-dependency DAG, deferred work with justification) live in
-`whale/.agents/roadmap/continuous-learning.md`. brain's half is in
-`edgeai/brain/.agents/roadmap/continuous-learning.md`. Read the whale file
-first.**
+dependency DAG, deferred work with justification) live in the orchestrator
+repo's own `.agents/roadmap/continuous-learning.md`. brain's half is in
+`edgeai/brain/.agents/roadmap/continuous-learning.md`. Read the
+orchestrator's file first.**
 
 (This is sven's first `.agents/roadmap/` entry — the directory didn't exist
 before this file. Follow this file's format for future entries: what's the
-goal, what's actually left, nothing else, per whale/brain's own convention
+goal, what's actually left, nothing else, per the sibling repos' own convention
 which sven is adopting here.)
 
 ## Goal, restated for this repo
@@ -18,7 +18,7 @@ Sven's job in the loop: detect when the agent (or the user) is missing
 information or facing a real choice, resolve it (ask the user, or — gated —
 search the web, or accept a document the user hands over directly), tag
 every resulting fact with honest provenance, and hand confirmed knowledge
-off to whale for training — without ever letting untrusted content reach
+off to a training service — without ever letting untrusted content reach
 the model's weights, or even its live context, without the right level of
 human sign-off. Extraction of facts/probes from a document is *sven's* job
 (reasoning), not brain's (brain does math) and not a new machine or state —
@@ -196,10 +196,10 @@ is what carries that report back to sven and the user).
 Runs as a background task in `sven-frontend` (wiring tier) behind a config
 flag — **not** an HSM `Effect`; the HSM must not own a training pipeline,
 per this repo's own separation of pure transitions from impure I/O. The
-concrete whale-speaking `FactSubmitter` implementation lives in whale
-(`W7`), never here, per whale's own "never leak marketplace-shaped logic
-upstream" rule — this trait is deliberately generic and marketplace-
-agnostic.
+concrete orchestrator-speaking `FactSubmitter` implementation lives outside
+this repo (`W7`), never here, per that repo's own "never leak
+marketplace-shaped logic upstream" rule — this trait is deliberately generic
+and marketplace- agnostic.
 
 Reused, not reinvented: `sven-scheduler`'s due-job poller has zero call
 sites anywhere in the binary (dead-code-adjacent — its `JobStore` is a
@@ -226,8 +226,8 @@ behind a config flag.
 left open is that nothing implemented the trait, which `S8` closes.
 
 ### S8 — the local submitter, and a synchronous flush
-`S6′` left a generic trait with no implementation: whale's (`W7`) was the
-only one planned, and whale is now a deliberately paused optional scale-out
+`S6′` left a generic trait with no implementation: the remote one (`W7`) was the
+only one planned, and that path is now a deliberately paused optional scale-out
 rather than the path the loop runs on. So the primary submitter is a local
 one — sven and brain on one machine, nothing leaving it — and the drain
 finally has something to submit to.

@@ -63,13 +63,13 @@ second entry point into the same knowledge-capture pipeline
   build both at once.
 - **Model-agnostic by construction, so "even a remote API model" is free.**
   sven already routes every mode through the same 34 provider drivers
-  (`sven-model-drivers`) — Student mode needs no brain/whale dependency to
+  (`sven-model-drivers`) — Student mode needs no external-service dependency to
   run at all. This is what makes the end-to-end proof below cheap.
 
 ## Simplest possible end-to-end proof
 
 `sven --mode student "task: <description>"` as a **standalone** top-level
-session — no brain, no whale, any already-configured model provider. It
+session — no external services, any already-configured model provider. It
 interviews the user; once the coverage gate is satisfied, it writes a real
 dataset file in the same triple format `B1`/`B2` consume. That alone proves
 the whole concept (adversarial interview → gated export → training-ready
