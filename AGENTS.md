@@ -81,6 +81,25 @@ disagreeing about the same feature. When the existing page documents
 behaviour that turned out not to work, correct it rather than writing around
 it.
 
+## Docs describe what works
+
+`docs/` is a description of the current behaviour, not a record of intent. A
+change that alters, removes, or disables user-visible behaviour updates its
+page **in the same commit**; a feature found to be unreachable gets its page
+corrected rather than left standing.
+
+This is not housekeeping. `docs/16-voice.md` described an ElevenLabs/Whisper/
+Twilio voice subsystem in full, with configuration and worked examples, for a
+tool whose provider fields are populated by no caller anywhere -- so every
+example in it was unrunnable and the config block it documented did nothing
+at all. Documentation that cannot be distinguished from working behaviour is
+worse than a gap, because a reader has no way to find out except by trying
+it.
+
+If you find a documented feature that does not work, either fix the feature
+or fix the page, in that commit. Leaving it for later is what produced that
+one.
+
 ## Essential Commands
 
 | Command | Purpose |
