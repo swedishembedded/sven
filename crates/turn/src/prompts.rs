@@ -345,14 +345,19 @@ pub fn build_agents_section(agents: &[AgentInfo]) -> String {
                 Some(m) => format!("\n    <model>{m}</model>"),
                 None => String::new(),
             };
-            let bg_hint = if a.is_background { "\n    <background>true</background>" } else { "" };
-            let ro_hint = if a.readonly { "\n    <readonly>true</readonly>" } else { "" };
+            // `is_background` is deliberately not advertised: the task tool
+            // always runs a sub-agent to completion, so a <background> hint
+            // would promise the model an option it does not have.
+            let ro_hint = if a.readonly {
+                "\n    <readonly>true</readonly>"
+            } else {
+                ""
+            };
             format!(
-                "  <agent>\n    <name>{}</name>\n    <description>{}</description>{}{}{}\n  </agent>",
+                "  <agent>\n    <name>{}</name>\n    <description>{}</description>{}{}\n  </agent>",
                 a.name,
                 a.description.trim(),
                 model_hint,
-                bg_hint,
                 ro_hint,
             )
         })

@@ -47,7 +47,8 @@
 //! | `description`   | No       | When to use this subagent. Defaults to first body line.   |
 //! | `model`         | No       | `fast`, `inherit`, or a specific model ID.                |
 //! | `readonly`      | No       | If `true`, restricted write permissions.                  |
-//! | `is_background` | No       | If `true`, runs in background without waiting.            |
+//! | `is_background` | No       | Parsed and shown in the UI; the task tool does not yet    |
+//! |                 |          | honour it - every sub-agent runs to completion.           |
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -74,7 +75,10 @@ pub struct AgentInfo {
     pub model: Option<String>,
     /// When `true`, the subagent runs with restricted write permissions.
     pub readonly: bool,
-    /// When `true`, the subagent runs in the background without blocking.
+    /// Marks the subagent as one the author wants run in the background.
+    ///
+    /// Parsed and surfaced in the UI, but the `task` tool always waits for a
+    /// sub-agent to finish, so this currently changes no behaviour.
     pub is_background: bool,
     /// System prompt body (everything after the closing `---` fence).
     pub content: String,

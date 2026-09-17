@@ -102,31 +102,50 @@ impl TaskTool {
     }
 }
 
+/// What a requested `mode` resolves to: the ACP session mode to run, the
+/// prompt actually sent to the sub-agent, and the model the persona asks for.
+#[derive(Debug)]
+struct Resolved {
+    /// Built-in ACP session mode (`research` / `plan` / `agent`).
+    acp_mode: String,
+    /// Prompt with the persona's system prompt prepended, if any.
+    prompt: String,
+    /// Persona's `model:` front-matter, already normalised (`inherit` -> `None`).
+    model: Option<String>,
+}
+
 /// Resolve a requested `mode` against the three built-in modes and any
-/// discovered subagent persona, returning the effective ACP session mode and
-/// the prompt actually sent to the sub-agent.
+/// discovered subagent persona.
 ///
-/// A persona match prepends its `content` (system prompt) to `prompt` and
-/// maps `readonly` to an ACP mode: `true` -> `research` (read-only tool
-/// profile), `false` -> `agent` (full read/write tool profile). Built-in
-/// mode names always take priority over a same-named persona.
+/// A persona match prepends its `content` (system prompt) to `prompt`, carries
+/// its `model` through for [`effective_model`], and maps `readonly` to an ACP
+/// mode: `true` -> `research` (read-only tool profile), `false` -> `agent`
+/// (full read/write tool profile). Built-in mode names always take priority
+/// over a same-named persona.
 fn resolve_mode_and_prompt(
     mode: &str,
     prompt: &str,
     agents: &[AgentInfo],
-) -> Result<(String, String), String> {
+) -> Result<Resolved, String> {
     if matches!(mode, "research" | "plan" | "agent") {
-        return Ok((mode.to_string(), prompt.to_string()));
+        return Ok(Resolved {
+            acp_mode: mode.to_string(),
+            prompt: prompt.to_string(),
+            model: None,
+        });
     }
 
     if let Some(persona) = agents.iter().find(|a| a.name == mode) {
-        let effective_mode = if persona.readonly {
+        let acp_mode = if persona.readonly {
             "research"
         } else {
             "agent"
         };
-        let effective_prompt = format!("{}\n\n---\n\n## Task\n\n{prompt}", persona.content.trim());
-        return Ok((effective_mode.to_string(), effective_prompt));
+        return Ok(Resolved {
+            acp_mode: acp_mode.to_string(),
+            prompt: format!("{}\n\n---\n\n## Task\n\n{prompt}", persona.content.trim()),
+            model: persona.model.clone(),
+        });
     }
 
     let mut valid: Vec<&str> = vec!["research", "plan", "agent"];
@@ -135,6 +154,17 @@ fn resolve_mode_and_prompt(
         "unknown mode '{mode}'. Valid options: {}",
         valid.join(", ")
     ))
+}
+
+/// Pick the model a sub-agent runs on, most specific wins: the caller's
+/// explicit `model` argument, then the persona's `model:` front-matter, then
+/// the session's own model.  `None` leaves the child to its own default.
+fn effective_model(
+    explicit: Option<String>,
+    persona: Option<String>,
+    session_default: Option<String>,
+) -> Option<String> {
+    explicit.or(persona).or(session_default)
 }
 
 #[async_trait]
@@ -381,21 +411,23 @@ impl Tool for TaskTool {
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("/"));
 
-        let model_override = call
+        let requested_model = call
             .args
             .get("model")
             .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| self.default_model.clone());
+            .map(str::to_string);
 
         // `acp_mode` is the built-in ACP session mode a persona maps onto;
         // `requested_mode` (kept for the TUI buffer label) may be a persona
         // name such as "knowledge-extract".
-        let (acp_mode, prompt) =
-            match resolve_mode_and_prompt(&requested_mode, &prompt, &self.agents.get()) {
-                Ok(v) => v,
-                Err(e) => return ToolOutput::err(&call.id, e),
-            };
+        let resolved = match resolve_mode_and_prompt(&requested_mode, &prompt, &self.agents.get()) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::err(&call.id, e),
+        };
+        let acp_mode = resolved.acp_mode;
+        let prompt = resolved.prompt;
+        let model_override =
+            effective_model(requested_model, resolved.model, self.default_model.clone());
 
         // Subagents (SUBAGENT_DEPTH_ENV set) cannot spawn further sub-agents.
         if std::env::var(SUBAGENT_DEPTH_ENV).is_ok() {
@@ -504,6 +536,14 @@ mod tests {
         let (tx, _rx) = mpsc::channel(8);
         let store = Arc::new(Mutex::new(OutputBufferStore::new()));
         TaskTool::new(store, tx, None, agents)
+    }
+
+    /// A persona that declares a `model:`, for the model-precedence specs.
+    pub(super) fn persona_with_model(name: &str, model: Option<&str>) -> AgentInfo {
+        AgentInfo {
+            model: model.map(str::to_string),
+            ..persona(name, "persona body", false)
+        }
     }
 
     fn persona(name: &str, content: &str, readonly: bool) -> AgentInfo {
@@ -647,9 +687,9 @@ mod tests {
     #[test]
     fn resolve_builtin_modes_pass_through_unchanged() {
         for m in ["research", "plan", "agent"] {
-            let (mode, prompt) = resolve_mode_and_prompt(m, "do it", &[]).unwrap();
-            assert_eq!(mode, m);
-            assert_eq!(prompt, "do it");
+            let r = resolve_mode_and_prompt(m, "do it", &[]).unwrap();
+            assert_eq!(r.acp_mode, m);
+            assert_eq!(r.prompt, "do it");
         }
     }
 
@@ -663,19 +703,17 @@ mod tests {
     #[test]
     fn resolve_persona_readonly_maps_to_research_and_prepends_content() {
         let agents = [persona("knowledge-extract", "You extract knowledge.", true)];
-        let (mode, prompt) =
-            resolve_mode_and_prompt("knowledge-extract", "learn from doc.md", &agents).unwrap();
-        assert_eq!(mode, "research");
-        assert!(prompt.starts_with("You extract knowledge."));
-        assert!(prompt.contains("learn from doc.md"));
+        let r = resolve_mode_and_prompt("knowledge-extract", "learn from doc.md", &agents).unwrap();
+        assert_eq!(r.acp_mode, "research");
+        assert!(r.prompt.starts_with("You extract knowledge."));
+        assert!(r.prompt.contains("learn from doc.md"));
     }
 
     #[test]
     fn resolve_persona_writable_maps_to_agent() {
         let agents = [persona("implementer", "You write code.", false)];
-        let (mode, _prompt) =
-            resolve_mode_and_prompt("implementer", "fix the bug", &agents).unwrap();
-        assert_eq!(mode, "agent");
+        let r = resolve_mode_and_prompt("implementer", "fix the bug", &agents).unwrap();
+        assert_eq!(r.acp_mode, "agent");
     }
 
     #[test]
@@ -708,5 +746,45 @@ mod tests {
             .await;
         assert!(out.is_error);
         assert!(out.content.contains("not-a-real-mode"));
+    }
+}
+
+#[cfg(test)]
+mod persona_model_tests {
+    use super::tests::persona_with_model;
+    use super::{effective_model, resolve_mode_and_prompt};
+
+    #[test]
+    fn resolve_returns_the_personas_model() {
+        let agents = [persona_with_model("fast-reviewer", Some("fast"))];
+        let r = resolve_mode_and_prompt("fast-reviewer", "review it", &agents).unwrap();
+        assert_eq!(r.model.as_deref(), Some("fast"));
+    }
+
+    #[test]
+    fn builtin_modes_carry_no_model() {
+        let r = resolve_mode_and_prompt("agent", "do it", &[]).unwrap();
+        assert!(r.model.is_none());
+    }
+
+    #[test]
+    fn explicit_override_beats_persona_which_beats_session_default() {
+        assert_eq!(
+            effective_model(
+                Some("opus".into()),
+                Some("fast".into()),
+                Some("sonnet".into())
+            ),
+            Some("opus".into())
+        );
+        assert_eq!(
+            effective_model(None, Some("fast".into()), Some("sonnet".into())),
+            Some("fast".into())
+        );
+        assert_eq!(
+            effective_model(None, None, Some("sonnet".into())),
+            Some("sonnet".into())
+        );
+        assert_eq!(effective_model(None, None, None), None);
     }
 }
