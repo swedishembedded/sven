@@ -186,6 +186,72 @@ projection for interoperability:
   `/v1/images/edits` — the standard verbs, implemented as projections of the
   substrate so the two cannot drift
 
+### Tool composition (sven)
+
+Tool exposure is decided statically by the kernel, not searched for at
+runtime by the model. The reason is measurable: prompt caching is a pure
+prefix match and the render order is `tools` -> `system` -> `messages`, so
+mutating the tool array mid-session invalidates the system prompt *and* the
+entire conversation history behind it. A varying tool set is a documented
+silent cache invalidator. A sub-agent, by contrast, starts its own short
+prefix and pays nothing.
+
+That makes the **agent**, not the tool, the right unit of disclosure: a
+persona line in the parent's prompt is a ~15-token pointer to a ~500-token
+toolset.
+
+Resolution is one expression:
+
+```
+resolved = (core u U included_bundles) \ denied
+```
+
+- `tools: [gdb, web]` - **additive** to core. The common case, and the
+  inheritance path: a generic agent plus one domain.
+- `only_tools: [gdb, shell]` - **exact**; replaces core. Least privilege.
+- `deny_tools: [shell]` - subtractive, applied last.
+- `task(mode="agent", bundles=["gdb"])` - the dynamic form: spawn a generic
+  agent and add tools, with no pre-declared persona. One optional param on a
+  tool already in core; the child is a fresh session, so no cache cost.
+
+Deliberately **not** built: persona-extends-persona. Bundles already compose;
+chained inheritance adds diamond-resolution ambiguity for no gain. The
+lattice stays flat - bundles are the unit of reuse, personas compose them.
+
+Enforcement is at the kernel permission gate, not by omission from the
+prompt, so a tool outside an agent's set is structurally unreachable and the
+denial is audited. Claude Code's equivalent frontmatter is advisory and has
+open bugs where restricted subagents still run forbidden tools; sven's
+`Effect` seam makes that failure mode impossible. Default stays
+inherit-everything: a persona with no `tools:` key behaves exactly as today.
+
+**Core bundle:** `read_file`, `write_file`, `edit_file`, `grep`, `find_file`,
+`shell`, `process`, `buf_read`, `buf_grep`, `todo`, `task`, `skill`,
+`attach_file`. Bundles: `gdb`, `web`, `knowledge` (5.3k chars alone),
+`context`, `system`, `media`.
+
+**The subprocess gap.** `shell` today takes only `shell_command`,
+`timeout_secs` and `workdir` - it is synchronous, with no background spawn,
+handle, polling or completion signal. A general-purpose agent must be able to
+start work and return to it. The kernel is already event-driven, so a
+finished process should post a `SessionEvent` that wakes the agent rather
+than the agent spending turns polling. Most machinery exists:
+`OutputBufferStore` + `buf_read`/`buf_grep` already hold sub-agent output and
+can hold process stdout unchanged, letting the agent grep a large build log
+without pulling it into context. The new surface is therefore one `process`
+tool with actions (sven's existing idiom - `task` and `context` both do this)
+plus the exit event, not four tools.
+
+**What is already built and disconnected.** `ToolSetProfile::detect` already
+implements profile selection, including a `has_gdb_config` heuristic keyed on
+`.gdbinit`/`openocd.cfg`/`debugging/` - and is called only from its own unit
+tests. `RuntimeBuilder::build` hard-codes `ToolSetProfile::Full`, which sets
+`include_gdb_context: true`, so every session on every surface pays ~4,200
+chars for `gdb` + `context` regardless of project. `Coding`, `Research` and
+`SubAgent` are constructed by nothing. Persona frontmatter parses `name`,
+`description`, `model`, `readonly`, `is_background` and `knowledge`, but has
+no `tools` field.
+
 ## Phases
 
 Ordered so the user-visible north star is reachable early and the two large
@@ -256,16 +322,19 @@ The HTTP `ActionProvider`. Phase 1 and 2's test suites are re-run unchanged
 against both transports; a remote brain is proven to reach every action a local
 one does.
 
-### Phase 6 — progressive-disclosure harness (sven)
+### Phase 6 — tool bundles (sven)
 
-Search-and-load applied to *all* tools, not only brain actions, so only the
-tools relevant to the current turn occupy context. This is where the 24,505-char
-baseline comes down. Published results for this pattern put Opus 4.5 at
-79.5% → 88.1% on tool-use evaluation.
+The core bundle above becomes the default, everything else becomes an opt-in
+bundle, and `ToolSetProfile` (dead today) is replaced by the composition
+model. This is where the 24,505-char baseline comes down.
+
+Also closes the subprocess gap, which is a prerequisite rather than a nicety:
+today `shell` is synchronous-only, so the agent cannot start long work and
+return to it.
 
 *Risk to respect:* the bats suite in `tests/e2e/basic/` pins headless output
 tokens as a public contract, and existing prompts reference tool names
-directly. The harness must preserve both.
+directly. Both must survive.
 
 ## Open items
 
