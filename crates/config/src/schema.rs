@@ -864,10 +864,9 @@ pub struct AsrConfig {
     /// the prefixed manifest id.
     #[serde(default = "default_asr_model")]
     pub model: String,
-    /// Explicit D-Bus address of the brain server, e.g.
-    /// `unix:path=/run/brain/bus`. `None` uses the session bus, which is what
-    /// a desktop session or `brain serve --dbus` provides. A DETACHED server
-    /// has no session bus to inherit, so it is reached by address.
+    /// Explicit D-Bus address of the brain server
+    /// (`unix:path=/run/brain/bus`). `None` uses the session bus. A DETACHED
+    /// server inherits no session bus, so it is reached by address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bus_address: Option<String>,
     /// Hard timeout for a single transcription subprocess, in seconds.

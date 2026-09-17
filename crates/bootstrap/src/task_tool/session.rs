@@ -40,7 +40,7 @@ use sven_tools::{
 };
 use sven_tools_fs::OutputBufferStore;
 
-use super::DEPTH_ENV;
+use super::SUBAGENT_DEPTH_ENV;
 
 /// How long the subagent can be silent before we kill it (10 minutes).
 ///
@@ -144,7 +144,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     let mut cmd = tokio::process::Command::new(&exe);
     cmd.arg("acp")
         .arg("serve")
-        .env(DEPTH_ENV, depth.to_string())
+        .env(SUBAGENT_DEPTH_ENV, depth.to_string())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped()) // capture stderr for diagnostics

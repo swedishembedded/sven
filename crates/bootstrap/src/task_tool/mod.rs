@@ -67,7 +67,11 @@ mod session;
 use session::{run_acp_session, CancelGuard, SpawnArgs};
 
 /// Environment variable set when running as a subagent (depth 0).
-const DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
+///
+/// Public because it is the ONE definition of "this process is a sub-agent":
+/// `ToolSetProfile::for_session` reads it to pick the sub-agent tool set, and
+/// a second literal there would let the spawner and the spawned disagree.
+pub(crate) const SUBAGENT_DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
 
 // ── TaskTool ─────────────────────────────────────────────────────────────────
 
@@ -393,8 +397,8 @@ impl Tool for TaskTool {
                 Err(e) => return ToolOutput::err(&call.id, e),
             };
 
-        // Subagents (DEPTH_ENV set) cannot spawn further sub-agents.
-        if std::env::var(DEPTH_ENV).is_ok() {
+        // Subagents (SUBAGENT_DEPTH_ENV set) cannot spawn further sub-agents.
+        if std::env::var(SUBAGENT_DEPTH_ENV).is_ok() {
             return ToolOutput::err(&call.id, "sub-agents cannot spawn further sub-agents");
         }
 
@@ -623,11 +627,11 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_blocked_when_subagent() {
-        let _env = std::env::var(super::DEPTH_ENV).ok();
-        std::env::set_var(super::DEPTH_ENV, "0");
+        let _env = std::env::var(super::SUBAGENT_DEPTH_ENV).ok();
+        std::env::set_var(super::SUBAGENT_DEPTH_ENV, "0");
         let t = make_task();
         let out = t.execute(&call(json!({"prompt": "do something"}))).await;
-        std::env::remove_var(super::DEPTH_ENV);
+        std::env::remove_var(super::SUBAGENT_DEPTH_ENV);
         assert!(
             out.is_error,
             "spawn should be blocked when running as subagent: {}",

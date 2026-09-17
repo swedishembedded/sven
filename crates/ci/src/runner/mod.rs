@@ -190,7 +190,6 @@ async fn build_attachment_parts(
         supports_audio: model.supports_audio(),
         force_transcribe: false,
         asr: asr.clone(),
-        // Production dials its own client from `asr`; only tests inject one.
         asr_client: None,
     };
     let label = format!("{}/{}", model.name(), model.model_name());

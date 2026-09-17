@@ -263,6 +263,35 @@ impl ToolSetProfile {
         }
     }
 
+    /// The profile for a live session, from the runtime context and the
+    /// environment.
+    ///
+    /// Wraps [`Self::detect`] with the one fact a caller cannot supply
+    /// cleanly: whether this process IS a sub-agent. That is read from the
+    /// depth variable `TaskTool` sets on the child it spawns, so the two
+    /// halves cannot disagree about what a sub-agent is.
+    pub fn for_session(
+        agent_mode: sven_config::AgentMode,
+        project_root: Option<&std::path::Path>,
+        question_tx: Option<mpsc::Sender<QuestionRequest>>,
+        todos: Arc<Mutex<Vec<TodoItem>>>,
+        buffer_store: Arc<Mutex<OutputBufferStore>>,
+    ) -> Self {
+        let profile = Self::detect(
+            std::env::var(crate::task_tool::SUBAGENT_DEPTH_ENV).is_ok(),
+            agent_mode,
+            project_root,
+            question_tx,
+            todos,
+            buffer_store,
+        );
+        tracing::debug!(
+            profile = profile.name(),
+            "resolved tool set for this session"
+        );
+        profile
+    }
+
     /// Returns a short name for the profile (for logging/display).
     pub fn name(&self) -> &'static str {
         match self {

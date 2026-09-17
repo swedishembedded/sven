@@ -610,23 +610,10 @@ impl RuntimeBuilder {
         #[cfg(not(feature = "memory"))]
         let provenance_sink: Option<Arc<dyn sven_vocab::provenance::ProvenanceSink>> = None;
 
-        // Which tools this session carries, decided rather than assumed. This
-        // used to be a hard-coded `Full`, so every session on every surface
-        // paid for the GDB and large-content tools whether or not the project
-        // had ever seen a debugger -- while `detect`, which answers exactly
-        // this question and is unit-tested, was called by nothing.
-        //
-        // A sub-agent is identified the same way `TaskTool` identifies one, by
-        // the depth variable it sets on the child.
-        let tool_profile = ToolSetProfile::detect(
-            std::env::var("SVEN_SUBAGENT_DEPTH").is_ok(),
-            self.agent_mode.unwrap_or(sven_config::AgentMode::Agent),
-            self.runtime_ctx.project_root.as_deref(),
-            self.tool_question_tx.clone(),
-            todos,
-            buffer_store,
-        );
-        tracing::debug!(profile = tool_profile.name(), "resolved tool set for this session");
+        let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
+        let root = self.runtime_ctx.project_root.as_deref();
+        let q = self.tool_question_tx.clone();
+        let tool_profile = ToolSetProfile::for_session(mode, root, q, todos, buffer_store);
         let mut tool_registry = build_tool_registry_with_integrations(
             &self.config,
             model.clone(),
@@ -1316,11 +1303,20 @@ mod tests {
         let req = first_request_with(RuntimeContext::empty()).await;
         let names: Vec<&str> = req.tools.iter().map(|t| t.name.as_str()).collect();
 
-        assert!(!names.contains(&"gdb"), "no .gdbinit here, so no gdb tool: {names:?}");
-        assert!(!names.contains(&"context"), "large-content tools are opt-in too: {names:?}");
+        assert!(
+            !names.contains(&"gdb"),
+            "no .gdbinit here, so no gdb tool: {names:?}"
+        );
+        assert!(
+            !names.contains(&"context"),
+            "large-content tools are opt-in too: {names:?}"
+        );
         // The point is to drop what is unused, not to break the session.
         for expected in ["read_file", "edit_file", "grep", "shell", "task"] {
-            assert!(names.contains(&expected), "{expected} must survive: {names:?}");
+            assert!(
+                names.contains(&expected),
+                "{expected} must survive: {names:?}"
+            );
         }
     }
 
