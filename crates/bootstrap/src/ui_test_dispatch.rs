@@ -9,7 +9,7 @@
 //! [`sven_machines::ModeRegistry`] path every other sven machine already
 //! uses (see `.agents/roadmap/android-ui-test.md`'s Phase 3 "not wired into
 //! mode.rs/RuntimeBuilder" gap, closed by this module), wires the REAL
-//! `sven-tools-android`/`sven-tools-ground`/`sven-tools-agent` tool
+//! `sven-tools-android`/`sven-tools-agent` tool
 //! implementations by default, and reports the run's outcome as a plain
 //! `Result<Value, String>` - exactly the shape a CLI wrapper turns into the
 //! `{"ok": true, "output": ...}` / `{"ok": false, "error": ...}` reply.
@@ -88,8 +88,6 @@ pub struct UiTestDispatchOverrides {
     pub model_provider: Option<Box<dyn sven_model::ModelProvider>>,
     /// Replaces the real `android` tool (`sven_tools_android::AndroidTool`).
     pub android_tool: Option<Arc<dyn Tool>>,
-    /// Replaces the real `ground` tool (`sven_tools_ground::GroundTool`).
-    pub ground_tool: Option<Arc<dyn Tool>>,
     /// Replaces the real `ask_question` tool
     /// (`sven_tools_agent::AskQuestionTool::new_headless`).
     pub ask_tool: Option<Arc<dyn Tool>>,
@@ -146,9 +144,6 @@ pub async fn dispatch_ui_test_step(
             sven_tools_android::AndroidTool::new(serial).with_declared_packages(declared_packages),
         )
     });
-    let ground_tool = overrides
-        .ground_tool
-        .unwrap_or_else(|| Arc::new(sven_tools_ground::GroundTool::default()));
     let ask_tool = overrides
         .ask_tool
         .unwrap_or_else(|| Arc::new(sven_tools_agent::AskQuestionTool::new_headless()));
@@ -156,7 +151,6 @@ pub async fn dispatch_ui_test_step(
     let factory: ToolExecutorFactory = Box::new(move |conv_store, call_id_to_thread| {
         let mut registry = ToolRegistry::new();
         registry.register_arc(android_tool);
-        registry.register_arc(ground_tool);
         registry.register_arc(ask_tool);
         Box::new(ToolExecutor::with_shared_store(
             Arc::new(registry),
@@ -334,9 +328,16 @@ mod tests {
         cfg
     }
 
-    /// A fake `android`/`ground`/`ask_question` tool that always succeeds
-    /// with a fixed observation, recording every call it received so a test
-    /// can assert on what the machine actually sent it.
+    /// A fake `android`/`ask_question` tool standing in for a device that
+    /// answers, recording every call it received so a test can assert on
+    /// what the machine actually sent it.
+    ///
+    /// The query actions the machine now brackets every step with
+    /// (`screen_is_secure`, `find_element`, `ui_signature`) get real
+    /// well-formed answers; anything else gets the fixed `reply` the test
+    /// configured. `ui_signature` returns a fresh digest on each call, so a
+    /// step reads as having changed the screen - a test that wants the
+    /// opposite says so explicitly.
     struct FakeTool {
         name: &'static str,
         capability: sven_hsm::ToolCapability,
@@ -378,8 +379,35 @@ mod tests {
         }
         async fn execute(&self, call: &ToolCall) -> ToolOutput {
             self.calls.lock().unwrap().push(call.args.clone());
-            ToolOutput::ok(&call.id, self.reply.clone())
+            let nth = self.calls.lock().unwrap().len();
+            let reply = match call.args.get("action").and_then(Value::as_str) {
+                Some("screen_is_secure") => json!({ "secure_screen": false }).to_string(),
+                Some("ui_signature") => json!({ "signature": format!("sig-{nth}") }).to_string(),
+                Some("find_element") => json!({
+                    "found": true, "x": 10, "y": 20, "via": "exact",
+                    "signature": format!("sig-{nth}")
+                })
+                .to_string(),
+                _ => self.reply.clone(),
+            };
+            ToolOutput::ok(&call.id, reply)
         }
+    }
+
+    /// The first recorded call performing `action`.
+    ///
+    /// Every device-acting step is now bracketed by query calls
+    /// (`screen_is_secure` before, `ui_signature` before and after), so a
+    /// test that indexes a fixed position asserts on the bracket instead of
+    /// on the action it means.
+    fn call_performing(tool: &FakeTool, action: &str) -> Value {
+        tool.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|c| c.get("action").and_then(Value::as_str) == Some(action))
+            .unwrap_or_else(|| panic!("no '{action}' call was made"))
+            .clone()
     }
 
     fn compiled_step_reply(compiled: Value) -> ScriptedMockProvider {
@@ -434,11 +462,8 @@ mod tests {
         assert_eq!(out["passed"], true);
         assert_eq!(out["step"]["passed"], true);
         assert_eq!(out["step"]["instruction"], "Launch the demo app");
-        assert_eq!(android.calls.lock().unwrap()[0]["action"], "launch_app");
-        assert_eq!(
-            android.calls.lock().unwrap()[0]["package"],
-            "com.example.demoapp"
-        );
+        let launched = call_performing(&android, "launch_app");
+        assert_eq!(launched["package"], "com.example.demoapp");
     }
 
     /// A fake [`DeviceLister`] returning a fixed, canned device list - so a
@@ -636,7 +661,7 @@ mod tests {
         .expect("must succeed");
 
         assert_eq!(out["passed"], true);
-        assert_eq!(android.calls.lock().unwrap()[0]["text"], "123456");
+        assert_eq!(call_performing(&android, "type_text")["text"], "123456");
     }
 
     #[tokio::test]
@@ -660,7 +685,7 @@ mod tests {
         .expect("must succeed");
 
         assert_eq!(out["passed"], true);
-        assert_eq!(android.calls.lock().unwrap()[0]["text"], "3");
+        assert_eq!(call_performing(&android, "type_text")["text"], "3");
     }
 
     #[tokio::test]

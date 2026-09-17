@@ -93,7 +93,6 @@ pub(super) const ASK_USER_OPTIONS: &[&str] = &["Provide the value", "Skip this s
 const STEPS_FACT: &str = "ui_test_steps";
 const INDEX_FACT: &str = "ui_test_index";
 pub(super) const COMPILED_FACT: &str = "ui_test_compiled";
-const SCREENSHOT_FACT: &str = "ui_test_screenshot_path";
 pub(super) const LOCATING_PHASE_FACT: &str = "ui_test_locating_phase";
 /// Digest of the view hierarchy as it was immediately BEFORE this step
 /// acted, so [`UiTestState::Verifying`] can tell whether the action changed
@@ -1094,12 +1093,14 @@ mod tests {
         );
         assert_eq!(vars::resolve(&ctx, "code"), Some("123456".to_string()));
 
-        let out = drive(
+        drive(
             &mut m,
             &mut ctx,
             &mut state,
             compiled_llm_turn(json!({ "verb": "type_text", "value_ref": "code" })),
         );
+        // The action itself is now emitted once the gate and baseline are
+        // answered, so THAT reaction carries the type_text call.
         let out = reach_acting(&mut m, &mut ctx, &mut state);
         assert_eq!(state, UiTestState::Acting);
         let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {
@@ -1187,12 +1188,14 @@ mod tests {
             "a var supplied in the seed script must be bound before step 0 compiles"
         );
 
-        let out = drive(
+        drive(
             &mut m,
             &mut ctx,
             &mut state,
             compiled_llm_turn(json!({ "verb": "type_text", "value_ref": "code" })),
         );
+        // The action itself is now emitted once the gate and baseline are
+        // answered, so THAT reaction carries the type_text call.
         let out = reach_acting(&mut m, &mut ctx, &mut state);
         assert_eq!(state, UiTestState::Acting);
         let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {

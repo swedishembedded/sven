@@ -6,8 +6,9 @@
 //! assumes English or any other particular language; e.g. "Launch the demo
 //! app", "Click \"log in with password\"", "Enter the code") into a
 //! [`CompiledStep`] via one bounded, schema-constrained
-//! text-model call (instruction-following only, never vision - screenshots
-//! are grounded separately by the `ground` tool). Also builds every
+//! text-model call (instruction-following only, never vision - a tap's
+//! target is resolved in the device's own view hierarchy, not by a model).
+//! Also builds every
 //! `Effect::CallTool` [`super::UiTestMachine`] emits and parses their
 //! results, so the machine itself only ever handles typed values.
 //!
@@ -15,7 +16,7 @@
 //! `reactive_agent.rs`'s `ASK_QUESTION_TOOL` is: `sven-machines` is a
 //! machines-tier crate and (by deliberate architectural discipline, not tier
 //! legality - domain is a strictly lower tier and could be depended on) has
-//! no path to `sven-tools-android`/`sven-tools-ground`'s implementations.
+//! no path to `sven-tools-android`'s implementation.
 //! The kernel still enforces the declared capability; this only names which
 //! bucket a call falls in.
 
@@ -30,9 +31,6 @@ use super::vars;
 
 pub const ANDROID_TOOL: &str = "android";
 pub const ANDROID_CAPABILITY: ToolCapability = ToolCapability::ControlDevice;
-pub const GROUND_TOOL: &str = "ground";
-/// Mirrors `sven_tools_ground::GroundTool::kernel_capability()`.
-pub const GROUND_CAPABILITY: ToolCapability = ToolCapability::ReadFile;
 pub const ASK_QUESTION_TOOL: &str = "ask_question";
 /// Mirrors `AskQuestionTool::kernel_capability()` (see `reactive_agent.rs`'s
 /// identical constant and its reasoning).
@@ -167,57 +165,6 @@ fn strip_code_fence(s: &str) -> &str {
     }
 }
 
-/// A single grounded box, as `brain florence2 ground` reports it.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct GroundBox {
-    pub phrase: String,
-    pub bbox: [f64; 4],
-}
-
-/// The `ground` tool's parsed result - `{found, boxes, secure_screen}`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct GroundResult {
-    pub found: bool,
-    #[serde(default)]
-    pub boxes: Vec<GroundBox>,
-    /// Set when the screenshot was a solid-black Android `FLAG_SECURE`
-    /// placeholder and the tool never sent it to the grounding model - see
-    /// `sven_tools_ground::black_screen`.
-    #[serde(default)]
-    pub secure_screen: bool,
-}
-
-/// Parse the `ground` tool's `Event::ToolSucceeded` observation.
-pub fn parse_ground_result(observation: &Value) -> Result<GroundResult, String> {
-    let text = observation
-        .as_str()
-        .ok_or_else(|| "ground observation was not a string".to_string())?;
-    serde_json::from_str(text).map_err(|e| format!("could not parse ground result: {e}"))
-}
-
-/// Normalized center point of a bbox, clamped into `[0, 1]` - the same
-/// normalized-fraction contract `AndroidTool::tap` accepts directly.
-#[must_use]
-pub fn bbox_center(bbox: &[f64; 4]) -> (f64, f64) {
-    (
-        ((bbox[0] + bbox[2]) / 2.0).clamp(0.0, 1.0),
-        ((bbox[1] + bbox[3]) / 2.0).clamp(0.0, 1.0),
-    )
-}
-
-/// Extract the screenshot path from `AndroidTool`'s `screenshot` observation
-/// text (`"screenshot saved: <path> (WxH)"` or `"screenshot saved: <path>"`).
-#[must_use]
-pub fn extract_screenshot_path(text: &str) -> Option<String> {
-    let rest = text.strip_prefix("screenshot saved: ")?;
-    let path = match rest.rfind(" (") {
-        Some(i) if rest.ends_with(')') => &rest[..i],
-        _ => rest,
-    };
-    let path = path.trim();
-    (!path.is_empty()).then(|| path.to_string())
-}
-
 /// The `android` tool's `find_element` answer.
 ///
 /// `found: false` carries no coordinate at all - that is the point. A
@@ -329,37 +276,6 @@ pub fn tap_pixel_effect(index: u32, attempt: u32, x: i64, y: i64) -> (Effect, To
             name: ANDROID_TOOL.to_string(),
             capability: ANDROID_CAPABILITY,
             args: json!({ "action": "tap", "x": x, "y": y, "normalized": false }),
-        },
-        call_id,
-    )
-}
-
-pub fn screenshot_effect(index: u32, attempt: u32) -> (Effect, ToolCallId) {
-    let call_id = derive_call_id(&format!("ui_test:screenshot:{index}:{attempt}"));
-    (
-        Effect::CallTool {
-            call_id,
-            name: ANDROID_TOOL.to_string(),
-            capability: ANDROID_CAPABILITY,
-            args: json!({ "action": "screenshot" }),
-        },
-        call_id,
-    )
-}
-
-pub fn ground_effect(
-    index: u32,
-    attempt: u32,
-    image_path: &str,
-    target: &str,
-) -> (Effect, ToolCallId) {
-    let call_id = derive_call_id(&format!("ui_test:ground:{index}:{attempt}"));
-    (
-        Effect::CallTool {
-            call_id,
-            name: GROUND_TOOL.to_string(),
-            capability: GROUND_CAPABILITY,
-            args: json!({ "image_path": image_path, "target": target }),
         },
         call_id,
     )
@@ -595,60 +511,6 @@ mod tests {
     }
 
     #[test]
-    fn bbox_center_is_the_midpoint() {
-        assert_eq!(bbox_center(&[0.0, 0.0, 0.5, 0.5]), (0.25, 0.25));
-        assert_eq!(
-            bbox_center(&[0.2, 0.6, 0.4, 0.8]),
-            (0.30000000000000004, 0.7)
-        );
-    }
-
-    #[test]
-    fn bbox_center_clamps_into_unit_range() {
-        assert_eq!(bbox_center(&[-0.2, -0.2, 0.2, 0.2]), (0.0, 0.0));
-        assert_eq!(bbox_center(&[0.8, 0.8, 1.4, 1.4]), (1.0, 1.0));
-    }
-
-    #[test]
-    fn extract_screenshot_path_strips_the_dims_suffix() {
-        assert_eq!(
-            extract_screenshot_path("screenshot saved: shots/a.png (1220x2712)"),
-            Some("shots/a.png".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_screenshot_path_handles_no_dims_suffix() {
-        assert_eq!(
-            extract_screenshot_path("screenshot saved: shots/a.png"),
-            Some("shots/a.png".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_screenshot_path_rejects_an_unrelated_observation() {
-        assert_eq!(extract_screenshot_path("tapped (10, 20)"), None);
-    }
-
-    #[test]
-    fn ground_result_parses_found_and_secure_screen() {
-        let found = parse_ground_result(&json!(
-            "{\"found\": true, \"boxes\": [{\"phrase\": \"x\", \"bbox\": [0.1,0.2,0.3,0.4]}]}"
-        ))
-        .unwrap();
-        assert!(found.found);
-        assert!(!found.secure_screen);
-        assert_eq!(found.boxes[0].phrase, "x");
-
-        let secure = parse_ground_result(&json!(
-            "{\"found\": false, \"boxes\": [], \"secure_screen\": true}"
-        ))
-        .unwrap();
-        assert!(secure.secure_screen);
-        assert!(!secure.found);
-    }
-
-    #[test]
     fn direct_action_effect_resolves_a_value_ref_against_bound_vars() {
         let mut ctx = Context::new();
         vars::bind(&mut ctx, "code", "123456");
@@ -744,22 +606,24 @@ mod tests {
 
     #[test]
     fn derive_call_id_is_stable_for_the_same_label() {
-        let (_, id1) = screenshot_effect(2, 0);
-        let (_, id2) = screenshot_effect(2, 0);
+        let (_, id1) = secure_check_effect(2, 0);
+        let (_, id2) = secure_check_effect(2, 0);
         assert_eq!(id1, id2);
     }
 
     #[test]
     fn derive_call_id_differs_across_phases_index_and_attempt() {
-        let (_, screenshot_id) = screenshot_effect(0, 0);
-        let (_, ground_id) = ground_effect(0, 0, "shots/a.png", "x");
-        let (_, tap_id) = tap_effect(0, 0, 0.5, 0.5);
-        let (_, next_attempt_id) = screenshot_effect(0, 1);
-        let (_, next_index_id) = screenshot_effect(1, 0);
+        let (_, secure_id) = secure_check_effect(0, 0);
+        let (_, locate_id) = find_element_effect(0, 0, "x");
+        let (_, tap_id) = tap_pixel_effect(0, 0, 10, 20);
+        let (_, verify_id) = ui_signature_effect(0, 0);
+        let (_, next_attempt_id) = secure_check_effect(0, 1);
+        let (_, next_index_id) = secure_check_effect(1, 0);
         let ids = [
-            screenshot_id,
-            ground_id,
+            secure_id,
+            locate_id,
             tap_id,
+            verify_id,
             next_attempt_id,
             next_index_id,
         ];
