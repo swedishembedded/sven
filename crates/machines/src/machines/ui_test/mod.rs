@@ -756,8 +756,11 @@ mod tests {
 
     // ── Compiling -> direct action ──────────────────────────────────────────
 
+    /// `launch_app` states a goal, not a change. Bringing an app to the
+    /// foreground when it is ALREADY there is a correct no-op, so holding it
+    /// to "the screen differs" would fail a run for doing what was asked.
     #[test]
-    fn a_non_tap_step_clears_the_secure_gate_and_baselines_before_acting() {
+    fn a_launch_app_step_acts_directly_and_is_not_held_to_changing_the_screen() {
         let (mut m, mut ctx, mut state) = make();
         drive(
             &mut m,
@@ -774,23 +777,7 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
         );
-        assert_eq!(state, UiTestState::Locating, "gated before it acts");
-        let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {
-            panic!("expected CallTool")
-        };
-        assert_eq!(args["action"], "screen_is_secure");
-
-        let out = clear_secure_gate(&mut m, &mut ctx, &mut state);
-        let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {
-            panic!("expected CallTool")
-        };
-        assert_eq!(
-            args["action"], "ui_signature",
-            "a pre-action baseline, so the action can be held to changing something"
-        );
-
-        let out = answer_signature(&mut m, &mut ctx, &mut state, "before");
-        assert_eq!(state, UiTestState::Acting);
+        assert_eq!(state, UiTestState::Acting, "no gate, no baseline");
         assert_eq!(effects_of(&out).len(), 1);
         let Effect::CallTool {
             name,
@@ -805,6 +792,19 @@ mod tests {
         assert_eq!(*capability, ToolCapability::ControlDevice);
         assert_eq!(args["action"], "launch_app");
         assert_eq!(args["package"], "com.example.demoapp");
+
+        let call_id = pending_call_id(&ctx);
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(call_id, json!("launched com.example.demoapp")),
+        );
+        assert_eq!(
+            state,
+            UiTestState::Done,
+            "never enters Verifying: adb already failed it on a bad package"
+        );
     }
 
     #[test]
@@ -1003,7 +1003,6 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
         );
-        reach_acting(&mut m, &mut ctx, &mut state);
         let call_id = pending_call_id(&ctx);
         drive(
             &mut m,
@@ -1011,13 +1010,6 @@ mod tests {
             &mut state,
             tool_ok(call_id, json!("launched com.example.demoapp")),
         );
-        assert_eq!(
-            state,
-            UiTestState::Verifying,
-            "success from the tool is not yet success for the step"
-        );
-        verify_changed(&mut m, &mut ctx, &mut state);
-
         assert_eq!(state, UiTestState::Done);
         let results = ctx.fact(RESULTS_FACT).unwrap().as_array().unwrap();
         assert_eq!(results.len(), 1);
@@ -1041,7 +1033,6 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
         );
-        reach_acting(&mut m, &mut ctx, &mut state);
         let call_id = pending_call_id(&ctx);
         drive(
             &mut m,
@@ -1049,8 +1040,6 @@ mod tests {
             &mut state,
             tool_ok(call_id, json!("launched com.example.demoapp")),
         );
-        verify_changed(&mut m, &mut ctx, &mut state);
-
         assert_eq!(state, UiTestState::Compiling);
         assert_eq!(load_index(&ctx), 1);
     }
@@ -1398,7 +1387,6 @@ mod tests {
                 &mut state,
                 compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
             );
-            reach_acting(&mut m, &mut ctx, &mut state);
             assert_eq!(state, UiTestState::Acting);
             let call_id = pending_call_id(&ctx);
             drive(
@@ -1435,7 +1423,6 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
         );
-        reach_acting(&mut m, &mut ctx, &mut state);
         let call_id = pending_call_id(&ctx);
         drive(
             &mut m,
@@ -1455,7 +1442,6 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
         );
-        reach_acting(&mut m, &mut ctx, &mut state);
         let call_id = pending_call_id(&ctx);
         drive(
             &mut m,
@@ -1463,7 +1449,6 @@ mod tests {
             &mut state,
             tool_ok(call_id, json!("launched com.example.demoapp")),
         );
-        verify_changed(&mut m, &mut ctx, &mut state);
         assert_eq!(state, UiTestState::Done);
     }
 

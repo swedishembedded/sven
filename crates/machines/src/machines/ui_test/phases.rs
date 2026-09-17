@@ -24,21 +24,24 @@ use super::{
 };
 use step::CompiledStep;
 
-/// Whether this verb is supposed to change the device, and so must prove it
-/// did.
+/// Whether this verb's success means "the screen moved", and so must prove
+/// it did.
 ///
-/// [`step::StepVerb::Wait`] is exempt because doing nothing IS its job, and
-/// [`step::StepVerb::AskUser`] never touches the device at all.
+/// Only the verbs whose entire purpose is to move the UI along. The rest
+/// are exempt for concrete reasons, not for convenience:
+///
+/// - `launch_app`/`force_stop` state a GOAL, not a change: bringing an app
+///   to the foreground when it is already there is a correct no-op, and
+///   holding it to "the screen differs" would fail a run for doing exactly
+///   what was asked. They carry their own postcondition regardless - adb
+///   fails them outright on a package that cannot be resolved or started.
+/// - `wait` exists precisely to change nothing.
+/// - `ask_user` never touches the device.
 fn needs_verification(verb: step::StepVerb) -> bool {
     use step::StepVerb;
     match verb {
-        StepVerb::LaunchApp
-        | StepVerb::ForceStop
-        | StepVerb::Tap
-        | StepVerb::TypeText
-        | StepVerb::Swipe
-        | StepVerb::KeyEvent => true,
-        StepVerb::Wait | StepVerb::AskUser => false,
+        StepVerb::Tap | StepVerb::TypeText | StepVerb::Swipe | StepVerb::KeyEvent => true,
+        StepVerb::LaunchApp | StepVerb::ForceStop | StepVerb::Wait | StepVerb::AskUser => false,
     }
 }
 
