@@ -610,14 +610,27 @@ impl RuntimeBuilder {
         #[cfg(not(feature = "memory"))]
         let provenance_sink: Option<Arc<dyn sven_vocab::provenance::ProvenanceSink>> = None;
 
+        // Which tools this session carries, decided rather than assumed. This
+        // used to be a hard-coded `Full`, so every session on every surface
+        // paid for the GDB and large-content tools whether or not the project
+        // had ever seen a debugger -- while `detect`, which answers exactly
+        // this question and is unit-tested, was called by nothing.
+        //
+        // A sub-agent is identified the same way `TaskTool` identifies one, by
+        // the depth variable it sets on the child.
+        let tool_profile = ToolSetProfile::detect(
+            std::env::var("SVEN_SUBAGENT_DEPTH").is_ok(),
+            self.agent_mode.unwrap_or(sven_config::AgentMode::Agent),
+            self.runtime_ctx.project_root.as_deref(),
+            self.tool_question_tx.clone(),
+            todos,
+            buffer_store,
+        );
+        tracing::debug!(profile = tool_profile.name(), "resolved tool set for this session");
         let mut tool_registry = build_tool_registry_with_integrations(
             &self.config,
             model.clone(),
-            ToolSetProfile::Full {
-                question_tx: self.tool_question_tx.clone(),
-                todos,
-                buffer_store,
-            },
+            tool_profile,
             mode_lock.clone(),
             tool_event_tx,
             runtime.clone(),
@@ -1286,6 +1299,29 @@ mod tests {
             .clone()
             .expect("the model must have received a request");
         req
+    }
+
+    /// A project with no embedded-debugging configuration must not pay for
+    /// the GDB and large-content tools on every single request.
+    ///
+    /// `ToolSetProfile::detect` has always decided this -- it checks for
+    /// `.gdbinit`/`openocd.cfg`/`debugging/` and picks `Coding` when none is
+    /// present -- and was called by nothing but its own unit tests, because
+    /// `build()` hard-coded `Full`. Every session on every surface (TUI,
+    /// headless, ACP, and every sub-agent) therefore carried `gdb` and
+    /// `context`: 4,203 characters of schema, roughly 1,100 tokens, in a
+    /// repository that has never run a debugger.
+    #[tokio::test]
+    async fn a_project_without_gdb_config_does_not_load_the_gdb_tools() {
+        let req = first_request_with(RuntimeContext::empty()).await;
+        let names: Vec<&str> = req.tools.iter().map(|t| t.name.as_str()).collect();
+
+        assert!(!names.contains(&"gdb"), "no .gdbinit here, so no gdb tool: {names:?}");
+        assert!(!names.contains(&"context"), "large-content tools are opt-in too: {names:?}");
+        // The point is to drop what is unused, not to break the session.
+        for expected in ["read_file", "edit_file", "grep", "shell", "task"] {
+            assert!(names.contains(&expected), "{expected} must survive: {names:?}");
+        }
     }
 
     #[tokio::test]
