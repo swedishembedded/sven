@@ -6,7 +6,6 @@
 pub mod asr;
 pub mod attach_file;
 pub mod attachment;
-pub mod delete_file;
 pub mod edit_file;
 pub mod find_file;
 pub mod read_file;
@@ -17,7 +16,6 @@ pub use attachment::{
     classify as classify_attachment, load_attachment, AttachError, AttachOptions, AttachmentKind,
     LoadedAttachment,
 };
-pub use delete_file::DeleteFileTool;
 pub use edit_file::EditFileTool;
 pub use find_file::FindFileTool;
 pub use read_file::ReadFileTool;

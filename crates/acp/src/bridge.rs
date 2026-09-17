@@ -161,11 +161,10 @@ pub fn ui_event_to_session_update(ev: &UiEvent) -> Option<SessionUpdate> {
 
 fn tool_name_to_kind(name: &str) -> ToolKind {
     match name {
-        "read_file" | "read_image" | "list_dir" | "find_file" | "buf_read" => ToolKind::Read,
+        "read_file" | "find_file" | "buf_read" => ToolKind::Read,
         "write" | "edit_file" | "update_memory" => ToolKind::Edit,
-        "delete_file" => ToolKind::Delete,
-        "grep" | "search_codebase" | "buf_grep" | "context_grep" => ToolKind::Search,
-        "run_terminal_command" | "shell" | "task" => ToolKind::Execute,
+        "grep" | "buf_grep" | "context_grep" => ToolKind::Search,
+        "shell" | "task" => ToolKind::Execute,
         "web_fetch" | "web_search" => ToolKind::Fetch,
         "switch_mode" => ToolKind::SwitchMode,
         _ => ToolKind::Other,

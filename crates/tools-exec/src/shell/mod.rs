@@ -5,4 +5,3 @@
 
 mod tool;
 pub use tool::ShellTool;
-pub(crate) use tool::{head_tail_truncate, MAX_TIMEOUT_SECS};

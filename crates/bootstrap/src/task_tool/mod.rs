@@ -174,24 +174,18 @@ impl Tool for TaskTool {
     }
 
     fn description(&self) -> &str {
-        "Spawn a focused sub-agent or inspect a running sub-agent's output.\n\
-         action: spawn (default) | status | read | grep\n\n\
-         **Spawn workflow (action=spawn or omitted):**\n\
-         1. Call `task` with prompt → subagent runs and returns its final response\n\
-         2. Optionally spawn more sub-agents in parallel with different prompts\n\
-         3. The tool blocks until the subagent completes and returns the result\n\n\
-         **When to spawn:**\n\
-         - Exploration and research of large unfamiliar areas.\n\
-         - Tasks that searching through a lot of context but we are only interested in the final findings. \n\
-         **Modes:** `research`/`plan`/`agent` are built in. `mode` also accepts the name of any\n\
-         discovered subagent persona (see the Subagents section of your system prompt) - the\n\
-         persona's own instructions become the sub-agent's system prompt and its `readonly`\n\
-         flag picks the tool profile.\n\n\
-         **Important:**\n\
-         - Do not use for anything you can easily do with shell.\n\
-         - Do not spawn tasks for simple single step commands.\n\
-         - Do not spawn tasks for exploring single files or anything that you can readily do directly. \n\
-         Sub-agents have access to all standard tools. Sub-agents cannot spawn further sub-agents."
+        "Run a focused sub-agent to completion and return its final answer, or inspect\n\
+         a finished one's output. The 'action' parameter lists what it can do.\n\
+         Spawning blocks until the sub-agent finishes; several may run at once by\n\
+         issuing several calls.\n\
+         'mode' takes a built-in role (research/plan/agent) or the name of a discovered\n\
+         subagent persona, whose own instructions then become the sub-agent's system\n\
+         prompt and whose readonly flag picks its tools.\n\
+         Worth it when the work is open-ended search over unfamiliar ground and only the\n\
+         conclusion matters - it keeps what was read out of this conversation. Not worth\n\
+         it for a single command or a file you could read yourself: the sub-agent pays\n\
+         the full system prompt again to do it.\n\
+         Sub-agents get the standard tools and cannot spawn further sub-agents."
     }
 
     fn parameters_schema(&self) -> Value {

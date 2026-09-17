@@ -44,7 +44,7 @@ pub struct ToolCall {
 
 /// A single content item in a rich tool output.
 ///
-/// Most tools produce only `Text`.  Multimodal tools (e.g. `read_image`,
+/// Most tools produce only `Text`.  Multimodal tools (e.g. `read_file` on an image,
 /// `attach_file`) may produce a mix of `Text`, `Image`, and `Audio` items.
 #[derive(Debug, Clone)]
 pub enum ToolOutputPart {

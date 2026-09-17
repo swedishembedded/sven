@@ -10,13 +10,16 @@
 //!
 //! The tools registered here are stateless from the MCP client's perspective
 //! and work without a TUI.
+//!
+//! Names are shared with the agent's own registry, and mean the same thing
+//! there: one job has one tool, and it is called the same on every surface an
+//! MCP client or the agent sees. A second tool for a job the first already
+//! does is a choice pushed onto the caller with nothing to decide it on.
 
 use sven_tools::ToolRegistry;
-use sven_tools_exec::{RunTerminalCommandTool, ShellTool};
-use sven_tools_fs::{
-    DeleteFileTool, EditFileTool, FindFileTool, ReadFileTool, ReadImageTool, WriteTool,
-};
-use sven_tools_web::{GrepTool, ReadLintsTool, SearchCodebaseTool, WebFetchTool, WebSearchTool};
+use sven_tools_exec::ShellTool;
+use sven_tools_fs::{EditFileTool, FindFileTool, ReadFileTool, WriteTool};
+use sven_tools_web::{GrepTool, ReadLintsTool, WebFetchTool, WebSearchTool};
 
 /// Tool names included in the default MCP-safe set.
 ///
@@ -24,15 +27,11 @@ use sven_tools_web::{GrepTool, ReadLintsTool, SearchCodebaseTool, WebFetchTool, 
 /// `Tool::name()` implementation.  Clients can use this list to discover
 /// what `sven mcp serve` exposes by default.
 pub const DEFAULT_TOOL_NAMES: &[&str] = &[
-    "delete_file",
     "edit_file",
     "find_file",
     "grep",
     "read_file",
-    "read_image",
     "read_lints",
-    "run_terminal_command",
-    "search_codebase",
     "shell",
     "web_fetch",
     "web_search",
@@ -69,9 +68,6 @@ pub fn build_mcp_registry(
 
     let mut reg = ToolRegistry::new();
 
-    if allow("delete_file") {
-        reg.register(DeleteFileTool);
-    }
     if allow("edit_file") {
         reg.register(EditFileTool);
     }
@@ -84,17 +80,8 @@ pub fn build_mcp_registry(
     if allow("read_file") {
         reg.register(ReadFileTool);
     }
-    if allow("read_image") {
-        reg.register(ReadImageTool);
-    }
     if allow("read_lints") {
         reg.register(ReadLintsTool);
-    }
-    if allow("run_terminal_command") {
-        reg.register(RunTerminalCommandTool::default());
-    }
-    if allow("search_codebase") {
-        reg.register(SearchCodebaseTool);
     }
     if allow("shell") {
         reg.register(ShellTool::default());
@@ -119,6 +106,40 @@ pub fn build_mcp_registry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One job, one tool - across every surface sven exposes.
+    ///
+    /// This registry drifted from the agent's: it offered `shell` AND
+    /// `run_terminal_command`, `grep` AND `search_codebase`, plus `read_image`
+    /// for files `read_file` already handles. Two tools for one job is a
+    /// choice the caller has to make on every request, and the model has no
+    /// basis for making it, so it is answered by whichever description reads
+    /// better that turn.
+    ///
+    /// Pinned as names rather than checked against the agent registry, which
+    /// lives a crate away and needs a live model to build. The overlap is the
+    /// point: every name here is one the agent knows by the same name and for
+    /// the same job.
+    #[test]
+    fn no_two_tools_do_the_same_job() {
+        let superseded = [
+            ("run_terminal_command", "shell"),
+            ("search_codebase", "grep"),
+            ("read_image", "read_file"),
+            ("delete_file", "shell"),
+        ];
+        let names = build_mcp_registry(None, None).names();
+        for (gone, canonical) in superseded {
+            assert!(
+                !names.iter().any(|n| n == gone),
+                "{gone:?} is superseded by {canonical:?} but is still offered: {names:?}"
+            );
+            assert!(
+                names.iter().any(|n| n == canonical),
+                "{canonical:?} must be offered in place of {gone:?}: {names:?}"
+            );
+        }
+    }
 
     #[test]
     fn default_registry_contains_all_default_tools() {

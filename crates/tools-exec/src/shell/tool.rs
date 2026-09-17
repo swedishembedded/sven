@@ -52,20 +52,14 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command and return stdout + stderr.\n\
-         ALWAYS provide 'description': a short human-readable summary of what this command does\n\
-         (shown to the user in the UI instead of the raw command).\n\
-         Output is capped at ~20 KB; when larger, the first 100 and last 100 lines are\n\
-         preserved with an omission marker in the middle - errors at the end are never lost.\n\
-         Prefer non-interactive commands. Avoid commands that require a TTY.\n\
-         On Unix/macOS commands run via bash; on Windows via cmd.exe.\n\
-         IMPORTANT: do NOT use shell for file operations:\n\
-         - Read files  → use read_file  (not cat / head / tail)\n\
-         - Search text → use grep tool  (not grep / rg / ack)\n\
-         - Find files  → use glob tool  (not find / ls -R)\n\
-         - Edit files  → use edit_file  (not sed / awk / patch)\n\
-         For large outputs (builds, test runs), pipe through `tail -200` or\n\
-         `grep -E 'error:|warning:' 2>&1` to keep only what matters."
+        "Run a shell command; returns stdout + stderr.\n\
+         'description' is required: one short line naming what the command does, shown\n\
+         to the user in place of the raw command.\n\
+         Runs via bash on Unix/macOS, cmd.exe on Windows. Non-interactive only - a\n\
+         command needing a TTY will hang.\n\
+         Output is capped at ~20 KB, keeping the first and last 100 lines with a marker\n\
+         between, so errors at the end survive. Narrow big output at the source\n\
+         (`tail -200`, `grep -E 'error:|warning:'`) rather than paying for the cap."
     }
 
     fn parameters_schema(&self) -> Value {

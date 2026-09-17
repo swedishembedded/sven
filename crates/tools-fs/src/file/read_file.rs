@@ -32,15 +32,14 @@ impl Tool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "Read a file. If offset is not provided then first 200 lines are returned.\n\
-         Binary files are returned as Intel HEX;\n\
-         For binary files limit/offset apply to HEX line numbers (each line = 16 bytes).\n\
-         Images (png/jpg/gif/webp/bmp/tiff) → returned as base64 data URL.\n\
-         Returned lines are formatted as L{n}:content (1-indexed). For edit_file old_str strip the L{n}: prefix.\n\
-         When more lines exist, a pagination notice shows the next offset. \n\
-         You must provide 'offset' to read more than initial 200 lines. \n\
-         Strategy: use grep to find the relevant region first, then read only those lines by passing offset and limit.\n\
-         Avoid reading a whole large file - read only what you need."
+        "Read a file, 200 lines from the start unless 'offset' says otherwise.\n\
+         Lines come back as L{n}:content, 1-indexed; strip the L{n}: prefix before\n\
+         reusing a line as text.\n\
+         Binary files are returned as Intel HEX, where limit/offset count HEX lines of\n\
+         16 bytes each. Images (png/jpg/gif/webp/bmp/tiff) come back as a base64 data URL.\n\
+         When more lines remain, the reply names the next offset to pass.\n\
+         Read the region you need rather than a whole large file - 'offset' and 'limit'\n\
+         cost one call each, a full file costs the context it fills."
     }
 
     fn parameters_schema(&self) -> Value {

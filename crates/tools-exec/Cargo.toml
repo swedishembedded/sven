@@ -2,12 +2,11 @@
 name        = "sven-tools-exec"
 version.workspace = true
 edition     = "2021"
-description = "Command-execution tools: the free-form shell tool and run_terminal_command. Domain tier. Split out of sven-tools's builtin/shell/ + builtin/terminal/ (5.3 of the refactor plan's god-crate splits); terminal imports shell::head_tail_truncate, so the two move together as one crate."
+description = "Command execution: the free-form shell tool. Domain tier."
 license     = "Apache-2.0"
 
 [dependencies]
 sven-tool-api = { path = "../tool-api" }
-sven-config   = { path = "../config" }
 sven-hsm      = { path = "../hsm" }
 async-trait   = { workspace = true }
 serde_json    = { workspace = true }

@@ -46,7 +46,7 @@ impl Tool for WebFetchTool {
         "Fetch a URL and return content as readable text (HTML → markdown). Read-only.\n\
          Valid http/https only. No auth, no binary, no localhost/private IPs.\n\
          max_chars: defaults to the configured tools.web.fetch_max_chars.\n\
-         For non-webpage URLs use shell."
+         Fetches webpages; a URL serving anything else comes back as-is or errors."
     }
 
     fn parameters_schema(&self) -> Value {

@@ -46,13 +46,14 @@ impl Tool for GrepTool {
     }
 
     fn description(&self) -> &str {
-        "Pattern search built on ripgrep.\n\
-         pattern: full regex (escape literal braces: \\{\\}).\n\
-         include: glob filter (*.rs, **/*.{ts,tsx}).\n\
-         whole_project: true → auto-exclude .git/ target/ node_modules/ dist/ __pycache__/ *.lock\n\
-         case_sensitive: default true. limit: 100. context_lines: 0.\n\
-         output_mode: content (default, file:line:col:text) | files_with_matches | count\n\
-         Use files_with_matches for discovery, then read_file for details."
+        "Search file contents by regex, built on ripgrep.\n\
+         pattern: a full regex - escape literal braces as \\{\\}.\n\
+         include: glob filter, e.g. '*.rs' or '**/*.{ts,tsx}'.\n\
+         whole_project: true also skips .git/ target/ node_modules/ dist/ __pycache__/ *.lock\n\
+         case_sensitive defaults true; limit 100 matches; context_lines 0.\n\
+         output_mode: content (default: file:line:col:text) | files_with_matches | count.\n\
+         Start with files_with_matches when locating something - it returns one line per\n\
+         file instead of one per match, which is the difference between a list and a wall."
     }
 
     fn parameters_schema(&self) -> Value {

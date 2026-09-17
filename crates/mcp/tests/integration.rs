@@ -77,7 +77,7 @@ impl Tool for AlwaysFailTool {
     }
 }
 
-/// A tool with `Ask` policy - stands in for shell / write_file / delete_file.
+/// A tool with `Ask` policy - stands in for shell / write_file.
 /// Must never execute unless a permission requester approves the call.
 struct AskPolicyTool;
 
@@ -513,8 +513,8 @@ async fn default_registry_tools_are_listed_by_server() {
         "grep must be listed; got: {names:?}"
     );
     assert!(
-        names.contains(&"run_terminal_command"),
-        "run_terminal_command must be listed"
+        names.contains(&"shell"),
+        "shell must be listed; got: {names:?}"
     );
 }
 

@@ -573,3 +573,140 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
 
     reg
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sven_model_mock::MockProvider;
+
+    /// Every tool the agent is offered, with its description.
+    fn agent_tools() -> Vec<(String, String, serde_json::Value)> {
+        let (tx, _rx) = mpsc::channel::<ToolEvent>(16);
+        let reg = build_tool_registry(
+            &Config::default(),
+            Arc::new(MockProvider),
+            ToolSetProfile::Full {
+                question_tx: None,
+                todos: Arc::new(Mutex::new(Vec::new())),
+                buffer_store: Arc::new(Mutex::new(OutputBufferStore::default())),
+            },
+            Arc::new(Mutex::new(AgentMode::Agent)),
+            tx,
+            AgentRuntimeContext::default(),
+        );
+        reg.schemas().into_iter().map(|s| (s.name, s.description, s.parameters)).collect()
+    }
+
+    /// The words a tool's own schema already defines: its parameter names and
+    /// every value of an enum it accepts.
+    ///
+    /// A compound tool naming its own actions is describing itself, which is
+    /// the opposite of the coupling under test - `context` documents an
+    /// `action: grep` it implements, and that is not a reference to the `grep`
+    /// tool. Taken from the schema rather than a hand-kept list, so a tool that
+    /// renames an action cannot leave a stale exemption behind.
+    fn own_vocabulary(parameters: &serde_json::Value) -> Vec<String> {
+        let mut words = Vec::new();
+        let Some(props) = parameters.get("properties").and_then(|p| p.as_object()) else {
+            return words;
+        };
+        for (name, spec) in props {
+            words.push(name.clone());
+            let variants = spec.get("enum").and_then(|e| e.as_array()).into_iter().flatten();
+            words.extend(variants.filter_map(|v| v.as_str()).map(str::to_string));
+        }
+        words
+    }
+
+    /// The exact tool set the agent is offered.
+    ///
+    /// Pinned deliberately. Every tool here is schema, description and name in
+    /// the system prompt of every single request, so the set growing is a cost
+    /// paid forever by every turn - and one nobody notices, because adding a
+    /// tool is a one-line registration. Changing this list should be a
+    /// decision, which means it has to be visible.
+    #[test]
+    fn the_agent_tool_set_is_what_we_think_it_is() {
+        let mut got: Vec<String> = agent_tools().into_iter().map(|(n, ..)| n).collect();
+        got.sort();
+        let expected = [
+            "attach_file", "context", "edit_file", "find_file", "gdb", "grep", "memory",
+            "read_file", "shell", "skill", "system", "task", "todo", "web_fetch",
+            "web_search", "write_file",
+        ];
+        assert_eq!(got, expected, "the agent's tool set changed");
+    }
+
+    /// A tool description must describe that tool and nothing else.
+    ///
+    /// Naming a sibling makes the pair a unit that has to be changed together,
+    /// and nothing enforces that: `shell` spent an unknown time telling the
+    /// model "Find files -> use glob tool" when no tool has ever been called
+    /// `glob`. A redirect to nothing is worse than none at all - it forbids
+    /// the obvious approach and names an alternative that cannot be called, so
+    /// the model invents. "List the files here" became `find_file` against a
+    /// guessed root, and before that a `read_file` on `/current_directory`.
+    ///
+    /// Cross-cutting policy ("prefer edit_file over sed") is not lost by this
+    /// rule, it is relocated: it belongs to the system prompt, which states it
+    /// once, instead of being restated in every sibling's description and
+    /// charged to the context window on every single request.
+    #[test]
+    fn a_tool_description_never_names_another_tool() {
+        let tools = agent_tools();
+        let names: Vec<String> = tools.iter().map(|(n, ..)| n.clone()).collect();
+
+        let mut offenders: Vec<String> = Vec::new();
+        for (name, description, parameters) in &tools {
+            let own = own_vocabulary(parameters);
+            let mentioned: Vec<&str> = names
+                .iter()
+                .filter(|other| *other != name && !AMBIGUOUS.contains(&other.as_str()))
+                .filter(|other| !own.contains(other))
+                .filter(|other| mentions(description, other))
+                .map(String::as_str)
+                .collect();
+            if !mentioned.is_empty() {
+                offenders.push(format!("{name} names {mentioned:?}"));
+            }
+        }
+        assert!(offenders.is_empty(), "tool descriptions are not self-contained:\n  {}", offenders.join("\n  "));
+    }
+
+    /// Tool names that are also ordinary English, and so cannot be judged by
+    /// spelling alone: `edit_file` says "context line" about unified diffs,
+    /// not about the `context` tool. Excluded rather than special-cased per
+    /// call site, because a check that reports things that are fine is a check
+    /// people learn to override.
+    const AMBIGUOUS: &[&str] = &["context", "memory", "system", "task", "todo", "skill"];
+
+    /// Whether `description` refers to the tool `needle` in prose.
+    ///
+    /// Two things are deliberately not matches. A longer tool's name that
+    /// contains a shorter one (`grep` inside `context_grep`) is a different
+    /// tool, so the match must land on word boundaries. And a backticked span
+    /// is code, not a reference: `grep -E 'error:'` inside a shell example is
+    /// the Unix program the caller will actually run, which is exactly the
+    /// kind of concrete example a self-contained description should keep.
+    fn mentions(description: &str, needle: &str) -> bool {
+        let prose = strip_code_spans(description);
+        let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        prose.match_indices(needle).any(|(i, _)| {
+            let before = prose[..i].chars().next_back();
+            let after = prose[i + needle.len()..].chars().next();
+            !before.is_some_and(is_word) && !after.is_some_and(is_word)
+        })
+    }
+
+    /// `description` with every `` `backticked` `` span removed. An unclosed
+    /// backtick swallows the rest, which is the safe direction: it can only
+    /// hide a reference, never invent one, and the missing pair is the typo to
+    /// fix first anyway.
+    fn strip_code_spans(description: &str) -> String {
+        description
+            .split('`')
+            .step_by(2)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}

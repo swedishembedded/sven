@@ -23,13 +23,11 @@
 pub mod grep;
 mod provenance;
 pub mod read_lints;
-pub mod search_codebase;
 pub mod web_fetch;
 pub mod web_search;
 
 pub use grep::GrepTool;
 pub use read_lints::ReadLintsTool;
-pub use search_codebase::SearchCodebaseTool;
 pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
 
@@ -45,12 +43,6 @@ mod output_category_tests {
     #[test]
     fn grep_tool_is_matchlist() {
         let t = super::GrepTool;
-        assert_eq!(t.output_category(), OutputCategory::MatchList);
-    }
-
-    #[test]
-    fn search_codebase_is_matchlist() {
-        let t = super::SearchCodebaseTool;
         assert_eq!(t.output_category(), OutputCategory::MatchList);
     }
 

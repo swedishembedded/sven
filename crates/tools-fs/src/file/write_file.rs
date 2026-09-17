@@ -21,11 +21,13 @@ impl Tool for WriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write content to a file. Overwrites by default; append=true to extend.\n\
-         Parent directories created automatically.\n\
-         ALWAYS prefer edit_file for modifying existing files.\n\
-         NEVER proactively create documentation, README, or config files.\n\
-         NEVER write new files unless explicitly requested by the user."
+        "Write a whole file. Overwrites by default; append=true extends instead.\n\
+         Missing parent directories are created.\n\
+         This replaces the entire contents, so it is the wrong call for changing part of\n\
+         an existing file - that rewrite costs the whole file in tokens and loses anything\n\
+         not restated.\n\
+         Create files the user asked for. Do not add README, docs or config files\n\
+         alongside them uninvited."
     }
 
     fn parameters_schema(&self) -> Value {
