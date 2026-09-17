@@ -63,6 +63,24 @@ Ad-hoc task briefs for AI agents live in `.todo/*.md` (gitignored — never part
 repo history). When a task is finished, move its file into `.todo/completed/`
 (plain `mv`, not `git mv`, since the whole directory is ignored).
 
+## Roadmaps (`.agents/roadmap/`)
+
+A roadmap file describes work that is **planned or in flight**. It is a
+working document, not an archive.
+
+When the work lands, the knowledge in it moves into `docs/` as real
+documentation and the roadmap file (or the finished section of it) is
+**deleted in the same commit that finishes the work**. Never leave a completed
+initiative sitting in `.agents/roadmap/` as a de-facto manual: a reader cannot
+tell a plan from a description, so a stale roadmap silently becomes
+documentation nobody maintains and nobody trusts.
+
+Prefer folding into an existing page over adding a new one -- if `docs/`
+already covers the area, extend that page rather than leaving two documents
+disagreeing about the same feature. When the existing page documents
+behaviour that turned out not to work, correct it rather than writing around
+it.
+
 ## Essential Commands
 
 | Command | Purpose |
