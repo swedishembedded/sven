@@ -34,7 +34,9 @@ pub mod context;
 pub mod knowledge;
 pub mod memory;
 
-pub use context::{ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore, SubQueryRunner};
+pub use context::{
+    ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore, SubQueryRunner,
+};
 pub use knowledge::{ListKnowledgeTool, SearchKnowledgeTool};
 pub use memory::MemoryTool;
 

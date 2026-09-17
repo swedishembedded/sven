@@ -26,7 +26,9 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use chrono::Utc;
-pub use sven_chain::{append_chain, read_chain, verify_chain, ChainError, ChainedLine, GENESIS_HASH};
+pub use sven_chain::{
+    append_chain, read_chain, verify_chain, ChainError, ChainedLine, GENESIS_HASH,
+};
 use sven_hsm::{AuditTrailHandle, Effect, ObservationSink};
 use sven_kernel::{EffectExecutor, EventSink};
 
@@ -562,5 +564,4 @@ mod tests {
             "persisted records carry principal attribution"
         );
     }
-
 }

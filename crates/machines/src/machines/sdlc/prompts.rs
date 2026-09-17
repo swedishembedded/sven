@@ -385,7 +385,10 @@ mod tests {
     fn intake_request_is_well_formed() {
         let v = intake_request("fix the auth bug");
         assert_turn_request(&v, "intake");
-        assert!(v["instruction"].as_str().unwrap().contains("fix the auth bug"));
+        assert!(v["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("fix the auth bug"));
     }
 
     #[test]

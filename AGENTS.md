@@ -43,8 +43,8 @@ and was removed - the TUI is the only interactive local surface.)
   `loop_core` for the tool-loop plumbing; register it in
   `machines/src/mode.rs::default_registry()`. (A prior graph-DSL extension path
   was deleted - see `docs/adr/0001-delete-graph-dsl.md`.)
-- **Tests**: `make test` (unit/integration), `make check` (text gates +
-  `xtask arch` + clippy `-D warnings`, zero-warning policy),
+- **Tests**: `make test` (unit/integration), `make check` (rustfmt + text
+  gates + `xtask arch` + clippy `-D warnings`, zero-warning policy),
   `make tests/e2e/basic` (bats E2E; needs `bats-core`).
 - **Repo hygiene is gated, not documented.** `make check/gates` refuses an
   absolute machine path (`/data`, `/home`, `/opt`, `/mnt`, `/root` anywhere;
@@ -70,7 +70,8 @@ repo history). When a task is finished, move its file into `.todo/completed/`
 | `make build` | Debug build (all binaries) |
 | `make release` | Optimised release build |
 | `make test` | Unit + integration tests (whole workspace) |
-| `make check` | text gates + `xtask arch` + clippy, `-D warnings` |
+| `make check` | rustfmt + text gates + `xtask arch` + clippy, `-D warnings` |
+| `make check/fmt` | rustfmt shape only, checked not applied |
 | `make check/gates` | text gates: no machine paths, no brain dependency |
 | `make check/arch` | architecture ratchet only |
 | `make check/clippy` | clippy only |

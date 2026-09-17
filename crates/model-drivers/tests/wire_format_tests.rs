@@ -1500,11 +1500,7 @@ async fn probe_context_window_falls_back_to_models_list_when_props_absent() {
         ],
     })
     .to_string();
-    let port = mock_server_sequence(vec![
-        (404, "{}".to_string()),
-        (200, models_body),
-    ])
-    .await;
+    let port = mock_server_sequence(vec![(404, "{}".to_string()), (200, models_body)]).await;
 
     let cfg = ModelConfig {
         provider: "openai".into(),
@@ -1515,7 +1511,11 @@ async fn probe_context_window_falls_back_to_models_list_when_props_absent() {
     };
     let provider = from_config(&cfg).unwrap();
     let ctx = provider.probe_context_window().await;
-    assert_eq!(ctx, Some(2048), "must fall back to the /v1/models context_length when /props 404s");
+    assert_eq!(
+        ctx,
+        Some(2048),
+        "must fall back to the /v1/models context_length when /props 404s"
+    );
 }
 
 #[tokio::test]
@@ -1525,7 +1525,10 @@ async fn probe_context_window_none_when_neither_path_answers() {
     // config value must stand, i.e. this returns None with no error.
     let port = mock_server_sequence(vec![
         (404, "{}".to_string()),
-        (200, serde_json::json!({"object": "list", "data": []}).to_string()),
+        (
+            200,
+            serde_json::json!({"object": "list", "data": []}).to_string(),
+        ),
     ])
     .await;
 
@@ -1538,7 +1541,10 @@ async fn probe_context_window_none_when_neither_path_answers() {
     };
     let provider = from_config(&cfg).unwrap();
     let ctx = provider.probe_context_window().await;
-    assert_eq!(ctx, None, "no matching entry anywhere must yield None, not an error");
+    assert_eq!(
+        ctx, None,
+        "no matching entry anywhere must yield None, not an error"
+    );
 }
 
 // ── from_config_probed ──────────────────────────────────────────────────────
@@ -1601,7 +1607,10 @@ async fn from_config_probed_falls_back_to_config_when_probe_fails() {
     // identical to plain from_config, i.e. the config value stands untouched.
     let port = mock_server_sequence(vec![
         (404, "{}".to_string()),
-        (200, serde_json::json!({"object": "list", "data": []}).to_string()),
+        (
+            200,
+            serde_json::json!({"object": "list", "data": []}).to_string(),
+        ),
     ])
     .await;
 
@@ -1616,7 +1625,10 @@ async fn from_config_probed_falls_back_to_config_when_probe_fails() {
     let probed_provider = from_config_probed(&cfg).await.unwrap();
     let plain_provider = from_config(&cfg).unwrap();
     assert_eq!(probed_provider.catalog_context_window(), Some(128_000));
-    assert_eq!(probed_provider.catalog_context_window(), plain_provider.catalog_context_window());
+    assert_eq!(
+        probed_provider.catalog_context_window(),
+        plain_provider.catalog_context_window()
+    );
 }
 
 // ── from_config_probed: empty brain model name resolution ──────────────────
@@ -1654,7 +1666,11 @@ async fn from_config_probed_resolves_empty_brain_name_from_single_chat_model() {
         ..ModelConfig::default()
     };
     let provider = from_config_probed(&cfg).await.unwrap();
-    assert_eq!(provider.model_name(), "Qwen/Qwen3-0.6B", "the sole chat-capable entry must be resolved");
+    assert_eq!(
+        provider.model_name(),
+        "Qwen/Qwen3-0.6B",
+        "the sole chat-capable entry must be resolved"
+    );
     assert_eq!(provider.catalog_context_window(), Some(2048));
 }
 
@@ -1673,7 +1689,10 @@ async fn from_config_probed_leaves_empty_brain_name_unresolved_when_ambiguous() 
     let port = mock_server_sequence(vec![
         (200, models_body),
         (404, "{}".to_string()), // /props for the (still-empty-named) provider
-        (200, serde_json::json!({"object": "list", "data": []}).to_string()),
+        (
+            200,
+            serde_json::json!({"object": "list", "data": []}).to_string(),
+        ),
     ])
     .await;
 
@@ -1685,7 +1704,11 @@ async fn from_config_probed_leaves_empty_brain_name_unresolved_when_ambiguous() 
         ..ModelConfig::default()
     };
     let provider = from_config_probed(&cfg).await.unwrap();
-    assert_eq!(provider.model_name(), "", "an ambiguous model list must not be guessed at");
+    assert_eq!(
+        provider.model_name(),
+        "",
+        "an ambiguous model list must not be guessed at"
+    );
 }
 
 #[tokio::test]

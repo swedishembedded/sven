@@ -583,7 +583,10 @@ async fn tools_call_ask_policy_tool_runs_when_approved() {
         resp["result"]["isError"], false,
         "approved Ask-policy tool must run; got: {resp}"
     );
-    assert_eq!(resp["result"]["content"][0]["text"], "dangerous op executed");
+    assert_eq!(
+        resp["result"]["content"][0]["text"],
+        "dangerous op executed"
+    );
 }
 
 /// With a permission requester that denies, an `Ask`-policy tool is blocked.

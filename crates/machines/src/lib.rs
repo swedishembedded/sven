@@ -32,7 +32,9 @@ pub use sven_turn::{system_prompt, CollabEvent};
 pub use completion::development_complete;
 pub use events::{AgentEvent, CompactionStrategyUsed, PeerInfo};
 pub use machines::{
-    reactive_agent::ReactiveAgentMachine, sdlc::task::TaskMachine, sdlc::SdlcMachine,
+    reactive_agent::ReactiveAgentMachine,
+    sdlc::task::TaskMachine,
+    sdlc::SdlcMachine,
     ui_test::UiTestMachine,
     verified_task::{VerifiedTaskMachine, ERROR_FACT, NEEDS_HUMAN_FACT, VERDICT_FACT},
 };

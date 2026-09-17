@@ -95,7 +95,8 @@ fn current_status_text() -> String {
              max_thinking_tokens: {}\n  thinking_timeout_secs: {}\n\n\
              /think-limit off  - clear the override, revert to config/defaults",
             b.max_thinking_tokens
-                .map_or("default (10% of context window)".to_string(), |v| v.to_string()),
+                .map_or("default (10% of context window)".to_string(), |v| v
+                    .to_string()),
             b.thinking_timeout_secs
                 .map_or("default (600)".to_string(), |v| v.to_string()),
         ),
@@ -136,7 +137,10 @@ mod tests {
         for alias in ["reset", "clear"] {
             let result = ThinkLimitCommand.execute(vec![alias.into()]);
             assert!(
-                matches!(result.immediate_action, Some(ImmediateAction::SetThinkingBudget(None))),
+                matches!(
+                    result.immediate_action,
+                    Some(ImmediateAction::SetThinkingBudget(None))
+                ),
                 "{alias} must behave like off"
             );
         }

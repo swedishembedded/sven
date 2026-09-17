@@ -224,8 +224,14 @@ mod tests {
             kind: RuleKind::CategoricalMap {
                 var: "offer".to_string(),
                 entries: vec![
-                    ("Architecture Review".to_string(), "From EUR 7,500".to_string()),
-                    ("Secure Architecture Sprint".to_string(), "From EUR 22,500".to_string()),
+                    (
+                        "Architecture Review".to_string(),
+                        "From EUR 7,500".to_string(),
+                    ),
+                    (
+                        "Secure Architecture Sprint".to_string(),
+                        "From EUR 22,500".to_string(),
+                    ),
                 ],
             },
             prompt_templates: vec!["What does {value} cost?".to_string()],

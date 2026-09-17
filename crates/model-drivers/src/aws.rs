@@ -30,8 +30,7 @@ use tracing::debug;
 
 use sven_model::{
     catalog::{static_catalog, ModelCatalogEntry},
-    ResponseStream,
-    CompletionRequest, MessageContent, ResponseEvent, Role,
+    CompletionRequest, MessageContent, ResponseEvent, ResponseStream, Role,
 };
 
 /// Placeholder substituted for audio content, which Bedrock Converse does not
@@ -165,7 +164,9 @@ impl sven_model::ModelProvider for BedrockProvider {
                         sven_model::ToolResultContent::Parts(parts) => parts
                             .iter()
                             .map(|p| match p {
-                                sven_model::ToolContentPart::Text { text } => json!({ "text": text }),
+                                sven_model::ToolContentPart::Text { text } => {
+                                    json!({ "text": text })
+                                }
                                 sven_model::ToolContentPart::Audio { .. } => {
                                     json!({ "text": AUDIO_PLACEHOLDER })
                                 }
@@ -552,7 +553,9 @@ mod tests {
                     for part in content_arr {
                         if let Some(text) = part["text"].as_str() {
                             if !text.is_empty() {
-                                events.push(Ok(sven_model::ResponseEvent::TextDelta(text.to_string())));
+                                events.push(Ok(sven_model::ResponseEvent::TextDelta(
+                                    text.to_string(),
+                                )));
                             }
                         }
                         if let Some(rc) = part.get("reasoningContent") {
@@ -623,7 +626,10 @@ mod tests {
         });
         let events = parse_bedrock_events(body);
         assert_eq!(events.len(), 2);
-        assert!(matches!(&events[0], sven_model::ResponseEvent::ThinkingDelta(_)));
+        assert!(matches!(
+            &events[0],
+            sven_model::ResponseEvent::ThinkingDelta(_)
+        ));
         assert!(matches!(&events[1], sven_model::ResponseEvent::TextDelta(t) if t.contains("42")));
     }
 

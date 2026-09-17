@@ -33,7 +33,9 @@ impl<T> AbortOnDrop<T> {
 
     /// Takes the handle, so dropping this wrapper no longer aborts the task.
     pub(crate) fn disarm(mut self) -> JoinHandle<T> {
-        self.0.take().expect("handle is taken exactly once, by join")
+        self.0
+            .take()
+            .expect("handle is taken exactly once, by join")
     }
 }
 

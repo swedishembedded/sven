@@ -355,7 +355,10 @@ impl RuntimeRunner {
         // loop-derived `result` unchanged.
         let (result, verdict) = if is_verified_task {
             match bundle.runtime.join().await {
-                Ok(report) => (exit_code_for_verified_task(&report.ctx), verdict_from_context(&report.ctx)),
+                Ok(report) => (
+                    exit_code_for_verified_task(&report.ctx),
+                    verdict_from_context(&report.ctx),
+                ),
                 Err(e) => {
                     write_stderr(&format!(
                         "[sven:warn] verified-task kernel task did not join cleanly: {e}"
@@ -470,14 +473,20 @@ fn should_stamp_reward(exit: i32) -> bool {
 /// `SessionOutcome::Unknown` rather than a guessed pass or fail.
 fn verdict_from_context(ctx: &KernelContext) -> Option<Verdict> {
     if let Some(reason) = ctx.fact(ERROR_FACT).and_then(|v| v.as_str()) {
-        write_stderr(&format!("[sven:warn] verified-task run ended without a verdict: {reason}"));
+        write_stderr(&format!(
+            "[sven:warn] verified-task run ended without a verdict: {reason}"
+        ));
     }
     if let Some(needs_human) = ctx.fact(NEEDS_HUMAN_FACT) {
         write_progress(&format!(
             "[sven:info] verified-task run parked, needs a human: {needs_human}"
         ));
     }
-    match ctx.fact(VERDICT_FACT).and_then(|v| v.get("passed")).and_then(|v| v.as_bool()) {
+    match ctx
+        .fact(VERDICT_FACT)
+        .and_then(|v| v.get("passed"))
+        .and_then(|v| v.as_bool())
+    {
         Some(true) => Some(Verdict::Passed),
         Some(false) => Some(Verdict::Failed),
         None => None,
@@ -502,7 +511,13 @@ fn exit_code_for_verified_task(ctx: &KernelContext) -> i32 {
     }
 }
 
-fn write_trajectory(state: CiOutState, exit: i32, config: &Config, mode: &str, verdict: Option<Verdict>) {
+fn write_trajectory(
+    state: CiOutState,
+    exit: i32,
+    config: &Config,
+    mode: &str,
+    verdict: Option<Verdict>,
+) {
     let Some(path) = sven_workspace::resolve_auto_log_path() else {
         return;
     };
@@ -878,7 +893,10 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         // QuestionAnswer never fires in headless mode (nothing here ever
         // posts an answer back through this event); TitleGenerated has no
         // headless stdout/stderr representation.
-        UiEvent::CollabEvent(_) | UiEvent::PeerList(_) | UiEvent::QuestionAnswer { .. } | UiEvent::TitleGenerated(_) => {}
+        UiEvent::CollabEvent(_)
+        | UiEvent::PeerList(_)
+        | UiEvent::QuestionAnswer { .. }
+        | UiEvent::TitleGenerated(_) => {}
     }
     None
 }
@@ -921,7 +939,11 @@ mod tests {
     #[test]
     fn verdict_from_context_reads_only_the_verdict_fact() {
         let mut ctx = KernelContext::new();
-        assert_eq!(verdict_from_context(&ctx), None, "no verdict fact yet -> unknown");
+        assert_eq!(
+            verdict_from_context(&ctx),
+            None,
+            "no verdict fact yet -> unknown"
+        );
 
         ctx.set_fact(VERDICT_FACT, serde_json::json!({"passed": true}));
         assert_eq!(verdict_from_context(&ctx), Some(Verdict::Passed));
@@ -933,7 +955,10 @@ mod tests {
     #[test]
     fn exit_code_for_verified_task_maps_parked_to_needs_human() {
         let mut ctx = KernelContext::new();
-        ctx.set_fact(NEEDS_HUMAN_FACT, serde_json::json!({"question": "?", "options": []}));
+        ctx.set_fact(
+            NEEDS_HUMAN_FACT,
+            serde_json::json!({"question": "?", "options": []}),
+        );
         assert_eq!(exit_code_for_verified_task(&ctx), EXIT_NEEDS_HUMAN);
     }
 
@@ -957,7 +982,10 @@ mod tests {
     #[test]
     fn verdict_from_context_ignores_a_parked_run() {
         let mut ctx = KernelContext::new();
-        ctx.set_fact(NEEDS_HUMAN_FACT, serde_json::json!({"question": "?", "options": []}));
+        ctx.set_fact(
+            NEEDS_HUMAN_FACT,
+            serde_json::json!({"question": "?", "options": []}),
+        );
         assert_eq!(
             verdict_from_context(&ctx),
             None,
@@ -1182,9 +1210,10 @@ mod tests {
         let r = handle_ui_event(UiEvent::TurnComplete, &mut st);
         assert_eq!(r, Some(EXIT_SUCCESS));
         // ... but it does grade a verified success's reward down.
-        let outcome = st
-            .outcome
-            .conclude(conclusion_for(EXIT_SUCCESS), Some(sven_session_store::Verdict::Passed));
+        let outcome = st.outcome.conclude(
+            conclusion_for(EXIT_SUCCESS),
+            Some(sven_session_store::Verdict::Passed),
+        );
         let sven_session_store::SessionOutcome::Scored(reward) = outcome else {
             panic!("expected Scored, got {outcome:?}");
         };
@@ -1219,7 +1248,10 @@ mod tests {
             EXIT_BUDGET_EXHAUSTED,
             42,
         ] {
-            assert!(should_stamp_reward(exit), "exit {exit} must still conclude normally");
+            assert!(
+                should_stamp_reward(exit),
+                "exit {exit} must still conclude normally"
+            );
         }
     }
 

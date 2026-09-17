@@ -22,10 +22,6 @@ use run::questions::run_questions_command;
 use run::task::run_task_command;
 // `run_acp_command`/`run_mcp_command` live in `sven-acp`/`sven-mcp`, shared
 // verbatim with the standalone binaries.
-#[cfg(feature = "network")]
-use sven_acp::cli::run_acp_command;
-#[cfg(feature = "network")]
-use sven_mcp::cli::run_mcp_command;
 use run::oauth::run_oauth_callback;
 use run::pipeline::{run_map_command, run_reduce_command, run_tee_command};
 #[cfg(feature = "network")]
@@ -34,6 +30,10 @@ use run::tool::run_tool_command;
 #[cfg(feature = "tui")]
 use run::tui::run_tui;
 use run::workflow::validate_workflow;
+#[cfg(feature = "network")]
+use sven_acp::cli::run_acp_command;
+#[cfg(feature = "network")]
+use sven_mcp::cli::run_mcp_command;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

@@ -251,9 +251,9 @@ async fn parallel_call_tool_effects_fan_in_correctly() {
 /// This verifies that the `Generating → RunningTools/Idle` loop repeats.
 #[tokio::test]
 async fn multi_round_chat_completes_twice_via_kernel() {
-    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::submachine::ErasedMachine;
+    use sven_machines::ReactiveAgentMachine;
     use sven_model_mock::MockProvider;
 
     let provider = Arc::new(MockProvider);

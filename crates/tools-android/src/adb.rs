@@ -233,7 +233,10 @@ pub async fn resolve_serial_validated(
     requested: Option<&str>,
 ) -> Result<SerialPick, String> {
     let devices = lister.list_devices().await?;
-    let ready: Vec<DeviceEntry> = devices.into_iter().filter(|d| d.state == "device").collect();
+    let ready: Vec<DeviceEntry> = devices
+        .into_iter()
+        .filter(|d| d.state == "device")
+        .collect();
     Ok(pick_serial(requested, &ready))
 }
 
@@ -345,7 +348,12 @@ pub struct RealPackageLister;
 #[async_trait::async_trait]
 impl PackageLister for RealPackageLister {
     async fn list_packages(&self, serial: &str) -> Result<Vec<String>, String> {
-        let out = run(serial, &["shell", "pm", "list", "packages"], DEFAULT_TIMEOUT_SECS).await?;
+        let out = run(
+            serial,
+            &["shell", "pm", "list", "packages"],
+            DEFAULT_TIMEOUT_SECS,
+        )
+        .await?;
         if !out.success() {
             return Err(format!("pm list packages failed: {}", out.stderr));
         }
@@ -446,7 +454,9 @@ pub fn shell_single_quote(s: &str) -> String {
 /// Android package names are `[a-zA-Z0-9_.]+` by platform convention. Reject
 /// anything else before it reaches a remote-shell-reparsed command line.
 pub fn valid_package_name(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────
@@ -704,7 +714,10 @@ mod tests {
 
     #[test]
     fn a_hint_matching_nothing_installed_is_not_guessed_at() {
-        assert_eq!(pick_package("spotify", &installed()), PackagePick::NoneInstalled);
+        assert_eq!(
+            pick_package("spotify", &installed()),
+            PackagePick::NoneInstalled
+        );
     }
 
     /// Two installed packages both containing the hint is genuinely
@@ -729,10 +742,7 @@ mod tests {
     /// match for other installed packages - precision beats breadth.
     #[test]
     fn an_exact_match_wins_over_competing_loose_matches() {
-        let many = vec![
-            "betalo".to_string(),
-            "se.betalo.androidapp".to_string(),
-        ];
+        let many = vec!["betalo".to_string(), "se.betalo.androidapp".to_string()];
         assert_eq!(
             pick_package("betalo", &many),
             PackagePick::Resolved("betalo".to_string())
@@ -763,7 +773,10 @@ mod tests {
         let pick = resolve_package_validated(&Fake, "ec677a50", "betalo", &[])
             .await
             .expect("lister succeeded");
-        assert_eq!(pick, PackagePick::ResolvedFromHint("se.betalo.androidapp".to_string()));
+        assert_eq!(
+            pick,
+            PackagePick::ResolvedFromHint("se.betalo.androidapp".to_string())
+        );
     }
 
     #[tokio::test]

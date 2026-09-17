@@ -22,8 +22,8 @@ pub use chat_document::{
 };
 pub use conversation::{
     parse_conversation, parse_jsonl_full, serialize_conversation, serialize_conversation_turn,
-    serialize_conversation_turn_with_metadata, serialize_jsonl_records, ConversationFile, ConversationRecord,
-    ParsedJsonlConversation, TurnMetadata,
+    serialize_conversation_turn_with_metadata, serialize_jsonl_records, ConversationFile,
+    ConversationRecord, ParsedJsonlConversation, TurnMetadata,
 };
 pub use frontmatter::{parse_frontmatter, WorkflowMetadata};
 pub use markdown::{parse_workflow, ParsedWorkflow};
@@ -37,9 +37,9 @@ pub use title::{make_title, sanitize_llm_title};
 pub use trace_session::{
     chat_usage_to_final_metrics, conversation_records_to_steps,
     conversation_records_to_steps_with_copied_context, copied_context_steps, default_agent_profile,
-    ensure_session_dir, final_metrics_to_chat_usage, import_legacy_chat_document, list_all_sessions,
-    list_sessions, load_session_from, messages_to_steps, migrate_legacy_chats, new_session_id,
-    session_path, steps_to_conversation_records, steps_to_messages,
+    ensure_session_dir, final_metrics_to_chat_usage, import_legacy_chat_document,
+    list_all_sessions, list_sessions, load_session_from, messages_to_steps, migrate_legacy_chats,
+    new_session_id, session_path, steps_to_conversation_records, steps_to_messages,
     steps_to_turn_records, turn_records_to_steps, turn_records_to_steps_with_copied_context,
     ContextCompactionDetails, MigrationSummary, SessionEntry, StepAssembler, SvenSessionMeta,
     UnifiedSessionEntry, ATIF_SCHEMA_VERSION,

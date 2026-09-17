@@ -112,11 +112,7 @@ mod tests {
 
     #[test]
     fn document_form_with_spaced_path_joins_args() {
-        let result = LearnCommand.execute(vec![
-            "document".into(),
-            "my".into(),
-            "notes.md".into(),
-        ]);
+        let result = LearnCommand.execute(vec!["document".into(), "my".into(), "notes.md".into()]);
         let msg = result.message_to_send.expect("expected a queued message");
         assert!(msg.contains("my notes.md"));
     }

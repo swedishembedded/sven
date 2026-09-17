@@ -201,8 +201,8 @@ mod tests {
 
     #[tokio::test]
     async fn returns_error_without_api_key() {
-        use sven_tool_api::tool::ToolCall;
         use serde_json::json;
+        use sven_tool_api::tool::ToolCall;
 
         // Ensure env var is unset for test
         std::env::remove_var("BRAVE_API_KEY");

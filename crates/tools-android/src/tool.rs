@@ -149,16 +149,24 @@ impl Tool for AndroidTool {
         };
 
         let explicit_serial = call.args.get("serial").and_then(|v| v.as_str());
-        let serial = match adb::resolve_serial(explicit_serial, self.default_serial.as_deref()).await {
-            Ok(s) => s,
-            Err(e) => return ToolOutput::err(&call.id, e),
-        };
+        let serial =
+            match adb::resolve_serial(explicit_serial, self.default_serial.as_deref()).await {
+                Ok(s) => s,
+                Err(e) => return ToolOutput::err(&call.id, e),
+            };
 
         debug!(action, serial, "android tool");
 
         match action {
             "display_info" => display_info(&call.id, &serial).await,
-            "screenshot" => screenshot(&call.id, &serial, call.args.get("path").and_then(|v| v.as_str())).await,
+            "screenshot" => {
+                screenshot(
+                    &call.id,
+                    &serial,
+                    call.args.get("path").and_then(|v| v.as_str()),
+                )
+                .await
+            }
             "tap" => tap(&call.id, &serial, &call.args).await,
             "swipe" => swipe(&call.id, &serial, &call.args).await,
             "type_text" => type_text(&call.id, &serial, &call.args).await,
@@ -170,7 +178,14 @@ impl Tool for AndroidTool {
             "force_stop" => {
                 force_stop(&call.id, &serial, &call.args, &self.declared_packages).await
             }
-            "list_packages" => list_packages(&call.id, &serial, call.args.get("filter").and_then(|v| v.as_str())).await,
+            "list_packages" => {
+                list_packages(
+                    &call.id,
+                    &serial,
+                    call.args.get("filter").and_then(|v| v.as_str()),
+                )
+                .await
+            }
             "current_app" => current_app(&call.id, &serial).await,
             "wait" => wait(&call.id, &call.args).await,
             other => ToolOutput::err(&call.id, format!("unknown action '{other}'")),
@@ -234,7 +249,10 @@ async fn screenshot(call_id: &str, serial: &str, path: Option<&str>) -> ToolOutp
     };
 
     if let Err(e) = std::fs::write(path, &out.stdout) {
-        return ToolOutput::err(call_id, format!("failed to write screenshot to {path:?}: {e}"));
+        return ToolOutput::err(
+            call_id,
+            format!("failed to write screenshot to {path:?}: {e}"),
+        );
     }
 
     // Real device-pixel dimensions, read from the captured bytes directly -
@@ -242,26 +260,39 @@ async fn screenshot(call_id: &str, serial: &str, path: Option<&str>) -> ToolOutp
     // (observed live: a 1220x2712 screenshot encoded as 921x2047), and the
     // label here must reflect the actual screen a `tap`'s pixel math targets,
     // not what the vision model happens to be shown.
-    let real_dims = image::load_from_memory(&out.stdout).ok().map(|i| (i.width(), i.height()));
+    let real_dims = image::load_from_memory(&out.stdout)
+        .ok()
+        .map(|i| (i.width(), i.height()));
 
     match sven_image::load_image(path) {
         Ok(img) => {
             let data_url = img.into_data_url();
-            let dims_text = real_dims.map(|(w, h)| format!(" ({w}x{h})")).unwrap_or_default();
+            let dims_text = real_dims
+                .map(|(w, h)| format!(" ({w}x{h})"))
+                .unwrap_or_default();
             ToolOutput::with_parts(
                 call_id,
                 vec![
-                    ToolOutputPart::Text(format!("screenshot saved: {}{}", path.display(), dims_text)),
+                    ToolOutputPart::Text(format!(
+                        "screenshot saved: {}{}",
+                        path.display(),
+                        dims_text
+                    )),
                     ToolOutputPart::Image(data_url),
                 ],
             )
         }
-        Err(e) => ToolOutput::err(call_id, format!("captured but failed to load {path:?}: {e}")),
+        Err(e) => ToolOutput::err(
+            call_id,
+            format!("captured but failed to load {path:?}: {e}"),
+        ),
     }
 }
 
 fn want_normalized(args: &Value) -> bool {
-    args.get("normalized").and_then(|v| v.as_bool()).unwrap_or(true)
+    args.get("normalized")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
 }
 
 fn require_f64(args: &Value, field: &str) -> Result<f64, String> {
@@ -294,7 +325,13 @@ async fn tap(call_id: &str, serial: &str, args: &Value) -> ToolOutput {
     };
     let px_s = px.to_string();
     let py_s = py.to_string();
-    match adb::run(serial, &["shell", "input", "tap", &px_s, &py_s], adb::DEFAULT_TIMEOUT_SECS).await {
+    match adb::run(
+        serial,
+        &["shell", "input", "tap", &px_s, &py_s],
+        adb::DEFAULT_TIMEOUT_SECS,
+    )
+    .await
+    {
         Ok(out) if out.success() => ToolOutput::ok(call_id, format!("tapped ({px}, {py})")),
         Ok(out) => ToolOutput::err(call_id, format!("tap failed: {}", out.stderr)),
         Err(e) => ToolOutput::err(call_id, e),
@@ -310,7 +347,11 @@ async fn swipe(call_id: &str, serial: &str, args: &Value) -> ToolOutput {
     ) {
         (Ok(x), Ok(y), Ok(x2), Ok(y2)) => (x, y, x2, y2),
         (a, b, c, d) => {
-            let e = [a.err(), b.err(), c.err(), d.err()].into_iter().flatten().next().unwrap();
+            let e = [a.err(), b.err(), c.err(), d.err()]
+                .into_iter()
+                .flatten()
+                .next()
+                .unwrap();
             return ToolOutput::err(call_id, e);
         }
     };
@@ -323,12 +364,28 @@ async fn swipe(call_id: &str, serial: &str, args: &Value) -> ToolOutput {
         Ok(p) => p,
         Err(e) => return ToolOutput::err(call_id, e),
     };
-    let duration = args.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(300);
-    let (a, b, c, d, dur) = (px.to_string(), py.to_string(), px2.to_string(), py2.to_string(), duration.to_string());
-    match adb::run(serial, &["shell", "input", "swipe", &a, &b, &c, &d, &dur], adb::DEFAULT_TIMEOUT_SECS).await {
-        Ok(out) if out.success() => {
-            ToolOutput::ok(call_id, format!("swiped ({px}, {py}) -> ({px2}, {py2}) over {duration}ms"))
-        }
+    let duration = args
+        .get("duration_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300);
+    let (a, b, c, d, dur) = (
+        px.to_string(),
+        py.to_string(),
+        px2.to_string(),
+        py2.to_string(),
+        duration.to_string(),
+    );
+    match adb::run(
+        serial,
+        &["shell", "input", "swipe", &a, &b, &c, &d, &dur],
+        adb::DEFAULT_TIMEOUT_SECS,
+    )
+    .await
+    {
+        Ok(out) if out.success() => ToolOutput::ok(
+            call_id,
+            format!("swiped ({px}, {py}) -> ({px2}, {py2}) over {duration}ms"),
+        ),
         Ok(out) => ToolOutput::err(call_id, format!("swipe failed: {}", out.stderr)),
         Err(e) => ToolOutput::err(call_id, e),
     }
@@ -351,7 +408,10 @@ async fn type_text(call_id: &str, serial: &str, args: &Value) -> ToolOutput {
     let quoted = adb::shell_single_quote(text);
     let cmd = format!("input text {quoted}");
     match adb::run(serial, &["shell", &cmd], adb::DEFAULT_TIMEOUT_SECS).await {
-        Ok(out) if out.success() => ToolOutput::ok(call_id, format!("typed {} characters", text.chars().count())),
+        Ok(out) if out.success() => ToolOutput::ok(
+            call_id,
+            format!("typed {} characters", text.chars().count()),
+        ),
         Ok(out) => ToolOutput::err(call_id, format!("type_text failed: {}", out.stderr)),
         Err(e) => ToolOutput::err(call_id, e),
     }
@@ -366,7 +426,13 @@ fn normalize_keycode(key: &str) -> String {
 }
 
 async fn send_key(call_id: &str, serial: &str, keycode: &str) -> ToolOutput {
-    match adb::run(serial, &["shell", "input", "keyevent", keycode], adb::DEFAULT_TIMEOUT_SECS).await {
+    match adb::run(
+        serial,
+        &["shell", "input", "keyevent", keycode],
+        adb::DEFAULT_TIMEOUT_SECS,
+    )
+    .await
+    {
         Ok(out) if out.success() => ToolOutput::ok(call_id, format!("sent {keycode}")),
         Ok(out) => ToolOutput::err(call_id, format!("key_event failed: {}", out.stderr)),
         Err(e) => ToolOutput::err(call_id, e),
@@ -420,18 +486,16 @@ async fn resolve_package_or_refuse(
     }
 }
 
-async fn launch_app(
-    call_id: &str,
-    serial: &str,
-    args: &Value,
-    declared: &[String],
-) -> ToolOutput {
+async fn launch_app(call_id: &str, serial: &str, args: &Value, declared: &[String]) -> ToolOutput {
     let package = match args.get("package").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return ToolOutput::err(call_id, "missing required parameter 'package'"),
     };
     if !adb::valid_package_name(package) {
-        return ToolOutput::err(call_id, format!("'{package}' is not a valid Android package name"));
+        return ToolOutput::err(
+            call_id,
+            format!("'{package}' is not a valid Android package name"),
+        );
     }
     let package = &match resolve_package_or_refuse(serial, package, declared).await {
         Ok(p) => p,
@@ -439,7 +503,15 @@ async fn launch_app(
     };
     match adb::run(
         serial,
-        &["shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"],
+        &[
+            "shell",
+            "monkey",
+            "-p",
+            package,
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "1",
+        ],
         adb::DEFAULT_TIMEOUT_SECS,
     )
     .await
@@ -447,37 +519,50 @@ async fn launch_app(
         Ok(out) if out.success() => ToolOutput::ok(call_id, format!("launched {package}")),
         Ok(out) => ToolOutput::err(
             call_id,
-            format!("launch_app failed (is '{package}' installed?): {}", out.stderr),
+            format!(
+                "launch_app failed (is '{package}' installed?): {}",
+                out.stderr
+            ),
         ),
         Err(e) => ToolOutput::err(call_id, e),
     }
 }
 
-async fn force_stop(
-    call_id: &str,
-    serial: &str,
-    args: &Value,
-    declared: &[String],
-) -> ToolOutput {
+async fn force_stop(call_id: &str, serial: &str, args: &Value, declared: &[String]) -> ToolOutput {
     let package = match args.get("package").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return ToolOutput::err(call_id, "missing required parameter 'package'"),
     };
     if !adb::valid_package_name(package) {
-        return ToolOutput::err(call_id, format!("'{package}' is not a valid Android package name"));
+        return ToolOutput::err(
+            call_id,
+            format!("'{package}' is not a valid Android package name"),
+        );
     }
     let package = &match resolve_package_or_refuse(serial, package, declared).await {
         Ok(p) => p,
         Err(e) => return ToolOutput::err(call_id, e),
     };
-    match adb::run(serial, &["shell", "am", "force-stop", package], adb::DEFAULT_TIMEOUT_SECS).await {
+    match adb::run(
+        serial,
+        &["shell", "am", "force-stop", package],
+        adb::DEFAULT_TIMEOUT_SECS,
+    )
+    .await
+    {
         Ok(_) => ToolOutput::ok(call_id, format!("force-stopped {package}")),
         Err(e) => ToolOutput::err(call_id, e),
     }
 }
 
 async fn list_packages(call_id: &str, serial: &str, filter: Option<&str>) -> ToolOutput {
-    let out = match adb::run(serial, &["shell", "pm", "list", "packages"], adb::DEFAULT_TIMEOUT_SECS).await {
+    let out = match adb::run(
+        serial,
+        &["shell", "pm", "list", "packages"],
+        adb::DEFAULT_TIMEOUT_SECS,
+    )
+    .await
+    {
         Ok(o) => o,
         Err(e) => return ToolOutput::err(call_id, e),
     };
@@ -497,11 +582,8 @@ async fn list_packages(call_id: &str, serial: &str, filter: Option<&str>) -> Too
 /// `mCurrentFocus` line at all), `mResumedActivity`/`mFocusedActivity` cover
 /// older releases, and the window-manager dump's `mCurrentFocus`/
 /// `mFocusedApp` are the last-resort fallback this originally shipped with.
-const FOCUS_LINE_PREFIXES: &[&str] = &[
-    "topResumedActivity",
-    "mResumedActivity",
-    "mFocusedActivity",
-];
+const FOCUS_LINE_PREFIXES: &[&str] =
+    &["topResumedActivity", "mResumedActivity", "mFocusedActivity"];
 
 async fn current_app(call_id: &str, serial: &str) -> ToolOutput {
     let activities = match adb::run(
@@ -552,7 +634,11 @@ fn find_focus_line(text: &str, prefixes: &[&str]) -> Option<String> {
 }
 
 async fn wait(call_id: &str, args: &Value) -> ToolOutput {
-    let ms = args.get("ms").and_then(|v| v.as_u64()).unwrap_or(500).min(MAX_WAIT_MS);
+    let ms = args
+        .get("ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(500)
+        .min(MAX_WAIT_MS);
     tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
     ToolOutput::ok(call_id, format!("waited {ms}ms"))
 }
@@ -605,21 +691,37 @@ mod tests {
 
     #[tokio::test]
     async fn type_text_rejects_non_ascii() {
-        let out = type_text("1", "any-serial-unused-before-ascii-check", &json!({"text": "kod på svenska"})).await;
+        let out = type_text(
+            "1",
+            "any-serial-unused-before-ascii-check",
+            &json!({"text": "kod på svenska"}),
+        )
+        .await;
         assert!(out.is_error);
         assert!(out.content.contains("ASCII"));
     }
 
     #[tokio::test]
     async fn launch_app_rejects_invalid_package() {
-        let out = launch_app("1", "any-serial-unused-before-validation", &json!({"package": "com.example; rm -rf /"}), &[]).await;
+        let out = launch_app(
+            "1",
+            "any-serial-unused-before-validation",
+            &json!({"package": "com.example; rm -rf /"}),
+            &[],
+        )
+        .await;
         assert!(out.is_error);
         assert!(out.content.contains("not a valid"));
     }
 
     #[tokio::test]
     async fn tap_rejects_out_of_range_normalized_coords() {
-        let out = tap("1", "any-serial-unused-before-range-check", &json!({"x": 1.5, "y": 0.5})).await;
+        let out = tap(
+            "1",
+            "any-serial-unused-before-range-check",
+            &json!({"x": 1.5, "y": 0.5}),
+        )
+        .await;
         assert!(out.is_error);
         assert!(out.content.contains("0.0..=1.0"));
     }

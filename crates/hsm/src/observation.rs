@@ -16,6 +16,8 @@
 
 use tokio::sync::broadcast;
 
+/// Re-export of [`UiEvent::ContextCompacted`]'s `strategy` field type.
+pub use sven_vocab::CompactionStrategyUsed;
 /// A renderable event emitted on the outward observation plane.
 ///
 /// Re-exports [`sven_vocab::SessionEvent`] — the single, unified session
@@ -24,8 +26,6 @@ use tokio::sync::broadcast;
 /// (TUI, GUI, CI, node, ACP) can render streaming output, tool progress,
 /// usage, and the transition trace while effects are in flight.
 pub use sven_vocab::SessionEvent as UiEvent;
-/// Re-export of [`UiEvent::ContextCompacted`]'s `strategy` field type.
-pub use sven_vocab::CompactionStrategyUsed;
 
 /// A broadcast sender for [`UiEvent`]s — the outward observation plane.
 ///

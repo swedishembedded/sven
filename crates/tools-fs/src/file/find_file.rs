@@ -314,11 +314,7 @@ mod tests {
         assert!(glob_matches("*.rs", "lib.rs", false));
         // With `/`, match the full path.
         assert!(glob_matches("**/*.rs", "src/lib.rs", false));
-        assert!(glob_matches(
-            "**/*.rs",
-            "crates/team/src/lib.rs",
-            false
-        ));
+        assert!(glob_matches("**/*.rs", "crates/team/src/lib.rs", false));
     }
 
     #[test]
@@ -331,11 +327,7 @@ mod tests {
     #[test]
     fn glob_matches_dir_anywhere() {
         // Pattern with ** on both sides matches inside any directory.
-        assert!(glob_matches(
-            "**/team/**",
-            "crates/team/src/lib.rs",
-            false
-        ));
+        assert!(glob_matches("**/team/**", "crates/team/src/lib.rs", false));
         assert!(!glob_matches(
             "**/team/**",
             "crates/other/src/lib.rs",

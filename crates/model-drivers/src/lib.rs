@@ -426,10 +426,8 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
         // users who wrote `provider: sven` in their config don't hit an
         // "unknown provider" error.  base_url must be set in config.
         "sven" => {
-            let base = cfg
-                .base_url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!(
+            let base = cfg.base_url.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
                     "provider 'sven' requires base_url in config.\n\
                      Set it to your local server, e.g.:\n\
                      \n\
@@ -437,7 +435,8 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
                        provider: sven\n\
                        base_url: http://koala:8000/v1\n\
                        name: <your-model-name>"
-                ))?;
+                )
+            })?;
             let k = key();
             let auth = if k.is_some() {
                 AuthStyle::Bearer
@@ -935,7 +934,10 @@ mod tests {
         use std::sync::atomic::{AtomicU32, Ordering};
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("sven-model-test-{tag}-{}-{n}.json", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "sven-model-test-{tag}-{}-{n}.json",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -965,7 +967,11 @@ mod tests {
     #[test]
     fn read_key_from_json_file_finds_the_openai_dialect_key() {
         let path = unique_temp_path("keys-ok");
-        std::fs::write(&path, r#"{"openai":"sk-brain-abc123","anthropic":"sk-brain-def456"}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"openai":"sk-brain-abc123","anthropic":"sk-brain-def456"}"#,
+        )
+        .unwrap();
         let key = read_key_from_json_file(&path, "openai");
         let _ = std::fs::remove_file(&path);
         assert_eq!(key.as_deref(), Some("sk-brain-abc123"));
@@ -1019,7 +1025,11 @@ mod tests {
             std::env::set_var("BRAIN_API_KEYS_FILE", &path);
         }
 
-        let cfg = ModelConfig { provider: "brain".into(), name: "Qwen/Qwen3-0.6B".into(), ..ModelConfig::default() };
+        let cfg = ModelConfig {
+            provider: "brain".into(),
+            name: "Qwen/Qwen3-0.6B".into(),
+            ..ModelConfig::default()
+        };
         let key = resolve_api_key(&cfg);
 
         unsafe {
@@ -1050,7 +1060,11 @@ mod tests {
             std::env::set_var("BRAIN_API_KEYS_FILE", &path);
         }
 
-        let cfg = ModelConfig { provider: "brain".into(), name: "Qwen/Qwen3-0.6B".into(), ..ModelConfig::default() };
+        let cfg = ModelConfig {
+            provider: "brain".into(),
+            name: "Qwen/Qwen3-0.6B".into(),
+            ..ModelConfig::default()
+        };
         let key = resolve_api_key(&cfg);
 
         unsafe {
@@ -1065,7 +1079,11 @@ mod tests {
         }
         let _ = std::fs::remove_file(&path);
 
-        assert_eq!(key.as_deref(), Some("sk-brain-from-env"), "an explicit env var must win over the keys file");
+        assert_eq!(
+            key.as_deref(),
+            Some("sk-brain-from-env"),
+            "an explicit env var must win over the keys file"
+        );
     }
 
     #[test]

@@ -49,7 +49,9 @@ use sven_tools::{
     tool::{Tool, ToolCall, ToolDisplay, ToolOutput},
     ToolCapability,
 };
-use sven_vocab::provenance::{FactId, FactSource, KnowledgeApprovals, LedgerAdmission, ProvenanceSink};
+use sven_vocab::provenance::{
+    FactId, FactSource, KnowledgeApprovals, LedgerAdmission, ProvenanceSink,
+};
 
 use crate::{
     ledger::{FrozenProbe, PendingFactRecord, PendingFactsLedger},
@@ -246,11 +248,11 @@ impl AssimilateFactTool {
                         .to_string())
                 }
             }
-            LedgerAdmission::Never => {
-                Err("inferred facts stay in session memory and are never recorded \
+            LedgerAdmission::Never => Err(
+                "inferred facts stay in session memory and are never recorded \
                      for training"
-                    .to_string())
-            }
+                    .to_string(),
+            ),
         }
     }
 }
@@ -354,12 +356,14 @@ impl Tool for AssimilateFactTool {
             .unwrap_or(FactSource::AgentInferred { from: Vec::new() });
 
         match (single, batch) {
-            (true, true) => {
-                ToolOutput::err(&call.id, "assimilate_fact takes exactly one of 'fact'/'facts', not both")
-            }
-            (false, false) => {
-                ToolOutput::err(&call.id, "assimilate_fact requires either 'fact' or 'facts'")
-            }
+            (true, true) => ToolOutput::err(
+                &call.id,
+                "assimilate_fact takes exactly one of 'fact'/'facts', not both",
+            ),
+            (false, false) => ToolOutput::err(
+                &call.id,
+                "assimilate_fact requires either 'fact' or 'facts'",
+            ),
             (true, false) => {
                 let (message, is_error) = self.assimilate_one(&call.args, &source).await;
                 if is_error {
@@ -404,7 +408,12 @@ impl AssimilateFactTool {
     async fn assimilate_one(&self, args: &Value, source: &FactSource) -> (String, bool) {
         let fact = match args.get("fact").and_then(|v| v.as_str()) {
             Some(f) if !f.trim().is_empty() => f.trim().to_string(),
-            _ => return ("assimilate_fact requires a non-empty 'fact'".to_string(), true),
+            _ => {
+                return (
+                    "assimilate_fact requires a non-empty 'fact'".to_string(),
+                    true,
+                )
+            }
         };
 
         // Rejected before anything is written, memory included: a malformed
@@ -487,9 +496,18 @@ impl AssimilateFactTool {
         // The ledger does blocking filesystem I/O under an advisory lock.
         let written = tokio::task::spawn_blocking(move || ledger.record_fact(&record)).await;
         match written {
-            Ok(Ok(())) => (format!("Remembered (ID={doc_id}) and recorded as durable knowledge."), false),
-            Ok(Err(e)) => (format!("Remembered (ID={doc_id}), but the ledger append failed: {e}"), true),
-            Err(e) => (format!("Remembered (ID={doc_id}), but the ledger append panicked: {e}"), true),
+            Ok(Ok(())) => (
+                format!("Remembered (ID={doc_id}) and recorded as durable knowledge."),
+                false,
+            ),
+            Ok(Err(e)) => (
+                format!("Remembered (ID={doc_id}), but the ledger append failed: {e}"),
+                true,
+            ),
+            Err(e) => (
+                format!("Remembered (ID={doc_id}), but the ledger append panicked: {e}"),
+                true,
+            ),
         }
     }
 }

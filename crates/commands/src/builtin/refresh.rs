@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `/refresh` command - re-scan skill directories and rebuild slash commands.
 
-use crate::{
-    CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
-};
+use crate::{CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand};
 
 pub struct RefreshCommand;
 

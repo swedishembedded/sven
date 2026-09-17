@@ -1,22 +1,29 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! [`GroundTool`] - a `Tool` wrapping brain's florence2 `ground` capability
-//! action: a saved screenshot PNG and a short target phrase in, a normalized
-//! bounding box out (`{found, boxes: [{phrase, bbox}]}`).
+//! [`GroundTool`] - a `Tool` that asks a vision model where an element is: a
+//! saved screenshot PNG and a short target phrase in, a normalized bounding
+//! box out (`{found, boxes: [{phrase, bbox}]}`).
 //!
-//! Reached exactly as documented in the android-ui-test roadmap:
-//! `brain florence2 ground --json --target "<target>" --in image=<path>`
-//! (see `brain`'s `crates/cli/src/caps_cli.rs` and `crates/florence2/src/
-//! caps.rs`). This mirrors `sven-tools-fs`'s ASR fallback
-//! (`crates/tools-fs/src/file/asr.rs`), the existing convention in this repo
-//! for a domain-tier `Tool` calling one of brain's capability actions: shell
-//! out to the `brain` CLI and parse its `--json` stdout, rather than
-//! duplicating the D-Bus `Brain1.Manager.Run` transport `sven-model` already
-//! owns for chat completions (that transport returns free text into a
-//! streamed `ResponseEvent`, not the structured `{found, boxes}` shape this
-//! tool needs, and machines never call a `ModelProvider` directly anyway -
-//! only `Effect::CallTool`).
+//! sven owns the CONTRACT here, not any particular model. [`GroundBackend`]
+//! is the seam, and this crate names no vendor type; the default
+//! [`SubprocessGroundBackend`] satisfies the contract by invoking a
+//! configurable grounding CLI:
+//!
+//! ```text
+//! <command> <model> ground --json --target "<target>" --in image=<path>
+//! ```
+//!
+//! answering on stdout with the `{found, boxes}` JSON above. `command` and
+//! `model` are both configuration ([`GroundConfig`]), so any tool
+//! implementing that shape can serve it. A host that already holds a vision
+//! model resident should implement [`GroundBackend`] directly instead - see
+//! that trait's own doc for why.
+//!
+//! A subprocess is deliberately NOT the same path `sven-model` uses for chat
+//! completions: that transport streams free text into a `ResponseEvent`, not
+//! the structured `{found, boxes}` shape this tool needs, and machines never
+//! call a `ModelProvider` directly anyway - only `Effect::CallTool`.
 //!
 //! Swedish Embedded AB implements solutions for on-device UI-test grounding
 //! for its clients. If your team needs expertise in vision-model-backed test
@@ -43,7 +50,13 @@ use crate::black_screen::is_flag_secure_black;
 /// How many bytes of stderr to quote back in an error message.
 const STDERR_TAIL_BYTES: usize = 512;
 
-/// Where the `ground` tool gets its `brain` invocation from.
+/// How [`SubprocessGroundBackend`] invokes a grounding CLI.
+///
+/// Every field is configuration, not architecture: point `command` at any
+/// executable satisfying the CLI contract in this module's doc and the tool
+/// works unchanged. The default is one known-good implementation, not a
+/// requirement - and an embedder that bypasses the subprocess entirely
+/// implements [`GroundBackend`] instead, where none of this applies.
 ///
 /// Deliberately env-var configured rather than added to `sven-config`'s
 /// schema: this tool is scoped to the android-ui-test workstream and does
@@ -53,12 +66,13 @@ const STDERR_TAIL_BYTES: usize = 512;
 /// device serial.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroundConfig {
-    /// Executable invoked for grounding (must accept the `brain <arch>
-    /// <action>` CLI shape).
+    /// Executable invoked for grounding. Must accept the `<command> <model>
+    /// ground --json` shape documented in this module's doc; override with
+    /// `SVEN_GROUND_COMMAND`.
     pub command: String,
-    /// Architecture/model id passed as `brain`'s first argument, e.g.
-    /// `"florence2"` (resolves to the `brain/florence2` catalog id inside
-    /// `brain` itself - see the module docs).
+    /// Model/architecture id passed as the command's first argument, e.g.
+    /// `"florence2"`. How that id resolves to weights is the grounding
+    /// command's business, not sven's; override with `SVEN_GROUND_MODEL`.
     pub model: String,
     /// Hard timeout for a single grounding subprocess, in seconds.
     pub timeout_secs: u64,
@@ -80,16 +94,15 @@ impl Default for GroundConfig {
 /// How a [`GroundTool`] actually reaches a grounding model.
 ///
 /// The seam that lets a HOST process supply an in-process, already-resident
-/// model instead of paying a cold start per call. `sven-tools-ground`
-/// deliberately has no brain dependency (see this crate's `Cargo.toml`), so
-/// this trait names no brain type: an embedder implements it over whatever
-/// it already holds.
+/// model instead of paying a cold start per call. This crate depends on no
+/// model implementation and this trait names no vendor type: an embedder
+/// implements it over whatever it already holds.
 ///
 /// [`SubprocessGroundBackend`] is the default and keeps sven standalone -
-/// one `brain` CLI invocation per call, which re-imports the checkpoint
-/// every time. A long-running embedder should implement this instead:
-/// re-loading a multi-hundred-megabyte checkpoint per screen dominates the
-/// actual inference by an order of magnitude.
+/// one CLI invocation per call, which re-imports the checkpoint every time.
+/// A long-running embedder should implement this instead: re-loading a
+/// multi-hundred-megabyte checkpoint per screen dominates the actual
+/// inference by an order of magnitude.
 #[async_trait]
 pub trait GroundBackend: Send + Sync {
     /// Locate `target` in the image at `image_path`.
@@ -107,8 +120,9 @@ pub trait GroundBackend: Send + Sync {
     async fn ground(&self, image_path: &Path, target: &str) -> Result<Value, String>;
 }
 
-/// The default [`GroundBackend`]: one `brain <arch> ground` subprocess per
-/// call. Keeps sven usable with nothing but a `brain` binary on `PATH`.
+/// The default [`GroundBackend`]: one `<command> <model> ground` subprocess
+/// per call, per this module's documented CLI contract. Keeps sven usable
+/// with nothing but a conforming grounding binary on `PATH`.
 pub struct SubprocessGroundBackend {
     cfg: GroundConfig,
 }
@@ -219,7 +233,10 @@ impl Tool for GroundTool {
         // the module docs and `black_screen`'s own docs for why this is not
         // a fallback on a bad answer but a hard local gate.
         if is_flag_secure_black(&img) {
-            debug!(image_path, "ground: solid-black FLAG_SECURE frame; skipping the grounding model");
+            debug!(
+                image_path,
+                "ground: solid-black FLAG_SECURE frame; skipping the grounding model"
+            );
             return ToolOutput::ok(
                 &call.id,
                 json!({ "secure_screen": true, "found": false, "boxes": [] }).to_string(),
@@ -241,7 +258,10 @@ impl ToolDisplay for GroundTool {
         "system"
     }
     fn collapsed_summary(&self, args: &Value) -> String {
-        args.get("target").and_then(|v| v.as_str()).unwrap_or("").to_string()
+        args.get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
     }
 }
 
@@ -284,7 +304,10 @@ fn parse_ground_stdout(stdout: &str) -> Result<Value, String> {
     if saw_json {
         Err("JSON output has no 'found'/'boxes' fields".to_string())
     } else {
-        Err(format!("no JSON line found in stdout ({} bytes)", stdout.len()))
+        Err(format!(
+            "no JSON line found in stdout ({} bytes)",
+            stdout.len()
+        ))
     }
 }
 
@@ -307,7 +330,10 @@ async fn run_ground(cfg: &GroundConfig, image_path: &Path, target: &str) -> Resu
     let timeout = Duration::from_secs(cfg.timeout_secs.max(1));
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Err(_) => {
-            return Err(format!("'{}' timed out after {}s", cfg.command, cfg.timeout_secs))
+            return Err(format!(
+                "'{}' timed out after {}s",
+                cfg.command, cfg.timeout_secs
+            ))
         }
         Ok(Err(e)) => return Err(format!("'{}' failed to run: {e}", cfg.command)),
         Ok(Ok(o)) => o,
@@ -350,7 +376,13 @@ mod tests {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
-    fn write_png(dir: &tempfile::TempDir, name: &str, rgb: [u8; 3], w: u32, h: u32) -> std::path::PathBuf {
+    fn write_png(
+        dir: &tempfile::TempDir,
+        name: &str,
+        rgb: [u8; 3],
+        w: u32,
+        h: u32,
+    ) -> std::path::PathBuf {
         let mut img = RgbImage::new(w, h);
         for p in img.pixels_mut() {
             *p = Rgb(rgb);
@@ -377,14 +409,22 @@ mod tests {
     }
 
     fn cfg_with_command(command: String) -> GroundConfig {
-        GroundConfig { command, model: "florence2".to_string(), timeout_secs: 5 }
+        GroundConfig {
+            command,
+            model: "florence2".to_string(),
+            timeout_secs: 5,
+        }
     }
 
     #[tokio::test]
     async fn missing_image_path_is_error() {
         let t = GroundTool::default();
         let out = t
-            .execute(&ToolCall { id: "1".into(), name: "ground".into(), args: json!({ "target": "x" }) })
+            .execute(&ToolCall {
+                id: "1".into(),
+                name: "ground".into(),
+                args: json!({ "target": "x" }),
+            })
             .await;
         assert!(out.is_error);
         assert!(out.content.contains("image_path"));
@@ -394,7 +434,11 @@ mod tests {
     async fn missing_target_is_error() {
         let t = GroundTool::default();
         let out = t
-            .execute(&ToolCall { id: "1".into(), name: "ground".into(), args: json!({ "image_path": "/x.png" }) })
+            .execute(&ToolCall {
+                id: "1".into(),
+                name: "ground".into(),
+                args: json!({ "image_path": "/x.png" }),
+            })
             .await;
         assert!(out.is_error);
         assert!(out.content.contains("target"));
@@ -421,7 +465,9 @@ mod tests {
     async fn a_black_screenshot_short_circuits_without_invoking_brain() {
         let dir = tempfile::tempdir().unwrap();
         let png = write_png(&dir, "black.png", [0, 0, 0], 32, 32);
-        let t = GroundTool::new(cfg_with_command("/nonexistent/should-never-run".to_string()));
+        let t = GroundTool::new(cfg_with_command(
+            "/nonexistent/should-never-run".to_string(),
+        ));
         let out = t
             .execute(&ToolCall {
                 id: "1".into(),
@@ -429,7 +475,11 @@ mod tests {
                 args: json!({ "image_path": png.to_string_lossy(), "target": "confirm on the secure screen" }),
             })
             .await;
-        assert!(!out.is_error, "a detected secure screen is a result, not a failure: {}", out.content);
+        assert!(
+            !out.is_error,
+            "a detected secure screen is a result, not a failure: {}",
+            out.content
+        );
         let v: Value = serde_json::from_str(&out.content).unwrap();
         assert_eq!(v["secure_screen"], true);
         assert_eq!(v["found"], false);
@@ -521,7 +571,9 @@ mod tests {
     async fn a_nonexistent_command_is_a_clean_spawn_error() {
         let dir = tempfile::tempdir().unwrap();
         let png = write_png(&dir, "shot.png", [10, 200, 10], 16, 16);
-        let t = GroundTool::new(cfg_with_command("/nonexistent/sven-ground-binary".to_string()));
+        let t = GroundTool::new(cfg_with_command(
+            "/nonexistent/sven-ground-binary".to_string(),
+        ));
         let out = t
             .execute(&ToolCall {
                 id: "1".into(),
@@ -583,7 +635,8 @@ mod tests {
                 args: json!({ "image_path": png.to_string_lossy(), "target": "log in" }),
             })
             .await;
-        let value: Value = serde_json::from_str(&out.content).expect("backend JSON reaches the caller");
+        let value: Value =
+            serde_json::from_str(&out.content).expect("backend JSON reaches the caller");
         assert_eq!(value["found"], json!(true));
         assert_eq!(value["boxes"][0]["phrase"], json!("log in"));
     }
@@ -628,6 +681,10 @@ mod tests {
             })
             .await;
         assert!(out.is_error, "a backend refusal must be an error");
-        assert!(out.content.contains("florence2 is not configured"), "{}", out.content);
+        assert!(
+            out.content.contains("florence2 is not configured"),
+            "{}",
+            out.content
+        );
     }
 }

@@ -15,8 +15,7 @@ use tracing::debug;
 
 use sven_model::{
     catalog::{static_catalog, ModelCatalogEntry},
-    ResponseStream,
-    CompletionRequest, MessageContent, ResponseEvent, Role,
+    CompletionRequest, MessageContent, ResponseEvent, ResponseStream, Role,
 };
 
 pub struct CohereProvider {

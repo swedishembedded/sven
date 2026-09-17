@@ -375,7 +375,10 @@ mod tests {
         assert!(!approvals.consume_approval(), "nothing to spend");
 
         approvals.record_human_approval();
-        assert!(approvals.consume_approval(), "the one approval is spendable");
+        assert!(
+            approvals.consume_approval(),
+            "the one approval is spendable"
+        );
         assert!(
             !approvals.consume_approval(),
             "one human act must not pay for a second admission"

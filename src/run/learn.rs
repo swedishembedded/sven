@@ -124,11 +124,7 @@ fn print_reports(reports: &[FactReport]) {
     for report in reports {
         match &report.outcome {
             FactOutcome::Promoted { numbers } => {
-                println!(
-                    "promoted  {}{}",
-                    report.id.as_str(),
-                    rates_suffix(numbers)
-                );
+                println!("promoted  {}{}", report.id.as_str(), rates_suffix(numbers));
             }
             FactOutcome::Rejected { reason, .. } => {
                 println!("rejected  {}  {reason}", report.id.as_str());

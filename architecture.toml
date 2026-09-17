@@ -223,13 +223,13 @@ dependencies of its own, so this can never become a cycle.
 # measured tree at the start of the refactor (2026-08-13).
 [[allow.large_file]]
 path = "crates/model-drivers/tests/wire_format_tests.rs"
-lines = 1706
+lines = 1729
+[[allow.large_file]]
+path = "crates/ci/src/runner/mod.rs"
+lines = 1433
 [[allow.large_file]]
 path = "crates/mcp-client/src/oauth.rs"
 lines = 1430
-[[allow.large_file]]
-path = "crates/ci/src/runner/mod.rs"
-lines = 1425
 [[allow.large_file]]
 path = "crates/tools-ctx/tests/context_integration.rs"
 lines = 1418
@@ -238,34 +238,34 @@ path = "crates/config/src/schema.rs"
 lines = 1396
 [[allow.large_file]]
 path = "crates/session-store/src/trace_session.rs"
-lines = 1288
+lines = 1289
 [[allow.large_file]]
 path = "crates/session-store/src/trace_session_tests.rs"
-lines = 1252
+lines = 1249
 [[allow.large_file]]
 path = "crates/team/src/spawn.rs"
 lines = 1232
 [[allow.large_file]]
+path = "crates/executors/tests/pipeline_integration.rs"
+lines = 1195
+[[allow.large_file]]
 path = "crates/tui/src/app/chat_ops.rs"
 lines = 1164
 [[allow.large_file]]
-path = "crates/executors/tests/pipeline_integration.rs"
-lines = 1131
-[[allow.large_file]]
 path = "crates/kernel/src/lib.rs"
-lines = 1054
+lines = 1048
+[[allow.large_file]]
+path = "crates/bootstrap/src/runtime_builder.rs"
+lines = 1025
 [[allow.large_file]]
 path = "crates/mcp-client/src/manager.rs"
 lines = 1016
 [[allow.large_file]]
-path = "crates/bootstrap/src/runtime_builder.rs"
-lines = 1016
+path = "crates/ci/src/runner/runtime_runner.rs"
+lines = 905
 [[allow.large_file]]
 path = "crates/tools-ctx/src/context/store.rs"
 lines = 885
-[[allow.large_file]]
-path = "crates/ci/src/runner/runtime_runner.rs"
-lines = 887
 [[allow.large_file]]
 path = "crates/tui/src/app/session_manager.rs"
 lines = 856
@@ -282,5 +282,8 @@ lines = 814
 path = "crates/executors/src/turn.rs"
 lines = 812
 [[allow.large_file]]
+path = "crates/machines/src/machines/sdlc/mod.rs"
+lines = 812
+[[allow.large_file]]
 path = "crates/model-drivers/src/lib.rs"
-lines = 810
+lines = 809

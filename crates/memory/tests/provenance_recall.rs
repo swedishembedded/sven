@@ -376,14 +376,20 @@ async fn a_second_session_can_neither_delete_nor_probe_a_confined_record() {
     assert!(!out.is_error, "{}", out.content);
     let out = first
         .assimilate
-        .execute(&learn("Termination is optional, says this page.", "ev-unapproved"))
+        .execute(&learn(
+            "Termination is optional, says this page.",
+            "ev-unapproved",
+        ))
         .await;
     assert!(!out.is_error, "{}", out.content);
 
     let second = session(&store, &ledger);
     let out = second
         .memory
-        .execute(&call("semantic_memory", json!({ "action": "forget", "id": 2 })))
+        .execute(&call(
+            "semantic_memory",
+            json!({ "action": "forget", "id": 2 }),
+        ))
         .await;
     assert!(
         out.is_error && out.content.contains("No memory with ID 2"),
@@ -399,7 +405,10 @@ async fn a_second_session_can_neither_delete_nor_probe_a_confined_record() {
     // Nothing else is confined: a shared record is still any session's to forget.
     let out = second
         .memory
-        .execute(&call("semantic_memory", json!({ "action": "forget", "id": 1 })))
+        .execute(&call(
+            "semantic_memory",
+            json!({ "action": "forget", "id": 1 }),
+        ))
         .await;
     assert!(!out.is_error, "{}", out.content);
     assert_eq!(*store.deleted.lock().expect("store lock"), vec![1]);
@@ -407,7 +416,10 @@ async fn a_second_session_can_neither_delete_nor_probe_a_confined_record() {
     // And the owning session can still forget its own confined record.
     let out = first
         .memory
-        .execute(&call("semantic_memory", json!({ "action": "forget", "id": 2 })))
+        .execute(&call(
+            "semantic_memory",
+            json!({ "action": "forget", "id": 2 }),
+        ))
         .await;
     assert!(!out.is_error, "{}", out.content);
     assert_eq!(*store.deleted.lock().expect("store lock"), vec![1, 2]);

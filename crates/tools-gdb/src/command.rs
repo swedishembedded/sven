@@ -161,8 +161,8 @@ impl Tool for GdbCommandTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sven_tool_api::tool::ToolCall;
     use sven_config::GdbConfig;
+    use sven_tool_api::tool::ToolCall;
 
     fn call(args: Value) -> ToolCall {
         ToolCall {

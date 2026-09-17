@@ -717,7 +717,9 @@ mod tests {
         // that the result has a non-empty provider string rather than a
         // fixed value. Guarded because auto-detection reads process-global
         // env state shared with the brain/openrouter/anthropic/openai tests.
-        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUTODETECT_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let cfg = load(None).unwrap();
         assert!(!cfg.model.provider.is_empty());
         // A detected-but-unresolved brain (empty name is its deliberate
@@ -985,7 +987,9 @@ model:
 
     #[test]
     fn load_auto_detection_priority_openrouter_wins() {
-        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUTODETECT_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // We must be careful with env vars in parallel tests, but this is
         // the only test that sets these specific keys.
         std::env::set_var("OPENROUTER_API_KEY", "sk-or-v1-test");
@@ -1010,7 +1014,9 @@ model:
 
     #[test]
     fn brain_env_key_wins_over_openrouter() {
-        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUTODETECT_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // We must be careful with env vars in parallel tests, but these
         // specific keys (BRAIN_*) are only set in this test.
         std::env::set_var("BRAIN_API_KEY", "sk-brain-test");
@@ -1022,12 +1028,17 @@ model:
         std::env::remove_var("OPENROUTER_API_KEY");
 
         assert_eq!(cfg.model.provider, "brain");
-        assert_eq!(cfg.model.name, "", "empty is the deliberate sentinel resolved later by from_config_probed");
+        assert_eq!(
+            cfg.model.name, "",
+            "empty is the deliberate sentinel resolved later by from_config_probed"
+        );
     }
 
     #[test]
     fn brain_keys_file_wins_over_openrouter_when_no_env_key() {
-        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUTODETECT_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let f = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(f.path(), r#"{"openai":"sk-brain-from-file"}"#).unwrap();
         std::env::set_var("BRAIN_API_KEYS_FILE", f.path());
@@ -1043,7 +1054,9 @@ model:
 
     #[test]
     fn brain_not_detected_when_neither_env_key_nor_file_present() {
-        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUTODETECT_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Sanity check for the tests above: with BOTH BRAIN_* signals absent
         // and OpenRouter present, OpenRouter must still win (unchanged
         // pre-existing behaviour — an existing cloud user is unaffected).
@@ -1060,7 +1073,9 @@ model:
 
     #[test]
     fn sven_disable_brain_autodetect_opts_out() {
-        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUTODETECT_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("BRAIN_API_KEY", "sk-brain-test");
         std::env::set_var("SVEN_DISABLE_BRAIN_AUTODETECT", "1");
         std::env::set_var("OPENROUTER_API_KEY", "sk-or-v1-test");
@@ -1071,12 +1086,17 @@ model:
         std::env::remove_var("SVEN_DISABLE_BRAIN_AUTODETECT");
         std::env::remove_var("OPENROUTER_API_KEY");
 
-        assert_eq!(cfg.model.provider, "openrouter", "the opt-out must fall through to the next priority tier");
+        assert_eq!(
+            cfg.model.provider, "openrouter",
+            "the opt-out must fall through to the next priority tier"
+        );
     }
 
     #[test]
     fn explicit_model_config_wins_over_brain_autodetect() {
-        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUTODETECT_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         use std::io::Write;
         std::env::set_var("BRAIN_API_KEY", "sk-brain-test");
 
@@ -1100,7 +1120,9 @@ model:
         // each other's set_var/remove_var and flaked under `cargo test`'s
         // default parallel execution (reproduced: passed standalone, failed
         // under the full workspace suite).
-        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUTODETECT_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("BRAIN_API_KEYS_FILE", "/explicit/override.json");
         std::env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
         let path = brain_keys_file_path();
@@ -1111,11 +1133,16 @@ model:
 
     #[test]
     fn brain_keys_file_path_falls_back_to_xdg_runtime_dir() {
-        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUTODETECT_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("BRAIN_API_KEYS_FILE");
         std::env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
         let path = brain_keys_file_path();
         std::env::remove_var("XDG_RUNTIME_DIR");
-        assert_eq!(path, Some(PathBuf::from("/run/user/1000/brain/api-keys.json")));
+        assert_eq!(
+            path,
+            Some(PathBuf::from("/run/user/1000/brain/api-keys.json"))
+        );
     }
 }

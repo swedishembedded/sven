@@ -40,7 +40,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{ApprovalId, Effect, Event, ObservationSink, QuestionId, ToolCallId, ToolCapability};
+use sven_hsm::{
+    ApprovalId, Effect, Event, ObservationSink, QuestionId, ToolCallId, ToolCapability,
+};
 use sven_kernel::{EffectExecutor, EventSink};
 use sven_vocab::provenance::KnowledgeApprovals;
 use tokio::sync::{mpsc, oneshot};
@@ -155,10 +157,7 @@ impl UserExecutor {
     /// side and the durable-recording side (`mpsc::Receiver<ParkedQuestion>`).
     pub fn parked_channel(
         cap: usize,
-    ) -> (
-        mpsc::Sender<ParkedQuestion>,
-        mpsc::Receiver<ParkedQuestion>,
-    ) {
+    ) -> (mpsc::Sender<ParkedQuestion>, mpsc::Receiver<ParkedQuestion>) {
         mpsc::channel(cap)
     }
 }
@@ -376,7 +375,8 @@ mod tests {
         let sink = rt.sink();
         exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
             .await;
-        let outcome = tokio::time::timeout(std::time::Duration::from_millis(200), rt.wait_done()).await;
+        let outcome =
+            tokio::time::timeout(std::time::Duration::from_millis(200), rt.wait_done()).await;
         rt.abort();
         assert!(
             outcome.is_err(),
@@ -475,7 +475,10 @@ mod tests {
         assert_eq!(parked.question_id, question_id);
         assert_eq!(parked.call_id, call_id);
         assert_eq!(parked.prompt, "Which framework?");
-        assert_eq!(parked.options, vec!["Axum".to_string(), "Actix".to_string()]);
+        assert_eq!(
+            parked.options,
+            vec!["Axum".to_string(), "Actix".to_string()]
+        );
     }
 
     #[tokio::test]

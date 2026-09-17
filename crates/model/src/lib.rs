@@ -352,10 +352,16 @@ mod tests {
     fn resolve_slash_separated_clears_capacity_and_driver_options_on_provider_change() {
         let cfg = resolve_model_cfg(&local_server_base(), "brain/Qwen/Qwen3-0.6B");
         assert_eq!(cfg.provider, "brain");
-        assert_eq!(cfg.max_tokens, None, "a different provider's context window must not carry over");
+        assert_eq!(
+            cfg.max_tokens, None,
+            "a different provider's context window must not carry over"
+        );
         assert_eq!(cfg.max_output_tokens, None);
         assert_eq!(cfg.max_input_tokens, None);
-        assert!(cfg.driver_options.is_null(), "a different provider's extra request fields must not carry over");
+        assert!(
+            cfg.driver_options.is_null(),
+            "a different provider's extra request fields must not carry over"
+        );
         assert_eq!(cfg.azure_resource, None);
         assert_eq!(cfg.aws_region, None);
         // base_url clearing was already covered above; capacity/driver_options

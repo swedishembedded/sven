@@ -26,13 +26,13 @@ use sven_hsm::{
     status::Reaction,
 };
 
+use super::decisions::decision_schema;
 use super::decisions::{message_of, payload_of, status_of, DecisionStatus};
 use super::prompts;
 use crate::machines::loop_core::{
     build_turn_effect, init_loop, mark_calls_pending, max_rounds, on_llm_turn_complete,
     on_tool_result, GeneratingAction,
 };
-use super::decisions::decision_schema;
 
 /// States of the one-shot task submachine.
 #[allow(missing_docs)]
@@ -106,12 +106,18 @@ impl Machine for TaskMachine {
             Run => match event {
                 Event::Internal(InternalEvent::Entry) => {
                     // Check continuation re-entry guard.
-                    if ctx.facts.get("task_in_continuation").and_then(serde_json::Value::as_bool).unwrap_or(false) {
+                    if ctx
+                        .facts
+                        .get("task_in_continuation")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                    {
                         ctx.facts.remove("task_in_continuation");
                         return Reaction::handled();
                     }
                     // Fresh entry: start the task turn.
-                    let tools_owned: Vec<String> = prompts::WRITE_TOOLS.iter().map(|s| s.to_string()).collect();
+                    let tools_owned: Vec<String> =
+                        prompts::WRITE_TOOLS.iter().map(|s| s.to_string()).collect();
                     init_loop(ctx, "task", &tools_owned, "", 40);
                     let req = prompts::task_request(&self.task);
                     Reaction::effects(vec![Effect::CallLlm { request: req }])
@@ -136,9 +142,17 @@ impl Machine for TaskMachine {
                             );
                             Reaction::transition(Done, [], "task complete")
                         }
-                        GeneratingAction::CallTools { calls, tool_effects, .. } => {
+                        GeneratingAction::CallTools {
+                            calls,
+                            tool_effects,
+                            ..
+                        } => {
                             mark_calls_pending(ctx, &calls);
-                            Reaction::transition(RunningTools, tool_effects, "task: dispatching tool calls")
+                            Reaction::transition(
+                                RunningTools,
+                                tool_effects,
+                                "task: dispatching tool calls",
+                            )
                         }
                         GeneratingAction::EmptyTurn { nudge_effect } => {
                             Reaction::effects(vec![nudge_effect])
@@ -171,7 +185,8 @@ impl Machine for TaskMachine {
                     let all_done = on_tool_result(ctx, call_id);
                     if all_done {
                         // Build continuation turn with the decision schema.
-                        let tools_owned: Vec<String> = prompts::WRITE_TOOLS.iter().map(|s| s.to_string()).collect();
+                        let tools_owned: Vec<String> =
+                            prompts::WRITE_TOOLS.iter().map(|s| s.to_string()).collect();
                         let next_turn = build_turn_effect(
                             "task",
                             &tools_owned,
@@ -184,12 +199,20 @@ impl Machine for TaskMachine {
                             Some("decision"),
                         );
                         ctx.set_fact("task_in_continuation", json!(true));
-                        Reaction::transition(Run, vec![next_turn], "task: all tools done; continuing")
+                        Reaction::transition(
+                            Run,
+                            vec![next_turn],
+                            "task: all tools done; continuing",
+                        )
                     } else {
                         Reaction::handled()
                     }
                 }
-                Event::ToolApprovalRequired { call_id, capability, description } => {
+                Event::ToolApprovalRequired {
+                    call_id,
+                    capability,
+                    description,
+                } => {
                     // Auto-deny in task context (no human approver).
                     let _ = on_tool_result(ctx, call_id);
                     // Emit a RequestHumanApproval for the kernel to handle.
@@ -204,4 +227,3 @@ impl Machine for TaskMachine {
         }
     }
 }
-

@@ -387,7 +387,8 @@ responses:
         let first = stream.next().await.expect("stream must yield one item");
         let err = first.expect_err("error rule must yield Err, not a ResponseEvent");
         assert!(
-            err.to_string().contains("the model failed to process the request"),
+            err.to_string()
+                .contains("the model failed to process the request"),
             "unexpected error message: {err}"
         );
         // Exactly one item - a stream that fails mid-request has nothing more to say.

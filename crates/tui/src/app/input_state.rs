@@ -156,7 +156,6 @@ impl InputState {
     }
 }
 
-
 // ── EditState ─────────────────────────────────────────────────────────────────
 
 /// State for inline editing of a chat segment or a queued message.

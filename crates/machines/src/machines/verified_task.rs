@@ -138,7 +138,9 @@ impl VerifiedTaskMachine {
     /// Creates a fresh instance, not yet seeded with a task.
     #[must_use]
     pub fn new() -> Self {
-        Self { id: MachineId::new() }
+        Self {
+            id: MachineId::new(),
+        }
     }
 
     /// Permission policy: `RunVerifier` only where verification actually
@@ -147,12 +149,15 @@ impl VerifiedTaskMachine {
     #[must_use]
     pub fn permission_policy() -> PermissionPolicy {
         use ToolCapability::{
-            AssimilateKnowledge, ExecuteShell, GitOperation, IngestDocument, ReadFile,
-            RunVerifier, WriteFile,
+            AssimilateKnowledge, ExecuteShell, GitOperation, IngestDocument, ReadFile, RunVerifier,
+            WriteFile,
         };
         PermissionPolicy::builder()
             .allow_globally([ReadFile, AssimilateKnowledge, IngestDocument])
-            .allow_in(VerifiedTaskState::Attempting, [WriteFile, ExecuteShell, GitOperation])
+            .allow_in(
+                VerifiedTaskState::Attempting,
+                [WriteFile, ExecuteShell, GitOperation],
+            )
             .allow_in(VerifiedTaskState::Verifying, [RunVerifier])
             .build()
     }
@@ -197,7 +202,12 @@ fn append_attempt(ctx: &mut Context, record: Value) {
 
 /// Builds the turn instruction for one attempt, folding in the previous
 /// attempt's failure reason (if any) so a retry has something to act on.
-fn attempt_request(prompt: &str, attempt_index: u32, max_attempts: u32, last_failure: Option<&str>) -> Effect {
+fn attempt_request(
+    prompt: &str,
+    attempt_index: u32,
+    max_attempts: u32,
+    last_failure: Option<&str>,
+) -> Effect {
     let retry_note = match last_failure {
         Some(reason) if attempt_index > 0 => format!(
             "\n\nThis is attempt {} of {max_attempts}. The previous attempt was \
@@ -215,7 +225,10 @@ fn attempt_request(prompt: &str, attempt_index: u32, max_attempts: u32, last_fai
          decision yourself, an external verifier decides that.\n\n\
          Task:\n\"{prompt}\"{retry_note}"
     );
-    let tools: Vec<String> = super::sdlc::prompts::WRITE_TOOLS.iter().map(|s| s.to_string()).collect();
+    let tools: Vec<String> = super::sdlc::prompts::WRITE_TOOLS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     build_turn_effect(
         THREAD,
         &tools,
@@ -281,7 +294,9 @@ impl Machine for VerifiedTaskMachine {
                     };
                     let frozen = FrozenVerifier::freeze(
                         seed.task.verifier.clone(),
-                        sven_vocab::verify::VerifierOrigin::Authored { digest: seed.source_digest },
+                        sven_vocab::verify::VerifierOrigin::Authored {
+                            digest: seed.source_digest,
+                        },
                     );
                     ctx.set_fact(FROZEN_VERIFIER_FACT, serde_json::to_value(&frozen).unwrap());
                     ctx.set_fact(TASK_ID_FACT, seed.task.id.clone());
@@ -301,13 +316,26 @@ impl Machine for VerifiedTaskMachine {
                     init_loop(
                         ctx,
                         THREAD,
-                        &super::sdlc::prompts::WRITE_TOOLS.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                        &super::sdlc::prompts::WRITE_TOOLS
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>(),
                         "",
                         MAX_ROUNDS_PER_ATTEMPT,
                     );
-                    let prompt = ctx.fact(TASK_PROMPT_FACT).and_then(Value::as_str).unwrap_or_default().to_string();
-                    let attempt_index = ctx.fact(ATTEMPT_INDEX_FACT).and_then(Value::as_u64).unwrap_or(0) as u32;
-                    let max_attempts = ctx.fact(MAX_ATTEMPTS_FACT).and_then(Value::as_u64).unwrap_or(1) as u32;
+                    let prompt = ctx
+                        .fact(TASK_PROMPT_FACT)
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    let attempt_index = ctx
+                        .fact(ATTEMPT_INDEX_FACT)
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as u32;
+                    let max_attempts = ctx
+                        .fact(MAX_ATTEMPTS_FACT)
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1) as u32;
                     let last_failure = ctx
                         .fact(ATTEMPTS_FACT)
                         .and_then(Value::as_array)
@@ -315,7 +343,12 @@ impl Machine for VerifiedTaskMachine {
                         .and_then(|a| a.get("outcome"))
                         .and_then(Value::as_str)
                         .map(|s| s.to_string());
-                    let req = attempt_request(&prompt, attempt_index, max_attempts, last_failure.as_deref());
+                    let req = attempt_request(
+                        &prompt,
+                        attempt_index,
+                        max_attempts,
+                        last_failure.as_deref(),
+                    );
                     Reaction::effects(vec![req])
                 }
                 Event::LlmTurnComplete { .. } => match on_llm_turn_complete(ctx, event) {
@@ -331,19 +364,31 @@ impl Machine for VerifiedTaskMachine {
                             "attempt claims completion; verifying",
                         )
                     }
-                    GeneratingAction::CallTools { tool_effects, calls, .. } => {
+                    GeneratingAction::CallTools {
+                        tool_effects,
+                        calls,
+                        ..
+                    } => {
                         mark_calls_pending(ctx, &calls);
                         Reaction::effects(tool_effects)
                     }
-                    GeneratingAction::EmptyTurn { nudge_effect } => Reaction::effects(vec![nudge_effect]),
+                    GeneratingAction::EmptyTurn { nudge_effect } => {
+                        Reaction::effects(vec![nudge_effect])
+                    }
                     GeneratingAction::MaxRoundsReached { .. } => {
-                        let attempt_index = ctx.fact(ATTEMPT_INDEX_FACT).and_then(Value::as_u64).unwrap_or(0) as u32;
+                        let attempt_index = ctx
+                            .fact(ATTEMPT_INDEX_FACT)
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0) as u32;
                         append_attempt(ctx, attempt_record(attempt_index, false, None));
                         next_after_attempt(ctx)
                     }
                 },
                 Event::LlmFailed { error } => {
-                    ctx.set_fact(ERROR_FACT, format!("attempt failed to reach the model: {error}"));
+                    ctx.set_fact(
+                        ERROR_FACT,
+                        format!("attempt failed to reach the model: {error}"),
+                    );
                     Reaction::transition(Done, [], "attempt could not reach the model")
                 }
                 _ => match handle_tool_event(ctx, |ls| ls.continuation_turn(), event) {
@@ -366,11 +411,21 @@ impl Machine for VerifiedTaskMachine {
                         // actually cause this today (see the module doc) -
                         // but if it ever does, the verdict must not be
                         // trusted, so this returns Unknown, not a pass.
-                        ctx.set_fact(ERROR_FACT, "frozen verifier no longer matches its pinned hash");
-                        return Reaction::transition(Done, [], "verifier tampered; refusing to grade");
+                        ctx.set_fact(
+                            ERROR_FACT,
+                            "frozen verifier no longer matches its pinned hash",
+                        );
+                        return Reaction::transition(
+                            Done,
+                            [],
+                            "verifier tampered; refusing to grade",
+                        );
                     }
 
-                    let attempt_index = ctx.fact(ATTEMPT_INDEX_FACT).and_then(Value::as_u64).unwrap_or(0) as u32;
+                    let attempt_index = ctx
+                        .fact(ATTEMPT_INDEX_FACT)
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as u32;
                     append_attempt(ctx, attempt_record(attempt_index, true, Some(verdict)));
 
                     match verdict {
@@ -387,7 +442,10 @@ impl Machine for VerifiedTaskMachine {
                             Reaction::transition(Parked, [], "verifier needs a human to decide")
                         }
                         VerifierVerdict::Unknown { reason } => {
-                            ctx.set_fact(NEEDS_HUMAN_FACT, json!({"question": reason, "options": []}));
+                            ctx.set_fact(
+                                NEEDS_HUMAN_FACT,
+                                json!({"question": reason, "options": []}),
+                            );
                             Reaction::transition(Parked, [], "verifier could not reach a verdict")
                         }
                     }
@@ -398,14 +456,20 @@ impl Machine for VerifiedTaskMachine {
             // ── Retrying: a real, audited bounce back into Attempting ──────
             Retrying => match event {
                 Event::Internal(InternalEvent::Entry) => {
-                    let next_index = ctx.fact(ATTEMPT_INDEX_FACT).and_then(Value::as_u64).unwrap_or(0) as u32 + 1;
+                    let next_index = ctx
+                        .fact(ATTEMPT_INDEX_FACT)
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as u32
+                        + 1;
                     ctx.set_fact(ATTEMPT_INDEX_FACT, next_index);
                     Reaction::effects(vec![Effect::EmitInternal {
                         name: RETRY_READY_SIGNAL.to_string(),
                         payload: Value::Null,
                     }])
                 }
-                Event::Internal(InternalEvent::Custom { name, .. }) if name == RETRY_READY_SIGNAL => {
+                Event::Internal(InternalEvent::Custom { name, .. })
+                    if name == RETRY_READY_SIGNAL =>
+                {
                     Reaction::transition(Attempting, [], "starting next attempt")
                 }
                 _ => Reaction::Ignored,
@@ -419,13 +483,27 @@ impl Machine for VerifiedTaskMachine {
 /// Decide the next state after an attempt that did not pass: retry while
 /// budget remains, otherwise a final, verified failure.
 fn next_after_attempt(ctx: &mut Context) -> Reaction<VerifiedTaskState> {
-    let attempt_index = ctx.fact(ATTEMPT_INDEX_FACT).and_then(Value::as_u64).unwrap_or(0) as u32;
-    let max_attempts = ctx.fact(MAX_ATTEMPTS_FACT).and_then(Value::as_u64).unwrap_or(1) as u32;
+    let attempt_index = ctx
+        .fact(ATTEMPT_INDEX_FACT)
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    let max_attempts = ctx
+        .fact(MAX_ATTEMPTS_FACT)
+        .and_then(Value::as_u64)
+        .unwrap_or(1) as u32;
     if attempt_index + 1 < max_attempts {
-        Reaction::transition(VerifiedTaskState::Retrying, [], "attempt did not pass; retrying")
+        Reaction::transition(
+            VerifiedTaskState::Retrying,
+            [],
+            "attempt did not pass; retrying",
+        )
     } else {
         ctx.set_fact(VERDICT_FACT, json!({"passed": false}));
-        Reaction::transition(VerifiedTaskState::Done, [], "retries exhausted without a passing verdict")
+        Reaction::transition(
+            VerifiedTaskState::Done,
+            [],
+            "retries exhausted without a passing verdict",
+        )
     }
 }
 
@@ -440,14 +518,22 @@ mod tests {
 
     fn seed(id: &str, prompt: &str, verifier: VerifierSpec, max_attempts: u32) -> String {
         serde_json::to_string(&VerifiedTaskSeed {
-            task: Task { id: id.into(), prompt: prompt.into(), verifier, max_attempts },
+            task: Task {
+                id: id.into(),
+                prompt: prompt.into(),
+                verifier,
+                max_attempts,
+            },
             source_digest: ContentDigest::from_hex("deadbeef"),
         })
         .unwrap()
     }
 
     fn file_exists_spec(path: &str) -> VerifierSpec {
-        VerifierSpec::FileExists { path: path.into(), min_bytes: None }
+        VerifierSpec::FileExists {
+            path: path.into(),
+            min_bytes: None,
+        }
     }
 
     /// Drives one event through the machine, following the resulting
@@ -457,12 +543,20 @@ mod tests {
     /// that one round trip too. A real `Runtime` does this via
     /// `InternalExecutor`; this direct `dispatch_state` unit test has no
     /// executor, so it plays that one part by hand.
-    fn drive(m: &mut VerifiedTaskMachine, ctx: &mut Context, state: &mut VerifiedTaskState, event: Event) {
+    fn drive(
+        m: &mut VerifiedTaskMachine,
+        ctx: &mut Context,
+        state: &mut VerifiedTaskState,
+        event: Event,
+    ) {
         let reaction = m.dispatch_state(*state, &event, ctx);
         if let Reaction::Transition { target, .. } = reaction {
             *state = target;
             let entry = m.dispatch_state(*state, &Event::entry(), ctx);
-            assert!(!entry.is_transition(), "entry handlers must never transition");
+            assert!(
+                !entry.is_transition(),
+                "entry handlers must never transition"
+            );
             if let Reaction::Handled(effects) = entry {
                 for effect in effects {
                     if let Effect::EmitInternal { name, payload } = effect {
@@ -474,7 +568,10 @@ mod tests {
                         if let Reaction::Transition { target, .. } = bounced {
                             *state = target;
                             let entry = m.dispatch_state(*state, &Event::entry(), ctx);
-                            assert!(!entry.is_transition(), "entry handlers must never transition");
+                            assert!(
+                                !entry.is_transition(),
+                                "entry handlers must never transition"
+                            );
                         }
                     }
                 }
@@ -483,7 +580,11 @@ mod tests {
     }
 
     fn final_turn(text: &str) -> Event {
-        Event::LlmTurnComplete { thread: THREAD.into(), text: text.into(), tool_calls: vec![] }
+        Event::LlmTurnComplete {
+            thread: THREAD.into(),
+            text: text.into(),
+            tool_calls: vec![],
+        }
     }
 
     #[test]
@@ -511,10 +612,20 @@ mod tests {
         let mut state = m.initial();
         let _ = m.dispatch_state(state, &Event::entry(), &mut ctx);
 
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: "not json".into() });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: "not json".into(),
+            },
+        );
 
         assert_eq!(state, VerifiedTaskState::Done);
-        assert!(ctx.fact(VERDICT_FACT).is_none(), "a setup error must never read as a graded outcome");
+        assert!(
+            ctx.fact(VERDICT_FACT).is_none(),
+            "a setup error must never read as a graded outcome"
+        );
         assert!(ctx.fact(ERROR_FACT).is_some());
     }
 
@@ -531,7 +642,9 @@ mod tests {
             &mut m,
             &mut ctx,
             &mut state,
-            Event::UserMessage { text: seed("t1", "write out.txt", file_exists_spec("out.txt"), 1) },
+            Event::UserMessage {
+                text: seed("t1", "write out.txt", file_exists_spec("out.txt"), 1),
+            },
         );
 
         drive(&mut m, &mut ctx, &mut state, final_turn("Done!"));
@@ -542,13 +655,18 @@ mod tests {
             &mut ctx,
             &mut state,
             Event::VerificationComplete {
-                verdict: VerifierVerdict::Failed { reason: "out.txt does not exist".into() },
+                verdict: VerifierVerdict::Failed {
+                    reason: "out.txt does not exist".into(),
+                },
             },
         );
 
         assert_eq!(state, VerifiedTaskState::Done);
         let verdict = ctx.fact(VERDICT_FACT).unwrap();
-        assert_eq!(verdict["passed"], false, "a claim with no evidence must never pass");
+        assert_eq!(
+            verdict["passed"], false,
+            "a claim with no evidence must never pass"
+        );
     }
 
     #[test]
@@ -561,7 +679,9 @@ mod tests {
             &mut m,
             &mut ctx,
             &mut state,
-            Event::UserMessage { text: seed("t1", "write out.txt", file_exists_spec("out.txt"), 2) },
+            Event::UserMessage {
+                text: seed("t1", "write out.txt", file_exists_spec("out.txt"), 2),
+            },
         );
 
         // Attempt 1: claims done, verifier disagrees.
@@ -571,15 +691,33 @@ mod tests {
             &mut ctx,
             &mut state,
             Event::VerificationComplete {
-                verdict: VerifierVerdict::Failed { reason: "missing".into() },
+                verdict: VerifierVerdict::Failed {
+                    reason: "missing".into(),
+                },
             },
         );
-        assert_eq!(state, VerifiedTaskState::Attempting, "must bounce through Retrying back into Attempting");
+        assert_eq!(
+            state,
+            VerifiedTaskState::Attempting,
+            "must bounce through Retrying back into Attempting"
+        );
         assert_eq!(ctx.fact(ATTEMPT_INDEX_FACT).unwrap(), 1);
 
         // Attempt 2: claims done, verifier agrees.
-        drive(&mut m, &mut ctx, &mut state, final_turn("Done, for real this time."));
-        drive(&mut m, &mut ctx, &mut state, Event::VerificationComplete { verdict: VerifierVerdict::Passed });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            final_turn("Done, for real this time."),
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::VerificationComplete {
+                verdict: VerifierVerdict::Passed,
+            },
+        );
 
         assert_eq!(state, VerifiedTaskState::Done);
         assert_eq!(ctx.fact(VERDICT_FACT).unwrap()["passed"], true);
@@ -606,7 +744,10 @@ mod tests {
                 text: seed(
                     "t1",
                     "decide something ambiguous",
-                    VerifierSpec::AskHuman { question: "did it work?".into(), options: vec![] },
+                    VerifierSpec::AskHuman {
+                        question: "did it work?".into(),
+                        options: vec![],
+                    },
                     1,
                 ),
             },
@@ -618,12 +759,18 @@ mod tests {
             &mut ctx,
             &mut state,
             Event::VerificationComplete {
-                verdict: VerifierVerdict::NeedsHuman { question: "did it work?".into(), options: vec![] },
+                verdict: VerifierVerdict::NeedsHuman {
+                    question: "did it work?".into(),
+                    options: vec![],
+                },
             },
         );
 
         assert_eq!(state, VerifiedTaskState::Parked);
-        assert!(ctx.fact(VERDICT_FACT).is_none(), "parked must never read as a graded outcome");
+        assert!(
+            ctx.fact(VERDICT_FACT).is_none(),
+            "parked must never read as a graded outcome"
+        );
         assert!(ctx.fact(NEEDS_HUMAN_FACT).is_some());
     }
 
@@ -642,7 +789,9 @@ mod tests {
             &mut m,
             &mut ctx,
             &mut state,
-            Event::UserMessage { text: seed("t1", "do it", file_exists_spec("out.txt"), 1) },
+            Event::UserMessage {
+                text: seed("t1", "do it", file_exists_spec("out.txt"), 1),
+            },
         );
         let frozen_before = ctx.fact(FROZEN_VERIFIER_FACT).cloned().unwrap();
 
@@ -679,7 +828,9 @@ mod tests {
             &mut m,
             &mut ctx,
             &mut state,
-            Event::UserMessage { text: seed("t1", "do it", file_exists_spec("out.txt"), 1) },
+            Event::UserMessage {
+                text: seed("t1", "do it", file_exists_spec("out.txt"), 1),
+            },
         );
 
         // Drive tool-call turns until the round budget is exceeded.
@@ -699,7 +850,11 @@ mod tests {
             let _ = on_tool_result(&mut ctx, &call_id);
         }
 
-        assert_eq!(state, VerifiedTaskState::Done, "no attempts remain (max_attempts=1)");
+        assert_eq!(
+            state,
+            VerifiedTaskState::Done,
+            "no attempts remain (max_attempts=1)"
+        );
         assert_eq!(ctx.fact(VERDICT_FACT).unwrap()["passed"], false);
         let attempts = ctx.fact(ATTEMPTS_FACT).unwrap().as_array().unwrap().clone();
         assert_eq!(attempts.len(), 1);

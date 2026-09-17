@@ -33,22 +33,31 @@ pub fn evaluate<'a>(
         match spec {
             VerifierSpec::FileExists { path, min_bytes } => {
                 let Some(resolved) = jail(root, path) else {
-                    return VerifierVerdict::Unknown { reason: format!("path escapes root: {path}") };
+                    return VerifierVerdict::Unknown {
+                        reason: format!("path escapes root: {path}"),
+                    };
                 };
                 match tokio::fs::metadata(&resolved).await {
                     Ok(meta) => match min_bytes {
                         Some(min) if meta.len() < *min => VerifierVerdict::Failed {
-                            reason: format!("{path} is {} bytes, expected at least {min}", meta.len()),
+                            reason: format!(
+                                "{path} is {} bytes, expected at least {min}",
+                                meta.len()
+                            ),
                         },
                         _ => VerifierVerdict::Passed,
                     },
-                    Err(_) => VerifierVerdict::Failed { reason: format!("{path} does not exist") },
+                    Err(_) => VerifierVerdict::Failed {
+                        reason: format!("{path} does not exist"),
+                    },
                 }
             }
 
             VerifierSpec::FileHash { path, sha256 } => {
                 let Some(resolved) = jail(root, path) else {
-                    return VerifierVerdict::Unknown { reason: format!("path escapes root: {path}") };
+                    return VerifierVerdict::Unknown {
+                        reason: format!("path escapes root: {path}"),
+                    };
                 };
                 match tokio::fs::read(&resolved).await {
                     Ok(bytes) => {
@@ -61,21 +70,38 @@ pub fn evaluate<'a>(
                             }
                         }
                     }
-                    Err(e) => VerifierVerdict::Failed { reason: format!("{path} unreadable: {e}") },
+                    Err(e) => VerifierVerdict::Failed {
+                        reason: format!("{path} unreadable: {e}"),
+                    },
                 }
             }
 
-            VerifierSpec::JsonPredicate { path, pointer, op, value } => {
+            VerifierSpec::JsonPredicate {
+                path,
+                pointer,
+                op,
+                value,
+            } => {
                 let Some(resolved) = jail(root, path) else {
-                    return VerifierVerdict::Unknown { reason: format!("path escapes root: {path}") };
+                    return VerifierVerdict::Unknown {
+                        reason: format!("path escapes root: {path}"),
+                    };
                 };
                 let bytes = match tokio::fs::read(&resolved).await {
                     Ok(b) => b,
-                    Err(e) => return VerifierVerdict::Failed { reason: format!("{path} unreadable: {e}") },
+                    Err(e) => {
+                        return VerifierVerdict::Failed {
+                            reason: format!("{path} unreadable: {e}"),
+                        }
+                    }
                 };
                 let doc: serde_json::Value = match serde_json::from_slice(&bytes) {
                     Ok(v) => v,
-                    Err(e) => return VerifierVerdict::Unknown { reason: format!("{path} is not valid JSON: {e}") },
+                    Err(e) => {
+                        return VerifierVerdict::Unknown {
+                            reason: format!("{path} is not valid JSON: {e}"),
+                        }
+                    }
                 };
                 let Some(found) = doc.pointer(pointer) else {
                     return VerifierVerdict::Failed {
@@ -99,10 +125,18 @@ pub fn evaluate<'a>(
                 }
             }
 
-            VerifierSpec::HttpPredicate { url, expect_status, body_contains } => {
+            VerifierSpec::HttpPredicate {
+                url,
+                expect_status,
+                body_contains,
+            } => {
                 let response = match reqwest::get(url).await {
                     Ok(r) => r,
-                    Err(e) => return VerifierVerdict::Unknown { reason: format!("{url} unreachable: {e}") },
+                    Err(e) => {
+                        return VerifierVerdict::Unknown {
+                            reason: format!("{url} unreachable: {e}"),
+                        }
+                    }
                 };
                 let status = response.status().as_u16();
                 if let Some(expected) = expect_status {
@@ -115,7 +149,11 @@ pub fn evaluate<'a>(
                 if let Some(needle) = body_contains {
                     let body = match response.text().await {
                         Ok(b) => b,
-                        Err(e) => return VerifierVerdict::Unknown { reason: format!("{url} body unreadable: {e}") },
+                        Err(e) => {
+                            return VerifierVerdict::Unknown {
+                                reason: format!("{url} body unreadable: {e}"),
+                            }
+                        }
                     };
                     if !body.contains(needle.as_str()) {
                         return VerifierVerdict::Failed {
@@ -142,7 +180,9 @@ pub fn evaluate<'a>(
             }
 
             VerifierSpec::Any { specs } => {
-                let mut last = VerifierVerdict::Unknown { reason: "Any with no sub-specs".to_string() };
+                let mut last = VerifierVerdict::Unknown {
+                    reason: "Any with no sub-specs".to_string(),
+                };
                 for s in specs {
                     let v = evaluate(s, root).await;
                     if matches!(v, VerifierVerdict::Passed) {
@@ -229,37 +269,64 @@ mod tests {
     async fn file_exists_passes_when_present() {
         let dir = tempdir();
         std::fs::write(dir.path().join("out.txt"), "hello").unwrap();
-        let spec = VerifierSpec::FileExists { path: "out.txt".into(), min_bytes: None };
+        let spec = VerifierSpec::FileExists {
+            path: "out.txt".into(),
+            min_bytes: None,
+        };
         assert_eq!(evaluate(&spec, dir.path()).await, VerifierVerdict::Passed);
     }
 
     #[tokio::test]
     async fn file_exists_fails_when_absent() {
         let dir = tempdir();
-        let spec = VerifierSpec::FileExists { path: "missing.txt".into(), min_bytes: None };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Failed { .. }));
+        let spec = VerifierSpec::FileExists {
+            path: "missing.txt".into(),
+            min_bytes: None,
+        };
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Failed { .. }
+        ));
     }
 
     #[tokio::test]
     async fn file_exists_enforces_min_bytes() {
         let dir = tempdir();
         std::fs::write(dir.path().join("out.txt"), "hi").unwrap(); // 2 bytes
-        let spec = VerifierSpec::FileExists { path: "out.txt".into(), min_bytes: Some(10) };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Failed { .. }));
+        let spec = VerifierSpec::FileExists {
+            path: "out.txt".into(),
+            min_bytes: Some(10),
+        };
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Failed { .. }
+        ));
     }
 
     #[tokio::test]
     async fn a_path_escaping_the_root_is_unknown_not_evaluated() {
         let dir = tempdir();
-        let spec = VerifierSpec::FileExists { path: "../../etc/passwd".into(), min_bytes: None };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Unknown { .. }));
+        let spec = VerifierSpec::FileExists {
+            path: "../../etc/passwd".into(),
+            min_bytes: None,
+        };
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Unknown { .. }
+        ));
     }
 
     #[tokio::test]
     async fn an_absolute_path_is_unknown_not_evaluated() {
         let dir = tempdir();
-        let spec = VerifierSpec::FileExists { path: "/etc/passwd".into(), min_bytes: None };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Unknown { .. }));
+        let spec = VerifierSpec::FileExists {
+            path: "/etc/passwd".into(),
+            min_bytes: None,
+        };
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Unknown { .. }
+        ));
     }
 
     // ── FileHash ─────────────────────────────────────────────────────────
@@ -269,7 +336,10 @@ mod tests {
         let dir = tempdir();
         std::fs::write(dir.path().join("out.txt"), "hello").unwrap();
         let digest = hex::encode(Sha256::digest(b"hello"));
-        let spec = VerifierSpec::FileHash { path: "out.txt".into(), sha256: digest };
+        let spec = VerifierSpec::FileHash {
+            path: "out.txt".into(),
+            sha256: digest,
+        };
         assert_eq!(evaluate(&spec, dir.path()).await, VerifierVerdict::Passed);
     }
 
@@ -277,8 +347,14 @@ mod tests {
     async fn file_hash_fails_on_mismatched_digest() {
         let dir = tempdir();
         std::fs::write(dir.path().join("out.txt"), "hello").unwrap();
-        let spec = VerifierSpec::FileHash { path: "out.txt".into(), sha256: "0".repeat(64) };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Failed { .. }));
+        let spec = VerifierSpec::FileHash {
+            path: "out.txt".into(),
+            sha256: "0".repeat(64),
+        };
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Failed { .. }
+        ));
     }
 
     // ── JsonPredicate ────────────────────────────────────────────────────
@@ -306,7 +382,10 @@ mod tests {
             op: JsonCmpOp::Eq,
             value: serde_json::json!("ok"),
         };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Failed { .. }));
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Failed { .. }
+        ));
     }
 
     #[tokio::test]
@@ -319,7 +398,10 @@ mod tests {
             op: JsonCmpOp::Eq,
             value: serde_json::json!("ok"),
         };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Failed { .. }));
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Failed { .. }
+        ));
     }
 
     #[tokio::test]
@@ -332,13 +414,20 @@ mod tests {
             op: JsonCmpOp::Eq,
             value: serde_json::json!(null),
         };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Unknown { .. }));
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Unknown { .. }
+        ));
     }
 
     #[tokio::test]
     async fn json_predicate_contains_passes_on_substring() {
         let dir = tempdir();
-        std::fs::write(dir.path().join("r.json"), r#"{"log":"build succeeded at 12:00"}"#).unwrap();
+        std::fs::write(
+            dir.path().join("r.json"),
+            r#"{"log":"build succeeded at 12:00"}"#,
+        )
+        .unwrap();
         let spec = VerifierSpec::JsonPredicate {
             path: "r.json".into(),
             pointer: "/log".into(),
@@ -363,7 +452,9 @@ mod tests {
                 assert_eq!(question, "Did it work?");
                 assert_eq!(options, vec!["Yes".to_string(), "No".to_string()]);
             }
-            other => panic!("AskHuman must never resolve to anything but NeedsHuman, got {other:?}"),
+            other => {
+                panic!("AskHuman must never resolve to anything but NeedsHuman, got {other:?}")
+            }
         }
     }
 
@@ -375,19 +466,37 @@ mod tests {
         std::fs::write(dir.path().join("a"), "x").unwrap();
         let all_pass = VerifierSpec::All {
             specs: vec![
-                VerifierSpec::FileExists { path: "a".into(), min_bytes: None },
-                VerifierSpec::FileExists { path: "a".into(), min_bytes: None },
+                VerifierSpec::FileExists {
+                    path: "a".into(),
+                    min_bytes: None,
+                },
+                VerifierSpec::FileExists {
+                    path: "a".into(),
+                    min_bytes: None,
+                },
             ],
         };
-        assert_eq!(evaluate(&all_pass, dir.path()).await, VerifierVerdict::Passed);
+        assert_eq!(
+            evaluate(&all_pass, dir.path()).await,
+            VerifierVerdict::Passed
+        );
 
         let one_fails = VerifierSpec::All {
             specs: vec![
-                VerifierSpec::FileExists { path: "a".into(), min_bytes: None },
-                VerifierSpec::FileExists { path: "missing".into(), min_bytes: None },
+                VerifierSpec::FileExists {
+                    path: "a".into(),
+                    min_bytes: None,
+                },
+                VerifierSpec::FileExists {
+                    path: "missing".into(),
+                    min_bytes: None,
+                },
             ],
         };
-        assert!(matches!(evaluate(&one_fails, dir.path()).await, VerifierVerdict::Failed { .. }));
+        assert!(matches!(
+            evaluate(&one_fails, dir.path()).await,
+            VerifierVerdict::Failed { .. }
+        ));
     }
 
     #[tokio::test]
@@ -396,8 +505,14 @@ mod tests {
         std::fs::write(dir.path().join("a"), "x").unwrap();
         let spec = VerifierSpec::Any {
             specs: vec![
-                VerifierSpec::FileExists { path: "missing".into(), min_bytes: None },
-                VerifierSpec::FileExists { path: "a".into(), min_bytes: None },
+                VerifierSpec::FileExists {
+                    path: "missing".into(),
+                    min_bytes: None,
+                },
+                VerifierSpec::FileExists {
+                    path: "a".into(),
+                    min_bytes: None,
+                },
             ],
         };
         assert_eq!(evaluate(&spec, dir.path()).await, VerifierVerdict::Passed);
@@ -408,11 +523,20 @@ mod tests {
         let dir = tempdir();
         let spec = VerifierSpec::Any {
             specs: vec![
-                VerifierSpec::FileExists { path: "missing1".into(), min_bytes: None },
-                VerifierSpec::FileExists { path: "missing2".into(), min_bytes: None },
+                VerifierSpec::FileExists {
+                    path: "missing1".into(),
+                    min_bytes: None,
+                },
+                VerifierSpec::FileExists {
+                    path: "missing2".into(),
+                    min_bytes: None,
+                },
             ],
         };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Failed { .. }));
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Failed { .. }
+        ));
     }
 
     // ── Unsupported ──────────────────────────────────────────────────────
@@ -421,7 +545,10 @@ mod tests {
     async fn unsupported_is_always_unknown_never_passed() {
         let dir = tempdir();
         let spec = VerifierSpec::Unsupported;
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Unknown { .. }));
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Unknown { .. }
+        ));
     }
 
     // ── HttpPredicate ────────────────────────────────────────────────────
@@ -463,8 +590,15 @@ mod tests {
     async fn http_predicate_fails_on_wrong_status() {
         let dir = tempdir();
         let url = serve_once("HTTP/1.1 500 Internal Server Error", "oops").await;
-        let spec = VerifierSpec::HttpPredicate { url, expect_status: Some(200), body_contains: None };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Failed { .. }));
+        let spec = VerifierSpec::HttpPredicate {
+            url,
+            expect_status: Some(200),
+            body_contains: None,
+        };
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Failed { .. }
+        ));
     }
 
     #[tokio::test]
@@ -476,7 +610,10 @@ mod tests {
             expect_status: Some(200),
             body_contains: Some("succeeded".into()),
         };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Failed { .. }));
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Failed { .. }
+        ));
     }
 
     #[tokio::test]
@@ -488,7 +625,10 @@ mod tests {
             expect_status: Some(200),
             body_contains: None,
         };
-        assert!(matches!(evaluate(&spec, dir.path()).await, VerifierVerdict::Unknown { .. }));
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Unknown { .. }
+        ));
     }
 
     // ── VerifyExecutor ──────────────────────────────────────────────────────
@@ -577,7 +717,11 @@ mod tests {
         .await;
         rt.wait_done().await;
         let report = rt.join().await.unwrap();
-        let verdict = report.ctx.fact("verdict").cloned().expect("verdict fact set");
+        let verdict = report
+            .ctx
+            .fact("verdict")
+            .cloned()
+            .expect("verdict fact set");
         serde_json::from_value(verdict).unwrap()
     }
 
@@ -586,15 +730,24 @@ mod tests {
         let dir = tempdir();
         std::fs::write(dir.path().join("out.txt"), "hi").unwrap();
         let mut exec = VerifyExecutor::new(dir.path());
-        let spec = VerifierSpec::FileExists { path: "out.txt".into(), min_bytes: None };
-        assert_eq!(run_verify_effect(&mut exec, spec).await, VerifierVerdict::Passed);
+        let spec = VerifierSpec::FileExists {
+            path: "out.txt".into(),
+            min_bytes: None,
+        };
+        assert_eq!(
+            run_verify_effect(&mut exec, spec).await,
+            VerifierVerdict::Passed
+        );
     }
 
     #[tokio::test]
     async fn verify_executor_jails_to_its_own_root_not_a_spec_supplied_one() {
         let dir = tempdir();
         let mut exec = VerifyExecutor::new(dir.path());
-        let spec = VerifierSpec::FileExists { path: "/etc/passwd".into(), min_bytes: None };
+        let spec = VerifierSpec::FileExists {
+            path: "/etc/passwd".into(),
+            min_bytes: None,
+        };
         assert!(matches!(
             run_verify_effect(&mut exec, spec).await,
             VerifierVerdict::Unknown { .. }
@@ -613,10 +766,17 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(sven_hsm::Effect::PersistAudit, &sink, &sven_hsm::ObservationSink::default())
-            .await;
+        exec.execute(
+            sven_hsm::Effect::PersistAudit,
+            &sink,
+            &sven_hsm::ObservationSink::default(),
+        )
+        .await;
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        assert!(!rt.status().done, "a non-Verify effect must not post anything");
+        assert!(
+            !rt.status().done,
+            "a non-Verify effect must not post anything"
+        );
         rt.abort();
     }
 }

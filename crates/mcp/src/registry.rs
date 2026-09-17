@@ -13,7 +13,9 @@
 
 use sven_tools::ToolRegistry;
 use sven_tools_exec::{RunTerminalCommandTool, ShellTool};
-use sven_tools_fs::{DeleteFileTool, EditFileTool, FindFileTool, ReadFileTool, ReadImageTool, WriteTool};
+use sven_tools_fs::{
+    DeleteFileTool, EditFileTool, FindFileTool, ReadFileTool, ReadImageTool, WriteTool,
+};
 use sven_tools_web::{GrepTool, ReadLintsTool, SearchCodebaseTool, WebFetchTool, WebSearchTool};
 
 /// Tool names included in the default MCP-safe set.

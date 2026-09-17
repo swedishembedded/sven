@@ -27,10 +27,10 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
+    use sven_model::{Message, Role};
     use sven_session_store::{
         parse_conversation, parse_workflow, serialize_conversation_turn, Step, StepQueue,
     };
-    use sven_model::{Message, Role};
 
     // ── Helper aliases ────────────────────────────────────────────────────────
 

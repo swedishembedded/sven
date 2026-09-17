@@ -60,7 +60,11 @@ async fn ingest_document_computes_its_own_digest_never_trusts_a_model_supplied_o
         })
         .await;
 
-    assert!(!out.is_error, "ingest_document should succeed: {}", out.content);
+    assert!(
+        !out.is_error,
+        "ingest_document should succeed: {}",
+        out.content
+    );
 
     let real = real_digest(content);
     let ingested = ledger.ingested_document_digests().expect("read ledger");
@@ -73,7 +77,10 @@ async fn ingest_document_computes_its_own_digest_never_trusts_a_model_supplied_o
 
     match out.provenance.map(|b| *b) {
         Some(FactSource::UserProvidedDocument { digest, uri, .. }) => {
-            assert_eq!(digest, real, "attached provenance must carry the real digest too");
+            assert_eq!(
+                digest, real,
+                "attached provenance must carry the real digest too"
+            );
             assert_eq!(uri, file_path.to_string_lossy());
         }
         other => panic!("expected UserProvidedDocument provenance, got {other:?}"),
@@ -129,7 +136,10 @@ async fn ingest_document_refuses_both_path_and_url_together() {
 
     assert!(out.is_error);
     assert!(
-        ledger.ingested_document_digests().expect("read ledger").is_empty(),
+        ledger
+            .ingested_document_digests()
+            .expect("read ledger")
+            .is_empty(),
         "an ambiguous call must record nothing"
     );
 }
@@ -139,7 +149,9 @@ async fn ingest_document_refuses_both_path_and_url_together() {
 /// mocking of `reqwest` itself - `fetch_document` hits a real socket, the same
 /// discipline `sven-executors::verify`'s `HttpPredicate` tests use.
 async fn serve_once(body: &'static str) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let addr = listener.local_addr().expect("local_addr");
     tokio::spawn(async move {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -175,7 +187,11 @@ async fn ingest_document_from_a_url_fetches_and_returns_readable_text() {
         })
         .await;
 
-    assert!(!out.is_error, "ingest_document should succeed: {}", out.content);
+    assert!(
+        !out.is_error,
+        "ingest_document should succeed: {}",
+        out.content
+    );
     assert!(
         out.content.contains("The CAN bus runs at 500 kbit/s."),
         "the fetched text must be in the tool's own output, since there is no \

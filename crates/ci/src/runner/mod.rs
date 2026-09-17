@@ -499,8 +499,8 @@ impl CiRunner {
         // fails fast with the same error the legacy runner surfaced before
         // constructing the agent. The kernel session (re)builds the provider
         // from `model_cfg` per turn.
-        let _ =
-            sven_model_drivers::from_config(&model_cfg).context("failed to initialise model provider")?;
+        let _ = sven_model_drivers::from_config(&model_cfg)
+            .context("failed to initialise model provider")?;
 
         write_stderr(&format!(
             "[sven:settings] model={} mode={}",
@@ -920,19 +920,23 @@ impl CiRunner {
             // ── --attach: pre-load attachments into the first user turn ─────
             // No tool call is involved, so this works even with models that
             // cannot call tools at all.
-            let attached_parts: Option<Vec<sven_model::ContentPart>> =
-                if pending_attachments.is_empty() {
-                    None
-                } else {
-                    let paths = std::mem::take(&mut pending_attachments);
-                    // The agent's *current* model: a per-step override may
-                    // already have replaced the initial one, and its
-                    // modalities are what decide native vs. transcribed audio.
-                    let model = agent
-                        .model()
-                        .context("failed to initialise model provider for --attach")?;
-                    Some(build_attachment_parts(&step_content, &paths, &model, &self.config.tools.asr).await?)
-                };
+            let attached_parts: Option<Vec<sven_model::ContentPart>> = if pending_attachments
+                .is_empty()
+            {
+                None
+            } else {
+                let paths = std::mem::take(&mut pending_attachments);
+                // The agent's *current* model: a per-step override may
+                // already have replaced the initial one, and its
+                // modalities are what decide native vs. transcribed audio.
+                let model = agent
+                    .model()
+                    .context("failed to initialise model provider for --attach")?;
+                Some(
+                    build_attachment_parts(&step_content, &paths, &model, &self.config.tools.asr)
+                        .await?,
+                )
+            };
 
             // Record the user turn before submitting. A user message always
             // closes any pending agent step from the *previous* CI step (see
@@ -1384,7 +1388,11 @@ impl CiRunner {
                             })
                             .collect::<Vec<_>>()
                             .join("");
-                        if text.is_empty() { None } else { Some(text) }
+                        if text.is_empty() {
+                            None
+                        } else {
+                            Some(text)
+                        }
                     }
                     _ => None,
                 });

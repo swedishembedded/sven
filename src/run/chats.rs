@@ -34,10 +34,7 @@ pub(crate) fn print_chats(limit: usize) {
                 } else {
                     format!("{:?}", e.status)
                 };
-                println!(
-                    "{:<38}  {:<16}  {:<9}  {}",
-                    display_id, date, status, title
-                );
+                println!("{:<38}  {:<16}  {:<9}  {}", display_id, date, status, title);
             }
             println!("\nTotal: {} session(s)", entries.len());
             println!("Sessions dir: {}", session_dir().display());

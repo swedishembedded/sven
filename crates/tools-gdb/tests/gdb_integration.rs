@@ -304,8 +304,7 @@ mod gdb_integration {
         ).unwrap();
 
         let result =
-            sven_tools_gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
-                .await;
+            sven_tools_gdb::discovery::discover_gdb_server_command_in(Some(dir.path())).await;
 
         let cmd = result.unwrap().unwrap();
         assert!(
@@ -333,11 +332,10 @@ mod gdb_integration {
         )
         .unwrap();
 
-        let cmd =
-            sven_tools_gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
-                .await
-                .unwrap()
-                .unwrap();
+        let cmd = sven_tools_gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
+            .await
+            .unwrap()
+            .unwrap();
 
         assert!(
             cmd.contains("AT32F435RMT7"),
@@ -356,11 +354,10 @@ mod gdb_integration {
         )
         .unwrap();
 
-        let cmd =
-            sven_tools_gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
-                .await
-                .unwrap()
-                .unwrap();
+        let cmd = sven_tools_gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
+            .await
+            .unwrap()
+            .unwrap();
 
         assert!(cmd.contains("AT32F435RMT7"), "got: {cmd}");
     }
@@ -369,8 +366,7 @@ mod gdb_integration {
     async fn discovery_returns_none_in_empty_dir() {
         let dir = tempfile::tempdir().unwrap();
         let result =
-            sven_tools_gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
-                .await;
+            sven_tools_gdb::discovery::discover_gdb_server_command_in(Some(dir.path())).await;
         assert!(result.unwrap().is_none());
     }
 
@@ -388,11 +384,10 @@ mod gdb_integration {
         )
         .unwrap();
 
-        let cmd =
-            sven_tools_gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
-                .await
-                .unwrap()
-                .unwrap();
+        let cmd = sven_tools_gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
+            .await
+            .unwrap()
+            .unwrap();
 
         assert!(cmd.contains("GDBINIT_DEVICE"), ".gdbinit should win: {cmd}");
         assert!(

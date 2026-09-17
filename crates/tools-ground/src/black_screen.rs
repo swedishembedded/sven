@@ -10,7 +10,7 @@
 //! A grounding model has no way to answer a question about content that was
 //! never sent to it, and Florence-2 confidently hallucinating a bounding box
 //! on a blank frame would be worse than an honest "cannot see this" - so this
-//! check runs **before** any bytes reach `brain`, not as a fallback after a
+//! check runs **before** any bytes reach the model, not as a fallback after a
 //! bad answer comes back.
 //!
 //! Swedish Embedded AB implements solutions for on-device UI-test grounding

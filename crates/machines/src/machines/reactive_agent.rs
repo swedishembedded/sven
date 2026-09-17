@@ -485,10 +485,7 @@ impl Machine for ReactiveAgentMachine {
 mod tests {
     use super::*;
     use sven_hsm::{
-        dispatch::Hsm,
-        effect::EffectKind,
-        ids::ToolCallId,
-        permissions::ToolCapability,
+        dispatch::Hsm, effect::EffectKind, ids::ToolCallId, permissions::ToolCapability,
     };
 
     fn make_hsm() -> (Hsm<ReactiveAgentMachine>, Context) {

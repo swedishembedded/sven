@@ -20,7 +20,10 @@ use crate::cli::QuestionsCommands;
 pub(crate) fn run_questions_command(cmd: &QuestionsCommands) -> anyhow::Result<()> {
     match cmd {
         QuestionsCommands::List { json } => list(*json),
-        QuestionsCommands::Answer { question_id, answer } => answer_question(question_id, answer),
+        QuestionsCommands::Answer {
+            question_id,
+            answer,
+        } => answer_question(question_id, answer),
     }
 }
 

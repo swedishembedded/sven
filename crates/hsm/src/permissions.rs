@@ -259,11 +259,19 @@ pub fn capability_for_tool_name(name: &str) -> ToolCapability {
         n if n.starts_with("ingest_") => ToolCapability::IngestDocument,
         n if n.starts_with("delete_") => ToolCapability::DeleteFile,
         n if n.starts_with("write_") || n.starts_with("edit_") => ToolCapability::WriteFile,
-        n if n.starts_with("read_") || n.starts_with("find_") || n.starts_with("search_")
-            || n.starts_with("grep") || n.starts_with("list_") || n.starts_with("buf_")
-            || n.starts_with("context_") => ToolCapability::ReadFile,
-        n if n.starts_with("shell") || n.starts_with("run_terminal")
-            || n.starts_with("gdb") => ToolCapability::ExecuteShell,
+        n if n.starts_with("read_")
+            || n.starts_with("find_")
+            || n.starts_with("search_")
+            || n.starts_with("grep")
+            || n.starts_with("list_")
+            || n.starts_with("buf_")
+            || n.starts_with("context_") =>
+        {
+            ToolCapability::ReadFile
+        }
+        n if n.starts_with("shell") || n.starts_with("run_terminal") || n.starts_with("gdb") => {
+            ToolCapability::ExecuteShell
+        }
         n if n.starts_with("web_") || n.starts_with("fetch") => ToolCapability::NetworkAccess,
         n if n.starts_with("git_") => ToolCapability::GitOperation,
         _ => ToolCapability::NetworkAccess,

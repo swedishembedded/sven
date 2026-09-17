@@ -145,7 +145,11 @@ async fn a_user_provided_document_fact_reaches_the_ledger_without_a_per_fact_app
         })))
         .await;
 
-    assert!(!out.is_error, "assimilation should succeed: {}", out.content);
+    assert!(
+        !out.is_error,
+        "assimilation should succeed: {}",
+        out.content
+    );
     assert_eq!(fx.store.len(), 1, "the fact is always written to memory");
     let facts = fx.ledger.pending_facts().expect("read ledger");
     assert_eq!(facts.len(), 1, "the document fact must reach the ledger");
@@ -171,7 +175,11 @@ async fn a_web_sourced_fact_still_requires_a_human_approved_event() {
         })))
         .await;
 
-    assert!(!out.is_error, "memory write still succeeds: {}", out.content);
+    assert!(
+        !out.is_error,
+        "memory write still succeeds: {}",
+        out.content
+    );
     assert_eq!(fx.store.len(), 1, "the fact is always written to memory");
     assert!(
         fx.ledger.pending_facts().expect("read ledger").is_empty(),
@@ -265,8 +273,10 @@ async fn a_document_fact_whose_digest_does_not_match_any_approved_document_is_re
         .record_document(&a_document(&ingested))
         .expect("record document");
     // Claims a *different* digest than the one actually handed over.
-    fx.provenance
-        .record("ev-forged", a_document_source(&ContentDigest::from_hex("deadbeef")));
+    fx.provenance.record(
+        "ev-forged",
+        a_document_source(&ContentDigest::from_hex("deadbeef")),
+    );
 
     let out = fx
         .tool
@@ -315,7 +325,11 @@ async fn assimilate_fact_refuses_a_web_sourced_record_whose_url_is_absent() {
         })))
         .await;
 
-    assert!(!out.is_error, "still remembered in session memory: {}", out.content);
+    assert!(
+        !out.is_error,
+        "still remembered in session memory: {}",
+        out.content
+    );
     assert_eq!(fx.store.len(), 1);
     assert!(
         fx.ledger.pending_facts().expect("read ledger").is_empty(),
@@ -439,7 +453,11 @@ async fn a_frozen_probe_travels_into_the_ledger_beside_its_fact() {
         })))
         .await;
 
-    assert!(!out.is_error, "assimilation should succeed: {}", out.content);
+    assert!(
+        !out.is_error,
+        "assimilation should succeed: {}",
+        out.content
+    );
     let facts = fx.ledger.pending_facts().expect("read ledger");
     assert_eq!(facts.len(), 1);
     assert_eq!(
@@ -518,7 +536,9 @@ async fn a_half_written_or_leaking_probe_is_refused_never_silently_dropped() {
 async fn a_batch_of_facts_shares_one_evidence_handle_and_all_reach_the_ledger() {
     let fx = fixture();
     let digest = ContentDigest::from_hex("abc123");
-    fx.ledger.record_document(&a_document(&digest)).expect("record document");
+    fx.ledger
+        .record_document(&a_document(&digest))
+        .expect("record document");
     fx.provenance.record("ev-doc", a_document_source(&digest));
 
     let out = fx
@@ -537,11 +557,17 @@ async fn a_batch_of_facts_shares_one_evidence_handle_and_all_reach_the_ledger() 
         })))
         .await;
 
-    assert!(!out.is_error, "a fully-admissible batch should succeed: {}", out.content);
+    assert!(
+        !out.is_error,
+        "a fully-admissible batch should succeed: {}",
+        out.content
+    );
     assert_eq!(fx.store.len(), 3, "every fact in the batch is remembered");
     let facts = fx.ledger.pending_facts().expect("read ledger");
     assert_eq!(facts.len(), 3, "every fact in the batch reaches the ledger");
-    assert!(facts.iter().all(|f| matches!(f.source, FactSource::UserProvidedDocument { .. })));
+    assert!(facts
+        .iter()
+        .all(|f| matches!(f.source, FactSource::UserProvidedDocument { .. })));
     assert_eq!(
         facts.iter().filter(|f| f.probe.is_some()).count(),
         1,
@@ -555,7 +581,9 @@ async fn a_batch_of_facts_shares_one_evidence_handle_and_all_reach_the_ledger() 
 async fn a_batch_partial_failure_still_admits_the_good_items() {
     let fx = fixture();
     let digest = ContentDigest::from_hex("abc123");
-    fx.ledger.record_document(&a_document(&digest)).expect("record document");
+    fx.ledger
+        .record_document(&a_document(&digest))
+        .expect("record document");
     fx.provenance.record("ev-doc", a_document_source(&digest));
 
     let out = fx
@@ -570,9 +598,19 @@ async fn a_batch_partial_failure_still_admits_the_good_items() {
         })))
         .await;
 
-    assert!(!out.is_error, "at least one item succeeded, so the call itself is not an error");
-    assert!(out.content.contains("2."), "the summary should be per-item, numbered");
-    assert_eq!(fx.store.len(), 2, "only the two well-formed facts are remembered");
+    assert!(
+        !out.is_error,
+        "at least one item succeeded, so the call itself is not an error"
+    );
+    assert!(
+        out.content.contains("2."),
+        "the summary should be per-item, numbered"
+    );
+    assert_eq!(
+        fx.store.len(),
+        2,
+        "only the two well-formed facts are remembered"
+    );
     let facts = fx.ledger.pending_facts().expect("read ledger");
     assert_eq!(facts.len(), 2);
 }
@@ -628,6 +666,14 @@ async fn a_web_sourced_batch_still_spends_one_approval_per_fact() {
 
     assert!(!out.is_error, "the first two items succeeded");
     let facts = fx.ledger.pending_facts().expect("read ledger");
-    assert_eq!(facts.len(), 2, "only the two approved facts reach the ledger");
-    assert_eq!(fx.store.len(), 3, "all three are still remembered for this session");
+    assert_eq!(
+        facts.len(),
+        2,
+        "only the two approved facts reach the ledger"
+    );
+    assert_eq!(
+        fx.store.len(),
+        3,
+        "all three are still remembered for this session"
+    );
 }

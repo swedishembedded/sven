@@ -128,8 +128,7 @@ struct AllowSections {
 
 fn load_config(workspace_root: &Path) -> Result<ArchConfig> {
     let path = workspace_root.join("architecture.toml");
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
@@ -160,7 +159,10 @@ fn cargo_metadata(workspace_root: &Path) -> Result<Vec<Package>> {
         serde_json::from_slice(&out.stdout).context("parsing cargo metadata JSON")?;
     let mut packages = Vec::new();
     for p in v["packages"].as_array().context("packages[] missing")? {
-        let name = p["name"].as_str().context("package.name missing")?.to_string();
+        let name = p["name"]
+            .as_str()
+            .context("package.name missing")?
+            .to_string();
         let manifest_path = p["manifest_path"]
             .as_str()
             .context("package.manifest_path missing")?;
@@ -169,8 +171,14 @@ fn cargo_metadata(workspace_root: &Path) -> Result<Vec<Package>> {
             .context("manifest_path has no parent")?
             .to_path_buf();
         let mut deps = Vec::new();
-        for d in p["dependencies"].as_array().context("dependencies[] missing")? {
-            let dep_name = d["name"].as_str().context("dependency.name missing")?.to_string();
+        for d in p["dependencies"]
+            .as_array()
+            .context("dependencies[] missing")?
+        {
+            let dep_name = d["name"]
+                .as_str()
+                .context("dependency.name missing")?
+                .to_string();
             // kind is null for a normal dependency, "dev" or "build" otherwise.
             let is_normal = d["kind"].is_null();
             deps.push((dep_name, is_normal));
@@ -235,7 +243,10 @@ fn run_arch(workspace_root: &Path, profile: Option<&str>) -> Result<Vec<String>>
     let mut seen_same_layer = BTreeSet::new();
 
     for p in &packages {
-        let Some(&from_tier) = cfg.crates.get(&p.name).and_then(|t| tier_index.get(t.as_str()))
+        let Some(&from_tier) = cfg
+            .crates
+            .get(&p.name)
+            .and_then(|t| tier_index.get(t.as_str()))
         else {
             continue; // already reported as ARCH-001
         };

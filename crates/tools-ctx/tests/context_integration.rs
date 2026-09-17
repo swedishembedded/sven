@@ -23,9 +23,9 @@ use serde_json::json;
 use tempfile::{NamedTempFile, TempDir};
 use tokio::sync::Mutex;
 
+use sven_tool_api::tool::{Tool, ToolCall};
 use sven_tools_ctx::context::store::ContextStore;
 use sven_tools_ctx::context::{ContextGrepTool, ContextOpenTool, ContextReadTool};
-use sven_tool_api::tool::{Tool, ToolCall};
 
 // ─── Paths to always-present source files ─────────────────────────────────────
 

@@ -172,7 +172,10 @@ impl GmailProvider {
     /// only by its owner — it holds a long-lived Google credential.
     async fn write_token(&self, token: &GmailToken) -> anyhow::Result<()> {
         let json = serde_json::to_vec_pretty(token)?;
-        let dir = self.token_path.parent().unwrap_or(std::path::Path::new("."));
+        let dir = self
+            .token_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
         let tmp = self.token_path.with_extension("tmp");
 
         tokio::fs::create_dir_all(dir).await?;
@@ -476,11 +479,7 @@ mod tests {
     async fn expired_token_without_a_refresh_token_explains_the_fix() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("gmail-token.json");
-        std::fs::write(
-            &path,
-            serde_json::to_string(&token(Some(0), None)).unwrap(),
-        )
-        .unwrap();
+        std::fs::write(&path, serde_json::to_string(&token(Some(0), None)).unwrap()).unwrap();
 
         let provider = GmailProvider::new("id", "secret", &path);
         let err = provider.access_token().await.unwrap_err().to_string();

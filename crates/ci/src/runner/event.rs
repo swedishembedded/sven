@@ -10,9 +10,9 @@ use std::collections::HashMap;
 
 use atif::Trajectory;
 use sven_machines::AgentEvent;
+use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_session_store::trace_session::{self, StepAssembler};
 use sven_session_store::OutcomeFold;
-use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::SubagentUpdate;
 
 use crate::output::{format_token_usage_line, tool_output_snippet, write_stderr, write_stdout};

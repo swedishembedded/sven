@@ -251,7 +251,10 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let ledger = PendingFactsLedger::new(dir.path().join("pending-facts.jsonl"));
 
-        assert!(ledger.entries().expect("empty ledger reads clean").is_empty());
+        assert!(ledger
+            .entries()
+            .expect("empty ledger reads clean")
+            .is_empty());
 
         ledger
             .record_document(&DocumentRecord {

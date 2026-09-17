@@ -38,7 +38,11 @@ const HEADROOM_DEN: usize = 10;
 /// heuristic [`Message::approx_tokens`] uses, so the estimate is internally
 /// consistent (mixing heuristics would make the headroom multiplier
 /// meaningless), plus [`HEADROOM_NUM`]/[`HEADROOM_DEN`] headroom.
-pub fn estimate_request_tokens(messages: &[Message], tools: &[ToolSchema], dynamic_suffix: Option<&str>) -> usize {
+pub fn estimate_request_tokens(
+    messages: &[Message],
+    tools: &[ToolSchema],
+    dynamic_suffix: Option<&str>,
+) -> usize {
     let messages_tokens: usize = messages.iter().map(Message::approx_tokens).sum();
     // Tool schemas are JSON sent verbatim in every request; approximate them
     // the same chars/4 way as message text.
@@ -49,7 +53,9 @@ pub fn estimate_request_tokens(messages: &[Message], tools: &[ToolSchema], dynam
             chars.max(1).div_ceil(4)
         })
         .sum();
-    let suffix_tokens = dynamic_suffix.map(|s| s.len().max(1).div_ceil(4)).unwrap_or(0);
+    let suffix_tokens = dynamic_suffix
+        .map(|s| s.len().max(1).div_ceil(4))
+        .unwrap_or(0);
     let raw = messages_tokens + tools_tokens + suffix_tokens;
     raw * HEADROOM_NUM / HEADROOM_DEN
 }
@@ -109,7 +115,10 @@ const CHAT_TEMPLATE_OVERHEAD_RESERVE: usize = 128;
 /// no catalog entry and no live probe result) — callers should skip the gate
 /// entirely in that case rather than guessing a number that could be wrong
 /// in either direction.
-pub fn effective_input_budget(context_window: Option<u32>, _max_output_tokens: Option<u32>) -> Option<usize> {
+pub fn effective_input_budget(
+    context_window: Option<u32>,
+    _max_output_tokens: Option<u32>,
+) -> Option<usize> {
     let window = context_window? as usize;
     Some(window.saturating_sub(MIN_OUTPUT_RESERVE))
 }
@@ -180,7 +189,11 @@ mod tests {
 
     #[test]
     fn estimate_counts_tool_schemas() {
-        let tools = vec![schema("shell", "run a command", serde_json::json!({"type": "object"}))];
+        let tools = vec![schema(
+            "shell",
+            "run a command",
+            serde_json::json!({"type": "object"}),
+        )];
         let est = estimate_request_tokens(&[], &tools, None);
         assert!(est > 0, "tool schema JSON must contribute to the estimate");
     }
@@ -201,7 +214,10 @@ mod tests {
         let messages = vec![Message::user("a".repeat(60_000))]; // ~15000 raw tokens
         let est = estimate_request_tokens(&messages, &[], None);
         let budget = effective_input_budget(Some(2048), Some(0)).unwrap();
-        assert!(est > budget, "estimate {est} must exceed budget {budget} for this to gate correctly");
+        assert!(
+            est > budget,
+            "estimate {est} must exceed budget {budget} for this to gate correctly"
+        );
     }
 
     // ── effective_input_budget ──────────────────────────────────────────────
@@ -216,8 +232,14 @@ mod tests {
         // Configured cap is 512, but only MIN_OUTPUT_RESERVE (256) is
         // actually reserved here - the rest is recovered dynamically by
         // dynamic_output_budget once the real prompt size is known.
-        assert_eq!(effective_input_budget(Some(2048), Some(512)), Some(2048 - 256));
-        assert_eq!(effective_input_budget(Some(2048), Some(1024)), Some(2048 - 256));
+        assert_eq!(
+            effective_input_budget(Some(2048), Some(512)),
+            Some(2048 - 256)
+        );
+        assert_eq!(
+            effective_input_budget(Some(2048), Some(1024)),
+            Some(2048 - 256)
+        );
     }
 
     #[test]
@@ -242,7 +264,10 @@ mod tests {
         // old fixed-subtraction formula), and a 2-token "hi" prompt. It must
         // now fit.
         let budget = effective_input_budget(Some(1024), Some(1024)).unwrap();
-        assert!(2 <= budget, "a 2-token prompt must fit a 1024-token window even with a 1024-token cap configured");
+        assert!(
+            2 <= budget,
+            "a 2-token prompt must fit a 1024-token window even with a 1024-token cap configured"
+        );
     }
 
     // ── dynamic_output_budget ────────────────────────────────────────────────
@@ -287,18 +312,27 @@ mod tests {
         // 1024-token window, 1024-token cap, 2-token prompt -> the model
         // still gets its full configured output room, minus the fixed
         // chat-template overhead reserve (128).
-        assert_eq!(dynamic_output_budget(Some(1024), Some(1024), 2), Some(1024 - 2 - 128));
+        assert_eq!(
+            dynamic_output_budget(Some(1024), Some(1024), 2),
+            Some(1024 - 2 - 128)
+        );
     }
 
     #[test]
     fn dynamic_output_shrinks_for_a_large_prompt() {
-        assert_eq!(dynamic_output_budget(Some(2048), Some(1024), 1800), Some(2048 - 1800 - 128));
+        assert_eq!(
+            dynamic_output_budget(Some(2048), Some(1024), 1800),
+            Some(2048 - 1800 - 128)
+        );
     }
 
     #[test]
     fn dynamic_output_never_exceeds_the_configured_cap() {
         // Plenty of room left, but the cap still wins.
-        assert_eq!(dynamic_output_budget(Some(1_000_000), Some(512), 10), Some(512));
+        assert_eq!(
+            dynamic_output_budget(Some(1_000_000), Some(512), 10),
+            Some(512)
+        );
     }
 
     #[test]

@@ -27,16 +27,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sven_config::{AgentMode, Config, ModelConfig};
-use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine, UiTestMachine};
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
     CompositeExecutorBuilder, ToolExecutor, TurnExecutor,
 };
-use sven_hsm::{
-    Context, Event, ObservationSink, Principal, RuntimeStatus, ToolCallId, UiEvent,
-};
+use sven_hsm::{Context, Event, ObservationSink, Principal, RuntimeStatus, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, ErasedRuntime, EventSink};
 use sven_llm::ThreadStore;
+use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine, UiTestMachine};
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
 use sven_tools::events::ToolEvent;
@@ -194,7 +192,10 @@ impl RuntimeHandle {
     /// against exactly those turns. A no-op if the store mutex is poisoned.
     pub fn seed_history(&self, messages: Vec<Message>) {
         if let Ok(mut store) = self.conv_store.lock() {
-            store.replace_thread(sven_machines::machines::reactive_agent::CHAT_THREAD, messages);
+            store.replace_thread(
+                sven_machines::machines::reactive_agent::CHAT_THREAD,
+                messages,
+            );
         }
     }
 
@@ -519,7 +520,10 @@ impl RuntimeBuilder {
                         loop {
                             let tools = mcp_manager.tools().await;
                             if !tools.is_empty() {
-                                info!(count = tools.len(), "MCP tools available for kernel runtime");
+                                info!(
+                                    count = tools.len(),
+                                    "MCP tools available for kernel runtime"
+                                );
                                 break;
                             }
                             if tokio::time::Instant::now() >= deadline {
@@ -551,8 +555,9 @@ impl RuntimeBuilder {
         let todos = Arc::new(tokio::sync::Mutex::new(
             Vec::<sven_tools::events::TodoItem>::new(),
         ));
-        let buffer_store =
-            Arc::new(tokio::sync::Mutex::new(sven_tools_fs::OutputBufferStore::new()));
+        let buffer_store = Arc::new(tokio::sync::Mutex::new(
+            sven_tools_fs::OutputBufferStore::new(),
+        ));
 
         // Semantic memory (SQLite + FTS5 `semantic_memory` tool) is
         // constructed here, the one real assembly point every surface
@@ -571,17 +576,18 @@ impl RuntimeBuilder {
         let knowledge_approvals = Arc::new(sven_vocab::provenance::KnowledgeApprovals::new());
         #[cfg(feature = "memory")]
         {
-            integration_providers.memory_store =
-                match sven_memory::SqliteMemoryStore::open(None).await {
-                    Ok(store) => Some(Arc::new(store) as Arc<dyn sven_memory::VectorStore>),
-                    Err(err) => {
-                        warn!(
-                            error = %err,
-                            "failed to open semantic memory store; semantic_memory tool will not be registered"
-                        );
-                        None
-                    }
-                };
+            integration_providers.memory_store = match sven_memory::SqliteMemoryStore::open(None)
+                .await
+            {
+                Ok(store) => Some(Arc::new(store) as Arc<dyn sven_memory::VectorStore>),
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "failed to open semantic memory store; semantic_memory tool will not be registered"
+                    );
+                    None
+                }
+            };
             integration_providers.fact_ledger =
                 Some(sven_memory::PendingFactsLedger::at_default_path());
             integration_providers.provenance_index =
@@ -663,7 +669,10 @@ impl RuntimeBuilder {
         if let Ok(mut store) = conv_store.lock() {
             let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
             if let Some(system_msg) = runtime.build_system_message(mode) {
-                store.append(sven_machines::machines::reactive_agent::CHAT_THREAD, system_msg);
+                store.append(
+                    sven_machines::machines::reactive_agent::CHAT_THREAD,
+                    system_msg,
+                );
             }
             for msg in &self.initial_history {
                 store.append(
@@ -672,9 +681,10 @@ impl RuntimeBuilder {
                 );
             }
         }
-        let call_id_to_thread = Arc::new(std::sync::Mutex::new(
-            std::collections::HashMap::<ToolCallId, (String, String)>::new(),
-        ));
+        let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+            ToolCallId,
+            (String, String),
+        >::new()));
 
         // ── User/approval channels ────────────────────────────────────────────
         let (question_tx, question_rx) = mpsc::channel::<UserQuestion>(16);
@@ -1293,7 +1303,9 @@ mod tests {
         ctx.no_system = true;
         let req = first_request_with(ctx).await;
         assert!(
-            req.messages.iter().all(|m| m.role != sven_model::Role::System),
+            req.messages
+                .iter()
+                .all(|m| m.role != sven_model::Role::System),
             "--no-system with no override/append must add zero system tokens"
         );
     }
@@ -1340,4 +1352,3 @@ mod tests {
     // the ToolExecutor's `Event::ToolFailed` output directly instead of
     // racing the kernel's observation bus.
 }
-

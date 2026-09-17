@@ -188,7 +188,9 @@ impl OutcomeFold {
         // A claimed success with no observed failure - the only case that
         // needs a verifier's word before it can be trusted either way.
         match verdict {
-            None => SessionOutcome::Unknown { reason: "no_verifier" },
+            None => SessionOutcome::Unknown {
+                reason: "no_verifier",
+            },
             Some(Verdict::Failed) => SessionOutcome::Scored(SessionReward {
                 reward: 0.0,
                 outcome: "verification_failed",
@@ -202,7 +204,11 @@ impl OutcomeFold {
                 // a scored session into a skipped one. `tool_error_ratio`
                 // already guards the division, so this only ever fires if
                 // someone changes the formula above.
-                let reward = if reward.is_finite() { reward.clamp(0.0, 1.0) } else { 0.0 };
+                let reward = if reward.is_finite() {
+                    reward.clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
                 SessionOutcome::Scored(SessionReward {
                     reward,
                     outcome: "verified_success",
@@ -268,7 +274,12 @@ mod tests {
         let mut f = OutcomeFold::default();
         f.observe(&SessionEvent::TurnComplete);
         let outcome = f.conclude(RunConclusion::Success, None);
-        assert_eq!(outcome, SessionOutcome::Unknown { reason: "no_verifier" });
+        assert_eq!(
+            outcome,
+            SessionOutcome::Unknown {
+                reason: "no_verifier"
+            }
+        );
     }
 
     #[test]
@@ -327,7 +338,11 @@ mod tests {
     #[test]
     fn tool_errors_grade_a_verified_success_downward() {
         let verified = |calls, errors| {
-            scored(fold_with_tools(calls, errors).conclude(RunConclusion::Success, Some(Verdict::Passed))).reward
+            scored(
+                fold_with_tools(calls, errors)
+                    .conclude(RunConclusion::Success, Some(Verdict::Passed)),
+            )
+            .reward
         };
         assert_eq!(verified(10, 0), 1.0);
         assert_eq!(verified(10, 2), 0.9);
@@ -337,7 +352,10 @@ mod tests {
         let mut prev = f64::MAX;
         for errors in 0..=10 {
             let r = verified(10, errors);
-            assert!(r < prev, "reward must decrease as errors grow: {r} !< {prev}");
+            assert!(
+                r < prev,
+                "reward must decrease as errors grow: {r} !< {prev}"
+            );
             prev = r;
         }
 
@@ -345,7 +363,8 @@ mod tests {
         // but the verified label wins over the mechanical one, since
         // verification is now what earned the score at all.
         assert_eq!(
-            scored(fold_with_tools(10, 1).conclude(RunConclusion::Success, Some(Verdict::Passed))).outcome,
+            scored(fold_with_tools(10, 1).conclude(RunConclusion::Success, Some(Verdict::Passed)))
+                .outcome,
             "verified_success"
         );
     }

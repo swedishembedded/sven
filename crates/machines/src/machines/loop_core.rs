@@ -726,7 +726,10 @@ mod tests {
             Some(Reaction::Handled(effs)) if matches!(effs.as_slice(), [Effect::RequestHumanAnswer { .. }])
         ));
         let ls = LoopState::load(&ctx);
-        assert!(!ls.pending.contains(&call_id), "parked call leaves the pending set");
+        assert!(
+            !ls.pending.contains(&call_id),
+            "parked call leaves the pending set"
+        );
         assert!(!ls.is_idle(), "a parked question must not read as idle");
         assert!(ls.awaiting_answer.is_some());
         assert!(ctx.pending_question.is_some());
@@ -759,7 +762,10 @@ mod tests {
         };
         let reaction: Option<Reaction<u8>> =
             handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &answered);
-        assert!(reaction.is_some(), "resolving the last pending question must resume the loop");
+        assert!(
+            reaction.is_some(),
+            "resolving the last pending question must resume the loop"
+        );
         let ls = LoopState::load(&ctx);
         assert!(ls.awaiting_answer.is_none());
         assert!(ls.is_idle());
@@ -794,7 +800,8 @@ mod tests {
 
         let mut live = make_ctx();
         init_loop(&mut live, "chat", &[], "", 16);
-        let _: Option<Reaction<u8>> = handle_tool_event(&mut live, |ls| ls.continuation_turn(), &asked);
+        let _: Option<Reaction<u8>> =
+            handle_tool_event(&mut live, |ls| ls.continuation_turn(), &asked);
         let recorded = LoopState::load(&live).awaiting_answer.expect("parked");
 
         let mut replayed = make_ctx();

@@ -299,7 +299,11 @@ async fn a_flush_settles_every_pending_fact_before_it_returns() {
         "and still submits each fact exactly once"
     );
     assert!(
-        drain.drain_all(&submitter).await.expect("idle flush").is_empty(),
+        drain
+            .drain_all(&submitter)
+            .await
+            .expect("idle flush")
+            .is_empty(),
         "a settled ledger flushes to nothing"
     );
 }

@@ -382,8 +382,8 @@ mod tests {
         ToolCallId, ToolCapability,
     };
     use sven_kernel::{EffectExecutor, EventSink, Runtime};
-    use sven_vocab::provenance::ProvenanceSink;
     use sven_tools::ToolRegistry;
+    use sven_vocab::provenance::ProvenanceSink;
 
     use super::ToolExecutor;
 
@@ -614,9 +614,14 @@ mod tests {
         let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
         let call_id = ToolCallId::new();
 
-        let content =
-            run_tool_effect_and_get_stored_content(&mut exec, Arc::clone(&store), "chat", call_id, "parking")
-                .await;
+        let content = run_tool_effect_and_get_stored_content(
+            &mut exec,
+            Arc::clone(&store),
+            "chat",
+            call_id,
+            "parking",
+        )
+        .await;
         assert_eq!(
             content, "",
             "a parked call has not concluded and must not appear as a tool result yet: {content:?}"
@@ -658,7 +663,10 @@ mod tests {
 
     impl ProvenanceSink for RecordingSink {
         fn record_provenance(&self, handle: &str, source: sven_vocab::provenance::FactSource) {
-            self.calls.lock().unwrap().push((handle.to_string(), source));
+            self.calls
+                .lock()
+                .unwrap()
+                .push((handle.to_string(), source));
         }
     }
 

@@ -375,10 +375,10 @@ fn collect_files_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sven_tool_api::tool::ToolCall;
     use serde_json::json;
     use std::fs;
     use std::path::PathBuf;
+    use sven_tool_api::tool::ToolCall;
     use sven_workspace::{SharedSkills, SkillInfo, SvenSkillMeta};
 
     fn make_skill(command: &str, description: &str, content: &str) -> SkillInfo {

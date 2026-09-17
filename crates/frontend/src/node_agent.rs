@@ -360,10 +360,7 @@ async fn handle_event(
         // no more fabricating an empty tool_name for ToolCallFinished (the
         // old flattened `ControlEvent::ToolResult` had dropped it).
         Evt::Session { event, .. } => {
-            let terminal = matches!(
-                event,
-                AgentEvent::TurnComplete | AgentEvent::Aborted { .. }
-            );
+            let terminal = matches!(event, AgentEvent::TurnComplete | AgentEvent::Aborted { .. });
             let _ = tx.send(event).await;
             if terminal {
                 return true;
@@ -603,7 +600,10 @@ mod tests {
             host_header("wss://tenant-a.cloud.example.com:8443/ws").unwrap(),
             "tenant-a.cloud.example.com:8443"
         );
-        assert_eq!(host_header("ws://127.0.0.1:9000/ws").unwrap(), "127.0.0.1:9000");
+        assert_eq!(
+            host_header("ws://127.0.0.1:9000/ws").unwrap(),
+            "127.0.0.1:9000"
+        );
         assert_eq!(host_header("ws://[::1]:9000/ws").unwrap(), "[::1]:9000");
         assert!(host_header("not a url").is_err());
     }

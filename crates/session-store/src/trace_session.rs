@@ -1248,7 +1248,9 @@ fn migrate_legacy_chats_between(
         fs::create_dir_all(session_dir)
             .with_context(|| format!("creating session directory {}", session_dir.display()))?;
     }
-    for entry in fs::read_dir(chat_dir).with_context(|| format!("reading {}", chat_dir.display()))? {
+    for entry in
+        fs::read_dir(chat_dir).with_context(|| format!("reading {}", chat_dir.display()))?
+    {
         let path = entry?.path();
         if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
             continue;
@@ -1284,7 +1286,6 @@ fn migrate_legacy_chats_between(
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
-
 
 #[cfg(test)]
 #[path = "trace_session_tests.rs"]

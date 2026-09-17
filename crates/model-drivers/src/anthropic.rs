@@ -9,8 +9,7 @@ use tracing::{debug, warn};
 
 use sven_model::{
     catalog::{static_catalog, ModelCatalogEntry},
-    ResponseStream,
-    CompletionRequest, ResponseEvent,
+    CompletionRequest, ResponseEvent, ResponseStream,
 };
 
 /// Placeholder substituted for audio content on the Anthropic transport.
@@ -548,7 +547,10 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
         // be a plain HTTP error status; matched before the catch-all so it
         // isn't misread as an unknown/empty delta.
         "error" => {
-            let msg = v["error"]["message"].as_str().unwrap_or("model stream error").to_string();
+            let msg = v["error"]["message"]
+                .as_str()
+                .unwrap_or("model stream error")
+                .to_string();
             Ok(ResponseEvent::Error(msg))
         }
         _ => Ok(ResponseEvent::TextDelta(String::new())),
@@ -600,8 +602,7 @@ pub(crate) fn build_anthropic_messages(messages: &[sven_model::Message]) -> (Str
                             json!({ "type": "text", "text": ANTHROPIC_AUDIO_OMITTED })
                         }
                         ContentPart::Image { image_url, .. } => {
-                            if let Ok((mime, data)) = sven_model::parse_data_url_parts(image_url)
-                            {
+                            if let Ok((mime, data)) = sven_model::parse_data_url_parts(image_url) {
                                 json!({
                                     "type": "image",
                                     "source": {
@@ -985,7 +986,9 @@ mod tests {
             "error": { "type": "overloaded_error", "message": "the model failed to process the request" }
         });
         let ev = parse_anthropic_event(&v).unwrap();
-        assert!(matches!(ev, ResponseEvent::Error(m) if m == "the model failed to process the request"));
+        assert!(
+            matches!(ev, ResponseEvent::Error(m) if m == "the model failed to process the request")
+        );
     }
 
     #[test]

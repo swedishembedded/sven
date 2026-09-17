@@ -290,7 +290,10 @@ async fn spawn_children(
     let mut remaining = Vec::with_capacity(effects.len());
     for effect in effects {
         match effect {
-            Effect::InstantiateSubmachine { machine, descriptor } => {
+            Effect::InstantiateSubmachine {
+                machine,
+                descriptor,
+            } => {
                 children.insert(machine, ());
                 spawner.spawn_child(machine, descriptor, sink.clone()).await;
             }
@@ -489,8 +492,7 @@ where
     // Initial transitions run inside the single consumer task, so their entry
     // effects go through the same validate-then-execute path as everything else.
     let init_effects = hsm.init(&mut ctx);
-    let init_effects =
-        spawn_children(init_effects, &child_spawner, &mut children, &sink).await;
+    let init_effects = spawn_children(init_effects, &child_spawner, &mut children, &sink).await;
     run_effects(
         &policy,
         hsm.state(),
@@ -528,8 +530,7 @@ where
             to: outcome.to.clone(),
             event: format!("{:?}", event_kind),
         });
-        let effects =
-            spawn_children(outcome.effects, &child_spawner, &mut children, &sink).await;
+        let effects = spawn_children(outcome.effects, &child_spawner, &mut children, &sink).await;
         run_effects(
             &policy,
             hsm.state(),
@@ -931,8 +932,7 @@ where
     let mut children: ChildRegistry = HashMap::new();
 
     let init_effects = machine.init(&mut ctx);
-    let init_effects =
-        spawn_children(init_effects, &child_spawner, &mut children, &sink).await;
+    let init_effects = spawn_children(init_effects, &child_spawner, &mut children, &sink).await;
     // Mirror the audit trail *before* running effects so a `PersistAudit`
     // effect in this batch sees the records of the dispatch that emitted it.
     trail.sync_from(&ctx);
@@ -965,9 +965,7 @@ where
     // contains the tool-audit and rejection records those effects produced.
     // Machines never need to emit `PersistAudit` themselves; executors
     // without an audit slot ignore it.
-    executor
-        .execute(Effect::PersistAudit, &sink, &obs)
-        .await;
+    executor.execute(Effect::PersistAudit, &sink, &obs).await;
 
     if machine.is_done() {
         return ErasedReport {
@@ -985,8 +983,7 @@ where
             to: outcome.to.clone(),
             event: format!("{:?}", event_kind),
         });
-        let effects =
-            spawn_children(outcome.effects, &child_spawner, &mut children, &sink).await;
+        let effects = spawn_children(outcome.effects, &child_spawner, &mut children, &sink).await;
         // Mirror the audit trail *before* running effects (see init above).
         trail.sync_from(&ctx);
         run_effects(
@@ -1019,9 +1016,7 @@ where
         // this batch includes the tool/rejection records that `run_effects`
         // pushed — including those of a *terminal* dispatch, which would
         // otherwise never reach the durable log.
-        executor
-            .execute(Effect::PersistAudit, &sink, &obs)
-            .await;
+        executor.execute(Effect::PersistAudit, &sink, &obs).await;
 
         if machine.is_done() {
             break;
@@ -1051,4 +1046,3 @@ fn publish_erased(
         processed,
     });
 }
-

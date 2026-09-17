@@ -21,7 +21,10 @@ pub fn load(ctx: &Context) -> BTreeMap<String, String> {
 }
 
 fn store(ctx: &mut Context, vars: &BTreeMap<String, String>) {
-    ctx.set_fact(VARS_FACT, serde_json::to_value(vars).expect("BTreeMap<String,String> always serializes"));
+    ctx.set_fact(
+        VARS_FACT,
+        serde_json::to_value(vars).expect("BTreeMap<String,String> always serializes"),
+    );
 }
 
 /// Binds `value` under `name`, overwriting any prior binding of that name.

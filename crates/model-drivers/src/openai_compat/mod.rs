@@ -224,8 +224,7 @@ impl OpenAICompatProvider {
         body["data"]
             .as_array()?
             .iter()
-            .find(|m| m["id"].as_str() == Some(self.model.as_str()))?
-            ["context_length"]
+            .find(|m| m["id"].as_str() == Some(self.model.as_str()))?["context_length"]
             .as_u64()
             .map(|v| v as u32)
     }

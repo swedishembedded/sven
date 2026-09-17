@@ -203,7 +203,9 @@ impl SdlcMachine {
     /// Create a new instance.
     #[must_use]
     pub fn new() -> Self {
-        Self { id: MachineId::new() }
+        Self {
+            id: MachineId::new(),
+        }
     }
 
     /// Permission policy: kernel-gated per state - reads and provenance-gated
@@ -216,9 +218,15 @@ impl SdlcMachine {
     #[must_use]
     pub fn permission_policy() -> PermissionPolicy {
         use SdlcState::{Delivery, Discovery, Execution, Planning, Verification};
-        use ToolCapability::{AssimilateKnowledge, ExecuteShell, GitOperation, ReadFile, WriteFile};
+        use ToolCapability::{
+            AssimilateKnowledge, ExecuteShell, GitOperation, ReadFile, WriteFile,
+        };
         PermissionPolicy::builder()
-            .allow_globally([ReadFile, AssimilateKnowledge, ToolCapability::IngestDocument])
+            .allow_globally([
+                ReadFile,
+                AssimilateKnowledge,
+                ToolCapability::IngestDocument,
+            ])
             .allow_in(Discovery, [GitOperation])
             .allow_in(Planning, [GitOperation])
             .allow_in(Execution, [WriteFile, GitOperation, ExecuteShell])
@@ -392,7 +400,12 @@ fn phase_init_loop(ctx: &mut Context, thread: &str, tools: &[&str], max_tool_rou
 }
 
 /// Build a follow-up turn on a phase thread (after a developer message or revision).
-fn phase_followup_turn(thread: &str, tools: &[&str], instruction: &str, max_tool_rounds: u32) -> Effect {
+fn phase_followup_turn(
+    thread: &str,
+    tools: &[&str],
+    instruction: &str,
+    max_tool_rounds: u32,
+) -> Effect {
     let tools_owned: Vec<String> = tools.iter().map(|s| s.to_string()).collect();
     super::loop_core::build_turn_effect(
         thread,
@@ -588,8 +601,11 @@ impl Machine for SdlcMachine {
 
                 match event {
                     Event::Internal(InternalEvent::Entry) => {
-                        let plan_payload =
-                            ctx.facts.get("plan_payload").cloned().unwrap_or(Value::Null);
+                        let plan_payload = ctx
+                            .facts
+                            .get("plan_payload")
+                            .cloned()
+                            .unwrap_or(Value::Null);
                         let tasks = tasks_of(&plan_payload);
                         if should_fan_out(ctx, &tasks) {
                             ctx.set_fact("exec_remaining", json!(tasks.len() as i64));
@@ -605,8 +621,7 @@ impl Machine for SdlcMachine {
                             return Reaction::effects(effects);
                         }
                         phase_init_loop(ctx, "execution", prompts::WRITE_TOOLS, 40);
-                        let req =
-                            prompts::execution_request(&fact_str(ctx, "plan_summary"));
+                        let req = prompts::execution_request(&fact_str(ctx, "plan_summary"));
                         Reaction::effects(vec![Effect::CallLlm { request: req }])
                     }
 

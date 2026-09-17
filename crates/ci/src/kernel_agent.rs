@@ -25,8 +25,8 @@ use tokio::sync::mpsc;
 
 use sven_bootstrap::{build_tool_registry, RuntimeBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
-use sven_machines::AgentEvent;
 use sven_hsm::{Event, UiEvent};
+use sven_machines::AgentEvent;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::ToolRegistry;
 
@@ -109,14 +109,15 @@ impl KernelAgent {
     /// turn; replay only needs a functional registry to re-execute the recorded
     /// calls with fresh results, so a fresh Full-profile registry suffices.
     pub fn build_tool_registry(&self) -> anyhow::Result<Arc<ToolRegistry>> {
-        let model =
-            sven_model_drivers::from_config(&self.model_cfg).context("failed to initialise model provider")?;
+        let model = sven_model_drivers::from_config(&self.model_cfg)
+            .context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
         let mode_lock = Arc::new(tokio::sync::Mutex::new(AgentMode::Agent));
-        let (tool_event_tx, _tool_event_rx) =
-            mpsc::channel::<sven_tools::events::ToolEvent>(64);
+        let (tool_event_tx, _tool_event_rx) = mpsc::channel::<sven_tools::events::ToolEvent>(64);
         let todos = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let buffer_store = Arc::new(tokio::sync::Mutex::new(sven_tools_fs::OutputBufferStore::new()));
+        let buffer_store = Arc::new(tokio::sync::Mutex::new(
+            sven_tools_fs::OutputBufferStore::new(),
+        ));
         let profile = ToolSetProfile::Full {
             question_tx: None,
             todos,
@@ -139,11 +140,7 @@ impl KernelAgent {
     /// The user message and every resulting assistant/tool message are appended
     /// to the internal history so the next turn sees the full context — exactly
     /// as the legacy `Agent` maintained its session across `submit` calls.
-    pub async fn submit(
-        &mut self,
-        text: &str,
-        tx: mpsc::Sender<AgentEvent>,
-    ) -> anyhow::Result<()> {
+    pub async fn submit(&mut self, text: &str, tx: mpsc::Sender<AgentEvent>) -> anyhow::Result<()> {
         let ctx = self.runtime_ctx.clone();
         let bundle = RuntimeBuilder::new(self.config.clone(), self.mode.clone())
             .with_runtime_context(ctx)
@@ -318,7 +315,9 @@ fn reduce_history(ev: &AgentEvent, history: &mut Vec<Message>) {
                 },
             });
         }
-        AgentEvent::ToolCallFinished { call_id, output, .. } => {
+        AgentEvent::ToolCallFinished {
+            call_id, output, ..
+        } => {
             history.push(Message::tool_result(call_id, output));
         }
         AgentEvent::Aborted { partial_text } if !partial_text.is_empty() => {

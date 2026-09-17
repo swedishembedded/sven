@@ -94,10 +94,7 @@ fn first_user_message_enters_intake_and_deliberates() {
     hsm.init(&mut ctx);
     let out = hsm.dispatch(&Event::user_message("hi"), &mut ctx);
     assert_eq!(hsm.state(), SdlcState::Intake);
-    assert_eq!(
-        first_turn_thread(&out.effects).as_deref(),
-        Some("intake")
-    );
+    assert_eq!(first_turn_thread(&out.effects).as_deref(), Some("intake"));
     // Must use kind="turn" (kernel-native).
     let req = reaction_call_llm(&out.effects).unwrap();
     assert_eq!(req["kind"], "turn", "SDLC must emit kind=turn");
@@ -116,7 +113,11 @@ fn intake_chitchat_stays_in_intake_and_asks_user() {
         ),
         &mut ctx,
     );
-    assert_eq!(hsm.state(), SdlcState::Intake, "must NOT launch the pipeline");
+    assert_eq!(
+        hsm.state(),
+        SdlcState::Intake,
+        "must NOT launch the pipeline"
+    );
     assert!(out.effects.iter().any(|e| e.kind() == EffectKind::AskUser));
 }
 
@@ -159,7 +160,11 @@ fn intake_approved_advances_to_discovery_and_deliberates() {
         ),
         &mut ctx,
     );
-    let approval_id = ctx.pending_approval.as_ref().map(|p| p.approval_id).unwrap();
+    let approval_id = ctx
+        .pending_approval
+        .as_ref()
+        .map(|p| p.approval_id)
+        .unwrap();
     let out = hsm.dispatch(&Event::HumanApproved { approval_id }, &mut ctx);
     assert_eq!(hsm.state(), SdlcState::Discovery);
     assert_eq!(
@@ -189,7 +194,10 @@ fn discovery_proceed_transitions_to_planning() {
     let mut m = SdlcMachine::new();
     let mut ctx = Context::new();
     // init_loop so continuation turn can find the thread.
-    let tools: Vec<String> = super::prompts::READ_TOOLS.iter().map(|s| s.to_string()).collect();
+    let tools: Vec<String> = super::prompts::READ_TOOLS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     crate::machines::loop_core::init_loop(&mut ctx, "discovery", &tools, "", 20);
     let r = m.dispatch_state(
         SdlcState::Discovery,
@@ -225,12 +233,19 @@ fn full_pipeline_drives_intake_to_done() {
         ),
         &mut ctx,
     );
-    let id = ctx.pending_approval.as_ref().map(|p| p.approval_id).unwrap();
+    let id = ctx
+        .pending_approval
+        .as_ref()
+        .map(|p| p.approval_id)
+        .unwrap();
     hsm.dispatch(&Event::HumanApproved { approval_id: id }, &mut ctx);
     assert_eq!(hsm.state(), SdlcState::Discovery);
 
     hsm.dispatch(
-        &lm_turn_complete("discovery", json!({"status": "proceed", "summary": "small crate"})),
+        &lm_turn_complete(
+            "discovery",
+            json!({"status": "proceed", "summary": "small crate"}),
+        ),
         &mut ctx,
     );
     assert_eq!(hsm.state(), SdlcState::Planning);
@@ -242,18 +257,28 @@ fn full_pipeline_drives_intake_to_done() {
         ),
         &mut ctx,
     );
-    let id = ctx.pending_approval.as_ref().map(|p| p.approval_id).unwrap();
+    let id = ctx
+        .pending_approval
+        .as_ref()
+        .map(|p| p.approval_id)
+        .unwrap();
     hsm.dispatch(&Event::HumanApproved { approval_id: id }, &mut ctx);
     assert_eq!(hsm.state(), SdlcState::Execution);
 
     hsm.dispatch(
-        &lm_turn_complete("execution", json!({"status": "proceed", "summary": "implemented"})),
+        &lm_turn_complete(
+            "execution",
+            json!({"status": "proceed", "summary": "implemented"}),
+        ),
         &mut ctx,
     );
     assert_eq!(hsm.state(), SdlcState::Verification);
 
     hsm.dispatch(
-        &lm_turn_complete("verification", json!({"status": "proceed", "summary": "tests pass"})),
+        &lm_turn_complete(
+            "verification",
+            json!({"status": "proceed", "summary": "tests pass"}),
+        ),
         &mut ctx,
     );
     assert_eq!(hsm.state(), SdlcState::Delivery);
@@ -265,7 +290,11 @@ fn full_pipeline_drives_intake_to_done() {
         ),
         &mut ctx,
     );
-    let id = ctx.pending_approval.as_ref().map(|p| p.approval_id).unwrap();
+    let id = ctx
+        .pending_approval
+        .as_ref()
+        .map(|p| p.approval_id)
+        .unwrap();
     hsm.dispatch(&Event::HumanApproved { approval_id: id }, &mut ctx);
     assert_eq!(hsm.state(), SdlcState::Done);
     assert!(hsm.is_done());
@@ -277,11 +306,17 @@ fn full_pipeline_drives_intake_to_done() {
 fn failed_decision_routes_to_recovery() {
     let mut m = SdlcMachine::new();
     let mut ctx = Context::new();
-    let tools: Vec<String> = super::prompts::READ_TOOLS.iter().map(|s| s.to_string()).collect();
+    let tools: Vec<String> = super::prompts::READ_TOOLS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     crate::machines::loop_core::init_loop(&mut ctx, "discovery", &tools, "", 20);
     let r = m.dispatch_state(
         SdlcState::Discovery,
-        &lm_turn_complete("discovery", json!({"status": "failed", "summary": "cannot read"})),
+        &lm_turn_complete(
+            "discovery",
+            json!({"status": "failed", "summary": "cannot read"}),
+        ),
         &mut ctx,
     );
     assert!(matches!(
@@ -327,10 +362,7 @@ fn recovery_entry_fires_turn_then_failed_after_limit() {
         &mut ctx,
     );
     assert_eq!(hsm.state(), SdlcState::Recovery);
-    assert_eq!(
-        first_turn_thread(&out.effects).as_deref(),
-        Some("recovery")
-    );
+    assert_eq!(first_turn_thread(&out.effects).as_deref(), Some("recovery"));
 }
 
 // ── Phase 2: parallel execution fan-out ───────────────────────────────────────
@@ -366,7 +398,8 @@ fn execution_stays_single_track_without_spawner_flag() {
     );
     assert_eq!(count_instantiate(&r), 0, "must not emit submachines");
     assert_eq!(
-        reaction_call_llm(&reaction_effects(&r)).map(|req| req["thread"].as_str().unwrap().to_string()),
+        reaction_call_llm(&reaction_effects(&r))
+            .map(|req| req["thread"].as_str().unwrap().to_string()),
         Some("execution".to_string()),
         "falls back to a single execution turn"
     );
@@ -390,7 +423,10 @@ fn execution_aggregates_all_children_then_synthesises_on_thread() {
         &submachine_completed(json!({"summary": "did a"})),
         &mut ctx,
     );
-    assert!(reaction_call_llm(&reaction_effects(&r1)).is_none(), "wait for all children");
+    assert!(
+        reaction_call_llm(&reaction_effects(&r1)).is_none(),
+        "wait for all children"
+    );
     let r2 = m.dispatch_state(
         SdlcState::Execution,
         &submachine_completed(json!({"summary": "did b"})),

@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `/clear` command - erase all chat segments and reset the conversation view.
 
-use crate::{
-    CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
-};
+use crate::{CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand};
 
 pub struct ClearCommand;
 

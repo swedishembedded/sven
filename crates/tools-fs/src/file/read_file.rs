@@ -9,7 +9,9 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::params::{opt_u64, require_str};
 use sven_tool_api::policy::ApprovalPolicy;
-use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput, ToolOutputPart};
+use sven_tool_api::tool::{
+    OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput, ToolOutputPart,
+};
 
 /// Default number of lines returned when the caller does not specify a limit.
 /// Kept small to avoid flooding the model context on the first read; the agent
@@ -422,7 +424,10 @@ mod tests {
         use std::sync::atomic::{AtomicU32, Ordering};
         static CTR: AtomicU32 = AtomicU32::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
-        let path = scratch_path(&format!("sven_read_file_test_{}_{n}.txt", std::process::id()));
+        let path = scratch_path(&format!(
+            "sven_read_file_test_{}_{n}.txt",
+            std::process::id()
+        ));
         std::fs::write(&path, content).unwrap();
         path
     }

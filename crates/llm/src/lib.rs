@@ -12,7 +12,7 @@ pub mod conversation;
 pub mod error;
 
 // Re-export the most important types at the crate root.
-pub use conversation::{ThreadStore, ThreadId, TurnRequest, TURN_KIND};
+pub use conversation::{ThreadId, ThreadStore, TurnRequest, TURN_KIND};
 pub use error::LlmError;
 
 /// Strip leading/trailing markdown code fences from a string.
@@ -24,11 +24,19 @@ pub fn strip_code_fences(s: &str) -> &str {
     // Handle ```json or ``` prefix
     let s = if let Some(rest) = s.strip_prefix("```") {
         // Skip optional language tag on first line
-        if let Some(nl) = rest.find('\n') { &rest[nl + 1..] } else { rest }
+        if let Some(nl) = rest.find('\n') {
+            &rest[nl + 1..]
+        } else {
+            rest
+        }
     } else {
         s
     };
     // Strip trailing ```
-    let s = if let Some(idx) = s.rfind("```") { &s[..idx] } else { s };
+    let s = if let Some(idx) = s.rfind("```") {
+        &s[..idx]
+    } else {
+        s
+    };
     s.trim()
 }

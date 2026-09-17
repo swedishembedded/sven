@@ -22,8 +22,7 @@ use tracing::debug;
 
 use sven_model::{
     catalog::{static_catalog, ModelCatalogEntry},
-    ResponseStream,
-    CompletionRequest, MessageContent, ResponseEvent, Role,
+    CompletionRequest, MessageContent, ResponseEvent, ResponseStream, Role,
 };
 
 pub struct GoogleProvider {
@@ -474,7 +473,10 @@ mod tests {
     /// workspace renders into user-visible events. It must carry no secret.
     #[test]
     fn stream_url_carries_no_credential() {
-        let url = stream_url("https://generativelanguage.googleapis.com/", "gemini-2.0-flash");
+        let url = stream_url(
+            "https://generativelanguage.googleapis.com/",
+            "gemini-2.0-flash",
+        );
         assert!(
             url.ends_with("/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse"),
             "unexpected endpoint: {url}"

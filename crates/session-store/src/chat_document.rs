@@ -666,8 +666,16 @@ mod tests {
         ];
         let records = turns_to_records(&turns);
         assert_eq!(records.len(), 6);
-        assert!(matches!(&records[1], ConversationRecord::Thinking { content } if content == "reasoning"));
-        assert!(matches!(&records[5], ConversationRecord::ContextCompacted { tokens_before: 500, .. }));
+        assert!(
+            matches!(&records[1], ConversationRecord::Thinking { content } if content == "reasoning")
+        );
+        assert!(matches!(
+            &records[5],
+            ConversationRecord::ContextCompacted {
+                tokens_before: 500,
+                ..
+            }
+        ));
     }
 
     #[test]

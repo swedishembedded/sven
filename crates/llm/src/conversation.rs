@@ -56,7 +56,10 @@ impl ThreadStore {
 
     /// Append a single turn to a thread (creating the thread if needed).
     pub fn append(&mut self, id: &str, message: Message) {
-        self.threads.entry(id.to_string()).or_default().push(message);
+        self.threads
+            .entry(id.to_string())
+            .or_default()
+            .push(message);
     }
 
     /// Replace a thread's entire contents with `messages`.
@@ -198,5 +201,4 @@ mod tests {
         assert_eq!(store.len("discovery"), 1);
         assert!(store.exists("discovery"));
     }
-
 }

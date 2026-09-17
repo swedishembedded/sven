@@ -28,7 +28,7 @@ DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
 .PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
-        check check/clippy check/gates check/paths check/deps check/arch hooks/install docs docs-pdf \
+        check check/fmt check/clippy check/gates check/paths check/deps check/arch hooks/install docs docs-pdf \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
         _require-cargo-release \
@@ -200,13 +200,24 @@ docs-pdf: docs
 fmt:
 	$(CARGO) fmt --all
 
-## check     - text gates, architecture ratchet, then clippy
-# In that order on purpose: a baked-in machine path or an
+## check     - formatting, text gates, architecture ratchet, then clippy
+# In that order on purpose: a rustfmt drift, a baked-in machine path or an
 # illegal crate edge should fail in seconds, not after a full workspace lint.
 # Every gate below is reachable from HERE, not only from an installed git
 # hook -- a check that lives only in `make hooks/install` enforces nothing on a
 # fresh clone that never ran it.
-check: check/gates check/arch check/clippy
+check: check/fmt check/gates check/arch check/clippy
+
+## check/fmt - rustfmt shape, checked not applied (`make fmt` fixes it)
+# First, because it is the cheapest thing that can fail and the least
+# interesting to argue about. The script is `cargo fmt --all -- --check` with
+# its report filtered against a short, self-expiring list of files a
+# concurrent change had open when formatting was first enforced -- it goes
+# away, and this line becomes that one, when the list empties. It judges the
+# COMMITTED shape of those files, so it can read as stale in a working tree
+# that still holds the concurrent change. See the script's header.
+check/fmt:
+	bash scripts/gates/check-rustfmt.sh
 
 ## check/clippy - lint the workspace, warnings are errors
 check/clippy:

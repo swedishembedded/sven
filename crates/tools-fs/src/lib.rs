@@ -24,7 +24,9 @@ pub mod buffer;
 pub mod file;
 pub mod read_image;
 
-pub use buffer::{BufGrepTool, BufReadTool, BufStatusTool, BufferSource, BufferStatus, OutputBufferStore};
+pub use buffer::{
+    BufGrepTool, BufReadTool, BufStatusTool, BufferSource, BufferStatus, OutputBufferStore,
+};
 pub use file::{
     classify_attachment, load_attachment, AttachError, AttachFileTool, AttachOptions,
     AttachmentKind, DeleteFileTool, EditFileTool, FindFileTool, LoadedAttachment, ReadFileTool,

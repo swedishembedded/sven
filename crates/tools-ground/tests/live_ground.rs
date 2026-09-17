@@ -1,42 +1,54 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Real-checkpoint integration test: exercises `GroundTool` against an
-//! actually running `brain florence2 ground`. Skips cleanly (not a failure)
-//! when `brain` is not on `PATH` or the florence2 checkpoint is not staged
-//! locally, mirroring `sven-tools-android/tests/live_device.rs`'s hardware
-//! gate - so `make test` stays green with neither present, but this still
-//! runs wherever both are.
+//! Real-model integration test: exercises `GroundTool` against an actually
+//! running grounding command, whichever one `SVEN_GROUND_COMMAND` names.
+//! Skips cleanly (not a failure) unless it is opted into, mirroring
+//! `sven-tools-android/tests/live_device.rs`'s hardware gate - so `make
+//! test` stays green on a machine with no grounding model at all.
 //!
-//! Unit tests in `src/tool.rs` cover the subprocess/parsing machinery against
-//! a fake `brain`; this is the one place a real checkpoint is exercised.
+//! The gate is an explicit opt-in (`SVEN_GROUND_LIVE_TEST=1`) rather than a
+//! sniff for some particular vendor's staged weights, and that is the
+//! point: sven owns the CLI contract, not any model's installation layout,
+//! so it has no business knowing which directory a given implementation
+//! keeps its checkpoint in. The operator who configured the command is the
+//! one who knows it is ready.
+//!
+//! Unit tests in `src/tool.rs` cover the subprocess/parsing machinery
+//! against a fake command; this is the one place a real model is exercised.
 
 use image::{Rgb, RgbImage};
 use serde_json::json;
 use sven_tool_api::tool::{Tool, ToolCall};
 use sven_tools_ground::{GroundConfig, GroundTool};
 
-/// `true` when `brain` resolves on `PATH` and a florence2 checkpoint is
-/// staged (`BRAIN_FLORENCE2_DIR`, per `brain`'s own `Florence2Provider::
-/// from_env`).
-fn brain_and_checkpoint_available() -> bool {
-    let has_brain = std::process::Command::new("brain")
+/// `true` when the operator opted this test in AND the configured grounding
+/// command actually resolves on `PATH`. Both halves matter: the opt-in says
+/// a model is ready, the `--help` probe catches a typo'd command before it
+/// shows up as a confusing grounding failure.
+pub fn live_grounding_opted_in() -> bool {
+    let opted_in = std::env::var("SVEN_GROUND_LIVE_TEST")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    if !opted_in {
+        return false;
+    }
+    let command = GroundConfig::default().command;
+    std::process::Command::new(&command)
         .arg("--help")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .is_ok_and(|s| s.success());
-    let has_checkpoint = std::env::var("BRAIN_FLORENCE2_DIR")
-        .ok()
-        .filter(|p| !p.is_empty())
-        .is_some_and(|p| std::path::Path::new(&p).join("model.safetensors").exists());
-    has_brain && has_checkpoint
+        .is_ok_and(|s| s.success())
 }
 
 #[tokio::test]
 async fn grounds_a_real_screenshot_against_the_real_checkpoint() {
-    if !brain_and_checkpoint_available() {
-        eprintln!("skipping: `brain` and/or BRAIN_FLORENCE2_DIR checkpoint not available");
+    if !live_grounding_opted_in() {
+        eprintln!(
+            "skipping: set SVEN_GROUND_LIVE_TEST=1 (and SVEN_GROUND_COMMAND/\
+             SVEN_GROUND_MODEL if the defaults are not what you want) to run this"
+        );
         return;
     }
 
@@ -51,7 +63,10 @@ async fn grounds_a_real_screenshot_against_the_real_checkpoint() {
     }
     img.save(&path).unwrap();
 
-    let t = GroundTool::new(GroundConfig { timeout_secs: 120, ..GroundConfig::default() });
+    let t = GroundTool::new(GroundConfig {
+        timeout_secs: 120,
+        ..GroundConfig::default()
+    });
     let out = t
         .execute(&ToolCall {
             id: "1".into(),

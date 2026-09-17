@@ -134,7 +134,10 @@ impl QuestionLedger {
     ///
     /// Returns [`QuestionLedgerError`] when the entry cannot be encoded or
     /// appended.
-    pub fn record_answered(&self, record: &QuestionAnsweredRecord) -> Result<(), QuestionLedgerError> {
+    pub fn record_answered(
+        &self,
+        record: &QuestionAnsweredRecord,
+    ) -> Result<(), QuestionLedgerError> {
         self.append(&QuestionLedgerEntry::Answered(record.clone()))
     }
 
@@ -201,8 +204,14 @@ mod tests {
     fn a_fresh_ledger_reads_empty() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let ledger = QuestionLedger::new(dir.path().join("questions.jsonl"));
-        assert!(ledger.entries().expect("empty ledger reads clean").is_empty());
-        assert!(ledger.pending_questions().expect("empty ledger reads clean").is_empty());
+        assert!(ledger
+            .entries()
+            .expect("empty ledger reads clean")
+            .is_empty());
+        assert!(ledger
+            .pending_questions()
+            .expect("empty ledger reads clean")
+            .is_empty());
     }
 
     #[test]
@@ -210,7 +219,9 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let ledger = QuestionLedger::new(dir.path().join("questions.jsonl"));
         let question_id = QuestionId::new();
-        ledger.record_asked(&asked(question_id)).expect("record asked");
+        ledger
+            .record_asked(&asked(question_id))
+            .expect("record asked");
 
         let pending = ledger.pending_questions().expect("read pending");
         assert_eq!(pending.len(), 1);
@@ -248,7 +259,10 @@ mod tests {
 
         let pending = ledger.pending_questions().expect("read pending");
         assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].question_id, b, "only the unanswered question remains pending");
+        assert_eq!(
+            pending[0].question_id, b,
+            "only the unanswered question remains pending"
+        );
     }
 
     #[test]
@@ -256,7 +270,9 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let ledger = QuestionLedger::new(dir.path().join("questions.jsonl"));
         let question_id = QuestionId::new();
-        ledger.record_asked(&asked(question_id)).expect("record asked");
+        ledger
+            .record_asked(&asked(question_id))
+            .expect("record asked");
         ledger
             .record_answered(&QuestionAnsweredRecord {
                 question_id,

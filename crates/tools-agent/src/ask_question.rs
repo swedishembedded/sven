@@ -420,8 +420,8 @@ mod tests {
 
     #[tokio::test]
     async fn missing_questions_is_error() {
-        use sven_tool_api::tool::ToolCall;
         use serde_json::json;
+        use sven_tool_api::tool::ToolCall;
         let t = AskQuestionTool::new();
         let call = ToolCall {
             id: "1".into(),
@@ -435,8 +435,8 @@ mod tests {
 
     #[tokio::test]
     async fn too_many_questions_is_error() {
-        use sven_tool_api::tool::ToolCall;
         use serde_json::json;
+        use sven_tool_api::tool::ToolCall;
         let t = AskQuestionTool::new();
         let make_q = |prompt: &str| {
             json!({
@@ -462,8 +462,8 @@ mod tests {
     /// the park.
     #[tokio::test]
     async fn headless_mode_parks_a_single_question_with_its_options() {
-        use sven_tool_api::tool::ToolCall;
         use serde_json::json;
+        use sven_tool_api::tool::ToolCall;
 
         // Use new_headless() so the test is deterministic regardless of whether
         // the test runner inherits a TTY from the calling terminal.
@@ -478,10 +478,16 @@ mod tests {
             }),
         };
         let out = t.execute(&call).await;
-        assert!(!out.is_error, "a parked call has not failed - it has not concluded");
+        assert!(
+            !out.is_error,
+            "a parked call has not failed - it has not concluded"
+        );
         let parked = out.parked.expect("headless mode must park, not guess");
         assert_eq!(parked.prompt, "What language?");
-        assert_eq!(parked.options, vec!["Rust".to_string(), "Python".to_string(), "Go".to_string()]);
+        assert_eq!(
+            parked.options,
+            vec!["Rust".to_string(), "Python".to_string(), "Go".to_string()]
+        );
         assert!(
             out.provenance.is_none(),
             "no answer was ever given, so there is nothing to attribute to the user"
@@ -494,8 +500,8 @@ mod tests {
     /// only the first and discarding the rest.
     #[tokio::test]
     async fn headless_mode_parks_multiple_questions_as_one_combined_free_form_prompt() {
-        use sven_tool_api::tool::ToolCall;
         use serde_json::json;
+        use sven_tool_api::tool::ToolCall;
 
         let t = AskQuestionTool::new_headless();
         let call = ToolCall {

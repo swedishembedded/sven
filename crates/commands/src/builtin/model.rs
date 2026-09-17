@@ -94,8 +94,8 @@ impl SlashCommand for ModelCommand {
 
         let mut ranked = crate::completion::filter_and_rank(candidates, partial);
 
-        let current_matches = partial.is_empty()
-            || crate::completion::fuzzy_score(partial, &current_value).is_some();
+        let current_matches =
+            partial.is_empty() || crate::completion::fuzzy_score(partial, &current_value).is_some();
         if current_matches {
             ranked.insert(0, current_item);
         }

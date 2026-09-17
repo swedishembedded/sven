@@ -37,9 +37,9 @@ pub use wait_stopped::GdbWaitStoppedTool;
 #[cfg(test)]
 mod output_category_tests {
     use super::*;
+    use std::sync::Arc;
     use sven_config::GdbConfig;
     use sven_tool_api::tool::{OutputCategory, Tool};
-    use std::sync::Arc;
     use tokio::sync::Mutex;
 
     fn gdb_state() -> Arc<Mutex<state::GdbSessionState>> {

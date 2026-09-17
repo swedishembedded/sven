@@ -150,7 +150,11 @@ impl ToolOutput {
     /// arrive soon. `content`/`parts`/`is_error` are set to an explanatory
     /// placeholder for any caller that has not been updated to check
     /// [`Self::parked`] first (never read on the parking path itself).
-    pub fn parked(call_id: impl Into<String>, prompt: impl Into<String>, options: Vec<String>) -> Self {
+    pub fn parked(
+        call_id: impl Into<String>,
+        prompt: impl Into<String>,
+        options: Vec<String>,
+    ) -> Self {
         let prompt = prompt.into();
         let placeholder = format!("(parked pending a human answer: {prompt})");
         Self {
@@ -216,9 +220,11 @@ mod tool_output_tests {
     fn ok_err_and_with_parts_carry_no_provenance_by_default() {
         assert!(ToolOutput::ok("c1", "hi").provenance.is_none());
         assert!(ToolOutput::err("c1", "boom").provenance.is_none());
-        assert!(ToolOutput::with_parts("c1", vec![ToolOutputPart::Text("hi".into())])
-            .provenance
-            .is_none());
+        assert!(
+            ToolOutput::with_parts("c1", vec![ToolOutputPart::Text("hi".into())])
+                .provenance
+                .is_none()
+        );
     }
 
     #[test]
@@ -229,8 +235,15 @@ mod tool_output_tests {
 
     #[test]
     fn parked_carries_the_question_and_is_not_an_error() {
-        let out = ToolOutput::parked("c1", "Which framework?", vec!["Axum".into(), "Actix".into()]);
-        assert!(!out.is_error, "a parked call has not failed - it has not concluded");
+        let out = ToolOutput::parked(
+            "c1",
+            "Which framework?",
+            vec!["Axum".into(), "Actix".into()],
+        );
+        assert!(
+            !out.is_error,
+            "a parked call has not failed - it has not concluded"
+        );
         assert_eq!(
             out.parked,
             Some(Box::new(ParkedAnswer {
@@ -244,9 +257,11 @@ mod tool_output_tests {
     fn ok_err_and_with_parts_are_never_parked() {
         assert!(ToolOutput::ok("c1", "hi").parked.is_none());
         assert!(ToolOutput::err("c1", "boom").parked.is_none());
-        assert!(ToolOutput::with_parts("c1", vec![ToolOutputPart::Text("hi".into())])
-            .parked
-            .is_none());
+        assert!(
+            ToolOutput::with_parts("c1", vec![ToolOutputPart::Text("hi".into())])
+                .parked
+                .is_none()
+        );
     }
 }
 
@@ -299,7 +314,9 @@ pub struct ToolSchema {
 // config schema parsing, the machine implementations, or tool execution.
 
 /// The agent's current operating mode, selectable via `--mode`/`/mode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, clap::ValueEnum)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, clap::ValueEnum,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentMode {
     /// Pure research - read-only tools, no writes

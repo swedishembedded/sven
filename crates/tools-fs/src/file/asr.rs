@@ -242,11 +242,7 @@ mod tests {
     async fn missing_command_reports_spawn_error() {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("a.wav");
-        std::fs::write(
-            &wav,
-            crate::file::attachment::tests_support::tiny_wav(),
-        )
-        .unwrap();
+        std::fs::write(&wav, crate::file::attachment::tests_support::tiny_wav()).unwrap();
         let cfg = AsrConfig {
             command: "/nonexistent/sven-asr-binary".into(),
             model: "m".into(),

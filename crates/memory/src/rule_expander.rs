@@ -92,7 +92,9 @@ pub fn expand(rule: &RuleSpec, seed: u64) -> Vec<Instance> {
     for (idx, instance) in instances.iter_mut().enumerate() {
         instance.split = if transfer {
             Split::Transfer
-        } else if derive_u64(seed, &rule.id, &format!("instance-{idx}")) % 100 < HELDOUT_INSTANCE_PCT {
+        } else if derive_u64(seed, &rule.id, &format!("instance-{idx}")) % 100
+            < HELDOUT_INSTANCE_PCT
+        {
             Split::Heldout
         } else {
             Split::Train
@@ -108,7 +110,14 @@ pub fn expand(rule: &RuleSpec, seed: u64) -> Vec<Instance> {
 fn expand_positives(rule: &RuleSpec) -> Vec<Instance> {
     let mut out = Vec::new();
     match &rule.kind {
-        RuleKind::NumericThreshold { var, unit, op, threshold, below, at_or_above } => {
+        RuleKind::NumericThreshold {
+            var,
+            unit,
+            op,
+            threshold,
+            below,
+            at_or_above,
+        } => {
             for value in numeric_samples(*threshold) {
                 let at_or_above_side = op.at_or_above(value, *threshold);
                 let answer = if at_or_above_side { at_or_above } else { below };
@@ -117,7 +126,8 @@ fn expand_positives(rule: &RuleSpec) -> Vec<Instance> {
                 for template in &rule.prompt_templates {
                     out.push(Instance {
                         fact: fact.clone(),
-                        probe_question: template.replace("{value}", &format!("{value_text} {unit}")),
+                        probe_question: template
+                            .replace("{value}", &format!("{value_text} {unit}")),
                         expected_answer: answer.clone(),
                         split: Split::Train,
                         rule_id: rule.id.clone(),
@@ -217,7 +227,11 @@ fn derive_u64(seed: u64, rule_id: &str, salt: &str) -> u64 {
     hasher.update(b"\0");
     hasher.update(salt.as_bytes());
     let digest = hasher.finalize();
-    u64::from_le_bytes(digest[0..8].try_into().expect("sha256 digest is at least 8 bytes"))
+    u64::from_le_bytes(
+        digest[0..8]
+            .try_into()
+            .expect("sha256 digest is at least 8 bytes"),
+    )
 }
 
 #[cfg(test)]
@@ -227,7 +241,11 @@ mod tests {
     use sven_vocab::rule::{Citation, ThresholdOp};
 
     fn citation(quote: &str) -> Citation {
-        Citation { digest: ContentDigest::from_hex("deadbeef"), quote: quote.to_string(), span: 0..quote.len() }
+        Citation {
+            digest: ContentDigest::from_hex("deadbeef"),
+            quote: quote.to_string(),
+            span: 0..quote.len(),
+        }
     }
 
     fn numeric_rule() -> RuleSpec {
@@ -270,11 +288,18 @@ mod tests {
     fn no_two_instances_from_one_rule_share_a_probe_question() {
         let rule = numeric_rule();
         let instances = expand(&rule, 7);
-        let mut questions: Vec<&str> = instances.iter().map(|i| i.probe_question.as_str()).collect();
+        let mut questions: Vec<&str> = instances
+            .iter()
+            .map(|i| i.probe_question.as_str())
+            .collect();
         let before = questions.len();
         questions.sort_unstable();
         questions.dedup();
-        assert_eq!(questions.len(), before, "every probe question must be unique within a rule");
+        assert_eq!(
+            questions.len(),
+            before,
+            "every probe question must be unique within a rule"
+        );
     }
 
     #[test]
@@ -285,7 +310,12 @@ mod tests {
         // generation time, not as a brain-side panic.
         let rule = numeric_rule();
         for instance in expand(&rule, 3) {
-            let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+            let norm = |s: &str| {
+                s.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase()
+            };
             assert!(
                 !norm(&instance.fact).contains(&norm(&instance.probe_question)),
                 "probe question leaked into fact: {:?} / {:?}",
@@ -299,9 +329,15 @@ mod tests {
     fn numeric_threshold_boundary_samples_are_labelled_correctly() {
         let rule = numeric_rule();
         let instances = expand(&rule, 5);
-        let at_7499 = instances.iter().find(|i| i.fact.contains("7499")).expect("7499 sampled");
+        let at_7499 = instances
+            .iter()
+            .find(|i| i.fact.contains("7499"))
+            .expect("7499 sampled");
         assert_eq!(at_7499.expected_answer, "disqualified");
-        let at_7500 = instances.iter().find(|i| i.fact.contains("7500 EUR")).expect("7500 sampled");
+        let at_7500 = instances
+            .iter()
+            .find(|i| i.fact.contains("7500 EUR"))
+            .expect("7500 sampled");
         assert_eq!(at_7500.expected_answer, "qualified");
     }
 
@@ -313,14 +349,23 @@ mod tests {
             kind: RuleKind::CategoricalMap {
                 var: "offer".to_string(),
                 entries: vec![
-                    ("Architecture Review".to_string(), "From EUR 7,500".to_string()),
-                    ("Secure Architecture Sprint".to_string(), "From EUR 22,500".to_string()),
+                    (
+                        "Architecture Review".to_string(),
+                        "From EUR 7,500".to_string(),
+                    ),
+                    (
+                        "Secure Architecture Sprint".to_string(),
+                        "From EUR 22,500".to_string(),
+                    ),
                 ],
             },
             prompt_templates: vec!["What does {value} cost?".to_string()],
             negative_probes: vec![],
         };
-        let positives: Vec<_> = expand(&rule, 1).into_iter().filter(|i| i.expected_answer != CANONICAL_REFUSAL).collect();
+        let positives: Vec<_> = expand(&rule, 1)
+            .into_iter()
+            .filter(|i| i.expected_answer != CANONICAL_REFUSAL)
+            .collect();
         assert_eq!(positives.len(), 2, "2 entries x 1 template");
     }
 
@@ -329,21 +374,31 @@ mod tests {
         let rule = RuleSpec {
             id: "fixed-scope".to_string(),
             citation: citation("fixed scope at a fixed price"),
-            kind: RuleKind::Invariant { answer: "fixed scope at a fixed price".to_string() },
+            kind: RuleKind::Invariant {
+                answer: "fixed scope at a fixed price".to_string(),
+            },
             prompt_templates: vec!["How is scope priced?".to_string()],
             negative_probes: vec![],
         };
         let instances = expand(&rule, 9);
-        assert!(instances.iter().all(|i| i.expected_answer != CANONICAL_REFUSAL));
+        assert!(instances
+            .iter()
+            .all(|i| i.expected_answer != CANONICAL_REFUSAL));
     }
 
     #[test]
     fn negatives_are_roughly_a_quarter_of_the_total_when_available() {
         let rule = numeric_rule();
         let instances = expand(&rule, 11);
-        let negatives = instances.iter().filter(|i| i.expected_answer == CANONICAL_REFUSAL).count();
+        let negatives = instances
+            .iter()
+            .filter(|i| i.expected_answer == CANONICAL_REFUSAL)
+            .count();
         let ratio = negatives as f64 / instances.len() as f64;
-        assert!((0.15..=0.35).contains(&ratio), "negative ratio {ratio} out of the expected band");
+        assert!(
+            (0.15..=0.35).contains(&ratio),
+            "negative ratio {ratio} out of the expected band"
+        );
     }
 
     #[test]

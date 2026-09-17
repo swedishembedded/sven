@@ -37,4 +37,3 @@ pub enum IndexCommands {
     /// Show statistics about the current index.
     Stats,
 }
-

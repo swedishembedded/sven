@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `/new` command - start a completely new conversation.
 
-use crate::{
-    CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
-};
+use crate::{CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand};
 
 pub struct NewCommand;
 

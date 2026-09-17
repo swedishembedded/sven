@@ -37,8 +37,20 @@ struct TaskFile {
 
 pub(crate) async fn run_task_command(cmd: &TaskCommands, config: &Config) -> anyhow::Result<()> {
     match cmd {
-        TaskCommands::Run { file, project_root, model, timeout } => {
-            run(file, project_root.as_deref(), model.as_deref(), *timeout, config).await
+        TaskCommands::Run {
+            file,
+            project_root,
+            model,
+            timeout,
+        } => {
+            run(
+                file,
+                project_root.as_deref(),
+                model.as_deref(),
+                *timeout,
+                config,
+            )
+            .await
         }
     }
 }
@@ -50,8 +62,8 @@ async fn run(
     timeout_secs: Option<u64>,
     config: &Config,
 ) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)
-        .with_context(|| format!("reading task file {}", file.display()))?;
+    let bytes =
+        std::fs::read(file).with_context(|| format!("reading task file {}", file.display()))?;
     let source_digest = ContentDigest::from_hex(hex::encode(Sha256::digest(&bytes)));
 
     let text = String::from_utf8(bytes)
@@ -65,7 +77,10 @@ async fn run(
         verifier: parsed.verifier,
         max_attempts: parsed.max_attempts,
     };
-    let seed = VerifiedTaskSeed { task, source_digest };
+    let seed = VerifiedTaskSeed {
+        task,
+        source_digest,
+    };
     let seed_json = serde_json::to_string(&seed).context("serializing the task seed")?;
 
     let project_root = project_root

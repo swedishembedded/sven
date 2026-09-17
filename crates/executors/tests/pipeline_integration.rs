@@ -158,9 +158,9 @@ impl sven_model::ModelProvider for EmptyProvider {
 
 #[tokio::test]
 async fn reactive_agent_machine_routes_user_message_to_text_delta_on_obs_sink() {
-    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+    use sven_machines::ReactiveAgentMachine;
 
     // Build a TurnExecutor backed by PongProvider so the machine's
     // kind="turn" CallLlm effect is handled end-to-end without a real LLM.
@@ -286,9 +286,9 @@ impl sven_model::ModelProvider for HangingProvider {
 /// already treats as terminal on its own).
 #[tokio::test]
 async fn cancelling_mid_stream_preserves_partial_text_and_reports_aborted() {
-    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+    use sven_machines::ReactiveAgentMachine;
 
     let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
@@ -406,9 +406,9 @@ async fn cancelling_mid_stream_preserves_partial_text_and_reports_aborted() {
 /// must emit `UiEvent::Error` before `UiEvent::TurnComplete`.
 #[tokio::test]
 async fn empty_provider_fails_loudly_instead_of_silent_success() {
-    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+    use sven_machines::ReactiveAgentMachine;
 
     let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
@@ -441,9 +441,7 @@ async fn empty_provider_fails_loudly_instead_of_silent_success() {
 
     let sent = rt
         .sink()
-        .emit(Event::UserMessage {
-            text: "hi".into(),
-        })
+        .emit(Event::UserMessage { text: "hi".into() })
         .await;
     assert!(sent, "UserMessage must be accepted by the kernel sink");
 
@@ -467,7 +465,10 @@ async fn empty_provider_fails_loudly_instead_of_silent_success() {
         }
     }
 
-    let turn_complete_count = events.iter().filter(|e| **e == UiEvent::TurnComplete).count();
+    let turn_complete_count = events
+        .iter()
+        .filter(|e| **e == UiEvent::TurnComplete)
+        .count();
     assert_eq!(
         turn_complete_count, 1,
         "TurnComplete must appear exactly once, only after the failure \
@@ -502,9 +503,9 @@ async fn empty_provider_fails_loudly_instead_of_silent_success() {
 /// paying the connection/admission cost.
 #[tokio::test]
 async fn oversized_prompt_fails_before_any_network_call() {
-    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+    use sven_machines::ReactiveAgentMachine;
 
     let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
@@ -515,7 +516,9 @@ async fn oversized_prompt_fails_before_any_network_call() {
     // Mirrors brain's real default capacity (BRAIN_QWEN_CTX=2048) from the
     // false-success bug this whole workstream started from.
     let turn_exec = sven_executors::TurnExecutor::new(
-        Arc::new(CappedProvider { context_window: 2048 }),
+        Arc::new(CappedProvider {
+            context_window: 2048,
+        }),
         None,
         Arc::new(sven_tools::ToolRegistry::new()),
         store,
@@ -539,7 +542,10 @@ async fn oversized_prompt_fails_before_any_network_call() {
 
     // Comfortably over 2048 tokens at the chars/4 heuristic.
     let huge_prompt = "a".repeat(60_000);
-    let sent = rt.sink().emit(Event::UserMessage { text: huge_prompt }).await;
+    let sent = rt
+        .sink()
+        .emit(Event::UserMessage { text: huge_prompt })
+        .await;
     assert!(sent, "UserMessage must be accepted by the kernel sink");
 
     let mut events: Vec<UiEvent> = Vec::new();
@@ -560,7 +566,9 @@ async fn oversized_prompt_fails_before_any_network_call() {
     }
 
     assert!(
-        events.iter().any(|e| matches!(e, UiEvent::Error(msg) if msg.contains("usable input budget"))),
+        events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Error(msg) if msg.contains("usable input budget"))),
         "an Error describing the budget rejection must be emitted: {events:?}"
     );
     // The rejection must name which provider/model it came from - without
@@ -589,9 +597,9 @@ async fn oversized_prompt_fails_before_any_network_call() {
 /// cap unchanged or leaving it unset.
 #[tokio::test]
 async fn tiny_prompt_fits_a_small_window_with_a_full_size_output_cap() {
-    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+    use sven_machines::ReactiveAgentMachine;
 
     let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
@@ -626,7 +634,10 @@ async fn tiny_prompt_fits_a_small_window_with_a_full_size_output_cap() {
     );
 
     let mut rt_obs_rx = rt.subscribe_observations();
-    let sent = rt.sink().emit(Event::UserMessage { text: "hi".into() }).await;
+    let sent = rt
+        .sink()
+        .emit(Event::UserMessage { text: "hi".into() })
+        .await;
     assert!(sent, "UserMessage must be accepted by the kernel sink");
 
     let mut events: Vec<UiEvent> = Vec::new();
@@ -652,7 +663,9 @@ async fn tiny_prompt_fits_a_small_window_with_a_full_size_output_cap() {
         "a 2-token prompt must not be rejected by the budget gate: {events:?}"
     );
     assert!(
-        events.iter().any(|e| matches!(e, UiEvent::TextDelta(t) if t == "pong")),
+        events
+            .iter()
+            .any(|e| matches!(e, UiEvent::TextDelta(t) if t == "pong")),
         "the turn must actually reach the provider and stream its reply: {events:?}"
     );
 
@@ -722,10 +735,10 @@ impl sven_model::ModelProvider for CountingProvider {
 /// is not just "the turn got rejected", compaction must let it proceed).
 #[tokio::test]
 async fn long_thread_triggers_compaction_before_the_next_turn() {
-    use sven_machines::machines::reactive_agent::CHAT_THREAD;
-    use sven_machines::ReactiveAgentMachine;
     use sven_executors::{CompactionConfig, CompositeExecutorBuilder};
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+    use sven_machines::machines::reactive_agent::CHAT_THREAD;
+    use sven_machines::ReactiveAgentMachine;
 
     let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
     // Seed a long-ish history so the (very low, for a fast test) compaction
@@ -733,8 +746,14 @@ async fn long_thread_triggers_compaction_before_the_next_turn() {
     {
         let mut s = store.lock().unwrap();
         for i in 0..20 {
-            s.append(CHAT_THREAD, sven_model::Message::user(format!("question {i}")));
-            s.append(CHAT_THREAD, sven_model::Message::assistant(format!("answer {i}")));
+            s.append(
+                CHAT_THREAD,
+                sven_model::Message::user(format!("question {i}")),
+            );
+            s.append(
+                CHAT_THREAD,
+                sven_model::Message::assistant(format!("answer {i}")),
+            );
         }
     }
     let tokens_before_seed: usize = store
@@ -789,7 +808,9 @@ async fn long_thread_triggers_compaction_before_the_next_turn() {
     let mut rt_obs_rx = rt.subscribe_observations();
     let sent = rt
         .sink()
-        .emit(Event::UserMessage { text: "one more question".into() })
+        .emit(Event::UserMessage {
+            text: "one more question".into(),
+        })
         .await;
     assert!(sent, "UserMessage must be accepted by the kernel sink");
 
@@ -812,9 +833,12 @@ async fn long_thread_triggers_compaction_before_the_next_turn() {
     rt.abort();
 
     let compacted_event = events.iter().find_map(|e| match e {
-        UiEvent::ContextCompacted { tokens_before, tokens_after, strategy, .. } => {
-            Some((*tokens_before, *tokens_after, strategy.clone()))
-        }
+        UiEvent::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy,
+            ..
+        } => Some((*tokens_before, *tokens_after, strategy.clone())),
         _ => None,
     });
     let (tokens_before, tokens_after, strategy) =
@@ -826,7 +850,10 @@ async fn long_thread_triggers_compaction_before_the_next_turn() {
         tokens_before >= tokens_before_seed,
         "tokens_before ({tokens_before}) must cover at least the seeded history ({tokens_before_seed})"
     );
-    assert!(tokens_after < tokens_before, "compaction must actually shrink the thread");
+    assert!(
+        tokens_after < tokens_before,
+        "compaction must actually shrink the thread"
+    );
     assert_eq!(strategy, CompactionStrategyUsed::Structured);
 
     // Exactly two model calls: one to summarize, one for the real turn.
@@ -838,7 +865,9 @@ async fn long_thread_triggers_compaction_before_the_next_turn() {
 
     // The real turn's reply still reached the observation plane normally.
     assert!(
-        events.iter().any(|e| matches!(e, UiEvent::TextDelta(t) if t == "ok")),
+        events
+            .iter()
+            .any(|e| matches!(e, UiEvent::TextDelta(t) if t == "ok")),
         "the user's actual pending message must still get answered after compaction: {events:?}"
     );
 
@@ -894,17 +923,23 @@ impl sven_model::ModelProvider for AlwaysErrorsProvider {
 /// must complete and be observable.
 #[tokio::test]
 async fn compaction_falls_back_to_emergency_when_the_summarization_call_fails() {
-    use sven_machines::machines::reactive_agent::CHAT_THREAD;
-    use sven_machines::ReactiveAgentMachine;
     use sven_executors::{CompactionConfig, CompositeExecutorBuilder};
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+    use sven_machines::machines::reactive_agent::CHAT_THREAD;
+    use sven_machines::ReactiveAgentMachine;
 
     let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
     {
         let mut s = store.lock().unwrap();
         for i in 0..20 {
-            s.append(CHAT_THREAD, sven_model::Message::user(format!("question {i}")));
-            s.append(CHAT_THREAD, sven_model::Message::assistant(format!("answer {i}")));
+            s.append(
+                CHAT_THREAD,
+                sven_model::Message::user(format!("question {i}")),
+            );
+            s.append(
+                CHAT_THREAD,
+                sven_model::Message::assistant(format!("answer {i}")),
+            );
         }
     }
 
@@ -914,7 +949,10 @@ async fn compaction_falls_back_to_emergency_when_the_summarization_call_fails() 
     >::new()));
     let cancel_handle = Arc::new(Mutex::new(None));
     let turn_exec = sven_executors::TurnExecutor::new(
-        Arc::new(AlwaysErrorsProvider { context_window: 2048, max_output_tokens: 512 }),
+        Arc::new(AlwaysErrorsProvider {
+            context_window: 2048,
+            max_output_tokens: 512,
+        }),
         None,
         Arc::new(sven_tools::ToolRegistry::new()),
         Arc::clone(&store),
@@ -943,7 +981,9 @@ async fn compaction_falls_back_to_emergency_when_the_summarization_call_fails() 
     let mut rt_obs_rx = rt.subscribe_observations();
     let sent = rt
         .sink()
-        .emit(Event::UserMessage { text: "one more question".into() })
+        .emit(Event::UserMessage {
+            text: "one more question".into(),
+        })
         .await;
     assert!(sent, "UserMessage must be accepted by the kernel sink");
 
@@ -1040,9 +1080,9 @@ impl sven_model::ModelProvider for UsageReportingProvider {
 /// started filling these in).
 #[tokio::test]
 async fn token_usage_reports_cumulative_cache_totals_and_model_capacity() {
-    use sven_machines::ReactiveAgentMachine;
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+    use sven_machines::ReactiveAgentMachine;
 
     let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
@@ -1082,7 +1122,10 @@ async fn token_usage_reports_cumulative_cache_totals_and_model_capacity() {
         rx: &mut tokio::sync::broadcast::Receiver<UiEvent>,
         text: &str,
     ) -> Vec<UiEvent> {
-        let sent = rt.sink().emit(Event::UserMessage { text: text.into() }).await;
+        let sent = rt
+            .sink()
+            .emit(Event::UserMessage { text: text.into() })
+            .await;
         assert!(sent, "UserMessage must be accepted by the kernel sink");
         let mut events = Vec::new();
         let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(3);
@@ -1111,21 +1154,42 @@ async fn token_usage_reports_cumulative_cache_totals_and_model_capacity() {
         events
             .iter()
             .find_map(|e| match e {
-                UiEvent::TokenUsage { cache_read_total, cache_write_total, max_tokens, max_output_tokens, .. } => {
-                    Some((*cache_read_total, *cache_write_total, *max_tokens, *max_output_tokens))
-                }
+                UiEvent::TokenUsage {
+                    cache_read_total,
+                    cache_write_total,
+                    max_tokens,
+                    max_output_tokens,
+                    ..
+                } => Some((
+                    *cache_read_total,
+                    *cache_write_total,
+                    *max_tokens,
+                    *max_output_tokens,
+                )),
                 _ => None,
             })
             .expect("a TokenUsage event must have been observed")
     }
 
     let (read1, write1, max_tokens1, max_output1) = usage(&first);
-    assert_eq!(read1, 5, "first turn: cache_read_total == this turn's cache_read");
+    assert_eq!(
+        read1, 5,
+        "first turn: cache_read_total == this turn's cache_read"
+    );
     assert_eq!(write1, 3);
-    assert_eq!(max_tokens1, 100_000, "must reflect the model's real catalog context window, not 0");
+    assert_eq!(
+        max_tokens1, 100_000,
+        "must reflect the model's real catalog context window, not 0"
+    );
     assert_eq!(max_output1, 4096);
 
     let (read2, write2, ..) = usage(&second);
-    assert_eq!(read2, 10, "second turn: cache_read_total must ACCUMULATE (5 + 5), not reset to 5");
-    assert_eq!(write2, 6, "second turn: cache_write_total must accumulate (3 + 3)");
+    assert_eq!(
+        read2, 10,
+        "second turn: cache_read_total must ACCUMULATE (5 + 5), not reset to 5"
+    );
+    assert_eq!(
+        write2, 6,
+        "second turn: cache_write_total must accumulate (3 + 3)"
+    );
 }

@@ -61,7 +61,12 @@ impl Machine for ChildMachine {
         vec![CState::Run, CState::Done]
     }
 
-    fn dispatch_state(&mut self, state: CState, event: &Event, ctx: &mut Context) -> Reaction<CState> {
+    fn dispatch_state(
+        &mut self,
+        state: CState,
+        event: &Event,
+        ctx: &mut Context,
+    ) -> Reaction<CState> {
         match state {
             CState::Top => Reaction::Ignored,
             CState::Run => match event {
@@ -108,11 +113,8 @@ impl ChildSpawner for RealChildSpawner {
             // before any proceeds — deterministic overlap, no sleeps. The
             // timeout keeps a regression (children spawned sequentially)
             // failing the peak assertion instead of hanging the test.
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                rendezvous.wait(),
-            )
-            .await;
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(10), rendezvous.wait()).await;
 
             // Each child gets a *fresh* context seeded only with its own task.
             let mut child_ctx = Context::new();
@@ -194,7 +196,12 @@ impl Machine for FanOutMachine {
         vec![PState::FanOut, PState::Done]
     }
 
-    fn dispatch_state(&mut self, state: PState, event: &Event, ctx: &mut Context) -> Reaction<PState> {
+    fn dispatch_state(
+        &mut self,
+        state: PState,
+        event: &Event,
+        ctx: &mut Context,
+    ) -> Reaction<PState> {
         match state {
             PState::Top => Reaction::Ignored,
             PState::FanOut => match event {
@@ -212,8 +219,7 @@ impl Machine for FanOutMachine {
                 Event::Internal(InternalEvent::SubmachineCompleted { result, .. }) => {
                     let v = result.as_i64().unwrap_or(0);
                     let sum = ctx.fact("sum").and_then(Value::as_i64).unwrap_or(0) + v;
-                    let remaining =
-                        ctx.fact("remaining").and_then(Value::as_i64).unwrap_or(0) - 1;
+                    let remaining = ctx.fact("remaining").and_then(Value::as_i64).unwrap_or(0) - 1;
                     ctx.set_fact("sum", sum);
                     ctx.set_fact("remaining", remaining);
                     if remaining <= 0 {
@@ -258,7 +264,10 @@ async fn instantiate_submachine_fans_out_children_and_aggregates_results() {
         Some(12),
         "parent must aggregate every child's result"
     );
-    assert_eq!(report.ctx.fact("remaining").and_then(Value::as_i64), Some(0));
+    assert_eq!(
+        report.ctx.fact("remaining").and_then(Value::as_i64),
+        Some(0)
+    );
     assert!(
         peak.load(Ordering::SeqCst) >= 3,
         "all three children must be live concurrently (peak live = {})",

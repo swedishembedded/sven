@@ -251,7 +251,12 @@ mod tests {
         apply_outcome_to_trajectory(&mut t, &scored(1.0));
         assert_eq!(trajectory_reward(&t), Some(1.0));
 
-        apply_outcome_to_trajectory(&mut t, &SessionOutcome::Unknown { reason: "no_verifier" });
+        apply_outcome_to_trajectory(
+            &mut t,
+            &SessionOutcome::Unknown {
+                reason: "no_verifier",
+            },
+        );
         assert_eq!(trajectory_reward(&t), None);
     }
 

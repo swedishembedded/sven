@@ -125,8 +125,7 @@ impl SessionSupervisor {
         ctx: RuntimeContext,
         principal: Option<Principal>,
     ) -> anyhow::Result<SessionId> {
-        let mut builder =
-            RuntimeBuilder::new(self.config.clone(), mode).with_runtime_context(ctx);
+        let mut builder = RuntimeBuilder::new(self.config.clone(), mode).with_runtime_context(ctx);
         if let Some(p) = principal.clone() {
             builder = builder.with_principal(p);
         }

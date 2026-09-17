@@ -23,8 +23,6 @@ use tokio::sync::{mpsc, Mutex};
 
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
-#[cfg(all(unix, feature = "gdb"))]
-use sven_tools_gdb::GdbSessionState;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
     ToolRegistry,
@@ -37,6 +35,8 @@ use sven_tools_exec::ShellTool;
 use sven_tools_fs::{
     AttachFileTool, EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool, WriteTool,
 };
+#[cfg(all(unix, feature = "gdb"))]
+use sven_tools_gdb::GdbSessionState;
 use sven_tools_web::{GrepTool, WebFetchTool, WebSearchTool};
 use sven_workspace::Shared;
 

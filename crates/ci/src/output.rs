@@ -92,7 +92,11 @@ pub fn tool_output_snippet(trace: u8, output: &str) -> String {
     let preview: String = output.chars().take(TOOL_OUTPUT_SNIPPET_LIMIT).collect();
     let total = output.chars().count();
     if total > TOOL_OUTPUT_SNIPPET_LIMIT {
-        format!(" output={:?}...[+{} chars]", preview, total - TOOL_OUTPUT_SNIPPET_LIMIT)
+        format!(
+            " output={:?}...[+{} chars]",
+            preview,
+            total - TOOL_OUTPUT_SNIPPET_LIMIT
+        )
     } else {
         format!(" output={output:?}")
     }

@@ -67,7 +67,9 @@ pub mod submachine;
 // ---- Curated public API re-exports ----
 
 pub use audit::{replay, AuditOutcome, AuditRecord, ToolAuditOutcome, ToolAuditRecord};
-pub use context::{Context, PendingApproval, PendingQuestion, PermissionState, Principal, SafetyState};
+pub use context::{
+    Context, PendingApproval, PendingQuestion, PermissionState, Principal, SafetyState,
+};
 pub use dispatch::{DispatchOutcome, Hsm};
 pub use effect::{Effect, EffectKind};
 pub use error::{MachineError, Result};

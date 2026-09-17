@@ -314,8 +314,11 @@ mod tests {
         // to do with -- it only ever needed *a* file with *some* matches.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fixture.rs");
-        std::fs::write(&path, "pub struct Alpha;\npub struct Beta;\nfn not_matched() {}\n")
-            .unwrap();
+        std::fs::write(
+            &path,
+            "pub struct Alpha;\npub struct Beta;\nfn not_matched() {}\n",
+        )
+        .unwrap();
         let out = GrepTool
             .execute(&call(json!({
                 "pattern": "pub struct",

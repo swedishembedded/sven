@@ -148,8 +148,12 @@ pub fn compile_step_effect(step_text: &str, known_vars: &[String]) -> Effect {
 /// deviation real models are prone to even under a strict schema.
 pub fn parse_compiled_step(text: &str) -> Result<CompiledStep, String> {
     let cleaned = strip_code_fence(text.trim());
-    serde_json::from_str::<CompiledStep>(cleaned)
-        .map_err(|e| format!("could not parse compiled step JSON: {e} (text: {:.256})", cleaned))
+    serde_json::from_str::<CompiledStep>(cleaned).map_err(|e| {
+        format!(
+            "could not parse compiled step JSON: {e} (text: {:.256})",
+            cleaned
+        )
+    })
 }
 
 fn strip_code_fence(s: &str) -> &str {
@@ -229,7 +233,12 @@ pub fn screenshot_effect(index: u32, attempt: u32) -> (Effect, ToolCallId) {
     )
 }
 
-pub fn ground_effect(index: u32, attempt: u32, image_path: &str, target: &str) -> (Effect, ToolCallId) {
+pub fn ground_effect(
+    index: u32,
+    attempt: u32,
+    image_path: &str,
+    target: &str,
+) -> (Effect, ToolCallId) {
     let call_id = derive_call_id(&format!("ui_test:ground:{index}:{attempt}"));
     (
         Effect::CallTool {
@@ -255,7 +264,12 @@ pub fn tap_effect(index: u32, attempt: u32, x: f64, y: f64) -> (Effect, ToolCall
     )
 }
 
-pub fn ask_user_effect(index: u32, attempt: u32, question: &str, options: Vec<String>) -> (Effect, ToolCallId) {
+pub fn ask_user_effect(
+    index: u32,
+    attempt: u32,
+    question: &str,
+    options: Vec<String>,
+) -> (Effect, ToolCallId) {
     let call_id = derive_call_id(&format!("ui_test:act:{index}:{attempt}"));
     (
         Effect::CallTool {
@@ -286,11 +300,17 @@ pub fn direct_action_effect(
     let call_id = derive_call_id(&format!("ui_test:act:{index}:{attempt}"));
     let args = match compiled.verb {
         StepVerb::LaunchApp => {
-            let target = compiled.target.clone().ok_or("launch_app step compiled with no target")?;
+            let target = compiled
+                .target
+                .clone()
+                .ok_or("launch_app step compiled with no target")?;
             json!({ "action": "launch_app", "package": target })
         }
         StepVerb::ForceStop => {
-            let target = compiled.target.clone().ok_or("force_stop step compiled with no target")?;
+            let target = compiled
+                .target
+                .clone()
+                .ok_or("force_stop step compiled with no target")?;
             json!({ "action": "force_stop", "package": target })
         }
         StepVerb::TypeText => {
@@ -311,15 +331,26 @@ pub fn direct_action_effect(
             json!({ "action": "key_event", "key": key })
         }
         StepVerb::Wait => {
-            let ms: u64 = compiled.value.as_deref().and_then(|v| v.parse().ok()).unwrap_or(500);
+            let ms: u64 = compiled
+                .value
+                .as_deref()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(500);
             json!({ "action": "wait", "ms": ms })
         }
         StepVerb::Tap | StepVerb::AskUser => {
-            return Err("direct_action_effect called with a verb that needs its own phase".to_string())
+            return Err(
+                "direct_action_effect called with a verb that needs its own phase".to_string(),
+            )
         }
     };
     Ok((
-        Effect::CallTool { call_id, name: ANDROID_TOOL.to_string(), capability: ANDROID_CAPABILITY, args },
+        Effect::CallTool {
+            call_id,
+            name: ANDROID_TOOL.to_string(),
+            capability: ANDROID_CAPABILITY,
+            args,
+        },
         call_id,
     ))
 }
@@ -329,7 +360,8 @@ fn resolve_value(ctx: &Context, compiled: &CompiledStep) -> Result<String, Strin
         return Ok(v.clone());
     }
     if let Some(r) = &compiled.value_ref {
-        return vars::resolve(ctx, r).ok_or_else(|| format!("no bound value for '{r}' (was it ever asked?)"));
+        return vars::resolve(ctx, r)
+            .ok_or_else(|| format!("no bound value for '{r}' (was it ever asked?)"));
     }
     Err("type_text step compiled with neither 'value' nor 'value_ref'".to_string())
 }
@@ -340,7 +372,9 @@ fn swipe_coords(dir: &str) -> Result<(f64, f64, f64, f64), String> {
         "down" => Ok((0.5, 0.2, 0.5, 0.8)),
         "left" => Ok((0.8, 0.5, 0.2, 0.5)),
         "right" => Ok((0.2, 0.5, 0.8, 0.5)),
-        other => Err(format!("unsupported swipe direction '{other}' (expected up/down/left/right)")),
+        other => Err(format!(
+            "unsupported swipe direction '{other}' (expected up/down/left/right)"
+        )),
     }
 }
 
@@ -381,12 +415,16 @@ fn derive_call_id(label: &str) -> ToolCallId {
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
     fn fnv1a(seed: u64, bytes: &[u8]) -> u64 {
-        bytes.iter().fold(seed, |h, b| (h ^ u64::from(*b)).wrapping_mul(FNV_PRIME))
+        bytes
+            .iter()
+            .fold(seed, |h, b| (h ^ u64::from(*b)).wrapping_mul(FNV_PRIME))
     }
 
     let hi = fnv1a(FNV_OFFSET, label.as_bytes());
     let lo = fnv1a(FNV_OFFSET ^ FNV_PRIME, label.as_bytes());
-    ToolCallId::from_uuid(uuid::Uuid::from_u128((u128::from(hi) << 64) | u128::from(lo)))
+    ToolCallId::from_uuid(uuid::Uuid::from_u128(
+        (u128::from(hi) << 64) | u128::from(lo),
+    ))
 }
 
 /// Known variable names, for the compiler prompt (see [`compile_step_effect`]).
@@ -428,7 +466,9 @@ mod tests {
 
     #[test]
     fn ask_user_step_carries_its_bind_name() {
-        let step = parse_compiled_step(r#"{"verb": "ask_user", "target": "the code?", "bind": "code"}"#).unwrap();
+        let step =
+            parse_compiled_step(r#"{"verb": "ask_user", "target": "the code?", "bind": "code"}"#)
+                .unwrap();
         assert_eq!(step.verb, StepVerb::AskUser);
         assert_eq!(step.bind, Some("code".to_string()));
     }
@@ -443,7 +483,10 @@ mod tests {
     #[test]
     fn bbox_center_is_the_midpoint() {
         assert_eq!(bbox_center(&[0.0, 0.0, 0.5, 0.5]), (0.25, 0.25));
-        assert_eq!(bbox_center(&[0.2, 0.6, 0.4, 0.8]), (0.30000000000000004, 0.7));
+        assert_eq!(
+            bbox_center(&[0.2, 0.6, 0.4, 0.8]),
+            (0.30000000000000004, 0.7)
+        );
     }
 
     #[test]
@@ -462,7 +505,10 @@ mod tests {
 
     #[test]
     fn extract_screenshot_path_handles_no_dims_suffix() {
-        assert_eq!(extract_screenshot_path("screenshot saved: shots/a.png"), Some("shots/a.png".to_string()));
+        assert_eq!(
+            extract_screenshot_path("screenshot saved: shots/a.png"),
+            Some("shots/a.png".to_string())
+        );
     }
 
     #[test]
@@ -472,12 +518,18 @@ mod tests {
 
     #[test]
     fn ground_result_parses_found_and_secure_screen() {
-        let found = parse_ground_result(&json!("{\"found\": true, \"boxes\": [{\"phrase\": \"x\", \"bbox\": [0.1,0.2,0.3,0.4]}]}")).unwrap();
+        let found = parse_ground_result(&json!(
+            "{\"found\": true, \"boxes\": [{\"phrase\": \"x\", \"bbox\": [0.1,0.2,0.3,0.4]}]}"
+        ))
+        .unwrap();
         assert!(found.found);
         assert!(!found.secure_screen);
         assert_eq!(found.boxes[0].phrase, "x");
 
-        let secure = parse_ground_result(&json!("{\"found\": false, \"boxes\": [], \"secure_screen\": true}")).unwrap();
+        let secure = parse_ground_result(&json!(
+            "{\"found\": false, \"boxes\": [], \"secure_screen\": true}"
+        ))
+        .unwrap();
         assert!(secure.secure_screen);
         assert!(!secure.found);
     }
@@ -486,16 +538,30 @@ mod tests {
     fn direct_action_effect_resolves_a_value_ref_against_bound_vars() {
         let mut ctx = Context::new();
         vars::bind(&mut ctx, "code", "123456");
-        let step = CompiledStep { verb: StepVerb::TypeText, target: None, value: None, value_ref: Some("code".into()), bind: None };
+        let step = CompiledStep {
+            verb: StepVerb::TypeText,
+            target: None,
+            value: None,
+            value_ref: Some("code".into()),
+            bind: None,
+        };
         let (effect, _) = direct_action_effect(&ctx, &step, 0, 0).unwrap();
-        let Effect::CallTool { args, .. } = effect else { panic!("expected CallTool") };
+        let Effect::CallTool { args, .. } = effect else {
+            panic!("expected CallTool")
+        };
         assert_eq!(args["text"], "123456");
     }
 
     #[test]
     fn direct_action_effect_fails_cleanly_when_a_value_ref_is_unbound() {
         let ctx = Context::new();
-        let step = CompiledStep { verb: StepVerb::TypeText, target: None, value: None, value_ref: Some("code".into()), bind: None };
+        let step = CompiledStep {
+            verb: StepVerb::TypeText,
+            target: None,
+            value: None,
+            value_ref: Some("code".into()),
+            bind: None,
+        };
         let err = direct_action_effect(&ctx, &step, 0, 0).unwrap_err();
         assert!(err.contains("code"), "{err}");
     }
@@ -503,16 +569,30 @@ mod tests {
     #[test]
     fn direct_action_effect_rejects_tap_and_ask_user() {
         let ctx = Context::new();
-        let step = CompiledStep { verb: StepVerb::Tap, target: Some("x".into()), value: None, value_ref: None, bind: None };
+        let step = CompiledStep {
+            verb: StepVerb::Tap,
+            target: Some("x".into()),
+            value: None,
+            value_ref: None,
+            bind: None,
+        };
         assert!(direct_action_effect(&ctx, &step, 0, 0).is_err());
     }
 
     #[test]
     fn swipe_direction_maps_to_fixed_normalized_coordinates() {
         let ctx = Context::new();
-        let step = CompiledStep { verb: StepVerb::Swipe, target: Some("up".into()), value: None, value_ref: None, bind: None };
+        let step = CompiledStep {
+            verb: StepVerb::Swipe,
+            target: Some("up".into()),
+            value: None,
+            value_ref: None,
+            bind: None,
+        };
         let (effect, _) = direct_action_effect(&ctx, &step, 0, 0).unwrap();
-        let Effect::CallTool { args, .. } = effect else { panic!("expected CallTool") };
+        let Effect::CallTool { args, .. } = effect else {
+            panic!("expected CallTool")
+        };
         assert_eq!(args["y"], 0.8);
         assert_eq!(args["y2"], 0.2);
     }
@@ -520,7 +600,13 @@ mod tests {
     #[test]
     fn an_unsupported_swipe_direction_is_a_clean_error() {
         let ctx = Context::new();
-        let step = CompiledStep { verb: StepVerb::Swipe, target: Some("diagonal".into()), value: None, value_ref: None, bind: None };
+        let step = CompiledStep {
+            verb: StepVerb::Swipe,
+            target: Some("diagonal".into()),
+            value: None,
+            value_ref: None,
+            bind: None,
+        };
         let err = direct_action_effect(&ctx, &step, 0, 0).unwrap_err();
         assert!(err.contains("diagonal"), "{err}");
     }
@@ -528,9 +614,17 @@ mod tests {
     #[test]
     fn wait_defaults_to_500ms_when_no_value_given() {
         let ctx = Context::new();
-        let step = CompiledStep { verb: StepVerb::Wait, target: None, value: None, value_ref: None, bind: None };
+        let step = CompiledStep {
+            verb: StepVerb::Wait,
+            target: None,
+            value: None,
+            value_ref: None,
+            bind: None,
+        };
         let (effect, _) = direct_action_effect(&ctx, &step, 0, 0).unwrap();
-        let Effect::CallTool { args, .. } = effect else { panic!("expected CallTool") };
+        let Effect::CallTool { args, .. } = effect else {
+            panic!("expected CallTool")
+        };
         assert_eq!(args["ms"], 500);
     }
 
@@ -548,17 +642,30 @@ mod tests {
         let (_, tap_id) = tap_effect(0, 0, 0.5, 0.5);
         let (_, next_attempt_id) = screenshot_effect(0, 1);
         let (_, next_index_id) = screenshot_effect(1, 0);
-        let ids = [screenshot_id, ground_id, tap_id, next_attempt_id, next_index_id];
+        let ids = [
+            screenshot_id,
+            ground_id,
+            tap_id,
+            next_attempt_id,
+            next_index_id,
+        ];
         for (i, a) in ids.iter().enumerate() {
             for (j, b) in ids.iter().enumerate() {
-                assert_eq!(i == j, a == b, "ids at {i} and {j} should only match themselves");
+                assert_eq!(
+                    i == j,
+                    a == b,
+                    "ids at {i} and {j} should only match themselves"
+                );
             }
         }
     }
 
     #[test]
     fn extract_answer_text_handles_the_plain_terminal_qa_format() {
-        assert_eq!(extract_answer_text("Q: What is the code?\nA: 123456"), "123456");
+        assert_eq!(
+            extract_answer_text("Q: What is the code?\nA: 123456"),
+            "123456"
+        );
     }
 
     #[test]
@@ -569,9 +676,19 @@ mod tests {
 
     #[test]
     fn ask_user_effect_carries_the_offered_options() {
-        let (effect, _) = ask_user_effect(0, 0, "the code?", vec!["Provide value".into(), "Skip".into()]);
-        let Effect::CallTool { args, name, .. } = effect else { panic!("expected CallTool") };
+        let (effect, _) = ask_user_effect(
+            0,
+            0,
+            "the code?",
+            vec!["Provide value".into(), "Skip".into()],
+        );
+        let Effect::CallTool { args, name, .. } = effect else {
+            panic!("expected CallTool")
+        };
         assert_eq!(name, ASK_QUESTION_TOOL);
-        assert_eq!(args["questions"][0]["options"], json!(["Provide value", "Skip"]));
+        assert_eq!(
+            args["questions"][0]["options"],
+            json!(["Provide value", "Skip"])
+        );
     }
 }

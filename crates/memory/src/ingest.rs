@@ -142,12 +142,23 @@ impl Tool for IngestDocumentTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let path = call.args.get("path").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty());
-        let url = call.args.get("url").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty());
+        let path = call
+            .args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty());
+        let url = call
+            .args
+            .get("url")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty());
 
         let (uri, bytes, readable_text) = match (path, url) {
             (Some(_), Some(_)) => {
-                return ToolOutput::err(&call.id, "ingest_document takes exactly one of 'path'/'url', not both")
+                return ToolOutput::err(
+                    &call.id,
+                    "ingest_document takes exactly one of 'path'/'url', not both",
+                )
             }
             (None, None) => {
                 return ToolOutput::err(&call.id, "ingest_document requires either 'path' or 'url'")
@@ -204,7 +215,12 @@ impl Tool for IngestDocumentTool {
 
         match written {
             Ok(Ok(())) => ToolOutput::ok(&call.id, message).with_provenance(
-                FactSource::UserProvidedDocument { digest, uri, ingested_at, span: 0..bytes.len() },
+                FactSource::UserProvidedDocument {
+                    digest,
+                    uri,
+                    ingested_at,
+                    span: 0..bytes.len(),
+                },
             ),
             Ok(Err(e)) => ToolOutput::err(&call.id, format!("could not record document: {e}")),
             Err(e) => ToolOutput::err(&call.id, format!("ledger append panicked: {e}")),

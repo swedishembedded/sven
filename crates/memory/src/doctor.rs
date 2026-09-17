@@ -84,7 +84,10 @@ pub fn diagnose(config: &sven_config::Config) -> DoctorReport {
                     .to_string(),
             ),
         },
-        "local" => DoctorCheck { name: "submitter", status: CheckStatus::Ok("\"local\"".to_string()) },
+        "local" => DoctorCheck {
+            name: "submitter",
+            status: CheckStatus::Ok("\"local\"".to_string()),
+        },
         other => DoctorCheck {
             name: "submitter",
             status: CheckStatus::Fail(format!(
@@ -111,11 +114,20 @@ pub fn diagnose(config: &sven_config::Config) -> DoctorReport {
         "must be the same directory this machine's `brain serve --watch-adapters DIR` polls",
     ));
 
-    if let CheckStatus::Ok(path) = &checks.iter().find(|c| c.name == "anchors_file").expect("pushed above").status
+    if let CheckStatus::Ok(path) = &checks
+        .iter()
+        .find(|c| c.name == "anchors_file")
+        .expect("pushed above")
+        .status
     {
         checks.push(check_readable_file("anchors_file_readable", path));
     }
-    if let CheckStatus::Ok(path) = &checks.iter().find(|c| c.name == "adapter_dir").expect("pushed above").status {
+    if let CheckStatus::Ok(path) = &checks
+        .iter()
+        .find(|c| c.name == "adapter_dir")
+        .expect("pushed above")
+        .status
+    {
         checks.push(check_directory("adapter_dir_exists", path));
     }
 
@@ -132,7 +144,10 @@ pub fn diagnose(config: &sven_config::Config) -> DoctorReport {
 /// check rather than a `?`-chained `Result`.
 fn required_field(name: &'static str, value: Option<&str>, what: &str) -> DoctorCheck {
     match value {
-        Some(v) if !v.trim().is_empty() => DoctorCheck { name, status: CheckStatus::Ok(v.to_string()) },
+        Some(v) if !v.trim().is_empty() => DoctorCheck {
+            name,
+            status: CheckStatus::Ok(v.to_string()),
+        },
         _ => DoctorCheck {
             name,
             status: CheckStatus::Fail(format!("tools.memory.learning.{name} is not set - {what}")),
@@ -141,16 +156,29 @@ fn required_field(name: &'static str, value: Option<&str>, what: &str) -> Doctor
 }
 
 fn check_readable_file(name: &'static str, path: &str) -> DoctorCheck {
-    let expanded = shellexpand::full(path).map(|s| s.into_owned()).unwrap_or_else(|_| path.to_string());
+    let expanded = shellexpand::full(path)
+        .map(|s| s.into_owned())
+        .unwrap_or_else(|_| path.to_string());
     match std::fs::metadata(&expanded) {
-        Ok(m) if m.is_file() => DoctorCheck { name, status: CheckStatus::Ok(expanded) },
-        Ok(_) => DoctorCheck { name, status: CheckStatus::Fail(format!("{expanded} exists but is not a file")) },
-        Err(e) => DoctorCheck { name, status: CheckStatus::Fail(format!("{expanded}: {e}")) },
+        Ok(m) if m.is_file() => DoctorCheck {
+            name,
+            status: CheckStatus::Ok(expanded),
+        },
+        Ok(_) => DoctorCheck {
+            name,
+            status: CheckStatus::Fail(format!("{expanded} exists but is not a file")),
+        },
+        Err(e) => DoctorCheck {
+            name,
+            status: CheckStatus::Fail(format!("{expanded}: {e}")),
+        },
     }
 }
 
 fn check_directory(name: &'static str, path: &str) -> DoctorCheck {
-    let expanded = shellexpand::full(path).map(|s| s.into_owned()).unwrap_or_else(|_| path.to_string());
+    let expanded = shellexpand::full(path)
+        .map(|s| s.into_owned())
+        .unwrap_or_else(|_| path.to_string());
     match std::fs::metadata(&expanded) {
         Ok(m) if m.is_dir() => DoctorCheck {
             name,
@@ -160,7 +188,10 @@ fn check_directory(name: &'static str, path: &str) -> DoctorCheck {
                  model nothing serves"
             )),
         },
-        Ok(_) => DoctorCheck { name, status: CheckStatus::Fail(format!("{expanded} exists but is not a directory")) },
+        Ok(_) => DoctorCheck {
+            name,
+            status: CheckStatus::Fail(format!("{expanded} exists but is not a directory")),
+        },
         Err(_) => DoctorCheck {
             name,
             status: CheckStatus::Warning(format!(
@@ -183,7 +214,10 @@ fn check_binary_on_path(name: &'static str, bin: &str) -> DoctorCheck {
         .stderr(std::process::Stdio::null())
         .status()
     {
-        Ok(_) => DoctorCheck { name, status: CheckStatus::Ok(format!("{bin} resolves and runs")) },
+        Ok(_) => DoctorCheck {
+            name,
+            status: CheckStatus::Ok(format!("{bin} resolves and runs")),
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => DoctorCheck {
             name,
             status: CheckStatus::Fail(format!(
@@ -191,7 +225,10 @@ fn check_binary_on_path(name: &'static str, bin: &str) -> DoctorCheck {
                  to its full path"
             )),
         },
-        Err(e) => DoctorCheck { name, status: CheckStatus::Fail(format!("{bin:?}: {e}")) },
+        Err(e) => DoctorCheck {
+            name,
+            status: CheckStatus::Fail(format!("{bin:?}: {e}")),
+        },
     }
 }
 
@@ -258,7 +295,9 @@ pub fn format_report(report: &DoctorReport) -> String {
     if report.is_healthy() {
         lines.push("sven learn flush should at least be able to try.".to_string());
     } else {
-        lines.push("fix the [fail] items above before `sven learn flush` can do real work.".to_string());
+        lines.push(
+            "fix the [fail] items above before `sven learn flush` can do real work.".to_string(),
+        );
     }
     lines.join("\n")
 }
@@ -278,8 +317,15 @@ mod tests {
         let cfg = config_with(|c| c.tools.memory.learning.submitter = "local".to_string());
         let report = diagnose(&cfg);
         for name in ["base_weights", "anchors_file", "adapter_dir"] {
-            let check = report.checks.iter().find(|c| c.name == name).expect("check present");
-            assert!(check.status.is_fail(), "{name} should fail on a fresh config: {check:?}");
+            let check = report
+                .checks
+                .iter()
+                .find(|c| c.name == name)
+                .expect("check present");
+            assert!(
+                check.status.is_fail(),
+                "{name} should fail on a fresh config: {check:?}"
+            );
         }
         assert!(!report.is_healthy());
     }
@@ -288,7 +334,11 @@ mod tests {
     fn submitter_none_is_a_warning_not_a_failure() {
         let cfg = config_with(|c| c.tools.memory.learning.submitter = "none".to_string());
         let report = diagnose(&cfg);
-        let check = report.checks.iter().find(|c| c.name == "submitter").expect("check present");
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "submitter")
+            .expect("check present");
         assert_eq!(check.status, CheckStatus::Warning(
             "tools.memory.learning.submitter is \"none\" - facts are admitted to the ledger but never handed to a training pipeline until this is set to \"local\"".to_string()
         ));
@@ -298,7 +348,11 @@ mod tests {
     fn an_unknown_submitter_fails() {
         let cfg = config_with(|c| c.tools.memory.learning.submitter = "sftp".to_string());
         let report = diagnose(&cfg);
-        let check = report.checks.iter().find(|c| c.name == "submitter").expect("check present");
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "submitter")
+            .expect("check present");
         assert!(check.status.is_fail());
     }
 
@@ -306,10 +360,15 @@ mod tests {
     fn a_brain_bin_not_on_path_fails_by_name() {
         let cfg = config_with(|c| {
             c.tools.memory.learning.submitter = "local".to_string();
-            c.tools.memory.learning.brain_bin = "sven-doctor-test-nonexistent-binary-xyz".to_string();
+            c.tools.memory.learning.brain_bin =
+                "sven-doctor-test-nonexistent-binary-xyz".to_string();
         });
         let report = diagnose(&cfg);
-        let check = report.checks.iter().find(|c| c.name == "brain_bin").expect("check present");
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "brain_bin")
+            .expect("check present");
         assert!(check.status.is_fail());
     }
 

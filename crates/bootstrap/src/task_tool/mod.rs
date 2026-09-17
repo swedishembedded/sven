@@ -116,9 +116,12 @@ fn resolve_mode_and_prompt(
     }
 
     if let Some(persona) = agents.iter().find(|a| a.name == mode) {
-        let effective_mode = if persona.readonly { "research" } else { "agent" };
-        let effective_prompt =
-            format!("{}\n\n---\n\n## Task\n\n{prompt}", persona.content.trim());
+        let effective_mode = if persona.readonly {
+            "research"
+        } else {
+            "agent"
+        };
+        let effective_prompt = format!("{}\n\n---\n\n## Task\n\n{prompt}", persona.content.trim());
         return Ok((effective_mode.to_string(), effective_prompt));
     }
 
@@ -695,7 +698,9 @@ mod tests {
     async fn spawn_with_unknown_mode_returns_error_before_spawning() {
         let t = make_task();
         let out = t
-            .execute(&call(json!({"prompt": "do something", "mode": "not-a-real-mode"})))
+            .execute(&call(
+                json!({"prompt": "do something", "mode": "not-a-real-mode"}),
+            ))
             .await;
         assert!(out.is_error);
         assert!(out.content.contains("not-a-real-mode"));

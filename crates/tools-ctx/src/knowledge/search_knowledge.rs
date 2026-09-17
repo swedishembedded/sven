@@ -220,8 +220,8 @@ fn extract_excerpts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sven_tool_api::tool::{Tool, ToolCall};
     use serde_json::json;
+    use sven_tool_api::tool::{Tool, ToolCall};
     use sven_workspace::KnowledgeInfo;
 
     fn call(query: &str) -> ToolCall {

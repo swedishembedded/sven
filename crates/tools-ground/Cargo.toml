@@ -2,7 +2,7 @@
 name        = "sven-tools-ground"
 version.workspace = true
 edition     = "2021"
-description = "UI-element visual grounding: calls brain's florence2 `ground` capability action (screenshot + target phrase in, normalized bounding box out) over the `brain` CLI. Domain tier. Detects a solid-black FLAG_SECURE screencap locally and never sends it to the grounding model."
+description = "UI-element visual grounding: screenshot + target phrase in, normalized bounding box out. Reaches a grounding model through a swappable `GroundBackend` (an in-process model, or the default configurable CLI contract). Domain tier. Detects a solid-black FLAG_SECURE screencap locally and never sends it to the grounding model."
 license     = "Apache-2.0"
 
 [dependencies]

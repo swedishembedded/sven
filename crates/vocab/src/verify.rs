@@ -165,8 +165,10 @@ pub enum VerifierVerdict {
 fn canonicalize(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
-            let sorted: std::collections::BTreeMap<String, Value> =
-                map.iter().map(|(k, v)| (k.clone(), canonicalize(v))).collect();
+            let sorted: std::collections::BTreeMap<String, Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), canonicalize(v)))
+                .collect();
             Value::Object(sorted.into_iter().collect())
         }
         Value::Array(items) => Value::Array(items.iter().map(canonicalize).collect()),
@@ -235,7 +237,11 @@ impl FrozenVerifier {
     #[must_use]
     pub fn freeze(spec: VerifierSpec, origin: VerifierOrigin) -> Self {
         let spec_hash = spec_hash(&spec);
-        Self { spec, spec_hash, origin }
+        Self {
+            spec,
+            spec_hash,
+            origin,
+        }
     }
 
     /// `true` if `spec`'s current hash still matches the one pinned at freeze
@@ -318,9 +324,15 @@ mod tests {
     fn all_and_any_carry_nested_specs_through_json() {
         let spec = VerifierSpec::All {
             specs: vec![
-                VerifierSpec::FileExists { path: "a".into(), min_bytes: None },
+                VerifierSpec::FileExists {
+                    path: "a".into(),
+                    min_bytes: None,
+                },
                 VerifierSpec::Any {
-                    specs: vec![VerifierSpec::FileExists { path: "b".into(), min_bytes: None }],
+                    specs: vec![VerifierSpec::FileExists {
+                        path: "b".into(),
+                        min_bytes: None,
+                    }],
                 },
             ],
         };
@@ -354,7 +366,10 @@ mod tests {
         // The same predicate, serialized with fields in a different order,
         // must hash identically - otherwise a harmless refactor of the
         // serializer would look like tampering to `FrozenVerifier::still_matches`.
-        let a = VerifierSpec::FileExists { path: "out.txt".into(), min_bytes: Some(1) };
+        let a = VerifierSpec::FileExists {
+            path: "out.txt".into(),
+            min_bytes: Some(1),
+        };
         let value = serde_json::to_value(&a).unwrap();
         let reordered = serde_json::json!({
             "min_bytes": value["min_bytes"],
@@ -368,22 +383,36 @@ mod tests {
 
     #[test]
     fn spec_hash_differs_for_different_specs() {
-        let a = VerifierSpec::FileExists { path: "a".into(), min_bytes: None };
-        let b = VerifierSpec::FileExists { path: "b".into(), min_bytes: None };
+        let a = VerifierSpec::FileExists {
+            path: "a".into(),
+            min_bytes: None,
+        };
+        let b = VerifierSpec::FileExists {
+            path: "b".into(),
+            min_bytes: None,
+        };
         assert_ne!(spec_hash(&a), spec_hash(&b));
     }
 
     #[test]
     fn frozen_verifier_still_matches_until_the_spec_changes() {
-        let spec = VerifierSpec::FileExists { path: "out.txt".into(), min_bytes: None };
+        let spec = VerifierSpec::FileExists {
+            path: "out.txt".into(),
+            min_bytes: None,
+        };
         let frozen = FrozenVerifier::freeze(
             spec,
-            VerifierOrigin::Authored { digest: ContentDigest::from_hex("deadbeef") },
+            VerifierOrigin::Authored {
+                digest: ContentDigest::from_hex("deadbeef"),
+            },
         );
         assert!(frozen.still_matches());
 
         let mut tampered = frozen.clone();
-        tampered.spec = VerifierSpec::FileExists { path: "different.txt".into(), min_bytes: None };
+        tampered.spec = VerifierSpec::FileExists {
+            path: "different.txt".into(),
+            min_bytes: None,
+        };
         assert!(
             !tampered.still_matches(),
             "a spec that no longer matches its pinned hash must be detectable"
@@ -407,7 +436,10 @@ mod tests {
             task: Task {
                 id: "t1".into(),
                 prompt: "do the thing".into(),
-                verifier: VerifierSpec::FileExists { path: "out.txt".into(), min_bytes: None },
+                verifier: VerifierSpec::FileExists {
+                    path: "out.txt".into(),
+                    min_bytes: None,
+                },
                 max_attempts: 3,
             },
             source_digest: ContentDigest::from_hex("abc123"),

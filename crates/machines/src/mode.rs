@@ -68,7 +68,9 @@ impl ModeRegistry {
         );
         reg.register(
             "verified-task",
-            Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(VerifiedTaskMachine::new())) }),
+            Box::new(|| -> Box<dyn ErasedMachine> {
+                Box::new(Hsm::new(VerifiedTaskMachine::new()))
+            }),
         );
         reg.register(
             "ui-test",
@@ -109,7 +111,9 @@ mod tests {
     #[test]
     fn default_registry_has_verified_task() {
         let reg = ModeRegistry::default_registry();
-        let factory = reg.get("verified-task").expect("verified-task mode must be registered");
+        let factory = reg
+            .get("verified-task")
+            .expect("verified-task mode must be registered");
         let mut machine = factory();
         let mut ctx = Context::new();
         let _ = machine.init(&mut ctx);

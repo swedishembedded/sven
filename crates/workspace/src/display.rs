@@ -279,11 +279,7 @@ mod tests {
 
     #[test]
     fn skill_path_shown() {
-        let skill = make_skill(
-            "git/commit",
-            "Commit",
-            ".cursor/skills/git/commit/SKILL.md",
-        );
+        let skill = make_skill("git/commit", "Commit", ".cursor/skills/git/commit/SKILL.md");
         let out = format_skills_tree(&[skill]);
         assert!(out.contains(".cursor/skills/git/commit/SKILL.md"));
     }

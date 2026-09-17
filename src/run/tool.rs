@@ -9,7 +9,10 @@ use sven_bootstrap::build_cli_tool_registry;
 
 // ── Tool command handler ──────────────────────────────────────────────────────
 
-pub(crate) async fn run_tool_command(cmd: &ToolCommands, cfg: &sven_config::Config) -> anyhow::Result<()> {
+pub(crate) async fn run_tool_command(
+    cmd: &ToolCommands,
+    cfg: &sven_config::Config,
+) -> anyhow::Result<()> {
     use sven_tools::tool::ToolCall;
 
     match cmd {

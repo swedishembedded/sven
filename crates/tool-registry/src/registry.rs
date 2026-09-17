@@ -124,7 +124,10 @@ impl ToolRegistry {
 
     /// Register a tool that also provides display metadata. The same instance
     /// is used for execution and for TUI display (collapsed summary, display name).
-    pub fn register_with_display(&mut self, tool: impl Tool + sven_tool_api::tool::ToolDisplay + 'static) {
+    pub fn register_with_display(
+        &mut self,
+        tool: impl Tool + sven_tool_api::tool::ToolDisplay + 'static,
+    ) {
         let arc = Arc::new(tool);
         let name = arc.name().to_string();
         if let Ok(mut guard) = self.tools.write() {
@@ -518,7 +521,9 @@ mod tests {
         let mut reg = ToolRegistry::new();
         let tool: Arc<dyn Tool> = Arc::new(EchoTool { name: "echo" });
         reg.register_arc(Arc::clone(&tool));
-        let fetched = reg.get("echo").expect("registered tool must be retrievable");
+        let fetched = reg
+            .get("echo")
+            .expect("registered tool must be retrievable");
         assert!(Arc::ptr_eq(&tool, &fetched));
     }
 

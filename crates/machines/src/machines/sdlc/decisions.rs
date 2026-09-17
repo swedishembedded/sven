@@ -164,7 +164,10 @@ mod tests {
             DecisionStatus::parse("need_approval"),
             DecisionStatus::NeedApproval
         );
-        assert_eq!(DecisionStatus::parse("need_tools"), DecisionStatus::NeedTools);
+        assert_eq!(
+            DecisionStatus::parse("need_tools"),
+            DecisionStatus::NeedTools
+        );
     }
 
     #[test]
