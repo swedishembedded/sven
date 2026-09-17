@@ -32,11 +32,34 @@ pub struct AndroidTool {
     /// "auto-detect the single attached ready device" (see
     /// [`adb::resolve_serial`]).
     default_serial: Option<String>,
+    /// Packages the caller knows are installed on this device. Empty is the
+    /// ordinary case; see [`AndroidTool::with_declared_packages`].
+    declared_packages: Vec<String>,
 }
 
 impl AndroidTool {
     pub fn new(default_serial: Option<String>) -> Self {
-        Self { default_serial }
+        Self {
+            default_serial,
+            declared_packages: Vec::new(),
+        }
+    }
+
+    /// Declares which packages this device is known to have installed, so a
+    /// loose `launch_app`/`force_stop` hint resolves against that
+    /// declaration before the device is asked.
+    ///
+    /// A caller that placed this run on a device it already has an app
+    /// inventory for should pass it: resolution then costs no `pm list
+    /// packages` round trip and cannot be derailed by an unrelated system
+    /// package sharing a dot-segment with the hint. Leaving it empty (the
+    /// default) simply asks the device, which is what every other caller
+    /// wants. See [`adb::resolve_package_validated`] for the exact
+    /// precedence and its limits.
+    #[must_use]
+    pub fn with_declared_packages(mut self, packages: Vec<String>) -> Self {
+        self.declared_packages = packages;
+        self
     }
 }
 
@@ -47,6 +70,7 @@ impl Default for AndroidTool {
     fn default() -> Self {
         Self {
             default_serial: std::env::var("SVEN_ANDROID_SERIAL").ok(),
+            declared_packages: Vec::new(),
         }
     }
 }
@@ -140,8 +164,12 @@ impl Tool for AndroidTool {
             "type_text" => type_text(&call.id, &serial, &call.args).await,
             "key_event" => key_event(&call.id, &serial, &call.args).await,
             "go_home" => send_key(&call.id, &serial, "KEYCODE_HOME").await,
-            "launch_app" => launch_app(&call.id, &serial, &call.args).await,
-            "force_stop" => force_stop(&call.id, &serial, &call.args).await,
+            "launch_app" => {
+                launch_app(&call.id, &serial, &call.args, &self.declared_packages).await
+            }
+            "force_stop" => {
+                force_stop(&call.id, &serial, &call.args, &self.declared_packages).await
+            }
             "list_packages" => list_packages(&call.id, &serial, call.args.get("filter").and_then(|v| v.as_str())).await,
             "current_app" => current_app(&call.id, &serial).await,
             "wait" => wait(&call.id, &call.args).await,
@@ -353,7 +381,51 @@ async fn key_event(call_id: &str, serial: &str, args: &Value) -> ToolOutput {
     send_key(call_id, serial, &normalize_keycode(key)).await
 }
 
-async fn launch_app(call_id: &str, serial: &str, args: &Value) -> ToolOutput {
+/// Resolves a caller-supplied app `hint` to a package actually installed on
+/// `serial`, or a human-readable refusal naming what it saw.
+///
+/// `launch_app`/`force_stop` take a "package name hint" by contract (see
+/// `ui_test`'s step-compiler prompt, which says so in as many words), but
+/// `monkey -p`/`am force-stop` need a real package name. Without this, a
+/// step written as "Launch betalo app" compiles to the hint `betalo` and
+/// fails against a device that genuinely has `se.betalo.androidapp`
+/// installed.
+///
+/// `declared` short-circuits the device round trip when the caller already
+/// knows this device's app inventory - see
+/// [`AndroidTool::with_declared_packages`].
+async fn resolve_package_or_refuse(
+    serial: &str,
+    hint: &str,
+    declared: &[String],
+) -> Result<String, String> {
+    match adb::resolve_package_validated(&adb::RealPackageLister, serial, hint, declared).await? {
+        adb::PackagePick::Resolved(p) => Ok(p),
+        adb::PackagePick::ResolvedFromHint(p) => {
+            tracing::warn!(
+                hint = %hint,
+                resolved = %p,
+                "app hint '{hint}' is not an installed package name; resolved it to '{p}'"
+            );
+            Ok(p)
+        }
+        adb::PackagePick::NoneInstalled => Err(format!(
+            "no installed package matches '{hint}' (is it installed on this device?)"
+        )),
+        adb::PackagePick::Ambiguous(candidates) => Err(format!(
+            "'{hint}' matches {} installed packages ({}); name the package exactly to disambiguate",
+            candidates.len(),
+            candidates.join(", ")
+        )),
+    }
+}
+
+async fn launch_app(
+    call_id: &str,
+    serial: &str,
+    args: &Value,
+    declared: &[String],
+) -> ToolOutput {
     let package = match args.get("package").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return ToolOutput::err(call_id, "missing required parameter 'package'"),
@@ -361,6 +433,10 @@ async fn launch_app(call_id: &str, serial: &str, args: &Value) -> ToolOutput {
     if !adb::valid_package_name(package) {
         return ToolOutput::err(call_id, format!("'{package}' is not a valid Android package name"));
     }
+    let package = &match resolve_package_or_refuse(serial, package, declared).await {
+        Ok(p) => p,
+        Err(e) => return ToolOutput::err(call_id, e),
+    };
     match adb::run(
         serial,
         &["shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"],
@@ -377,7 +453,12 @@ async fn launch_app(call_id: &str, serial: &str, args: &Value) -> ToolOutput {
     }
 }
 
-async fn force_stop(call_id: &str, serial: &str, args: &Value) -> ToolOutput {
+async fn force_stop(
+    call_id: &str,
+    serial: &str,
+    args: &Value,
+    declared: &[String],
+) -> ToolOutput {
     let package = match args.get("package").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return ToolOutput::err(call_id, "missing required parameter 'package'"),
@@ -385,6 +466,10 @@ async fn force_stop(call_id: &str, serial: &str, args: &Value) -> ToolOutput {
     if !adb::valid_package_name(package) {
         return ToolOutput::err(call_id, format!("'{package}' is not a valid Android package name"));
     }
+    let package = &match resolve_package_or_refuse(serial, package, declared).await {
+        Ok(p) => p,
+        Err(e) => return ToolOutput::err(call_id, e),
+    };
     match adb::run(serial, &["shell", "am", "force-stop", package], adb::DEFAULT_TIMEOUT_SECS).await {
         Ok(_) => ToolOutput::ok(call_id, format!("force-stopped {package}")),
         Err(e) => ToolOutput::err(call_id, e),
@@ -433,18 +518,30 @@ async fn current_app(call_id: &str, serial: &str) -> ToolOutput {
         return ToolOutput::ok(call_id, line);
     }
 
-    let windows = match adb::run(serial, &["shell", "dumpsys", "window", "windows"], adb::DEFAULT_TIMEOUT_SECS).await {
-        Ok(o) => o.stdout_text(),
-        Err(e) => return ToolOutput::err(call_id, e),
-    };
-    match find_focus_line(&windows, &["mCurrentFocus", "mFocusedApp"]) {
-        Some(line) => ToolOutput::ok(call_id, line),
-        None => ToolOutput::err(
-            call_id,
-            "could not determine foreground app (no topResumedActivity/mResumedActivity/\
-             mFocusedActivity/mCurrentFocus/mFocusedApp line in dumpsys output)",
-        ),
+    // Two window probes, narrowest first. `dumpsys window windows` is the
+    // long-standing idiom and stays first because its output is a fraction
+    // of the size - but Android 15 no longer reports the focus lines under
+    // that sub-command at all (verified against a real Android 15 device:
+    // zero matches there, both markers present without it), so a bare
+    // `dumpsys window` is tried before giving up. Neither is a replacement
+    // for the other: older devices answer the first, newer ones the second.
+    for probe in [
+        &["shell", "dumpsys", "window", "windows"][..],
+        &["shell", "dumpsys", "window"][..],
+    ] {
+        let windows = match adb::run(serial, probe, adb::DEFAULT_TIMEOUT_SECS).await {
+            Ok(o) => o.stdout_text(),
+            Err(e) => return ToolOutput::err(call_id, e),
+        };
+        if let Some(line) = find_focus_line(&windows, &["mCurrentFocus", "mFocusedApp"]) {
+            return ToolOutput::ok(call_id, line);
+        }
     }
+    ToolOutput::err(
+        call_id,
+        "could not determine foreground app (no topResumedActivity/mResumedActivity/\
+         mFocusedActivity/mCurrentFocus/mFocusedApp line in dumpsys output)",
+    )
 }
 
 fn find_focus_line(text: &str, prefixes: &[&str]) -> Option<String> {
@@ -515,7 +612,7 @@ mod tests {
 
     #[tokio::test]
     async fn launch_app_rejects_invalid_package() {
-        let out = launch_app("1", "any-serial-unused-before-validation", &json!({"package": "com.example; rm -rf /"})).await;
+        let out = launch_app("1", "any-serial-unused-before-validation", &json!({"package": "com.example; rm -rf /"}), &[]).await;
         assert!(out.is_error);
         assert!(out.content.contains("not a valid"));
     }

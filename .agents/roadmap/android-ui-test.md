@@ -41,7 +41,18 @@ to the sole attached device with a logged warning, only genuine ambiguity
 hard-fails) - see Phase 7's own update below for the exact contract, and
 whale's own `.agents/roadmap/android-ui-test.md` update for the whale-side
 half (`DeviceSpec::serial`, the dispatch JSON shape, `devices.json`, and a
-new `scripts/dev/run-ui-test.sh` one-command runner).**
+new `scripts/dev/run-ui-test.sh` one-command runner). Phase 8 fixed the next
+real bug behind it (an app-name HINT is not a package name: "Launch betalo
+app" compiled to `betalo`, which `monkey -p` can never launch). Phase 9
+closes Phase 8's own "left to do" and, with it, a contract defect the whole
+series had been accumulating: sven is a generic agent SDK and now names no
+particular orchestrator anywhere in its code or doc comments (51 mentions
+across 11 files removed - there was never a Cargo dependency, only
+vocabulary), and a dispatching host can now DECLARE which apps a device runs
+(`UiTestDevice::apps`, `#[serde(default)]` on the wire) so a hint resolves
+against that declaration - exactly, and with no `pm list packages` round
+trip - before the device is ever asked. See Phase 9's own entry for the four
+precedence decisions and what is left.**
 
 ## Goal
 
@@ -891,3 +902,181 @@ verified against real hardware, not just mocks.
 `cargo test -p sven-tools-android -p sven-bootstrap -p sven` and `cargo
 clippy --all-targets -- -D warnings` on the touched crates are clean;
 `cargo run -p xtask -- arch` reports no new violation.
+
+## Phase 8 - an app-name hint is not a package name
+
+**Found by running the exact end-to-end path Phase 7 listed as NOT
+verified**: whale -> `sven agent-dispatch` -> real device, with a real
+florence2 checkpoint and `ec677a50` attached. Phase 7's serial fix worked -
+the dispatch reached `adb` and ran a real `monkey` launch - and the step
+immediately behind it failed:
+
+    launch_app failed (is 'betalo' installed?):
+      args: [-p, betalo, -c, android.intent.category.LAUNCHER, 1]
+
+The device genuinely has the app installed, as `se.betalo.androidapp`.
+
+**The defect is a self-contradictory contract.** `ui_test`'s step-compiler
+prompt (`machines/src/machines/ui_test/step.rs`) tells the model
+`launch_app/force_stop (target = app or package name hint)` - a HINT, in as
+many words. `direct_action_effect` then passed that hint verbatim as
+`package`, and `tools-android`'s `launch_app` handed it straight to
+`monkey -p`, which needs an exact package name. So "Launch betalo app"
+compiled to `betalo` and could never launch anything.
+
+Structurally identical to Phase 7: an identifier from one naming world
+(a human's app nickname) used directly as an address in another (Android's
+package namespace), exactly as whale's catalog key was used as an ADB
+serial.
+
+**Fix** (`crates/tools-android/src/adb.rs`), mirroring
+`pick_serial`/`resolve_serial_validated`'s shape deliberately:
+
+- `PackagePick` = `Resolved` | `ResolvedFromHint` | `NoneInstalled` |
+  `Ambiguous(Vec<String>)`, the package analogue of `SerialPick`.
+- `pick_package(hint, installed)` - pure, no I/O. Precision tiers, first
+  tier that matches anything decides: exact name; last dot-segment;
+  any dot-segment (`betalo` -> `se.betalo.androidapp`); substring. Tiers
+  2-4 case-insensitive. A tier matching 2+ packages is `Ambiguous`, never
+  guessed at - same reasoning `pick_serial` applies to two attached phones.
+- `PackageLister`/`RealPackageLister` + `resolve_package_validated`, the
+  same fake-able seam `DeviceLister` already uses.
+- `tool.rs::resolve_package_or_refuse` wires it into BOTH `launch_app` and
+  `force_stop`, after the existing `valid_package_name` check (so the
+  injection guard still runs first, on the raw hint). A `ResolvedFromHint`
+  is logged at `warn` naming what it resolved to, never applied silently.
+
+**Tests**: 10 new in `adb.rs`, TDD'd red-then-green (confirmed red: 20
+compile errors before the implementation existed) - exact match untouched;
+the real `betalo` -> `se.betalo.androidapp` case; case-insensitive;
+last-segment; no-match-is-not-guessed-at; ambiguous names every candidate;
+exact wins over competing loose matches; `pm list packages` parsing;
+`resolve_package_validated` through a fake lister and its failure
+propagation.
+
+**Verified**: `cargo test -p sven-tools-android` fully green INCLUDING the
+hardware-gated `live_device.rs` suite, which ran against the real attached
+`ec677a50` in this session. `make check` clean (arch ratchet + clippy
+`-D warnings`, both profiles).
+
+## Phase 9 - sven is a generic agent SDK, and the app list is part of the contract
+
+Two things, one theme: sven's own contract had grown the shape of ONE
+caller, both in what it said and in what it left out.
+
+### 9a - sven names no orchestrator, anywhere
+
+sven is an agent SDK. It has no Cargo dependency on any orchestrator (and
+never did - checked, not assumed), but 51 mentions of one particular caller
+had accumulated across 11 Rust files, including in the PUBLIC doc comments
+of `UiTestDevice`, `DispatchRequest`, `AndroidTool`'s device selection, the
+`agent-dispatch` CLI help text, and - furthest from anything device-related
+- `sven-memory`'s `FactSubmitter` trait. One `sven agent-dispatch --help`
+example was literally a foreign tool's command line with a foreign env var.
+
+That is a real defect, not a cosmetic one: a doc comment is the contract. A
+type documented as "the device a <specific product> dispatch resolved" reads
+as coupling to anyone evaluating sven as an SDK, and it quietly discourages
+a second embedder from using the same seam.
+
+Every one is now stated in role terms - "the dispatching host", "an
+orchestrating host", "a caller's own catalog/leasing key", "a remote
+`FactSubmitter`". Nothing about the architecture changed, because there was
+nothing coupled to change; only the vocabulary, which was the whole problem.
+`git grep -i` over `crates/` and `src/` is the standing check.
+
+Fixed on the way past (stale since Phase 7, found while rewording):
+`dispatch_ui_test_step`'s own doc still claimed `device_id` is "used exactly
+like `AndroidTool`'s own `SVEN_ANDROID_SERIAL` env var" - the exact
+conflation Phase 7 existed to end. It now describes `serial` resolution.
+
+### 9b - a declared app list, threaded end to end
+
+Phase 8's own "Left to do": a host that already knows which apps a device
+runs had no way to say so, so every `launch_app`/`force_stop` hint was
+resolved by sniffing `pm list packages` off the device.
+
+The wire and the seam, both additive:
+
+- `UiTestDevice::apps: Vec<String>` and `DispatchDevice::apps`
+  (`#[serde(default)]`) - a request written before the field existed still
+  parses, and an empty list is a real, expected state (a host that keeps no
+  app inventory), not a malformed request.
+- `AndroidTool::with_declared_packages(Vec<String>)` - a builder method, so
+  `AndroidTool::new`'s existing signature is untouched.
+- `adb::resolve_package_validated` gained a `declared: &[String]` tier that
+  runs BEFORE the device is asked, via the same pure `pick_package` both
+  tiers share.
+
+The three decisions worth stating, because each could defensibly have gone
+the other way:
+
+- **A declared match skips the device entirely** - no `pm list packages`
+  subprocess at all. This is what makes resolution *exact* rather than a
+  guess: `betalo` against a one-app declaration cannot be derailed by an
+  unrelated system package sharing a dot-segment.
+- **A hint the declaration does not cover still falls back to the device.** A
+  declaration names the apps a caller CARES about, not everything installed
+  - a step driving the device's own Settings app must still work.
+- **Ambiguity inside the declaration refuses rather than broadening.**
+  Asking the device could only add candidates, never remove one.
+- **A declaration is trusted, not re-verified.** A stale entry surfaces as
+  the launch itself failing, which is cheaper and no less honest than a
+  second round trip that can go stale just as fast.
+
+**Tests**: 6 new, TDD'd red-then-green (confirmed red: 6 compile errors in
+`adb.rs`, 2 in the wire parser, before either implementation existed).
+Declared-resolves-without-any-I/O (a `PanicsIfCalled` lister proves the
+device is never asked); uncovered-hint-falls-back; empty-declaration-behaves-
+exactly-as-before; ambiguous-declaration-refuses; and the two wire cases
+(`apps` parses, `apps` defaults to empty).
+
+### 9c - `current_app` was broken on Android 15 (found by the gate, on real hardware)
+
+Not planned, not related to 9a/9b - `make test` surfaced it because a real
+device happened to be attached to this box while the gate ran, and
+`live_device.rs` stopped self-skipping:
+
+    could not determine foreground app (no topResumedActivity/
+    mResumedActivity/mFocusedActivity/mCurrentFocus/mFocusedApp line
+    in dumpsys output)
+
+The device genuinely had a foreground app. Measured on the attached
+Android 15 unit (`ec677a50`):
+
+| probe | focus-marker lines |
+|---|---|
+| `dumpsys activity activities` | 0 |
+| `dumpsys window windows` | 0 |
+| `dumpsys window` | 2 (`mCurrentFocus`, `mFocusedApp`) |
+
+Android 15 no longer reports the focus lines under the `windows`
+sub-command, and `current_app` only ever tried the first two. `current_app`
+now falls through to a bare `dumpsys window` as a third probe. The order is
+deliberate: the narrower sub-command stays FIRST because its output is a
+fraction of the size, and neither probe replaces the other - older devices
+answer the first, Android 15 the second.
+
+Verified by the previously-failing `current_app_reports_a_focus_line` now
+passing against that same real device, plus the 2 new live package tests
+(`resolve_package_validated_round_trips_through_a_real_device`, and
+`a_declaration_outranks_what_the_real_device_reports` - which declares a
+package that is genuinely NOT installed, so a declaration being ignored or
+merely merged with `pm list packages` would fail it). Whole hardware-gated
+suite: 11 passed, 0 failed.
+
+### Left to do
+
+- **The host side of 9b.** sven now accepts and uses `apps`; the orchestrator
+  that dispatches to it must actually put its declared list into the
+  request. That half is a change in the calling repo, not this one.
+- **`sven-tools-ground` still shells out to a `brain` CLI by default.** The
+  `GroundBackend` trait already makes that a swappable default rather than a
+  hard dependency (this crate names no brain type), which is the right
+  shape - but the default itself still assumes a specific binary on `PATH`,
+  and the crate description still says so. Worth deciding whether the
+  standalone default should instead be "no backend configured".
+- **`.agents/roadmap/*.md` still names a specific orchestrator throughout**
+  (3 files). 9a deliberately covered code and doc comments only; whether
+  these internal planning notes should be reworded too, or left as accurate
+  cross-repo history, is a call worth making explicitly.

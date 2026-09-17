@@ -152,7 +152,7 @@ pub enum SerialPick {
 }
 
 /// The pure decision core behind [`resolve_serial_validated`]: given what
-/// serial was `requested` (a whale dispatch's own device info, a
+/// serial was `requested` (an embedding host's own device info, a
 /// `SVEN_ANDROID_SERIAL` value, or nothing) and the CURRENT `ready` device
 /// list, decides which serial to use.
 ///
@@ -213,8 +213,8 @@ impl DeviceLister for RealDeviceLister {
 /// Like [`resolve_serial`], but validates `requested` against `lister`'s
 /// CURRENT view of what's attached rather than trusting it blindly, via
 /// [`pick_serial`]. Exists for a caller whose "requested" identity comes
-/// from another system's own catalog/leasing key (e.g. whale's
-/// `DeviceSpec`/`devices.json`) rather than a human directly typing an ADB
+/// from another system's own catalog/leasing key (an orchestrating host's
+/// own stable logical device id) rather than a human directly typing an ADB
 /// serial - that identity can legitimately not be a real serial at all (a
 /// stable logical id) or point at hardware that was re-plugged since - so
 /// silently trusting it the way [`resolve_serial`]'s `default_serial` does
@@ -226,7 +226,7 @@ impl DeviceLister for RealDeviceLister {
 /// Only for a real I/O failure listing devices (e.g. `adb` itself is not on
 /// `PATH`) - [`SerialPick::NoneAttached`]/[`SerialPick::Ambiguous`] are
 /// returned as `Ok`, not `Err`, since deciding how to report those to a
-/// human is a caller concern (a whale-dispatch caller wants to name its own
+/// human is a caller concern (a dispatching caller wants to name its own
 /// catalog id in the message; this function has no such context).
 pub async fn resolve_serial_validated(
     lister: &dyn DeviceLister,
@@ -235,6 +235,168 @@ pub async fn resolve_serial_validated(
     let devices = lister.list_devices().await?;
     let ready: Vec<DeviceEntry> = devices.into_iter().filter(|d| d.state == "device").collect();
     Ok(pick_serial(requested, &ready))
+}
+
+/// Which installed package a launch/stop call should actually target,
+/// given the possibly-loose name a step compiler produced. The package
+/// analogue of [`SerialPick`], and it exists for the same reason: the
+/// identifier a caller hands in is not guaranteed to be the real one.
+///
+/// A UI-test step is written by a human in prose ("Launch betalo app"), and
+/// `ui_test`'s own step compiler is told `target` may be an "app or package
+/// name hint". A hint like `betalo` is not a package name - the device has
+/// it installed as `se.betalo.androidapp` - so passing it straight to
+/// `monkey -p` fails on an app that is genuinely present.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackagePick {
+    /// The hint already WAS an installed package name, used untouched -
+    /// the ordinary case, nothing for a caller to warn about.
+    Resolved(String),
+    /// The hint was loose but matched exactly one installed package. A real
+    /// substitution - a caller should log what it resolved to, the same way
+    /// [`SerialPick::FellBackToSole`] is logged rather than applied
+    /// silently.
+    ResolvedFromHint(String),
+    /// Nothing installed matches the hint at any precision.
+    NoneInstalled,
+    /// Two or more installed packages match equally well - genuinely
+    /// ambiguous, every candidate seen.
+    Ambiguous(Vec<String>),
+}
+
+/// The pure decision core behind [`resolve_package_validated`]: given a
+/// `hint` and the CURRENT `installed` package list, decides which package
+/// to target.
+///
+/// Matching runs in precision tiers, and the FIRST tier that matches
+/// anything decides - a broader tier never dilutes a narrower one's answer:
+///
+/// 1. the hint is already an installed package name, exactly;
+/// 2. the hint equals a package's last dot-segment (`settings` ->
+///    `com.android.settings`);
+/// 3. the hint equals any dot-segment (`betalo` -> `se.betalo.androidapp`);
+/// 4. the hint appears anywhere in the package name.
+///
+/// Tiers 2-4 are case-insensitive: a human writing "Betalo" means the same
+/// app as "betalo", and Android package names are conventionally lowercase.
+/// A tier matching 2+ packages is [`PackagePick::Ambiguous`], never guessed
+/// at - silently picking one would make a test nondeterministic about which
+/// app it actually drove, exactly the reasoning [`pick_serial`] applies to
+/// two attached phones.
+///
+/// No I/O - pure over an already-fetched `installed` slice, so it is unit
+/// tested against a synthetic package list rather than a real `pm list
+/// packages` invocation.
+#[must_use]
+pub fn pick_package(hint: &str, installed: &[String]) -> PackagePick {
+    if installed.iter().any(|p| p == hint) {
+        return PackagePick::Resolved(hint.to_string());
+    }
+    let needle = hint.to_ascii_lowercase();
+    let last_segment = |p: &String| {
+        p.rsplit('.')
+            .next()
+            .is_some_and(|seg| seg.eq_ignore_ascii_case(&needle))
+    };
+    let any_segment = |p: &String| p.split('.').any(|seg| seg.eq_ignore_ascii_case(&needle));
+    let substring = |p: &String| p.to_ascii_lowercase().contains(&needle);
+
+    for tier in [
+        &last_segment as &dyn Fn(&String) -> bool,
+        &any_segment,
+        &substring,
+    ] {
+        let matches: Vec<String> = installed.iter().filter(|p| tier(p)).cloned().collect();
+        match matches.as_slice() {
+            [] => continue,
+            [one] => return PackagePick::ResolvedFromHint(one.clone()),
+            _ => return PackagePick::Ambiguous(matches),
+        }
+    }
+    PackagePick::NoneInstalled
+}
+
+/// Parses `pm list packages` output: one `package:<name>` per line. A line
+/// without that prefix is skipped rather than taken verbatim, so a stray
+/// warning on stdout cannot become a bogus package name.
+#[must_use]
+fn parse_packages(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix("package:"))
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Abstraction over "list the packages installed on this device", so
+/// [`resolve_package_validated`] can be unit tested against a fixed,
+/// synthetic list rather than shelling out to a real device on every `cargo
+/// test` run. [`RealPackageLister`] is the one production implementation -
+/// the same split [`DeviceLister`]/[`RealDeviceLister`] already uses.
+#[async_trait::async_trait]
+pub trait PackageLister: Send + Sync {
+    /// Returns every package installed on `serial`.
+    async fn list_packages(&self, serial: &str) -> Result<Vec<String>, String>;
+}
+
+/// The real [`PackageLister`]: shells out to `adb shell pm list packages`.
+pub struct RealPackageLister;
+
+#[async_trait::async_trait]
+impl PackageLister for RealPackageLister {
+    async fn list_packages(&self, serial: &str) -> Result<Vec<String>, String> {
+        let out = run(serial, &["shell", "pm", "list", "packages"], DEFAULT_TIMEOUT_SECS).await?;
+        if !out.success() {
+            return Err(format!("pm list packages failed: {}", out.stderr));
+        }
+        Ok(parse_packages(&String::from_utf8_lossy(&out.stdout)))
+    }
+}
+
+/// Resolves a possibly-loose app `hint` against the packages the caller
+/// DECLARED for this device, and only then against what is actually
+/// installed on `serial`. Both tiers decide via [`pick_package`].
+///
+/// `declared` is a caller's own inventory of the apps it knows this device
+/// runs - an orchestrating host that placed this run on the device usually
+/// has one. Consulting it first is what makes resolution exact rather than
+/// a guess: matching `betalo` against a one-app declaration cannot be
+/// derailed by an unrelated system package that happens to share a
+/// dot-segment, and it costs no `pm list packages` subprocess at all.
+///
+/// Falling back to the device is deliberate, not a safety net: a
+/// declaration names the apps a caller CARES about, not everything
+/// installed, so a step that drives the device's own Settings app must
+/// still resolve. An empty `declared` is the ordinary no-inventory case and
+/// goes straight to the device, exactly as this function behaved before
+/// declarations existed.
+///
+/// A declaration that is itself [`PackagePick::Ambiguous`] refuses rather
+/// than broadening: asking the device could only add candidates, never
+/// remove one. The declaration is trusted rather than re-verified against
+/// the device - a stale entry surfaces as the launch itself failing, which
+/// is both cheaper and more honest than a second round trip that could go
+/// stale just as fast.
+///
+/// # Errors
+///
+/// Only for a real I/O failure listing packages (e.g. `adb` is not on
+/// `PATH`, or the device went away) - [`PackagePick::NoneInstalled`]/
+/// [`PackagePick::Ambiguous`] are returned as `Ok`, not `Err`, since how to
+/// report those to a human is a caller concern, matching
+/// [`resolve_serial_validated`]'s own contract.
+pub async fn resolve_package_validated(
+    lister: &dyn PackageLister,
+    serial: &str,
+    hint: &str,
+    declared: &[String],
+) -> Result<PackagePick, String> {
+    match pick_package(hint, declared) {
+        PackagePick::NoneInstalled => {}
+        decided => return Ok(decided),
+    }
+    let installed = lister.list_packages(serial).await?;
+    Ok(pick_package(hint, &installed))
 }
 
 /// Parsed `wm size` output: `(width, height)` in pixels. Prefers an
@@ -373,7 +535,7 @@ mod tests {
 
     // ─── pick_serial / resolve_serial_validated ────────────────────────────
     // The device-fallback logic fix part 2 of the android-ui-test/device-
-    // identity work exists for: a caller-requested identity (e.g. whale's
+    // identity work exists for: a caller-requested identity (e.g. a host's
     // own catalog device id, mistakenly or legitimately not a real ADB
     // serial) that doesn't match what's actually attached should fall back
     // to the one attached device when that's unambiguous, never guess when
@@ -413,7 +575,7 @@ mod tests {
 
     #[test]
     fn pick_serial_mismatched_request_and_one_ready_falls_back() {
-        // The exact bug this exists for: whale's catalog id ("phone-1") was
+        // The exact bug this exists for: a host's catalog id ("phone-1") was
         // sent as if it were a real serial and matches nothing attached,
         // but exactly one real device is - use it, but as a named
         // substitution, not a silent resolve.
@@ -492,5 +654,211 @@ mod tests {
             .await
             .expect_err("a lister failure must propagate, not be swallowed");
         assert!(err.contains("adb not on PATH"));
+    }
+
+    // ─── pick_package / resolve_package_validated ────────────────────────
+
+    fn installed() -> Vec<String> {
+        vec![
+            "se.betalo.androidapp".to_string(),
+            "com.android.settings".to_string(),
+            "com.google.android.gms".to_string(),
+        ]
+    }
+
+    #[test]
+    fn an_exact_package_name_resolves_untouched() {
+        assert_eq!(
+            pick_package("se.betalo.androidapp", &installed()),
+            PackagePick::Resolved("se.betalo.androidapp".to_string())
+        );
+    }
+
+    /// The real bug this exists for: a human writes "Launch betalo app", the
+    /// step compiler emits the hint `betalo`, and the device has it installed
+    /// as `se.betalo.androidapp`. Passing the hint verbatim to `monkey -p`
+    /// fails even though the app is genuinely present.
+    #[test]
+    fn a_dot_segment_hint_resolves_to_the_installed_package() {
+        assert_eq!(
+            pick_package("betalo", &installed()),
+            PackagePick::ResolvedFromHint("se.betalo.androidapp".to_string())
+        );
+    }
+
+    #[test]
+    fn a_hint_is_matched_case_insensitively() {
+        assert_eq!(
+            pick_package("Betalo", &installed()),
+            PackagePick::ResolvedFromHint("se.betalo.androidapp".to_string())
+        );
+    }
+
+    #[test]
+    fn a_last_segment_hint_resolves() {
+        assert_eq!(
+            pick_package("settings", &installed()),
+            PackagePick::ResolvedFromHint("com.android.settings".to_string())
+        );
+    }
+
+    #[test]
+    fn a_hint_matching_nothing_installed_is_not_guessed_at() {
+        assert_eq!(pick_package("spotify", &installed()), PackagePick::NoneInstalled);
+    }
+
+    /// Two installed packages both containing the hint is genuinely
+    /// ambiguous - never silently pick one, and name every candidate so a
+    /// human can disambiguate.
+    #[test]
+    fn an_ambiguous_hint_names_every_candidate_rather_than_guessing() {
+        let many = vec![
+            "com.example.betalo.alpha".to_string(),
+            "com.example.betalo.beta".to_string(),
+        ];
+        assert_eq!(
+            pick_package("betalo", &many),
+            PackagePick::Ambiguous(vec![
+                "com.example.betalo.alpha".to_string(),
+                "com.example.betalo.beta".to_string(),
+            ])
+        );
+    }
+
+    /// An exact match must win even when the same string is also a loose
+    /// match for other installed packages - precision beats breadth.
+    #[test]
+    fn an_exact_match_wins_over_competing_loose_matches() {
+        let many = vec![
+            "betalo".to_string(),
+            "se.betalo.androidapp".to_string(),
+        ];
+        assert_eq!(
+            pick_package("betalo", &many),
+            PackagePick::Resolved("betalo".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_pm_list_packages_output() {
+        let text = "package:se.betalo.androidapp\npackage:com.android.settings\n";
+        assert_eq!(
+            parse_packages(text),
+            vec![
+                "se.betalo.androidapp".to_string(),
+                "com.android.settings".to_string()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_package_validated_resolves_a_hint_through_the_lister() {
+        struct Fake;
+        #[async_trait::async_trait]
+        impl PackageLister for Fake {
+            async fn list_packages(&self, _serial: &str) -> Result<Vec<String>, String> {
+                Ok(installed())
+            }
+        }
+        let pick = resolve_package_validated(&Fake, "ec677a50", "betalo", &[])
+            .await
+            .expect("lister succeeded");
+        assert_eq!(pick, PackagePick::ResolvedFromHint("se.betalo.androidapp".to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_package_validated_propagates_a_real_lister_failure() {
+        struct FailingLister;
+        #[async_trait::async_trait]
+        impl PackageLister for FailingLister {
+            async fn list_packages(&self, _serial: &str) -> Result<Vec<String>, String> {
+                Err("adb not on PATH".to_string())
+            }
+        }
+        let err = resolve_package_validated(&FailingLister, "ec677a50", "betalo", &[])
+            .await
+            .expect_err("a lister failure must propagate, not be swallowed");
+        assert!(err.contains("adb not on PATH"));
+    }
+
+    // ─── a caller's DECLARED package list ────────────────────────────────
+    // A dispatching host usually already knows which apps a device runs.
+    // Consulting that declaration BEFORE `pm list packages` is what makes
+    // resolution exact rather than a guess across several hundred system
+    // packages - and when it answers, it costs no subprocess at all.
+
+    struct PanicsIfCalled;
+    #[async_trait::async_trait]
+    impl PackageLister for PanicsIfCalled {
+        async fn list_packages(&self, _serial: &str) -> Result<Vec<String>, String> {
+            panic!("the device must not be asked once the declaration has answered");
+        }
+    }
+
+    struct FakeInstalled;
+    #[async_trait::async_trait]
+    impl PackageLister for FakeInstalled {
+        async fn list_packages(&self, _serial: &str) -> Result<Vec<String>, String> {
+            Ok(installed())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_declared_package_resolves_without_asking_the_device() {
+        let declared = vec!["se.betalo.androidapp".to_string()];
+        let pick = resolve_package_validated(&PanicsIfCalled, "ec677a50", "betalo", &declared)
+            .await
+            .expect("a declaration answers without any I/O");
+        assert_eq!(
+            pick,
+            PackagePick::ResolvedFromHint("se.betalo.androidapp".to_string())
+        );
+    }
+
+    /// A declaration names the apps a caller CARES about, not everything
+    /// installed - so a step that drives the device's own Settings app must
+    /// still resolve, by falling back to what is really installed.
+    #[tokio::test]
+    async fn a_hint_the_declaration_does_not_cover_falls_back_to_the_device() {
+        let declared = vec!["se.betalo.androidapp".to_string()];
+        let pick = resolve_package_validated(&FakeInstalled, "ec677a50", "settings", &declared)
+            .await
+            .expect("lister succeeded");
+        assert_eq!(
+            pick,
+            PackagePick::ResolvedFromHint("com.android.settings".to_string())
+        );
+    }
+
+    /// No declaration at all is the ordinary case (a caller that tracks no
+    /// app inventory), and must behave exactly as it did before declarations
+    /// existed.
+    #[tokio::test]
+    async fn an_empty_declaration_asks_the_device_exactly_as_before() {
+        let pick = resolve_package_validated(&FakeInstalled, "ec677a50", "betalo", &[])
+            .await
+            .expect("lister succeeded");
+        assert_eq!(
+            pick,
+            PackagePick::ResolvedFromHint("se.betalo.androidapp".to_string())
+        );
+    }
+
+    /// Ambiguity INSIDE the declaration is real ambiguity: asking the device
+    /// could only add candidates, never remove one, so falling back would
+    /// trade a clear refusal for a worse one.
+    #[tokio::test]
+    async fn an_ambiguous_declaration_refuses_rather_than_falling_back() {
+        let declared = vec!["com.acme.betalo".to_string(), "se.other.betalo".to_string()];
+        let pick = resolve_package_validated(&PanicsIfCalled, "ec677a50", "betalo", &declared)
+            .await
+            .expect("ambiguity is an Ok answer, not an I/O error");
+        assert_eq!(
+            pick,
+            PackagePick::Ambiguous(vec![
+                "com.acme.betalo".to_string(),
+                "se.other.betalo".to_string(),
+            ])
+        );
     }
 }
