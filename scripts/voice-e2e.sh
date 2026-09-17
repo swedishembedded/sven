@@ -264,7 +264,12 @@ model:
   name: brain/qwen3
   base_url: http://127.0.0.1:$OPENAI_PORT/v1
   api_key: $BRAIN_API_KEY
+  # max_tokens is the whole CONTEXT WINDOW (input + output), so it matches
+  # --qwen-ctx above.  max_output_tokens is the room to answer in, and it
+  # has to be set: without it the window doubles as the per-request output
+  # cap, so every turn asks for prompt + 40960 tokens and is refused.
   max_tokens: 40960
+  max_output_tokens: 4096
 
 tools:
   asr:
