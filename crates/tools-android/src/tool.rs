@@ -103,6 +103,9 @@ impl Tool for AndroidTool {
          device's view hierarchy. Answers with the exact tap coordinate of the clickable\n\
          element, or `found: false` plus the labels that ARE on screen. Prefer this over\n\
          guessing coordinates: it is exact, needs no screenshot, and can say \"not there\".\n\
+         - `screen_is_secure` - whether the current screen is FLAG_SECURE (Android returns an\n\
+         all-black capture). Check this BEFORE acting: a secure screen is one a human is meant\n\
+         to handle, and the view hierarchy stays readable on one even though the pixels do not.\n\
          - `ui_signature`   - a digest of the current view hierarchy. Take one before an action\n\
          and one after to tell whether the action actually changed anything.\n\
          - `current_app`    - the foreground package/activity.\n\
@@ -121,7 +124,7 @@ impl Tool for AndroidTool {
                         "display_info", "screenshot", "tap", "swipe", "type_text",
                         "key_event", "go_home", "launch_app", "force_stop",
                         "list_packages", "current_app", "wait",
-                        "find_element", "ui_signature"
+                        "find_element", "ui_signature", "screen_is_secure"
                     ]
                 },
                 "serial": { "type": "string", "description": "Target device serial (optional if exactly one is attached)" },
@@ -197,6 +200,7 @@ impl Tool for AndroidTool {
             }
             "find_element" => find_element(&call.id, &serial, &call.args).await,
             "ui_signature" => ui_signature(&call.id, &serial).await,
+            "screen_is_secure" => screen_is_secure(&call.id, &serial).await,
             "current_app" => current_app(&call.id, &serial).await,
             "wait" => wait(&call.id, &call.args).await,
             other => ToolOutput::err(&call.id, format!("unknown action '{other}'")),
@@ -655,6 +659,33 @@ async fn wait(call_id: &str, args: &Value) -> ToolOutput {
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────
+
+/// Whether the current frame is Android's solid-black `FLAG_SECURE`
+/// placeholder.
+///
+/// Separate from `screenshot` so a caller can gate on it without also
+/// committing to writing a PNG somewhere, and so the answer is a typed
+/// boolean rather than something parsed back out of prose.
+async fn screen_is_secure(call_id: &str, serial: &str) -> ToolOutput {
+    let out = match adb::run(serial, &["exec-out", "screencap", "-p"], 20).await {
+        Ok(o) => o,
+        Err(e) => return ToolOutput::err(call_id, e),
+    };
+    if out.stdout.is_empty() {
+        return ToolOutput::err(
+            call_id,
+            format!("screencap produced no output (stderr: {})", out.stderr),
+        );
+    }
+    let img = match image::load_from_memory(&out.stdout) {
+        Ok(i) => i,
+        Err(e) => return ToolOutput::err(call_id, format!("could not decode screencap: {e}")),
+    };
+    ToolOutput::ok(
+        call_id,
+        json!({ "secure_screen": sven_image::is_flag_secure_black(&img) }).to_string(),
+    )
+}
 
 /// Dump the device's current view hierarchy as XML.
 ///

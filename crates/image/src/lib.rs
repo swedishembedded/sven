@@ -17,6 +17,9 @@
 //! the same file (or different paths to identical content) avoid the decode →
 //! resize → re-encode work.  The cache holds up to [`CACHE_CAPACITY`] entries.
 
+pub mod black_screen;
+pub use black_screen::is_flag_secure_black;
+
 use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::path::Path;

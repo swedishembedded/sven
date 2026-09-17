@@ -2,9 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! `sven-tools-ground`: the `ground` tool - UI-element visual grounding via
-//! a vision model's `ground` capability, plus the local FLAG_SECURE
-//! black-screen detector `UiTestMachine` (`sven-machines`) depends on for its
-//! secure-screen hand-off. See `.agents/roadmap/android-ui-test.md`.
+//! a vision model's `ground` capability. The FLAG_SECURE black-screen check
+//! it applies before sending any frame to a model lives in `sven-image`
+//! (`sven_image::is_flag_secure_black`), since driving a secure screen is a
+//! concern of every device path, not only this one. See
+//! `.agents/roadmap/android-ui-test.md`.
 //!
 //! # Embedding this tool
 //!
@@ -18,7 +20,6 @@
 //! implementation and names no vendor type, so doing so adds no dependency
 //! here.
 
-pub mod black_screen;
 pub mod tool;
 
 pub use tool::{GroundBackend, GroundConfig, GroundTool, SubprocessGroundBackend};

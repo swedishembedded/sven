@@ -45,7 +45,7 @@ use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
-use crate::black_screen::is_flag_secure_black;
+use sven_image::is_flag_secure_black;
 
 /// How many bytes of stderr to quote back in an error message.
 const STDERR_TAIL_BYTES: usize = 512;

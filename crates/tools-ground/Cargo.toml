@@ -6,6 +6,7 @@ description = "UI-element visual grounding: screenshot + target phrase in, norma
 license     = "Apache-2.0"
 
 [dependencies]
+sven-image    = { path = "../image" }
 sven-tool-api = { path = "../tool-api" }
 sven-hsm      = { path = "../hsm" }
 image         = { workspace = true }

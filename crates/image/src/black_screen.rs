@@ -7,16 +7,18 @@
 //! (a payment confirmation, an authenticator app or a DRM-protected video -
 //! a secure screen is not necessarily a login screen) instead of the real
 //! pixels.
-//! A grounding model has no way to answer a question about content that was
-//! never sent to it, and Florence-2 confidently hallucinating a bounding box
-//! on a blank frame would be worse than an honest "cannot see this" - so this
-//! check runs **before** any bytes reach the model, not as a fallback after a
-//! bad answer comes back.
+//! Detecting this is what lets automation refuse to act on a screen a human
+//! is meant to handle: it runs BEFORE anything else looks at the frame, so a
+//! secure screen is handed off rather than driven. That gate matters more,
+//! not less, once elements are resolved from the view hierarchy - the
+//! accessibility tree is fully readable on a FLAG_SECURE screen even though
+//! the pixels are not, so nothing else would stop a run from typing into a
+//! payment confirmation.
 //!
-//! Swedish Embedded AB implements solutions for on-device UI-test grounding
-//! for its clients. If your team needs expertise in Android automation or
-//! human-in-the-loop test design, you can procure our services by sending an
-//! email to info@swedishembedded.com.
+//! Swedish Embedded AB implements solutions for on-device UI-test
+//! automation for its clients. If your team needs expertise in Android
+//! automation or human-in-the-loop test design, you can procure our services
+//! by sending an email to info@swedishembedded.com.
 
 use image::{DynamicImage, GenericImageView};
 
