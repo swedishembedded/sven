@@ -164,16 +164,15 @@ so a wrong transcript reads as a confidently wrong answer, not an error.
 
 **It looks stuck after "Starting brain".** A cold start scans the whole model
 directory and activates the first checkpoint before any surface binds, which
-takes a minute or two. `brain serve -d` echoes the server's log while it
-waits, so you see the scan happen; a run that prints nothing at all is a
-brain old enough to predate that.
+is a minute or two of work. `brain serve -d` echoes the server's log to
+stderr while it waits, so that time shows its progress rather than nothing.
 
-**The server is up but the start never returns.** Readiness is the AND of
-every surface asked for, so a requested surface that cannot bind means the
-process can never report itself ready. That is a failed start and ends the
-process, with the reason in the log - most often a `--dbus-address` pointing
-at a bus that is gone, after a `down` that stopped the bus but left the
-address behind.
+**The start ends with a surface that did not bind.** Readiness is the AND of
+every surface asked for, so a process missing one can never report itself
+ready; that is a failed start and it exits rather than serving the rest. The
+usual cause is a `--dbus-address` naming a bus that is no longer there - the
+script checks with a `Peer.Ping` before reusing one, because a recorded pid
+can have been reused by an unrelated process.
 
 **Everything is correct but enormously slow.** Check the server log for the
 adapter it chose. `adapter: llvmpipe (Cpu, Vulkan)` means it fell back to a
