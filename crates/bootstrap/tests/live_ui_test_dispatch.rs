@@ -7,8 +7,8 @@
 //! the real `sven-tools-android`/`sven-tools-ground` tool implementations,
 //! not just against the fakes `ui_test_dispatch`'s own unit tests use.
 //!
-//! Skips cleanly (not a failure) unless a single ready ADB device AND a
-//! real `brain florence2` checkpoint are both available, mirroring
+//! Skips cleanly (not a failure) unless a single ready ADB device is
+//! attached AND live grounding is opted into, mirroring
 //! `sven-tools-android/tests/live_device.rs` and
 //! `sven-tools-ground/tests/live_ground.rs`'s own hardware gates - so
 //! `make test` stays green on a box with neither present. The step
@@ -36,19 +36,26 @@ async fn ready_serial() -> Option<String> {
     }
 }
 
-/// Mirrors `sven-tools-ground/tests/live_ground.rs::brain_and_checkpoint_available`.
-fn brain_and_checkpoint_available() -> bool {
-    let has_brain = std::process::Command::new("brain")
+/// Mirrors `sven-tools-ground/tests/live_ground.rs::live_grounding_opted_in`:
+/// an explicit opt-in plus a resolvable command, rather than a sniff for one
+/// particular model's staged weights. See that file's own module doc for why
+/// sven deliberately does not know where a given implementation keeps its
+/// checkpoint.
+fn live_grounding_opted_in() -> bool {
+    let opted_in = std::env::var("SVEN_GROUND_LIVE_TEST")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    if !opted_in {
+        return false;
+    }
+    let command =
+        std::env::var("SVEN_GROUND_COMMAND").unwrap_or_else(|_| "brain".to_string());
+    std::process::Command::new(&command)
         .arg("--help")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .is_ok_and(|s| s.success());
-    let has_checkpoint = std::env::var("BRAIN_FLORENCE2_DIR")
-        .ok()
-        .filter(|p| !p.is_empty())
-        .is_some_and(|p| std::path::Path::new(&p).join("model.safetensors").exists());
-    has_brain && has_checkpoint
+        .is_ok_and(|s| s.success())
 }
 
 #[tokio::test]
@@ -57,12 +64,12 @@ async fn a_real_non_destructive_step_runs_against_a_real_device_with_real_tools(
         eprintln!("skipping: no single ready ADB device attached");
         return;
     };
-    if !brain_and_checkpoint_available() {
-        eprintln!("skipping: `brain` and/or BRAIN_FLORENCE2_DIR checkpoint not available");
+    if !live_grounding_opted_in() {
+        eprintln!("skipping: set SVEN_GROUND_LIVE_TEST=1 to run this against a real model");
         return;
     }
 
-    // `device_id` is whale's own stable catalog/leasing key (never a real
+    // `device_id` is the host's own stable catalog/leasing key (never a real
     // ADB serial - see `UiTestDevice`'s own doc); `serial` is the real ADB
     // identity this test resolved above. A plain `"phone-1"` catalog id here
     // (deliberately NOT the real serial) proves the exact-serial-match path
@@ -72,6 +79,9 @@ async fn a_real_non_destructive_step_runs_against_a_real_device_with_real_tools(
         provider_id: "local".into(),
         device_id: "phone-1".into(),
         serial: Some(serial),
+        // No declared app list: this instruction drives no app, and leaving
+        // it empty is the ordinary no-inventory path (see `UiTestDevice::apps`).
+        apps: Vec::new(),
     };
 
     // "Go home" is the one instruction `sven-tools-android/tests/live_device.rs`

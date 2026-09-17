@@ -1,8 +1,8 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Runs one [`sven_machines::UiTestMachine`] step to completion for whale's
-//! real agent-dispatch stdio contract (`mode: "ui-test"`).
+//! Runs one [`sven_machines::UiTestMachine`] step to completion for the
+//! agent-dispatch stdio contract (`mode: "ui-test"`).
 //!
 //! [`dispatch_ui_test_step`] is the one function a `sven` CLI subcommand
 //! needs: it builds the machine through the SAME [`RuntimeBuilder`]/
@@ -11,16 +11,15 @@
 //! mode.rs/RuntimeBuilder" gap, closed by this module), wires the REAL
 //! `sven-tools-android`/`sven-tools-ground`/`sven-tools-agent` tool
 //! implementations by default, and reports the run's outcome as a plain
-//! `Result<Value, String>` - exactly the shape a CLI wrapper turns into
-//! whale's `{"ok": true, "output": ...}` / `{"ok": false, "error": ...}`
-//! reply.
+//! `Result<Value, String>` - exactly the shape a CLI wrapper turns into the
+//! `{"ok": true, "output": ...}` / `{"ok": false, "error": ...}` reply.
 //!
-//! Handles exactly one instruction per call, matching whale's per-node
-//! dispatch granularity: every other top-level `params` field (a resolved
-//! upstream `Link` value, by whale's own naming convention) is seeded into
-//! `UiTestMachine`'s existing variable-binding mechanism
+//! Handles exactly one instruction per call, matching the per-node dispatch
+//! granularity an orchestrating host works in: every other top-level
+//! `params` field (a value the host resolved from an upstream node) is
+//! seeded into `UiTestMachine`'s existing variable-binding mechanism
 //! (`UiTestScript::vars`, Phase 3's `vars.rs`) before the one step compiles,
-//! so a downstream node's `Link` reaches this step's `value_ref` resolution
+//! so an upstream node's output reaches this step's `value_ref` resolution
 //! without any new sven-side plumbing.
 //!
 //! Swedish Embedded AB implements solutions for deterministic, CI-dispatched
@@ -43,30 +42,38 @@ use sven_tools_android::adb::{self, DeviceLister, RealDeviceLister, SerialPick};
 
 use crate::runtime_builder::{RuntimeBuilder, ToolExecutorFactory};
 
-/// The device a whale dispatch request resolved and leased for this step,
-/// or `None` when the node declared no device requirement - mirrors
-/// `whale_workflow_runner::agent_dispatch::AgentDispatcher::dispatch`'s own
-/// `device: Option<&DeviceKey>` parameter, PLUS `serial`: the real ADB
-/// identity of the physical unit, when whale's own `DeviceSpec` knows it.
+/// The device the dispatching host resolved and leased for this step, or
+/// `None` when the node declared no device requirement.
 ///
-/// `device_id` is whale's stable, logical catalog/leasing key (e.g.
-/// `"phone-1"`) - it names a ROLE in whale's placement/leasing bookkeeping,
-/// not a physical device, and is never a valid ADB `-s` argument. `serial`
-/// is the actual physical address (`adb devices`' first column, e.g.
-/// `"ec677a50"`) - the two are deliberately never conflated: a device could
-/// be re-plugged under the same logical role with a different physical unit
-/// over time, and whale's own `devices.json` may legitimately not know the
-/// serial at all (see `resolve_effective_serial`'s own doc for what happens
-/// then).
+/// `device_id` is the host's stable, logical catalog/leasing key (e.g.
+/// `"phone-1"`) - it names a ROLE in the host's own placement/leasing
+/// bookkeeping, not a physical device, and is never a valid ADB `-s`
+/// argument. `serial` is the actual physical address (`adb devices`' first
+/// column, e.g. `"ec677a50"`) - the two are deliberately never conflated: a
+/// device could be re-plugged under the same logical role with a different
+/// physical unit over time, and the host's own catalog may legitimately not
+/// know the serial at all (see `resolve_effective_serial`'s own doc for what
+/// happens then).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UiTestDevice {
     pub provider_id: String,
     pub device_id: String,
-    /// The real ADB serial, when whale's `DeviceSpec` reported one. `None`
-    /// is a real, expected state (not every `devices.json` entry names a
-    /// serial) - see `resolve_effective_serial`'s own doc for how that
-    /// degrades to ordinary auto-detect rather than a hard failure.
+    /// The real ADB serial, when the host's catalog reported one. `None` is
+    /// a real, expected state (not every catalog entry names a serial) - see
+    /// `resolve_effective_serial`'s own doc for how that degrades to
+    /// ordinary auto-detect rather than a hard failure.
     pub serial: Option<String>,
+    /// The packages the host declares are installed on this device.
+    ///
+    /// Empty is a real, expected state - a host that keeps no app inventory,
+    /// or a device with nothing installed yet - and simply means a loose
+    /// app-name hint in a step gets resolved by asking the device instead.
+    /// When it IS populated, a hint resolves against this list first, which
+    /// makes the answer exact (the host placed this run on the device and
+    /// knows what it runs) and costs no `pm list packages` round trip. See
+    /// `sven_tools_android::adb::resolve_package_validated` for the exact
+    /// precedence and why a declaration is trusted rather than re-verified.
+    pub apps: Vec<String>,
 }
 
 /// Test-only (and otherwise advanced-use) seams: substitute the model
@@ -101,16 +108,17 @@ pub struct UiTestDispatchOverrides {
 /// top-level field of `params` is seeded into the machine's variable-binding
 /// mechanism before the step compiles (see the module doc). `device`
 /// selects which real Android device `sven-tools-android` drives - its
-/// `device_id` is used exactly like `AndroidTool`'s own
-/// `SVEN_ANDROID_SERIAL` env var, falling back to that env var (then
-/// auto-detection) when `device` is `None`.
+/// `serial` is validated against what is actually attached (see
+/// `resolve_effective_serial`), falling back to `AndroidTool`'s own
+/// `SVEN_ANDROID_SERIAL` env var (then auto-detection) when `device` is
+/// `None`.
 ///
 /// # Errors
 ///
 /// Returns `Err` both for a genuine setup failure (couldn't build the
 /// kernel session, couldn't join the runtime) and for an ordinary failed UI
 /// step (the machine reached `Failed` and recorded a reason) - the caller
-/// (whale's stdio contract) treats both the same way: a well-formed
+/// (the host's stdio contract) treats both the same way: a well-formed
 /// `{"ok": false, "error": ...}` reply, never a process crash.
 pub async fn dispatch_ui_test_step(
     config: Arc<Config>,
@@ -132,9 +140,12 @@ pub async fn dispatch_ui_test_step(
         .unwrap_or_else(|| Arc::new(RealDeviceLister));
     let serial = resolve_effective_serial(device, lister.as_ref()).await?;
 
-    let android_tool = overrides
-        .android_tool
-        .unwrap_or_else(|| Arc::new(sven_tools_android::AndroidTool::new(serial)));
+    let declared_packages = device.map(|d| d.apps.clone()).unwrap_or_default();
+    let android_tool = overrides.android_tool.unwrap_or_else(|| {
+        Arc::new(
+            sven_tools_android::AndroidTool::new(serial).with_declared_packages(declared_packages),
+        )
+    });
     let ground_tool = overrides
         .ground_tool
         .unwrap_or_else(|| Arc::new(sven_tools_ground::GroundTool::default()));
@@ -181,14 +192,18 @@ pub async fn dispatch_ui_test_step(
     let mut status_rx = bundle.runtime.status_watch();
 
     if !sink.emit(Event::UserMessage { text: script }).await {
-        return Err("ui-test kernel event queue closed before the step could be posted".to_string());
+        return Err(
+            "ui-test kernel event queue closed before the step could be posted".to_string(),
+        );
     }
 
-    // No externally-imposed timeout (whale itself enforces none) - bounded
-    // instead by `UiTestMachine`'s own per-step retry budget, which always
-    // drives the machine to a terminal `Done`/`Failed` state.
+    // No externally-imposed timeout (the dispatching host enforces none) -
+    // bounded instead by `UiTestMachine`'s own per-step retry budget, which
+    // always drives the machine to a terminal `Done`/`Failed` state.
     if status_rx.wait_for(|s| s.done).await.is_err() {
-        return Err("ui-test kernel runtime shut down before the step reached a terminal state".to_string());
+        return Err(
+            "ui-test kernel runtime shut down before the step reached a terminal state".to_string(),
+        );
     }
 
     let report = bundle
@@ -216,13 +231,13 @@ pub async fn dispatch_ui_test_step(
 }
 
 /// Resolves which real ADB serial this step's `AndroidTool` should default
-/// to, given whale's own `device` info and `lister`'s current view of
+/// to, given the host's own `device` info and `lister`'s current view of
 /// what's attached.
 ///
 /// `device` is `None` (no device requirement on this node at all) preserves
 /// the pre-existing behaviour exactly: fall back to `SVEN_ANDROID_SERIAL`,
 /// then let `AndroidTool`'s own per-call auto-detect handle it - there is no
-/// whale-supplied identity to validate against reality here at all.
+/// host-supplied identity to validate against reality here at all.
 ///
 /// `device` is `Some` routes through `adb::resolve_serial_validated`
 /// (`sven-tools-android`'s own real device-selection/auto-detect - reused,
@@ -235,7 +250,7 @@ pub async fn dispatch_ui_test_step(
 ///
 /// # Errors
 ///
-/// A descriptive error naming `device.device_id` (whale's own catalog
+/// A descriptive error naming `device.device_id` (the host's own catalog
 /// identity, for a human reading the failure) when resolution is genuinely
 /// ambiguous, or when listing devices itself fails (e.g. `adb` not on
 /// `PATH`).
@@ -284,8 +299,8 @@ async fn resolve_effective_serial(
 /// Every top-level `params` field except `instruction`, coerced to a string
 /// for `UiTestScript::vars`. Non-string JSON values (numbers, bools,
 /// objects, arrays) are serialized verbatim rather than dropped - a
-/// resolved upstream `Link` value can be any JSON type (per whale's own
-/// dispatch contract), but `UiTestMachine`'s variable slots are always text
+/// resolved upstream value can be any JSON type (per the dispatch
+/// contract), but `UiTestMachine`'s variable slots are always text
 /// (they only ever feed `type_text`/`value_ref`).
 fn extract_vars(params: &Value) -> BTreeMap<String, String> {
     let Some(obj) = params.as_object() else {
@@ -330,7 +345,11 @@ mod tests {
     }
 
     impl FakeTool {
-        fn new(name: &'static str, capability: sven_hsm::ToolCapability, reply: impl Into<String>) -> Arc<Self> {
+        fn new(
+            name: &'static str,
+            capability: sven_hsm::ToolCapability,
+            reply: impl Into<String>,
+        ) -> Arc<Self> {
             Arc::new(Self {
                 name,
                 capability,
@@ -371,7 +390,10 @@ mod tests {
     /// exhausting its full retry budget makes (`ScriptedMockProvider` does
     /// not repeat a script once consumed - see its own `complete` doc).
     /// `attempts` mirrors `UiTestMachine`'s own `MAX_ATTEMPTS_PER_STEP`.
-    fn compiled_step_reply_for_every_retry(compiled: Value, attempts: usize) -> ScriptedMockProvider {
+    fn compiled_step_reply_for_every_retry(
+        compiled: Value,
+        attempts: usize,
+    ) -> ScriptedMockProvider {
         let text = compiled.to_string();
         ScriptedMockProvider::new(
             (0..attempts)
@@ -387,9 +409,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_launch_app_step_succeeds_and_reports_the_step_outcome() {
-        let android = FakeTool::new("android", sven_hsm::ToolCapability::ControlDevice, "launched com.example.demoapp");
+        let android = FakeTool::new(
+            "android",
+            sven_hsm::ToolCapability::ControlDevice,
+            "launched com.example.demoapp",
+        );
         let overrides = UiTestDispatchOverrides {
-            model_provider: Some(Box::new(compiled_step_reply(json!({ "verb": "launch_app", "target": "com.example.demoapp" })))),
+            model_provider: Some(Box::new(compiled_step_reply(
+                json!({ "verb": "launch_app", "target": "com.example.demoapp" }),
+            ))),
             android_tool: Some(android.clone() as Arc<dyn Tool>),
             ..Default::default()
         };
@@ -407,7 +435,10 @@ mod tests {
         assert_eq!(out["step"]["passed"], true);
         assert_eq!(out["step"]["instruction"], "Launch the demo app");
         assert_eq!(android.calls.lock().unwrap()[0]["action"], "launch_app");
-        assert_eq!(android.calls.lock().unwrap()[0]["package"], "com.example.demoapp");
+        assert_eq!(
+            android.calls.lock().unwrap()[0]["package"],
+            "com.example.demoapp"
+        );
     }
 
     /// A fake [`DeviceLister`] returning a fixed, canned device list - so a
@@ -430,14 +461,16 @@ mod tests {
     #[tokio::test]
     async fn a_device_field_does_not_prevent_the_step_from_running() {
         // `dispatch_ui_test_step` resolves `device.serial` (the real ADB
-        // identity, distinct from `device.device_id`, whale's own catalog
+        // identity, distinct from `device.device_id`, the host's own catalog
         // key) into `AndroidTool::new`'s default serial when using the real
         // tool - see `resolve_effective_serial`'s own doc. With a fake tool
         // substituted, this only proves the `device` field is accepted and
         // plumbed through without breaking the run.
         let android = FakeTool::new("android", sven_hsm::ToolCapability::ControlDevice, "ok");
         let overrides = UiTestDispatchOverrides {
-            model_provider: Some(Box::new(compiled_step_reply(json!({ "verb": "key_event", "target": "HOME" })))),
+            model_provider: Some(Box::new(compiled_step_reply(
+                json!({ "verb": "key_event", "target": "HOME" }),
+            ))),
             android_tool: Some(android as Arc<dyn Tool>),
             device_lister: Some(Arc::new(FakeLister(vec![ready("ec677a50")]))),
             ..Default::default()
@@ -446,6 +479,7 @@ mod tests {
             provider_id: "local".into(),
             device_id: "phone-1".into(),
             serial: Some("ec677a50".into()),
+            ..Default::default()
         };
 
         let out = dispatch_ui_test_step(
@@ -460,7 +494,7 @@ mod tests {
     }
 
     // ─── resolve_effective_serial: the device-fallback logic itself ───────
-    // This is the "auto-detect instead of hard-failing on whale's own
+    // This is the "auto-detect instead of hard-failing on the host's own
     // catalog id" behaviour the android-ui-test/device-identity fix exists
     // for. Every case is a unit test against a `FakeLister`, per this
     // repo's TDD convention for `sven-tools-android`'s own device-selection
@@ -488,6 +522,7 @@ mod tests {
             provider_id: "local".into(),
             device_id: "phone-1".into(),
             serial: Some("ec677a50".into()),
+            ..Default::default()
         };
         let lister = FakeLister(vec![ready("ec677a50")]);
         let resolved = resolve_effective_serial(Some(&device), &lister)
@@ -498,13 +533,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_mismatched_serial_falls_back_to_the_only_attached_device() {
-        // The exact bug: whale sent its catalog id, not a real serial, and
+        // The exact bug: the host sent its catalog id, not a real serial, and
         // it happens not to match anything attached - but exactly one real
         // device is, so this must succeed via fallback, not hard-fail.
         let device = UiTestDevice {
             provider_id: "local".into(),
             device_id: "phone-1".into(),
             serial: Some("phone-1".into()),
+            ..Default::default()
         };
         let lister = FakeLister(vec![ready("ec677a50")]);
         let resolved = resolve_effective_serial(Some(&device), &lister)
@@ -522,6 +558,7 @@ mod tests {
             provider_id: "local".into(),
             device_id: "phone-1".into(),
             serial: None,
+            ..Default::default()
         };
         let lister = FakeLister(vec![ready("ec677a50")]);
         let resolved = resolve_effective_serial(Some(&device), &lister)
@@ -536,6 +573,7 @@ mod tests {
             provider_id: "local".into(),
             device_id: "phone-1".into(),
             serial: Some("ec677a50".into()),
+            ..Default::default()
         };
         let lister = FakeLister(vec![]);
         let err = resolve_effective_serial(Some(&device), &lister)
@@ -550,6 +588,7 @@ mod tests {
             provider_id: "local".into(),
             device_id: "phone-1".into(),
             serial: Some("phone-1".into()),
+            ..Default::default()
         };
         let lister = FakeLister(vec![ready("aaa"), ready("bbb")]);
         let err = resolve_effective_serial(Some(&device), &lister)
@@ -567,6 +606,7 @@ mod tests {
             provider_id: "local".into(),
             device_id: "phone-1".into(),
             serial: Some("bbb".into()),
+            ..Default::default()
         };
         let lister = FakeLister(vec![ready("aaa"), ready("bbb")]);
         let resolved = resolve_effective_serial(Some(&device), &lister)
@@ -579,7 +619,9 @@ mod tests {
     async fn other_params_fields_are_seeded_as_vars_and_resolve_through_value_ref() {
         let android = FakeTool::new("android", sven_hsm::ToolCapability::ControlDevice, "typed");
         let overrides = UiTestDispatchOverrides {
-            model_provider: Some(Box::new(compiled_step_reply(json!({ "verb": "type_text", "value_ref": "code" })))),
+            model_provider: Some(Box::new(compiled_step_reply(
+                json!({ "verb": "type_text", "value_ref": "code" }),
+            ))),
             android_tool: Some(android.clone() as Arc<dyn Tool>),
             ..Default::default()
         };
@@ -601,7 +643,9 @@ mod tests {
     async fn a_non_string_params_field_is_seeded_as_its_json_text() {
         let android = FakeTool::new("android", sven_hsm::ToolCapability::ControlDevice, "ok");
         let overrides = UiTestDispatchOverrides {
-            model_provider: Some(Box::new(compiled_step_reply(json!({ "verb": "type_text", "value_ref": "retries" })))),
+            model_provider: Some(Box::new(compiled_step_reply(
+                json!({ "verb": "type_text", "value_ref": "retries" }),
+            ))),
             android_tool: Some(android.clone() as Arc<dyn Tool>),
             ..Default::default()
         };
@@ -640,7 +684,10 @@ mod tests {
         .expect("must succeed");
 
         assert_eq!(out["passed"], true);
-        assert_eq!(out["code"], "1234", "the ask_user answer must be a clearly-named top-level field, not buried in step");
+        assert_eq!(
+            out["code"], "1234",
+            "the ask_user answer must be a clearly-named top-level field, not buried in step"
+        );
     }
 
     #[tokio::test]
@@ -691,9 +738,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_instruction_field_is_a_clear_error() {
-        let err = dispatch_ui_test_step(Arc::new(test_config()), None, &json!({}), UiTestDispatchOverrides::default())
-            .await
-            .expect_err("params without an instruction must be refused");
+        let err = dispatch_ui_test_step(
+            Arc::new(test_config()),
+            None,
+            &json!({}),
+            UiTestDispatchOverrides::default(),
+        )
+        .await
+        .expect_err("params without an instruction must be refused");
         assert!(err.contains("instruction"), "{err}");
     }
 }

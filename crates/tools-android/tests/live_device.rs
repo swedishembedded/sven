@@ -135,7 +135,7 @@ async fn unknown_device_serial_is_a_clear_error() {
 /// tests cover the pure decision logic against a fake device lister; this
 /// proves the REAL `RealDeviceLister`/`adb devices` round trip actually
 /// substitutes the sole attached device when the "requested" identity
-/// (mirroring whale's own catalog device id, e.g. `"phone-1"`, sent where a
+/// (mirroring a host's own catalog device id, e.g. `"phone-1"`, sent where a
 /// real ADB serial was expected - the exact bug this fix exists for) does
 /// not match anything attached.
 #[tokio::test]
@@ -156,4 +156,40 @@ async fn resolve_serial_validated_uses_a_real_exact_match_directly() {
         .await
         .expect("a real, reachable adb must succeed");
     assert_eq!(pick, adb::SerialPick::Resolved(serial));
+}
+
+/// The package analogue of the two serial tests above: proves the REAL
+/// `RealPackageLister`/`pm list packages` round trip actually feeds
+/// `pick_package`. Deliberately device-agnostic - it asks the device what it
+/// has and then resolves the first answer exactly, so it pins the round trip
+/// rather than any particular app being installed.
+#[tokio::test]
+async fn resolve_package_validated_round_trips_through_a_real_device() {
+    let serial = skip_without_device!();
+    let installed = adb::PackageLister::list_packages(&adb::RealPackageLister, &serial)
+        .await
+        .expect("a real, reachable adb must list packages");
+    let first = installed.first().expect("a real device has packages installed").clone();
+    let pick = adb::resolve_package_validated(&adb::RealPackageLister, &serial, &first, &[])
+        .await
+        .expect("a real, reachable adb must succeed");
+    assert_eq!(pick, adb::PackagePick::Resolved(first));
+}
+
+/// A caller's declaration takes precedence over the device, proven where it
+/// is impossible to fake: the declared package is NOT installed on this real
+/// device, so if the declaration were being ignored (or merely merged with
+/// what `pm list packages` reports) this would resolve to `NoneInstalled`.
+#[tokio::test]
+async fn a_declaration_outranks_what_the_real_device_reports() {
+    let serial = skip_without_device!();
+    let declared = vec!["com.example.declaredonly".to_string()];
+    let pick =
+        adb::resolve_package_validated(&adb::RealPackageLister, &serial, "declaredonly", &declared)
+            .await
+            .expect("a real, reachable adb must succeed");
+    assert_eq!(
+        pick,
+        adb::PackagePick::ResolvedFromHint("com.example.declaredonly".to_string())
+    );
 }
