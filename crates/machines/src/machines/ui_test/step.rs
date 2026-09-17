@@ -218,7 +218,121 @@ pub fn extract_screenshot_path(text: &str) -> Option<String> {
     (!path.is_empty()).then(|| path.to_string())
 }
 
+/// The `android` tool's `find_element` answer.
+///
+/// `found: false` carries no coordinate at all - that is the point. A
+/// grounding model always returns some box, so a step could never fail for
+/// pointing at something that was not on screen; `candidates` names what
+/// WAS there so the failure is actionable.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct FoundElement {
+    pub found: bool,
+    #[serde(default)]
+    pub x: i64,
+    #[serde(default)]
+    pub y: i64,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub via: String,
+    #[serde(default)]
+    pub candidates: Vec<String>,
+    /// Digest of the hierarchy this answer was read from - the pre-action
+    /// baseline the post-action check compares against.
+    #[serde(default)]
+    pub signature: String,
+}
+
+/// Parse a `find_element` observation.
+pub fn parse_find_element(observation: &Value) -> Result<FoundElement, String> {
+    let text = observation
+        .as_str()
+        .ok_or_else(|| "find_element observation was not a string".to_string())?;
+    serde_json::from_str(text).map_err(|e| format!("could not parse find_element result: {e}"))
+}
+
+/// Parse a `ui_signature` observation into the digest itself.
+pub fn parse_signature(observation: &Value) -> Result<String, String> {
+    let text = observation
+        .as_str()
+        .ok_or_else(|| "ui_signature observation was not a string".to_string())?;
+    let v: Value = serde_json::from_str(text)
+        .map_err(|e| format!("could not parse ui_signature result: {e}"))?;
+    v.get("signature")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "ui_signature result carried no 'signature'".to_string())
+}
+
+/// Parse a `screen_is_secure` observation.
+pub fn parse_secure_screen(observation: &Value) -> Result<bool, String> {
+    let text = observation
+        .as_str()
+        .ok_or_else(|| "screen_is_secure observation was not a string".to_string())?;
+    let v: Value = serde_json::from_str(text)
+        .map_err(|e| format!("could not parse screen_is_secure result: {e}"))?;
+    v.get("secure_screen")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "screen_is_secure result carried no 'secure_screen'".to_string())
+}
+
 // ─── Effect builders ────────────────────────────────────────────────────────
+
+pub fn secure_check_effect(index: u32, attempt: u32) -> (Effect, ToolCallId) {
+    let call_id = derive_call_id(&format!("ui_test:secure:{index}:{attempt}"));
+    (
+        Effect::CallTool {
+            call_id,
+            name: ANDROID_TOOL.to_string(),
+            capability: ANDROID_CAPABILITY,
+            args: json!({ "action": "screen_is_secure" }),
+        },
+        call_id,
+    )
+}
+
+pub fn find_element_effect(index: u32, attempt: u32, target: &str) -> (Effect, ToolCallId) {
+    let call_id = derive_call_id(&format!("ui_test:locate:{index}:{attempt}"));
+    (
+        Effect::CallTool {
+            call_id,
+            name: ANDROID_TOOL.to_string(),
+            capability: ANDROID_CAPABILITY,
+            args: json!({ "action": "find_element", "target": target }),
+        },
+        call_id,
+    )
+}
+
+pub fn ui_signature_effect(index: u32, attempt: u32) -> (Effect, ToolCallId) {
+    let call_id = derive_call_id(&format!("ui_test:verify:{index}:{attempt}"));
+    (
+        Effect::CallTool {
+            call_id,
+            name: ANDROID_TOOL.to_string(),
+            capability: ANDROID_CAPABILITY,
+            args: json!({ "action": "ui_signature" }),
+        },
+        call_id,
+    )
+}
+
+/// Tap an exact pixel coordinate, as `find_element` reports it.
+///
+/// Pixels, not normalized fractions: the view hierarchy states real bounds,
+/// so converting to a fraction and back would only add rounding.
+pub fn tap_pixel_effect(index: u32, attempt: u32, x: i64, y: i64) -> (Effect, ToolCallId) {
+    let call_id = derive_call_id(&format!("ui_test:act:{index}:{attempt}"));
+    (
+        Effect::CallTool {
+            call_id,
+            name: ANDROID_TOOL.to_string(),
+            capability: ANDROID_CAPABILITY,
+            args: json!({ "action": "tap", "x": x, "y": y, "normalized": false }),
+        },
+        call_id,
+    )
+}
 
 pub fn screenshot_effect(index: u32, attempt: u32) -> (Effect, ToolCallId) {
     let call_id = derive_call_id(&format!("ui_test:screenshot:{index}:{attempt}"));

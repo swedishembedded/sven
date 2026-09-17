@@ -20,24 +20,37 @@
 //! Top
 //! ├── Seeding    ← parses the first UserMessage as the step list
 //! ├── Compiling  ← one schema-constrained CallLlm compiles the current step
-//! ├── Locating   ← (tap only) screenshot, then ground; a solid-black
-//! │                FLAG_SECURE frame hands off to Acting's ask_user path
-//! │                instead of ever reaching the grounding model
+//! ├── Locating   ← gate on FLAG_SECURE, then resolve the target in the
+//! │                device's view hierarchy (tap) or record a pre-action
+//! │                baseline (every other acting verb). A secure screen
+//! │                hands off to Acting's ask_user path instead of ever
+//! │                being driven.
 //! ├── Acting     ← the android tool call (or ask_question) for this step
+//! ├── Verifying  ← re-read the hierarchy: an action that changed nothing
+//! │                spends a retry rather than reporting success
 //! ├── Retrying   ← bounces back into Compiling for the same step (a real
 //! │                state, for the audit trail - mirrors VerifiedTaskMachine)
 //! ├── Done       ← terminal: every step completed
 //! └── Failed     ← terminal: a step exhausted its retry budget
 //! ```
 //!
-//! # Verification (current scope)
+//! # Verification
 //!
-//! "Verify" in the roadmap's pipeline sketch is, today, simply the acting
-//! tool call's own success/failure: a `ToolSucceeded` for the `android` (or
-//! `ask_question`) call advances to the next step, a `ToolFailed` spends a
-//! retry. There is no independent post-action re-screenshot/re-ground check
-//! yet - see the roadmap's Phase 3 gaps for why that was deliberately left
-//! out of this pass.
+//! A tool call succeeding is not the same as a step working. `adb shell
+//! input tap` exits 0 for any coordinate on the display, including empty
+//! space, so "the tool succeeded" alone once let a step that changed
+//! nothing whatsoever report itself passed.
+//!
+//! So every device-acting verb is bracketed: the hierarchy digest is taken
+//! before the action and again after, and an unchanged digest spends a
+//! retry and ultimately fails the step. [`step::StepVerb::Wait`] and
+//! [`step::StepVerb::AskUser`] are exempt - neither is supposed to change
+//! the device.
+//!
+//! The digest is over the view hierarchy, never over pixels. A screenshot
+//! of an idle device is not stable (a status-bar clock or live network-rate
+//! readout repaints constantly), so a pixel comparison reports "changed"
+//! every time and could never catch a no-op.
 //!
 //! Swedish Embedded AB implements solutions for deterministic on-device
 //! Android UI testing for its clients. If your team needs expertise in
@@ -45,6 +58,7 @@
 //! automated agent must never touch, you can procure our services by sending
 //! an email to info@swedishembedded.com.
 
+pub mod phases;
 pub mod step;
 pub mod vars;
 
@@ -62,30 +76,36 @@ use sven_hsm::{
     status::Reaction,
 };
 
+use phases::{begin_verification_or_finish, handle_verifying_success};
+use phases::{dispatch_compiled, handle_locating_success};
 use step::CompiledStep;
 
 /// Attempts allowed per step before it counts as failed for good.
 const MAX_ATTEMPTS_PER_STEP: u32 = 3;
 
 /// Options offered on the secure-screen (`FLAG_SECURE`) hand-off confirmation.
-const HANDOFF_OPTIONS: &[&str] = &["Done", "Cancel"];
+pub(super) const HANDOFF_OPTIONS: &[&str] = &["Done", "Cancel"];
 /// Options offered on a genuine `ask_user` step with no options of its own -
 /// `ask_question` requires at least two; a human answers for real via its
 /// free-form "Other: <text>" path (see `step::extract_answer_text`).
-const ASK_USER_OPTIONS: &[&str] = &["Provide the value", "Skip this step"];
+pub(super) const ASK_USER_OPTIONS: &[&str] = &["Provide the value", "Skip this step"];
 
 const STEPS_FACT: &str = "ui_test_steps";
 const INDEX_FACT: &str = "ui_test_index";
-const COMPILED_FACT: &str = "ui_test_compiled";
+pub(super) const COMPILED_FACT: &str = "ui_test_compiled";
 const SCREENSHOT_FACT: &str = "ui_test_screenshot_path";
-const LOCATING_PHASE_FACT: &str = "ui_test_locating_phase";
+pub(super) const LOCATING_PHASE_FACT: &str = "ui_test_locating_phase";
+/// Digest of the view hierarchy as it was immediately BEFORE this step
+/// acted, so [`UiTestState::Verifying`] can tell whether the action changed
+/// anything at all.
+pub(super) const BASELINE_SIG_FACT: &str = "ui_test_baseline_signature";
 /// Ordered per-step outcome records (`{index, instruction, passed, attempts,
 /// error}`), appended to as each step concludes - public so a caller driving
 /// this machine to completion (e.g. an agent-dispatch CLI wrapper) can build
 /// its own reply shape from the real outcome instead of re-deriving it.
 pub const RESULTS_FACT: &str = "ui_test_results";
 const PENDING_CALL_FACT: &str = "ui_test_pending_call";
-const ASK_BIND_FACT: &str = "ui_test_ask_bind";
+pub(super) const ASK_BIND_FACT: &str = "ui_test_ask_bind";
 const LAST_FAILURE_FACT: &str = "ui_test_last_failure";
 /// Set only in [`UiTestState::Failed`]; a run that never reaches `Failed`
 /// never sets it.
@@ -122,6 +142,7 @@ pub enum UiTestState {
     Compiling,
     Locating,
     Acting,
+    Verifying,
     Retrying,
     Done,
     Failed,
@@ -160,7 +181,7 @@ impl Default for UiTestMachine {
 
 // ─── Small Context accessors ────────────────────────────────────────────────
 
-fn load_steps(ctx: &Context) -> Vec<String> {
+pub(super) fn load_steps(ctx: &Context) -> Vec<String> {
     ctx.fact(STEPS_FACT)
         .and_then(|v| v.as_array())
         .map_or_else(Vec::new, |a| {
@@ -170,11 +191,11 @@ fn load_steps(ctx: &Context) -> Vec<String> {
         })
 }
 
-fn load_index(ctx: &Context) -> u32 {
+pub(super) fn load_index(ctx: &Context) -> u32 {
     ctx.fact(INDEX_FACT).and_then(Value::as_u64).unwrap_or(0) as u32
 }
 
-fn load_compiled(ctx: &Context) -> Option<CompiledStep> {
+pub(super) fn load_compiled(ctx: &Context) -> Option<CompiledStep> {
     ctx.fact(COMPILED_FACT)
         .cloned()
         .and_then(|v| serde_json::from_value(v).ok())
@@ -184,14 +205,14 @@ fn retry_key(index: u32) -> String {
     format!("ui_test_step_{index}")
 }
 
-fn attempt_number(ctx: &Context, index: u32) -> u32 {
+pub(super) fn attempt_number(ctx: &Context, index: u32) -> u32 {
     ctx.retry_counters
         .get(&retry_key(index))
         .copied()
         .unwrap_or(0)
 }
 
-fn set_pending(ctx: &mut Context, call_id: ToolCallId) {
+pub(super) fn set_pending(ctx: &mut Context, call_id: ToolCallId) {
     ctx.set_fact(
         PENDING_CALL_FACT,
         serde_json::to_value(call_id).expect("ToolCallId always serializes"),
@@ -252,7 +273,7 @@ fn begin_compile(ctx: &Context, index: u32) -> Effect {
 }
 
 /// Move on to the next step, or finish if `index` was the last one.
-fn advance_or_finish(ctx: &mut Context) -> Reaction<UiTestState> {
+pub(super) fn advance_or_finish(ctx: &mut Context) -> Reaction<UiTestState> {
     let index = load_index(ctx);
     let steps = load_steps(ctx);
     append_result(
@@ -279,7 +300,7 @@ fn advance_or_finish(ctx: &mut Context) -> Reaction<UiTestState> {
 /// A step failed. Spend a retry if the budget allows, otherwise fail the run
 /// for good. Mirrors `verified_task.rs::next_after_attempt`'s bounded-retry
 /// shape, per-step rather than per-whole-task.
-fn fail_or_retry(ctx: &mut Context, reason: impl Into<String>) -> Reaction<UiTestState> {
+pub(super) fn fail_or_retry(ctx: &mut Context, reason: impl Into<String>) -> Reaction<UiTestState> {
     let index = load_index(ctx);
     let reason = reason.into();
     let attempts = ctx.bump_retry(retry_key(index));
@@ -337,7 +358,9 @@ impl Machine for UiTestMachine {
 
     fn all_states(&self) -> Vec<UiTestState> {
         use UiTestState::*;
-        vec![Seeding, Compiling, Locating, Acting, Retrying, Done, Failed]
+        vec![
+            Seeding, Compiling, Locating, Acting, Verifying, Retrying, Done, Failed,
+        ]
     }
 
     fn dispatch_state(
@@ -443,7 +466,7 @@ impl Machine for UiTestMachine {
                     if let Some(text) = observation.as_str() {
                         maybe_bind_answer(ctx, text);
                     }
-                    advance_or_finish(ctx)
+                    begin_verification_or_finish(ctx)
                 }
                 Event::ToolFailed { call_id, error } => {
                     if !pending_matches(ctx, call_id) {
@@ -486,6 +509,27 @@ impl Machine for UiTestMachine {
                 _ => Reaction::Ignored,
             },
 
+            // ── Verifying: did the action actually change anything? ────────
+            Verifying => match event {
+                Event::Internal(InternalEvent::Entry) => Reaction::handled(),
+                Event::ToolSucceeded {
+                    call_id,
+                    observation,
+                } => {
+                    if !pending_matches(ctx, call_id) {
+                        return Reaction::Ignored;
+                    }
+                    handle_verifying_success(ctx, observation)
+                }
+                Event::ToolFailed { call_id, error } => {
+                    if !pending_matches(ctx, call_id) {
+                        return Reaction::Ignored;
+                    }
+                    fail_or_retry(ctx, error.clone())
+                }
+                _ => Reaction::Ignored,
+            },
+
             // ── Retrying: a real, audited bounce back into Compiling ───────
             Retrying => match event {
                 Event::Internal(InternalEvent::Entry) => {
@@ -510,133 +554,6 @@ impl Machine for UiTestMachine {
 
             Done | Failed => Reaction::Ignored,
         }
-    }
-}
-
-/// Route a freshly compiled step to whichever phase it needs: `Locating`
-/// for `tap`, straight into `Acting` for everything else (`ask_user` builds
-/// its own `CallTool` directly; every other verb goes through
-/// `direct_action_effect`).
-fn dispatch_compiled(
-    ctx: &mut Context,
-    compiled: &CompiledStep,
-    index: u32,
-    attempt: u32,
-) -> Reaction<UiTestState> {
-    use step::StepVerb;
-
-    match compiled.verb {
-        StepVerb::Tap => {
-            if compiled.target.is_none() {
-                return fail_or_retry(ctx, "tap step compiled with no target");
-            }
-            let (effect, call_id) = step::screenshot_effect(index, attempt);
-            set_pending(ctx, call_id);
-            ctx.set_fact(LOCATING_PHASE_FACT, "screenshot");
-            Reaction::transition(
-                UiTestState::Locating,
-                vec![effect],
-                "compiled a tap step; locating on screen",
-            )
-        }
-        StepVerb::AskUser => {
-            let question = compiled
-                .target
-                .clone()
-                .unwrap_or_else(|| "Please help with this step.".to_string());
-            let options = ASK_USER_OPTIONS.iter().map(|s| s.to_string()).collect();
-            let (effect, call_id) = step::ask_user_effect(index, attempt, &question, options);
-            set_pending(ctx, call_id);
-            ctx.set_fact(ASK_BIND_FACT, json!(compiled.bind));
-            Reaction::transition(
-                UiTestState::Acting,
-                vec![effect],
-                "compiled an ask_user step",
-            )
-        }
-        _ => match step::direct_action_effect(ctx, compiled, index, attempt) {
-            Ok((effect, call_id)) => {
-                set_pending(ctx, call_id);
-                ctx.set_fact(ASK_BIND_FACT, Value::Null);
-                Reaction::transition(
-                    UiTestState::Acting,
-                    vec![effect],
-                    "compiled a direct action step",
-                )
-            }
-            Err(reason) => fail_or_retry(ctx, reason),
-        },
-    }
-}
-
-/// Handle a `ToolSucceeded` while in `Locating`: either the screenshot just
-/// came back (take the path, ground it) or the ground result just came back
-/// (act on it, or hand off to a human on a `FLAG_SECURE` frame).
-fn handle_locating_success(ctx: &mut Context, observation: &Value) -> Reaction<UiTestState> {
-    let index = load_index(ctx);
-    let attempt = attempt_number(ctx, index);
-    let phase = ctx
-        .fact(LOCATING_PHASE_FACT)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-
-    match phase.as_str() {
-        "screenshot" => {
-            let text = observation.as_str().unwrap_or("");
-            match step::extract_screenshot_path(text) {
-                Some(path) => {
-                    ctx.set_fact(SCREENSHOT_FACT, path.clone());
-                    let target = load_compiled(ctx)
-                        .and_then(|c| c.target)
-                        .unwrap_or_default();
-                    let (effect, call_id) = step::ground_effect(index, attempt, &path, &target);
-                    set_pending(ctx, call_id);
-                    ctx.set_fact(LOCATING_PHASE_FACT, "ground");
-                    Reaction::effects(vec![effect])
-                }
-                None => fail_or_retry(
-                    ctx,
-                    format!("could not parse a screenshot path from '{text}'"),
-                ),
-            }
-        }
-        "ground" => match step::parse_ground_result(observation) {
-            Ok(g) if g.secure_screen => {
-                let steps = load_steps(ctx);
-                let instruction = steps.get(index as usize).map_or("", String::as_str);
-                let question = format!(
-                    "This step needs a human: the screen is marked FLAG_SECURE, so a \
-                     grounding model cannot see it. Original instruction: \"{instruction}\". \
-                     Please complete it manually on the device, then confirm."
-                );
-                let options = HANDOFF_OPTIONS.iter().map(|s| s.to_string()).collect();
-                let (effect, call_id) = step::ask_user_effect(index, attempt, &question, options);
-                set_pending(ctx, call_id);
-                ctx.set_fact(ASK_BIND_FACT, Value::Null);
-                Reaction::transition(
-                    UiTestState::Acting,
-                    vec![effect],
-                    "secure screen detected; handing off to a human",
-                )
-            }
-            Ok(g) if g.found && !g.boxes.is_empty() => {
-                let (cx, cy) = step::bbox_center(&g.boxes[0].bbox);
-                let (effect, call_id) = step::tap_effect(index, attempt, cx, cy);
-                set_pending(ctx, call_id);
-                Reaction::transition(
-                    UiTestState::Acting,
-                    vec![effect],
-                    "element located; tapping",
-                )
-            }
-            Ok(_) => fail_or_retry(ctx, "target not found on screen"),
-            Err(e) => fail_or_retry(ctx, e),
-        },
-        other => fail_or_retry(
-            ctx,
-            format!("internal error: unexpected locating phase '{other}'"),
-        ),
     }
 }
 
@@ -741,6 +658,59 @@ mod tests {
 
     // ── Seeding ──────────────────────────────────────────────────────────────
 
+    /// Clear the FLAG_SECURE gate every device-acting verb now passes
+    /// through before anything touches the device.
+    fn clear_secure_gate(
+        m: &mut UiTestMachine,
+        ctx: &mut Context,
+        state: &mut UiTestState,
+    ) -> Reaction<UiTestState> {
+        let id = pending_call_id(ctx);
+        drive(
+            m,
+            ctx,
+            state,
+            tool_ok(id, json!(json!({ "secure_screen": false }).to_string())),
+        )
+    }
+
+    /// Answer a pending `ui_signature` call with `sig`.
+    fn answer_signature(
+        m: &mut UiTestMachine,
+        ctx: &mut Context,
+        state: &mut UiTestState,
+        sig: &str,
+    ) -> Reaction<UiTestState> {
+        let id = pending_call_id(ctx);
+        drive(
+            m,
+            ctx,
+            state,
+            tool_ok(id, json!(json!({ "signature": sig }).to_string())),
+        )
+    }
+
+    /// Drive a freshly compiled NON-tap acting verb through the secure gate
+    /// and its pre-action baseline, leaving the machine in `Acting`.
+    fn reach_acting(
+        m: &mut UiTestMachine,
+        ctx: &mut Context,
+        state: &mut UiTestState,
+    ) -> Reaction<UiTestState> {
+        clear_secure_gate(m, ctx, state);
+        answer_signature(m, ctx, state, "before")
+    }
+
+    /// Answer the post-action check with a digest unlike the baseline: the
+    /// action really did change the screen.
+    fn verify_changed(
+        m: &mut UiTestMachine,
+        ctx: &mut Context,
+        state: &mut UiTestState,
+    ) -> Reaction<UiTestState> {
+        answer_signature(m, ctx, state, "after")
+    }
+
     #[test]
     fn seeding_parses_the_script_and_starts_compiling_step_0() {
         let (mut m, mut ctx, mut state) = make();
@@ -788,7 +758,7 @@ mod tests {
     // ── Compiling -> direct action ──────────────────────────────────────────
 
     #[test]
-    fn a_non_tap_step_compiles_straight_into_acting() {
+    fn a_non_tap_step_clears_the_secure_gate_and_baselines_before_acting() {
         let (mut m, mut ctx, mut state) = make();
         drive(
             &mut m,
@@ -805,6 +775,22 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
         );
+        assert_eq!(state, UiTestState::Locating, "gated before it acts");
+        let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {
+            panic!("expected CallTool")
+        };
+        assert_eq!(args["action"], "screen_is_secure");
+
+        let out = clear_secure_gate(&mut m, &mut ctx, &mut state);
+        let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {
+            panic!("expected CallTool")
+        };
+        assert_eq!(
+            args["action"], "ui_signature",
+            "a pre-action baseline, so the action can be held to changing something"
+        );
+
+        let out = answer_signature(&mut m, &mut ctx, &mut state, "before");
         assert_eq!(state, UiTestState::Acting);
         assert_eq!(effects_of(&out).len(), 1);
         let Effect::CallTool {
@@ -823,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_step_compiles_into_locating_and_takes_a_screenshot() {
+    fn a_tap_step_checks_the_screen_is_drivable_before_anything_else() {
         let (mut m, mut ctx, mut state) = make();
         drive(
             &mut m,
@@ -845,13 +831,13 @@ mod tests {
             panic!("expected CallTool")
         };
         assert_eq!(name, "android");
-        assert_eq!(args["action"], "screenshot");
+        assert_eq!(args["action"], "screen_is_secure");
     }
 
-    // ── Locating: screenshot -> ground -> tap ───────────────────────────────
+    // ── Locating: secure gate -> resolve in the hierarchy -> tap ────────────
 
     #[test]
-    fn locating_grounds_the_screenshot_then_taps_the_found_box_center() {
+    fn locating_resolves_the_target_then_taps_its_exact_pixel_centre() {
         let (mut m, mut ctx, mut state) = make();
         drive(
             &mut m,
@@ -869,44 +855,44 @@ mod tests {
         );
         assert_eq!(state, UiTestState::Locating);
 
-        let screenshot_id = pending_call_id(&ctx);
-        let out = drive(
-            &mut m,
-            &mut ctx,
-            &mut state,
-            tool_ok(
-                screenshot_id,
-                json!("screenshot saved: shots/shot.png (100x200)"),
-            ),
-        );
+        let out = clear_secure_gate(&mut m, &mut ctx, &mut state);
         assert_eq!(
             state,
             UiTestState::Locating,
-            "still locating; now grounding"
+            "still locating; now resolving"
         );
         let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else {
             panic!("expected CallTool")
         };
-        assert_eq!(name, "ground");
-        assert_eq!(args["image_path"], "shots/shot.png");
+        assert_eq!(name, "android");
+        assert_eq!(args["action"], "find_element");
         assert_eq!(args["target"], "log in");
 
-        let ground_id = pending_call_id(&ctx);
-        let ground_json = json!({ "found": true, "boxes": [{ "phrase": "log in", "bbox": [0.1, 0.1, 0.3, 0.3] }] }).to_string();
+        let found = json!({
+            "found": true, "x": 610, "y": 1858, "label": "Log in",
+            "via": "exact", "signature": "before"
+        })
+        .to_string();
+        let locate_id = pending_call_id(&ctx);
         let out = drive(
             &mut m,
             &mut ctx,
             &mut state,
-            tool_ok(ground_id, json!(ground_json)),
+            tool_ok(locate_id, json!(found)),
         );
+
         assert_eq!(state, UiTestState::Acting);
         let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else {
             panic!("expected CallTool")
         };
         assert_eq!(name, "android");
         assert_eq!(args["action"], "tap");
-        assert_eq!(args["x"], 0.2);
-        assert_eq!(args["y"], 0.2);
+        assert_eq!(args["x"], 610);
+        assert_eq!(args["y"], 1858);
+        assert_eq!(
+            args["normalized"], false,
+            "the hierarchy states real pixels; normalizing and back would only add rounding"
+        );
     }
 
     #[test]
@@ -926,27 +912,19 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "tap", "target": "confirm" })),
         );
-        let screenshot_id = pending_call_id(&ctx);
-        drive(
-            &mut m,
-            &mut ctx,
-            &mut state,
-            tool_ok(screenshot_id, json!("screenshot saved: shots/shot.png")),
-        );
-        let ground_id = pending_call_id(&ctx);
-
-        let secure_json = json!({ "found": false, "boxes": [], "secure_screen": true }).to_string();
+        let gate_id = pending_call_id(&ctx);
+        let secure_json = json!({ "secure_screen": true }).to_string();
         let out = drive(
             &mut m,
             &mut ctx,
             &mut state,
-            tool_ok(ground_id, json!(secure_json)),
+            tool_ok(gate_id, json!(secure_json)),
         );
 
         assert_eq!(
             state,
             UiTestState::Acting,
-            "must hand off, never attempt to tap a screen it never saw"
+            "must hand off, never drive a screen a human is meant to handle"
         );
         let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else {
             panic!("expected CallTool")
@@ -977,29 +955,33 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "tap", "target": "log in" })),
         );
-        let screenshot_id = pending_call_id(&ctx);
+        clear_secure_gate(&mut m, &mut ctx, &mut state);
+        let locate_id = pending_call_id(&ctx);
+        let not_found = json!({
+            "found": false,
+            "candidates": ["Sign in with Mobile BankID", "CHANGE TO BUSINESS"],
+            "signature": "before"
+        })
+        .to_string();
         drive(
             &mut m,
             &mut ctx,
             &mut state,
-            tool_ok(screenshot_id, json!("screenshot saved: shots/shot.png")),
-        );
-        let ground_id = pending_call_id(&ctx);
-        let not_found = json!({ "found": false, "boxes": [] }).to_string();
-        drive(
-            &mut m,
-            &mut ctx,
-            &mut state,
-            tool_ok(ground_id, json!(not_found)),
+            tool_ok(locate_id, json!(not_found)),
         );
         assert_eq!(
             state,
             UiTestState::Compiling,
             "one attempt remains in the default budget; Retrying bounces straight back into Compiling"
         );
-        assert_eq!(
-            ctx.fact(LAST_FAILURE_FACT).unwrap(),
-            "target not found on screen"
+        let failure = ctx.fact(LAST_FAILURE_FACT).unwrap().as_str().unwrap();
+        assert!(
+            failure.contains("'log in' is not on this screen"),
+            "{failure}"
+        );
+        assert!(
+            failure.contains("Sign in with Mobile BankID"),
+            "the failure must name what WAS on screen, or it costs an engineer a device: {failure}"
         );
     }
 
@@ -1022,6 +1004,7 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
         );
+        reach_acting(&mut m, &mut ctx, &mut state);
         let call_id = pending_call_id(&ctx);
         drive(
             &mut m,
@@ -1029,6 +1012,12 @@ mod tests {
             &mut state,
             tool_ok(call_id, json!("launched com.example.demoapp")),
         );
+        assert_eq!(
+            state,
+            UiTestState::Verifying,
+            "success from the tool is not yet success for the step"
+        );
+        verify_changed(&mut m, &mut ctx, &mut state);
 
         assert_eq!(state, UiTestState::Done);
         let results = ctx.fact(RESULTS_FACT).unwrap().as_array().unwrap();
@@ -1053,6 +1042,7 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
         );
+        reach_acting(&mut m, &mut ctx, &mut state);
         let call_id = pending_call_id(&ctx);
         drive(
             &mut m,
@@ -1060,6 +1050,7 @@ mod tests {
             &mut state,
             tool_ok(call_id, json!("launched com.example.demoapp")),
         );
+        verify_changed(&mut m, &mut ctx, &mut state);
 
         assert_eq!(state, UiTestState::Compiling);
         assert_eq!(load_index(&ctx), 1);
@@ -1109,6 +1100,7 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "type_text", "value_ref": "code" })),
         );
+        let out = reach_acting(&mut m, &mut ctx, &mut state);
         assert_eq!(state, UiTestState::Acting);
         let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {
             panic!("expected CallTool")
@@ -1201,6 +1193,7 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "type_text", "value_ref": "code" })),
         );
+        let out = reach_acting(&mut m, &mut ctx, &mut state);
         assert_eq!(state, UiTestState::Acting);
         let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {
             panic!("expected CallTool")
@@ -1291,6 +1284,96 @@ mod tests {
         );
     }
 
+    // ── Verification: a tool call succeeding is not the step working ────────
+
+    /// The defect this state exists for. `adb shell input tap` exits 0 for
+    /// any coordinate on the display, so a tap into empty space reports
+    /// success while changing nothing. An unchanged hierarchy must fail.
+    #[test]
+    fn an_action_that_changes_nothing_fails_instead_of_passing() {
+        let (mut m, mut ctx, mut state) = make();
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Click \"log in\""]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "tap", "target": "log in" })),
+        );
+        clear_secure_gate(&mut m, &mut ctx, &mut state);
+
+        let locate_id = pending_call_id(&ctx);
+        let found =
+            json!({ "found": true, "x": 10, "y": 20, "signature": "unchanged" }).to_string();
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(locate_id, json!(found)),
+        );
+
+        let tap_id = pending_call_id(&ctx);
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(tap_id, json!("tapped (10, 20)")),
+        );
+        assert_eq!(state, UiTestState::Verifying);
+
+        // The very same digest: the tap landed somewhere that did nothing.
+        answer_signature(&mut m, &mut ctx, &mut state, "unchanged");
+
+        assert_eq!(
+            state,
+            UiTestState::Compiling,
+            "a no-op step must spend a retry, not report success"
+        );
+        let failure = ctx.fact(LAST_FAILURE_FACT).unwrap().as_str().unwrap();
+        assert!(failure.contains("left the screen unchanged"), "{failure}");
+    }
+
+    /// `wait` is exempt on purpose: changing nothing is precisely its job,
+    /// so holding it to the same contract would fail every correct run.
+    #[test]
+    fn a_wait_step_is_not_held_to_changing_the_screen() {
+        let (mut m, mut ctx, mut state) = make();
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Wait a moment"]),
+            },
+        );
+        let out = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "wait", "value": "500" })),
+        );
+        assert_eq!(state, UiTestState::Acting, "no gate, no baseline");
+        let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {
+            panic!("expected CallTool")
+        };
+        assert_eq!(args["action"], "wait");
+
+        let call_id = pending_call_id(&ctx);
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(call_id, json!("waited 500ms")),
+        );
+        assert_eq!(state, UiTestState::Done, "never enters Verifying");
+    }
+
     // ── Retry budget ─────────────────────────────────────────────────────────
 
     #[test]
@@ -1312,6 +1395,7 @@ mod tests {
                 &mut state,
                 compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
             );
+            reach_acting(&mut m, &mut ctx, &mut state);
             assert_eq!(state, UiTestState::Acting);
             let call_id = pending_call_id(&ctx);
             drive(
@@ -1348,6 +1432,7 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
         );
+        reach_acting(&mut m, &mut ctx, &mut state);
         let call_id = pending_call_id(&ctx);
         drive(
             &mut m,
@@ -1367,6 +1452,7 @@ mod tests {
             &mut state,
             compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
         );
+        reach_acting(&mut m, &mut ctx, &mut state);
         let call_id = pending_call_id(&ctx);
         drive(
             &mut m,
@@ -1374,6 +1460,7 @@ mod tests {
             &mut state,
             tool_ok(call_id, json!("launched com.example.demoapp")),
         );
+        verify_changed(&mut m, &mut ctx, &mut state);
         assert_eq!(state, UiTestState::Done);
     }
 
