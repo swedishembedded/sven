@@ -2,10 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod attachment;
 mod event;
 mod helpers;
 pub mod runtime_runner;
 
+use attachment::build_attachment_parts;
 use event::{handle_event, stream_new_steps, StepState, SubagentChildState};
 pub(crate) use helpers::{
     is_conversation_format, is_json_summary_format, is_jsonl_format, parse_json_summary,
@@ -170,62 +172,6 @@ pub struct CiOptions {
     /// Unlike the `attach_file` tool this needs no tool call, so it works with
     /// models that have no tool-calling support at all.
     pub attachments: Vec<PathBuf>,
-}
-
-// ── Attachment loading (`--attach`) ───────────────────────────────────────────
-
-/// Build the initial user turn's content parts from the prompt plus `paths`.
-///
-/// Classification and loading go through `sven_tools_fs::load_attachment`, the
-/// same function the `attach_file` tool uses, so the CLI flag and the tool can
-/// never disagree about how a path becomes a content part.
-async fn build_attachment_parts(
-    prompt: &str,
-    paths: &[PathBuf],
-    model: &Arc<dyn sven_model::ModelProvider>,
-    asr: &sven_config::AsrConfig,
-) -> anyhow::Result<Vec<sven_model::ContentPart>> {
-    let opts = sven_tools_fs::AttachOptions {
-        supports_images: model.supports_images(),
-        supports_audio: model.supports_audio(),
-        force_transcribe: false,
-        asr: asr.clone(),
-        asr_client: None,
-    };
-    let label = format!("{}/{}", model.name(), model.model_name());
-
-    let mut parts = vec![sven_model::ContentPart::text(prompt)];
-    for path in paths {
-        let loaded = sven_tools_fs::load_attachment(path, &opts, &label)
-            .await
-            .with_context(|| format!("attaching {}", path.display()))?;
-        write_stderr(&format!(
-            "[sven:attach] {}",
-            loaded.text().lines().next().unwrap_or("")
-        ));
-        parts.extend(loaded.into_content_parts());
-    }
-
-    // If every attachment resolved to text (e.g. all audio was transcribed),
-    // merge into one text part.  `Message::user_with_parts` then collapses it
-    // to a plain string message, so the turn is indistinguishable from an
-    // ordinary prompt for every provider.
-    if parts
-        .iter()
-        .all(|p| matches!(p, sven_model::ContentPart::Text { .. }))
-    {
-        let merged = parts
-            .iter()
-            .filter_map(|p| match p {
-                sven_model::ContentPart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        return Ok(vec![sven_model::ContentPart::text(merged)]);
-    }
-
-    Ok(parts)
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
