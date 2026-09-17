@@ -25,3 +25,7 @@ walkdir       = { workspace = true }
 
 [dev-dependencies]
 sven-model-mock = { path = "../model-mock" }
+# A fake `Brain1.Manager` served over a plain `UnixStream` pair, so the
+# transcription path is exercised with no bus daemon, no server and no
+# checkpoint. `p2p` is what makes a connection with no well-known name legal.
+zbus = { version = "5", default-features = false, features = ["tokio", "p2p"] }

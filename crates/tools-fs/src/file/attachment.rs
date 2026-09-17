@@ -61,8 +61,15 @@ pub struct AttachOptions {
     pub supports_audio: bool,
     /// Transcribe audio even when the model would accept it natively.
     pub force_transcribe: bool,
-    /// Command used for the transcription fallback.
+    /// Where transcription is sent when audio must be turned into text.
     pub asr: AsrConfig,
+    /// A pre-built action client for transcription, instead of one dialled
+    /// from [`AttachOptions::asr`].
+    ///
+    /// `None` in every production path. A test supplies a client wired to a
+    /// fake `Brain1.Manager` so the audio-to-transcript behaviour can be
+    /// exercised without a bus, a server, or a 2.4 GiB checkpoint.
+    pub asr_client: Option<sven_model::ActionClient>,
 }
 
 /// A file that has been loaded and is ready to be turned into content parts.
@@ -213,7 +220,10 @@ pub async fn load_attachment(
                     url,
                 })
             } else {
-                let t = asr::transcribe(path, &opts.asr)
+                let client = opts.asr_client.clone().unwrap_or_else(|| {
+                    sven_model::ActionClient::new(opts.asr.bus_address.as_deref())
+                });
+                let t = asr::transcribe_with(path, &opts.asr, client)
                     .await
                     .map_err(|e| AttachError::Asr {
                         path: display.clone(),
@@ -273,31 +283,73 @@ pub(crate) mod tests_support {
         wav_mono_16bit(16_000, 8_000)
     }
 
-    /// Write a fake `brain` executable that echoes a fixed JSON transcript.
+    /// Serve a fake `Brain1.Manager` that answers `transcribe` with `text`,
+    /// and return a client wired to it plus the server connection.
     ///
-    /// Lets the ASR path be exercised without a real `brain` binary or model
-    /// weights.  Returns the script path.
-    pub fn fake_brain(dir: &std::path::Path, text: &str) -> std::path::PathBuf {
-        write_script(
-            dir,
-            &format!("#!/bin/sh\nprintf '%s\\n' '{{\"text\": \"{text}\", \"num_tokens\": 3}}'\n"),
-        )
-    }
-
-    /// Write a fake `brain` that fails with a message on stderr.
-    pub fn failing_brain(dir: &std::path::Path, stderr: &str) -> std::path::PathBuf {
-        write_script(dir, &format!("#!/bin/sh\necho '{stderr}' 1>&2\nexit 3\n"))
-    }
-
-    fn write_script(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
-        let path = dir.join("fake-brain.sh");
-        std::fs::write(&path, body).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    /// Peer-to-peer over a `UnixStream` pair: no bus daemon, no well-known
+    /// name, no model weights. The server connection is handed back because it
+    /// must outlive the call.
+    ///
+    /// The caller must keep both alive for the duration of the transcription.
+    #[cfg(unix)]
+    pub async fn fake_asr(text: &str) -> (sven_model::ActionClient, zbus::Connection) {
+        struct FakeManager {
+            text: String,
         }
-        path
+
+        #[zbus::interface(name = "com.swedishembedded.Brain1.Manager")]
+        impl FakeManager {
+            #[allow(clippy::too_many_arguments)]
+            async fn run(
+                &self,
+                _model: String,
+                _action: String,
+                _params: String,
+                _in_fds: std::collections::HashMap<String, zbus::zvariant::OwnedFd>,
+                _in_meta: String,
+                _transport: String,
+            ) -> zbus::fdo::Result<(
+                String,
+                std::collections::HashMap<String, zbus::zvariant::OwnedFd>,
+                String,
+            )> {
+                // Inline in the result JSON rather than on an fd: brain does
+                // this for short replies, and a transcript is short.
+                let result = serde_json::json!({ "text": self.text, "num_tokens": 3 }).to_string();
+                Ok((result, std::collections::HashMap::new(), "{}".to_string()))
+            }
+
+            async fn list_models(&self) -> Vec<String> {
+                vec!["brain/nemotronasr".to_string()]
+            }
+        }
+
+        let (client_sock, server_sock) = tokio::net::UnixStream::pair().expect("socket pair");
+        let text = text.to_string();
+        // Both `build()` calls drive one half of the same handshake, so they
+        // have to run concurrently: awaiting the server first would block on a
+        // client that does not exist yet.
+        let server_task = tokio::spawn(async move {
+            zbus::connection::Builder::unix_stream(server_sock)
+                .p2p()
+                .server(zbus::Guid::generate())
+                .expect("server guid")
+                .serve_at("/com/swedishembedded/Brain1", FakeManager { text })
+                .expect("serve_at")
+                .build()
+                .await
+                .expect("server connection")
+        });
+        let client_conn = zbus::connection::Builder::unix_stream(client_sock)
+            .p2p()
+            .build()
+            .await
+            .expect("client connection");
+        let server_conn = server_task.await.expect("server task");
+        (
+            sven_model::ActionClient::with_connection(client_conn),
+            server_conn,
+        )
     }
 }
 
@@ -405,14 +457,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("a.wav");
         std::fs::write(&wav, tiny_wav()).unwrap();
+        let (client, _server) = fake_asr("draw a box around the cat").await;
         let opts = AttachOptions {
-            asr: AsrConfig {
-                command: fake_brain(dir.path(), "draw a box around the cat")
-                    .display()
-                    .to_string(),
-                model: "brain/qwen-asr".into(),
-                timeout_secs: 30,
-            },
+            asr_client: Some(client),
             ..AttachOptions::default()
         };
         let loaded = load_attachment(&wav, &opts, "text-model").await.unwrap();
@@ -434,14 +481,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("a.wav");
         std::fs::write(&wav, tiny_wav()).unwrap();
+        let (client, _server) = fake_asr("forced").await;
         let opts = AttachOptions {
             supports_audio: true,
             force_transcribe: true,
-            asr: AsrConfig {
-                command: fake_brain(dir.path(), "forced").display().to_string(),
-                model: "m".into(),
-                timeout_secs: 30,
-            },
+            asr_client: Some(client),
             ..AttachOptions::default()
         };
         let loaded = load_attachment(&wav, &opts, "omni").await.unwrap();
@@ -449,26 +493,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn asr_failure_surfaces_command_and_stderr() {
+    /// An unreachable brain must say which model it was trying to use and
+    /// carry the transport reason underneath. "Transcription failed" alone
+    /// cannot distinguish a stopped server from a misspelled model id, and
+    /// both are common.
+    async fn asr_failure_names_the_model_and_the_reason() {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("a.wav");
         std::fs::write(&wav, tiny_wav()).unwrap();
-        let script = failing_brain(dir.path(), "model weights not found");
         let opts = AttachOptions {
             asr: AsrConfig {
-                command: script.display().to_string(),
-                model: "m".into(),
-                timeout_secs: 30,
+                model: "brain/nemotronasr".into(),
+                // Nothing is listening here, so the call cannot connect.
+                bus_address: Some(format!(
+                    "unix:path={}",
+                    dir.path().join("absent.sock").display()
+                )),
+                timeout_secs: 5,
             },
             ..AttachOptions::default()
         };
         let err = load_attachment(&wav, &opts, "text-model")
             .await
             .unwrap_err();
-        let msg = format!("{err:#}");
-        let chain = format!("{msg} {}", std::error::Error::source(&err).unwrap());
-        assert!(chain.contains("fake-brain.sh"), "{chain}");
-        assert!(chain.contains("model weights not found"), "{chain}");
+        let chain = format!("{err:#}");
+        assert!(chain.contains("brain/nemotronasr"), "{chain}");
     }
 
     #[tokio::test]

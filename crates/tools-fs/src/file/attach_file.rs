@@ -31,13 +31,30 @@ pub struct AttachFileTool {
     /// text-only": images are refused and audio is always transcribed, which
     /// is the only answer that is correct for every possible target model.
     model: Option<Arc<dyn ModelProvider>>,
-    /// Transcription command used for the audio fallback.
+    /// Where transcription is sent for the audio fallback.
     asr: AsrConfig,
+    /// A pre-built transcription client, for tests. `None` in production, where
+    /// one is dialled from `asr`.
+    asr_client: Option<sven_model::ActionClient>,
 }
 
 impl AttachFileTool {
     pub fn new(model: Option<Arc<dyn ModelProvider>>, asr: AsrConfig) -> Self {
-        Self { model, asr }
+        Self {
+            model,
+            asr,
+            asr_client: None,
+        }
+    }
+
+    /// Use `client` for transcription instead of dialling one from `asr`.
+    ///
+    /// Exists for tests: a client wired to a fake `Brain1.Manager` exercises
+    /// the audio path with no bus, no server and no checkpoint.
+    #[cfg(test)]
+    pub(crate) fn with_asr_client(mut self, client: sven_model::ActionClient) -> Self {
+        self.asr_client = Some(client);
+        self
     }
 
     /// Capabilities of the target model, conservative when none is known.
@@ -47,6 +64,7 @@ impl AttachFileTool {
             supports_audio: self.model.as_ref().is_some_and(|m| m.supports_audio()),
             force_transcribe,
             asr: self.asr.clone(),
+            asr_client: self.asr_client.clone(),
         }
     }
 
@@ -194,10 +212,10 @@ mod tests {
         Arc::new(ScriptedMockProvider::new(vec![]))
     }
 
-    fn asr_with(command: std::path::PathBuf) -> AsrConfig {
+    fn asr_cfg() -> AsrConfig {
         AsrConfig {
-            command: command.display().to_string(),
-            model: "brain/qwen-asr".into(),
+            model: "brain/nemotronasr".into(),
+            bus_address: None,
             timeout_secs: 30,
         }
     }
@@ -269,9 +287,14 @@ mod tests {
         let wav = dir.path().join("say.wav");
         std::fs::write(&wav, tiny_wav()).unwrap();
 
-        // No usable ASR command: if the tool were to shell out, this would fail
-        // loudly, proving the native path really avoids the subprocess.
-        let asr = asr_with("/nonexistent/should-never-run".into());
+        // An ASR endpoint nothing is listening on: if the tool tried to
+        // transcribe at all, the call would fail loudly. Reaching a successful
+        // native attachment proves it never went near the ASR path.
+        let asr = AsrConfig {
+            model: "brain/nemotronasr".into(),
+            bus_address: Some("unix:path=/nonexistent/should-never-be-dialled".into()),
+            timeout_secs: 5,
+        };
         let t = AttachFileTool::new(Some(omni_model()), asr);
         let out = t
             .execute(&call(json!({"path": wav.display().to_string()})))
@@ -296,9 +319,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("say.wav");
         std::fs::write(&wav, tiny_wav()).unwrap();
-        let asr = asr_with(fake_brain(dir.path(), "put a box around the dog"));
+        let (client, _server) = fake_asr("put a box around the dog").await;
 
-        let t = AttachFileTool::new(Some(text_model()), asr);
+        let t = AttachFileTool::new(Some(text_model()), asr_cfg()).with_asr_client(client);
         let out = t
             .execute(&call(json!({"path": wav.display().to_string()})))
             .await;
@@ -318,9 +341,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("say.wav");
         std::fs::write(&wav, tiny_wav()).unwrap();
-        let asr = asr_with(fake_brain(dir.path(), "forced transcript"));
+        let (client, _server) = fake_asr("forced transcript").await;
 
-        let t = AttachFileTool::new(Some(omni_model()), asr);
+        let t = AttachFileTool::new(Some(omni_model()), asr_cfg()).with_asr_client(client);
         let out = t
             .execute(&call(
                 json!({"path": wav.display().to_string(), "force_transcribe": true}),
@@ -337,10 +360,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("say.wav");
         std::fs::write(&wav, tiny_wav()).unwrap();
-        let asr = asr_with(fake_brain(dir.path(), "cli transcript"));
+        let (client, _server) = fake_asr("cli transcript").await;
 
         // model: None — the `sven tool call …` registry case.
-        let t = AttachFileTool::new(None, asr);
+        let t = AttachFileTool::new(None, asr_cfg()).with_asr_client(client);
         let out = t
             .execute(&call(json!({"path": wav.display().to_string()})))
             .await;
@@ -390,12 +413,23 @@ mod tests {
         );
     }
 
+    /// An unreachable server must name the model it could not transcribe with,
+    /// not fail anonymously: the two ASR ids are easy to confuse and the bus
+    /// may simply have no brain on it.
     #[tokio::test]
-    async fn asr_failure_names_command_and_stderr() {
+    async fn asr_failure_names_the_model() {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("say.wav");
         std::fs::write(&wav, tiny_wav()).unwrap();
-        let asr = asr_with(failing_brain(dir.path(), "no weights on this box"));
+        // An address nothing is listening on: the call cannot connect.
+        let asr = AsrConfig {
+            model: "brain/nemotronasr".into(),
+            bus_address: Some(format!(
+                "unix:path={}",
+                dir.path().join("absent.sock").display()
+            )),
+            timeout_secs: 5,
+        };
 
         let t = AttachFileTool::new(Some(text_model()), asr);
         let out = t
@@ -403,12 +437,7 @@ mod tests {
             .await;
 
         assert!(out.is_error);
-        assert!(out.content.contains("fake-brain.sh"), "{}", out.content);
-        assert!(
-            out.content.contains("no weights on this box"),
-            "{}",
-            out.content
-        );
+        assert!(out.content.contains("brain/nemotronasr"), "{}", out.content);
     }
 
     #[tokio::test]

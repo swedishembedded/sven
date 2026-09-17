@@ -858,24 +858,25 @@ pub struct ToolsConfig {
 /// because the caller asked for `force_transcribe`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AsrConfig {
-    /// Executable invoked for transcription (must accept brain's CLI
-    /// argument shape: `<command> <model> transcribe --json --in audio=<file>`).
-    #[serde(default = "default_asr_command")]
-    pub command: String,
-    /// Model identifier passed to the transcription command.
+    /// Manifest id of the served ASR model, as `ListModels` reports it
+    /// (`brain/nemotronasr`). This is NOT brain's CLI spelling: the CLI
+    /// dispatches on a bare architecture id, while the served surface uses
+    /// the prefixed manifest id.
     #[serde(default = "default_asr_model")]
     pub model: String,
+    /// Explicit D-Bus address of the brain server, e.g.
+    /// `unix:path=/run/brain/bus`. `None` uses the session bus, which is what
+    /// a desktop session or `brain serve --dbus` provides. A DETACHED server
+    /// has no session bus to inherit, so it is reached by address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus_address: Option<String>,
     /// Hard timeout for a single transcription subprocess, in seconds.
     #[serde(default = "default_asr_timeout_secs")]
     pub timeout_secs: u64,
 }
 
-fn default_asr_command() -> String {
-    "brain".into()
-}
-
 fn default_asr_model() -> String {
-    "nemotronasr".into()
+    "brain/nemotronasr".into()
 }
 
 fn default_asr_timeout_secs() -> u64 {
@@ -885,8 +886,8 @@ fn default_asr_timeout_secs() -> u64 {
 impl Default for AsrConfig {
     fn default() -> Self {
         Self {
-            command: default_asr_command(),
             model: default_asr_model(),
+            bus_address: None,
             timeout_secs: default_asr_timeout_secs(),
         }
     }
@@ -1831,17 +1832,26 @@ input_modalities: [text, image, audio]
     #[test]
     fn asr_config_defaults_match_the_documented_values() {
         let a = AsrConfig::default();
-        assert_eq!(a.command, "brain");
-        assert_eq!(a.model, "nemotronasr");
+        assert_eq!(a.model, "brain/nemotronasr");
+        assert_eq!(a.bus_address, None, "the session bus is the default");
         assert_eq!(a.timeout_secs, 120);
     }
 
     #[test]
     fn asr_config_partial_yaml_keeps_defaults_for_absent_keys() {
-        let a: AsrConfig = serde_yaml::from_str("command: /usr/local/bin/brain\n").unwrap();
-        assert_eq!(a.command, "/usr/local/bin/brain");
-        assert_eq!(a.model, "nemotronasr");
+        let a: AsrConfig = serde_yaml::from_str("bus_address: unix:path=/run/brain/bus\n").unwrap();
+        assert_eq!(a.bus_address.as_deref(), Some("unix:path=/run/brain/bus"));
+        assert_eq!(a.model, "brain/nemotronasr");
         assert_eq!(a.timeout_secs, 120);
+    }
+
+    /// The served surface uses the prefixed manifest id, not brain's CLI
+    /// spelling. Confusing the two is how this default was wrong before: the
+    /// CLI rejects `brain/nemotronasr`, and `ListModels` never reports the
+    /// bare `nemotronasr`.
+    #[test]
+    fn asr_default_model_is_the_served_manifest_id() {
+        assert!(AsrConfig::default().model.starts_with("brain/"));
     }
 
     #[test]

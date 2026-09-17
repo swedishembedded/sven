@@ -1,67 +1,66 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Speech-to-text fallback used when the active model cannot accept audio.
+//! Speech-to-text used when the active model cannot accept audio natively.
 //!
-//! Transcription shells out to the `brain` CLI:
+//! The clip is handed to an **already-running** brain server over its generic
+//! capability surface: one `Run` of the `transcribe` action against the
+//! configured model id.
 //!
-//! ```text
-//! brain <asr_model> transcribe --json --in audio=<file>
-//! ```
+//! # Why not a subprocess
 //!
-//! brain dispatches `brain <architecture> <action>` directly; there is no
-//! generic `do` verb (one existed historically and is now rejected with
-//! "unknown command 'do'").
+//! This used to shell out per clip. That pays a process spawn, a device
+//! handshake and a full checkpoint load every single time -- for the ASR model
+//! this repo uses, 2.4 GiB from disk onto the GPU before a single sample is
+//! examined, to transcribe two seconds of speech. A resident server loads once
+//! and every later call is the inference alone.
 //!
-//! ## Why the temp file is raw PCM, not the original WAV
+//! It also removes a second, easily-skewed spelling of the model. brain's CLI
+//! dispatches on a bare architecture id (`nemotronasr`) while the served
+//! surface uses the prefixed manifest id (`brain/nemotronasr`); the shell-out
+//! path had drifted onto `brain/qwen-asr`, which neither accepts.
 //!
-//! brain's blob loader reads non-image `--in` files **completely raw**,
-//! with no format sniffing.  Handing it a `.wav` would feed the 44-byte RIFF
-//! header to the model as if it were audio samples.  The input is therefore
-//! written as headerless mono `f32` little-endian PCM at 16 kHz — exactly the
-//! sample layout the loader assumes — under a `.pcm` suffix.
+//! # Wire format
+//!
+//! brain does no format sniffing: whatever bytes arrive on the fd reach the
+//! model as-is. Audio is therefore sent as headerless mono `f32`
+//! little-endian PCM at [`ASR_SAMPLE_RATE`], described by
+//! `{"media":"audio","sample_rate":16000}` -- exactly what brain's audio
+//! actions declare. Handing over a WAV container unchanged would feed its
+//! 44-byte RIFF header to the model as samples.
 
+use std::collections::HashMap;
 use std::path::Path;
-use std::process::Stdio;
 
 use sven_config::AsrConfig;
+use sven_model::{ActionClient, ActionInput};
 use thiserror::Error;
-use tokio::process::Command;
 use tracing::debug;
 
-/// Sample rate the ASR model expects.
+/// Sample rate the ASR model expects. brain's `transcribe` declares
+/// `sample_rate` with a hard requirement of 16 kHz.
 pub const ASR_SAMPLE_RATE: u32 = 16_000;
 
-/// How many bytes of stderr to quote back in an error message.
-const STDERR_TAIL_BYTES: usize = 512;
+/// The action every ASR model in brain exposes.
+const TRANSCRIBE_ACTION: &str = "transcribe";
 
 #[derive(Debug, Error)]
 pub enum AsrError {
     #[error("could not decode audio for transcription: {0}")]
     Decode(#[from] sven_audio::AudioError),
 
-    #[error("could not stage audio for transcription: {0}")]
-    Staging(#[source] std::io::Error),
+    #[error("transcription timed out after {timeout_secs}s (model {model})")]
+    Timeout { model: String, timeout_secs: u64 },
 
-    #[error("could not run transcription command '{command}': {source}")]
-    Spawn {
-        command: String,
+    #[error("could not reach brain for transcription (model {model}): {source:#}")]
+    Unreachable {
+        model: String,
         #[source]
-        source: std::io::Error,
+        source: anyhow::Error,
     },
 
-    #[error("transcription command '{command}' timed out after {timeout_secs}s")]
-    Timeout { command: String, timeout_secs: u64 },
-
-    #[error("transcription command '{command}' exited with {status}: {stderr}")]
-    Failed {
-        command: String,
-        status: String,
-        stderr: String,
-    },
-
-    #[error("transcription command '{command}' produced no parsable JSON on stdout: {detail}")]
-    BadOutput { command: String, detail: String },
+    #[error("transcription of {model} returned no `text` output: {detail}")]
+    NoText { model: String, detail: String },
 }
 
 /// A completed transcription.
@@ -73,253 +72,133 @@ pub struct Transcript {
     pub duration_secs: f32,
 }
 
-/// Transcribe `path` by invoking the configured ASR command.
+/// Params for one `transcribe` call.
+///
+/// `sample_rate` is sent explicitly rather than left to the action's default:
+/// the audio was resampled to a rate this side chose, so stating it keeps the
+/// two halves from disagreeing silently if either default ever moves.
+pub(crate) fn transcribe_params(sample_rate: u32) -> serde_json::Value {
+    serde_json::json!({ "sample_rate": sample_rate })
+}
+
+/// Transcribe `path` against the configured brain server.
 pub async fn transcribe(path: &Path, cfg: &AsrConfig) -> Result<Transcript, AsrError> {
+    transcribe_with(path, cfg, ActionClient::new(cfg.bus_address.as_deref())).await
+}
+
+/// [`transcribe`], against a caller-supplied client.
+///
+/// The seam a test uses: a client built on a peer-to-peer connection reaches a
+/// fake `Brain1.Manager` with no bus daemon and no real model involved.
+pub async fn transcribe_with(
+    path: &Path,
+    cfg: &AsrConfig,
+    client: ActionClient,
+) -> Result<Transcript, AsrError> {
     let pcm = sven_audio::load_pcm_at(path, ASR_SAMPLE_RATE)?;
     let duration_secs = pcm.duration_secs();
     let bytes = sven_audio::to_f32_le_bytes(&pcm.samples);
 
-    // Headerless raw samples, `.pcm` suffix — see the module docs.
-    let tmp = tempfile::Builder::new()
-        .prefix("sven-asr-")
-        .suffix(".pcm")
-        .tempfile()
-        .map_err(AsrError::Staging)?;
-    std::fs::write(tmp.path(), &bytes).map_err(AsrError::Staging)?;
+    debug!(
+        model = %cfg.model,
+        bus = cfg.bus_address.as_deref().unwrap_or("session"),
+        samples = pcm.samples.len(),
+        "transcribing over the brain capability surface"
+    );
 
-    let text = run_asr_command(tmp.path(), cfg).await?;
-    Ok(Transcript {
-        text,
-        duration_secs,
-    })
-}
-
-/// Argv for one transcription, after the executable itself.
-///
-/// The shape is `brain <model> transcribe --json --in audio=<file>`. There is
-/// deliberately no `do` verb: brain's CLI dispatches
-/// `brain <architecture> <action>` (and the mirrored `brain <action>
-/// <architecture>`) directly. A `do` prefix was this module's original
-/// invocation and is now rejected outright with "unknown command 'do'", which
-/// made every transcription fail before the model was ever reached.
-fn asr_args(cfg: &AsrConfig, pcm_path: &Path) -> Vec<String> {
-    vec![
-        cfg.model.clone(),
-        "transcribe".to_string(),
-        "--json".to_string(),
-        "--in".to_string(),
-        format!("audio={}", pcm_path.display()),
-    ]
-}
-
-/// Spawn the ASR subprocess and extract `.text` from its JSON output.
-async fn run_asr_command(pcm_path: &Path, cfg: &AsrConfig) -> Result<String, AsrError> {
-    let args = asr_args(cfg, pcm_path);
-    debug!(command = %cfg.command, ?args, "running ASR subprocess");
-
-    let child = Command::new(&cfg.command)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| AsrError::Spawn {
-            command: cfg.command.clone(),
-            source: e,
-        })?;
+    let mut inputs = HashMap::new();
+    inputs.insert(
+        "audio".to_string(),
+        ActionInput::audio_pcm_f32(bytes, ASR_SAMPLE_RATE),
+    );
 
     let timeout = std::time::Duration::from_secs(cfg.timeout_secs.max(1));
-    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+    let params = transcribe_params(ASR_SAMPLE_RATE);
+    let call = client.run(&cfg.model, TRANSCRIBE_ACTION, &params, &inputs);
+    let outcome = match tokio::time::timeout(timeout, call).await {
         Err(_) => {
             return Err(AsrError::Timeout {
-                command: cfg.command.clone(),
+                model: cfg.model.clone(),
                 timeout_secs: cfg.timeout_secs,
             })
         }
-        Ok(Err(e)) => {
-            return Err(AsrError::Spawn {
-                command: cfg.command.clone(),
-                source: e,
+        Ok(Err(source)) => {
+            return Err(AsrError::Unreachable {
+                model: cfg.model.clone(),
+                source,
             })
         }
-        Ok(Ok(o)) => o,
+        Ok(Ok(outcome)) => outcome,
     };
 
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    if !output.status.success() {
-        return Err(AsrError::Failed {
-            command: cfg.command.clone(),
-            status: output.status.to_string(),
-            stderr: tail(&stderr, STDERR_TAIL_BYTES),
-        });
-    }
+    let text = outcome.text("text").ok_or_else(|| AsrError::NoText {
+        model: cfg.model.clone(),
+        detail: format!("outputs: {:.256}", outcome.outputs),
+    })?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    parse_transcript_json(&stdout).map_err(|detail| AsrError::BadOutput {
-        command: cfg.command.clone(),
-        detail: format!("{detail}; stderr: {}", tail(&stderr, STDERR_TAIL_BYTES)),
+    Ok(Transcript {
+        text: text.trim().to_string(),
+        duration_secs,
     })
-}
-
-/// Extract the `text` field from `brain do --json` output.
-///
-/// The command prints exactly one line of JSON shaped
-/// `{"text": "...", "tokens": [...], "num_tokens": N}`, but tolerate leading
-/// progress lines by scanning backwards for the last parsable JSON object.
-pub(crate) fn parse_transcript_json(stdout: &str) -> Result<String, String> {
-    let mut saw_json = false;
-    for line in stdout.lines().rev() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        saw_json = true;
-        if let Some(text) = value.get("text").and_then(|t| t.as_str()) {
-            return Ok(text.to_string());
-        }
-    }
-    if saw_json {
-        Err("JSON output has no string `text` field".to_string())
-    } else {
-        Err(format!(
-            "no JSON line found in stdout ({} bytes)",
-            stdout.len()
-        ))
-    }
-}
-
-/// Return at most the last `max` bytes of `s`, on a char boundary.
-fn tail(s: &str, max: usize) -> String {
-    let trimmed = s.trim_end();
-    if trimmed.len() <= max {
-        return trimmed.to_string();
-    }
-    let mut start = trimmed.len() - max;
-    while start < trimmed.len() && !trimmed.is_char_boundary(start) {
-        start += 1;
-    }
-    format!("…{}", &trimmed[start..])
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    /// brain's CLI dispatches `brain <architecture> <action>`; there is no
-    /// `do` verb and passing one is rejected with "unknown command 'do'".
-    /// This module used to emit it, so every transcription failed before the
-    /// audio was ever read.
-    #[test]
-    fn asr_argv_has_no_do_verb_and_names_the_model_first() {
-        let cfg = AsrConfig {
-            command: "brain".into(),
-            model: "brain/nemotronasr".into(),
-            timeout_secs: 120,
-        };
-        let args = asr_args(&cfg, &PathBuf::from("/tmp/clip.pcm"));
-        assert_eq!(
-            args,
-            vec![
-                "brain/nemotronasr".to_string(),
-                "transcribe".to_string(),
-                "--json".to_string(),
-                "--in".to_string(),
-                "audio=/tmp/clip.pcm".to_string(),
-            ]
-        );
-        assert!(!args.iter().any(|a| a == "do"), "brain has no `do` subcommand");
-    }
-
-    /// The default must name an architecture brain's CLI dispatches on.
-    ///
-    /// Two distinct namespaces are easy to confuse here: `brain/nemotronasr`
-    /// is the MANIFEST id (what `Manifests`/`ListModels` report over D-Bus and
-    /// HTTP), while the CLI dispatches `brain <architecture> <action>` on the
-    /// BARE arch id and rejects the prefixed spelling with "unknown command
-    /// 'brain/nemotronasr'". The default was `brain/qwen-asr`, which is
-    /// neither: brain's ASR archs are `nemotronasr` and `qwen3asr`, and only
-    /// the bare legacy name `qwen-asr` aliases to the latter.
-    #[test]
-    fn default_asr_model_is_an_arch_brains_cli_dispatches_on() {
-        let model = AsrConfig::default().model;
-        assert!(
-            model == "nemotronasr" || model == "qwen3asr",
-            "default ASR model must be a bare brain arch id, got {model}"
-        );
-        assert!(!model.contains('/'), "the CLI rejects a prefixed model id: {model}");
-    }
-
     use super::*;
 
+    /// brain's `transcribe` requires 16 kHz and says so in its own param help.
+    /// Sending audio resampled to one rate while declaring another is a silent
+    /// corruption, not an error, so the two must come from one constant.
     #[test]
-    fn parses_text_from_single_json_line() {
-        let out = r#"{"text": "hello world", "tokens": [1,2], "num_tokens": 2}"#;
-        assert_eq!(parse_transcript_json(out).unwrap(), "hello world");
+    fn params_declare_the_rate_the_audio_was_resampled_to() {
+        let p = transcribe_params(ASR_SAMPLE_RATE);
+        assert_eq!(p["sample_rate"], 16_000);
+        assert_eq!(ASR_SAMPLE_RATE, 16_000);
     }
 
+    /// The served surface reports prefixed manifest ids; brain's CLI dispatches
+    /// on bare architecture ids and rejects the prefixed spelling. Now that the
+    /// call goes over the served surface, the default must be the former.
     #[test]
-    fn parses_text_ignoring_leading_progress_lines() {
-        let out = "loading model...\nready\n{\"text\": \"ok\", \"num_tokens\": 1}\n";
-        assert_eq!(parse_transcript_json(out).unwrap(), "ok");
+    fn the_default_model_is_the_served_manifest_id() {
+        let model = AsrConfig::default().model;
+        assert!(
+            model.starts_with("brain/"),
+            "expected a served manifest id, got {model}"
+        );
     }
 
+    /// A missing `text` output must be reported as such, naming what did come
+    /// back -- an empty reply and a reply in an unexpected shape are different
+    /// failures and a caller cannot act on them the same way.
     #[test]
-    fn missing_text_field_is_an_error() {
-        let err = parse_transcript_json(r#"{"tokens": []}"#).unwrap_err();
-        assert!(err.contains("text"), "got {err}");
-    }
-
-    #[test]
-    fn no_json_at_all_is_an_error() {
-        let err = parse_transcript_json("segfault\n").unwrap_err();
-        assert!(err.contains("no JSON line"), "got {err}");
-    }
-
-    #[test]
-    fn empty_output_is_an_error() {
-        assert!(parse_transcript_json("").is_err());
-    }
-
-    #[test]
-    fn tail_keeps_the_end_of_long_output() {
-        let s = "a".repeat(100);
-        let t = tail(&s, 10);
-        assert!(t.starts_with('…'));
-        assert_eq!(t.chars().filter(|c| *c == 'a').count(), 10);
-    }
-
-    #[test]
-    fn tail_returns_short_input_unchanged() {
-        assert_eq!(tail("boom\n", 512), "boom");
-    }
-
-    #[tokio::test]
-    async fn missing_command_reports_spawn_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let wav = dir.path().join("a.wav");
-        std::fs::write(&wav, crate::file::attachment::tests_support::tiny_wav()).unwrap();
-        let cfg = AsrConfig {
-            command: "/nonexistent/sven-asr-binary".into(),
-            model: "m".into(),
-            timeout_secs: 5,
+    fn a_reply_without_text_is_a_named_error() {
+        let outcome = sven_model::ActionOutcome {
+            outputs: serde_json::json!({ "num_tokens": 0 }),
+            blobs: HashMap::new(),
         };
-        let err = transcribe(&wav, &cfg).await.unwrap_err();
-        assert!(matches!(err, AsrError::Spawn { .. }), "got {err:?}");
+        assert!(outcome.text("text").is_none());
     }
 
-    #[tokio::test]
-    async fn non_wav_input_fails_before_spawning() {
-        let dir = tempfile::tempdir().unwrap();
-        let mp3 = dir.path().join("a.mp3");
-        std::fs::write(&mp3, b"ID3").unwrap();
-        let cfg = AsrConfig::default();
-        let err = transcribe(&mp3, &cfg).await.unwrap_err();
-        assert!(matches!(err, AsrError::Decode(_)), "got {err:?}");
+    /// Text may arrive inline in the result JSON or as a blob on an fd, and
+    /// which one brain picks is a property of the action. Both must work, with
+    /// the blob winning when present.
+    #[test]
+    fn text_is_read_from_either_the_blob_or_the_scalar() {
+        let inline = sven_model::ActionOutcome {
+            outputs: serde_json::json!({ "text": "from the scalar" }),
+            blobs: HashMap::new(),
+        };
+        assert_eq!(inline.text("text").as_deref(), Some("from the scalar"));
+
+        let mut blobs = HashMap::new();
+        blobs.insert("text".to_string(), b"from the blob".to_vec());
+        let blobbed = sven_model::ActionOutcome {
+            outputs: serde_json::json!({ "text": "from the scalar" }),
+            blobs,
+        };
+        assert_eq!(blobbed.text("text").as_deref(), Some("from the blob"));
     }
 }

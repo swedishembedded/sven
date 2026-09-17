@@ -59,6 +59,7 @@ use crate::{
     ToolResultContent,
 };
 
+pub mod action;
 pub mod blob;
 pub mod proxy;
 

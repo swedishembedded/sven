@@ -427,7 +427,7 @@ const TOOLS_CONFIG_KEYS: &[&str] = &[
 ];
 
 /// Known keys in [`crate::AsrConfig`].
-const ASR_CONFIG_KEYS: &[&str] = &["command", "model", "timeout_secs"];
+const ASR_CONFIG_KEYS: &[&str] = &["model", "bus_address", "timeout_secs"];
 
 /// Known keys in [`crate::TuiConfig`].
 const TUI_CONFIG_KEYS: &[&str] = &["theme", "code_line_numbers", "wrap_width", "ascii_borders"];
