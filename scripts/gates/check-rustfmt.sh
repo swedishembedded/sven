@@ -48,14 +48,10 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 # it means that file is ready to be dropped from it as soon as the work it
 # belongs to lands.
 PENDING=(
-    crates/bootstrap/src/ui_test_dispatch.rs
     crates/bootstrap/tests/live_ui_test_dispatch.rs
-    crates/machines/src/machines/ui_test/mod.rs
     crates/memory/src/drain.rs
     crates/memory/src/local_study.rs
     crates/tools-android/tests/live_device.rs
-    src/cli/mod.rs
-    src/run/agent_dispatch.rs
 )
 
 is_pending() {
