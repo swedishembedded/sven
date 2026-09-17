@@ -210,14 +210,11 @@ check: check/fmt check/gates check/arch check/clippy
 
 ## check/fmt - rustfmt shape, checked not applied (`make fmt` fixes it)
 # First, because it is the cheapest thing that can fail and the least
-# interesting to argue about. The script is `cargo fmt --all -- --check` with
-# its report filtered against a short, self-expiring list of files a
-# concurrent change had open when formatting was first enforced -- it goes
-# away, and this line becomes that one, when the list empties. It judges the
-# COMMITTED shape of those files, so it can read as stale in a working tree
-# that still holds the concurrent change. See the script's header.
+# interesting to argue about. Briefly a script with an exception list, while
+# a concurrent change held the last few unformatted files; that list reached
+# zero and the script went with it.
 check/fmt:
-	bash scripts/gates/check-rustfmt.sh
+	$(CARGO) fmt --all -- --check
 
 ## check/clippy - lint the workspace, warnings are errors
 check/clippy:

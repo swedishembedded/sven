@@ -29,7 +29,10 @@ use sven_tools_android::adb;
 /// Mirrors `sven-tools-android/tests/live_device.rs::ready_serial`.
 async fn ready_serial() -> Option<String> {
     let devices = adb::list_devices().await.ok()?;
-    let ready: Vec<_> = devices.into_iter().filter(|d| d.state == "device").collect();
+    let ready: Vec<_> = devices
+        .into_iter()
+        .filter(|d| d.state == "device")
+        .collect();
     match ready.as_slice() {
         [one] => Some(one.serial.clone()),
         _ => None,
@@ -48,8 +51,7 @@ fn live_grounding_opted_in() -> bool {
     if !opted_in {
         return false;
     }
-    let command =
-        std::env::var("SVEN_GROUND_COMMAND").unwrap_or_else(|_| "brain".to_string());
+    let command = std::env::var("SVEN_GROUND_COMMAND").unwrap_or_else(|_| "brain".to_string());
     std::process::Command::new(&command)
         .arg("--help")
         .stdout(std::process::Stdio::null())
@@ -89,7 +91,14 @@ async fn a_real_non_destructive_step_runs_against_a_real_device_with_real_tools(
     // is attached - see that file's own "deliberately non-destructive" note.
     let params = serde_json::json!({ "instruction": "Go home" });
 
-    match dispatch_ui_test_step(Arc::new(Config::default()), Some(&device), &params, UiTestDispatchOverrides::default()).await {
+    match dispatch_ui_test_step(
+        Arc::new(Config::default()),
+        Some(&device),
+        &params,
+        UiTestDispatchOverrides::default(),
+    )
+    .await
+    {
         Ok(output) => assert_eq!(output["passed"], true),
         Err(e) if e.contains("model provider") || e.contains("could not build") => {
             eprintln!("skipping: no usable model credentials in this environment ({e})");

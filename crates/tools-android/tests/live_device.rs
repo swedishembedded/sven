@@ -19,7 +19,10 @@ use sven_tools_android::AndroidTool;
 /// Returns the serial of a single ready device, or `None` (meaning: skip).
 async fn ready_serial() -> Option<String> {
     let devices = adb::list_devices().await.ok()?;
-    let ready: Vec<_> = devices.into_iter().filter(|d| d.state == "device").collect();
+    let ready: Vec<_> = devices
+        .into_iter()
+        .filter(|d| d.state == "device")
+        .collect();
     match ready.as_slice() {
         [one] => Some(one.serial.clone()),
         _ => None,
@@ -83,7 +86,11 @@ async fn screenshot_captures_a_real_image() {
     assert!(!out.is_error, "{}", out.content);
     assert!(out.has_images(), "screenshot should return an image part");
     let meta = std::fs::metadata(&path).expect("screenshot file should exist");
-    assert!(meta.len() > 1000, "screenshot file suspiciously small: {} bytes", meta.len());
+    assert!(
+        meta.len() > 1000,
+        "screenshot file suspiciously small: {} bytes",
+        meta.len()
+    );
     let _ = std::fs::remove_file(&path);
 }
 
@@ -98,7 +105,10 @@ async fn list_packages_filters_to_matching_packages() {
     // The filter is a plain substring match, so every line the device
     // returns must actually contain it.
     for line in out.content.lines().filter(|l| !l.is_empty()) {
-        assert!(line.to_lowercase().contains("com.android"), "unexpected package: {line}");
+        assert!(
+            line.to_lowercase().contains("com.android"),
+            "unexpected package: {line}"
+        );
     }
 }
 
@@ -118,7 +128,10 @@ async fn wait_action_actually_waits() {
     let start = std::time::Instant::now();
     let out = t.execute(&call("wait", json!({"ms": 200}))).await;
     assert!(!out.is_error, "{}", out.content);
-    assert!(start.elapsed().as_millis() >= 190, "wait returned too early");
+    assert!(
+        start.elapsed().as_millis() >= 190,
+        "wait returned too early"
+    );
 }
 
 #[tokio::test]
@@ -169,7 +182,10 @@ async fn resolve_package_validated_round_trips_through_a_real_device() {
     let installed = adb::PackageLister::list_packages(&adb::RealPackageLister, &serial)
         .await
         .expect("a real, reachable adb must list packages");
-    let first = installed.first().expect("a real device has packages installed").clone();
+    let first = installed
+        .first()
+        .expect("a real device has packages installed")
+        .clone();
     let pick = adb::resolve_package_validated(&adb::RealPackageLister, &serial, &first, &[])
         .await
         .expect("a real, reachable adb must succeed");

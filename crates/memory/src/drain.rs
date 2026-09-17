@@ -690,9 +690,7 @@ mod tests {
             .expect("lock io")
             .expect("an unheld lock is claimable");
         assert!(
-            claim_sole_drain(&cursor_path)
-                .expect("lock io")
-                .is_none(),
+            claim_sole_drain(&cursor_path).expect("lock io").is_none(),
             "a second, concurrent claimant must not also acquire the lock"
         );
 

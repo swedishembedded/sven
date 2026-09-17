@@ -71,7 +71,7 @@ repo history). When a task is finished, move its file into `.todo/completed/`
 | `make release` | Optimised release build |
 | `make test` | Unit + integration tests (whole workspace) |
 | `make check` | rustfmt + text gates + `xtask arch` + clippy, `-D warnings` |
-| `make check/fmt` | rustfmt shape only, checked not applied |
+| `make check/fmt` | `cargo fmt --all -- --check`, checked not applied |
 | `make check/gates` | text gates: no machine paths, no brain dependency |
 | `make check/arch` | architecture ratchet only |
 | `make check/clippy` | clippy only |

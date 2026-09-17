@@ -468,9 +468,10 @@ fn read_anchors(path: &Path) -> anyhow::Result<Vec<Triple>> {
         if line.trim().is_empty() {
             continue;
         }
-        out.push(serde_json::from_str(line).map_err(|e| {
-            anyhow::anyhow!("{}: line {}: {e}", path.display(), i + 1)
-        })?);
+        out.push(
+            serde_json::from_str(line)
+                .map_err(|e| anyhow::anyhow!("{}: line {}: {e}", path.display(), i + 1))?,
+        );
     }
     if out.is_empty() {
         anyhow::bail!(
