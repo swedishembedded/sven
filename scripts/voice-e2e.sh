@@ -343,6 +343,10 @@ case "$CMD" in
   down)   down ;;
   run)
     resolve_binaries
+    # `up` starts its own server a moment later, so stopping any existing one
+    # here costs nothing and keeps `speak`'s one-process-per-GPU guard from
+    # tripping on a server left behind by an earlier run.
+    "$BRAIN" serve --stop >/dev/null 2>&1 || true
     speak
     up
     ask
