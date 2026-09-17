@@ -209,11 +209,11 @@ impl Tool for FindFileTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Filename glob pattern. Examples: '*.rs', '**/*.toml', 'src/**/*.c', '*lint*', 'Cargo.toml'"
+                    "description": "Filename glob. Omit to list everything. Examples: '*.rs', 'src/**/*.c', '*lint*'"
                 },
                 "root": {
                     "type": "string",
-                    "description": "Root directory to search from (default: current directory)"
+                    "description": "Directory to search from. Omit for the working directory."
                 },
                 "case_insensitive": {
                     "type": "boolean",
@@ -228,7 +228,7 @@ impl Tool for FindFileTool {
                     "description": "Hard timeout in seconds (default: 10)"
                 }
             },
-            "required": ["pattern"],
+            "required": [],
             "additionalProperties": false
         })
     }
@@ -241,16 +241,23 @@ impl Tool for FindFileTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let raw_pattern = match call.args.get("pattern").and_then(|v| v.as_str()) {
-            Some(p) => p.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'pattern'"),
+        // An argument sent as "" means the caller did not supply one. Models
+        // routinely fill in every field of a schema rather than omitting the
+        // optional ones, and taking that literally searched nowhere for
+        // nothing - then reported success, which reads as "the directory is
+        // empty" rather than "you called me wrong".
+        let supplied = |key: &str| -> Option<String> {
+            call.args
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
         };
-        let root = call
-            .args
-            .get("root")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".")
-            .to_string();
+        // No pattern means every file, which is the plain reading of "what is
+        // in here" and is safe to answer now that the reply is a bounded page.
+        let raw_pattern = supplied("pattern").unwrap_or_else(|| "*".to_string());
+        let root = supplied("root").unwrap_or_else(|| ".".to_string());
         let case_insensitive = call
             .args
             .get("case_insensitive")
@@ -322,7 +329,11 @@ fn render_page(mut matches: Vec<String>, max: usize) -> String {
         // Naming both ways forward matters: raising the cap is right when the
         // set really is the answer, narrowing the pattern when it is not, and
         // only the caller knows which.
-        let more = if overflowed { format!("more than {max}") } else { format!("{held_back} more") };
+        let more = if overflowed {
+            format!("more than {max}")
+        } else {
+            format!("{held_back} more")
+        };
         out.push_str(&format!(
             "[{shown} shown, {more} matched - narrow 'pattern' or raise 'max_results']\n"
         ));
@@ -508,7 +519,51 @@ mod tests {
         // counting that as a result is what made this assertion ambiguous.
         let paths = out.content.lines().filter(|l| l.ends_with(".rs")).count();
         assert!(paths <= 3, "expected <=3 results, got {paths}");
-        assert!(out.content.contains("max_results"), "a cut page must say so: {}", out.content);
+        assert!(
+            out.content.contains("max_results"),
+            "a cut page must say so: {}",
+            out.content
+        );
+    }
+
+    /// An argument sent as "" means the caller did not supply one.
+    ///
+    /// A model that fills in every field of a schema rather than omitting the
+    /// optional ones is not doing anything wrong, and it is common: the empty
+    /// string arrives as a value, misses `unwrap_or`, and was taken literally -
+    /// an empty pattern matched nothing and an empty root searched nowhere.
+    /// The reply was "(no matches)" with success=true, so "list the files
+    /// here" came back as a confident claim that the directory was empty.
+    #[tokio::test]
+    async fn empty_arguments_mean_unspecified_not_literal() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("only.txt"), "x").unwrap();
+
+        let out = FindFileTool
+            .execute(&call(
+                json!({"pattern": "", "root": dir.path().to_str().unwrap()}),
+            ))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(
+            out.content.contains("only.txt"),
+            "an empty pattern must list everything, not nothing: {}",
+            out.content
+        );
+    }
+
+    /// An omitted or empty root searches the working directory.
+    ///
+    /// Asserted against the crate directory - which is where cargo runs these
+    /// - rather than by moving the process into a tempdir: the working
+    /// directory is process-wide state, and these tests run in parallel.
+    #[tokio::test]
+    async fn an_empty_root_is_the_working_directory() {
+        let out = FindFileTool
+            .execute(&call(json!({"pattern": "Cargo.toml", "root": ""})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("Cargo.toml"), "{}", out.content);
     }
 
     /// A search nobody bounded must still come back small.
@@ -525,12 +580,17 @@ mod tests {
         }
 
         let out = FindFileTool
-            .execute(&call(json!({"pattern": "*", "root": dir.path().to_str().unwrap()})))
+            .execute(&call(
+                json!({"pattern": "*", "root": dir.path().to_str().unwrap()}),
+            ))
             .await;
         assert!(!out.is_error, "{}", out.content);
 
         let listed = out.content.lines().filter(|l| l.ends_with(".txt")).count();
-        assert!(listed <= DEFAULT_MAX_RESULTS, "listed {listed} paths, budget is {DEFAULT_MAX_RESULTS}");
+        assert!(
+            listed <= DEFAULT_MAX_RESULTS,
+            "listed {listed} paths, budget is {DEFAULT_MAX_RESULTS}"
+        );
         assert!(
             out.content.len() <= MAX_OUTPUT_CHARS,
             "reply was {} chars, budget is {MAX_OUTPUT_CHARS}",
@@ -538,8 +598,16 @@ mod tests {
         );
         // Truncating silently would leave the caller believing it saw
         // everything, so the reply has to say otherwise and how to go on.
-        assert!(out.content.contains("more"), "no indication results were cut: {}", out.content);
-        assert!(out.content.contains("max_results"), "no way offered to see more: {}", out.content);
+        assert!(
+            out.content.contains("more"),
+            "no indication results were cut: {}",
+            out.content
+        );
+        assert!(
+            out.content.contains("max_results"),
+            "no way offered to see more: {}",
+            out.content
+        );
     }
 
     /// Paths are reported relative to the root that was searched.
@@ -554,7 +622,9 @@ mod tests {
         std::fs::write(dir.path().join("a/b/deep.rs"), "x").unwrap();
 
         let out = FindFileTool
-            .execute(&call(json!({"pattern": "*.rs", "root": dir.path().to_str().unwrap()})))
+            .execute(&call(
+                json!({"pattern": "*.rs", "root": dir.path().to_str().unwrap()}),
+            ))
             .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("a/b/deep.rs"), "{}", out.content);
@@ -579,18 +649,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_pattern_is_error() {
+    async fn a_call_with_no_arguments_lists_the_working_directory() {
+        // Refusing a bare call would be the tool getting in the way: "what is
+        // in here" is a complete question, and the answer is a bounded page.
         let out = FindFileTool.execute(&call(json!({}))).await;
-        assert!(out.is_error);
-        assert!(out.content.contains("missing 'pattern'"), "{}", out.content);
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("Cargo.toml"), "{}", out.content);
     }
 
     #[test]
-    fn schema_requires_only_pattern() {
+    fn schema_requires_nothing() {
         let schema = FindFileTool.parameters_schema();
         let required = schema["required"].as_array().unwrap();
-        assert_eq!(required.len(), 1);
-        assert!(required.iter().any(|v| v.as_str() == Some("pattern")));
+        assert!(
+            required.is_empty(),
+            "every argument has a usable default: {required:?}"
+        );
     }
 
     // ── Execute with path-glob patterns ──────────────────────────────────────
