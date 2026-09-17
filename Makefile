@@ -28,7 +28,7 @@ DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
 .PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
-        check check/clippy check/gates check/paths check/arch docs docs-pdf \
+        check check/clippy check/gates check/paths check/deps check/arch docs docs-pdf \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
         _require-cargo-release \
@@ -212,14 +212,19 @@ check: check/gates check/arch check/clippy
 check/clippy:
 	$(CARGO) clippy --workspace --all-targets $(CARGO_FLAGS) -- -D warnings
 
-## check/gates - every text gate. Costs well under a second, which is why it
-##              runs before a lint that takes a minute.
-check/gates: check/paths
+## check/gates - every text gate: no absolute machine paths, no brain dependency.
+##              Together they cost well under a second.
+check/gates: check/paths check/deps
 
 ## check/paths - no baked-in absolute machine path in any tracked (or new,
 ##              not-yet-tracked) file
 check/paths:
 	bash scripts/gates/check-no-machine-paths.sh
+
+## check/deps - sven must stay buildable with no brain checkout: no brain-*
+##              dependency, declared or transitively resolved
+check/deps:
+	bash scripts/gates/check-no-brain-dependency.sh
 
 ## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
 ##              and the `minimal` cargo feature profile's forbidden-crate list)
