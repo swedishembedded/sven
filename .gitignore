@@ -59,6 +59,9 @@ Thumbs.db
 logs/
 **/.sven/
 *.token
+# `git bundle` transfer artefacts (e.g. `sven.bundle`): a complete copy of
+# this repo's own history, so committing one would embed the repo in itself.
+*.bundle
 credit.jsonl
 credit.jsonl*
 portal-devices.yaml
