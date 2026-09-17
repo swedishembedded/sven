@@ -27,6 +27,8 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::process::Command;
@@ -75,14 +77,79 @@ impl Default for GroundConfig {
     }
 }
 
-pub struct GroundTool {
+/// How a [`GroundTool`] actually reaches a grounding model.
+///
+/// The seam that lets a HOST process supply an in-process, already-resident
+/// model instead of paying a cold start per call. `sven-tools-ground`
+/// deliberately has no brain dependency (see this crate's `Cargo.toml`), so
+/// this trait names no brain type: an embedder implements it over whatever
+/// it already holds.
+///
+/// [`SubprocessGroundBackend`] is the default and keeps sven standalone -
+/// one `brain` CLI invocation per call, which re-imports the checkpoint
+/// every time. A long-running embedder should implement this instead:
+/// re-loading a multi-hundred-megabyte checkpoint per screen dominates the
+/// actual inference by an order of magnitude.
+#[async_trait]
+pub trait GroundBackend: Send + Sync {
+    /// Locate `target` in the image at `image_path`.
+    ///
+    /// Returns the grounding answer as `{"found": bool, "boxes": [{"phrase",
+    /// "bbox"}]}` with `bbox` normalized `[x0,y0,x1,y1]` in `[0,1]` - the
+    /// shape [`GroundTool`]'s own callers parse.
+    ///
+    /// # Errors
+    ///
+    /// A human-readable message when the model could not be reached or its
+    /// answer could not be understood. Never an "empty answer" stand-in for
+    /// a failure - a caller retries on error and must be able to tell the
+    /// two apart.
+    async fn ground(&self, image_path: &Path, target: &str) -> Result<Value, String>;
+}
+
+/// The default [`GroundBackend`]: one `brain <arch> ground` subprocess per
+/// call. Keeps sven usable with nothing but a `brain` binary on `PATH`.
+pub struct SubprocessGroundBackend {
     cfg: GroundConfig,
 }
 
+impl SubprocessGroundBackend {
+    #[must_use]
+    pub fn new(cfg: GroundConfig) -> SubprocessGroundBackend {
+        SubprocessGroundBackend { cfg }
+    }
+}
+
+impl Default for SubprocessGroundBackend {
+    fn default() -> Self {
+        SubprocessGroundBackend::new(GroundConfig::default())
+    }
+}
+
+#[async_trait]
+impl GroundBackend for SubprocessGroundBackend {
+    async fn ground(&self, image_path: &Path, target: &str) -> Result<Value, String> {
+        run_ground(&self.cfg, image_path, target).await
+    }
+}
+
+pub struct GroundTool {
+    backend: Arc<dyn GroundBackend>,
+}
+
 impl GroundTool {
+    /// A tool that shells out per call, per `cfg` - the standalone default.
     #[must_use]
     pub fn new(cfg: GroundConfig) -> Self {
-        Self { cfg }
+        Self::with_backend(Arc::new(SubprocessGroundBackend::new(cfg)))
+    }
+
+    /// A tool backed by `backend` - the seam an embedder uses to supply an
+    /// already-resident, in-process model instead of a subprocess. See
+    /// [`GroundBackend`] for why that matters.
+    #[must_use]
+    pub fn with_backend(backend: Arc<dyn GroundBackend>) -> Self {
+        Self { backend }
     }
 }
 
@@ -159,7 +226,10 @@ impl Tool for GroundTool {
             );
         }
 
-        run_ground(&call.id, &self.cfg, Path::new(image_path), target).await
+        match self.backend.ground(Path::new(image_path), target).await {
+            Ok(value) => ToolOutput::ok(&call.id, value.to_string()),
+            Err(detail) => ToolOutput::err(&call.id, detail),
+        }
     }
 }
 
@@ -218,7 +288,7 @@ fn parse_ground_stdout(stdout: &str) -> Result<Value, String> {
     }
 }
 
-async fn run_ground(call_id: &str, cfg: &GroundConfig, image_path: &Path, target: &str) -> ToolOutput {
+async fn run_ground(cfg: &GroundConfig, image_path: &Path, target: &str) -> Result<Value, String> {
     let args = ground_args(cfg, image_path, target);
     debug!(command = %cfg.command, ?args, "running ground subprocess");
 
@@ -231,42 +301,31 @@ async fn run_ground(call_id: &str, cfg: &GroundConfig, image_path: &Path, target
         .spawn()
     {
         Ok(c) => c,
-        Err(e) => return ToolOutput::err(call_id, format!("could not run '{}': {e}", cfg.command)),
+        Err(e) => return Err(format!("could not run '{}': {e}", cfg.command)),
     };
 
     let timeout = Duration::from_secs(cfg.timeout_secs.max(1));
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Err(_) => {
-            return ToolOutput::err(
-                call_id,
-                format!("'{}' timed out after {}s", cfg.command, cfg.timeout_secs),
-            )
+            return Err(format!("'{}' timed out after {}s", cfg.command, cfg.timeout_secs))
         }
-        Ok(Err(e)) => return ToolOutput::err(call_id, format!("'{}' failed to run: {e}", cfg.command)),
+        Ok(Err(e)) => return Err(format!("'{}' failed to run: {e}", cfg.command)),
         Ok(Ok(o)) => o,
     };
 
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     if !output.status.success() {
-        return ToolOutput::err(
-            call_id,
-            format!(
-                "'{}' exited with {}: {}",
-                cfg.command,
-                output.status,
-                tail(&stderr, STDERR_TAIL_BYTES)
-            ),
-        );
+        return Err(format!(
+            "'{}' exited with {}: {}",
+            cfg.command,
+            output.status,
+            tail(&stderr, STDERR_TAIL_BYTES)
+        ));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    match parse_ground_stdout(&stdout) {
-        Ok(value) => ToolOutput::ok(call_id, value.to_string()),
-        Err(detail) => ToolOutput::err(
-            call_id,
-            format!("{detail}; stderr: {}", tail(&stderr, STDERR_TAIL_BYTES)),
-        ),
-    }
+    parse_ground_stdout(&stdout)
+        .map_err(|detail| format!("{detail}; stderr: {}", tail(&stderr, STDERR_TAIL_BYTES)))
 }
 
 /// Return at most the last `max` bytes of `s`, on a char boundary.
@@ -486,5 +545,89 @@ mod tests {
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v.as_str() == Some("image_path")));
         assert!(required.iter().any(|v| v.as_str() == Some("target")));
+    }
+
+    // ─── GroundBackend seam ──────────────────────────────────────────────
+
+    struct FixedBackend;
+    #[async_trait]
+    impl GroundBackend for FixedBackend {
+        async fn ground(&self, _image_path: &Path, target: &str) -> Result<Value, String> {
+            Ok(json!({
+                "found": true,
+                "boxes": [{ "phrase": target, "bbox": [0.1, 0.2, 0.3, 0.4] }]
+            }))
+        }
+    }
+
+    /// A backend that must never be reached - proves the FLAG_SECURE gate
+    /// short-circuits BEFORE any model is consulted, rather than relying on
+    /// the model to return nothing useful for a black frame.
+    struct PanicsIfCalled;
+    #[async_trait]
+    impl GroundBackend for PanicsIfCalled {
+        async fn ground(&self, _image_path: &Path, _target: &str) -> Result<Value, String> {
+            panic!("the grounding backend must not be reached for a FLAG_SECURE frame");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_injected_backend_is_used_instead_of_shelling_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = write_png(&dir, "shot.png", [200, 30, 30], 32, 32);
+        let tool = GroundTool::with_backend(Arc::new(FixedBackend));
+        let out = tool
+            .execute(&ToolCall {
+                id: "1".into(),
+                name: "ground".into(),
+                args: json!({ "image_path": png.to_string_lossy(), "target": "log in" }),
+            })
+            .await;
+        let value: Value = serde_json::from_str(&out.content).expect("backend JSON reaches the caller");
+        assert_eq!(value["found"], json!(true));
+        assert_eq!(value["boxes"][0]["phrase"], json!("log in"));
+    }
+
+    #[tokio::test]
+    async fn a_flag_secure_frame_never_reaches_the_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        // Solid black is the FLAG_SECURE screencap placeholder.
+        let png = write_png(&dir, "secure.png", [0, 0, 0], 64, 64);
+        let tool = GroundTool::with_backend(Arc::new(PanicsIfCalled));
+        let out = tool
+            .execute(&ToolCall {
+                id: "1".into(),
+                name: "ground".into(),
+                args: json!({ "image_path": png.to_string_lossy(), "target": "the code" }),
+            })
+            .await;
+        let value: Value = serde_json::from_str(&out.content).unwrap();
+        assert_eq!(value["secure_screen"], json!(true));
+        assert_eq!(value["found"], json!(false));
+    }
+
+    /// A backend refusal must surface as a tool error, not be swallowed into
+    /// a "nothing found" answer a caller would retry blindly.
+    #[tokio::test]
+    async fn a_backend_error_surfaces_as_a_tool_error() {
+        struct FailingBackend;
+        #[async_trait]
+        impl GroundBackend for FailingBackend {
+            async fn ground(&self, _image_path: &Path, _target: &str) -> Result<Value, String> {
+                Err("florence2 is not configured".to_string())
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let png = write_png(&dir, "shot.png", [200, 30, 30], 32, 32);
+        let tool = GroundTool::with_backend(Arc::new(FailingBackend));
+        let out = tool
+            .execute(&ToolCall {
+                id: "1".into(),
+                name: "ground".into(),
+                args: json!({ "image_path": png.to_string_lossy(), "target": "x" }),
+            })
+            .await;
+        assert!(out.is_error, "a backend refusal must be an error");
+        assert!(out.content.contains("florence2 is not configured"), "{}", out.content);
     }
 }
