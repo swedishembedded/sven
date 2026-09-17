@@ -28,7 +28,7 @@ DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
 .PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
-        check check/clippy check/gates check/paths check/deps check/arch docs docs-pdf \
+        check check/clippy check/gates check/paths check/deps check/arch hooks/install docs docs-pdf \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
         _require-cargo-release \
@@ -204,7 +204,7 @@ fmt:
 # In that order on purpose: a baked-in machine path or an
 # illegal crate edge should fail in seconds, not after a full workspace lint.
 # Every gate below is reachable from HERE, not only from an installed git
-# hook -- a check that lives only in a per-clone hook install enforces nothing on a
+# hook -- a check that lives only in `make hooks/install` enforces nothing on a
 # fresh clone that never ran it.
 check: check/gates check/arch check/clippy
 
@@ -231,6 +231,27 @@ check/deps:
 check/arch:
 	$(CARGO) run -q -p xtask -- arch
 	$(CARGO) run -q -p xtask -- arch --profile minimal
+
+## hooks/install - install this repo's git pre-commit hooks (one-time per clone;
+##              writes outside version control, so it is never automatic).
+##              Prefers the `pre-commit` framework, since .pre-commit-config.yaml
+##              carries the same gates plus rustfmt/clippy/ASCII hygiene; falls
+##              back to scripts/hooks/pre-commit, which needs only bash and git.
+##              Refuses to clobber a hook it did not write.
+hooks/install:
+	@if [ -e .git/hooks/pre-commit ] && ! grep -q 'scripts/gates/check-no-machine-paths.sh' .git/hooks/pre-commit \
+	   && ! grep -q 'pre-commit' .git/hooks/pre-commit; then \
+	    echo "error: .git/hooks/pre-commit exists and was not installed by this repo."; \
+	    echo "       Inspect it, then remove it and re-run 'make hooks/install'."; \
+	    exit 1; \
+	fi
+	@if command -v pre-commit >/dev/null 2>&1; then \
+	    pre-commit install; \
+	    echo "installed: .git/hooks/pre-commit (pre-commit framework, .pre-commit-config.yaml)"; \
+	else \
+	    install -m 755 scripts/hooks/pre-commit .git/hooks/pre-commit; \
+	    echo "installed: .git/hooks/pre-commit (standalone; 'pip install pre-commit' for the full set)"; \
+	fi
 
 ## clean     - remove build artefacts
 clean:

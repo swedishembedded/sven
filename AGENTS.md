@@ -48,8 +48,11 @@ and was removed - the TUI is the only interactive local surface.)
   `make tests/e2e/basic` (bats E2E; needs `bats-core`).
 - **Repo hygiene is gated, not documented.** `make check/gates` refuses an
   absolute machine path (`/data`, `/home`, `/opt`, `/mnt`, `/root` anywhere;
-  `/tmp` in a `.rs` file) and any `brain-*` Cargo dependency. They run from
-  `make check` on every clone, with no hook installation step to forget.
+  `/tmp` in a `.rs` file) and any `brain-*` Cargo dependency. Both also run as
+  a git pre-commit hook after `make hooks/install` - but the hook is the fast
+  extra guard, never the only path: a gate reachable only from a
+  manually-installed hook enforces nothing on a fresh clone, so everything is
+  in `make check` too.
 - **Before any sweeping/cross-cutting change, read "Making cross-cutting
   changes" below** - it is the canonical map of every place each kind of
   change must touch.
@@ -72,6 +75,7 @@ repo history). When a task is finished, move its file into `.todo/completed/`
 | `make check/arch` | architecture ratchet only |
 | `make check/clippy` | clippy only |
 | `make fmt` | Format |
+| `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |
 | `make tests/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour) |
 | `make docs` | Single-file user guide → `target/docs/sven-user-guide.md` |
 

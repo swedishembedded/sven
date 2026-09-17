@@ -23,6 +23,29 @@ repos:
 
   - repo: local
     hooks:
+      # The same two gates `make check` runs (via `make check/gates`), wired
+      # here so they also fire at commit time. Keep this list and
+      # scripts/hooks/pre-commit in sync: a gate added to only one of them
+      # silently stops being enforced for whoever installed the other. Neither
+      # is the only enforcement path - `make check` runs both from a clean
+      # clone with no hook installed at all.
+      - id: no-machine-paths
+        name: no absolute machine paths
+        entry: bash scripts/gates/check-no-machine-paths.sh
+        language: system
+        types: [text]
+        pass_filenames: true
+
+      # No file arguments: the question is "does the workspace resolve a
+      # brain package", which is answered by Cargo.toml + Cargo.lock as a
+      # whole, not by whichever manifest happens to be staged.
+      - id: no-brain-dependency
+        name: sven must not depend on brain
+        entry: bash scripts/gates/check-no-brain-dependency.sh
+        language: system
+        files: '(^|/)Cargo\.(toml|lock)$'
+        pass_filenames: false
+
       # Replace common non-ASCII punctuation (em/en dashes, curly quotes,
       # ellipsis, non-breaking spaces) with plain ASCII equivalents so the
       # repository stays pure ASCII in all text and markdown files.
