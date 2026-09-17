@@ -519,7 +519,7 @@ mod tests {
             call_id: ToolCallId::new(),
             name: "ingest_document".to_string(),
             capability: cap,
-            args: json!({ "path": "/tmp/fetched-by-the-agent.md" }),
+            args: json!({ "path": "docs/fetched-by-the-agent.md" }),
         };
 
         for (mode, policy) in [

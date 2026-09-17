@@ -722,7 +722,7 @@ mod tests {
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(100)).await;
-            let content = "---\n\n**You:** hello\n\n**Agent:** world\n\n🔧 **Tool Call: read_file**\n```\npath:/tmp/x\n```\n\n✅ **Tool Response: read_file**\n```\ncontents\n```\n";
+            let content = "---\n\n**You:** hello\n\n**Agent:** world\n\n🔧 **Tool Call: read_file**\n```\npath:src/x.rs\n```\n\n✅ **Tool Response: read_file**\n```\ncontents\n```\n";
             bridge.set_buffer_content(content).await.unwrap();
             sleep(Duration::from_millis(200)).await;
             let got = bridge.get_buffer_content().await.unwrap();

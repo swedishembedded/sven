@@ -240,7 +240,12 @@ mod tests {
         static CTR: AtomicU32 = AtomicU32::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
         MemoryTool::new(
-            Some(format!("/tmp/sven_memory_{}_{n}.json", std::process::id())),
+            Some(
+                std::env::temp_dir()
+                    .join(format!("sven_memory_{}_{n}.json", std::process::id()))
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             SharedKnowledge::empty(),
         )
     }

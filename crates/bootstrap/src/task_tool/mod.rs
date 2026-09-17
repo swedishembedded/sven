@@ -507,7 +507,7 @@ mod tests {
             readonly,
             is_background: false,
             content: content.to_string(),
-            agent_md_path: std::path::PathBuf::from(format!("/tmp/{name}.md")),
+            agent_md_path: std::path::PathBuf::from(format!("agents/{name}.md")),
             knowledge: vec![],
         }
     }

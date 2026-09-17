@@ -370,7 +370,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_extension_lists_supported_types() {
         let t = AttachFileTool::new(None, AsrConfig::default());
-        let out = t.execute(&call(json!({"path": "/tmp/main.rs"}))).await;
+        let out = t.execute(&call(json!({"path": "main.rs"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("png"), "{}", out.content);
         assert!(out.content.contains("wav"), "{}", out.content);
@@ -380,7 +380,7 @@ mod tests {
     async fn missing_image_file_errors() {
         let t = AttachFileTool::new(Some(vision_model()), AsrConfig::default());
         let out = t
-            .execute(&call(json!({"path": "/tmp/no_such_attach_xyz.png"})))
+            .execute(&call(json!({"path": "no_such_attach_xyz.png"})))
             .await;
         assert!(out.is_error);
         assert!(

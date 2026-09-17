@@ -6,7 +6,7 @@
 
 /// Return the last `n` non-empty path components joined by `/`.
 ///
-/// `/data/agents/sven/crates/tui/src/chat/markdown.rs`  →  `chat/markdown.rs`
+/// `/project/crates/tui/src/chat/markdown.rs`  →  `chat/markdown.rs`
 pub fn shorten_path(path: &str, n: usize) -> String {
     let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if parts.len() <= n {
@@ -20,9 +20,9 @@ pub fn shorten_path(path: &str, n: usize) -> String {
 /// without the redundant `key=` prefix.
 ///
 /// Examples:
-/// - `read_file {"path":"/data/foo/bar.rs"}` → `foo/bar.rs`
+/// - `read_file {"path":"/project/foo/bar.rs"}` → `foo/bar.rs`
 /// - `shell {"command":"cargo build --release"}` → `cargo build --release`
-/// - `grep {"pattern":"foo","path":"/data/baz"}` → `foo  baz`
+/// - `grep {"pattern":"foo","path":"/project/baz"}` → `foo  baz`
 pub fn tool_smart_summary(name: &str, args: &serde_json::Value) -> String {
     let str_field = |key: &str| -> Option<String> {
         args.get(key)
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn summary_read_file() {
-        let args = json!({"path": "/data/foo/bar.rs"});
+        let args = json!({"path": "/project/foo/bar.rs"});
         assert_eq!(tool_smart_summary("read_file", &args), "foo/bar.rs");
     }
 
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn summary_grep() {
-        let args = json!({"pattern": "fn main", "path": "/data/src"});
+        let args = json!({"pattern": "fn main", "path": "/project/src"});
         let s = tool_smart_summary("grep", &args);
         assert!(s.contains("fn main"));
         assert!(s.contains("src"));
@@ -264,11 +264,11 @@ mod tests {
     #[test]
     fn shorten_path_basic() {
         assert_eq!(
-            shorten_path("/data/agents/sven/src/main.rs", 2),
+            shorten_path("/project/agents/sven/src/main.rs", 2),
             "src/main.rs"
         );
         assert_eq!(
-            shorten_path("/data/agents/sven/src/main.rs", 3),
+            shorten_path("/project/agents/sven/src/main.rs", 3),
             "sven/src/main.rs"
         );
     }

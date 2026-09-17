@@ -229,22 +229,22 @@ mod tests {
     #[test]
     fn grep_fallback_keeps_injected_metacharacters_in_one_argv_element() {
         let args = grep_args(
-            "needle; touch /tmp/pwned",
-            "/repo; touch /tmp/pwned",
-            Some("*.rs; touch /tmp/pwned"),
+            "needle; touch pwned",
+            "/repo; touch pwned",
+            Some("*.rs; touch pwned"),
             true,
         );
 
         assert!(
-            args.contains(&"--include=*.rs; touch /tmp/pwned".to_string()),
+            args.contains(&"--include=*.rs; touch pwned".to_string()),
             "the include glob must survive whole, unsplit: {args:?}"
         );
         assert!(
-            args.contains(&"needle; touch /tmp/pwned".to_string()),
+            args.contains(&"needle; touch pwned".to_string()),
             "the query must survive whole: {args:?}"
         );
         assert!(
-            args.contains(&"/repo; touch /tmp/pwned".to_string()),
+            args.contains(&"/repo; touch pwned".to_string()),
             "the path must survive whole: {args:?}"
         );
         assert!(

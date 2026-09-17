@@ -786,14 +786,14 @@ mod tests {
 
     #[test]
     fn project_root_appears_in_prompt() {
-        let root = p("/home/user/my-project");
+        let root = p("/project/my-project");
         let ctx = PromptContext {
             project_root: Some(&root),
             ..Default::default()
         };
         let pr = system_prompt(AgentMode::Agent, None, ctx);
         assert!(
-            pr.contains("/home/user/my-project"),
+            pr.contains("/project/my-project"),
             "project root should appear in prompt"
         );
         assert!(
@@ -995,8 +995,8 @@ mod tests {
             name,
             description: description.to_string(),
             version: None,
-            skill_md_path: PathBuf::from(format!("/tmp/{command}/SKILL.md")),
-            skill_dir: PathBuf::from(format!("/tmp/{command}")),
+            skill_md_path: PathBuf::from(format!("skills/{command}/SKILL.md")),
+            skill_dir: PathBuf::from(format!("skills/{command}")),
             content: format!("## {command} content"),
             sven_meta: None,
         }

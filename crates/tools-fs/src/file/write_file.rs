@@ -168,11 +168,18 @@ mod tests {
         }
     }
 
+    /// A scratch path unique to this process and call. The temp root comes
+    /// from the environment (`TMPDIR`, honoured by `std::env::temp_dir`), never
+    /// a hardcoded `/tmp`, so the suite also runs where `/tmp` is absent or
+    /// read-only and inside a per-test sandbox.
     fn tmp_path() -> String {
         use std::sync::atomic::{AtomicU32, Ordering};
         static CTR: AtomicU32 = AtomicU32::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
-        format!("/tmp/sven_write_test_{}_{n}.txt", std::process::id())
+        std::env::temp_dir()
+            .join(format!("sven_write_test_{}_{n}.txt", std::process::id()))
+            .to_string_lossy()
+            .into_owned()
     }
 
     #[tokio::test]
@@ -221,17 +228,14 @@ mod tests {
 
     #[tokio::test]
     async fn write_creates_parent_dirs() {
-        use std::sync::atomic::{AtomicU32, Ordering};
-        static CTR: AtomicU32 = AtomicU32::new(0);
-        let n = CTR.fetch_add(1, Ordering::Relaxed);
-        let dir = format!("/tmp/sven_write_nested_{}_{n}", std::process::id());
-        let path = format!("{dir}/sub/file.txt");
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("nested/sub/file.txt");
         let t = WriteTool;
         let out = t
             .execute(&call(json!({"path": path, "text": "nested"})))
             .await;
         assert!(!out.is_error, "{}", out.content);
-        let _ = std::fs::remove_dir_all(dir);
+        assert!(path.exists(), "parent directories should have been created");
     }
 
     #[tokio::test]
@@ -245,7 +249,7 @@ mod tests {
     #[tokio::test]
     async fn missing_content_is_error() {
         let t = WriteTool;
-        let out = t.execute(&call(json!({"path": "/tmp/x.txt"}))).await;
+        let out = t.execute(&call(json!({"path": "x.txt"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("Missing required parameters: text"));
     }
@@ -274,20 +278,20 @@ mod tests {
     async fn path_traversal_does_not_crash() {
         let t = WriteTool;
         // The tool should either write to the traversed path or error cleanly,
-        // but must not panic.
+        // but must not panic. The `..` segments are the point of the test, so
+        // they stay; the whole path is rooted in a temp dir that is removed
+        // afterwards whatever the tool decided to do with them.
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let traversed = dir.path().join("a/../b/out.txt");
         let out = t
-            .execute(&call(json!({
-                "path": "/tmp/sven_adv_traversal/../../tmp/sven_adv_out.txt",
-                "text": "traversal"
-            })))
+            .execute(&call(json!({"path": traversed, "text": "traversal"})))
             .await;
         let _ = out.is_error;
-        let _ = std::fs::remove_file("/tmp/sven_adv_out.txt");
     }
 
     #[tokio::test]
     async fn extremely_large_content_does_not_panic() {
-        let path = format!("/tmp/sven_adv_large_write_{}.txt", std::process::id());
+        let path = tmp_path();
         let t = WriteTool;
         let large_text = "x".repeat(10_000_000);
         let out = t

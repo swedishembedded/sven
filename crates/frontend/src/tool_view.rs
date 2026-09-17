@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn extract_returns_category_from_fallback() {
-        let args = json!({ "path": "/data/foo.rs" });
+        let args = json!({ "path": "/project/foo.rs" });
         let view = extract_tool_view("read_file", &args, None);
         assert_eq!(view.category, "file");
         assert_eq!(view.icon, "▶");

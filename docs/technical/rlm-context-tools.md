@@ -128,7 +128,7 @@ Returns only metadata to the model:
 Context opened: handle=ctx_0001
 Files: 1, Lines: 4823, Bytes: 198412
 
-Single file: /data/my-project/src/main.c
+Single file: <project-root>/src/main.c
 Size: 198412 bytes
 Lines: 4823
 

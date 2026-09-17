@@ -720,7 +720,7 @@ mod tests {
                 tool_call_id: "id1".into(),
                 function: FunctionCall {
                     name: "read_file".into(),
-                    arguments: r#"{"path":"/tmp/x"}"#.into(),
+                    arguments: r#"{"path":"src/x.rs"}"#.into(),
                 },
             },
         };
@@ -869,7 +869,7 @@ mod tests {
             "**Agent:tool_call:abc123**\n",
             "⚙ **read_file**\n",
             "```json\n",
-            r#"{"path": "/tmp/test.txt"}"#,
+            r#"{"path": "test.txt"}"#,
             "\n",
             "```\n",
         );
@@ -883,7 +883,7 @@ mod tests {
         {
             assert_eq!(tool_call_id, "abc123");
             assert_eq!(function.name, "read_file");
-            assert_eq!(function.arguments.trim(), r#"{"path": "/tmp/test.txt"}"#);
+            assert_eq!(function.arguments.trim(), r#"{"path": "test.txt"}"#);
         } else {
             panic!("expected ToolCall content");
         }
@@ -954,7 +954,7 @@ mod tests {
                     tool_call_id: "call1".into(),
                     function: FunctionCall {
                         name: "read_file".into(),
-                        arguments: r#"{"path":"/tmp/x","encoding":"utf8"}"#.into(),
+                        arguments: r#"{"path":"src/x.rs","encoding":"utf8"}"#.into(),
                     },
                 },
             },

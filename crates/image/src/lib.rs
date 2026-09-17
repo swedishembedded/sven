@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn load_rgb_hwc_f32_missing_file_errors() {
-        let err = load_rgb_hwc_f32(Path::new("/tmp/no_such_image_abc.png")).unwrap_err();
+        let err = load_rgb_hwc_f32(Path::new("no_such_image_abc.png")).unwrap_err();
         assert!(matches!(err, ImageError::Io(_, _)), "got {err:?}");
     }
 

@@ -1084,7 +1084,7 @@ mod tests {
             UiEvent::ToolCallStarted(ToolCall {
                 id: "tc-1".into(),
                 name: "write_file".into(),
-                args: serde_json::json!({"path": "/tmp/x"}),
+                args: serde_json::json!({"path": "src/x.rs"}),
             }),
             &mut st,
         );

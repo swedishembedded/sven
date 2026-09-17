@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn parse_knowledge_file_valid() {
         let raw = "---\nsubsystem: HSM Kernel\nfiles:\n  - crates/hsm/**\nupdated: 2026-01-15\n---\n\n## Core Architecture\n\nDetail here.";
-        let path = PathBuf::from("/tmp/sven-hsm.md");
+        let path = PathBuf::from("knowledge/sven-hsm.md");
         let info = parse_knowledge_file(raw, &path).expect("should parse");
         assert_eq!(info.subsystem, "HSM Kernel");
         assert_eq!(info.files, vec!["crates/hsm/**"]);
@@ -366,21 +366,21 @@ mod tests {
     #[test]
     fn parse_knowledge_file_no_frontmatter_returns_none() {
         let raw = "# Just a heading\n\nNo frontmatter.";
-        let path = PathBuf::from("/tmp/no-fm.md");
+        let path = PathBuf::from("knowledge/no-fm.md");
         assert!(parse_knowledge_file(raw, &path).is_none());
     }
 
     #[test]
     fn parse_knowledge_file_missing_subsystem_returns_none() {
         let raw = "---\nfiles:\n  - crates/**\n---\n\nBody.";
-        let path = PathBuf::from("/tmp/missing.md");
+        let path = PathBuf::from("knowledge/missing.md");
         assert!(parse_knowledge_file(raw, &path).is_none());
     }
 
     #[test]
     fn parse_knowledge_file_no_files_or_updated() {
         let raw = "---\nsubsystem: Config\n---\n\nMinimal doc.";
-        let path = PathBuf::from("/tmp/config.md");
+        let path = PathBuf::from("knowledge/config.md");
         let info = parse_knowledge_file(raw, &path).expect("should parse with minimal fields");
         assert_eq!(info.subsystem, "Config");
         assert!(info.files.is_empty());

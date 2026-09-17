@@ -1114,7 +1114,7 @@ mod tests {
         let provider = sven_model_mock::ScriptedMockProvider::tool_then_text(
             "call-1",
             "write_file",
-            "{\"path\":\"/tmp/mock_probe.txt\",\"text\":\"x\",\"append\":false}",
+            "{\"path\":\"mock_probe.txt\",\"text\":\"x\",\"append\":false}",
             "done",
         );
         let last_request = provider.last_request.clone();

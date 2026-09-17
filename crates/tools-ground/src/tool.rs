@@ -462,7 +462,7 @@ mod tests {
     #[tokio::test]
     async fn ground_args_pass_the_short_arch_id_target_and_image_path() {
         let cfg = cfg_with_command("brain".to_string());
-        let args = ground_args(&cfg, Path::new("/tmp/a.png"), "log in with password");
+        let args = ground_args(&cfg, Path::new("shot.png"), "log in with password");
         assert_eq!(
             args,
             vec![
@@ -472,7 +472,7 @@ mod tests {
                 "--target".to_string(),
                 "log in with password".to_string(),
                 "--in".to_string(),
-                "image=/tmp/a.png".to_string(),
+                "image=shot.png".to_string(),
             ]
         );
     }

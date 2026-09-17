@@ -593,11 +593,18 @@ mod tests {
         }
     }
 
+    /// A scratch file unique to this process and call. The temp root comes
+    /// from the environment (`TMPDIR`, honoured by `std::env::temp_dir`), never
+    /// a hardcoded `/tmp`, so the suite also runs where `/tmp` is absent or
+    /// read-only and inside a per-test sandbox.
     fn tmp_file(content: &str) -> String {
         use std::sync::atomic::{AtomicU32, Ordering};
         static CTR: AtomicU32 = AtomicU32::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
-        let path = format!("/tmp/sven_edit_test_{}_{n}.txt", std::process::id());
+        let path = std::env::temp_dir()
+            .join(format!("sven_edit_test_{}_{n}.txt", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
         std::fs::write(&path, content).unwrap();
         path
     }
@@ -615,7 +622,7 @@ mod tests {
     #[tokio::test]
     async fn missing_diff_is_error() {
         let t = EditFileTool;
-        let out = t.execute(&call(json!({"path": "/tmp/x.txt"}))).await;
+        let out = t.execute(&call(json!({"path": "x.txt"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("diff"), "{}", out.content);
     }
@@ -643,7 +650,7 @@ mod tests {
         let t = EditFileTool;
         let out = t
             .execute(&call(json!({
-                "path": "/tmp/sven_no_such_file_xyz.txt",
+                "path": "sven_no_such_file_xyz.txt",
                 "diff": "@@ @@\n-hello\n+world\n"
             })))
             .await;
@@ -1498,11 +1505,17 @@ mod adversarial_tests {
         }
     }
 
+    /// Same contract as the `tests` module's `tmp_file`: unique per process and
+    /// call, with the temp root taken from the environment rather than a
+    /// hardcoded `/tmp`.
     fn tmp(content: &str) -> String {
         use std::sync::atomic::{AtomicU32, Ordering};
         static CTR: AtomicU32 = AtomicU32::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
-        let p = format!("/tmp/sven_edit_adv_{}_{n}.txt", std::process::id());
+        let p = std::env::temp_dir()
+            .join(format!("sven_edit_adv_{}_{n}.txt", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
         std::fs::write(&p, content).unwrap();
         p
     }
@@ -1655,13 +1668,15 @@ mod adversarial_tests {
     #[tokio::test]
     async fn path_traversal_in_file_path_is_error_or_harmless() {
         let diff = "@@ @@\n-foo\n+bar\n";
+        // The `..` segments are the point of the test. Rooted in the
+        // environment's temp dir so the escape attempt starts somewhere real on
+        // every platform rather than at a hardcoded /tmp.
+        let traversal = std::env::temp_dir().join("../../etc/passwd");
         let out = EditFileTool
-            .execute(&call(
-                json!({"path": "/tmp/../../etc/passwd", "diff": diff}),
-            ))
+            .execute(&call(json!({"path": traversal, "diff": diff})))
             .await;
-        // May succeed (path resolves to /etc/passwd which can't be written) or
-        // fail - must not panic, must not silently write to /etc/passwd
+        // May succeed (the path resolves to /etc/passwd, which cannot be
+        // written) or fail - must not panic, must not silently write there.
         let _ = out;
     }
 

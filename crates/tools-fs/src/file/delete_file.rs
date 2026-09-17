@@ -121,12 +121,8 @@ mod tests {
 
     #[tokio::test]
     async fn deletes_existing_file() {
-        let path = {
-            use std::sync::atomic::{AtomicU32, Ordering};
-            static CTR: AtomicU32 = AtomicU32::new(0);
-            let n = CTR.fetch_add(1, Ordering::Relaxed);
-            format!("/tmp/sven_delete_test_{}_{n}.txt", std::process::id())
-        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("delete_test.txt");
         std::fs::write(&path, "bye").unwrap();
         let t = DeleteFileTool;
         let out = t.execute(&call(json!({"path": path}))).await;
@@ -138,7 +134,7 @@ mod tests {
     async fn missing_file_is_error() {
         let t = DeleteFileTool;
         let out = t
-            .execute(&call(json!({"path": "/tmp/sven_no_such_delete_xyz.txt"})))
+            .execute(&call(json!({"path": "sven_no_such_delete_xyz.txt"})))
             .await;
         assert!(out.is_error);
     }

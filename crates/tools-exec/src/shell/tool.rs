@@ -570,7 +570,7 @@ mod adversarial_tests {
         let out = t
             .execute(&call(json!({
                 "shell_command": "pwd",
-                "workdir": "/tmp/sven_adversarial_nonexistent_dir_xyz"
+                "workdir": "sven_adversarial_nonexistent_dir_xyz"
             })))
             .await;
         assert!(
@@ -615,7 +615,7 @@ mod adversarial_tests {
         let out = t
             .execute(&call(json!({
                 "shell_command": "pwd",
-                "workdir": "/tmp/line1\nline2"
+                "workdir": "line1\nline2"
             })))
             .await;
         // Paths containing newlines are not valid directory names on Linux.

@@ -119,7 +119,10 @@ mod tests {
             0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92,
             0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
         ];
-        let path = format!("/tmp/sven_read_image_test_{}.png", std::process::id());
+        let path = std::env::temp_dir()
+            .join(format!("sven_read_image_test_{}.png", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
         std::fs::write(&path, png_bytes).unwrap();
         path
     }
@@ -157,7 +160,7 @@ mod tests {
     #[tokio::test]
     async fn non_image_extension_returns_error() {
         let t = ReadImageTool;
-        let out = t.execute(&call(json!({"path": "/tmp/test.rs"}))).await;
+        let out = t.execute(&call(json!({"path": "test.rs"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("does not appear to be an image"));
     }
@@ -166,7 +169,7 @@ mod tests {
     async fn missing_file_returns_error() {
         let t = ReadImageTool;
         let out = t
-            .execute(&call(json!({"path": "/tmp/no_such_image_xyz.png"})))
+            .execute(&call(json!({"path": "no_such_image_xyz.png"})))
             .await;
         assert!(out.is_error);
         assert!(out.content.contains("failed to read image"));

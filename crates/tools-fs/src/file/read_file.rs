@@ -110,8 +110,8 @@ impl Tool for ReadFileTool {
         // file relative to a workspace root one level up, try ascending the
         // directory tree to find the file automatically.
         //
-        // Example: /data/ng-iot-platform/.cursor/knowledge/foo.md fails →
-        //          /data/.cursor/knowledge/foo.md is tried automatically.
+        // Example: <workspace>/<project>/.cursor/knowledge/foo.md fails →
+        //          <workspace>/.cursor/knowledge/foo.md is tried automatically.
         let (resolved_path, resolved_note) = match ascend_to_find(&path) {
             Some(found) => {
                 let note = format!("note: resolved to {}\n", found.display());
@@ -414,13 +414,26 @@ mod tests {
         }
     }
 
+    /// A scratch file unique to this process and call. The temp root comes
+    /// from the environment (`TMPDIR`, honoured by `std::env::temp_dir`), never
+    /// a hardcoded `/tmp`, so the suite also runs where `/tmp` is absent or
+    /// read-only and inside a per-test sandbox.
     fn tmp_file(content: &str) -> String {
         use std::sync::atomic::{AtomicU32, Ordering};
         static CTR: AtomicU32 = AtomicU32::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
-        let path = format!("/tmp/sven_read_file_test_{}_{n}.txt", std::process::id());
+        let path = scratch_path(&format!("sven_read_file_test_{}_{n}.txt", std::process::id()));
         std::fs::write(&path, content).unwrap();
         path
+    }
+
+    /// `<temp root>/<name>` as an owned `String`, for the tests that build their
+    /// own scratch file rather than going through [`tmp_file`].
+    fn scratch_path(name: &str) -> String {
+        std::env::temp_dir()
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
     }
 
     // ── Basic text reading ────────────────────────────────────────────────────
@@ -460,7 +473,7 @@ mod tests {
     async fn missing_file_is_error() {
         let t = ReadFileTool;
         let out = t
-            .execute(&call(json!({"path": "/tmp/sven_no_such_file_xyz.txt"})))
+            .execute(&call(json!({"path": "sven_no_such_file_xyz.txt"})))
             .await;
         assert!(out.is_error);
         assert!(out.content.contains("read error"));
@@ -635,7 +648,7 @@ mod tests {
         use std::sync::atomic::{AtomicU32, Ordering};
         static CTR: AtomicU32 = AtomicU32::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
-        let path = format!("/tmp/sven_binary_test_{}_{n}.bin", std::process::id());
+        let path = scratch_path(&format!("sven_binary_test_{}_{n}.bin", std::process::id()));
         std::fs::write(&path, b"\x7fELF\x00\x01\x02\x03").unwrap();
 
         let t = ReadFileTool;
@@ -659,7 +672,7 @@ mod tests {
         use std::sync::atomic::{AtomicU32, Ordering};
         static CTR: AtomicU32 = AtomicU32::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
-        let path = format!("/tmp/sven_binary_page_{}_{n}.bin", std::process::id());
+        let path = scratch_path(&format!("sven_binary_page_{}_{n}.bin", std::process::id()));
         // 64 bytes = 4 full 16-byte records + ELA + EOF = 6 lines
         std::fs::write(&path, vec![0xBBu8; 64]).unwrap();
 
@@ -680,8 +693,8 @@ mod tests {
     #[test]
     fn ascend_finds_file_one_level_up() {
         use std::fs;
-        // Create structure: /tmp/sven_ascend_test/<workspace>/project/subdir/file.txt
-        // but file actually lives at /tmp/sven_ascend_test/<workspace>/subdir/file.txt
+        // Create structure: <tmp>/sven_ascend_test/workspace/project/subdir/file.txt
+        // but the file actually lives at <tmp>/sven_ascend_test/workspace/subdir/file.txt
         let base = std::env::temp_dir().join(format!("sven_ascend_test_{}", std::process::id()));
         let workspace = base.join("workspace");
         let project = workspace.join("project");
@@ -707,7 +720,11 @@ mod tests {
 
     #[test]
     fn ascend_returns_none_for_truly_missing_file() {
-        let found = ascend_to_find("/tmp/sven_no_such_dir_xyz/no_such_file.txt");
+        // Must be ABSOLUTE: `ascend_to_find` returns None for any relative path
+        // (the next test pins that), so a relative path here would pass for the
+        // wrong reason. Rooted in the environment's temp dir, never created.
+        let missing = scratch_path("sven_no_such_dir_xyz/no_such_file.txt");
+        let found = ascend_to_find(&missing);
         assert!(found.is_none());
     }
 

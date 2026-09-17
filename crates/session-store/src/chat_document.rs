@@ -41,7 +41,7 @@
 //!     name: list_dir
 //!     arguments:
 //!       depth: 2
-//!       path: /data/ng-iot-platform
+//!       path: <project-root>
 //!   - role: tool_result
 //!     tool_call_id: "toolu_01E9eMNfm8"
 //!     content: |

@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn deny_beats_auto_for_same_pattern() {
         let p = policy_with(&["rm *"], &["rm *"]);
-        assert_eq!(p.decide("rm /tmp/foo"), ApprovalPolicy::Deny);
+        assert_eq!(p.decide("rm ./foo"), ApprovalPolicy::Deny);
     }
 
     #[test]
@@ -187,14 +187,14 @@ mod tests {
     fn adversarial_uppercase_command_does_not_match_lowercase_pattern() {
         let p = policy_with(&["rm"], &[]);
         // Pattern is case-sensitive; `RM` should not match `rm`.
-        assert_ne!(p.decide("RM /tmp/foo"), ApprovalPolicy::Auto);
+        assert_ne!(p.decide("RM ./foo"), ApprovalPolicy::Auto);
     }
 
     #[test]
     fn adversarial_unicode_homoglyph_does_not_match_ascii_pattern() {
         let p = policy_with(&["rm"], &[]);
         // Cyrillic р (U+0440) looks like Latin r but is a different codepoint.
-        assert_ne!(p.decide("рm /tmp/foo"), ApprovalPolicy::Auto);
+        assert_ne!(p.decide("рm ./foo"), ApprovalPolicy::Auto);
     }
 
     #[test]

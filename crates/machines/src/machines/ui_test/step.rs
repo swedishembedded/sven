@@ -455,14 +455,14 @@ mod tests {
     #[test]
     fn extract_screenshot_path_strips_the_dims_suffix() {
         assert_eq!(
-            extract_screenshot_path("screenshot saved: /tmp/a.png (1220x2712)"),
-            Some("/tmp/a.png".to_string())
+            extract_screenshot_path("screenshot saved: shots/a.png (1220x2712)"),
+            Some("shots/a.png".to_string())
         );
     }
 
     #[test]
     fn extract_screenshot_path_handles_no_dims_suffix() {
-        assert_eq!(extract_screenshot_path("screenshot saved: /tmp/a.png"), Some("/tmp/a.png".to_string()));
+        assert_eq!(extract_screenshot_path("screenshot saved: shots/a.png"), Some("shots/a.png".to_string()));
     }
 
     #[test]
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn derive_call_id_differs_across_phases_index_and_attempt() {
         let (_, screenshot_id) = screenshot_effect(0, 0);
-        let (_, ground_id) = ground_effect(0, 0, "/tmp/a.png", "x");
+        let (_, ground_id) = ground_effect(0, 0, "shots/a.png", "x");
         let (_, tap_id) = tap_effect(0, 0, 0.5, 0.5);
         let (_, next_attempt_id) = screenshot_effect(0, 1);
         let (_, next_index_id) = screenshot_effect(1, 0);

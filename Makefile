@@ -6,8 +6,8 @@ CARGO   ?= cargo
 #
 # Rule: never override this with a different directory between invocations.
 # The ?= lets the caller / CI override it; the default is the conventional
-# writable home.  If the system CARGO_HOME is read-only (e.g. /opt/rust) set
-# the variable before calling make:
+# writable home.  If the system CARGO_HOME is read-only (a root-owned rustup
+# install, for example) set the variable before calling make:
 #   CARGO_HOME=~/.cargo make build/debug
 CARGO_HOME = $(HOME)/.cargo
 export CARGO_HOME

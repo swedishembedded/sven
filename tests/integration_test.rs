@@ -192,7 +192,7 @@ fn conversation_round_trip_with_tool_call() {
                 tool_call_id: "call_99".into(),
                 function: FunctionCall {
                     name: "read_file".into(),
-                    arguments: r#"{"path":"/tmp/x"}"#.into(),
+                    arguments: r#"{"path":"src/x.rs"}"#.into(),
                 },
             },
         },

@@ -47,7 +47,7 @@ pub enum ToolCommands {
     ///   sven tool call grep --help                     - show grep's schema
     ///   sven tool call grep pattern=TODO path=./src
     ///   sven tool call shell command="git status"
-    ///   sven tool call write_file path=/tmp/out.txt content="hello"
+    ///   sven tool call write_file path=out.txt content="hello"
     ///   sven tool call shell --json '{"command":"ls -la"}'
     // disable_help_flag so --help lands in `args` and we can show tool-specific docs
     #[command(disable_help_flag = true)]

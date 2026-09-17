@@ -574,9 +574,9 @@ fn enumerate_md_inner(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>)
 /// This means:
 /// - `/usr/share/sven/skills/` and `/usr/local/share/sven/skills/` provide
 ///   system-installed skills (lowest precedence).
-/// - `/home/user/.cursor/skills/` is found because home is one of the walk roots.
-/// - `/data/.cursor/skills/` is found when the project root is a subdirectory
-///   of `/data/` (e.g. `/data/repo/`), even though `/data/` has no `.git`.
+/// - `~/.cursor/skills/` is found because home is one of the walk roots.
+/// - A `.cursor/skills/` in any ANCESTOR of the project root is found too (a
+///   shared parent holding several checkouts), even with no `.git` of its own.
 /// - Skills at the project root itself always have the highest precedence.
 ///
 /// When `project_root` is `None`, the current working directory is used as the

@@ -411,10 +411,10 @@ mod tests {
 
     #[test]
     fn followup_carries_answer() {
-        let v = followup_request("intake", "role", READ_TOOLS, "the repo is at /tmp/x");
+        let v = followup_request("intake", "role", READ_TOOLS, "the repo is at ./x");
         assert!(v["instruction"]
             .as_str()
             .unwrap()
-            .contains("the repo is at /tmp/x"));
+            .contains("the repo is at ./x"));
     }
 }

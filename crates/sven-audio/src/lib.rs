@@ -704,7 +704,7 @@ mod tests {
 
     #[test]
     fn missing_file_errors() {
-        let err = load_pcm_at(Path::new("/tmp/definitely_not_here_xyz.wav"), 16_000)
+        let err = load_pcm_at(Path::new("definitely_not_here_xyz.wav"), 16_000)
             .expect_err("missing file");
         assert!(matches!(err, AudioError::Io(_, _)), "got {err:?}");
     }

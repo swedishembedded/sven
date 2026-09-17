@@ -242,7 +242,7 @@ mod tests {
             readonly: false,
             is_background: false,
             content: content.to_string(),
-            agent_md_path: PathBuf::from(format!("/tmp/agents/{name}.md")),
+            agent_md_path: PathBuf::from(format!("agents/{name}.md")),
             knowledge: vec![],
         }
     }
@@ -279,8 +279,8 @@ mod tests {
             name: "review-code".to_string(),
             description: "Review code.".to_string(),
             version: None,
-            skill_md_path: PathBuf::from("/tmp/review-code.md"),
-            skill_dir: PathBuf::from("/tmp"),
+            skill_md_path: PathBuf::from("skills/review-code.md"),
+            skill_dir: PathBuf::from("skills"),
             content: "body".to_string(),
             sven_meta: None,
         };

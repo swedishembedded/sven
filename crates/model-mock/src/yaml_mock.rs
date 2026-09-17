@@ -23,7 +23,7 @@
 ///         tool: fs
 ///         args:
 ///           operation: write
-///           path: /tmp/test.txt
+///           path: test.txt
 ///           content: "hello"
 ///     after_tool_reply: "File written."
 ///
@@ -295,7 +295,7 @@ responses:
         tool: fs
         args:
           operation: write
-          path: /tmp/test.txt
+          path: test.txt
           content: hello
     after_tool_reply: "File written."
 

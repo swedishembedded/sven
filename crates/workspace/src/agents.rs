@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn parse_agent_file_valid() {
         let raw = "---\ndescription: A test agent.\n---\n\nYou are a test assistant.";
-        let path = std::path::PathBuf::from("/tmp/test-agent.md");
+        let path = std::path::PathBuf::from("agents/test-agent.md");
         let info = parse_agent_file(raw, "test-agent", &path).expect("should parse");
         assert_eq!(info.name, "test-agent");
         assert_eq!(info.description.trim(), "A test agent.");
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn parse_agent_file_with_name_and_model() {
         let raw = "---\nname: security-auditor\ndescription: Security specialist.\nmodel: fast\nreadonly: true\n---\n\nAudit body.";
-        let path = std::path::PathBuf::from("/tmp/security-auditor.md");
+        let path = std::path::PathBuf::from("agents/security-auditor.md");
         let info = parse_agent_file(raw, "security-auditor", &path).expect("should parse");
         assert_eq!(info.name, "security-auditor");
         assert_eq!(info.model.as_deref(), Some("fast"));
@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn parse_agent_file_model_inherit_becomes_none() {
         let raw = "---\ndescription: Test.\nmodel: inherit\n---\n\nBody.";
-        let path = std::path::PathBuf::from("/tmp/test.md");
+        let path = std::path::PathBuf::from("agents/test.md");
         let info = parse_agent_file(raw, "test", &path).expect("should parse");
         assert!(info.model.is_none(), "inherit should normalise to None");
     }
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn parse_agent_file_no_frontmatter() {
         let raw = "# You are a specialist.\n\nHelp with tasks.";
-        let path = std::path::PathBuf::from("/tmp/agent.md");
+        let path = std::path::PathBuf::from("agents/agent.md");
         let info =
             parse_agent_file(raw, "agent", &path).expect("no-frontmatter agent should parse");
         assert_eq!(info.name, "agent");

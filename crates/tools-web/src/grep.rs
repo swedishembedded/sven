@@ -348,10 +348,8 @@ mod tests {
 
     #[tokio::test]
     async fn case_insensitive_search() {
-        use std::sync::atomic::{AtomicU32, Ordering};
-        static CTR: AtomicU32 = AtomicU32::new(0);
-        let n = CTR.fetch_add(1, Ordering::Relaxed);
-        let path = format!("/tmp/sven_grep_test_{}_{n}.txt", std::process::id());
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("grep_test.txt");
         std::fs::write(&path, "Hello World\n").unwrap();
 
         let out = GrepTool
@@ -363,7 +361,6 @@ mod tests {
             .await;
         assert!(!out.is_error);
         assert!(out.content.contains("Hello"));
-        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]
@@ -391,7 +388,7 @@ mod tests {
         let out = GrepTool
             .execute(&call(json!({
                 "pattern": "anything",
-                "path": "/tmp/sven_no_such_dir_xyzzy_12345"
+                "path": "sven_no_such_dir_xyzzy_12345"
             })))
             .await;
         // Either an error or a "no matches" result is acceptable

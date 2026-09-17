@@ -333,7 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_extension_errors() {
-        let err = load_attachment(Path::new("/tmp/x.rs"), &opts_text_only(), "m")
+        let err = load_attachment(Path::new("x.rs"), &opts_text_only(), "m")
             .await
             .unwrap_err();
         assert!(matches!(err, AttachError::UnknownExtension { .. }));
@@ -490,7 +490,7 @@ mod tests {
             supports_images: true,
             ..AttachOptions::default()
         };
-        let err = load_attachment(Path::new("/tmp/nope_xyz.png"), &opts, "vision")
+        let err = load_attachment(Path::new("nope_xyz.png"), &opts, "vision")
             .await
             .unwrap_err();
         assert!(matches!(err, AttachError::Image { .. }), "got {err:?}");

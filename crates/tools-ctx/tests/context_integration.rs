@@ -1264,7 +1264,7 @@ mod error_tests {
         let out = tool
             .execute(&tool_call(
                 "context_open",
-                json!({"path": "/tmp/sven_no_such_file_xyzzy_12345.rs"}),
+                json!({"path": "sven_no_such_file_xyzzy_12345.rs"}),
             ))
             .await;
         assert!(out.is_error, "expected error for nonexistent file");

@@ -75,12 +75,12 @@ where
 ///
 /// **git/commit** - Commit staged changes following project conventions
 /// `v1.0`  [always]
-/// /home/user/.cursor/skills/git/commit/SKILL.md
+/// <home>/.cursor/skills/git/commit/SKILL.md
 ///
 /// ### sven
 ///
 /// **sven/plan** - Plan a development task
-/// /data/.cursor/skills/sven/plan/SKILL.md
+/// <project-root>/.cursor/skills/sven/plan/SKILL.md
 /// ```
 pub fn format_skills_tree(skills: &[SkillInfo]) -> String {
     format_grouped_list(
@@ -145,7 +145,7 @@ pub fn format_skills_tree(skills: &[SkillInfo]) -> String {
 ///
 /// **security-auditor** - Security specialist. Use when implementing auth.
 /// Model: fast  [readonly]
-/// /data/.cursor/agents/security-auditor.md
+/// <project-root>/.cursor/agents/security-auditor.md
 /// ```
 pub fn format_agents_list(agents: &[AgentInfo]) -> String {
     // Agents are not grouped by namespace - use a single flat group.
@@ -282,10 +282,10 @@ mod tests {
         let skill = make_skill(
             "git/commit",
             "Commit",
-            "/home/user/.cursor/skills/git/commit/SKILL.md",
+            ".cursor/skills/git/commit/SKILL.md",
         );
         let out = format_skills_tree(&[skill]);
-        assert!(out.contains("/home/user/.cursor/skills/git/commit/SKILL.md"));
+        assert!(out.contains(".cursor/skills/git/commit/SKILL.md"));
     }
 
     #[test]

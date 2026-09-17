@@ -1,9 +1,9 @@
 # Architecture ratchet for the sven workspace.
 #
 # Enforced by `cargo run -p xtask -- arch` (wired into `make check`, runs before
-# clippy). Method and rationale: /data/workspace/.claude/skills/programming/rust/architecture.md
-# and /home/user/.claude/plans/use-cargo-tree-to-snug-pebble.md (the refactor plan
-# this file bootstraps).
+# clippy). Method and rationale: the `programming/rust` architecture skill in the
+# surrounding monorepo's `.claude/skills/` tree, and the cargo-tree refactor plan
+# this file bootstraps.
 #
 # Rules:
 #   - A crate may depend (as a normal, non-dev dependency) only on crates at a

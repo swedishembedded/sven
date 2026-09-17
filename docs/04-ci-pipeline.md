@@ -206,7 +206,7 @@ system prompt as the **Project Context**:
 
 ```
 ## Project Context
-Project root directory: `/home/user/my-project`
+Project root directory: `<absolute path to your project>`
 - Use this absolute path for all file operations.
 - Pass this path as the `workdir` argument to `run_terminal_command`
   so shell commands execute in the correct directory.

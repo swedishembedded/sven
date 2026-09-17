@@ -383,7 +383,7 @@ mod tests {
 
     fn make_skill(command: &str, description: &str, content: &str) -> SkillInfo {
         let name = command.rsplit('/').next().unwrap_or(command).to_string();
-        let skill_dir = PathBuf::from(format!("/tmp/skills/{command}"));
+        let skill_dir = PathBuf::from(format!("skills/{command}"));
         SkillInfo {
             command: command.to_string(),
             name,

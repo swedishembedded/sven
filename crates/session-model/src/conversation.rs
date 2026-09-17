@@ -672,7 +672,7 @@ mod tests {
                 tool_call_id: "call_abc".into(),
                 function: FunctionCall {
                     name: "read_file".into(),
-                    arguments: r#"{"path":"/tmp/x"}"#.into(),
+                    arguments: r#"{"path":"src/x.rs"}"#.into(),
                 },
             },
         };

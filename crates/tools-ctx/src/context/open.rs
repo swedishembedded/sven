@@ -189,7 +189,7 @@ mod tests {
     async fn nonexistent_path_returns_error() {
         let tool = ContextOpenTool::new(make_store());
         let out = tool
-            .execute(&call(json!({"path": "/tmp/sven_no_such_xyz_99"})))
+            .execute(&call(json!({"path": "sven_no_such_xyz_99"})))
             .await;
         assert!(out.is_error, "{}", out.content);
     }

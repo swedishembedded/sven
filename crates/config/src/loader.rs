@@ -706,7 +706,7 @@ mod tests {
 
     #[test]
     fn load_returns_error_when_explicit_path_missing() {
-        let result = load(Some(Path::new("/tmp/sven_nonexistent_config_xyz.yaml")));
+        let result = load(Some(Path::new("sven_nonexistent_config_xyz.yaml")));
         assert!(result.is_err());
     }
 
