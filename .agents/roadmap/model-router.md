@@ -250,7 +250,9 @@ tests. `RuntimeBuilder::build` hard-codes `ToolSetProfile::Full`, which sets
 chars for `gdb` + `context` regardless of project. `Coding`, `Research` and
 `SubAgent` are constructed by nothing. Persona frontmatter parses `name`,
 `description`, `model`, `readonly`, `is_background` and `knowledge`, but has
-no `tools` field.
+no `tools` field. `is_background` is parsed and honoured by nothing - the
+`task` tool always runs a sub-agent to completion - so a background spawn
+mode belongs in whichever phase gives `task` a non-blocking path.
 
 ## Phases
 
@@ -274,14 +276,13 @@ real `brain serve --dbus` on this machine generating an image with
 
 ### Phase 2 — compact tools, roles, sub-agent routing (sven)
 
-The three tools. Model roles in `sven-config`. Two bugs fixed on the way:
+The three tools. Model roles in `sven-config`.
 
-- `TaskTool` silently drops a persona's `model:`. `AgentInfo.model` exists and
-  the slash-command path honours it (`crates/commands/src/skill.rs:200`), but
-  `resolve_mode_and_prompt` returns only `(mode, prompt)`, so an LLM-spawned
-  sub-agent always inherits the parent's model.
-- No role alias table, so a persona declaring `model: fast` resolves to nothing
-  unless `fast` happens to be a provider key.
+`TaskTool` used to drop a persona's `model:` outright; it now resolves it,
+with `effective_model` stating the precedence (explicit argument, persona,
+session default). What that lands on is still unresolved: there is no role
+alias table, so a persona declaring `model: fast` resolves to nothing unless
+`fast` happens to be a provider key. Roles are what close it.
 
 *Verification:* "generate an image of a dog" and "…using Z-Image" both succeed
 end to end against real weights; a sub-agent persona pinned to a different
