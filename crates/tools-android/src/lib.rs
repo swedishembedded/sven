@@ -12,5 +12,6 @@
 
 pub mod adb;
 mod tool;
+pub mod ui_tree;
 
 pub use tool::AndroidTool;

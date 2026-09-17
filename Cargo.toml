@@ -95,6 +95,7 @@ chrono       = { version = "0.4", features = ["serde"] }
 dirs         = "5"
 humantime    = "2"
 regex        = "1"
+quick-xml    = "0.38"
 sha2         = "0.10"
 shellexpand  = "3"
 hex          = "0.4"
