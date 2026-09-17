@@ -20,16 +20,16 @@ mod tool;
 // `AcpCommands`/`McpCommands` live in `sven-acp`/`sven-mcp` themselves,
 // shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
 // than duplicated here.
-#[cfg(feature = "network")]
-pub use sven_acp::cli::AcpCommands;
 pub use index::IndexCommands;
 #[cfg(feature = "memory")]
 pub use learn::LearnCommands;
 #[cfg(feature = "memory")]
 pub use questions::QuestionsCommands;
-pub use task::TaskCommands;
+#[cfg(feature = "network")]
+pub use sven_acp::cli::AcpCommands;
 #[cfg(feature = "network")]
 pub use sven_mcp::cli::McpCommands;
+pub use task::TaskCommands;
 #[cfg(feature = "network")]
 pub use team::TeamCommands;
 pub use tool::ToolCommands;
@@ -516,12 +516,11 @@ pub enum Commands {
         json: bool,
     },
 
-    /// Handle one whale agent-dispatch stdio request.
+    /// Handle one agent-dispatch stdio request.
     ///
     /// Reads exactly one JSON request object from stdin
-    /// (`{"mode", "device", "params"}`, per whale's real agent-dispatch
-    /// stdio contract - see `.agents/roadmap/android-ui-test.md`), then
-    /// closes stdin. Runs the matching sven machine to completion through
+    /// (`{"mode", "device", "params"}`, the agent-dispatch stdio contract;
+    /// see `.agents/roadmap/android-ui-test.md`), then closes stdin. Runs the matching sven machine to completion through
     /// the same `RuntimeBuilder`/mode-registry path every other sven
     /// machine uses, and writes exactly one JSON reply as the LAST line of
     /// stdout: `{"ok": true, "output": <any JSON>}` on success or
@@ -532,7 +531,7 @@ pub enum Commands {
     /// reserved for a genuine subcommand-level fault: malformed stdin, or an
     /// internal error building/joining the kernel session.
     ///
-    ///   WHALE_AGENT_DISPATCH_CMD="sven agent-dispatch" whale run graph.yaml --local
+    ///   echo '{"mode": "ui-test", "params": {...}}' | sven agent-dispatch
     AgentDispatch,
 
     /// List all supported model providers.

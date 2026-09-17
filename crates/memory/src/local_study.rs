@@ -1,12 +1,13 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The local [`FactSubmitter`]: sven and brain on one machine, no whale.
+//! The local [`FactSubmitter`]: study runs on this machine, no remote service.
 //!
 //! [`crate::drain`] left the trait deliberately generic and named no
-//! implementation. The only one ever planned spoke to whale - a scale-out path
-//! the product has since paused - so the drain had nothing at all to submit
-//! to. This is the implementation the core learning loop actually runs: it
+//! implementation. The only one ever planned spoke to a remote service - a
+//! scale-out path the product has since paused - so the drain had nothing at
+//! all to submit to. This is the implementation the core learning loop
+//! actually runs: it
 //! writes the batch out as brain's `{fact, probe_question, expected_answer}`
 //! dataset, runs brain's gated document study as a subprocess, and turns the
 //! JSON report back into one [`FactOutcome`] per fact.
@@ -660,7 +661,7 @@ struct ClaimedFact {
 /// The submitter `config` selects, or `None` when it selects none.
 ///
 /// The selection is a config value rather than a compile-time choice so a
-/// later whale-backed submitter can be swapped in without the drain - which is
+/// later remote-backed submitter can be swapped in without the drain - which is
 /// generic over [`FactSubmitter`] precisely so this stays possible - changing
 /// at all.
 ///

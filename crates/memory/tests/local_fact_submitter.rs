@@ -1,12 +1,12 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The local (sven + brain, no whale) `FactSubmitter`.
+//! The local (on-machine, no remote service) `FactSubmitter`.
 //!
 //! `S6′` left the drain with a generic bidirectional trait and no
-//! implementation of it at all: the only planned one spoke to whale, which is
-//! a deliberately paused scale-out path. This is the implementation the core
-//! learning loop actually runs - it writes the batch out as brain's
+//! implementation of it at all: the only planned one spoke to a remote
+//! service, a deliberately paused scale-out path. This is the implementation
+//! the core learning loop actually runs - it writes the batch out as brain's
 //! `{fact, probe_question, expected_answer}` dataset, shells out to brain's
 //! gated document study, and turns the JSON report back into the drain's
 //! per-fact verdicts.

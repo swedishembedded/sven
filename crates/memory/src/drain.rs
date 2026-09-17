@@ -35,9 +35,9 @@
 //!
 //! Not an HSM `Effect`. The kernel owns pure transitions, not a training
 //! pipeline; the drain runs as a background task in the wiring tier
-//! (`sven_frontend`) behind a config flag. And the concrete, whale-speaking
-//! [`FactSubmitter`] lives in whale - this trait is deliberately generic and
-//! says nothing about jobs, nodes or payments.
+//! (`sven_frontend`) behind a config flag. And any concrete remote
+//! [`FactSubmitter`] lives outside this repo - this trait is deliberately
+//! generic and says nothing about jobs, nodes or payments.
 //!
 //! # Honest limitations
 //!
@@ -142,7 +142,7 @@ pub struct FactReport {
 
 /// Hands admitted facts to whatever trains on them, and reports back.
 ///
-/// Implementations live outside this repo (whale's is `W7`). Two rules make
+/// Implementations may live outside this repo entirely. Two rules make
 /// the drain's exactly-once settlement possible, and an implementation that
 /// breaks either of them breaks the guarantee:
 ///

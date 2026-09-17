@@ -81,7 +81,7 @@ const SCREENSHOT_FACT: &str = "ui_test_screenshot_path";
 const LOCATING_PHASE_FACT: &str = "ui_test_locating_phase";
 /// Ordered per-step outcome records (`{index, instruction, passed, attempts,
 /// error}`), appended to as each step concludes - public so a caller driving
-/// this machine to completion (e.g. a whale-dispatch CLI wrapper) can build
+/// this machine to completion (e.g. an agent-dispatch CLI wrapper) can build
 /// its own reply shape from the real outcome instead of re-deriving it.
 pub const RESULTS_FACT: &str = "ui_test_results";
 const PENDING_CALL_FACT: &str = "ui_test_pending_call";
@@ -100,8 +100,8 @@ const RETRY_READY_SIGNAL: &str = "ui_test_retry_ready";
 /// declared sequence of natural-language steps, plus any variables already
 /// known before the first step compiles.
 ///
-/// `vars` is how a whale-dispatched single-step run threads a resolved
-/// upstream `Link` value into this run's `value_ref` resolution without any
+/// `vars` is how a host-dispatched single-step run threads a resolved
+/// upstream node's value into this run's `value_ref` resolution without any
 /// new plumbing: the dispatcher seeds it from every `params` field besides
 /// the instruction text, keyed by field name, and [`UiTestState::Seeding`]
 /// binds each one via [`vars::bind`] - the exact mechanism Phase 3 already
@@ -135,13 +135,15 @@ pub struct UiTestMachine {
 impl UiTestMachine {
     #[must_use]
     pub fn new() -> Self {
-        Self { id: MachineId::new() }
+        Self {
+            id: MachineId::new(),
+        }
     }
 
     /// Permission policy: read a screenshot, drive the device, ask a human -
     /// nothing else. Neither capability is inherently dangerous (see
     /// `ToolCapability::is_inherently_dangerous`), so a fixed, reviewed test
-    /// script can run unattended, e.g. under whale's CI dispatch.
+    /// script can run unattended, e.g. under an automated CI dispatch.
     #[must_use]
     pub fn permission_policy() -> PermissionPolicy {
         PermissionPolicy::builder()
@@ -159,9 +161,13 @@ impl Default for UiTestMachine {
 // ─── Small Context accessors ────────────────────────────────────────────────
 
 fn load_steps(ctx: &Context) -> Vec<String> {
-    ctx.fact(STEPS_FACT).and_then(|v| v.as_array()).map_or_else(Vec::new, |a| {
-        a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
-    })
+    ctx.fact(STEPS_FACT)
+        .and_then(|v| v.as_array())
+        .map_or_else(Vec::new, |a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
 }
 
 fn load_index(ctx: &Context) -> u32 {
@@ -169,7 +175,9 @@ fn load_index(ctx: &Context) -> u32 {
 }
 
 fn load_compiled(ctx: &Context) -> Option<CompiledStep> {
-    ctx.fact(COMPILED_FACT).cloned().and_then(|v| serde_json::from_value(v).ok())
+    ctx.fact(COMPILED_FACT)
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
 }
 
 fn retry_key(index: u32) -> String {
@@ -177,11 +185,17 @@ fn retry_key(index: u32) -> String {
 }
 
 fn attempt_number(ctx: &Context, index: u32) -> u32 {
-    ctx.retry_counters.get(&retry_key(index)).copied().unwrap_or(0)
+    ctx.retry_counters
+        .get(&retry_key(index))
+        .copied()
+        .unwrap_or(0)
 }
 
 fn set_pending(ctx: &mut Context, call_id: ToolCallId) {
-    ctx.set_fact(PENDING_CALL_FACT, serde_json::to_value(call_id).expect("ToolCallId always serializes"));
+    ctx.set_fact(
+        PENDING_CALL_FACT,
+        serde_json::to_value(call_id).expect("ToolCallId always serializes"),
+    );
 }
 
 fn pending_matches(ctx: &Context, call_id: &ToolCallId) -> bool {
@@ -191,8 +205,18 @@ fn pending_matches(ctx: &Context, call_id: &ToolCallId) -> bool {
         .is_some_and(|pending| pending == *call_id)
 }
 
-fn append_result(ctx: &mut Context, index: u32, instruction: &str, passed: bool, error: Option<&str>) {
-    let mut results = ctx.fact(RESULTS_FACT).and_then(Value::as_array).cloned().unwrap_or_default();
+fn append_result(
+    ctx: &mut Context,
+    index: u32,
+    instruction: &str,
+    passed: bool,
+    error: Option<&str>,
+) {
+    let mut results = ctx
+        .fact(RESULTS_FACT)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     results.push(json!({
         "index": index,
         "instruction": instruction,
@@ -205,7 +229,7 @@ fn append_result(ctx: &mut Context, index: u32, instruction: &str, passed: bool,
 
 /// If the run's current (or just-completed) step is an `ask_user` step that
 /// named a `bind` variable, the `(bind name, answer)` pair - exactly what a
-/// downstream whale node's `Link` input should read from this run's result,
+/// downstream node in an orchestrating host should read from this run's result,
 /// per `vars.rs`'s own binding mechanism. `None` for any other verb, or when
 /// the step never got as far as binding an answer (e.g. it failed before
 /// being answered).
@@ -231,7 +255,13 @@ fn begin_compile(ctx: &Context, index: u32) -> Effect {
 fn advance_or_finish(ctx: &mut Context) -> Reaction<UiTestState> {
     let index = load_index(ctx);
     let steps = load_steps(ctx);
-    append_result(ctx, index, steps.get(index as usize).map_or("", String::as_str), true, None);
+    append_result(
+        ctx,
+        index,
+        steps.get(index as usize).map_or("", String::as_str),
+        true,
+        None,
+    );
 
     let next = index + 1;
     if (next as usize) >= steps.len() {
@@ -239,7 +269,11 @@ fn advance_or_finish(ctx: &mut Context) -> Reaction<UiTestState> {
     }
     ctx.set_fact(INDEX_FACT, next);
     let effect = begin_compile(ctx, next);
-    Reaction::transition(UiTestState::Compiling, vec![effect], "advancing to the next step")
+    Reaction::transition(
+        UiTestState::Compiling,
+        vec![effect],
+        "advancing to the next step",
+    )
 }
 
 /// A step failed. Spend a retry if the budget allows, otherwise fail the run
@@ -254,7 +288,10 @@ fn fail_or_retry(ctx: &mut Context, reason: impl Into<String>) -> Reaction<UiTes
         Reaction::transition(UiTestState::Retrying, [], "step failed; retrying")
     } else {
         let steps = load_steps(ctx);
-        let instruction = steps.get(index as usize).map_or("", String::as_str).to_string();
+        let instruction = steps
+            .get(index as usize)
+            .map_or("", String::as_str)
+            .to_string();
         append_result(ctx, index, &instruction, false, Some(&reason));
         ctx.set_fact(
             ERROR_FACT,
@@ -266,7 +303,11 @@ fn fail_or_retry(ctx: &mut Context, reason: impl Into<String>) -> Reaction<UiTes
 
 /// Resolve `Some(value)` when `answer` should be bound under [`ASK_BIND_FACT`].
 fn maybe_bind_answer(ctx: &mut Context, answer: &str) {
-    if let Some(name) = ctx.fact(ASK_BIND_FACT).and_then(Value::as_str).map(str::to_string) {
+    if let Some(name) = ctx
+        .fact(ASK_BIND_FACT)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    {
         vars::bind(ctx, &name, &step::normalize_answer(answer));
     }
 }
@@ -299,7 +340,12 @@ impl Machine for UiTestMachine {
         vec![Seeding, Compiling, Locating, Acting, Retrying, Done, Failed]
     }
 
-    fn dispatch_state(&mut self, state: UiTestState, event: &Event, ctx: &mut Context) -> Reaction<UiTestState> {
+    fn dispatch_state(
+        &mut self,
+        state: UiTestState,
+        event: &Event,
+        ctx: &mut Context,
+    ) -> Reaction<UiTestState> {
         use UiTestState::*;
 
         match state {
@@ -313,14 +359,21 @@ impl Machine for UiTestMachine {
                         Ok(s) => s,
                         Err(e) => {
                             ctx.set_fact(ERROR_FACT, format!("malformed test script: {e}"));
-                            return Reaction::transition(Failed, [], "test script could not be parsed");
+                            return Reaction::transition(
+                                Failed,
+                                [],
+                                "test script could not be parsed",
+                            );
                         }
                     };
                     if script.steps.is_empty() {
                         ctx.set_fact(ERROR_FACT, "test script has no steps");
                         return Reaction::transition(Failed, [], "empty test script");
                     }
-                    ctx.set_fact(STEPS_FACT, Value::Array(script.steps.iter().cloned().map(Value::String).collect()));
+                    ctx.set_fact(
+                        STEPS_FACT,
+                        Value::Array(script.steps.iter().cloned().map(Value::String).collect()),
+                    );
                     ctx.set_fact(INDEX_FACT, 0u32);
                     ctx.set_fact(RESULTS_FACT, Value::Array(Vec::new()));
                     // Bind any variables already known before step 0 even
@@ -350,14 +403,19 @@ impl Machine for UiTestMachine {
                         Err(reason) => fail_or_retry(ctx, format!("step compiler: {reason}")),
                     }
                 }
-                Event::LlmFailed { error } => fail_or_retry(ctx, format!("step-compiler call failed: {error}")),
+                Event::LlmFailed { error } => {
+                    fail_or_retry(ctx, format!("step-compiler call failed: {error}"))
+                }
                 _ => Reaction::Ignored,
             },
 
             // ── Locating: screenshot, then ground (tap steps only) ─────────
             Locating => match event {
                 Event::Internal(InternalEvent::Entry) => Reaction::handled(),
-                Event::ToolSucceeded { call_id, observation } => {
+                Event::ToolSucceeded {
+                    call_id,
+                    observation,
+                } => {
                     if !pending_matches(ctx, call_id) {
                         return Reaction::Ignored;
                     }
@@ -375,7 +433,10 @@ impl Machine for UiTestMachine {
             // ── Acting: the android/ask_question call for this step ────────
             Acting => match event {
                 Event::Internal(InternalEvent::Entry) => Reaction::handled(),
-                Event::ToolSucceeded { call_id, observation } => {
+                Event::ToolSucceeded {
+                    call_id,
+                    observation,
+                } => {
                     if !pending_matches(ctx, call_id) {
                         return Reaction::Ignored;
                     }
@@ -390,7 +451,11 @@ impl Machine for UiTestMachine {
                     }
                     fail_or_retry(ctx, error.clone())
                 }
-                Event::QuestionAsked { call_id, prompt, options } => {
+                Event::QuestionAsked {
+                    call_id,
+                    prompt,
+                    options,
+                } => {
                     if !pending_matches(ctx, call_id) {
                         return Reaction::Ignored;
                     }
@@ -408,7 +473,10 @@ impl Machine for UiTestMachine {
                         options: options.clone(),
                     }])
                 }
-                Event::HumanAnswered { question_id, answer } => match ctx.resolve_question(*question_id) {
+                Event::HumanAnswered {
+                    question_id,
+                    answer,
+                } => match ctx.resolve_question(*question_id) {
                     Some(_) => {
                         maybe_bind_answer(ctx, answer);
                         advance_or_finish(ctx)
@@ -420,14 +488,22 @@ impl Machine for UiTestMachine {
 
             // ── Retrying: a real, audited bounce back into Compiling ───────
             Retrying => match event {
-                Event::Internal(InternalEvent::Entry) => Reaction::effects(vec![Effect::EmitInternal {
-                    name: RETRY_READY_SIGNAL.to_string(),
-                    payload: Value::Null,
-                }]),
-                Event::Internal(InternalEvent::Custom { name, .. }) if name == RETRY_READY_SIGNAL => {
+                Event::Internal(InternalEvent::Entry) => {
+                    Reaction::effects(vec![Effect::EmitInternal {
+                        name: RETRY_READY_SIGNAL.to_string(),
+                        payload: Value::Null,
+                    }])
+                }
+                Event::Internal(InternalEvent::Custom { name, .. })
+                    if name == RETRY_READY_SIGNAL =>
+                {
                     let index = load_index(ctx);
                     let effect = begin_compile(ctx, index);
-                    Reaction::transition(Compiling, vec![effect], "starting next attempt for this step")
+                    Reaction::transition(
+                        Compiling,
+                        vec![effect],
+                        "starting next attempt for this step",
+                    )
                 }
                 _ => Reaction::Ignored,
             },
@@ -441,7 +517,12 @@ impl Machine for UiTestMachine {
 /// for `tap`, straight into `Acting` for everything else (`ask_user` builds
 /// its own `CallTool` directly; every other verb goes through
 /// `direct_action_effect`).
-fn dispatch_compiled(ctx: &mut Context, compiled: &CompiledStep, index: u32, attempt: u32) -> Reaction<UiTestState> {
+fn dispatch_compiled(
+    ctx: &mut Context,
+    compiled: &CompiledStep,
+    index: u32,
+    attempt: u32,
+) -> Reaction<UiTestState> {
     use step::StepVerb;
 
     match compiled.verb {
@@ -452,21 +533,36 @@ fn dispatch_compiled(ctx: &mut Context, compiled: &CompiledStep, index: u32, att
             let (effect, call_id) = step::screenshot_effect(index, attempt);
             set_pending(ctx, call_id);
             ctx.set_fact(LOCATING_PHASE_FACT, "screenshot");
-            Reaction::transition(UiTestState::Locating, vec![effect], "compiled a tap step; locating on screen")
+            Reaction::transition(
+                UiTestState::Locating,
+                vec![effect],
+                "compiled a tap step; locating on screen",
+            )
         }
         StepVerb::AskUser => {
-            let question = compiled.target.clone().unwrap_or_else(|| "Please help with this step.".to_string());
+            let question = compiled
+                .target
+                .clone()
+                .unwrap_or_else(|| "Please help with this step.".to_string());
             let options = ASK_USER_OPTIONS.iter().map(|s| s.to_string()).collect();
             let (effect, call_id) = step::ask_user_effect(index, attempt, &question, options);
             set_pending(ctx, call_id);
             ctx.set_fact(ASK_BIND_FACT, json!(compiled.bind));
-            Reaction::transition(UiTestState::Acting, vec![effect], "compiled an ask_user step")
+            Reaction::transition(
+                UiTestState::Acting,
+                vec![effect],
+                "compiled an ask_user step",
+            )
         }
         _ => match step::direct_action_effect(ctx, compiled, index, attempt) {
             Ok((effect, call_id)) => {
                 set_pending(ctx, call_id);
                 ctx.set_fact(ASK_BIND_FACT, Value::Null);
-                Reaction::transition(UiTestState::Acting, vec![effect], "compiled a direct action step")
+                Reaction::transition(
+                    UiTestState::Acting,
+                    vec![effect],
+                    "compiled a direct action step",
+                )
             }
             Err(reason) => fail_or_retry(ctx, reason),
         },
@@ -479,7 +575,11 @@ fn dispatch_compiled(ctx: &mut Context, compiled: &CompiledStep, index: u32, att
 fn handle_locating_success(ctx: &mut Context, observation: &Value) -> Reaction<UiTestState> {
     let index = load_index(ctx);
     let attempt = attempt_number(ctx, index);
-    let phase = ctx.fact(LOCATING_PHASE_FACT).and_then(Value::as_str).unwrap_or("").to_string();
+    let phase = ctx
+        .fact(LOCATING_PHASE_FACT)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
 
     match phase.as_str() {
         "screenshot" => {
@@ -487,13 +587,18 @@ fn handle_locating_success(ctx: &mut Context, observation: &Value) -> Reaction<U
             match step::extract_screenshot_path(text) {
                 Some(path) => {
                     ctx.set_fact(SCREENSHOT_FACT, path.clone());
-                    let target = load_compiled(ctx).and_then(|c| c.target).unwrap_or_default();
+                    let target = load_compiled(ctx)
+                        .and_then(|c| c.target)
+                        .unwrap_or_default();
                     let (effect, call_id) = step::ground_effect(index, attempt, &path, &target);
                     set_pending(ctx, call_id);
                     ctx.set_fact(LOCATING_PHASE_FACT, "ground");
                     Reaction::effects(vec![effect])
                 }
-                None => fail_or_retry(ctx, format!("could not parse a screenshot path from '{text}'")),
+                None => fail_or_retry(
+                    ctx,
+                    format!("could not parse a screenshot path from '{text}'"),
+                ),
             }
         }
         "ground" => match step::parse_ground_result(observation) {
@@ -509,18 +614,29 @@ fn handle_locating_success(ctx: &mut Context, observation: &Value) -> Reaction<U
                 let (effect, call_id) = step::ask_user_effect(index, attempt, &question, options);
                 set_pending(ctx, call_id);
                 ctx.set_fact(ASK_BIND_FACT, Value::Null);
-                Reaction::transition(UiTestState::Acting, vec![effect], "secure screen detected; handing off to a human")
+                Reaction::transition(
+                    UiTestState::Acting,
+                    vec![effect],
+                    "secure screen detected; handing off to a human",
+                )
             }
             Ok(g) if g.found && !g.boxes.is_empty() => {
                 let (cx, cy) = step::bbox_center(&g.boxes[0].bbox);
                 let (effect, call_id) = step::tap_effect(index, attempt, cx, cy);
                 set_pending(ctx, call_id);
-                Reaction::transition(UiTestState::Acting, vec![effect], "element located; tapping")
+                Reaction::transition(
+                    UiTestState::Acting,
+                    vec![effect],
+                    "element located; tapping",
+                )
             }
             Ok(_) => fail_or_retry(ctx, "target not found on screen"),
             Err(e) => fail_or_retry(ctx, e),
         },
-        other => fail_or_retry(ctx, format!("internal error: unexpected locating phase '{other}'")),
+        other => fail_or_retry(
+            ctx,
+            format!("internal error: unexpected locating phase '{other}'"),
+        ),
     }
 }
 
@@ -560,20 +676,35 @@ mod tests {
     /// and, since `Entry` handlers may never transition themselves,
     /// `Retrying`'s one self-addressed `EmitInternal`/`Custom` round trip.
     /// Mirrors `verified_task.rs`'s identical test helper.
-    fn drive(m: &mut UiTestMachine, ctx: &mut Context, state: &mut UiTestState, event: Event) -> Reaction<UiTestState> {
+    fn drive(
+        m: &mut UiTestMachine,
+        ctx: &mut Context,
+        state: &mut UiTestState,
+        event: Event,
+    ) -> Reaction<UiTestState> {
         let reaction = m.dispatch_state(*state, &event, ctx);
         if let Reaction::Transition { target, .. } = &reaction {
             *state = *target;
             let entry = m.dispatch_state(*state, &Event::entry(), ctx);
-            assert!(!entry.is_transition(), "entry handlers must never transition");
+            assert!(
+                !entry.is_transition(),
+                "entry handlers must never transition"
+            );
             if let Reaction::Handled(effects) = entry {
                 for effect in effects {
                     if let Effect::EmitInternal { name, payload } = effect {
-                        let bounced = m.dispatch_state(*state, &Event::Internal(InternalEvent::Custom { name, payload }), ctx);
+                        let bounced = m.dispatch_state(
+                            *state,
+                            &Event::Internal(InternalEvent::Custom { name, payload }),
+                            ctx,
+                        );
                         if let Reaction::Transition { target, .. } = bounced {
                             *state = target;
                             let entry = m.dispatch_state(*state, &Event::entry(), ctx);
-                            assert!(!entry.is_transition(), "entry handlers must never transition");
+                            assert!(
+                                !entry.is_transition(),
+                                "entry handlers must never transition"
+                            );
                         }
                     }
                 }
@@ -583,15 +714,25 @@ mod tests {
     }
 
     fn compiled_llm_turn(compiled: Value) -> Event {
-        Event::LlmTurnComplete { thread: step::COMPILE_THREAD.to_string(), text: compiled.to_string(), tool_calls: vec![] }
+        Event::LlmTurnComplete {
+            thread: step::COMPILE_THREAD.to_string(),
+            text: compiled.to_string(),
+            tool_calls: vec![],
+        }
     }
 
     fn tool_ok(call_id: ToolCallId, observation: Value) -> Event {
-        Event::ToolSucceeded { call_id, observation }
+        Event::ToolSucceeded {
+            call_id,
+            observation,
+        }
     }
 
     fn tool_err(call_id: ToolCallId, error: &str) -> Event {
-        Event::ToolFailed { call_id, error: error.to_string() }
+        Event::ToolFailed {
+            call_id,
+            error: error.to_string(),
+        }
     }
 
     fn pending_call_id(ctx: &Context) -> ToolCallId {
@@ -603,7 +744,14 @@ mod tests {
     #[test]
     fn seeding_parses_the_script_and_starts_compiling_step_0() {
         let (mut m, mut ctx, mut state) = make();
-        let out = drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
+        let out = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Launch the demo app"]),
+            },
+        );
         assert_eq!(state, UiTestState::Compiling);
         assert!(out.is_transition());
         assert_eq!(load_steps(&ctx), vec!["Launch the demo app".to_string()]);
@@ -613,7 +761,14 @@ mod tests {
     #[test]
     fn a_malformed_script_goes_to_failed() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: "not json".to_string() });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: "not json".to_string(),
+            },
+        );
         assert_eq!(state, UiTestState::Failed);
         assert!(ctx.fact(ERROR_FACT).is_some());
     }
@@ -621,7 +776,12 @@ mod tests {
     #[test]
     fn an_empty_script_goes_to_failed() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&[]) });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage { text: script(&[]) },
+        );
         assert_eq!(state, UiTestState::Failed);
     }
 
@@ -630,12 +790,32 @@ mod tests {
     #[test]
     fn a_non_tap_step_compiles_straight_into_acting() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Launch the demo app"]),
+            },
+        );
 
-        let out = drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })));
+        let out = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
+        );
         assert_eq!(state, UiTestState::Acting);
         assert_eq!(effects_of(&out).len(), 1);
-        let Effect::CallTool { name, args, capability, .. } = &effects_of(&out)[0] else { panic!("expected CallTool") };
+        let Effect::CallTool {
+            name,
+            args,
+            capability,
+            ..
+        } = &effects_of(&out)[0]
+        else {
+            panic!("expected CallTool")
+        };
         assert_eq!(name, "android");
         assert_eq!(*capability, ToolCapability::ControlDevice);
         assert_eq!(args["action"], "launch_app");
@@ -645,11 +825,25 @@ mod tests {
     #[test]
     fn a_tap_step_compiles_into_locating_and_takes_a_screenshot() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Click \"log in with password\""]) });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Click \"log in with password\""]),
+            },
+        );
 
-        let out = drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "tap", "target": "log in with password" })));
+        let out = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "tap", "target": "log in with password" })),
+        );
         assert_eq!(state, UiTestState::Locating);
-        let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else { panic!("expected CallTool") };
+        let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else {
+            panic!("expected CallTool")
+        };
         assert_eq!(name, "android");
         assert_eq!(args["action"], "screenshot");
     }
@@ -659,23 +853,56 @@ mod tests {
     #[test]
     fn locating_grounds_the_screenshot_then_taps_the_found_box_center() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Click \"log in\""]) });
-        drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "tap", "target": "log in" })));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Click \"log in\""]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "tap", "target": "log in" })),
+        );
         assert_eq!(state, UiTestState::Locating);
 
         let screenshot_id = pending_call_id(&ctx);
-        let out = drive(&mut m, &mut ctx, &mut state, tool_ok(screenshot_id, json!("screenshot saved: /tmp/shot.png (100x200)")));
-        assert_eq!(state, UiTestState::Locating, "still locating; now grounding");
-        let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else { panic!("expected CallTool") };
+        let out = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(
+                screenshot_id,
+                json!("screenshot saved: /tmp/shot.png (100x200)"),
+            ),
+        );
+        assert_eq!(
+            state,
+            UiTestState::Locating,
+            "still locating; now grounding"
+        );
+        let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else {
+            panic!("expected CallTool")
+        };
         assert_eq!(name, "ground");
         assert_eq!(args["image_path"], "/tmp/shot.png");
         assert_eq!(args["target"], "log in");
 
         let ground_id = pending_call_id(&ctx);
         let ground_json = json!({ "found": true, "boxes": [{ "phrase": "log in", "bbox": [0.1, 0.1, 0.3, 0.3] }] }).to_string();
-        let out = drive(&mut m, &mut ctx, &mut state, tool_ok(ground_id, json!(ground_json)));
+        let out = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(ground_id, json!(ground_json)),
+        );
         assert_eq!(state, UiTestState::Acting);
-        let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else { panic!("expected CallTool") };
+        let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else {
+            panic!("expected CallTool")
+        };
         assert_eq!(name, "android");
         assert_eq!(args["action"], "tap");
         assert_eq!(args["x"], 0.2);
@@ -685,39 +912,95 @@ mod tests {
     #[test]
     fn a_secure_screen_hands_off_to_ask_user_instead_of_tapping() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Confirm on the secure screen"]) });
-        drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "tap", "target": "confirm" })));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Confirm on the secure screen"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "tap", "target": "confirm" })),
+        );
         let screenshot_id = pending_call_id(&ctx);
-        drive(&mut m, &mut ctx, &mut state, tool_ok(screenshot_id, json!("screenshot saved: /tmp/shot.png")));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(screenshot_id, json!("screenshot saved: /tmp/shot.png")),
+        );
         let ground_id = pending_call_id(&ctx);
 
         let secure_json = json!({ "found": false, "boxes": [], "secure_screen": true }).to_string();
-        let out = drive(&mut m, &mut ctx, &mut state, tool_ok(ground_id, json!(secure_json)));
+        let out = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(ground_id, json!(secure_json)),
+        );
 
-        assert_eq!(state, UiTestState::Acting, "must hand off, never attempt to tap a screen it never saw");
-        let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else { panic!("expected CallTool") };
+        assert_eq!(
+            state,
+            UiTestState::Acting,
+            "must hand off, never attempt to tap a screen it never saw"
+        );
+        let Effect::CallTool { name, args, .. } = &effects_of(&out)[0] else {
+            panic!("expected CallTool")
+        };
         assert_eq!(name, "ask_question");
         let question = args["questions"][0]["prompt"].as_str().unwrap();
-        assert!(question.contains("Confirm on the secure screen"), "{question}");
+        assert!(
+            question.contains("Confirm on the secure screen"),
+            "{question}"
+        );
         assert_eq!(args["questions"][0]["options"], json!(["Done", "Cancel"]));
     }
 
     #[test]
     fn a_target_not_found_on_screen_is_a_failure_not_a_crash() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Click \"log in\""]) });
-        drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "tap", "target": "log in" })));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Click \"log in\""]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "tap", "target": "log in" })),
+        );
         let screenshot_id = pending_call_id(&ctx);
-        drive(&mut m, &mut ctx, &mut state, tool_ok(screenshot_id, json!("screenshot saved: /tmp/shot.png")));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(screenshot_id, json!("screenshot saved: /tmp/shot.png")),
+        );
         let ground_id = pending_call_id(&ctx);
         let not_found = json!({ "found": false, "boxes": [] }).to_string();
-        drive(&mut m, &mut ctx, &mut state, tool_ok(ground_id, json!(not_found)));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(ground_id, json!(not_found)),
+        );
         assert_eq!(
             state,
             UiTestState::Compiling,
             "one attempt remains in the default budget; Retrying bounces straight back into Compiling"
         );
-        assert_eq!(ctx.fact(LAST_FAILURE_FACT).unwrap(), "target not found on screen");
+        assert_eq!(
+            ctx.fact(LAST_FAILURE_FACT).unwrap(),
+            "target not found on screen"
+        );
     }
 
     // ── Acting -> advance / done ─────────────────────────────────────────────
@@ -725,10 +1008,27 @@ mod tests {
     #[test]
     fn the_last_step_succeeding_finishes_the_run() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
-        drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Launch the demo app"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
+        );
         let call_id = pending_call_id(&ctx);
-        drive(&mut m, &mut ctx, &mut state, tool_ok(call_id, json!("launched com.example.demoapp")));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(call_id, json!("launched com.example.demoapp")),
+        );
 
         assert_eq!(state, UiTestState::Done);
         let results = ctx.fact(RESULTS_FACT).unwrap().as_array().unwrap();
@@ -739,10 +1039,27 @@ mod tests {
     #[test]
     fn a_non_last_step_succeeding_advances_to_compiling_the_next_one() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app", "Wait a bit"]) });
-        drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Launch the demo app", "Wait a bit"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
+        );
         let call_id = pending_call_id(&ctx);
-        drive(&mut m, &mut ctx, &mut state, tool_ok(call_id, json!("launched com.example.demoapp")));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(call_id, json!("launched com.example.demoapp")),
+        );
 
         assert_eq!(state, UiTestState::Compiling);
         assert_eq!(load_index(&ctx), 1);
@@ -757,25 +1074,45 @@ mod tests {
             &mut m,
             &mut ctx,
             &mut state,
-            Event::UserMessage { text: script(&["Ask the user for the code", "Enter the code"]) },
+            Event::UserMessage {
+                text: script(&["Ask the user for the code", "Enter the code"]),
+            },
         );
         drive(
             &mut m,
             &mut ctx,
             &mut state,
-            compiled_llm_turn(json!({ "verb": "ask_user", "target": "What is the code?", "bind": "code" })),
+            compiled_llm_turn(
+                json!({ "verb": "ask_user", "target": "What is the code?", "bind": "code" }),
+            ),
         );
         assert_eq!(state, UiTestState::Acting);
         let ask_id = pending_call_id(&ctx);
 
         // TUI-style plain answer text (no "Q:/A:" wrapper).
-        drive(&mut m, &mut ctx, &mut state, tool_ok(ask_id, json!("123456")));
-        assert_eq!(state, UiTestState::Compiling, "advances to compile the next step");
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(ask_id, json!("123456")),
+        );
+        assert_eq!(
+            state,
+            UiTestState::Compiling,
+            "advances to compile the next step"
+        );
         assert_eq!(vars::resolve(&ctx, "code"), Some("123456".to_string()));
 
-        let out = drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "type_text", "value_ref": "code" })));
+        let out = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "type_text", "value_ref": "code" })),
+        );
         assert_eq!(state, UiTestState::Acting);
-        let Effect::CallTool { args, .. } = &effects_of(&out)[0] else { panic!("expected CallTool") };
+        let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {
+            panic!("expected CallTool")
+        };
         assert_eq!(args["action"], "type_text");
         assert_eq!(args["text"], "123456");
     }
@@ -783,12 +1120,21 @@ mod tests {
     #[test]
     fn an_answer_headless_parks_then_resumes_on_human_answered_and_still_binds() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Ask the user for the code"]) });
         drive(
             &mut m,
             &mut ctx,
             &mut state,
-            compiled_llm_turn(json!({ "verb": "ask_user", "target": "What is the code?", "bind": "code" })),
+            Event::UserMessage {
+                text: script(&["Ask the user for the code"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(
+                json!({ "verb": "ask_user", "target": "What is the code?", "bind": "code" }),
+            ),
         );
         let ask_id = pending_call_id(&ctx);
 
@@ -796,15 +1142,34 @@ mod tests {
             &mut m,
             &mut ctx,
             &mut state,
-            Event::QuestionAsked { call_id: ask_id, prompt: "What is the code?".to_string(), options: vec!["Provide the value".into(), "Skip this step".into()] },
+            Event::QuestionAsked {
+                call_id: ask_id,
+                prompt: "What is the code?".to_string(),
+                options: vec!["Provide the value".into(), "Skip this step".into()],
+            },
         );
-        assert_eq!(state, UiTestState::Acting, "parking must not move the machine");
+        assert_eq!(
+            state,
+            UiTestState::Acting,
+            "parking must not move the machine"
+        );
         assert_eq!(effects_of(&out).len(), 1);
-        assert_eq!(effects_of(&out)[0].kind(), sven_hsm::effect::EffectKind::RequestHumanAnswer);
+        assert_eq!(
+            effects_of(&out)[0].kind(),
+            sven_hsm::effect::EffectKind::RequestHumanAnswer
+        );
         assert!(ctx.pending_question.is_some());
 
         let question_id = ctx.pending_question.as_ref().unwrap().question_id;
-        drive(&mut m, &mut ctx, &mut state, Event::HumanAnswered { question_id, answer: "Other: 654321".to_string() });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::HumanAnswered {
+                question_id,
+                answer: "Other: 654321".to_string(),
+            },
+        );
         assert_eq!(state, UiTestState::Done);
         assert_eq!(vars::resolve(&ctx, "code"), Some("654321".to_string()));
         assert!(ctx.pending_question.is_none());
@@ -830,10 +1195,20 @@ mod tests {
             "a var supplied in the seed script must be bound before step 0 compiles"
         );
 
-        let out = drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "type_text", "value_ref": "code" })));
+        let out = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "type_text", "value_ref": "code" })),
+        );
         assert_eq!(state, UiTestState::Acting);
-        let Effect::CallTool { args, .. } = &effects_of(&out)[0] else { panic!("expected CallTool") };
-        assert_eq!(args["text"], "999111", "a seeded var resolves through value_ref exactly like an in-run ask_user answer");
+        let Effect::CallTool { args, .. } = &effects_of(&out)[0] else {
+            panic!("expected CallTool")
+        };
+        assert_eq!(
+            args["text"], "999111",
+            "a seeded var resolves through value_ref exactly like an in-run ask_user answer"
+        );
     }
 
     #[test]
@@ -842,12 +1217,19 @@ mod tests {
         // existing script in this test module, and every real pre-this-change
         // caller) must still parse and seed with no bindings.
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Launch the demo app"]),
+            },
+        );
         assert_eq!(state, UiTestState::Compiling);
         assert!(vars::load(&ctx).is_empty());
     }
 
-    // ── ask_user_binding: the (name, answer) pair a whale Link should read ──
+    // ── ask_user_binding: the (name, answer) pair a downstream node reads ──
 
     #[test]
     fn ask_user_binding_returns_none_before_any_step_runs() {
@@ -858,26 +1240,55 @@ mod tests {
     #[test]
     fn ask_user_binding_returns_none_for_a_non_ask_user_step() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
-        drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Launch the demo app"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
+        );
         assert_eq!(ask_user_binding(&ctx), None);
     }
 
     #[test]
     fn ask_user_binding_returns_the_bound_name_and_answer_once_the_step_succeeds() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Ask the user for the code"]) });
         drive(
             &mut m,
             &mut ctx,
             &mut state,
-            compiled_llm_turn(json!({ "verb": "ask_user", "target": "What is the code?", "bind": "code" })),
+            Event::UserMessage {
+                text: script(&["Ask the user for the code"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(
+                json!({ "verb": "ask_user", "target": "What is the code?", "bind": "code" }),
+            ),
         );
         let ask_id = pending_call_id(&ctx);
-        drive(&mut m, &mut ctx, &mut state, tool_ok(ask_id, json!("123456")));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(ask_id, json!("123456")),
+        );
 
         assert_eq!(state, UiTestState::Done);
-        assert_eq!(ask_user_binding(&ctx), Some(("code".to_string(), "123456".to_string())));
+        assert_eq!(
+            ask_user_binding(&ctx),
+            Some(("code".to_string(), "123456".to_string()))
+        );
     }
 
     // ── Retry budget ─────────────────────────────────────────────────────────
@@ -885,13 +1296,30 @@ mod tests {
     #[test]
     fn a_failing_step_retries_up_to_the_budget_then_fails_the_run() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Launch the demo app"]),
+            },
+        );
 
         for _ in 0..MAX_ATTEMPTS_PER_STEP {
-            drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })));
+            drive(
+                &mut m,
+                &mut ctx,
+                &mut state,
+                compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
+            );
             assert_eq!(state, UiTestState::Acting);
             let call_id = pending_call_id(&ctx);
-            drive(&mut m, &mut ctx, &mut state, tool_err(call_id, "device not found"));
+            drive(
+                &mut m,
+                &mut ctx,
+                &mut state,
+                tool_err(call_id, "device not found"),
+            );
         }
 
         assert_eq!(state, UiTestState::Failed);
@@ -906,27 +1334,69 @@ mod tests {
     #[test]
     fn a_step_that_fails_once_then_succeeds_advances_normally() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
-        drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Launch the demo app"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
+        );
         let call_id = pending_call_id(&ctx);
-        drive(&mut m, &mut ctx, &mut state, tool_err(call_id, "transient adb error"));
-        assert_eq!(state, UiTestState::Compiling, "bounced back through Retrying into Compiling");
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_err(call_id, "transient adb error"),
+        );
+        assert_eq!(
+            state,
+            UiTestState::Compiling,
+            "bounced back through Retrying into Compiling"
+        );
 
-        drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
+        );
         let call_id = pending_call_id(&ctx);
-        drive(&mut m, &mut ctx, &mut state, tool_ok(call_id, json!("launched com.example.demoapp")));
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(call_id, json!("launched com.example.demoapp")),
+        );
         assert_eq!(state, UiTestState::Done);
     }
 
     #[test]
     fn a_step_compiler_parse_failure_spends_a_retry_instead_of_crashing() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
         drive(
             &mut m,
             &mut ctx,
             &mut state,
-            Event::LlmTurnComplete { thread: step::COMPILE_THREAD.to_string(), text: "not json".to_string(), tool_calls: vec![] },
+            Event::UserMessage {
+                text: script(&["Launch the demo app"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::LlmTurnComplete {
+                thread: step::COMPILE_THREAD.to_string(),
+                text: "not json".to_string(),
+                tool_calls: vec![],
+            },
         );
         assert_eq!(state, UiTestState::Compiling, "retried back into Compiling");
     }
@@ -934,8 +1404,22 @@ mod tests {
     #[test]
     fn an_llm_failure_spends_a_retry_rather_than_wedging() {
         let (mut m, mut ctx, mut state) = make();
-        drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
-        drive(&mut m, &mut ctx, &mut state, Event::LlmFailed { error: "model unreachable".to_string() });
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Launch the demo app"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::LlmFailed {
+                error: "model unreachable".to_string(),
+            },
+        );
         assert_eq!(state, UiTestState::Compiling);
     }
 
@@ -943,8 +1427,20 @@ mod tests {
     fn replaying_the_same_event_sequence_yields_the_same_call_ids() {
         let run = || {
             let (mut m, mut ctx, mut state) = make();
-            drive(&mut m, &mut ctx, &mut state, Event::UserMessage { text: script(&["Launch the demo app"]) });
-            drive(&mut m, &mut ctx, &mut state, compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })));
+            drive(
+                &mut m,
+                &mut ctx,
+                &mut state,
+                Event::UserMessage {
+                    text: script(&["Launch the demo app"]),
+                },
+            );
+            drive(
+                &mut m,
+                &mut ctx,
+                &mut state,
+                compiled_llm_turn(json!({ "verb": "launch_app", "target": "com.example.demoapp" })),
+            );
             pending_call_id(&ctx)
         };
         assert_eq!(run(), run());
