@@ -594,7 +594,10 @@ mod tests {
             tx,
             AgentRuntimeContext::default(),
         );
-        reg.schemas().into_iter().map(|s| (s.name, s.description, s.parameters)).collect()
+        reg.schemas()
+            .into_iter()
+            .map(|s| (s.name, s.description, s.parameters))
+            .collect()
     }
 
     /// The words a tool's own schema already defines: its parameter names and
@@ -612,7 +615,11 @@ mod tests {
         };
         for (name, spec) in props {
             words.push(name.clone());
-            let variants = spec.get("enum").and_then(|e| e.as_array()).into_iter().flatten();
+            let variants = spec
+                .get("enum")
+                .and_then(|e| e.as_array())
+                .into_iter()
+                .flatten();
             words.extend(variants.filter_map(|v| v.as_str()).map(str::to_string));
         }
         words
@@ -630,9 +637,22 @@ mod tests {
         let mut got: Vec<String> = agent_tools().into_iter().map(|(n, ..)| n).collect();
         got.sort();
         let expected = [
-            "attach_file", "context", "edit_file", "find_file", "gdb", "grep", "memory",
-            "read_file", "shell", "skill", "system", "task", "todo", "web_fetch",
-            "web_search", "write_file",
+            "attach_file",
+            "context",
+            "edit_file",
+            "find_file",
+            "gdb",
+            "grep",
+            "memory",
+            "read_file",
+            "shell",
+            "skill",
+            "system",
+            "task",
+            "todo",
+            "web_fetch",
+            "web_search",
+            "write_file",
         ];
         assert_eq!(got, expected, "the agent's tool set changed");
     }
@@ -670,7 +690,11 @@ mod tests {
                 offenders.push(format!("{name} names {mentioned:?}"));
             }
         }
-        assert!(offenders.is_empty(), "tool descriptions are not self-contained:\n  {}", offenders.join("\n  "));
+        assert!(
+            offenders.is_empty(),
+            "tool descriptions are not self-contained:\n  {}",
+            offenders.join("\n  ")
+        );
     }
 
     /// Tool names that are also ordinary English, and so cannot be judged by
@@ -679,6 +703,55 @@ mod tests {
     /// call site, because a check that reports things that are fine is a check
     /// people learn to override.
     const AMBIGUOUS: &[&str] = &["context", "memory", "system", "task", "todo", "skill"];
+
+    /// Every tool the system prompt names must be a tool that exists.
+    ///
+    /// Same failure as a description naming a sibling, one level up and more
+    /// expensive: the system prompt is sent on every request, so a tool that
+    /// was renamed or removed goes on being advertised to the model forever.
+    /// It told the model to keep memory with `update_memory` and to pass
+    /// `workdir` to `run_terminal_command` - one renamed to `memory`, the
+    /// other deleted as a duplicate of `shell`.
+    #[test]
+    fn the_system_prompt_only_names_tools_that_exist() {
+        let known: Vec<String> = agent_tools().into_iter().map(|(n, ..)| n).collect();
+        let message = AgentRuntimeContext::default()
+            .build_system_message(AgentMode::Agent)
+            .expect("the default context builds a system prompt");
+        let sven_model::MessageContent::Text(prompt) = message.content else {
+            panic!("a system prompt is plain text");
+        };
+
+        // Only backticked words are considered: the prompt is prose about
+        // software, and `shell` or `task` in a sentence is usually English.
+        // A tool it means for the model to CALL is written as code.
+        let mut unknown: Vec<String> = Vec::new();
+        for span in prompt.split('`').skip(1).step_by(2) {
+            let span: &str = span;
+            let word = span.trim();
+            let looks_like_a_tool = word.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                && word.contains('_')
+                && !word.is_empty();
+            if looks_like_a_tool && !known.iter().any(|k| k == word) && !NOT_TOOLS.contains(&word) {
+                unknown.push(word.to_string());
+            }
+        }
+        unknown.sort();
+        unknown.dedup();
+        assert!(
+            unknown.is_empty(),
+            "the system prompt names tools that do not exist: {unknown:?}"
+        );
+    }
+
+    /// Backticked snake_case in the system prompt that is deliberately not a
+    /// tool name - argument names and file names read the same way.
+    const NOT_TOOLS: &[&str] = &[
+        "max_results",
+        "whole_project",
+        "output_mode",
+        "context_lines",
+    ];
 
     /// Whether `description` refers to the tool `needle` in prose.
     ///

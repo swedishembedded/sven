@@ -504,7 +504,7 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
          Operating Mode: `{mode}`\n\n\
          Core Capabilities:\n\
          - Multi-mode operation (Research, Plan, Agent) with dynamic mode switching\n\
-         - Persistent memory across sessions via `update_memory` tool\n\
+         - Persistent memory across sessions\n\
          - Integrated debugging support with GDB tools\n\
          - Markdown-driven workflows with frontmatter configuration\n\
          - Comprehensive linting and test integration\n\
@@ -572,13 +572,25 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
             "\n\n## Project Context\n\
              Project root: `{project_root}`\
              {workspace_line}\n\
-             - Use absolute paths for all file read/write operations.\n\
-             - Pass the project root as the `workdir` argument to `run_terminal_command` \
-               so shell commands execute in the correct directory.",
+             - Use absolute paths for all file read/write operations.",
             project_root = root.display(),
         )
     } else {
-        String::new()
+        // No git root does not mean no location. Said nothing, the model has
+        // to guess where it is running, and it guesses: asked to list the
+        // current directory it produced `/current_directory` once and `/tmp`
+        // another time. A working directory is cheap to state and is the one
+        // fact every path argument depends on.
+        match std::env::current_dir() {
+            Ok(cwd) => format!(
+                "\n\n## Project Context\n\
+                 Working directory: `{}`\n\
+                 - Not a git repository, so there is no project root above it.\n\
+                 - Resolve relative paths against this directory.",
+                cwd.display()
+            ),
+            Err(_) => String::new(),
+        }
     };
 
     let git_section = if let Some(git) = ctx.git_context {
@@ -807,10 +819,21 @@ mod tests {
         );
     }
 
+    /// No git root still tells the model where it is.
+    ///
+    /// Saying nothing was the old behaviour and it is the bug: a model with no
+    /// location has to guess one for every path argument, and it does - asked
+    /// to list the current directory it produced `/current_directory` once and
+    /// `/tmp` another time, then reported confidently on whatever it found
+    /// there.
     #[test]
-    fn no_project_root_no_section() {
+    fn no_project_root_still_names_the_working_directory() {
         let pr = system_prompt(AgentMode::Agent, None, empty());
-        assert!(!pr.contains("Project Context"));
+        let cwd = std::env::current_dir().unwrap();
+        assert!(pr.contains("Working directory"), "{pr}");
+        assert!(pr.contains(&cwd.display().to_string()), "{pr}");
+        // The git-rooted phrasing must not appear when there is no git root.
+        assert!(!pr.contains("Project root:"), "{pr}");
     }
 
     #[test]
