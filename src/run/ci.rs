@@ -140,6 +140,12 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
         && cli.output_last_message.is_none()
         && cli.system_prompt_file.is_none()
         && cli.vars.is_empty()
+        // `--attach` is loaded into the first user turn by `CiRunner` alone
+        // (`RunOptions::attachments`); `RuntimeRunner` has no attachment path
+        // at all, so routing an attach run to it silently dropped the flag and
+        // the model received a bare prompt. Treat it like every other feature
+        // only `CiRunner` implements.
+        && cli.attach.is_empty()
         && cli.effective_output_trace().is_none();
 
     if load_trace.is_none() && (mode_forces_runtime_runner || workflow_features_absent) {
