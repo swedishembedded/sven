@@ -858,8 +858,8 @@ pub struct ToolsConfig {
 /// because the caller asked for `force_transcribe`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AsrConfig {
-    /// Executable invoked for transcription (must accept the `brain do` CLI
-    /// argument shape: `<command> do <model> transcribe --json --in audio=<file>`).
+    /// Executable invoked for transcription (must accept brain's CLI
+    /// argument shape: `<command> <model> transcribe --json --in audio=<file>`).
     #[serde(default = "default_asr_command")]
     pub command: String,
     /// Model identifier passed to the transcription command.
@@ -875,7 +875,7 @@ fn default_asr_command() -> String {
 }
 
 fn default_asr_model() -> String {
-    "brain/qwen-asr".into()
+    "nemotronasr".into()
 }
 
 fn default_asr_timeout_secs() -> u64 {
@@ -1832,7 +1832,7 @@ input_modalities: [text, image, audio]
     fn asr_config_defaults_match_the_documented_values() {
         let a = AsrConfig::default();
         assert_eq!(a.command, "brain");
-        assert_eq!(a.model, "brain/qwen-asr");
+        assert_eq!(a.model, "nemotronasr");
         assert_eq!(a.timeout_secs, 120);
     }
 
@@ -1840,7 +1840,7 @@ input_modalities: [text, image, audio]
     fn asr_config_partial_yaml_keeps_defaults_for_absent_keys() {
         let a: AsrConfig = serde_yaml::from_str("command: /usr/local/bin/brain\n").unwrap();
         assert_eq!(a.command, "/usr/local/bin/brain");
-        assert_eq!(a.model, "brain/qwen-asr");
+        assert_eq!(a.model, "nemotronasr");
         assert_eq!(a.timeout_secs, 120);
     }
 

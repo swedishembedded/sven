@@ -6,12 +6,16 @@
 //! Transcription shells out to the `brain` CLI:
 //!
 //! ```text
-//! brain do <asr_model> transcribe --json --in audio=<file>
+//! brain <asr_model> transcribe --json --in audio=<file>
 //! ```
+//!
+//! brain dispatches `brain <architecture> <action>` directly; there is no
+//! generic `do` verb (one existed historically and is now rejected with
+//! "unknown command 'do'").
 //!
 //! ## Why the temp file is raw PCM, not the original WAV
 //!
-//! `brain do`'s blob loader reads non-image `--in` files **completely raw**,
+//! brain's blob loader reads non-image `--in` files **completely raw**,
 //! with no format sniffing.  Handing it a `.wav` would feed the 44-byte RIFF
 //! header to the model as if it were audio samples.  The input is therefore
 //! written as headerless mono `f32` little-endian PCM at 16 kHz — exactly the
@@ -90,16 +94,27 @@ pub async fn transcribe(path: &Path, cfg: &AsrConfig) -> Result<Transcript, AsrE
     })
 }
 
-/// Spawn the ASR subprocess and extract `.text` from its JSON output.
-async fn run_asr_command(pcm_path: &Path, cfg: &AsrConfig) -> Result<String, AsrError> {
-    let args = [
-        "do".to_string(),
+/// Argv for one transcription, after the executable itself.
+///
+/// The shape is `brain <model> transcribe --json --in audio=<file>`. There is
+/// deliberately no `do` verb: brain's CLI dispatches
+/// `brain <architecture> <action>` (and the mirrored `brain <action>
+/// <architecture>`) directly. A `do` prefix was this module's original
+/// invocation and is now rejected outright with "unknown command 'do'", which
+/// made every transcription fail before the model was ever reached.
+fn asr_args(cfg: &AsrConfig, pcm_path: &Path) -> Vec<String> {
+    vec![
         cfg.model.clone(),
         "transcribe".to_string(),
         "--json".to_string(),
         "--in".to_string(),
         format!("audio={}", pcm_path.display()),
-    ];
+    ]
+}
+
+/// Spawn the ASR subprocess and extract `.text` from its JSON output.
+async fn run_asr_command(pcm_path: &Path, cfg: &AsrConfig) -> Result<String, AsrError> {
+    let args = asr_args(cfg, pcm_path);
     debug!(command = %cfg.command, ?args, "running ASR subprocess");
 
     let child = Command::new(&cfg.command)
@@ -194,6 +209,52 @@ fn tail(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    /// brain's CLI dispatches `brain <architecture> <action>`; there is no
+    /// `do` verb and passing one is rejected with "unknown command 'do'".
+    /// This module used to emit it, so every transcription failed before the
+    /// audio was ever read.
+    #[test]
+    fn asr_argv_has_no_do_verb_and_names_the_model_first() {
+        let cfg = AsrConfig {
+            command: "brain".into(),
+            model: "brain/nemotronasr".into(),
+            timeout_secs: 120,
+        };
+        let args = asr_args(&cfg, &PathBuf::from("/tmp/clip.pcm"));
+        assert_eq!(
+            args,
+            vec![
+                "brain/nemotronasr".to_string(),
+                "transcribe".to_string(),
+                "--json".to_string(),
+                "--in".to_string(),
+                "audio=/tmp/clip.pcm".to_string(),
+            ]
+        );
+        assert!(!args.iter().any(|a| a == "do"), "brain has no `do` subcommand");
+    }
+
+    /// The default must name an architecture brain's CLI dispatches on.
+    ///
+    /// Two distinct namespaces are easy to confuse here: `brain/nemotronasr`
+    /// is the MANIFEST id (what `Manifests`/`ListModels` report over D-Bus and
+    /// HTTP), while the CLI dispatches `brain <architecture> <action>` on the
+    /// BARE arch id and rejects the prefixed spelling with "unknown command
+    /// 'brain/nemotronasr'". The default was `brain/qwen-asr`, which is
+    /// neither: brain's ASR archs are `nemotronasr` and `qwen3asr`, and only
+    /// the bare legacy name `qwen-asr` aliases to the latter.
+    #[test]
+    fn default_asr_model_is_an_arch_brains_cli_dispatches_on() {
+        let model = AsrConfig::default().model;
+        assert!(
+            model == "nemotronasr" || model == "qwen3asr",
+            "default ASR model must be a bare brain arch id, got {model}"
+        );
+        assert!(!model.contains('/'), "the CLI rejects a prefixed model id: {model}");
+    }
+
     use super::*;
 
     #[test]
