@@ -70,20 +70,14 @@ is_self() {
 # skipped WHOLESALE, so keep the list at zero entries wherever possible: while
 # a file sits here, a newly added machine path in it is not caught either.
 #
-#   crates/machines/src/machines/ui_test/mod.rs
-#     Four `/tmp/shot.png` literals inside its `#[cfg(test)]` module: synthetic
-#     android-tool output strings fed to a parser, never touched on disk. Not
-#     fixed alongside every other file in this repo because the file had
-#     uncommitted work in it from a concurrent change when this gate landed and
-#     could not be edited without swallowing that work. Fix those four lines
-#     (the sibling `ui_test/step.rs` shows the shape: `shots/a.png`) and delete
-#     this entry.
-KNOWN_VIOLATIONS=(
-    crates/machines/src/machines/ui_test/mod.rs
-)
+# Empty, and meant to stay that way.
+KNOWN_VIOLATIONS=()
 
 is_known() {
     local f
+    # `${arr[@]}` on an empty array is an unbound-variable error under `set -u`
+    # before bash 4.4, hence the length guard rather than a bare expansion.
+    [ "${#KNOWN_VIOLATIONS[@]}" -eq 0 ] && return 1
     for f in "${KNOWN_VIOLATIONS[@]}"; do
         [ "$f" = "$1" ] && return 0
     done
@@ -122,7 +116,7 @@ fi
 # Only meaningful on a whole-tree scan -- with an explicit file list (the hook)
 # the absence of a hit just means the file was not staged.
 stale=""
-if [ "$#" -eq 0 ]; then
+if [ "$#" -eq 0 ] && [ "${#KNOWN_VIOLATIONS[@]}" -gt 0 ]; then
     for f in "${KNOWN_VIOLATIONS[@]}"; do
         if [ ! -f "$f" ] || ! grep -qE "$ROOTS|$TMP" "$f" 2>/dev/null; then
             stale="${stale}${stale:+$'\n'}  ${f}"
@@ -140,7 +134,7 @@ if [ -n "$stale" ]; then
 fi
 
 [ -z "$hits" ] && {
-    [ "$#" -eq 0 ] && echo "check-no-machine-paths: OK (${#KNOWN_VIOLATIONS[@]} reviewed exception(s) still outstanding)"
+    [ "$#" -eq 0 ] && echo "check-no-machine-paths: OK (${#KNOWN_VIOLATIONS[@]} reviewed exception(s) outstanding)"
     exit 0
 }
 

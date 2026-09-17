@@ -876,7 +876,7 @@ mod tests {
             &mut state,
             tool_ok(
                 screenshot_id,
-                json!("screenshot saved: /tmp/shot.png (100x200)"),
+                json!("screenshot saved: shots/shot.png (100x200)"),
             ),
         );
         assert_eq!(
@@ -888,7 +888,7 @@ mod tests {
             panic!("expected CallTool")
         };
         assert_eq!(name, "ground");
-        assert_eq!(args["image_path"], "/tmp/shot.png");
+        assert_eq!(args["image_path"], "shots/shot.png");
         assert_eq!(args["target"], "log in");
 
         let ground_id = pending_call_id(&ctx);
@@ -931,7 +931,7 @@ mod tests {
             &mut m,
             &mut ctx,
             &mut state,
-            tool_ok(screenshot_id, json!("screenshot saved: /tmp/shot.png")),
+            tool_ok(screenshot_id, json!("screenshot saved: shots/shot.png")),
         );
         let ground_id = pending_call_id(&ctx);
 
@@ -982,7 +982,7 @@ mod tests {
             &mut m,
             &mut ctx,
             &mut state,
-            tool_ok(screenshot_id, json!("screenshot saved: /tmp/shot.png")),
+            tool_ok(screenshot_id, json!("screenshot saved: shots/shot.png")),
         );
         let ground_id = pending_call_id(&ctx);
         let not_found = json!({ "found": false, "boxes": [] }).to_string();
