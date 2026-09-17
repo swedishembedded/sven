@@ -43,9 +43,13 @@ and was removed - the TUI is the only interactive local surface.)
   `loop_core` for the tool-loop plumbing; register it in
   `machines/src/mode.rs::default_registry()`. (A prior graph-DSL extension path
   was deleted - see `docs/adr/0001-delete-graph-dsl.md`.)
-- **Tests**: `make test` (unit/integration), `make check` (`xtask arch` +
-  clippy `-D warnings`, zero-warning policy), `make tests/e2e/basic` (bats
-  E2E; needs `bats-core`).
+- **Tests**: `make test` (unit/integration), `make check` (text gates +
+  `xtask arch` + clippy `-D warnings`, zero-warning policy),
+  `make tests/e2e/basic` (bats E2E; needs `bats-core`).
+- **Repo hygiene is gated, not documented.** `make check/gates` refuses an
+  absolute machine path (`/data`, `/home`, `/opt`, `/mnt`, `/root` anywhere;
+  `/tmp` in a `.rs` file). They run from `make check` on every clone, with no
+  hook installation step to forget.
 - **Before any sweeping/cross-cutting change, read "Making cross-cutting
   changes" below** - it is the canonical map of every place each kind of
   change must touch.
@@ -63,7 +67,10 @@ repo history). When a task is finished, move its file into `.todo/completed/`
 | `make build` | Debug build (all binaries) |
 | `make release` | Optimised release build |
 | `make test` | Unit + integration tests (whole workspace) |
-| `make check` | `xtask arch` (architecture ratchet) + clippy, `-D warnings` |
+| `make check` | text gates + `xtask arch` + clippy, `-D warnings` |
+| `make check/gates` | text gates: no machine paths |
+| `make check/arch` | architecture ratchet only |
+| `make check/clippy` | clippy only |
 | `make fmt` | Format |
 | `make tests/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour) |
 | `make docs` | Single-file user guide → `target/docs/sven-user-guide.md` |

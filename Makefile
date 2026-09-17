@@ -27,7 +27,8 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt check check/arch docs docs-pdf \
+.PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
+        check check/clippy check/gates check/paths check/arch docs docs-pdf \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
         _require-cargo-release \
@@ -199,9 +200,26 @@ docs-pdf: docs
 fmt:
 	$(CARGO) fmt --all
 
-## check     - architecture ratchet, then lint without building
-check: check/arch
+## check     - text gates, architecture ratchet, then clippy
+# In that order on purpose: a baked-in machine path or an
+# illegal crate edge should fail in seconds, not after a full workspace lint.
+# Every gate below is reachable from HERE, not only from an installed git
+# hook -- a check that lives only in a per-clone hook install enforces nothing on a
+# fresh clone that never ran it.
+check: check/gates check/arch check/clippy
+
+## check/clippy - lint the workspace, warnings are errors
+check/clippy:
 	$(CARGO) clippy --workspace --all-targets $(CARGO_FLAGS) -- -D warnings
+
+## check/gates - every text gate. Costs well under a second, which is why it
+##              runs before a lint that takes a minute.
+check/gates: check/paths
+
+## check/paths - no baked-in absolute machine path in any tracked (or new,
+##              not-yet-tracked) file
+check/paths:
+	bash scripts/gates/check-no-machine-paths.sh
 
 ## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
 ##              and the `minimal` cargo feature profile's forbidden-crate list)
