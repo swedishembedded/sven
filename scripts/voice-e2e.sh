@@ -160,12 +160,28 @@ require_model() {
 # A detached server inherits no session bus, so it needs an address that
 # outlives this script's shell.  One bus is started per state directory and
 # reused by later invocations.
+# A live pid is not a live bus - the recorded pid can have been reused by an
+# unrelated process - so ask the bus itself.  Handing brain an address nobody
+# is listening on is the expensive mistake: the D-Bus surface it was told to
+# bind never comes up, and the failure surfaces as a start that takes minutes
+# to give up rather than as a bad address.
+bus_answers() {
+  [ -s "$BUS_ADDR_FILE" ] || return 1
+  if command -v busctl >/dev/null; then
+    busctl --address="$(cat "$BUS_ADDR_FILE")" call \
+      org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.Peer Ping \
+      >/dev/null 2>&1
+  else
+    [ -s "$BUS_PID_FILE" ] && kill -0 "$(cat "$BUS_PID_FILE")" 2>/dev/null
+  fi
+}
+
 start_bus() {
   mkdir -p "$STATE_DIR"
 
-  if [ -s "$BUS_PID_FILE" ] && kill -0 "$(cat "$BUS_PID_FILE")" 2>/dev/null; then
+  if bus_answers; then
     BUS_ADDR="$(cat "$BUS_ADDR_FILE")"
-    info "reusing bus $BUS_ADDR (pid $(cat "$BUS_PID_FILE"))"
+    info "reusing bus $BUS_ADDR"
     return
   fi
 
@@ -198,6 +214,10 @@ start_brain() {
     "$BRAIN" serve --stop >/dev/null 2>&1 || true
   fi
 
+  # `serve -d` scans the whole model directory and binds every surface before
+  # it returns, which is a minute or two cold.  It echoes its log while it
+  # waits, so the lines below come from the server, not from this script.
+  info "starting the server (cold start takes a minute or two)"
   BRAIN_NEMOTRONASR="$ASR_CKPT" \
   BRAIN_QWEN_WEIGHTS="$LLM_CKPT" \
   BRAIN_QWEN3TTS_CKPT="$TTS_CKPT" \
@@ -307,8 +327,8 @@ ask() {
 
 status() {
   resolve_binaries
-  if [ -s "$BUS_PID_FILE" ] && kill -0 "$(cat "$BUS_PID_FILE")" 2>/dev/null; then
-    info "bus:   $(cat "$BUS_ADDR_FILE") (pid $(cat "$BUS_PID_FILE"))"
+  if bus_answers; then
+    info "bus:   $(cat "$BUS_ADDR_FILE")"
   else
     info "bus:   not running"
   fi

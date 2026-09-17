@@ -162,6 +162,19 @@ review rather than executed blind. A small model given a mangled filename
 tends to answer from the transcript rather than admit it cannot find the file,
 so a wrong transcript reads as a confidently wrong answer, not an error.
 
+**It looks stuck after "Starting brain".** A cold start scans the whole model
+directory and activates the first checkpoint before any surface binds, which
+takes a minute or two. `brain serve -d` echoes the server's log while it
+waits, so you see the scan happen; a run that prints nothing at all is a
+brain old enough to predate that.
+
+**The server is up but the start never returns.** Readiness is the AND of
+every surface asked for, so a requested surface that cannot bind means the
+process can never report itself ready. That is a failed start and ends the
+process, with the reason in the log - most often a `--dbus-address` pointing
+at a bus that is gone, after a `down` that stopped the bus but left the
+address behind.
+
 **Everything is correct but enormously slow.** Check the server log for the
 adapter it chose. `adapter: llvmpipe (Cpu, Vulkan)` means it fell back to a
 software rasteriser: right answers, orders of magnitude too slow, no error
