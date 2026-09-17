@@ -95,6 +95,20 @@ fn glob_segment_match(pattern: &str, text: &str) -> bool {
     dp[p.len()][t.len()]
 }
 
+/// How many paths an untuned `find_file` returns.
+///
+/// A tool has to be useful before anyone has tuned it, and the first call is
+/// always the untuned one. 200 absolute paths against a deep tree measured
+/// 19 KB - enough to end a turn on a 40k context - so the default is a page
+/// the caller can act on, with the count of what was left behind.
+pub(crate) const DEFAULT_MAX_RESULTS: usize = 40;
+
+/// Hard ceiling on the reply, whatever `max_results` says.
+///
+/// `max_results` bounds the number of paths, not their length, and one deeply
+/// nested tree defeats any count-based budget on its own.
+pub(crate) const MAX_OUTPUT_CHARS: usize = 4000;
+
 /// Walk `root` recursively and return paths matching `pattern`, up to `max`
 /// results.  Skips excluded directories.  Times out at `deadline`.
 ///
@@ -156,8 +170,13 @@ fn find_files_walkdir(
         };
 
         if glob_matches(pattern, match_target, case_insensitive) {
-            results.push(entry.path().display().to_string());
-            if results.len() >= max {
+            // The relative path, not the absolute one: `root` is an input the
+            // caller already has, and repeating it per line is the longest
+            // part of every line.
+            results.push(rel_path.to_string());
+            // One past the budget, so the caller can distinguish "exactly max
+            // matches" from "more than max" without a second traversal.
+            if results.len() > max {
                 break;
             }
         }
@@ -173,17 +192,15 @@ impl Tool for FindFileTool {
     }
 
     fn description(&self) -> &str {
-        "Find files by name glob pattern, searching recursively under a root directory.\n\
-         Pure-Rust implementation (walkdir); excludes .git/, target/, node_modules/, .cargo/registry/.\n\
-         Glob patterns:\n\
-           '*.rs'               - all .rs files anywhere under root\n\
-           '**/*.rs'            - same (**/ prefix is stripped; search is always recursive)\n\
-           'src/**/*.rs'        - .rs files under <root>/src/\n\
-           '**/sven-team/**'    - all files inside any directory named 'sven-team'\n\
-           '**/sven-team/**/*.rs' - .rs files inside any 'sven-team' directory\n\
-           'Cargo.toml'         - exact filename anywhere under root\n\
-           '*lint*'             - filenames containing 'lint'\n\
-         For content search use grep instead."
+        "Find files by filename glob, recursively, under a root directory.\n\
+         Returns paths relative to 'root', 40 at a time by default; the reply says when\n\
+         more matched, and 'max_results' raises the cap.\n\
+         'root' defaults to the working directory, so an unset root lists from where the\n\
+         session is, not from the filesystem root.\n\
+         Skips .git/, target/, node_modules/, .cargo/registry/.\n\
+         Patterns: '*.rs' matches that filename anywhere below root; a pattern containing\n\
+         '/' matches the whole relative path, so 'src/**/*.rs' and '**/parser/**' work.\n\
+         Matches on names only - it never opens a file."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -243,7 +260,7 @@ impl Tool for FindFileTool {
             .args
             .get("max_results")
             .and_then(|v| v.as_u64())
-            .unwrap_or(200) as usize;
+            .unwrap_or(DEFAULT_MAX_RESULTS as u64) as usize;
         let timeout_secs = call
             .args
             .get("timeout_secs")
@@ -269,13 +286,48 @@ impl Tool for FindFileTool {
                 if matches.is_empty() {
                     ToolOutput::ok(&call.id, "(no matches)")
                 } else {
-                    ToolOutput::ok(&call.id, matches.join("\n"))
+                    ToolOutput::ok(&call.id, render_page(matches, max))
                 }
             }
             Ok(Err(e)) => ToolOutput::err(&call.id, format!("find_file error: {e}")),
             Err(e) => ToolOutput::err(&call.id, format!("find_file task error: {e}")),
         }
     }
+}
+
+/// Render at most `max` paths, within [`MAX_OUTPUT_CHARS`], saying plainly
+/// when something was left out and how to ask for it.
+///
+/// `matches` may hold one extra entry past `max` - that is how the walker
+/// signals "there were more" - so the surplus is dropped here rather than
+/// shown.
+fn render_page(mut matches: Vec<String>, max: usize) -> String {
+    let overflowed = matches.len() > max;
+    matches.truncate(max);
+
+    let mut out = String::new();
+    let mut shown = 0usize;
+    for path in &matches {
+        // Leave room for the notice that has to follow a cut.
+        if out.len() + path.len() + 1 > MAX_OUTPUT_CHARS.saturating_sub(120) {
+            break;
+        }
+        out.push_str(path);
+        out.push('\n');
+        shown += 1;
+    }
+
+    let held_back = matches.len() - shown;
+    if overflowed || held_back > 0 {
+        // Naming both ways forward matters: raising the cap is right when the
+        // set really is the answer, narrowing the pattern when it is not, and
+        // only the caller knows which.
+        let more = if overflowed { format!("more than {max}") } else { format!("{held_back} more") };
+        out.push_str(&format!(
+            "[{shown} shown, {more} matched - narrow 'pattern' or raise 'max_results']\n"
+        ));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -452,8 +504,65 @@ mod tests {
             })))
             .await;
         assert!(!out.is_error, "{}", out.content);
-        let lines: Vec<&str> = out.content.lines().collect();
-        assert!(lines.len() <= 3, "expected ≤3 results, got {}", lines.len());
+        // Paths, not lines: a truncated page also carries a notice line, and
+        // counting that as a result is what made this assertion ambiguous.
+        let paths = out.content.lines().filter(|l| l.ends_with(".rs")).count();
+        assert!(paths <= 3, "expected <=3 results, got {paths}");
+        assert!(out.content.contains("max_results"), "a cut page must say so: {}", out.content);
+    }
+
+    /// A search nobody bounded must still come back small.
+    ///
+    /// The default used to be 200 absolute paths joined with newlines and no
+    /// byte budget at all: a `*` against a deep tree produced 19 KB, which
+    /// overflowed the model's context and ended the turn. A tool has to be
+    /// usable without being tuned first, so the untuned call returns a page.
+    #[tokio::test]
+    async fn an_unbounded_search_returns_one_small_page() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..(DEFAULT_MAX_RESULTS * 3) {
+            std::fs::write(dir.path().join(format!("file_{i:04}.txt")), "x").unwrap();
+        }
+
+        let out = FindFileTool
+            .execute(&call(json!({"pattern": "*", "root": dir.path().to_str().unwrap()})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+
+        let listed = out.content.lines().filter(|l| l.ends_with(".txt")).count();
+        assert!(listed <= DEFAULT_MAX_RESULTS, "listed {listed} paths, budget is {DEFAULT_MAX_RESULTS}");
+        assert!(
+            out.content.len() <= MAX_OUTPUT_CHARS,
+            "reply was {} chars, budget is {MAX_OUTPUT_CHARS}",
+            out.content.len()
+        );
+        // Truncating silently would leave the caller believing it saw
+        // everything, so the reply has to say otherwise and how to go on.
+        assert!(out.content.contains("more"), "no indication results were cut: {}", out.content);
+        assert!(out.content.contains("max_results"), "no way offered to see more: {}", out.content);
+    }
+
+    /// Paths are reported relative to the root that was searched.
+    ///
+    /// The root is an input the caller already has, so repeating it on every
+    /// line buys nothing and costs the deepest part of each path. Measured at
+    /// roughly 95 characters per line against a real tree.
+    #[tokio::test]
+    async fn results_are_relative_to_the_search_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("a/b")).unwrap();
+        std::fs::write(dir.path().join("a/b/deep.rs"), "x").unwrap();
+
+        let out = FindFileTool
+            .execute(&call(json!({"pattern": "*.rs", "root": dir.path().to_str().unwrap()})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("a/b/deep.rs"), "{}", out.content);
+        assert!(
+            !out.content.contains(dir.path().to_str().unwrap()),
+            "the root is repeated on every line: {}",
+            out.content
+        );
     }
 
     #[tokio::test]
