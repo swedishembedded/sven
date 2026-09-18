@@ -236,3 +236,30 @@ async fn an_investigating_method_may_use_tools() {
          just a prediction with extra steps"
     );
 }
+
+#[tokio::test]
+async fn a_repair_attempt_sees_the_answer_it_is_correcting() {
+    let (engine, provider) = engine_with(vec![
+        says("I reckon it's fine"),
+        says(r#"{"risk":7,"summary":"repaired"}"#),
+    ]);
+    let mut agent = engine.agent_for(&assess());
+
+    agent
+        .call(&assess().max_repairs(1), &a_change())
+        .await
+        .expect("a repaired result");
+
+    let seen = provider.last_request.lock().unwrap().clone().unwrap();
+    let rendered = format!("{:?}", seen.messages);
+    assert!(
+        rendered.contains("I reckon it's fine"),
+        "the rejected answer must still be in the thread on the repair turn - \
+         a correction the model cannot see the mistake for is just the same \
+         question asked twice: {rendered}"
+    );
+    assert!(
+        rendered.contains("rejected"),
+        "and the diagnostic must follow it: {rendered}"
+    );
+}

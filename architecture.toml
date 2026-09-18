@@ -105,6 +105,9 @@ sven-acp   = "composite"
 # binary
 sven = "binary"
 
+# proc-macro support for the sdk facade (zero sven deps)
+sven-sdk-macros = "foundation"
+
 # tooling (not part of the production dependency graph; zero sven deps)
 xtask = "foundation"
 

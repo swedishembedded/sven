@@ -11,6 +11,7 @@ sven-config    = { path = "../config" }
 sven-hsm       = { path = "../hsm" }
 sven-machines  = { path = "../machines" }
 sven-model     = { path = "../model" }
+sven-sdk-macros = { path = "../sdk-macros" }
 sven-session-model = { path = "../session-model" }
 sven-vocab     = { path = "../vocab" }
 anyhow         = { workspace = true }

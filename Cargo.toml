@@ -32,6 +32,7 @@ members = [
     "crates/bootstrap",
     # The public framework facade every other surface is meant to be built on
     "crates/sdk",
+    "crates/sdk-macros",
     # SlashCommand vocabulary + builtins shared by every sven frontend
     "crates/commands",
     "crates/ci",

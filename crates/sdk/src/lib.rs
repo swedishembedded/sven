@@ -56,6 +56,11 @@ pub use error::CallError;
 pub use method::{Method, Strategy};
 pub use state::AgentState;
 
+/// Declares an agent from a Rust trait: its documentation is its prompt.
+///
+/// See the [`agent`] macro's own documentation for the rules.
+pub use sven_sdk_macros::agent;
+
 /// The event stream an agent emits while it works.
 ///
 /// Re-exported so a consumer never needs to name a kernel crate to render

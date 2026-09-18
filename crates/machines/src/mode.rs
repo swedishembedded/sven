@@ -14,6 +14,24 @@ use crate::machines::{
     ui_test::UiTestMachine, verified_task::VerifiedTaskMachine,
 };
 
+/// The conversation thread a mode's machine reads.
+///
+/// A session seeds its system message and prior history into one thread before
+/// the machine starts. Seeding the wrong one is silent: the machine simply
+/// begins with no context and no error, so this mapping is kept next to the
+/// registry that decides which machine a mode builds rather than left to each
+/// caller to remember.
+///
+/// Modes whose machines use per-phase threads of their own (`sdlc`) ignore the
+/// seed entirely, and fall through to the default.
+#[must_use]
+pub fn primary_thread(mode: &str) -> &'static str {
+    match mode {
+        "predict" => crate::machines::predict::PREDICT_THREAD,
+        _ => crate::machines::reactive_agent::CHAT_THREAD,
+    }
+}
+
 /// A factory that creates a type-erased running machine.
 pub type MachineFactory = Box<dyn Fn() -> Box<dyn ErasedMachine> + Send + Sync>;
 

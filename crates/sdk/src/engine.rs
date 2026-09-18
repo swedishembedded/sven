@@ -64,6 +64,15 @@ impl Engine {
         Agent::new(self.clone(), AgentState::new(mode))
     }
 
+    /// Creates a fresh agent that runs `mode` and plays `role`.
+    ///
+    /// The role becomes the agent's system prompt on every turn, which is what
+    /// lets it sit in the cacheable prefix rather than being repeated per call.
+    #[must_use]
+    pub fn agent_with_role(&self, mode: impl Into<String>, role: impl Into<String>) -> Agent {
+        Agent::new(self.clone(), AgentState::new(mode).with_role(role))
+    }
+
     /// Creates an agent suited to `method`: the strategy picks the machine,
     /// and the method's role becomes the agent's.
     #[must_use]

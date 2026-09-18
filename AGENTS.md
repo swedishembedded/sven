@@ -198,9 +198,10 @@ layer: `CompositeExecutor` + its executor slots)
 `SessionEvent` consumption)
 
 ### sdk
-`sven-sdk` (the public framework surface: `Engine`, `Agent`, `AgentState` -
-what an application depends on to run agents; see
-[docs/technical/sdk.md](docs/technical/sdk.md))
+`sven-sdk` (the public framework surface: `Engine`, `Agent`, `AgentState`,
+`Method<T>` - what an application depends on to run agents; see
+[docs/technical/sdk.md](docs/technical/sdk.md)) · `sven-sdk-macros`
+(foundation tier: the `#[agent]` attribute, re-exported as `sven_sdk::agent`)
 
 ### surface
 `sven-ci` (headless runner: `RuntimeRunner` + workflow orchestration) ·

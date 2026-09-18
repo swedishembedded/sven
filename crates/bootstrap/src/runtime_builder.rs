@@ -566,10 +566,12 @@ impl RuntimeBuilder {
         // ToolExecutor below (frontends reach it for history seeding / resume).
         let conv_store_for_handle = Arc::clone(&conv_store);
         // Seed the system message, then prior conversation history, into the
-        // reactive-agent thread so a fresh, resumed, or piped session sees the
-        // full context on its very first turn. Only the reactive `agent`/`chat`
-        // machines read `CHAT_THREAD`; the SDLC machine uses per-phase threads
-        // and simply ignores this seed. Seeding happens before any dispatch, so
+        // thread this mode's machine actually reads, so a fresh, resumed, or
+        // piped session sees the full context on its very first turn. Seeding
+        // the wrong thread is silent - the machine just starts with nothing -
+        // which is why the mapping lives in `sven_machines::mode` next to the
+        // registry rather than being assumed here. The SDLC machine uses
+        // per-phase threads and simply ignores this seed. Seeding happens before any dispatch, so
         // the append-only cache-safety invariant of the thread is preserved
         // (system → history → new user turn). `build_system_message` returns
         // `None` when `--no-system` was given with no override/append text,
@@ -578,19 +580,14 @@ impl RuntimeBuilder {
         // contains a system-role message by convention (parsers that seed it
         // strip the system message into `system_prompt_override` instead), so
         // there is no risk of a duplicate.
+        let seed_thread = sven_machines::mode::primary_thread(&self.mode);
         if let Ok(mut store) = conv_store.lock() {
             let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
             if let Some(system_msg) = runtime.build_system_message(mode) {
-                store.append(
-                    sven_machines::machines::reactive_agent::CHAT_THREAD,
-                    system_msg,
-                );
+                store.append(seed_thread, system_msg);
             }
             for msg in &self.initial_history {
-                store.append(
-                    sven_machines::machines::reactive_agent::CHAT_THREAD,
-                    msg.clone(),
-                );
+                store.append(seed_thread, msg.clone());
             }
         }
         let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<

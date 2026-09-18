@@ -93,6 +93,44 @@ proves nothing of the sort. A structurally valid object can still carry a
 fabricated citation, which is why return-type validation and postconditions are
 separate checks rather than one.
 
+## Declaring an agent as a trait
+
+`#[agent]` turns a Rust trait into an agent type. The role is the trait's
+documentation, each task is its method's documentation, and each schema is
+derived from the method's return type.
+
+```rust
+/// You are a meticulous Rust reviewer who never speculates.
+#[sven_sdk::agent]
+trait Reviewer {
+    /// Assess the change for correctness risk.
+    async fn assess(&self, change: Change) -> Assessment;
+
+    /// Whether this may merge unattended. Policy, so it is code.
+    fn may_merge(&self, a: &Assessment) -> bool {
+        a.risk < 50
+    }
+}
+
+let mut reviewer = Reviewer::new(&engine);
+let assessment = reviewer.assess(change).await?;
+```
+
+**A method with a body is deterministic; a method without one is model-driven.**
+That is the whole split, expressed as something the compiler already tracks -
+no marker attribute to forget and no second list to keep in sync. A model-driven
+method becomes `async fn … -> Result<T, CallError>`; a method with a body is
+emitted unchanged and never reaches the model.
+
+The generated type owns an `Agent`, so it suspends and resumes like any other:
+`new`, `resume`, `suspend`, `state`, `events`.
+
+Parameters are passed to the model as a named object (`{"change": {…}}`) rather
+than positionally, so the model is told what each value *is*. A trait or method
+without a doc comment is a compile error: a model told only a method's name has
+been told almost nothing, and failing at build time is better than discovering
+it in an answer.
+
 ### Why the repair loop is in the SDK, not in a machine
 
 A pure transition cannot deserialise a candidate into the caller's return type -
@@ -172,6 +210,7 @@ with `sven_config::load` and passes it to `EngineBuilder::config`.
 | `suspend_resume.rs` | Advance one step, persist, free, resume |
 | `watch_events.rs` | A custom surface built from the event stream |
 | `verified_workflow.rs` | Deterministic orchestration around model judgement, where a code-level check can reject the model's claim |
+| `declared_agent.rs` | An agent declared as a trait, with the deterministic/model-driven split |
 
 ## The CLI on the SDK
 
