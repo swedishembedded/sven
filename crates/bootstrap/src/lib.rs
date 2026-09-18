@@ -40,7 +40,9 @@ pub use runtime_builder::{
 pub use supervisor::{SessionId, SessionSupervisor};
 pub use sven_mcp_client::McpManager;
 pub use task_tool::TaskTool;
-pub use ui_test_dispatch::{dispatch_ui_test_step, UiTestDevice, UiTestDispatchOverrides};
+pub use ui_test_dispatch::{
+    dispatch_ui_test_step, StateReporter, UiTestDevice, UiTestDispatchOverrides,
+};
 
 // Re-export compound tools for convenience.
 pub use sven_tools_ctx::MemoryTool;

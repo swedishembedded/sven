@@ -98,7 +98,32 @@ pub struct UiTestDispatchOverrides {
     /// substitutes a fake to exercise the fallback/ambiguity paths without a
     /// real device.
     pub device_lister: Option<Arc<dyn DeviceLister>>,
+    /// Called once per DISTINCT state the step's machine passes through,
+    /// with that state's label, while the step is still running.
+    ///
+    /// This is not a test seam like the fields above it. A dispatched step is
+    /// otherwise a black box to whoever asked for it: the caller learns
+    /// nothing at all between "started" and "finished", which for a real UI
+    /// step is minutes. `RuntimeStatus` already publishes the machine's
+    /// current state label on a watch channel; this only forwards it, so it
+    /// costs one task and no new machinery.
+    ///
+    /// Distinct states only, not every status update: the watch channel
+    /// republishes on every processed event, and a caller relaying that to a
+    /// user would be sending hundreds of identical messages.
+    ///
+    /// `None` (the default) spawns nothing at all, so a caller that does not
+    /// want progress pays nothing for the ability to have it.
+    pub on_state: Option<StateReporter>,
 }
+
+/// Where [`UiTestDispatchOverrides::on_state`] sends each state label.
+///
+/// A named type rather than the inline `Arc<dyn Fn(&str) + Send + Sync>`:
+/// clippy asks for it at this nesting, and the name is the better
+/// documentation anyway -- every call site now says what the callback is FOR
+/// rather than restating its shape.
+pub type StateReporter = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Runs one `UiTestMachine` step to completion and returns its outcome.
 ///
@@ -184,6 +209,30 @@ pub async fn dispatch_ui_test_step(
     tokio::spawn(bundle.channels.auto_approve());
 
     let mut status_rx = bundle.runtime.status_watch();
+
+    // Progress relay. Spawned before the step is posted so the very first
+    // state the machine enters is reported, and it exits on its own when the
+    // machine reaches a terminal state -- never left running past the step it
+    // describes.
+    if let Some(on_state) = overrides.on_state.clone() {
+        let mut progress_rx = bundle.runtime.status_watch();
+        tokio::spawn(async move {
+            let mut last = String::new();
+            loop {
+                let (label, done) = {
+                    let status = progress_rx.borrow_and_update();
+                    (status.state_label.clone(), status.done)
+                };
+                if label != last {
+                    on_state(&label);
+                    last = label;
+                }
+                if done || progress_rx.changed().await.is_err() {
+                    return;
+                }
+            }
+        });
+    }
 
     if !sink.emit(Event::UserMessage { text: script }).await {
         return Err(
@@ -662,6 +711,75 @@ mod tests {
 
         assert_eq!(out["passed"], true);
         assert_eq!(call_performing(&android, "type_text")["text"], "123456");
+    }
+
+    /// A dispatched step is otherwise a black box for however long it takes
+    /// -- minutes, for a real UI step. `on_state` is what lets a host say
+    /// what it is doing meanwhile.
+    #[tokio::test]
+    async fn on_state_reports_each_distinct_state_the_step_passes_through() {
+        let android = FakeTool::new("android", sven_hsm::ToolCapability::ControlDevice, "tapped");
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&seen);
+        let overrides = UiTestDispatchOverrides {
+            model_provider: Some(Box::new(compiled_step_reply(
+                json!({ "verb": "tap", "target": "OK" }),
+            ))),
+            android_tool: Some(android.clone() as Arc<dyn Tool>),
+            on_state: Some(Arc::new(move |label: &str| {
+                recorder
+                    .lock()
+                    .expect("recorder mutex")
+                    .push(label.to_string());
+            })),
+            ..Default::default()
+        };
+
+        let out = dispatch_ui_test_step(
+            Arc::new(test_config()),
+            None,
+            &json!({ "instruction": "Tap OK" }),
+            overrides,
+        )
+        .await
+        .expect("must succeed");
+        assert_eq!(out["passed"], true);
+
+        let labels = seen.lock().expect("recorder mutex").clone();
+        assert!(
+            !labels.is_empty(),
+            "a step that ran must have reported at least the state it started in"
+        );
+        // DISTINCT states, not every status update: the watch channel
+        // republishes on every processed event, and relaying that verbatim
+        // would send a user hundreds of identical messages.
+        assert!(
+            labels.windows(2).all(|pair| pair[0] != pair[1]),
+            "the same state must never be reported twice in a row: {labels:?}"
+        );
+    }
+
+    /// Non-vacuity for the spawn: a caller that asks for nothing pays for
+    /// nothing, and the step behaves identically.
+    #[tokio::test]
+    async fn no_on_state_means_no_relay_and_an_unchanged_result() {
+        let android = FakeTool::new("android", sven_hsm::ToolCapability::ControlDevice, "tapped");
+        let overrides = UiTestDispatchOverrides {
+            model_provider: Some(Box::new(compiled_step_reply(
+                json!({ "verb": "tap", "target": "OK" }),
+            ))),
+            android_tool: Some(android as Arc<dyn Tool>),
+            ..Default::default()
+        };
+        let out = dispatch_ui_test_step(
+            Arc::new(test_config()),
+            None,
+            &json!({ "instruction": "Tap OK" }),
+            overrides,
+        )
+        .await
+        .expect("must succeed");
+        assert_eq!(out["passed"], true);
     }
 
     #[tokio::test]
