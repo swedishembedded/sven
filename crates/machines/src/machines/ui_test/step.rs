@@ -211,16 +211,27 @@ pub fn parse_signature(observation: &Value) -> Result<String, String> {
         .ok_or_else(|| "ui_signature result carried no 'signature'".to_string())
 }
 
+/// The `screen_is_secure` answer: whether a human must take over, and
+/// whether the display is simply not on.
+///
+/// These are different problems with different remedies and must not be
+/// conflated. A powered-off display screencaps solid black, which is also
+/// the FLAG_SECURE signal - so without `display_off` a sleeping phone is
+/// diagnosed as "a screen automation must never drive", which is wrong and
+/// leaves the operator nothing to act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct ScreenState {
+    pub secure_screen: bool,
+    #[serde(default)]
+    pub display_off: bool,
+}
+
 /// Parse a `screen_is_secure` observation.
-pub fn parse_secure_screen(observation: &Value) -> Result<bool, String> {
+pub fn parse_secure_screen(observation: &Value) -> Result<ScreenState, String> {
     let text = observation
         .as_str()
         .ok_or_else(|| "screen_is_secure observation was not a string".to_string())?;
-    let v: Value = serde_json::from_str(text)
-        .map_err(|e| format!("could not parse screen_is_secure result: {e}"))?;
-    v.get("secure_screen")
-        .and_then(Value::as_bool)
-        .ok_or_else(|| "screen_is_secure result carried no 'secure_screen'".to_string())
+    serde_json::from_str(text).map_err(|e| format!("could not parse screen_is_secure result: {e}"))
 }
 
 // ─── Effect builders ────────────────────────────────────────────────────────

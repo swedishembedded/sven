@@ -11,6 +11,7 @@
 //! call it directly without going through the `Tool`/`ToolCall` JSON layer.
 
 pub mod adb;
+mod query;
 mod tool;
 pub mod ui_tree;
 

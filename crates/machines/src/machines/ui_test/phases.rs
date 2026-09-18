@@ -187,11 +187,21 @@ pub(super) fn handle_locating_success(
         // handle; the accessibility tree stays readable on one, so without
         // this check nothing would stop a run driving it.
         "secure" => {
-            let secure = match step::parse_secure_screen(observation) {
+            let screen = match step::parse_secure_screen(observation) {
                 Ok(v) => v,
                 Err(e) => return fail_or_retry(ctx, e),
             };
-            if secure {
+            // An asleep device is recoverable by a human in one gesture, and
+            // saying so beats the FLAG_SECURE hand-off a black frame would
+            // otherwise trigger.
+            if screen.display_off {
+                return fail_or_retry(
+                    ctx,
+                    "the device display is off - wake and unlock it; a dark screen \
+                     cannot be read or driven",
+                );
+            }
+            if screen.secure_screen {
                 let steps = load_steps(ctx);
                 let instruction = steps.get(index as usize).map_or("", String::as_str);
                 let question = format!(

@@ -669,7 +669,10 @@ mod tests {
             m,
             ctx,
             state,
-            tool_ok(id, json!(json!({ "secure_screen": false }).to_string())),
+            tool_ok(
+                id,
+                json!(json!({ "secure_screen": false, "display_off": false }).to_string()),
+            ),
         )
     }
 
@@ -1264,6 +1267,48 @@ mod tests {
             ask_user_binding(&ctx),
             Some(("code".to_string(), "123456".to_string()))
         );
+    }
+
+    /// A sleeping phone screencaps solid black - the same signal as
+    /// FLAG_SECURE. Reporting it as a secure screen sends the run down the
+    /// human-hand-off path for a problem one gesture fixes, so the two must
+    /// stay distinct.
+    #[test]
+    fn an_asleep_display_is_reported_as_such_not_as_a_secure_screen() {
+        let (mut m, mut ctx, mut state) = make();
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Click \"log in\""]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "tap", "target": "log in" })),
+        );
+
+        let id = pending_call_id(&ctx);
+        let out = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(
+                id,
+                json!(json!({ "secure_screen": false, "display_off": true }).to_string()),
+            ),
+        );
+        assert!(
+            !effects_of(&out)
+                .iter()
+                .any(|e| matches!(e, Effect::CallTool { name, .. } if name == "ask_question")),
+            "an asleep screen must not be handed to a human as a secure screen"
+        );
+        let failure = ctx.fact(LAST_FAILURE_FACT).unwrap().as_str().unwrap();
+        assert!(failure.contains("display is off"), "{failure}");
     }
 
     // ── Verification: a tool call succeeding is not the step working ────────
