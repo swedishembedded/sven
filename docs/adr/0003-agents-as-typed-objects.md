@@ -2,9 +2,26 @@
 
 ## Status
 
-Accepted. Implementation in progress. The resumable-kernel groundwork
-(`Hsm::snapshot`/`Hsm::restore`, `replay` returning its context, and the
-`all_states()` requirement) has landed; the `sven-sdk` facade has not.
+Accepted and implemented.
+
+`sven-sdk` (directory `crates/sdk`) publishes `Engine`, `Agent`, `AgentState`,
+`Method<T>` and the `#[agent]` attribute; the kernel is suspendable via
+`Hsm::snapshot`/`Hsm::restore` and `ErasedRuntime::capture`; `replay` returns
+the context it reconstructs; every registered machine enumerates its states.
+Applications extend the framework through `EngineBuilder::tool` and
+`EngineBuilder::machine` without editing any crate here, and `sven agent step`
+is the in-repo consumer that keeps the surface honest.
+
+Described in [docs/technical/sdk.md](../technical/sdk.md) and
+[docs/technical/resumable-agents.md](../technical/resumable-agents.md).
+
+Not done: migrating the existing surfaces (`sven-tui`, `sven-ci`, `sven-acp`,
+`sven-mcp`) onto the SDK. They construct kernels through `RuntimeBuilder`
+directly and need capabilities the SDK does not yet publish - interactive
+approval interception, mid-session mode and model changes, and token-level
+streaming control. Growing the SDK to cover them is worth doing only if it can
+be done without turning the facade back into `RuntimeBuilder` with different
+names.
 
 ## Context
 

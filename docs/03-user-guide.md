@@ -442,6 +442,39 @@ and [CI and Pipelines](04-ci-pipeline.md) for the full file format.
 
 ---
 
+## Scripting an agent a step at a time
+
+`sven agent step` runs an agent for exactly one turn and exits, keeping
+everything durable in a state file:
+
+```sh
+sven agent step --state ./review.json "read src/lib.rs and summarise it"
+sven agent step --state ./review.json "now list its public types"
+```
+
+Each command is a separate process. The agent is loaded from the file,
+advanced by one step, written back, and dropped - so a shell script, a cron
+job or a web handler can drive a long conversation without holding anything
+open between turns.
+
+| Flag | Meaning |
+|------|---------|
+| `--state <file>` | Load from and write back to this file. Omit it for a one-off step that keeps nothing. |
+| `--mode <mode>` | Which machine to run. Only used when starting fresh; a resumed agent keeps its own. |
+| `--role <text>` | A stable system prompt for the agent. |
+| `--yes` | Approve permission gates instead of refusing them. Off by default. |
+
+Without `--yes` every approval gate is **refused**, so a step running
+unattended cannot be talked into a dangerous capability. Pass it only where the
+workspace is already disposable.
+
+A state file that exists but cannot be read is an error rather than a fresh
+start: silently discarding a conversation would only show up later, as an agent
+that had inexplicably forgotten everything.
+
+To build this into your own program rather than script it, see
+[the SDK](technical/sdk.md).
+
 ## Context and compaction
 
 Every message you send, every tool call, and every response is stored in the
