@@ -36,6 +36,75 @@ resumed.send("now propose a fix").await?;
 `Engine` is cheap to clone - it is a bundle of handles - so a service builds one
 at startup and clones it into each request.
 
+## Typed model-driven methods
+
+A `Method<T>` is a contract: instructions, a return type, and the limits on
+obtaining it. The caller supplies typed input and gets a validated `T` back.
+
+```rust
+let triage = Method::<Triage>::new("triage")
+    .role("You triage bug reports for a Rust systems project.")
+    .task("Classify the report. Be conservative.")
+    .max_repairs(2)
+    .postcondition(|t: &Triage| {
+        if (1..=5).contains(&t.severity) { Ok(()) }
+        else { Err(format!("severity must be 1-5, got {}", t.severity)) }
+    });
+
+let result: Triage = engine.call(&triage, &report).await?;
+```
+
+The schema the model is constrained by is **derived from `T`** rather than
+written by hand, which is what stops the description the model is given from
+drifting away from the type the caller actually receives.
+
+`Engine::call` is the lightweight form - no instance state, nothing accumulates
+between calls. `Engine::agent_for(&method)` returns an `Agent` whose successive
+calls build on each other.
+
+### Strategies
+
+| Strategy | Machine | For |
+|----------|---------|-----|
+| `Predict` (default) | `predict` | Interpretation without investigation: classification, extraction, assessment. **No tools at all.** |
+| `Investigate` | `agent` | Work that must find things out first - reading, running, searching - before it can answer. |
+
+Strategy is configuration, not a call-site argument: the same `Method` and the
+same call site work either way. A cheap model can serve a narrow classification
+while a stronger one investigates, without either contract changing.
+
+### Correction is bounded, and failures keep their kind
+
+A rejected answer stays in the thread and the diagnostic is appended after it,
+so the model sees what it got wrong rather than being asked again from a clean
+slate. `max_repairs` bounds this; zero means the first answer is the only one.
+
+Three outcomes, deliberately not collapsed into one:
+
+| Outcome | Means |
+|---------|-------|
+| `CallError::Invalid` | No answer could be read as `T` at all - a structural failure |
+| `CallError::Postcondition` | Well-formed, but broke an invariant the type cannot express |
+| `CallError::Infrastructure` | The kernel or provider failed. **Not** a model mistake |
+
+The first two are different evidence. A postcondition failure proves the model
+understood the shape it was asked for and got the *content* wrong; an `Invalid`
+proves nothing of the sort. A structurally valid object can still carry a
+fabricated citation, which is why return-type validation and postconditions are
+separate checks rather than one.
+
+### Why the repair loop is in the SDK, not in a machine
+
+A pure transition cannot deserialise a candidate into the caller's return type -
+the machine has no idea what that type is. So the `predict` machine does one
+thing: it runs a constrained, tool-free turn and records the raw candidate.
+Validating it, and deciding whether to spend another attempt, belongs to
+whoever declared the return type.
+
+This is not a second agent loop. The SDK posts messages and reads replies, the
+way any surface does; it does not stream from the model or dispatch tools. The
+one agent loop is still the kernel's.
+
 ## Sharing, and what is actually shared
 
 `EngineBuilder::model_provider` is what makes many agents affordable. Without
@@ -92,3 +161,14 @@ An engine built without an explicit config uses `Config::default()`, not the
 user's configuration file. An embedded agent should not silently inherit
 whatever happens to be on the host's disk; a caller that wants the file loads it
 with `sven_config::load` and passes it to `EngineBuilder::config`.
+
+## Examples
+
+`crates/sdk/examples/` holds runnable programs, one concept each:
+
+| Example | Shows |
+|---------|-------|
+| `classify.rs` | A typed method with no agent instance |
+| `suspend_resume.rs` | Advance one step, persist, free, resume |
+| `watch_events.rs` | A custom surface built from the event stream |
+| `verified_workflow.rs` | Deterministic orchestration around model judgement, where a code-level check can reject the model's claim |

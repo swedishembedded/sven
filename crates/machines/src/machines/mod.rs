@@ -5,6 +5,7 @@
 //! wrapped in a `sven_kernel::Runtime` for async production use.
 
 pub mod loop_core;
+pub mod predict;
 pub mod reactive_agent;
 pub mod sdlc;
 pub mod ui_test;

@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! One agent: a conversation, its kernel state, and the engine it borrows.
 
-use sven_bootstrap::RuntimeBuilder;
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
 use sven_hsm::{Event, UiEvent};
 use sven_model::Message;
 use sven_session_model::reduce_history;
@@ -12,6 +15,7 @@ use tokio::sync::broadcast;
 
 use crate::engine::{ApprovalPolicy, Engine};
 use crate::error::CallError;
+use crate::method::{Method, Strategy};
 use crate::state::AgentState;
 
 /// Capacity of the per-agent event broadcast channel.
@@ -75,6 +79,115 @@ impl Agent {
     /// cannot be built or the event queue closes mid-turn. A model that simply
     /// answers badly is not an error - it is the reply.
     pub async fn send(&mut self, text: &str) -> Result<String, CallError> {
+        self.run_turn(text, &TurnOptions::default()).await
+    }
+
+    /// Calls a model-driven method with typed input and a validated result.
+    ///
+    /// The model call, the schema it is constrained by, and any correction
+    /// attempts all happen behind this boundary. The caller sees a value of
+    /// `T` or an explicit failure.
+    ///
+    /// The call is folded into this agent's history, so an agent used for
+    /// several calls accumulates context across them. For a one-off call that
+    /// should carry no history, use [`Engine::call`](crate::Engine::call).
+    ///
+    /// # Errors
+    ///
+    /// - [`CallError::Invalid`] if no answer could be read as `T` within the
+    ///   method's repair budget.
+    /// - [`CallError::Postcondition`] if answers were well-formed but kept
+    ///   breaking the method's invariant.
+    /// - [`CallError::Precondition`] if the input cannot be serialized.
+    /// - [`CallError::Infrastructure`] if the kernel or provider failed -
+    ///   never reported as a model mistake.
+    pub async fn call<I, T>(&mut self, method: &Method<T>, input: &I) -> Result<T, CallError>
+    where
+        I: Serialize + ?Sized,
+        T: DeserializeOwned + JsonSchema,
+    {
+        let rendered = serde_json::to_string_pretty(input).map_err(|e| {
+            CallError::Precondition(format!(
+                "the input to {:?} is not serializable: {e}",
+                method.name()
+            ))
+        })?;
+
+        let options = TurnOptions {
+            role: self.state.role.clone().or_else(|| method.role.clone()),
+            no_tools: method.strategy == Strategy::Predict,
+            facts: Self::prediction_facts(method),
+        };
+
+        let mut message = method.instruction(&rendered);
+        let mut attempts = 0;
+
+        // Bounded correction. Each rejected answer stays in the thread and the
+        // diagnostic is appended after it, so the model sees what it got wrong
+        // rather than being asked again from a clean slate.
+        loop {
+            let last = self.run_turn(&message, &options).await?;
+            attempts += 1;
+
+            // `structural` separates "could not be read as the type at all"
+            // from "read fine, but broke an invariant" - two different reports
+            // to the caller, and only the second proves the model understood
+            // the shape it was asked for.
+            let (structural, detail) = match parse_candidate::<T>(&last) {
+                Ok(value) => match method.postcondition.as_ref().map(|c| c(&value)) {
+                    None | Some(Ok(())) => return Ok(value),
+                    Some(Err(why)) => (false, why),
+                },
+                Err(why) => (true, why),
+            };
+
+            if attempts > method.max_repairs {
+                let type_name = std::any::type_name::<T>();
+                return Err(if structural {
+                    CallError::Invalid {
+                        type_name,
+                        attempts,
+                        detail,
+                        last,
+                    }
+                } else {
+                    CallError::Postcondition {
+                        type_name,
+                        attempts,
+                        detail,
+                        last,
+                    }
+                });
+            }
+
+            message = format!(
+                "That answer was rejected: {detail}\n\nReply again with nothing but a JSON \
+                 object matching the required schema."
+            );
+        }
+    }
+
+    /// The context facts a `predict` session needs to constrain its turn.
+    fn prediction_facts<T>(method: &Method<T>) -> serde_json::Map<String, serde_json::Value>
+    where
+        T: DeserializeOwned + JsonSchema,
+    {
+        let mut facts = serde_json::Map::new();
+        if method.strategy == Strategy::Predict {
+            facts.insert(
+                sven_machines::machines::predict::SCHEMA_FACT.to_string(),
+                method.schema(),
+            );
+            facts.insert(
+                sven_machines::machines::predict::SCHEMA_NAME_FACT.to_string(),
+                serde_json::Value::String(method.name().to_string()),
+            );
+        }
+        facts
+    }
+
+    /// Builds a session, posts one message, and folds the result back in.
+    async fn run_turn(&mut self, text: &str, options: &TurnOptions) -> Result<String, CallError> {
         let registry = sven_machines::ModeRegistry::default_registry();
         if registry.get(&self.state.mode).is_none() {
             return Err(CallError::Precondition(format!(
@@ -84,8 +197,16 @@ impl Agent {
             )));
         }
 
+        let runtime_ctx = RuntimeContext {
+            system_prompt_override: options.role.clone(),
+            no_tools: options.no_tools,
+            ..RuntimeContext::default()
+        };
+
         let mut builder = RuntimeBuilder::new(self.engine.config(), self.state.mode.clone())
             .with_allow_interactive_oauth(false)
+            .with_runtime_context(runtime_ctx)
+            .with_context_facts(options.facts.clone())
             .with_initial_history(self.state.history.clone());
         if let Some(provider) = self.engine.provider() {
             builder = builder.with_shared_model_provider(provider);
@@ -157,4 +278,41 @@ impl Agent {
         }
         reply
     }
+}
+
+/// Per-turn overrides that do not belong to the agent's durable state.
+#[derive(Default)]
+struct TurnOptions {
+    /// System prompt for this turn.
+    role: Option<String>,
+    /// Whether the model is denied tools outright.
+    no_tools: bool,
+    /// Domain facts the machine needs in order to run the turn.
+    facts: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Reads `answer` as `T`, describing the failure in terms a model can act on.
+///
+/// Tolerates a fenced code block around the JSON, because a model told to
+/// answer with JSON very often answers with JSON in a fence, and rejecting that
+/// spends a repair attempt on punctuation.
+fn parse_candidate<T: DeserializeOwned>(answer: &str) -> Result<T, String> {
+    let trimmed = strip_fence(answer.trim());
+    if trimmed.is_empty() {
+        return Err("the answer was empty".to_string());
+    }
+    serde_json::from_str::<T>(trimmed).map_err(|e| e.to_string())
+}
+
+/// Returns `text` without a surrounding ```/```json fence, if it has one.
+fn strip_fence(text: &str) -> &str {
+    let Some(rest) = text.strip_prefix("```") else {
+        return text;
+    };
+    let rest = rest.strip_prefix("json").unwrap_or(rest);
+    rest.trim_start_matches(['\r', '\n'])
+        .trim_end()
+        .strip_suffix("```")
+        .unwrap_or(rest)
+        .trim()
 }

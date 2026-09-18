@@ -20,6 +20,12 @@ pub struct AgentState {
     pub(crate) mode: String,
     /// The conversation so far.
     pub(crate) history: Vec<Message>,
+    /// The stable role this agent plays, rendered as its system prompt.
+    ///
+    /// Belongs to the agent rather than to any one call, which is what lets it
+    /// sit in the cacheable prefix of every prompt the agent sends.
+    #[serde(default)]
+    pub(crate) role: Option<String>,
     /// The kernel state the last step ended in.
     ///
     /// `None` for an agent that has not run yet, which resumes from its
@@ -34,6 +40,7 @@ impl AgentState {
         Self {
             mode: mode.into(),
             history: Vec::new(),
+            role: None,
             kernel: None,
         }
     }
@@ -48,6 +55,19 @@ impl AgentState {
     #[must_use]
     pub fn history(&self) -> &[Message] {
         &self.history
+    }
+
+    /// The stable role this agent plays, if one was set.
+    #[must_use]
+    pub fn role(&self) -> Option<&str> {
+        self.role.as_deref()
+    }
+
+    /// Sets the stable role this agent plays.
+    #[must_use]
+    pub fn with_role(mut self, role: impl Into<String>) -> Self {
+        self.role = Some(role.into());
+        self
     }
 
     /// The kernel state the last step ended in, if it has run.

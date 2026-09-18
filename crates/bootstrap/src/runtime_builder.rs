@@ -109,6 +109,9 @@ pub struct RuntimeBuilder {
     /// Kernel state to resume into instead of starting from the machine's
     /// initial state. See [`RuntimeBuilder::with_kernel_snapshot`].
     kernel_snapshot: Option<sven_hsm::Snapshot>,
+    /// Domain facts seeded into the session's context before it starts.
+    /// See [`RuntimeBuilder::with_context_facts`].
+    context_facts: serde_json::Map<String, serde_json::Value>,
     /// The interactive [`AgentMode`] this session runs as (see
     /// [`Self::with_agent_mode`]). Selects the permission policy for the
     /// reactive machine — `Plan`/`Research` get a read-only policy — and seeds
@@ -152,6 +155,7 @@ impl RuntimeBuilder {
             principal: None,
             model_provider_override: None,
             kernel_snapshot: None,
+            context_facts: serde_json::Map::new(),
             agent_mode: None,
             shared_mcp_manager: None,
         }
@@ -315,6 +319,21 @@ impl RuntimeBuilder {
         provider: Arc<dyn sven_model::ModelProvider>,
     ) -> Self {
         self.model_provider_override = Some(provider);
+        self
+    }
+
+    /// Seed domain facts into the session's context before it starts.
+    ///
+    /// The kernel keeps a machine's knowledge in `Context::facts`, which is how
+    /// a machine is parameterised without teaching the kernel anything about
+    /// the domain. A caller that needs a machine to start out knowing something
+    /// - the JSON schema a `predict` turn must conform to, say - puts it here.
+    ///
+    /// Facts seeded this way are applied on top of a resumed snapshot's own
+    /// facts, so a caller can re-seed per step without losing what the machine
+    /// accumulated.
+    pub fn with_context_facts(mut self, facts: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.context_facts = facts;
         self
     }
 
@@ -760,6 +779,9 @@ impl RuntimeBuilder {
             }
             None => Context::new(),
         };
+        for (key, value) in std::mem::take(&mut self.context_facts) {
+            init_ctx.facts.insert(key, value);
+        }
         init_ctx.principal = self.principal.clone();
         if child_spawner.is_some() {
             init_ctx.set_fact("parallel_execution", serde_json::json!(true));

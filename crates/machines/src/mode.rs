@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
 use crate::machines::{
-    reactive_agent::ReactiveAgentMachine, sdlc::SdlcMachine, ui_test::UiTestMachine,
-    verified_task::VerifiedTaskMachine,
+    predict::PredictMachine, reactive_agent::ReactiveAgentMachine, sdlc::SdlcMachine,
+    ui_test::UiTestMachine, verified_task::VerifiedTaskMachine,
 };
 
 /// A factory that creates a type-erased running machine.
@@ -71,6 +71,10 @@ impl ModeRegistry {
             Box::new(|| -> Box<dyn ErasedMachine> {
                 Box::new(Hsm::new(VerifiedTaskMachine::new()))
             }),
+        );
+        reg.register(
+            "predict",
+            Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(PredictMachine::new())) }),
         );
         reg.register(
             "ui-test",

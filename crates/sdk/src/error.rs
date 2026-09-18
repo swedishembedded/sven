@@ -22,6 +22,39 @@ pub enum CallError {
     #[error("cannot resume agent: {0}")]
     Resume(#[from] sven_hsm::RestoreError),
 
+    /// The model never produced a value of the required shape.
+    ///
+    /// Distinct from [`Self::Postcondition`]: this is a structural failure -
+    /// the answer could not be read as the return type at all.
+    #[error("the model did not produce a valid {type_name} in {attempts} attempt(s): {detail}")]
+    Invalid {
+        /// The return type that could not be produced.
+        type_name: &'static str,
+        /// How many answers were rejected, including the first.
+        attempts: u32,
+        /// Why the last answer was rejected.
+        detail: String,
+        /// The last answer, verbatim, for diagnosis.
+        last: String,
+    },
+
+    /// The model produced a well-formed value that broke an invariant.
+    ///
+    /// Distinct from [`Self::Invalid`]: the structure was right, so the failure
+    /// is about meaning rather than shape. A structurally valid object can
+    /// still carry a fabricated citation or an impossible number.
+    #[error("{type_name} failed its postcondition in {attempts} attempt(s): {detail}")]
+    Postcondition {
+        /// The return type whose invariant was broken.
+        type_name: &'static str,
+        /// How many answers were rejected, including the first.
+        attempts: u32,
+        /// Which invariant failed.
+        detail: String,
+        /// The last answer, verbatim, for diagnosis.
+        last: String,
+    },
+
     /// The kernel, transport or provider failed.
     ///
     /// Not a model mistake. Deliberately distinct so that an outage is never

@@ -64,6 +64,37 @@ impl Engine {
         Agent::new(self.clone(), AgentState::new(mode))
     }
 
+    /// Creates an agent suited to `method`: the strategy picks the machine,
+    /// and the method's role becomes the agent's.
+    #[must_use]
+    pub fn agent_for<T>(&self, method: &crate::Method<T>) -> Agent
+    where
+        T: serde::de::DeserializeOwned + schemars::JsonSchema,
+    {
+        let mut state = AgentState::new(mode_for(method.strategy));
+        if let Some(role) = method.role.as_deref() {
+            state = state.with_role(role);
+        }
+        Agent::new(self.clone(), state)
+    }
+
+    /// Calls a model-driven method without keeping an agent around.
+    ///
+    /// The lightweight form: no persistent instance state, so nothing
+    /// accumulates between calls. Use [`Engine::agent_for`] when successive
+    /// calls should build on each other.
+    ///
+    /// # Errors
+    ///
+    /// The same failures as [`Agent::call`].
+    pub async fn call<I, T>(&self, method: &crate::Method<T>, input: &I) -> Result<T, CallError>
+    where
+        I: serde::Serialize + ?Sized,
+        T: serde::de::DeserializeOwned + schemars::JsonSchema,
+    {
+        self.agent_for(method).call(method, input).await
+    }
+
     /// Resumes a suspended agent against this engine.
     ///
     /// # Errors
@@ -152,5 +183,13 @@ impl EngineBuilder {
             provider: self.provider,
             approvals: self.approvals.unwrap_or(ApprovalPolicy::Deny),
         })
+    }
+}
+
+/// The machine that serves a given strategy.
+fn mode_for(strategy: crate::Strategy) -> &'static str {
+    match strategy {
+        crate::Strategy::Predict => "predict",
+        crate::Strategy::Investigate => "agent",
     }
 }

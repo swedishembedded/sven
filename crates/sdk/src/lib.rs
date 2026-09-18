@@ -47,11 +47,13 @@
 mod agent;
 mod engine;
 mod error;
+mod method;
 mod state;
 
 pub use agent::Agent;
-pub use engine::{Engine, EngineBuilder};
+pub use engine::{ApprovalPolicy, Engine, EngineBuilder};
 pub use error::CallError;
+pub use method::{Method, Strategy};
 pub use state::AgentState;
 
 /// The event stream an agent emits while it works.
