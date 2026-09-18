@@ -700,16 +700,6 @@ mod tests {
         answer_signature(m, ctx, state, "before")
     }
 
-    /// Answer the post-action check with a digest unlike the baseline: the
-    /// action really did change the screen.
-    fn verify_changed(
-        m: &mut UiTestMachine,
-        ctx: &mut Context,
-        state: &mut UiTestState,
-    ) -> Reaction<UiTestState> {
-        answer_signature(m, ctx, state, "after")
-    }
-
     #[test]
     fn seeding_parses_the_script_and_starts_compiling_step_0() {
         let (mut m, mut ctx, mut state) = make();
