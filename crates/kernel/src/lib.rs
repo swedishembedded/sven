@@ -30,20 +30,21 @@ mod abort_on_drop;
 use abort_on_drop::AbortOnDrop;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use async_trait::async_trait;
-use tokio::sync::{mpsc, watch};
-use tokio::task::JoinHandle;
+use tokio::sync::{mpsc, oneshot, watch};
 
 use serde_json::Value;
 
 use sven_hsm::{
     classify, validate_effects_are_allowed, AuditRecord, AuditTrailHandle, Context, Effect,
     EffectDisposition, ErasedMachine, ErasedReport, Event, EventKind, Hsm, InternalEvent, Machine,
-    MachineId, ObservationSink, PermissionPolicy, RuntimeReport, RuntimeStatus, StateLabel,
-    TimerId, ToolAuditRecord, UiEvent,
+    MachineId, ObservationSink, PermissionPolicy, RuntimeReport, RuntimeStatus, Snapshot,
+    StateLabel, ToolAuditRecord, UiEvent,
 };
+
+mod clock;
+pub use clock::{Clock, SystemClock, TimerService, VirtualClock};
 
 /// Default capacity of the per-runtime observation broadcast channel.
 const OBSERVATION_CAPACITY: usize = 1024;
@@ -66,156 +67,6 @@ impl EventSink {
     /// the kernel has shut down.
     pub fn try_emit(&self, event: Event) -> bool {
         self.tx.try_send(event).is_ok()
-    }
-}
-
-/// A monotonic, awaitable clock. Abstracted so timeouts are deterministic in
-/// tests.
-///
-/// The fundamental operation is [`sleep_until`](Clock::sleep_until) with an
-/// *absolute* deadline. Schedulers compute the deadline once, synchronously, at
-/// scheduling time; this is what makes a [`VirtualClock`] race-free even when
-/// time is advanced before the sleeping task starts.
-#[async_trait]
-pub trait Clock: Send + Sync + 'static {
-    /// Time elapsed since the clock's epoch.
-    fn now(&self) -> Duration;
-    /// Resolves once clock-time reaches `deadline`.
-    async fn sleep_until(&self, deadline: Duration);
-    /// Resolves once `duration` of clock-time has elapsed from now.
-    async fn sleep(&self, duration: Duration) {
-        let deadline = self.now() + duration;
-        self.sleep_until(deadline).await;
-    }
-}
-
-/// Real wall-clock time backed by `tokio::time`.
-pub struct SystemClock {
-    start: std::time::Instant,
-}
-
-impl SystemClock {
-    /// Creates a clock whose epoch is now.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            start: std::time::Instant::now(),
-        }
-    }
-}
-
-impl Default for SystemClock {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl Clock for SystemClock {
-    fn now(&self) -> Duration {
-        self.start.elapsed()
-    }
-
-    async fn sleep_until(&self, deadline: Duration) {
-        let now = self.now();
-        if deadline > now {
-            tokio::time::sleep(deadline - now).await;
-        }
-    }
-}
-
-/// A manually-driven virtual clock for deterministic timer tests.
-///
-/// Time starts at zero and only moves when [`advance`](VirtualClock::advance) is
-/// called; sleeping tasks wake the instant the virtual time reaches their
-/// deadline. Implemented with a `watch` channel so wakeups are edge-triggered
-/// rather than polled.
-#[derive(Clone)]
-pub struct VirtualClock {
-    tx: Arc<watch::Sender<Duration>>,
-}
-
-impl VirtualClock {
-    /// Creates a virtual clock at time zero.
-    #[must_use]
-    pub fn new() -> Self {
-        let (tx, _rx) = watch::channel(Duration::ZERO);
-        Self { tx: Arc::new(tx) }
-    }
-
-    /// Advances virtual time by `delta`, waking any sleepers whose deadline has
-    /// now passed.
-    pub fn advance(&self, delta: Duration) {
-        self.tx.send_modify(|t| *t += delta);
-    }
-}
-
-impl Default for VirtualClock {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl Clock for VirtualClock {
-    fn now(&self) -> Duration {
-        *self.tx.borrow()
-    }
-
-    async fn sleep_until(&self, deadline: Duration) {
-        let mut rx = self.tx.subscribe();
-        loop {
-            if *rx.borrow() >= deadline {
-                return;
-            }
-            if rx.changed().await.is_err() {
-                return; // clock dropped
-            }
-        }
-    }
-}
-
-/// Schedules one-shot timeouts that post `Event::Timeout { timer_id }` when they
-/// elapse, using an injected [`Clock`]. Cancellation aborts the pending task.
-pub struct TimerService {
-    clock: Arc<dyn Clock>,
-    sink: EventSink,
-    tasks: HashMap<TimerId, JoinHandle<()>>,
-}
-
-impl TimerService {
-    /// Creates a timer service that fires events into `sink` using `clock`.
-    #[must_use]
-    pub fn new(clock: Arc<dyn Clock>, sink: EventSink) -> Self {
-        Self {
-            clock,
-            sink,
-            tasks: HashMap::new(),
-        }
-    }
-
-    /// Schedules `timer_id` to fire after `duration` of clock-time. A timer with
-    /// the same id is replaced.
-    pub fn schedule(&mut self, timer_id: TimerId, duration: Duration) {
-        let clock = Arc::clone(&self.clock);
-        let sink = self.sink.clone();
-        // Compute the absolute deadline now, synchronously, so advancing a
-        // VirtualClock before the spawned task starts cannot be missed.
-        let deadline = self.clock.now() + duration;
-        let handle = tokio::spawn(async move {
-            clock.sleep_until(deadline).await;
-            let _ = sink.emit(Event::timeout(timer_id)).await;
-        });
-        if let Some(old) = self.tasks.insert(timer_id, handle) {
-            old.abort();
-        }
-    }
-
-    /// Cancels a scheduled timer, if present.
-    pub fn cancel(&mut self, timer_id: TimerId) {
-        if let Some(handle) = self.tasks.remove(&timer_id) {
-            handle.abort();
-        }
     }
 }
 
@@ -723,6 +574,7 @@ pub struct ErasedRuntime {
     obs: ObservationSink,
     status_rx: watch::Receiver<RuntimeStatus>,
     trail: AuditTrailHandle,
+    capture_tx: mpsc::Sender<oneshot::Sender<Snapshot>>,
     handle: AbortOnDrop<ErasedReport>,
 }
 
@@ -794,6 +646,7 @@ impl ErasedRuntime {
     {
         let (tx, rx) = mpsc::channel::<Event>(queue_depth.max(1));
         let (status_tx, status_rx) = watch::channel(RuntimeStatus::default());
+        let (capture_tx, capture_rx) = mpsc::channel::<oneshot::Sender<Snapshot>>(1);
         let sink = EventSink { tx };
         let obs = ObservationSink::new(OBSERVATION_CAPACITY);
 
@@ -803,6 +656,7 @@ impl ErasedRuntime {
             policy,
             executor,
             rx,
+            capture_rx,
             sink.clone(),
             obs.clone(),
             status_tx,
@@ -815,6 +669,7 @@ impl ErasedRuntime {
             obs,
             status_rx,
             trail,
+            capture_tx,
             handle: AbortOnDrop::new(handle),
         }
     }
@@ -901,6 +756,26 @@ impl ErasedRuntime {
         std::mem::drop(self.handle.disarm());
     }
 
+    /// Captures the machine's current state and context without stopping it.
+    ///
+    /// The consumer task owns its context, so this asks for a copy and waits
+    /// for it to be handed back. The request is served only once the event
+    /// queue has drained, so the snapshot always shows the machine at rest
+    /// rather than part-way through a turn.
+    ///
+    /// Callers relying on this to capture the end of a turn depend on the turn
+    /// executor's ordering guarantee: the inward completion event is posted
+    /// *before* the outward `UiEvent::TurnComplete` that tells a caller the
+    /// turn is over. That is what puts the completion event in the queue ahead
+    /// of the capture request.
+    ///
+    /// Returns `None` if the consumer task has already stopped.
+    pub async fn capture(&self) -> Option<Snapshot> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.capture_tx.send(reply_tx).await.ok()?;
+        reply_rx.await.ok()
+    }
+
     /// Awaits the consumer task and returns the final context.
     ///
     /// # Errors
@@ -918,6 +793,7 @@ async fn erased_consumer_loop<E>(
     policy: PermissionPolicy,
     mut executor: E,
     mut rx: mpsc::Receiver<Event>,
+    mut capture_rx: mpsc::Receiver<oneshot::Sender<Snapshot>>,
     sink: EventSink,
     obs: ObservationSink,
     status_tx: watch::Sender<RuntimeStatus>,
@@ -974,7 +850,28 @@ where
         };
     }
 
-    while let Some(event) = rx.recv().await {
+    loop {
+        // A capture is served only when no event is pending, and never
+        // mid-dispatch. `biased` is load-bearing, not a fairness preference:
+        // an unbiased select would sometimes hand out a snapshot taken while
+        // the machine still had queued work, capturing a transient mid-turn
+        // state. Resuming from one of those would drop the agent back into a
+        // state that ignores the next user message, and it would do so only
+        // occasionally.
+        let event = tokio::select! {
+            biased;
+            event = rx.recv() => match event {
+                Some(event) => event,
+                None => break,
+            },
+            Some(reply) = capture_rx.recv() => {
+                let _ = reply.send(Snapshot {
+                    state: machine.state_label(),
+                    context: ctx.clone(),
+                });
+                continue;
+            }
+        };
         note_child_completion(&mut children, &event);
         let outcome = machine.dispatch(&event, &mut ctx);
         let event_kind = outcome.event;

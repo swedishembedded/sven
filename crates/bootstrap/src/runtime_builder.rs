@@ -31,16 +31,16 @@ use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
     CompositeExecutorBuilder, ToolExecutor, TurnExecutor,
 };
-use sven_hsm::{Context, Event, ObservationSink, Principal, RuntimeStatus, ToolCallId, UiEvent};
-use sven_kernel::{EffectExecutor, ErasedRuntime, EventSink};
+use sven_hsm::{Context, ObservationSink, Principal, ToolCallId, UiEvent};
+use sven_kernel::{EffectExecutor, ErasedRuntime};
 use sven_llm::ThreadStore;
 use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine, UiTestMachine};
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
 use sven_tools::events::ToolEvent;
-use sven_tools::{PermissionRequester, ToolRegistry};
+use sven_tools::PermissionRequester;
 use sven_tools_agent::QuestionRequest;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::context::{RuntimeContext, ToolSetProfile};
@@ -64,147 +64,7 @@ pub type ToolExecutorFactory = Box<
         + Send,
 >;
 
-// ── KernelChannels ────────────────────────────────────────────────────────────
-
-/// Channel endpoints returned to the caller (TUI / node / CI) so they can
-/// exchange user input and approval decisions with the running kernel.
-pub struct KernelChannels {
-    /// Receives questions the kernel's `UserExecutor` forwards from
-    /// `Effect::AskUser`. The holder must display the prompt and send the
-    /// answer through [`UserQuestion::reply_tx`].
-    pub question_rx: mpsc::Receiver<UserQuestion>,
-    /// Receives approval requests forwarded from
-    /// `Effect::RequestHumanApproval`. The holder must approve or deny via
-    /// [`ApprovalRequest::reply_tx`].
-    pub approval_rx: mpsc::Receiver<ApprovalRequest>,
-}
-
-impl KernelChannels {
-    /// Auto-consumes every kernel-level question and approval gate, replying
-    /// immediately so the session never blocks on a human who isn't there:
-    /// an empty string for every `AskUser`, `true` (approve) for every
-    /// `RequestHumanApproval`. Returns once both channels close.
-    ///
-    /// This is the unattended path -- CI runs and one-shot test/demo
-    /// wiring. Typically
-    /// driven with `tokio::spawn(channels.auto_approve())`.
-    pub async fn auto_approve(mut self) {
-        loop {
-            tokio::select! {
-                q = self.question_rx.recv() => match q {
-                    Some(q) => { let _ = q.reply_tx.send(String::new()); }
-                    None => break,
-                },
-                a = self.approval_rx.recv() => match a {
-                    Some(a) => { let _ = a.reply_tx.send(true); }
-                    None => break,
-                },
-            }
-        }
-    }
-}
-
-// ── RuntimeHandle ─────────────────────────────────────────────────────────────
-
-/// A cheap-to-clone handle to a spawned [`ErasedRuntime`].
-///
-/// Provides the event sink and status watch; the caller typically also holds
-/// the [`KernelChannels`] returned alongside this handle.
-#[derive(Clone)]
-pub struct RuntimeHandle {
-    sink: EventSink,
-    obs: sven_hsm::ObservationSink,
-    status_rx: watch::Receiver<RuntimeStatus>,
-    /// The kernel's shared conversation store (thread → turns). Exposed so
-    /// interactive frontends can seed / replace history mid-session for the
-    /// edit-resubmit and resume flows.
-    conv_store: Arc<std::sync::Mutex<ThreadStore>>,
-    /// The live tool registry. Exposed so frontends can hot-swap MCP tools via
-    /// [`ToolRegistry::replace_mcp_tools`] without rebuilding the session.
-    tool_registry: Arc<ToolRegistry>,
-}
-
-impl RuntimeHandle {
-    /// Returns a cloneable sink for posting events into the kernel.
-    #[must_use]
-    pub fn sink(&self) -> EventSink {
-        self.sink.clone()
-    }
-
-    /// Returns a clone of the outward observation sink for this session.
-    #[must_use]
-    pub fn observations(&self) -> sven_hsm::ObservationSink {
-        self.obs.clone()
-    }
-
-    /// Subscribes a fresh receiver to the outward observation plane
-    /// (`UiEvent` stream: streamed text, tool progress, usage, transitions).
-    #[must_use]
-    pub fn subscribe_observations(&self) -> tokio::sync::broadcast::Receiver<sven_hsm::UiEvent> {
-        self.obs.subscribe()
-    }
-
-    /// Posts `Event::UserMessage { text }` into the kernel queue.
-    pub async fn send_user_message(&self, text: String) -> bool {
-        self.sink.emit(Event::UserMessage { text }).await
-    }
-
-    /// Posts `Event::UserCancelled` into the kernel queue.
-    pub async fn cancel(&self) -> bool {
-        self.sink.emit(Event::UserCancelled).await
-    }
-
-    /// The latest published status snapshot.
-    #[must_use]
-    pub fn status(&self) -> RuntimeStatus {
-        self.status_rx.borrow().clone()
-    }
-
-    /// A fresh receiver for status updates (watch channel).
-    #[must_use]
-    pub fn status_watch(&self) -> watch::Receiver<RuntimeStatus> {
-        self.status_rx.clone()
-    }
-
-    /// The kernel's shared conversation store (for history seeding / resume).
-    #[must_use]
-    pub fn conversation_store(&self) -> Arc<std::sync::Mutex<ThreadStore>> {
-        Arc::clone(&self.conv_store)
-    }
-
-    /// A snapshot of the reactive-agent conversation thread.
-    ///
-    /// Used to carry accumulated context forward when a session is rebuilt
-    /// (e.g. on a mid-session model switch) so the replacement kernel can be
-    /// seeded with the same history. Empty if the store mutex is poisoned.
-    #[must_use]
-    pub fn history_snapshot(&self) -> Vec<Message> {
-        self.conv_store
-            .lock()
-            .ok()
-            .map(|store| store.snapshot(sven_machines::machines::reactive_agent::CHAT_THREAD))
-            .unwrap_or_default()
-    }
-
-    /// Replace the reactive-agent conversation thread with `messages`.
-    ///
-    /// The history-seeding hook a rebuilt kernel uses so the next turn streams
-    /// against exactly those turns. A no-op if the store mutex is poisoned.
-    pub fn seed_history(&self, messages: Vec<Message>) {
-        if let Ok(mut store) = self.conv_store.lock() {
-            store.replace_thread(
-                sven_machines::machines::reactive_agent::CHAT_THREAD,
-                messages,
-            );
-        }
-    }
-
-    /// The live tool registry (for MCP tool hot-swap).
-    #[must_use]
-    pub fn tool_registry(&self) -> Arc<ToolRegistry> {
-        Arc::clone(&self.tool_registry)
-    }
-}
+pub use crate::session_handles::{KernelChannels, RuntimeHandle};
 
 // ── RuntimeBuilder ────────────────────────────────────────────────────────────
 
@@ -245,7 +105,10 @@ pub struct RuntimeBuilder {
     /// When set, this provider is used instead of the one
     /// `sven_model_drivers::from_config` would construct (see
     /// [`Self::with_model_provider`]).
-    model_provider_override: Option<Box<dyn sven_model::ModelProvider>>,
+    model_provider_override: Option<Arc<dyn sven_model::ModelProvider>>,
+    /// Kernel state to resume into instead of starting from the machine's
+    /// initial state. See [`RuntimeBuilder::with_kernel_snapshot`].
+    kernel_snapshot: Option<sven_hsm::Snapshot>,
     /// The interactive [`AgentMode`] this session runs as (see
     /// [`Self::with_agent_mode`]). Selects the permission policy for the
     /// reactive machine — `Plan`/`Research` get a read-only policy — and seeds
@@ -288,6 +151,7 @@ impl RuntimeBuilder {
             tool_executor_override: None,
             principal: None,
             model_provider_override: None,
+            kernel_snapshot: None,
             agent_mode: None,
             shared_mcp_manager: None,
         }
@@ -435,7 +299,37 @@ impl RuntimeBuilder {
     /// then reach the model unwrapped. Unlike [`Self::with_effect_executor`], all default
     /// executors (turn/tool/user/timer/checkpoint/audit) stay wired.
     pub fn with_model_provider(mut self, provider: Box<dyn sven_model::ModelProvider>) -> Self {
+        self.model_provider_override = Some(Arc::from(provider));
+        self
+    }
+
+    /// Supply a provider that is *shared* with other sessions.
+    ///
+    /// [`Self::with_model_provider`] hands the builder sole ownership, which
+    /// means one provider - and one HTTP client, connection pool and set of
+    /// credentials - per session. An engine serving many concurrent agents
+    /// wants the opposite: build the provider once and lend it to every
+    /// session it constructs.
+    pub fn with_shared_model_provider(
+        mut self,
+        provider: Arc<dyn sven_model::ModelProvider>,
+    ) -> Self {
         self.model_provider_override = Some(provider);
+        self
+    }
+
+    /// Resume the kernel into a previously captured state instead of starting
+    /// the machine from scratch.
+    ///
+    /// This is what makes a session survive being put down: a service can
+    /// suspend an agent between requests and rebuild it here without replaying
+    /// its event log. The snapshot's context - facts, granted capabilities,
+    /// audit trail - becomes the session's initial context.
+    ///
+    /// Building fails if the mode's machine does not enumerate the snapshot's
+    /// state (see `Machine::all_states`).
+    pub fn with_kernel_snapshot(mut self, snapshot: sven_hsm::Snapshot) -> Self {
+        self.kernel_snapshot = Some(snapshot);
         self
     }
 
@@ -476,7 +370,7 @@ impl RuntimeBuilder {
         // An injected provider (see `with_model_provider`) wins over the
         // config-constructed one — that is how metering/gateway wrappers get
         // between the kernel and the model.
-        let model_provider = match self.model_provider_override.take() {
+        let model: Arc<dyn sven_model::ModelProvider> = match self.model_provider_override.take() {
             Some(provider) => provider,
             // `_probed` additionally asks the live server for its actual
             // context window (a short-timeout, best-effort HTTP call) and
@@ -486,9 +380,8 @@ impl RuntimeBuilder {
             // `build()` already does I/O two lines below (MCP connect), so
             // this adds no new purity concern; it is a builder, not a
             // transition.
-            None => sven_model_drivers::from_config_probed(&model_cfg).await?,
+            None => Arc::from(sven_model_drivers::from_config_probed(&model_cfg).await?),
         };
-        let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model_provider);
 
         // ── MCP setup ────────────────────────────────────────────────────────
         // Reuse a caller-supplied manager (session rebuild) instead of building
@@ -855,7 +748,18 @@ impl RuntimeBuilder {
         // Seed the parallel-execution flag so the SDLC machine only fans out
         // when a child spawner is actually installed (otherwise it stays
         // single-track and never emits orphaned InstantiateSubmachine effects).
-        let mut init_ctx = Context::new();
+        // A resumed session starts from the snapshotted state and context; a
+        // fresh one starts from the machine's initial state and an empty
+        // context. Restoring before spawning is what keeps the runtime from
+        // re-entering the initial state and re-running completed work.
+        let mut machine = machine;
+        let mut init_ctx = match self.kernel_snapshot.take() {
+            Some(snapshot) => {
+                machine.restore_state(&snapshot.state)?;
+                snapshot.context
+            }
+            None => Context::new(),
+        };
         init_ctx.principal = self.principal.clone();
         if child_spawner.is_some() {
             init_ctx.set_fact("parallel_execution", serde_json::json!(true));
@@ -1027,7 +931,8 @@ fn spawn_tool_event_forwarder(mut rx: mpsc::Receiver<ToolEvent>, obs: Observatio
 mod tests {
     use std::time::Duration;
 
-    use sven_hsm::{Effect, EffectKind, ObservationSink};
+    use sven_hsm::{Effect, EffectKind, Event, ObservationSink};
+    use sven_kernel::EventSink;
 
     use super::*;
 
