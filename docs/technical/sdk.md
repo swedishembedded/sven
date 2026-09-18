@@ -172,3 +172,25 @@ with `sven_config::load` and passes it to `EngineBuilder::config`.
 | `suspend_resume.rs` | Advance one step, persist, free, resume |
 | `watch_events.rs` | A custom surface built from the event stream |
 | `verified_workflow.rs` | Deterministic orchestration around model judgement, where a code-level check can reject the model's claim |
+
+## The CLI on the SDK
+
+`sven agent step` is the shell-level form of the same lifecycle:
+
+```sh
+sven agent step --state ./review.json "read src/lib.rs and summarise it"
+sven agent step --state ./review.json "now list its public types"
+```
+
+Each invocation is a separate process. It loads the agent from the state file,
+advances it by exactly one step, persists, and exits - nothing of the agent
+survives between the two commands except the file.
+
+It is built on `sven-sdk` rather than on `RuntimeBuilder`, which makes it the
+working proof that the published surface is sufficient: if `sven agent step`
+cannot do something, neither can anyone else's application. Its contract is
+pinned by `tests/e2e/basic/16_agent_step.bats`.
+
+A state file that exists but cannot be parsed is an error, not a fresh start.
+Silently discarding a conversation would surface much later, as an agent that
+had inexplicably forgotten everything.

@@ -7,6 +7,7 @@
 //! This mirrors `src/run/` (see `src/main.rs`), which holds the *handler*
 //! for each of these groups — this module only declares the clap grammar.
 
+mod agent;
 mod index;
 #[cfg(feature = "memory")]
 mod learn;
@@ -20,6 +21,7 @@ mod tool;
 // `AcpCommands`/`McpCommands` live in `sven-acp`/`sven-mcp` themselves,
 // shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
 // than duplicated here.
+pub use agent::AgentCommands;
 pub use index::IndexCommands;
 #[cfg(feature = "memory")]
 pub use learn::LearnCommands;
@@ -282,6 +284,20 @@ pub enum Commands {
     Tool {
         #[command(subcommand)]
         command: ToolCommands,
+    },
+
+    /// Run an agent one step at a time, keeping its state in a file.
+    ///
+    /// The shell-level form of the sven SDK: each invocation loads the agent,
+    /// advances it by exactly one step, persists, and exits - the same shape a
+    /// service uses per request.
+    ///
+    ///   sven agent step "what does this repo do?"
+    ///   sven agent step --state ./s.json "read src/lib.rs and summarise it"
+    ///   sven agent step --state ./s.json "now list its public types"
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommands,
     },
 
     /// Expose sven as an MCP server for use with Cursor, Claude Desktop, and

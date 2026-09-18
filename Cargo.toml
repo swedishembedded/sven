@@ -146,6 +146,7 @@ sven-memory      = { path = "crates/memory", optional = true }
 sven-hsm         = { path = "crates/hsm", optional = true }
 uuid             = { workspace = true, optional = true }
 sven-ci          = { path = "crates/ci" }
+sven-sdk         = { path = "crates/sdk" }
 # `sven task run`: Task/VerifiedTaskSeed/ContentDigest to build the seed a
 # freshly-loaded `.task.toml` is posted as. Zero-dependency foundation crate,
 # so this is unconditional (not gated behind `memory`).

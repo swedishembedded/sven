@@ -362,6 +362,10 @@ types requiring a translator.
 - **Never duplicate frontend logic inside `sven-tui`** - shared code to `sven-frontend`.
 - **Sven is a framework, and the CLI is one of its consumers.** The public
   surface belongs in `sven-sdk`; the kernel stays embeddable and resumable.
+  `sven agent step` is built on that surface rather than on `RuntimeBuilder`,
+  deliberately: it is the standing proof that the surface is sufficient for
+  real work, so keep it that way rather than reaching past the SDK to fix
+  something in it.
   Read [docs/adr/0003-agents-as-typed-objects.md](docs/adr/0003-agents-as-typed-objects.md)
   before changing the public API, adding a machine, or touching session
   lifecycle - it records which design principles are adopted, which were already

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use clap::Parser;
 use cli::{Cli, Commands};
 
+use run::agent::run_agent_command;
 use run::agent_dispatch::run_agent_dispatch_command;
 use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
@@ -64,6 +65,13 @@ async fn main() -> anyhow::Result<()> {
             Commands::Tool { command } => {
                 let config = sven_config::load(cli.config.as_deref())?;
                 return run_tool_command(command, &config).await;
+            }
+            Commands::Agent { command } => {
+                let mut config = sven_config::load(cli.config.as_deref())?;
+                if let Some(m) = &cli.model {
+                    config.model = sven_model::resolve_model_from_config(&config, m);
+                }
+                return run_agent_command(command, config).await;
             }
             #[cfg(feature = "network")]
             Commands::Mcp { command } => {
