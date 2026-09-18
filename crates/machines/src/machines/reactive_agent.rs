@@ -479,6 +479,16 @@ impl Machine for ReactiveAgentMachine {
     fn is_terminal(&self, _state: ReactiveState) -> bool {
         false
     }
+
+    fn all_states(&self) -> Vec<ReactiveState> {
+        // Every state a snapshot can name. `Top` is the implicit root and is
+        // never an active leaf, so it is not resumable and not listed.
+        vec![
+            ReactiveState::Session,
+            ReactiveState::Idle,
+            ReactiveState::Generating,
+        ]
+    }
 }
 
 #[cfg(test)]

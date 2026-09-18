@@ -36,7 +36,10 @@
 
 pub mod decisions;
 pub mod prompts;
+pub mod state;
 pub mod task;
+
+pub use state::SdlcState;
 
 use serde_json::{json, Value};
 use sven_hsm::{
@@ -60,29 +63,6 @@ use super::loop_core::{
 
 /// Maximum number of recovery attempts before giving up.
 const MAX_RECOVERY: u32 = 3;
-
-// ─── State enum ───────────────────────────────────────────────────────────────
-
-/// States of the kernel-native SDLC machine.
-///
-/// Each phase state owns its tool loop — there are no shared `RunningTools` or
-/// `AwaitingApproval` states.
-#[allow(missing_docs)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum SdlcState {
-    Top,
-    Idle,
-    Intake,
-    Discovery,
-    Planning,
-    Execution,
-    Verification,
-    Delivery,
-    Recovery,
-    Done,
-    Failed,
-    Cancelled,
-}
 
 // ─── PhaseSpec table ──────────────────────────────────────────────────────────
 
@@ -555,10 +535,11 @@ impl Machine for SdlcMachine {
     }
 
     fn is_terminal(&self, state: SdlcState) -> bool {
-        matches!(
-            state,
-            SdlcState::Done | SdlcState::Failed | SdlcState::Cancelled
-        )
+        state.is_terminal()
+    }
+
+    fn all_states(&self) -> Vec<SdlcState> {
+        SdlcState::all()
     }
 
     #[allow(clippy::too_many_lines)]

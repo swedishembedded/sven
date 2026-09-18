@@ -257,7 +257,7 @@ fn event_sourcing_replay_reconstructs_identical_state_and_audit() {
     }
 
     // Replay run.
-    let replayed = sven_hsm::replay(AgentMachine::new, &replay_script());
+    let (replayed, replay_ctx) = sven_hsm::replay(AgentMachine::new, &replay_script());
 
     assert_eq!(live.state(), St::Done);
     assert_eq!(
@@ -267,12 +267,6 @@ fn event_sourcing_replay_reconstructs_identical_state_and_audit() {
     );
 
     // And the audit trails (the deterministic event-sourcing spine) match.
-    let mut replay_ctx = Context::new();
-    let mut rebuilt = Hsm::new(AgentMachine::new());
-    rebuilt.init(&mut replay_ctx);
-    for e in replay_script() {
-        rebuilt.dispatch(&e, &mut replay_ctx);
-    }
     assert_eq!(replay_ctx.audit, live_ctx.audit);
 }
 

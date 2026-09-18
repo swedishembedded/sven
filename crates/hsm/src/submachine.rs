@@ -18,6 +18,7 @@ use crate::effect::Effect;
 use crate::event::{Event, InternalEvent};
 use crate::ids::MachineId;
 use crate::machine::Machine;
+use crate::snapshot::RestoreError;
 
 /// Type-erased view of a running machine. Implemented for every
 /// [`Hsm<M>`](crate::dispatch::Hsm); lets a host drive a child without knowing
@@ -31,6 +32,18 @@ pub trait ErasedMachine: Send {
     fn dispatch(&mut self, event: &Event, ctx: &mut Context) -> DispatchOutcome;
     /// Current state label.
     fn state_label(&self) -> String;
+    /// Every state label this machine can be resumed into.
+    ///
+    /// Empty if the machine leaves [`Machine::all_states`] at its default, in
+    /// which case it cannot be resumed at all.
+    fn all_state_labels(&self) -> Vec<String>;
+    /// Resume into a previously snapshotted state label, without replaying.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RestoreError::UnknownState`] if the machine does not
+    /// enumerate `state`.
+    fn restore_state(&mut self, state: &str) -> std::result::Result<(), RestoreError>;
     /// `true` if the machine reached a terminal state.
     fn is_done(&self) -> bool;
 }
@@ -54,6 +67,18 @@ where
 
     fn state_label(&self) -> String {
         Hsm::state_label(self)
+    }
+
+    fn all_state_labels(&self) -> Vec<String> {
+        self.machine()
+            .all_states()
+            .into_iter()
+            .map(|s| format!("{s:?}"))
+            .collect()
+    }
+
+    fn restore_state(&mut self, state: &str) -> std::result::Result<(), RestoreError> {
+        Hsm::restore_in_place(self, state)
     }
 
     fn is_done(&self) -> bool {

@@ -61,6 +61,7 @@ pub mod machine;
 pub mod observation;
 pub mod permissions;
 pub mod report;
+pub mod snapshot;
 pub mod status;
 pub mod submachine;
 
@@ -82,5 +83,6 @@ pub use permissions::{
     PermissionPolicy, PermissionPolicyBuilder, ToolCapability,
 };
 pub use report::{AuditTrailHandle, ErasedReport, RuntimeReport, RuntimeStatus, StateLabel};
+pub use snapshot::{RestoreError, Snapshot};
 pub use status::Reaction;
 pub use submachine::{ErasedMachine, Submachine, SubmachineOutcome};

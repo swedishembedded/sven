@@ -10,7 +10,8 @@ use serde_json::Value;
 
 use sven_hsm::event::InternalEvent;
 use sven_hsm::{
-    Effect, Event, EventKind, Machine, MachineId, Reaction, TimerId, ToolCallId, ToolCapability,
+    Context, Effect, Event, EventKind, Machine, MachineId, Reaction, TimerId, ToolCallId,
+    ToolCapability,
 };
 
 // ---------------------------------------------------------------------------
@@ -587,5 +588,70 @@ impl Machine for ParentMachine {
             },
             PState::Finished => Reaction::Ignored,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OpaqueMachine - a machine that never opted into `all_states()`.
+//
+// This is what every machine written before state enumeration mattered looks
+// like: correct, dispatchable, but with no way to map a state *name* back to a
+// state value. Restoring one from a snapshot must fail loudly rather than
+// silently resetting it to its initial state.
+// ---------------------------------------------------------------------------
+
+/// States of [`OpaqueMachine`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum OpaqueState {
+    /// Implicit root.
+    Top,
+    /// The only real state.
+    Idle,
+}
+
+/// A machine that leaves [`Machine::all_states`] at its empty default.
+#[derive(Debug)]
+pub struct OpaqueMachine {
+    id: MachineId,
+}
+
+impl OpaqueMachine {
+    /// Creates a new instance with a fresh [`MachineId`].
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            id: MachineId::new(),
+        }
+    }
+}
+
+impl Default for OpaqueMachine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Machine for OpaqueMachine {
+    type State = OpaqueState;
+
+    fn id(&self) -> MachineId {
+        self.id
+    }
+    fn top(&self) -> Self::State {
+        OpaqueState::Top
+    }
+    fn initial(&self) -> Self::State {
+        OpaqueState::Idle
+    }
+    fn superstate(&self, _state: Self::State) -> Self::State {
+        OpaqueState::Top
+    }
+    fn dispatch_state(
+        &mut self,
+        _state: Self::State,
+        _event: &Event,
+        _ctx: &mut Context,
+    ) -> Reaction<Self::State> {
+        Reaction::Handled(Vec::new())
     }
 }

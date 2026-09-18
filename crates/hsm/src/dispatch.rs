@@ -30,6 +30,7 @@ use crate::context::Context;
 use crate::effect::Effect;
 use crate::event::{Event, EventKind};
 use crate::machine::Machine;
+use crate::snapshot::{RestoreError, Snapshot};
 use crate::status::Reaction;
 
 /// The result of dispatching one event.
@@ -83,6 +84,81 @@ impl<M: Machine> Hsm<M> {
     /// The `Debug` label of the current state (used for audit / policy keys).
     pub fn state_label(&self) -> String {
         format!("{:?}", self.state)
+    }
+
+    /// Suspends the machine into a serializable [`Snapshot`].
+    ///
+    /// Captures the active state and `ctx`; nothing else is needed, because
+    /// machines in this workspace keep their durable state in the context
+    /// rather than in their own fields.
+    pub fn snapshot(&self, ctx: &Context) -> Snapshot {
+        Snapshot {
+            state: self.state_label(),
+            context: ctx.clone(),
+        }
+    }
+
+    /// Resumes a machine from a [`Snapshot`] in constant time.
+    ///
+    /// Unlike [`crate::replay`], this re-dispatches nothing: the machine is
+    /// placed directly into the snapshotted state, already initialized, so no
+    /// entry action re-fires and no completed work is repeated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RestoreError::UnknownState`] if `machine` does not enumerate
+    /// the snapshot's state via [`Machine::all_states`].
+    pub fn restore(machine: M, snap: &Snapshot) -> Result<(Self, Context), RestoreError> {
+        let state = machine
+            .all_states()
+            .into_iter()
+            .find(|s| format!("{s:?}") == snap.state)
+            .ok_or_else(|| RestoreError::UnknownState {
+                state: snap.state.clone(),
+                known: machine
+                    .all_states()
+                    .into_iter()
+                    .map(|s| format!("{s:?}"))
+                    .collect(),
+            })?;
+        Ok((
+            Self {
+                machine,
+                state,
+                initialized: true,
+            },
+            snap.context.clone(),
+        ))
+    }
+
+    /// Resumes this machine into `state_label` in place, without replaying.
+    ///
+    /// The in-place counterpart of [`Hsm::restore`], for a machine that has
+    /// already been constructed - notably one produced by a mode registry as a
+    /// `Box<dyn ErasedMachine>`, whose concrete type the caller cannot name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RestoreError::UnknownState`] if the machine does not
+    /// enumerate `state_label` via [`Machine::all_states`].
+    pub fn restore_in_place(&mut self, state_label: &str) -> Result<(), RestoreError> {
+        let state = self
+            .machine
+            .all_states()
+            .into_iter()
+            .find(|s| format!("{s:?}") == state_label)
+            .ok_or_else(|| RestoreError::UnknownState {
+                state: state_label.to_owned(),
+                known: self
+                    .machine
+                    .all_states()
+                    .into_iter()
+                    .map(|s| format!("{s:?}"))
+                    .collect(),
+            })?;
+        self.state = state;
+        self.initialized = true;
+        Ok(())
     }
 
     /// Shared access to the wrapped machine.

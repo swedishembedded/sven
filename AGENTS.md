@@ -285,10 +285,18 @@ now only a thin re-export shim over `sven-tool-api`/`sven-tool-registry`.
 ### Add a new HSM machine / mode
 1. `machines/src/machines/…` - implement `Machine`, reusing `loop_core` for the
    tool-loop plumbing.
-2. `machines/src/mode.rs::default_registry()` - register the mode string.
-3. Its `permission_policy()`.
-4. `bootstrap/src/runtime_builder.rs` - any child-spawner wiring.
-5. Config: `sven-config` `AgentMode` if it's user-selectable.
+2. **Implement `all_states()`, and keep all durable state in `Context` rather
+   than in the machine's own fields.** Both are load-bearing, not optional
+   hygiene: `all_states()` is how a snapshot's state label is mapped back to a
+   state value, so a machine without it cannot be resumed at all, and a field
+   the machine owns is not captured by a snapshot and silently reverts on
+   resume. `crates/machines/tests/restorable.rs` fails the suite if you skip
+   the first; nothing catches the second but a corrupted production session.
+   See [docs/technical/resumable-agents.md](docs/technical/resumable-agents.md).
+3. `machines/src/mode.rs::default_registry()` - register the mode string.
+4. Its `permission_policy()`.
+5. `bootstrap/src/runtime_builder.rs` - any child-spawner wiring.
+6. Config: `sven-config` `AgentMode` if it's user-selectable.
 
 ### Add a new model provider / driver
 1. `model/src/registry.rs` - the `DRIVERS` table (env var, base URL,
@@ -346,6 +354,14 @@ types requiring a translator.
 - **The `EffectExecutor` trait is the I/O seam.** New I/O = new/extended
   executor, never I/O in a transition.
 - **Never duplicate frontend logic inside `sven-tui`** - shared code to `sven-frontend`.
+- **Sven is a framework, and the CLI is one of its consumers.** The public
+  surface belongs in `sven-sdk`; the kernel stays embeddable and resumable.
+  Read [docs/adr/0003-agents-as-typed-objects.md](docs/adr/0003-agents-as-typed-objects.md)
+  before changing the public API, adding a machine, or touching session
+  lifecycle - it records which design principles are adopted, which were already
+  satisfied by the kernel, and which are **rejected** (notably code-as-action
+  execution, which routes around the typed-`Effect` permission gate). Rejections
+  are there so they are not re-litigated or re-implemented by accident.
 - **The layering is enforced, not just documented.** `make check` runs
   `xtask arch` before clippy; an illegal cross-tier dependency or an unused
   declared one fails the build immediately, with the file/line and a fix
@@ -360,7 +376,11 @@ types requiring a translator.
 - [README.md](README.md), [docs/00-introduction.md](docs/00-introduction.md)
 - [docs/technical/](docs/technical/) - HSM architecture, ACP, skill system,
   state machines, and the deliberation engine.
-- [docs/adr/](docs/adr/) - architecture decision records.
+- [docs/adr/](docs/adr/) - architecture decision records. Start with
+  [0003 - agents as typed objects](docs/adr/0003-agents-as-typed-objects.md),
+  which defines the framework model the workspace is moving toward.
+- [docs/technical/resumable-agents.md](docs/technical/resumable-agents.md) -
+  suspending and resuming a session; snapshot vs. replay.
 - `architecture.toml` - authoritative crate tiers, dependency legality, file-size
   ratchet. `.claude/skills/programming/rust/architecture.md` - the layering
   method this workspace follows, generalized for reuse elsewhere.
