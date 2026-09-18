@@ -12,7 +12,9 @@
 use sven_model::{Message, MessageContent, Role};
 use sven_vocab::{CollabEvent, CompactionStrategyUsed, TodoItem};
 
+mod history;
 mod projection;
+pub use history::reduce_history;
 pub use projection::{projection_to_session_state, MachineProjection};
 
 mod outcome;

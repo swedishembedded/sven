@@ -27,7 +27,8 @@ use sven_bootstrap::{build_tool_registry, RuntimeBuilder, RuntimeContext, ToolSe
 use sven_config::{AgentMode, Config, ModelConfig};
 use sven_hsm::{Event, UiEvent};
 use sven_machines::AgentEvent;
-use sven_model::{FunctionCall, Message, MessageContent, Role};
+use sven_model::Message;
+use sven_session_model::reduce_history;
 use sven_tools::ToolRegistry;
 
 /// A kernel-backed replacement for the headless runners' use of
@@ -288,67 +289,5 @@ fn kernel_mode(mode: AgentMode) -> &'static str {
         AgentMode::Chat => "chat",
         AgentMode::Sdlc => "sdlc",
         AgentMode::Agent | AgentMode::Plan | AgentMode::Research => "agent",
-    }
-}
-
-/// Append this turn's produced messages to the accumulated history so the next
-/// rebuilt session is seeded with them. Mirrors the message shapes the runners'
-/// `handle_event`/`collect_event_full` push into their own `collected` copy.
-///
-/// Every non-handled variant is named explicitly (rather than a trailing
-/// `_ => {}`) so a future variant that plausibly belongs in history forces a
-/// decision here instead of being silently skipped.
-fn reduce_history(ev: &AgentEvent, history: &mut Vec<Message>) {
-    match ev {
-        AgentEvent::TextComplete(text) if !text.is_empty() => {
-            history.push(Message::assistant(text));
-        }
-        AgentEvent::ToolCallStarted(tc) => {
-            history.push(Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: tc.id.clone(),
-                    function: FunctionCall {
-                        name: tc.name.clone(),
-                        arguments: tc.args.to_string(),
-                    },
-                },
-            });
-        }
-        AgentEvent::ToolCallFinished {
-            call_id, output, ..
-        } => {
-            history.push(Message::tool_result(call_id, output));
-        }
-        AgentEvent::Aborted { partial_text } if !partial_text.is_empty() => {
-            history.push(Message::assistant(partial_text));
-        }
-        // Empty TextComplete/Aborted (already excluded above by the guards),
-        // plus every event with no message-history representation: streaming
-        // deltas (folded into the eventual TextComplete), progress/usage/
-        // compaction telemetry, mode/model/todo bookkeeping, questions,
-        // titles, team/subagent/peer observations, and the transition trace.
-        AgentEvent::TextComplete(_)
-        | AgentEvent::Aborted { .. }
-        | AgentEvent::TextDelta(_)
-        | AgentEvent::ThinkingDelta(_)
-        | AgentEvent::ThinkingComplete(_)
-        | AgentEvent::ToolProgress { .. }
-        | AgentEvent::ContextCompacted { .. }
-        | AgentEvent::TokenUsage { .. }
-        | AgentEvent::TurnComplete
-        | AgentEvent::Error(_)
-        | AgentEvent::TodoUpdate(_)
-        | AgentEvent::ModeChanged(_)
-        | AgentEvent::ModelChanged(_)
-        | AgentEvent::Question { .. }
-        | AgentEvent::QuestionAnswer { .. }
-        | AgentEvent::TitleGenerated(_)
-        | AgentEvent::CollabEvent(_)
-        | AgentEvent::DelegateSummary { .. }
-        | AgentEvent::SubagentStarted { .. }
-        | AgentEvent::SubagentEvent { .. }
-        | AgentEvent::PeerList(_)
-        | AgentEvent::Transition { .. } => {}
     }
 }

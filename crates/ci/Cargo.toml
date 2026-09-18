@@ -9,6 +9,7 @@ sven-model     = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-tools     = { path = "../tools" }
 sven-tools-fs  = { path = "../tools-fs" }
+sven-session-model = { path = "../session-model" }
 sven-machines      = { path = "../machines" }
 sven-session-store     = { path = "../session-store" }
 sven-bootstrap = { path = "../bootstrap", default-features = false }
