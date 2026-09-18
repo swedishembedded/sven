@@ -141,8 +141,9 @@ closure excludes `ratatui`/`libp2p`/`git2`/`webauthn-rs`/`portable-pty`/
 The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) →
 { `sven-machines` (machines), `sven-executors` (I/O), `sven-model` (LLM),
 `sven-tool-api`/`sven-tool-registry`/`sven-tools` }. Every workspace crate is
-organized into 10 tiers (`foundation` < `kernel` < `services` < `domain` <
-`machines` < `assembly` < `wiring` < `surface` < `composite` < `binary`) -
+organized into 11 tiers (`foundation` < `kernel` < `services` < `domain` <
+`machines` < `assembly` < `wiring` < `sdk` < `surface` < `composite` <
+`binary`) -
 **`architecture.toml` is authoritative**; this table groups the same crates by
 tier with a one-line purpose each.
 
@@ -195,6 +196,11 @@ layer: `CompositeExecutor` + its executor slots)
 ### wiring
 `sven-frontend` (shared frontend layer: the `agent` session task and
 `SessionEvent` consumption)
+
+### sdk
+`sven-sdk` (the public framework surface: `Engine`, `Agent`, `AgentState` -
+what an application depends on to run agents; see
+[docs/technical/sdk.md](docs/technical/sdk.md))
 
 ### surface
 `sven-ci` (headless runner: `RuntimeRunner` + workflow orchestration) ·
@@ -381,6 +387,8 @@ types requiring a translator.
   which defines the framework model the workspace is moving toward.
 - [docs/technical/resumable-agents.md](docs/technical/resumable-agents.md) -
   suspending and resuming a session; snapshot vs. replay.
+- [docs/technical/sdk.md](docs/technical/sdk.md) - the public framework
+  surface: engines, agents, and suspended agent state.
 - `architecture.toml` - authoritative crate tiers, dependency legality, file-size
   ratchet. `.claude/skills/programming/rust/architecture.md` - the layering
   method this workspace follows, generalized for reuse elsewhere.

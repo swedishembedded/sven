@@ -1,0 +1,24 @@
+[package]
+name    = "sven-sdk"
+version.workspace = true
+edition = "2021"
+description = "The public Sven framework: engines, agent objects, and typed model-driven methods"
+license = "Apache-2.0"
+
+[dependencies]
+sven-bootstrap = { path = "../bootstrap", default-features = false }
+sven-config    = { path = "../config" }
+sven-hsm       = { path = "../hsm" }
+sven-machines  = { path = "../machines" }
+sven-model     = { path = "../model" }
+sven-session-model = { path = "../session-model" }
+sven-vocab     = { path = "../vocab" }
+anyhow         = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+thiserror      = { workspace = true }
+tokio          = { workspace = true }
+
+[dev-dependencies]
+sven-model-mock = { path = "../model-mock" }
+tempfile        = { workspace = true }

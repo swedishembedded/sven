@@ -29,6 +29,7 @@ order = [
     "machines",   # pure Machine impls + the I/O executor layer that drives them
     "assembly",   # the composition root(s): RuntimeBuilder and friends
     "wiring",     # async surface plumbing shared by every frontend
+    "sdk",        # the public framework facade: engines and agent objects
     "surface",    # user-visible entry points (CLI/TUI, headless runner, MCP server)
     "composite",  # surfaces that assemble other surfaces
     "binary",     # the `sven` binary itself
@@ -89,6 +90,9 @@ sven-commands  = "assembly"
 
 # wiring
 sven-frontend = "wiring"
+
+# sdk
+sven-sdk = "sdk"
 
 # surface
 sven-ci  = "surface"
