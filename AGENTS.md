@@ -268,6 +268,12 @@ site. When you add a new axis of extension, add a row here.
 5. Any machine in `sven-machines` that should emit it.
 
 ### Add a new tool
+**First ask whether it belongs in this repo at all.** An application can
+register its own tools on an engine (`sven_sdk::EngineBuilder::tool`) without
+touching any crate here, and the same goes for machines
+(`EngineBuilder::machine`). Add it below only if it is genuinely part of sven's
+own capability set.
+
 Tool implementations live in the domain-tier `sven-tools-*` crates, split by
 concern (see the crate table above) - **not** in `sven-tools` itself, which is
 now only a thin re-export shim over `sven-tool-api`/`sven-tool-registry`.

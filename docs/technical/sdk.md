@@ -154,6 +154,64 @@ model unwrapped.
 Agents on one engine share those resources and **nothing else**. Histories are
 per-instance; one agent cannot see another's conversation.
 
+## Extending sven from outside it
+
+A framework whose capabilities can only be added by editing it is not a
+framework. Both extension points take types defined in *your* crate.
+
+### A tool of your own
+
+```rust
+let engine = Engine::builder()
+    .tool(Arc::new(StockPrice))   // repeatable
+    .build()?;
+```
+
+Registered on top of the built-in set, so the agent keeps everything it already
+had. From then on it is permission-gated and audited exactly like a built-in:
+`kernel_capability()` decides which bucket the kernel gates it under, and
+`default_policy()` whether it needs approval. Declaring those honestly is what
+keeps the permission model meaningful - a tool that reaches the network and
+claims otherwise has disabled a guarantee for everyone.
+
+Caller-supplied tools are registered last, so a deliberate shadowing of a
+built-in name wins. Silently ignoring it would be the more surprising choice.
+
+Everything needed to implement one is re-exported from `sven_sdk::tool`, so an
+application never names a kernel crate.
+
+### A machine of your own
+
+```rust
+let engine = Engine::builder()
+    .machine("echo", Box::new(|| Box::new(Hsm::new(EchoMachine::new()))))
+    .build()?;
+
+let mut agent = engine.agent("echo");
+```
+
+The kernel drives it exactly as it drives the built-in machines: permissions,
+audit, and suspend/resume all apply. Registering an existing mode name replaces
+it; registering a new one extends the registry rather than replacing it.
+
+**Implement `all_states()`** or agents running your machine cannot be suspended
+or resumed - see [resumable-agents.md](resumable-agents.md).
+
+`sven_sdk::machine` re-exports `Machine`, `Reaction`, `Context`, `Effect` and
+the rest of what an implementation needs.
+
+## When a step ends
+
+A step ends when the kernel has nothing left to do, not when a model turn
+completes. Those coincide for a machine that drives the model, but a machine
+that answers from its own state never completes a turn at all, and waiting for
+one would hang forever.
+
+`ErasedRuntime::capture` is served only once the event queue has drained, which
+makes it exactly the "nothing left to do" signal. `Agent::send` races it against
+the observation stream, preferring observations so that a model turn still ends
+on `TurnComplete` with its text collected.
+
 ## Approval policy
 
 A turn that reaches a human-approval gate blocks until the gate is answered, so
@@ -211,6 +269,7 @@ with `sven_config::load` and passes it to `EngineBuilder::config`.
 | `watch_events.rs` | A custom surface built from the event stream |
 | `verified_workflow.rs` | Deterministic orchestration around model judgement, where a code-level check can reject the model's claim |
 | `declared_agent.rs` | An agent declared as a trait, with the deterministic/model-driven split |
+| `custom_tool.rs` | Giving an agent a capability the kernel has never heard of |
 
 ## The CLI on the SDK
 

@@ -28,6 +28,8 @@ pub struct Engine {
     config: Arc<Config>,
     provider: Option<Arc<dyn ModelProvider>>,
     approvals: ApprovalPolicy,
+    tools: Vec<Arc<dyn sven_tool_api::Tool>>,
+    machines: Option<Arc<sven_machines::ModeRegistry>>,
 }
 
 /// What an agent does when the kernel asks a human to approve something.
@@ -111,12 +113,11 @@ impl Engine {
     /// Returns [`CallError::Precondition`] if `state` names a mode this engine
     /// cannot run.
     pub fn resume(&self, state: AgentState) -> Result<Agent, CallError> {
-        let registry = sven_machines::ModeRegistry::default_registry();
-        if registry.get(state.mode()).is_none() {
+        if !self.knows_mode(state.mode()) {
             return Err(CallError::Precondition(format!(
                 "cannot resume agent: this engine cannot run mode {:?}, only {:?}",
                 state.mode(),
-                registry.modes()
+                self.modes()
             )));
         }
         Ok(Agent::new(self.clone(), state))
@@ -133,6 +134,36 @@ impl Engine {
     pub(crate) fn approvals(&self) -> ApprovalPolicy {
         self.approvals
     }
+
+    pub(crate) fn tools(&self) -> Vec<Arc<dyn sven_tool_api::Tool>> {
+        self.tools.clone()
+    }
+
+    pub(crate) fn machines(&self) -> Option<Arc<sven_machines::ModeRegistry>> {
+        self.machines.clone()
+    }
+
+    /// Whether this engine can run `mode`.
+    fn knows_mode(&self, mode: &str) -> bool {
+        match &self.machines {
+            Some(registry) => registry.get(mode).is_some(),
+            None => sven_machines::ModeRegistry::default_registry()
+                .get(mode)
+                .is_some(),
+        }
+    }
+
+    /// Every mode this engine can run.
+    #[must_use]
+    pub fn modes(&self) -> Vec<String> {
+        let owned = |registry: &sven_machines::ModeRegistry| -> Vec<String> {
+            registry.modes().into_iter().map(str::to_owned).collect()
+        };
+        match &self.machines {
+            Some(registry) => owned(registry),
+            None => owned(&sven_machines::ModeRegistry::default_registry()),
+        }
+    }
 }
 
 /// Configures an [`Engine`].
@@ -141,6 +172,8 @@ pub struct EngineBuilder {
     config: Option<Arc<Config>>,
     provider: Option<Arc<dyn ModelProvider>>,
     approvals: Option<ApprovalPolicy>,
+    tools: Vec<Arc<dyn sven_tool_api::Tool>>,
+    machines: Option<sven_machines::ModeRegistry>,
 }
 
 impl EngineBuilder {
@@ -160,6 +193,42 @@ impl EngineBuilder {
     #[must_use]
     pub fn model_provider(mut self, provider: Arc<dyn ModelProvider>) -> Self {
         self.provider = Some(provider);
+        self
+    }
+
+    /// Gives every agent on this engine a tool of your own.
+    ///
+    /// Registered on top of the built-in set, so the agent keeps everything it
+    /// already had. The tool is permission-gated and audited exactly like a
+    /// built-in one: its `kernel_capability` decides which bucket it falls
+    /// under, and its `default_policy` whether it needs approval.
+    ///
+    /// Repeatable.
+    #[must_use]
+    pub fn tool(mut self, tool: Arc<dyn sven_tool_api::Tool>) -> Self {
+        self.tools.push(tool);
+        self
+    }
+
+    /// Registers a state machine of your own under `mode`.
+    ///
+    /// The kernel drives it exactly as it drives the built-in machines -
+    /// permissions, audit, suspend and resume all apply. Registering an
+    /// existing mode name replaces it.
+    ///
+    /// The machine must implement `all_states()`, or agents running it cannot
+    /// be suspended and resumed. See `docs/technical/resumable-agents.md`.
+    ///
+    /// Repeatable.
+    #[must_use]
+    pub fn machine(
+        mut self,
+        mode: impl AsRef<str>,
+        factory: sven_machines::mode::MachineFactory,
+    ) -> Self {
+        self.machines
+            .get_or_insert_with(sven_machines::ModeRegistry::default_registry)
+            .register(mode.as_ref(), factory);
         self
     }
 
@@ -191,6 +260,8 @@ impl EngineBuilder {
             config,
             provider: self.provider,
             approvals: self.approvals.unwrap_or(ApprovalPolicy::Deny),
+            tools: self.tools,
+            machines: self.machines.map(Arc::new),
         })
     }
 }

@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
-use sven_hsm::{Event, UiEvent};
+use sven_hsm::Event;
 use sven_model::Message;
 use sven_session_model::reduce_history;
 use sven_vocab::SessionEvent;
@@ -188,12 +188,11 @@ impl Agent {
 
     /// Builds a session, posts one message, and folds the result back in.
     async fn run_turn(&mut self, text: &str, options: &TurnOptions) -> Result<String, CallError> {
-        let registry = sven_machines::ModeRegistry::default_registry();
-        if registry.get(&self.state.mode).is_none() {
+        if !self.engine.modes().contains(&self.state.mode) {
             return Err(CallError::Precondition(format!(
                 "unknown mode {:?}; this engine can run {:?}",
                 self.state.mode,
-                registry.modes()
+                self.engine.modes()
             )));
         }
 
@@ -207,7 +206,11 @@ impl Agent {
             .with_allow_interactive_oauth(false)
             .with_runtime_context(runtime_ctx)
             .with_context_facts(options.facts.clone())
+            .with_extra_tools(self.engine.tools())
             .with_initial_history(self.state.history.clone());
+        if let Some(registry) = self.engine.machines() {
+            builder = builder.with_mode_registry(registry);
+        }
         if let Some(provider) = self.engine.provider() {
             builder = builder.with_shared_model_provider(provider);
         }
@@ -242,41 +245,60 @@ impl Agent {
             )));
         }
 
-        let reply = self.drain_turn(&mut observations).await;
-
-        // Capture where the kernel ended up before the session is torn down,
-        // so the next step resumes here instead of re-entering from the top.
-        self.state.kernel = bundle.runtime.capture().await;
-        Ok(reply)
-    }
-
-    /// Consumes observations until the turn ends, folding them into history
-    /// and republishing them to this agent's subscribers.
-    async fn drain_turn(&mut self, observations: &mut broadcast::Receiver<UiEvent>) -> String {
+        // A step ends when the kernel has nothing left to do. For a machine
+        // that drives the model that is the end of its turn; for one that does
+        // not - a custom machine answering from its own state, say - no turn
+        // ever completes, and waiting for one would hang forever. Racing the
+        // two means neither kind has to know about the other.
+        //
+        // `capture` is served only once the event queue has drained, so it is
+        // exactly the "nothing left to do" signal. The select prefers
+        // observations so that a model turn still ends on `TurnComplete`, with
+        // its text collected, rather than on quiescence a moment later.
         let mut reply = String::new();
+        let settled = bundle.runtime.capture();
+        tokio::pin!(settled);
+        let mut snapshot = None;
+
         loop {
-            match observations.recv().await {
-                Ok(event) => {
-                    let done = matches!(
-                        event,
-                        SessionEvent::TurnComplete | SessionEvent::Aborted { .. }
-                    );
-                    match &event {
-                        SessionEvent::TextComplete(text) => reply.push_str(text),
-                        SessionEvent::Aborted { partial_text } => reply.push_str(partial_text),
-                        _ => {}
+            tokio::select! {
+                biased;
+                event = observations.recv() => match event {
+                    Ok(event) => {
+                        let done = matches!(
+                            event,
+                            SessionEvent::TurnComplete | SessionEvent::Aborted { .. }
+                        );
+                        match &event {
+                            SessionEvent::TextComplete(text) => reply.push_str(text),
+                            SessionEvent::Aborted { partial_text } => reply.push_str(partial_text),
+                            _ => {}
+                        }
+                        reduce_history(&event, &mut self.state.history);
+                        let _ = self.events.send(event);
+                        if done {
+                            break;
+                        }
                     }
-                    reduce_history(&event, &mut self.state.history);
-                    let _ = self.events.send(event);
-                    if done {
-                        break;
-                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                },
+                captured = &mut settled => {
+                    snapshot = captured;
+                    break;
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
             }
         }
-        reply
+
+        // Capture where the kernel ended up before the session is torn down, so
+        // the next step resumes here instead of re-entering from the top. When
+        // the loop ended on a completed turn the in-flight request was dropped,
+        // so ask again.
+        self.state.kernel = match snapshot {
+            Some(snapshot) => Some(snapshot),
+            None => bundle.runtime.capture().await,
+        };
+        Ok(reply)
     }
 }
 

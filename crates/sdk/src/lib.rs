@@ -56,6 +56,31 @@ pub use error::CallError;
 pub use method::{Method, Strategy};
 pub use state::AgentState;
 
+/// Everything needed to give an agent a tool of your own.
+///
+/// Implement [`Tool`](tool::Tool) and register it with
+/// [`EngineBuilder::tool`]. Re-exported here so an application never has to
+/// name a kernel crate to extend the agent.
+pub mod tool {
+    pub use sven_tool_api::{
+        ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolCapability, ToolDisplay, ToolOutput,
+        ToolOutputPart,
+    };
+}
+
+/// Everything needed to run a state machine of your own.
+///
+/// Implement [`Machine`](machine::Machine) and register it with
+/// [`EngineBuilder::machine`]. The kernel drives it exactly as it drives the
+/// built-in ones, including permissions, audit and suspend/resume.
+pub mod machine {
+    pub use sven_hsm::{
+        Context, Effect, ErasedMachine, Event, Hsm, Machine, MachineId, Reaction, ToolCapability,
+    };
+    pub use sven_machines::mode::MachineFactory;
+    pub use sven_machines::ModeRegistry;
+}
+
 /// Declares an agent from a Rust trait: its documentation is its prompt.
 ///
 /// See the [`agent`] macro's own documentation for the rules.

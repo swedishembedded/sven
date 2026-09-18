@@ -112,6 +112,12 @@ pub struct RuntimeBuilder {
     /// Domain facts seeded into the session's context before it starts.
     /// See [`RuntimeBuilder::with_context_facts`].
     context_facts: serde_json::Map<String, serde_json::Value>,
+    /// Tools registered on top of the built-in set. See
+    /// [`RuntimeBuilder::with_extra_tools`].
+    extra_tools: Vec<Arc<dyn sven_tools::Tool>>,
+    /// Mode registry to look the machine up in, when not the default one.
+    /// See [`RuntimeBuilder::with_mode_registry`].
+    mode_registry: Option<Arc<sven_machines::ModeRegistry>>,
     /// The interactive [`AgentMode`] this session runs as (see
     /// [`Self::with_agent_mode`]). Selects the permission policy for the
     /// reactive machine — `Plan`/`Research` get a read-only policy — and seeds
@@ -156,6 +162,8 @@ impl RuntimeBuilder {
             model_provider_override: None,
             kernel_snapshot: None,
             context_facts: serde_json::Map::new(),
+            extra_tools: Vec::new(),
+            mode_registry: None,
             agent_mode: None,
             shared_mcp_manager: None,
         }
@@ -322,6 +330,27 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Register tools on top of the built-in set.
+    ///
+    /// This is how an application gives its agents capabilities the kernel has
+    /// never heard of. They are registered after the built-ins and after MCP
+    /// tools, so a name collision resolves in the caller's favour.
+    pub fn with_extra_tools(mut self, tools: Vec<Arc<dyn sven_tools::Tool>>) -> Self {
+        self.extra_tools = tools;
+        self
+    }
+
+    /// Look the mode's machine up in `registry` instead of the default one.
+    ///
+    /// The extension point for a machine that does not live in this workspace:
+    /// a caller builds a registry from
+    /// [`ModeRegistry::default_registry`](sven_machines::ModeRegistry::default_registry),
+    /// registers its own factory, and passes it here.
+    pub fn with_mode_registry(mut self, registry: Arc<sven_machines::ModeRegistry>) -> Self {
+        self.mode_registry = Some(registry);
+        self
+    }
+
     /// Seed domain facts into the session's context before it starts.
     ///
     /// The kernel keeps a machine's knowledge in `Context::facts`, which is how
@@ -371,7 +400,10 @@ impl RuntimeBuilder {
         mpsc::Receiver<McpEvent>,
     )> {
         // ── Look up machine ───────────────────────────────────────────────────
-        let registry = ModeRegistry::default_registry();
+        let registry = match self.mode_registry.take() {
+            Some(supplied) => supplied,
+            None => Arc::new(ModeRegistry::default_registry()),
+        };
         let factory = registry.get(&self.mode).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown mode {:?}; available: {:?}",
@@ -539,6 +571,13 @@ impl RuntimeBuilder {
         let mcp_tools: Vec<McpTool> = mcp_manager.tools().await;
         for tool in mcp_tools {
             tool_registry.register(tool);
+        }
+
+        // Caller-supplied tools go last so a name collision resolves in their
+        // favour: an application that deliberately shadows a built-in has said
+        // something, and silently ignoring it would be the surprising choice.
+        for tool in std::mem::take(&mut self.extra_tools) {
+            tool_registry.register_arc(tool);
         }
 
         if let Some(requester) = self.permission_requester {
