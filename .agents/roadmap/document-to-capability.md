@@ -62,6 +62,77 @@ Why this shape:
   find* rather than *inducible from examples* - which is the realistic case
   and the one that exercises the document pipeline end to end.
 
+## The cheap version: no emulator, no new verifier
+
+The toy ISA above is the *good* experiment. It is not the *first* one, because
+building a cycle-accurate simulator is most of the work and none of the claim.
+
+The constraint that decides the cheap version: `VerifierSpec` is
+**declarative-only by design** (`crates/vocab/src/verify.rs`) - there is no
+`Command` or `UnitTests` shape, so there is no arbitrary-code-execution surface
+in the vocabulary at all. "Run `cargo test` and check the exit code" is not
+expressible today and should not be added just for an experiment.
+
+What is expressible is `VerifierSpec::FileHash { path, sha256 }`, and it turns
+out to be exactly the right tool:
+
+> Write `out.bin` containing the SVF encoding of this payload.
+
+The verifier is the SHA-256 of the correct bytes, which we precompute with a
+reference implementation. The agent **cannot forge it and cannot approximate
+it** - it either produces the right bytes or it does not. No emulator, no test
+runner, no new verifier variant, no execution surface.
+
+**SVF** is an invented byte format. The spec document the agent gets describes
+the frame layout. The errata document - the knowledge under test - carries the
+parts that can only be read, never derived:
+
+- an arbitrary 4-byte magic header,
+- a CRC-8 polynomial and init value,
+- one gotcha: the length field covers the payload but excludes the checksum.
+
+That is roughly 16-32 bits of arbitrary content. Nothing in any pretraining
+corpus contains it, and no amount of reasoning recovers it.
+
+### Graded, despite the all-or-nothing hash
+
+A hash gives no partial credit, which is what makes it unguessable and also
+what would flatten the result. Grading is recovered by **separating the secrets
+across task types**, so the score says *which* piece of knowledge landed:
+
+| Task type | Needs | Instances |
+|---|---|---|
+| `header` | magic bytes only | 6 |
+| `framed` | magic + length rule | 6 |
+| `checked` | magic + length + CRC | 8 |
+
+Score is instances-hash-matched out of 20, and the staircase is diagnostic:
+a model that gets 6/20 learned the header and nothing else.
+
+### What it costs to build
+
+A reference implementation (~60 lines), two markdown documents (spec, errata),
+a decoy errata of matching length and shape, and a fixture generator emitting
+`{payload, expected_sha256}` pairs plus one task seed per instance. Call it
+300 lines and two documents.
+
+**Tier 0**, if even that is too much before the plumbing is trusted: one secret
+constant, one task type, five instances. Half a day. It proves the pipeline
+moves knowledge - `/learn` -> `knowledge-extract` -> `FactBatch` -> train ->
+`promote` -> `--watch-adapters` -> `sven-ci` verified task -> `VERDICT_FACT` ->
+reward stamp -> `ingest_dir` - and it proves nothing about capability
+acquisition, because one constant is close to pure recall. Its job is to find
+the plumbing bugs cheaply, before the real experiment is worth running.
+
+### One property this task does not have
+
+`FileHash` gives the agent **no gradient**: a near-miss and a wild guess score
+identically. That is correct for an acceptance test, and it is what makes arm
+A0 meaningful. It also means this task is unusable as an RL environment later -
+there is no hill to climb. Training data here comes from the document, not from
+rollouts, so that costs nothing now; it is the reason the toy ISA (scored by
+cycle count) is still the right second experiment.
+
 ## The arms
 
 Nothing below is optional. Each one exists because without it a specific
