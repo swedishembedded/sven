@@ -56,6 +56,21 @@ pub use error::CallError;
 pub use method::{Method, Strategy};
 pub use state::AgentState;
 
+/// Sven's configuration - which model, which provider, which limits.
+///
+/// [`EngineBuilder::config`] takes a [`Config`](config::Config), so an
+/// application that wants any model other than the compiled-in default has to
+/// be able to name that type and, usually, to load it the way the CLI does.
+/// Both live here so reaching a model never requires depending on a crate
+/// behind the facade.
+///
+/// [`load`](config::load) reads the same files and environment the `sven`
+/// binary reads, including its detection of a locally served model, so an
+/// application configured once works for both.
+pub mod config {
+    pub use sven_config::{load, Config};
+}
+
 /// Everything needed to give an agent a tool of your own.
 ///
 /// Implement [`Tool`](tool::Tool) and register it with
