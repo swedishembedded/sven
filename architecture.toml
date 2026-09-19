@@ -33,6 +33,7 @@ order = [
     "surface",    # user-visible entry points (CLI/TUI, headless runner, MCP server)
     "composite",  # surfaces that assemble other surfaces
     "binary",     # the `sven` binary itself
+    "sample",     # standalone applications built on the facade; nothing depends on one
 ]
 
 [crates]
@@ -110,6 +111,14 @@ sven-sdk-macros = "foundation"
 
 # tooling (not part of the production dependency graph; zero sven deps)
 xtask = "foundation"
+
+# samples: standalone applications under samples/, on the topmost tier because
+# nothing in this repository may depend on one. The tier does NOT enforce the
+# rule that matters for a sample -- that it depends on `sven-sdk` and nothing
+# else -- because a tier only bounds a crate from below, and every crate in the
+# workspace is below this one. `make check/samples` is what enforces that, by
+# reading the manifest. Both gates run in `make check`.
+sample-study-svf = "sample"
 
 # ── Legitimate same-tier edges. Each needs a `why`. ─────────────────────────
 [[same_layer]]

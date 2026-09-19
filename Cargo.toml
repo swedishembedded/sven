@@ -57,6 +57,11 @@ members = [
     "crates/atif",
     # Workspace tooling: `cargo run -p xtask -- arch` enforces architecture.toml
     "xtask",
+    # Standalone applications built on the SDK facade - see samples/README.md.
+    # Members on purpose: a sample depends only on the facade, so building and
+    # testing it with everything else costs almost nothing, and excluding it is
+    # how a sample rots into something that no longer compiles.
+    "samples/study/svf",
 ]
 
 # Single source of truth for the sven release version. The top-level `sven`
