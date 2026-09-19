@@ -557,8 +557,16 @@ mod tests {
                 args: json!({ "image_path": png.to_string_lossy(), "target": "x" }),
             })
             .await;
-        assert!(out.is_error);
-        assert!(out.content.contains("no JSON line"));
+        assert!(out.is_error, "unparsable stdout must be an error");
+        // Named, because every other way this can fail - a spawn that lost a
+        // race for a process slot, a shell that never ran - also produces an
+        // error, and a bare `contains` reports them all as "the parse error is
+        // missing" without saying what arrived instead.
+        assert!(
+            out.content.contains("no JSON line"),
+            "expected the parse error, got: {}",
+            out.content
+        );
     }
 
     #[test]
