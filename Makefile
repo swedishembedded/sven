@@ -28,7 +28,8 @@ DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
 .PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
-        check check/fmt check/clippy check/gates check/paths check/deps check/arch hooks/install docs docs-pdf \
+        check check/fmt check/clippy check/gates check/paths check/deps check/samples check/arch hooks/install docs docs-pdf \
+        samples/list \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
         _require-cargo-release \
@@ -220,9 +221,10 @@ check/fmt:
 check/clippy:
 	$(CARGO) clippy --workspace --all-targets $(CARGO_FLAGS) -- -D warnings
 
-## check/gates - every text gate: no absolute machine paths, no brain dependency.
+## check/gates - every text gate: no absolute machine paths, no brain dependency,
+##              samples that stay behind the SDK facade.
 ##              Together they cost well under a second.
-check/gates: check/paths check/deps
+check/gates: check/paths check/deps check/samples
 
 ## check/paths - no baked-in absolute machine path in any tracked (or new,
 ##              not-yet-tracked) file
@@ -233,6 +235,52 @@ check/paths:
 ##              dependency, declared or transitively resolved
 check/deps:
 	bash scripts/gates/check-no-brain-dependency.sh
+
+## check/samples - a sample depends on the SDK facade and nothing else, and its
+##              package name matches its path (see samples/README.md)
+check/samples:
+	bash scripts/gates/check-samples.sh
+
+# A sample is a standalone APPLICATION built on the public `sven-sdk` facade,
+# living in samples/<category>/<name>/. Unlike sibling repos, samples here ARE
+# built and tested with the workspace: one depends only on the SDK, so it costs
+# almost nothing, and excluding it is how a sample rots into something that no
+# longer compiles against the framework it demonstrates.
+#
+#   make samples/list
+#   make samples/study/svf/build
+#   make samples/study/svf/run ARGS="--errata real"
+#
+# `build` and `run` are separate and `run` does NOT invoke cargo: a built sample
+# is an ordinary binary, and a `run` that shelled out to cargo would make the
+# toolchain a runtime dependency of every demonstration. The cost is that `run`
+# cannot notice a stale binary, so it prints what it executes and when that file
+# was built.
+SAMPLE_PROFILE ?= release
+SAMPLE_CARGO_FLAGS = $(if $(filter release,$(SAMPLE_PROFILE)),--release,)
+ARGS ?=
+
+# samples/<a>/<b> -> package `sample-<a>-<b>`. check/samples enforces it.
+sample_pkg = sample-$(subst /,-,$(1))
+
+samples/list:
+	@echo "Samples (make samples/<path>/{build,run}):"
+	@find samples -mindepth 3 -maxdepth 3 -name Cargo.toml 2>/dev/null \
+		| sed -E 's|^samples/(.*)/Cargo\.toml$$|\1|' | sort | while read -r s; do \
+			printf '  %-28s %s\n' "$$s" \
+				"$$(sed -n 's/^description = "\(.*\)"/\1/p' "samples/$$s/Cargo.toml" | head -1)"; \
+		done
+
+samples/%/build:
+	$(CARGO) build $(SAMPLE_CARGO_FLAGS) -p $(call sample_pkg,$*)
+
+samples/%/run:
+	@bin="target/$(SAMPLE_PROFILE)/$(call sample_pkg,$*)"; \
+	if [ ! -x "$$bin" ]; then \
+		echo "error: $$bin does not exist - run 'make samples/$*/build' first"; exit 1; \
+	fi; \
+	echo "running $$bin (built $$(date -r "$$bin" '+%Y-%m-%d %H:%M:%S'))"; \
+	exec "$$bin" $(ARGS)
 
 ## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
 ##              and the `minimal` cargo feature profile's forbidden-crate list)
