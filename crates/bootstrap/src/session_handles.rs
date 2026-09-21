@@ -11,9 +11,10 @@
 
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use sven_executors::{ApprovalRequest, UserQuestion};
+use sven_hsm::ToolCapability;
 use sven_hsm::{Event, RuntimeStatus};
 use sven_kernel::EventSink;
 use sven_llm::ThreadStore;
@@ -36,14 +37,6 @@ pub struct KernelChannels {
 }
 
 impl KernelChannels {
-    /// Auto-consumes every kernel-level question and approval gate, replying
-    /// immediately so the session never blocks on a human who isn't there:
-    /// an empty string for every `AskUser`, `true` (approve) for every
-    /// `RequestHumanApproval`. Returns once both channels close.
-    ///
-    /// This is the unattended path -- CI runs and one-shot test/demo
-    /// wiring. Typically
-    /// driven with `tokio::spawn(channels.auto_approve())`.
     /// Refuses every kernel-level question and approval gate, replying
     /// immediately so the session never blocks on a human who isn't there:
     /// an empty string for every `AskUser`, `false` (deny) for every
@@ -53,6 +46,34 @@ impl KernelChannels {
     /// unattended session: answering the gate is mandatory - a turn that
     /// ignores it hangs - but answering it with "yes" hands a dangerous
     /// capability to nobody's judgement.
+    /// Hands every kernel-level question and approval gate to `responder`,
+    /// which owns replying to each.
+    ///
+    /// The third option beside [`Self::auto_approve`] and [`Self::deny_all`],
+    /// and the only one that is not a decision made on the absent person's
+    /// behalf. Returns once both channels close.
+    pub async fn forward_to(mut self, responder: HumanGateResponder) {
+        loop {
+            tokio::select! {
+                q = self.question_rx.recv() => match q {
+                    Some(q) => responder(HumanGate::Question {
+                        prompt: q.prompt,
+                        reply_tx: q.reply_tx,
+                    }),
+                    None => break,
+                },
+                a = self.approval_rx.recv() => match a {
+                    Some(a) => responder(HumanGate::Approval {
+                        capability: a.capability,
+                        prompt: a.description,
+                        reply_tx: a.reply_tx,
+                    }),
+                    None => break,
+                },
+            }
+        }
+    }
+
     pub async fn deny_all(mut self) {
         loop {
             tokio::select! {
@@ -68,6 +89,21 @@ impl KernelChannels {
         }
     }
 
+    /// Auto-consumes every kernel-level question and approval gate, replying
+    /// immediately so the session never blocks on a human who isn't there:
+    /// an empty string for every `AskUser`, `true` (approve) for every
+    /// `RequestHumanApproval`. Returns once both channels close.
+    ///
+    /// This is the unattended path - CI runs and one-shot test/demo wiring.
+    /// Typically driven with `tokio::spawn(channels.auto_approve())`.
+    ///
+    /// Its doc comment used to be glued onto [`Self::deny_all`] above, which
+    /// left the more dangerous of the two functions looking documented while
+    /// being the undocumented one.
+    ///
+    /// **Prefer [`Self::forward_to`] whenever the host CAN answer.** A host
+    /// with a person attached that calls this is deciding on their behalf
+    /// without telling them.
     pub async fn auto_approve(mut self) {
         loop {
             tokio::select! {
@@ -85,6 +121,43 @@ impl KernelChannels {
 }
 
 // ── RuntimeHandle ─────────────────────────────────────────────────────────────
+
+/// One kernel-level gate, handed to a host that wants to answer it itself.
+///
+/// Carries its own reply channel, so the responder OWNS answering: it may
+/// reply now, or hold the channel while it asks someone and reply minutes
+/// later. That is the whole point - a host that could only answer
+/// synchronously could not ask a person, which is the one thing a human gate
+/// is for.
+///
+/// Dropping a gate without replying is not a silent default: the kernel's
+/// turn stays parked, exactly as it would if a person never answered.
+pub enum HumanGate {
+    /// `Effect::AskUser` - free text.
+    Question {
+        /// What to show the person.
+        prompt: String,
+        /// Their answer.
+        reply_tx: oneshot::Sender<String>,
+    },
+    /// `Effect::RequestHumanApproval` - yes or no.
+    Approval {
+        /// What capability is being asked for.
+        capability: ToolCapability,
+        /// What will happen if this is approved.
+        prompt: String,
+        /// `true` to approve.
+        reply_tx: oneshot::Sender<bool>,
+    },
+}
+
+/// Where a host receives the gates it has chosen to answer itself.
+///
+/// A plain callback rather than yet another channel: the host already has
+/// somewhere to put these (its own run state, its own UI), and handing it the
+/// gate directly means it never has to keep a task alive just to move values
+/// from one queue to another.
+pub type HumanGateResponder = Arc<dyn Fn(HumanGate) + Send + Sync>;
 
 /// A cheap-to-clone handle to a spawned [`ErasedRuntime`].
 ///
@@ -183,5 +256,88 @@ impl RuntimeHandle {
     #[must_use]
     pub fn tool_registry(&self) -> Arc<ToolRegistry> {
         Arc::clone(&self.tool_registry)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sven_hsm::ApprovalId;
+
+    /// The seam's whole reason for existing: the host decides, and it may
+    /// take as long as a person does. The responder here holds both reply
+    /// channels and answers only after both gates have arrived, which a
+    /// synchronous answerer could not do.
+    #[tokio::test]
+    async fn forward_to_hands_both_gate_kinds_over_and_the_host_answers_when_it_likes() {
+        let (question_tx, question_rx) = mpsc::channel(4);
+        let (approval_tx, approval_rx) = mpsc::channel(4);
+        let channels = KernelChannels {
+            question_rx,
+            approval_rx,
+        };
+
+        let held: Arc<std::sync::Mutex<Vec<HumanGate>>> = Arc::new(std::sync::Mutex::new(vec![]));
+        let sink = Arc::clone(&held);
+        let forwarding = tokio::spawn(
+            channels.forward_to(Arc::new(move |gate| sink.lock().unwrap().push(gate))),
+        );
+
+        let (q_reply_tx, q_reply_rx) = oneshot::channel();
+        question_tx
+            .send(UserQuestion {
+                prompt: "which account?".into(),
+                reply_tx: q_reply_tx,
+            })
+            .await
+            .expect("queued");
+        let (a_reply_tx, a_reply_rx) = oneshot::channel();
+        approval_tx
+            .send(ApprovalRequest {
+                approval_id: ApprovalId::new(),
+                capability: ToolCapability::ReadFile,
+                description: "delete the account".into(),
+                reply_tx: a_reply_tx,
+            })
+            .await
+            .expect("queued");
+
+        // Both gates reach the host before either is answered.
+        let gates = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if held.lock().unwrap().len() == 2 {
+                    return std::mem::take(&mut *held.lock().unwrap());
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both gates forwarded");
+
+        for gate in gates {
+            match gate {
+                HumanGate::Question { prompt, reply_tx } => {
+                    assert_eq!(prompt, "which account?");
+                    reply_tx.send("the second one".into()).expect("answered");
+                }
+                HumanGate::Approval {
+                    prompt, reply_tx, ..
+                } => {
+                    assert_eq!(prompt, "delete the account");
+                    reply_tx.send(false).expect("answered");
+                }
+            }
+        }
+
+        assert_eq!(q_reply_rx.await.expect("a reply"), "the second one");
+        assert!(
+            !a_reply_rx.await.expect("a reply"),
+            "the host's DENIAL is what reaches the kernel -- the point of this \
+             seam is that no default is substituted for it"
+        );
+
+        drop(question_tx);
+        drop(approval_tx);
+        forwarding.await.expect("returns once both channels close");
     }
 }

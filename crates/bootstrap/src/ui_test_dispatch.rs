@@ -41,6 +41,7 @@ use sven_tools::{Tool, ToolRegistry};
 use sven_tools_android::adb::{self, DeviceLister, RealDeviceLister, SerialPick};
 
 use crate::runtime_builder::{RuntimeBuilder, ToolExecutorFactory};
+use crate::session_handles::HumanGateResponder;
 
 /// The device the dispatching host resolved and leased for this step, or
 /// `None` when the node declared no device requirement.
@@ -115,6 +116,20 @@ pub struct UiTestDispatchOverrides {
     /// `None` (the default) spawns nothing at all, so a caller that does not
     /// want progress pays nothing for the ability to have it.
     pub on_state: Option<StateReporter>,
+    /// Who answers the kernel-level question and approval gates this step
+    /// raises.
+    ///
+    /// `None` keeps the long-standing behaviour: auto-approve, because the
+    /// hosts this entry was written for (CI, one-shot demos) have nobody to
+    /// ask and a step that hangs forever helps none of them.
+    ///
+    /// That default is only defensible while it is TRUE that nobody is
+    /// listening. A host with a person attached - whale's workflow runner
+    /// is one - passing `None` is deciding on that person's behalf and not
+    /// telling them, which is exactly what `deny_all`'s own doc warns
+    /// about. Such a host passes a responder, and then it is the host's
+    /// business whether it asks, denies, or approves-and-records.
+    pub on_human_gate: Option<HumanGateResponder>,
 }
 
 /// Where [`UiTestDispatchOverrides::on_state`] sends each state label.
@@ -206,7 +221,13 @@ pub async fn dispatch_ui_test_step(
     // exactly like every other headless sven surface already does
     // (`sven_ci::RuntimeRunner` spawns the same `auto_approve` for CI runs)
     // rather than hanging forever with no answerer.
-    tokio::spawn(bundle.channels.auto_approve());
+    // Answering the gate is mandatory: a turn whose gate is never answered
+    // parks forever. WHAT the answer is, though, is the dispatching host's
+    // call and not this function's -- see `on_human_gate`.
+    match overrides.on_human_gate.clone() {
+        Some(responder) => tokio::spawn(bundle.channels.forward_to(responder)),
+        None => tokio::spawn(bundle.channels.auto_approve()),
+    };
 
     let mut status_rx = bundle.runtime.status_watch();
 
