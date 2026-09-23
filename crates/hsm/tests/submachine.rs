@@ -70,3 +70,33 @@ fn events_route_directly_to_parent_when_no_child_is_active() {
     assert!(!out.child_was_active);
     assert!(out.effects.contains(&parent_handled()));
 }
+
+/// Spec: a child's terminal state reaches the parent exactly once, whenever
+/// the child reaches it - including in its own initial transition.
+///
+/// The host looks for completion after routing an event, which is every way a
+/// child can finish except the first one. A child built for work that was
+/// already done finished before any event existed, so it was installed as a
+/// live child, the parent was never told, and the next event - if one ever
+/// came - was dispatched into a machine that had already ended.
+#[test]
+fn a_child_that_is_already_done_when_installed_completes_immediately() {
+    use common::probes::DoneOnArrivalMachine;
+
+    let mut sm = Submachine::new(ParentMachine::new());
+    let mut ctx = Context::new();
+    sm.init(&mut ctx);
+    assert_eq!(sm.parent_state(), PState::Working);
+
+    sm.instantiate_child(Box::new(Hsm::new(DoneOnArrivalMachine::new())), &mut ctx);
+
+    assert!(
+        !sm.has_child(),
+        "a child that its own initial transition finished must not be installed"
+    );
+    assert_eq!(
+        sm.parent_state(),
+        PState::Finished,
+        "the parent must be told at install time, not at the next event"
+    );
+}

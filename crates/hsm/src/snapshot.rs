@@ -45,13 +45,36 @@ pub enum RestoreError {
     /// the agent silently back at its initial state and re-run work that has
     /// already happened, so this fails instead.
     #[error(
-        "cannot resume into state {state:?}: the machine enumerates {known:?}. \
+        "cannot resume into state {state:?}: this machine resumes into {known:?}. \
          A machine that does not implement `all_states()` cannot be restored."
     )]
     UnknownState {
         /// The state label recorded in the snapshot.
         state: String,
-        /// The labels this machine does enumerate, for diagnosis.
+        /// The labels this machine can actually be resumed into, for
+        /// diagnosis - its enumerated states minus its composites.
         known: Vec<String>,
+    },
+
+    /// The snapshot names a composite state - one that other states of this
+    /// machine live under.
+    ///
+    /// A running machine never rests in a composite: every dispatch drills
+    /// through its initial transition into a substate. Resuming into one
+    /// would place the agent in a configuration no dispatch can produce, with
+    /// the substate's entry action never run and every event its substates
+    /// handle silently ignored - a session that sits there answering nothing.
+    /// Machines enumerate composites in
+    /// [`all_states`](crate::Machine::all_states) for coverage tooling, so
+    /// the check is here rather than in each machine's list.
+    #[error(
+        "cannot resume into composite state {state:?}: {substates:?} live under it, so a \
+         running machine always drills past it into one of them"
+    )]
+    CompositeState {
+        /// The state label recorded in the snapshot.
+        state: String,
+        /// The enumerated states that name it as their superstate.
+        substates: Vec<String>,
     },
 }

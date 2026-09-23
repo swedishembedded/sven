@@ -34,8 +34,11 @@ pub trait ErasedMachine: Send {
     fn state_label(&self) -> String;
     /// Every state label this machine can be resumed into.
     ///
-    /// Empty if the machine leaves [`Machine::all_states`] at its default, in
-    /// which case it cannot be resumed at all.
+    /// The machine's enumerated states minus its composites: a running
+    /// machine always drills through a composite into a substate, so a
+    /// composite is not a configuration a snapshot can name. Empty if the
+    /// machine leaves [`Machine::all_states`] at its default, in which case
+    /// it cannot be resumed at all.
     fn all_state_labels(&self) -> Vec<String>;
     /// Resume into a previously snapshotted state label, without replaying.
     ///
@@ -70,11 +73,7 @@ where
     }
 
     fn all_state_labels(&self) -> Vec<String> {
-        self.machine()
-            .all_states()
-            .into_iter()
-            .map(|s| format!("{s:?}"))
-            .collect()
+        Hsm::restorable_state_labels(self)
     }
 
     fn restore_state(&mut self, state: &str) -> std::result::Result<(), RestoreError> {
@@ -122,15 +121,38 @@ impl<P: Machine> Submachine<P> {
     }
 
     /// Installs and initializes a child submachine. Returns the child's entry
-    /// effects. Replaces any existing child.
+    /// effects, followed by anything the parent emits if the child was
+    /// already finished. Replaces any existing child.
+    ///
+    /// A child's initial transition can land straight in its terminal state -
+    /// a factory asked for a step whose work turns out to be done. Such a
+    /// child is never installed: completion is announced here, because the
+    /// only other place the host looks for it is after routing an event, and
+    /// waiting for an unrelated event to notice a machine that has already
+    /// finished means announcing it late, or never.
     pub fn instantiate_child(
         &mut self,
         mut child: Box<dyn ErasedMachine>,
         ctx: &mut Context,
     ) -> Vec<Effect> {
-        let effects = child.init(ctx);
+        let mut effects = child.init(ctx);
+        if child.is_done() {
+            effects.extend(self.complete_child(child.id(), ctx));
+            return effects;
+        }
         self.child = Some(child);
         effects
+    }
+
+    /// Announces a finished child to the parent. The child is already out of
+    /// `self.child` (or was never put there), so the parent's handler cannot
+    /// see a completed machine still installed.
+    fn complete_child(&mut self, id: MachineId, ctx: &mut Context) -> Vec<Effect> {
+        let completed = Event::Internal(InternalEvent::SubmachineCompleted {
+            machine: id.as_uuid().to_string(),
+            result: serde_json::Value::Null,
+        });
+        self.parent.dispatch(&completed, ctx).effects
     }
 
     /// `true` if a child submachine is currently active.
@@ -176,12 +198,7 @@ impl<P: Machine> Submachine<P> {
                 let id = child.id();
                 self.child = None;
                 child_completed = true;
-                let completed = Event::Internal(InternalEvent::SubmachineCompleted {
-                    machine: id.as_uuid().to_string(),
-                    result: serde_json::Value::Null,
-                });
-                let parent_out = self.parent.dispatch(&completed, ctx);
-                effects.extend(parent_out.effects);
+                effects.extend(self.complete_child(id, ctx));
             }
         } else {
             let parent_out = self.parent.dispatch(event, ctx);

@@ -107,20 +107,11 @@ impl<M: Machine> Hsm<M> {
     /// # Errors
     ///
     /// Returns [`RestoreError::UnknownState`] if `machine` does not enumerate
-    /// the snapshot's state via [`Machine::all_states`].
+    /// the snapshot's state via [`Machine::all_states`], or
+    /// [`RestoreError::CompositeState`] if it names a state that other states
+    /// live under.
     pub fn restore(machine: M, snap: &Snapshot) -> Result<(Self, Context), RestoreError> {
-        let state = machine
-            .all_states()
-            .into_iter()
-            .find(|s| format!("{s:?}") == snap.state)
-            .ok_or_else(|| RestoreError::UnknownState {
-                state: snap.state.clone(),
-                known: machine
-                    .all_states()
-                    .into_iter()
-                    .map(|s| format!("{s:?}"))
-                    .collect(),
-            })?;
+        let state = Self::resolve_restorable(&machine, &snap.state)?;
         Ok((
             Self {
                 machine,
@@ -140,25 +131,76 @@ impl<M: Machine> Hsm<M> {
     /// # Errors
     ///
     /// Returns [`RestoreError::UnknownState`] if the machine does not
-    /// enumerate `state_label` via [`Machine::all_states`].
+    /// enumerate `state_label` via [`Machine::all_states`], or
+    /// [`RestoreError::CompositeState`] if it names a state that other states
+    /// live under.
     pub fn restore_in_place(&mut self, state_label: &str) -> Result<(), RestoreError> {
-        let state = self
-            .machine
-            .all_states()
-            .into_iter()
-            .find(|s| format!("{s:?}") == state_label)
-            .ok_or_else(|| RestoreError::UnknownState {
-                state: state_label.to_owned(),
-                known: self
-                    .machine
-                    .all_states()
-                    .into_iter()
-                    .map(|s| format!("{s:?}"))
-                    .collect(),
-            })?;
+        let state = Self::resolve_restorable(&self.machine, state_label)?;
         self.state = state;
         self.initialized = true;
         Ok(())
+    }
+
+    /// Maps a snapshotted state label back to a state value, refusing the
+    /// labels a running machine can never be resting in.
+    ///
+    /// A machine enumerates its composites too, because
+    /// [`Machine::all_states`] also feeds coverage tooling - but a composite
+    /// is not a resumable configuration. Every dispatch ends by drilling
+    /// through a composite's initial transition into a substate, so resuming
+    /// into the composite itself would skip that substate's entry action and
+    /// leave the machine ignoring every event its substates handle. Whether a
+    /// state is composite is read off the hierarchy the machine already
+    /// declares, which needs no `Init` dispatch and therefore no context and
+    /// no entry actions.
+    fn resolve_restorable(machine: &M, label: &str) -> Result<M::State, RestoreError> {
+        let states = machine.all_states();
+        let state = states
+            .iter()
+            .copied()
+            .find(|s| format!("{s:?}") == label)
+            .ok_or_else(|| RestoreError::UnknownState {
+                state: label.to_owned(),
+                known: Self::restorable_labels(machine),
+            })?;
+
+        let substates = Self::substates_of(machine, state, &states);
+        if !substates.is_empty() {
+            return Err(RestoreError::CompositeState {
+                state: label.to_owned(),
+                substates,
+            });
+        }
+
+        Ok(state)
+    }
+
+    /// The enumerated states that name `state` as their superstate.
+    fn substates_of(machine: &M, state: M::State, all: &[M::State]) -> Vec<String> {
+        all.iter()
+            .filter(|s| **s != state && machine.superstate(**s) == state)
+            .map(|s| format!("{s:?}"))
+            .collect()
+    }
+
+    /// The state labels a snapshot of this machine may name.
+    ///
+    /// [`Machine::all_states`] enumerates the whole state set, composites
+    /// included, because coverage tooling needs all of it. Only the leaves
+    /// are resumable: see [`Hsm::restore`]. Empty for a machine that leaves
+    /// `all_states` at its default, which therefore cannot be resumed at all.
+    #[must_use]
+    pub fn restorable_state_labels(&self) -> Vec<String> {
+        Self::restorable_labels(&self.machine)
+    }
+
+    fn restorable_labels(machine: &M) -> Vec<String> {
+        let states = machine.all_states();
+        states
+            .iter()
+            .filter(|s| Self::substates_of(machine, **s, &states).is_empty())
+            .map(|s| format!("{s:?}"))
+            .collect()
     }
 
     /// Shared access to the wrapped machine.
@@ -341,7 +383,19 @@ impl<M: Machine> Hsm<M> {
     /// Repeatedly fires the current state's `Init` transition (if any), entering
     /// the default substate path, until a leaf with no initial transition is
     /// reached. Appends entry/init-action effects to `effects`.
+    ///
+    /// This is the one loop in the engine whose termination depends on the
+    /// machine rather than on the state hierarchy: it follows whatever each
+    /// `Init` handler returns, and nothing in [`Machine`]'s signature
+    /// constrains that to a descendant. A machine whose initial transitions
+    /// form a cycle would spin here forever, inside the runtime's single
+    /// consumer task - so the agent would stop answering with no error and no
+    /// way back. A state entered twice in one drill is therefore where the
+    /// drill stops: a well-formed machine descends strictly and never
+    /// revisits, so the guard costs a short scan and changes no legal
+    /// behaviour.
     fn drill_into_composites(&mut self, ctx: &mut Context, effects: &mut Vec<Effect>) {
+        let mut visited = vec![self.state];
         loop {
             let r = self.machine.dispatch_state(self.state, &Event::init(), ctx);
             match r {
@@ -350,6 +404,15 @@ impl<M: Machine> Hsm<M> {
                     effects: init_effects,
                     ..
                 } => {
+                    if visited.contains(&sub) {
+                        debug_assert!(
+                            false,
+                            "initial transitions form a cycle at {sub:?}: a composite's \
+                             `Init` must target a proper descendant"
+                        );
+                        break;
+                    }
+                    visited.push(sub);
                     effects.extend(init_effects);
                     for st in self.entry_path(self.state, sub) {
                         effects.extend(self.fire_entry(st, ctx));

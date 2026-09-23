@@ -106,6 +106,7 @@ pub fn call_shell() -> Effect {
 }
 
 /// The example agent machine.
+#[derive(Debug)]
 pub struct AgentMachine {
     id: MachineId,
 }
@@ -655,3 +656,5 @@ impl Machine for OpaqueMachine {
         Reaction::Handled(Vec::new())
     }
 }
+
+pub mod probes;

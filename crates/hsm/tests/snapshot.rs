@@ -120,3 +120,45 @@ fn restoring_a_machine_that_cannot_enumerate_its_states_names_the_problem() {
          silently reset to the initial state: {err:?}"
     );
 }
+
+#[test]
+fn a_snapshot_naming_a_composite_state_is_refused() {
+    let (live, live_ctx) = running_machine();
+    let mut snap = live.snapshot(&live_ctx);
+
+    // `Conversation` is a composite: `Listening` and `Drafting` live under it,
+    // and every running machine drills through it into one of them. Resuming
+    // *into* it would put the agent somewhere no dispatch can produce - the
+    // substate's entry action never ran, and every event the substates handle
+    // is ignored, so the session sits there silently doing nothing.
+    snap.state = format!("{:?}", St::Conversation);
+
+    let err = Hsm::restore(AgentMachine::new(), &snap)
+        .expect_err("a composite state is not a state a machine can be resumed into");
+
+    assert!(
+        matches!(err, RestoreError::CompositeState { .. }),
+        "the failure must name the problem as the state being composite: {err:?}"
+    );
+}
+
+#[test]
+fn every_leaf_state_is_still_resumable() {
+    // The composite check must refuse composites and nothing else: a machine
+    // whose states are all leaves (the common shape) stays fully resumable.
+    for leaf in [
+        St::Listening,
+        St::Drafting,
+        St::Planning,
+        St::Running,
+        St::Done,
+    ] {
+        let (live, live_ctx) = running_machine();
+        let mut snap = live.snapshot(&live_ctx);
+        snap.state = format!("{leaf:?}");
+
+        let (resumed, _) = Hsm::restore(AgentMachine::new(), &snap)
+            .unwrap_or_else(|e| panic!("leaf {leaf:?} must remain resumable: {e}"));
+        assert_eq!(resumed.state(), leaf);
+    }
+}

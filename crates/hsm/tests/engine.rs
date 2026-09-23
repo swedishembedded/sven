@@ -379,3 +379,33 @@ fn state_and_transition_coverage() {
         );
     }
 }
+
+/// Spec: a dispatch returns. The `Init` drill is the only loop in the engine
+/// whose termination depends on the machine rather than on the hierarchy, and
+/// a machine whose initial transitions form a cycle used to spin in it
+/// forever - inside the runtime's single consumer task, so the agent stopped
+/// answering with no error, no log line and no way back.
+///
+/// A cyclic `Init` is a contract violation, so the engine is allowed to
+/// complain loudly (it `debug_assert!`s). What it is not allowed to do is
+/// never come back.
+#[test]
+fn a_cyclic_initial_transition_stops_instead_of_spinning_forever() {
+    use common::probes::CyclicInitMachine;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut hsm = Hsm::new(CyclicInitMachine::new());
+        let mut ctx = Context::new();
+        // The debug assertion unwinds this thread; either way the call ends,
+        // which is the whole property. Caught here so the test reports the
+        // deadline rather than a thread that died on the way to it.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            hsm.init(&mut ctx);
+        }));
+        let _ = tx.send(());
+    });
+
+    rx.recv_timeout(std::time::Duration::from_secs(10))
+        .expect("init must return on a malformed machine, not spin forever");
+}
