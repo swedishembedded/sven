@@ -29,6 +29,7 @@ REPO    := swedishembedded/sven
 
 .PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
         check check/fmt check/clippy check/gates check/paths check/deps check/samples check/arch hooks/install docs docs-pdf \
+        formal \
         samples/list \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
@@ -200,6 +201,15 @@ docs-pdf: docs
 ## fmt       - format all code
 fmt:
 	$(CARGO) fmt --all
+
+## formal    - machine-check the TLA+ models of the HSM kernel (needs a JRE)
+# Not part of `make check`: the models need a JRE and a pinned 2 MB download,
+# and `check` is the inner loop. Several of them are EXPECTED to fail -- they
+# pin down designs the engine rejected -- so the runner compares each model
+# against the outcome the suite declares for it rather than against TLC's exit
+# code. See formal/README.md.
+formal:
+	bash formal/run-tla.sh
 
 ## check     - formatting, text gates, architecture ratchet, then clippy
 # In that order on purpose: a rustfmt drift, a baked-in machine path or an

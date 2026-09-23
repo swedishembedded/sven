@@ -46,6 +46,14 @@ and was removed - the TUI is the only interactive local surface.)
 - **Tests**: `make test` (unit/integration), `make check` (rustfmt + text
   gates + `xtask arch` + clippy `-D warnings`, zero-warning policy),
   `make tests/e2e/basic` (bats E2E; needs `bats-core`).
+- **The kernel's load-bearing claims are model-checked**, not only tested:
+  `formal/tla/` holds TLA+ models of `sven-hsm`'s dispatch algorithm, its
+  submachine host and `sven-kernel`'s effect gate, run by `make formal`.
+  Several configurations are *expected to fail* - they pin down designs the
+  engine rejected, two tracked gaps and one priced trade-off - so read
+  `formal/README.md` before changing `dispatch.rs`, `submachine.rs` or
+  `run_effects`: a change that makes an expected failure pass, or an expected
+  pass fail, is telling you something.
 - **Repo hygiene is gated, not documented.** `make check/gates` refuses an
   absolute machine path (`/data`, `/home`, `/opt`, `/mnt`, `/root` anywhere;
   `/tmp` in a `.rs` file) and any `brain-*` Cargo dependency. Both also run as
@@ -115,6 +123,7 @@ one.
 | `make fmt` | Format |
 | `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |
 | `make tests/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour) |
+| `make formal` | TLA+ models of the HSM kernel (needs a JRE; see `formal/README.md`) |
 | `make docs` | Single-file user guide → `target/docs/sven-user-guide.md` |
 
 ## Binaries and cargo features
