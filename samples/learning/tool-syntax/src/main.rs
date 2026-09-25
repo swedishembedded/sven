@@ -28,8 +28,8 @@
 use std::path::PathBuf;
 
 use sample_learning_lab::{
-    baseline_effective, capture_path, record_from_requests, run_verifier, run_witness, to_jsonl,
-    upstream_of, ArmScore, Demonstrator, Episode, Family, Outcome, Recorder, ServedModel, Step,
+    baseline_effective, capture_path, records_from_performance, run_verifier, run_witness,
+    to_jsonl, upstream_of, Action, ArmScore, Episode, Family, Outcome, Recorder, ServedModel,
 };
 use sven_sdk::{config, ApprovalPolicy, Engine, SessionEvent};
 
@@ -49,6 +49,7 @@ options for baseline:
   --api-key KEY            key for that endpoint (default: BRAIN_API_KEY)
   --report FILE.json       write the machine-readable result here
   --hint TEXT              appended to the request for THIS arm only
+  --prompt-from FILE       requests.json from a baseline run (demonstrate only)
 
 A hint is an exploration aid, not a change to the task. Collection may use one;
 the measured arms must not, or the number says what the prompt did rather than
@@ -121,6 +122,9 @@ struct BaselineOptions {
     /// Appended to the frozen request. Recorded in the report so an arm that
     /// used one can never be mistaken for one that did not.
     hint: Option<String>,
+    /// A `requests.json` written by a previous `baseline` run, holding the
+    /// prompt the agent really sends.
+    prompt_from: Option<PathBuf>,
 }
 
 fn parse_baseline(args: &[String]) -> anyhow::Result<BaselineOptions> {
@@ -131,6 +135,7 @@ fn parse_baseline(args: &[String]) -> anyhow::Result<BaselineOptions> {
     let mut api_key = std::env::var("BRAIN_API_KEY").ok();
     let mut report = None;
     let mut hint = None;
+    let mut prompt_from = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -148,6 +153,7 @@ fn parse_baseline(args: &[String]) -> anyhow::Result<BaselineOptions> {
             "--api-key" => api_key = Some(take(&mut i)?),
             "--report" => report = Some(PathBuf::from(take(&mut i)?)),
             "--hint" => hint = Some(take(&mut i)?),
+            "--prompt-from" => prompt_from = Some(PathBuf::from(take(&mut i)?)),
             other => anyhow::bail!("unknown option {other:?}"),
         }
         i += 1;
@@ -160,6 +166,7 @@ fn parse_baseline(args: &[String]) -> anyhow::Result<BaselineOptions> {
         api_key,
         report,
         hint,
+        prompt_from,
     })
 }
 
@@ -446,18 +453,23 @@ fn first_line(text: &str) -> String {
 /// it, change it, check the change. A demonstration that jumped straight to
 /// the right file would teach the model to guess correctly rather than to find
 /// out, and finding out is the capability under test.
-fn script(family: &Family, active: &str) -> anyhow::Result<Vec<Step>> {
+/// What the closing turn says once the work is done.
+const CLOSING: &str =
+    "The live deployment now has three retry attempts and the service validates it.";
+
+/// The demonstration, as actions only.
+///
+/// Deliberately the plodding version: ask which deployment is live, look at
+/// it, change it, check the change. A demonstration that jumped straight to
+/// the right file would teach the model to guess correctly rather than to find
+/// out, and finding out is the capability under test.
+fn demonstration(family: &Family, active: &str) -> anyhow::Result<Vec<Action>> {
     let config = format!("config/{active}.json");
 
     // The demonstration rewrites the whole file, so it must preserve what was
     // there: `production` overrides only the timeout, and dropping that would
     // change what the deployment does - which the verifier would rightly
-    // reject. Read the real template and add the one key.
-    //
-    // Built in Rust rather than by a shell one-liner because the shell tool
-    // runs non-interactive commands only: a heredoc feeding `python3 -` waits
-    // on stdin forever, which is exactly how the first version of this script
-    // hung. Writing the file is the more natural action to demonstrate anyway.
+    // reject.
     let template = family.root().join("workspace").join(&config);
     let mut contents: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&template)?)?;
@@ -468,53 +480,71 @@ fn script(family: &Family, active: &str) -> anyhow::Result<Vec<Step>> {
     let text = format!("{}\n", serde_json::to_string_pretty(&contents)?);
 
     Ok(vec![
-        Step::call(
+        Action::new(
             "shell",
-            &serde_json::json!({
+            serde_json::json!({
                 "shell_command": "./svctl status",
                 "description": "find out which deployment this host runs"
-            })
-            .to_string(),
+            }),
         ),
-        // Looking at the file before changing it, via the shell. `read_file`
-        // would be the natural choice and is what this used first: it returns
-        // instantly when called directly, and inside an agent turn it starts
-        // and never finishes, so the episode waits forever on a tool that has
-        // already done its work. Left as a shell read until that is
-        // understood - the demonstration still shows looking before writing,
-        // which is the behaviour being taught.
-        Step::call(
-            "shell",
-            &serde_json::json!({
-                "shell_command": format!("cat {config}"),
-                "description": "look at the live deployment's configuration"
-            })
-            .to_string(),
+        Action::new(
+            "read_file",
+            serde_json::json!({ "path": config, "offset": 1, "limit": 50 }),
         ),
-        Step::call(
+        Action::new(
             "write_file",
-            &serde_json::json!({ "path": config, "text": text, "append": false }).to_string(),
+            serde_json::json!({ "path": config, "text": text, "append": false }),
         ),
-        Step::call(
+        Action::new(
             "shell",
-            &serde_json::json!({
+            serde_json::json!({
                 "shell_command": "./svctl validate",
                 "description": "check the service accepts the change"
-            })
-            .to_string(),
+            }),
         ),
-        Step::say("The live deployment now has three retry attempts and the service validates it."),
     ])
 }
 
 fn demonstrate(args: &[String]) -> anyhow::Result<()> {
     let options = parse_baseline(args)?;
     let family = Family::load(&family_root()).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
 
-    println!("demonstrate: {}", family.id());
+    // The prompt the agent really sends. Captured by `baseline`, because it is
+    // the only place the whole thing exists - an agent's history holds neither
+    // the system prompt nor the tool schemas.
+    let capture = options
+        .prompt_from
+        .clone()
+        .unwrap_or_else(|| options.run_dir.join("requests.json"));
+    let captured: Vec<serde_json::Value> =
+        serde_json::from_str(&std::fs::read_to_string(&capture).map_err(|e| {
+            anyhow::anyhow!(
+                "{}: {e}\nRun `baseline --run-dir DIR` first; it writes the captured prompt there, \
+                 or name one with --prompt-from.",
+                capture.display()
+            )
+        })?)?;
+    let prompt = captured
+        .iter()
+        .find(|r| {
+            r.get("tools")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| !t.is_empty())
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} holds no request carrying tool schemas; a record built from it would train the \
+                 model on a prompt it never sees",
+                capture.display()
+            )
+        })?;
+
+    let sven = sven_binary()?;
+    println!(
+        "demonstrate: {} (tools via {})",
+        family.id(),
+        sven.display()
+    );
     println!();
 
     let mut records = Vec::new();
@@ -530,21 +560,14 @@ fn demonstrate(args: &[String]) -> anyhow::Result<()> {
     {
         attempted += 1;
         let dir = options.run_dir.join(format!("demo-{index:03}-{hidden}"));
-        match runtime.block_on(one_demonstration(&family, &dir, hidden)) {
-            Ok((verdict, requests, detail)) => {
-                if verdict.solved() {
-                    solved += 1;
-                }
-                println!(
-                    "  demo-{index:03} [{hidden:<10}] {}  {detail}",
-                    if verdict.solved() { "SOLVED" } else { "failed" }
-                );
-                match record_from_requests(family.id(), hidden, &requests, &verdict) {
-                    Ok(record) => records.push(record),
-                    Err(why) => println!("             not usable as training data: {why}"),
-                }
+        match one_demonstration(&family, &dir, hidden, prompt, &sven) {
+            Ok((verdict, produced, detail)) => {
+                solved += 1;
+                let _ = verdict;
+                println!("  demo-{index:03} [{hidden:<10}] SOLVED  {detail}");
+                records.extend(produced);
             }
-            Err(e) => println!("  demo-{index:03} [{hidden:<10}] ERROR   {e}"),
+            Err(e) => println!("  demo-{index:03} [{hidden:<10}] failed  {e}"),
         }
     }
 
@@ -563,8 +586,21 @@ fn demonstrate(args: &[String]) -> anyhow::Result<()> {
     std::fs::create_dir_all(&options.run_dir)?;
     let out = options.run_dir.join("train.jsonl");
     std::fs::write(&out, to_jsonl(&records)?)?;
-    // Checked by the parser that will train on it, before anything claims a GPU.
-    match brain::validate_chat_dataset(&out) {
+    // Checked by the parser AND the encoder that will train on it, before
+    // anything claims a GPU. Parsing alone is not enough: a record can satisfy
+    // the wire schema completely and still have no honest loss-mask boundary
+    // under the checkpoint's own chat template.
+    let checked = match std::env::var("BRAIN_QWEN_WEIGHTS") {
+        Ok(weights) => brain::validate_chat_dataset_for(&out, std::path::Path::new(&weights)),
+        Err(_) => {
+            println!(
+                "note: BRAIN_QWEN_WEIGHTS is not set, so the dataset is only parsed, not encoded; \
+                 a shape the template cannot mask would not be caught until training starts"
+            );
+            brain::validate_chat_dataset(&out)
+        }
+    };
+    match checked {
         Ok(summary) => println!(
             "dataset: {} ({} record(s), {} message(s), {} supervised)",
             out.display(),
@@ -577,72 +613,78 @@ fn demonstrate(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// One demonstrated episode: a scripted model, a real agent, a real verdict.
-async fn one_demonstration(
+/// Where the `sven` binary is. Named by the environment so a sample is not
+/// tied to one install or one build profile.
+fn sven_binary() -> anyhow::Result<PathBuf> {
+    if let Ok(path) = std::env::var("SVEN_BIN") {
+        return Ok(PathBuf::from(path));
+    }
+    let built = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .map(|root| root.join("target/release/sven"));
+    match built {
+        Some(path) if path.exists() => Ok(path),
+        _ => anyhow::bail!(
+            "cannot find the sven binary; build it (`make release`) or name it with SVEN_BIN"
+        ),
+    }
+}
+
+fn one_demonstration(
     family: &Family,
     dir: &std::path::Path,
     hidden: &str,
-) -> anyhow::Result<(sample_learning_lab::Verdict, Vec<serde_json::Value>, String)> {
+    prompt: &serde_json::Value,
+    sven: &std::path::Path,
+) -> anyhow::Result<(
+    sample_learning_lab::Verdict,
+    Vec<sample_learning_lab::Record>,
+    String,
+)> {
     let mut episode = Episode::start(family, dir, hidden).map_err(|e| anyhow::anyhow!("{e}"))?;
     let before = baseline_effective(family, &episode).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let demo = Demonstrator::start(script(family, hidden)?).await?;
-    let base_url = demo.base_url();
+    let env = episode.agent_env();
+    let actions = demonstration(family, hidden)?;
+    let performed = sample_learning_lab::perform_all(sven, episode.workspace(), &env, &actions)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    for (key, value) in episode.agent_env() {
-        std::env::set_var(key, value);
-    }
-    let previous = std::env::current_dir()?;
-    std::env::set_current_dir(episode.workspace())?;
-
-    let options = BaselineOptions {
-        instances: 1,
-        run_dir: dir.to_path_buf(),
-        model: ServedModel::qwen3(),
-        base_url: Some(base_url.clone()),
-        api_key: Some("demonstration".into()),
-        report: None,
-        hint: None,
-    };
-    // A demonstration that hangs must report where it got to. Without a
-    // deadline the episode waits forever on a reply that is not coming, and
-    // the only evidence is an audit ledger with a tool that never finished.
-    let result = match tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        run_agent(family, &options, Some(&base_url)),
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(_) => Err(anyhow::anyhow!(
-            "the agent stopped responding after {} of {} scripted step(s); \
-             the demonstration was not completed",
-            demo.consumed().await,
-            script(family, hidden)?.len()
-        )),
-    };
-
-    std::env::set_current_dir(previous)?;
     episode.stop();
 
-    let activity = result?;
     let predicates = run_verifier(family, &episode, &before).map_err(|e| anyhow::anyhow!("{e}"))?;
     let verdict = family
         .predicates()
         .evaluate(&predicates)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let requests = demo.requests().await;
-    let consumed = demo.consumed().await;
-    let mut detail = format!(
-        "{} tool call(s), {consumed} scripted step(s) used",
-        activity.calls
+    let steps: Vec<(String, String, String)> = performed
+        .iter()
+        .map(|p| {
+            (
+                p.action.tool.clone(),
+                p.action.arguments.to_string(),
+                p.observation.clone(),
+            )
+        })
+        .collect();
+
+    let records = records_from_performance(
+        family.id(),
+        hidden,
+        prompt,
+        family.request(),
+        &steps,
+        CLOSING,
+        &verdict,
+    )
+    .map_err(|why| anyhow::anyhow!("{why}"))?;
+
+    let detail = format!(
+        "{} action(s) performed, {} record(s)",
+        performed.len(),
+        records.len()
     );
-    if !verdict.solved() {
-        detail.push_str(&format!(", unmet: {}", verdict.failed().join(", ")));
-    }
-    if !activity.failures.is_empty() {
-        detail.push_str(&format!("; failed: {}", activity.failures.join(" | ")));
-    }
-    Ok((verdict, requests, detail))
+    Ok((verdict, records, detail))
 }

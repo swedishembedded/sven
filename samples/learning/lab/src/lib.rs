@@ -60,19 +60,21 @@ mod endpoint;
 mod episode;
 mod family;
 mod model_id;
+mod perform;
 mod recorder;
 mod score;
 mod verdict;
 
 pub use dataset::{
-    record_from_episode, record_from_requests, to_jsonl, Excluded, Provenance, Record,
-    RecordMetadata,
+    record_from_episode, record_from_requests, records_from_performance, to_jsonl, Excluded,
+    Provenance, Record, RecordMetadata,
 };
 pub use demonstrate::{Demonstrator, Step};
 pub use endpoint::{AdapterPath, NoAdapterPath};
 pub use episode::{baseline_effective, run_verifier, run_witness, Episode, EpisodeError};
 pub use family::{Family, FamilyError};
 pub use model_id::ServedModel;
+pub use perform::{perform, perform_all, Action, PerformError, Performed};
 pub use recorder::{capture_path, upstream_of, Recorder};
 pub use score::{ArmScore, Outcome};
 pub use verdict::{PredicateSet, Unevaluated, Verdict};

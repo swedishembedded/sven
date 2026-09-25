@@ -353,6 +353,106 @@ pub fn record_from_requests(
     })
 }
 
+/// Build training records from a captured prompt and performed actions.
+///
+/// **The first decision only.** Not a simplification - the only shape this
+/// checkpoint's chat template can be masked against.
+///
+/// The template renders an assistant turn conditionally on whether anything
+/// follows it:
+///
+/// ```jinja
+/// {%- if loop.index0 > ns.last_query_index %}
+///     {%- if loop.last or (not loop.last and reasoning_content) %}
+/// ```
+///
+/// so the same message produces different text in isolation than in context,
+/// there is no honest boundary to mask at, and the trainer refuses it rather
+/// than guessing. One record per decision does not help either: the earlier
+/// decisions are still context in the later records and fail identically.
+/// Only a record whose sole assistant turn is its last message is stable.
+///
+/// The template's own escape is a non-empty `reasoning_content`, which makes
+/// both branches identical - but `generic-messages-v2` has no such field and
+/// is `deny_unknown_fields`, so a producer cannot reach it. Multi-turn
+/// trajectory SFT on this checkpoint is a masking problem on the engine side,
+/// not something a dataset producer can work around.
+///
+/// This is not a consolation prize for this sample: the measured failure is
+/// that the model acts without investigating, so the first decision is the one
+/// that matters.
+///
+/// The system prompt and tool schemas come from a request the agent really
+/// sent, so a record renders at training time the way the prompt renders at
+/// inference. The observations come from the real tool executor. The
+/// decisions, and only the decisions, are the demonstration's.
+pub fn records_from_performance(
+    family: &str,
+    hidden_state: &str,
+    prompt: &serde_json::Value,
+    request: &str,
+    performed: &[(String, String, String)],
+    closing: &str,
+    verdict: &Verdict,
+) -> Result<Vec<Record>, Excluded> {
+    if !verdict.solved() {
+        return Err(Excluded::NotSolved {
+            unmet: verdict.failed().to_vec(),
+        });
+    }
+    if performed.is_empty() {
+        return Err(Excluded::NothingToLearn);
+    }
+
+    let system = prompt
+        .pointer("/messages/0/content")
+        .and_then(|c| c.as_str())
+        .ok_or(Excluded::OpaqueTurn {
+            role: "system".into(),
+        })?;
+    let tools = prompt
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let metadata = || RecordMetadata {
+        family: family.to_string(),
+        provenance: Provenance::Scripted,
+        hidden_state: hidden_state.to_string(),
+    };
+
+    // Context as it stood before the first decision: the prompt and the
+    // request, nothing else. Anything more would put an assistant turn in the
+    // context and make the record unmaskable.
+    let (tool, arguments, _observation) = &performed[0];
+    let messages = vec![
+        context("system", system),
+        context("user", request),
+        WireMessage {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_calls: vec![WireToolCall {
+                id: Some("call_0".into()),
+                kind: "function".into(),
+                function: WireFunction {
+                    name: tool.clone(),
+                    arguments: arguments.clone(),
+                },
+            }],
+            tool_call_id: None,
+            train: true,
+        },
+    ];
+    let records = vec![Record {
+        messages,
+        tools,
+        metadata: metadata(),
+    }];
+    let _ = closing;
+
+    Ok(records)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
