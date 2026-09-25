@@ -36,6 +36,9 @@
 //!   no constructor a sample could use to mark its own work correct.
 //! * [`Family`] - a task contract that does not load unless every predicate it
 //!   scores says where it came from.
+//! * [`record_from_episode`] - training data from a VERIFIED episode only,
+//!   supervising assistant turns and nothing else, and refusing a transcript
+//!   with a hole in it.
 //!
 //! # Making the expensive mistakes impossible rather than noticed
 //!
@@ -46,6 +49,7 @@
 //! scrolled past in a log - so where it was possible to make the mistake
 //! unrepresentable instead, that is what these types do.
 
+mod dataset;
 mod endpoint;
 mod episode;
 mod family;
@@ -53,6 +57,7 @@ mod model_id;
 mod score;
 mod verdict;
 
+pub use dataset::{record_from_episode, to_jsonl, Excluded, Provenance, Record, RecordMetadata};
 pub use endpoint::{AdapterPath, NoAdapterPath};
 pub use episode::{baseline_effective, run_verifier, run_witness, Episode, EpisodeError};
 pub use family::{Family, FamilyError};
