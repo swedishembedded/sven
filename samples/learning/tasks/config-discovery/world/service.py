@@ -9,10 +9,11 @@ deployment configs and no statement of which one is in effect, so an agent
 that edits the plausible-looking one has a one-in-three chance of editing the
 wrong file and no way to find out except by asking.
 
-The live deployment arrives on an inherited pipe (fd 3) at startup. Not a
-file, not `argv`, not the environment -- `/proc/<pid>/cmdline` and
-`/proc/<pid>/environ` are readable by the same user that runs the agent, so
-either would put the answer back on the filesystem in all but name.
+The live deployment arrives on **stdin** at startup, as one line, and stdin is
+then closed. Not a file, not `argv`, not the environment --
+`/proc/<pid>/cmdline` and `/proc/<pid>/environ` are readable by the same user
+that runs the agent, so either would put the answer back on the filesystem in
+all but name. A pipe has no name to read.
 
 The second thing only running reveals is the schema. `retries` is the obvious
 name and the wrong one; the service calls it `retry_attempts` and says so only
@@ -152,14 +153,14 @@ def serve(sock_path: Path, service: Service, ready_fd: int | None = None) -> Non
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: service.py <config-dir> <socket-path>", file=sys.stderr)
-        print("  the live deployment is read from fd 3, never from argv", file=sys.stderr)
+        print("  the live deployment is read from stdin, never from argv", file=sys.stderr)
         return 2
     config_dir, sock_path = Path(sys.argv[1]), Path(sys.argv[2])
 
-    # fd 3 carries the hidden state. Reading it here and closing it means the
-    # value exists only in this process's memory from now on.
-    with os.fdopen(3, "r") as pipe:
-        active = pipe.readline().strip()
+    # stdin carries the hidden state. Reading it and closing it means the value
+    # exists only in this process's memory from here on.
+    active = sys.stdin.readline().strip()
+    sys.stdin.close()
 
     try:
         service = Service(config_dir, active)

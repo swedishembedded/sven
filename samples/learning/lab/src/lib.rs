@@ -47,12 +47,14 @@
 //! unrepresentable instead, that is what these types do.
 
 mod endpoint;
+mod episode;
 mod family;
 mod model_id;
 mod score;
 mod verdict;
 
 pub use endpoint::{AdapterPath, NoAdapterPath};
+pub use episode::{baseline_effective, run_verifier, run_witness, Episode, EpisodeError};
 pub use family::{Family, FamilyError};
 pub use model_id::ServedModel;
 pub use score::{ArmScore, Outcome};

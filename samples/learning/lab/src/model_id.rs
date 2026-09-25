@@ -61,6 +61,17 @@ impl ServedModel {
         &self.manifest_id
     }
 
+    /// The provider sven routes this model through.
+    ///
+    /// Needed because `SVEN_MODEL` is a command-line argument of the `sven`
+    /// binary, not something `sven_sdk::config::load` reads: an application
+    /// embedding the SDK has to put the provider and the name on the `Config`
+    /// itself. Which is the better default for an experiment anyway - an arm
+    /// whose weights were chosen by auto-detection is not a controlled arm.
+    pub fn provider(&self) -> &'static str {
+        "brain"
+    }
+
     /// The value for sven's `SVEN_MODEL`, which is `<provider>/<name>` split
     /// on the first slash - so a resident id that already contains a slash
     /// gets the provider spelled in front of it.

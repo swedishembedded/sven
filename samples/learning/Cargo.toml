@@ -23,6 +23,7 @@
 resolver = "2"
 members = [
     "lab",
+    "tool-syntax",
 ]
 
 [workspace.package]

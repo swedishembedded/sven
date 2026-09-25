@@ -52,16 +52,15 @@ class World:
         self.workspace = workspace
         self.active = active
         self.sock = workspace.parent / "service.sock"
-        read_fd, write_fd = os.pipe()
-        os.write(write_fd, f"{active}\n".encode())
-        os.close(write_fd)
         self.proc = subprocess.Popen(
             [sys.executable, str(WORLD / "service.py"), str(workspace / "config"), str(self.sock)],
-            pass_fds=(read_fd,),
+            stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
-        os.close(read_fd)
+        self.proc.stdin.write(f"{active}\n".encode())
+        self.proc.stdin.flush()
+        self.proc.stdin.close()
         self._await_socket()
 
     def _await_socket(self, timeout: float = 10.0) -> None:
