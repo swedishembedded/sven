@@ -19,5 +19,5 @@
 mod mock;
 mod yaml_mock;
 
-pub use mock::{MockProvider, ScriptedMockProvider};
+pub use mock::{FailingMockProvider, MockProvider, ScriptedMockProvider};
 pub use yaml_mock::YamlMockProvider;

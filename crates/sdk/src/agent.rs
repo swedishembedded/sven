@@ -259,6 +259,17 @@ impl Agent {
         let settled = bundle.runtime.capture();
         tokio::pin!(settled);
         let mut snapshot = None;
+        // The FIRST hard failure of the turn, if any. `SessionEvent::Error` is
+        // reserved for exactly that - a turn that merely produced nothing is
+        // an ordinary empty turn and never reports one - so seeing it means
+        // the turn did not do what it was asked. Keeping the first rather than
+        // the last keeps the cause instead of whatever it cascaded into.
+        //
+        // This has to be tracked separately from `reply` because the executor
+        // emits `Error` and then `TurnComplete`: without it, a turn that
+        // failed is indistinguishable here from a turn that answered with an
+        // empty string, and `send` returns `Ok("")` for both.
+        let mut failure: Option<String> = None;
 
         loop {
             tokio::select! {
@@ -272,6 +283,9 @@ impl Agent {
                         match &event {
                             SessionEvent::TextComplete(text) => reply.push_str(text),
                             SessionEvent::Aborted { partial_text } => reply.push_str(partial_text),
+                            SessionEvent::Error(message) => {
+                                failure.get_or_insert_with(|| message.clone());
+                            }
                             _ => {}
                         }
                         reduce_history(&event, &mut self.state.history);
@@ -298,6 +312,17 @@ impl Agent {
             Some(snapshot) => Some(snapshot),
             None => bundle.runtime.capture().await,
         };
+
+        // Report the failure only after the kernel state above is stored, so a
+        // caller that retries or inspects the agent resumes from where the
+        // turn actually stopped rather than from before it started. The text
+        // collected before the failure is folded into the error rather than
+        // returned: a partial answer from a turn that failed is not an answer,
+        // and every other surface (ACP, the CI runner) already treats a
+        // `SessionEvent::Error` as fatal to the turn.
+        if let Some(message) = failure {
+            return Err(CallError::Infrastructure(anyhow::anyhow!(message)));
+        }
         Ok(reply)
     }
 }

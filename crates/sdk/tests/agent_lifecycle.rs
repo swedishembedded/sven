@@ -138,3 +138,53 @@ async fn an_unknown_mode_is_refused_when_the_agent_runs() {
         "the failure must name the mode it could not find: {err}"
     );
 }
+
+#[tokio::test]
+async fn a_turn_whose_model_call_failed_is_an_error_not_an_empty_answer() {
+    // A failed turn used to be indistinguishable from a turn that answered
+    // with nothing: the executor reports `SessionEvent::Error` and then
+    // `TurnComplete`, and `send` returned `Ok("")` for both. Anything that
+    // scores or records agent output would have counted the failure as the
+    // model declining to answer.
+    let provider = Arc::new(sven_model_mock::FailingMockProvider::new(
+        "upstream refused the connection",
+    ));
+    let engine = Engine::builder()
+        .model_provider(provider as Arc<_>)
+        .build()
+        .expect("an engine builds from a default config");
+    let mut agent = engine.agent("agent");
+
+    let err = agent
+        .send("what is the answer?")
+        .await
+        .expect_err("a turn whose model call failed must not report success");
+
+    assert!(
+        format!("{err:#}").contains("upstream refused the connection"),
+        "the failure must carry the reason the turn failed: {err:#}"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_turn_still_leaves_the_agent_resumable() {
+    // The error is reported only after the kernel snapshot is stored, so a
+    // caller can retry or inspect the agent instead of losing the session.
+    let provider = Arc::new(sven_model_mock::FailingMockProvider::new("transport died"));
+    let engine = Engine::builder()
+        .model_provider(provider as Arc<_>)
+        .build()
+        .expect("an engine builds from a default config");
+    let mut agent = engine.agent("agent");
+
+    let _ = agent.send("hello").await.expect_err("the turn fails");
+
+    let state = agent.suspend();
+    let stored = serde_json::to_string(&state).expect("state survives a failed turn");
+    let restored: AgentState = serde_json::from_str(&stored).expect("and round-trips");
+    assert_eq!(restored.mode(), "agent");
+    assert!(
+        !restored.history().is_empty(),
+        "the user message that provoked the failed turn is still in history"
+    );
+}

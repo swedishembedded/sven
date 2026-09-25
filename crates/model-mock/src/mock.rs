@@ -170,6 +170,44 @@ impl sven_model::ModelProvider for ScriptedMockProvider {
     }
 }
 
+/// A provider whose every call fails.
+///
+/// The scripted providers above can only express a model that *answers*, so
+/// they cannot reach the failure half of the turn executor - the branch that
+/// reports `UiEvent::Error` and `Event::LlmFailed`. A surface that mistakes a
+/// failed turn for an empty one is an ordinary bug and needs an ordinary
+/// regression test, which needs this.
+///
+/// Deliberately a distinct type rather than a mode of `ScriptedMockProvider`:
+/// a test that wants failure wants it on every call, and a script that can
+/// also fail invites a test whose failure depends on how many calls happened
+/// to be made.
+pub struct FailingMockProvider {
+    message: String,
+}
+
+impl FailingMockProvider {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl sven_model::ModelProvider for FailingMockProvider {
+    fn name(&self) -> &str {
+        "failing-mock"
+    }
+    fn model_name(&self) -> &str {
+        "failing-mock-model"
+    }
+
+    async fn complete(&self, _req: CompletionRequest) -> anyhow::Result<ResponseStream> {
+        Err(anyhow::anyhow!("{}", self.message))
+    }
+}
+
 // ─── Unit tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
