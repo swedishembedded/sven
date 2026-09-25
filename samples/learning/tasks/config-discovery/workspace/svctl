@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+"""svctl - inspect and validate this host's upload service.
+
+The service is already running. This talks to it; it does not start it and
+cannot change it.
+
+  ./svctl status                 which deployment this host is running
+  ./svctl effective [DEPLOYMENT] the configuration actually in effect
+  ./svctl validate  [DEPLOYMENT] check a deployment's configuration
+
+With no DEPLOYMENT, each command uses the one this host is running.
+"""
+
+import json
+import os
+import socket
+import sys
+
+SOCKET_ENV = "UPLOAD_SERVICE_SOCKET"
+
+
+def call(request: dict) -> dict:
+    path = os.environ.get(SOCKET_ENV)
+    if not path:
+        raise SystemExit(f"svctl: {SOCKET_ENV} is not set; is the service running?")
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(path)
+    except OSError as exc:
+        raise SystemExit(f"svctl: cannot reach the upload service at {path}: {exc}")
+    with sock, sock.makefile("rw") as stream:
+        stream.write(json.dumps(request) + "\n")
+        stream.flush()
+        line = stream.readline()
+    if not line:
+        raise SystemExit("svctl: the upload service closed the connection without answering")
+    return json.loads(line)
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+
+    command, rest = argv[0], argv[1:]
+    if command not in ("status", "effective", "validate"):
+        print(f"svctl: unknown command {command!r}", file=sys.stderr)
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+
+    request: dict = {"command": command}
+    if rest:
+        request["deployment"] = rest[0]
+
+    response = call(request)
+    if not response.get("ok"):
+        if command == "validate":
+            # A failed validation is a result, not an error: print what is
+            # wrong and exit non-zero so a script can tell.
+            print(f"{response.get('deployment', '?')}: INVALID")
+            for problem in response.get("problems", []):
+                print(f"  - {problem}")
+            return 1
+        print(f"svctl: {response.get('error', 'request failed')}", file=sys.stderr)
+        return 1
+
+    if command == "status":
+        print(f"active deployment: {response['active_deployment']}")
+    elif command == "effective":
+        print(f"{response['deployment']}: {json.dumps(response['config'], indent=2, sort_keys=True)}")
+    elif command == "validate":
+        problems = response.get("problems", [])
+        if problems:
+            print(f"{response['deployment']}: INVALID")
+            for problem in problems:
+                print(f"  - {problem}")
+            return 1
+        print(f"{response['deployment']}: valid")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

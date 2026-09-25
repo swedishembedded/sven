@@ -305,8 +305,28 @@ samples/%/run:
 LEARNING_DIR = samples/learning
 BRAIN_DIR ?= ../edgeai/brain
 
+## samples/learning/audit - offline task-catalog audit: no model, no GPU, no network
+#
+# L1-L5 for every family in samples/learning/tasks/: the world drives its own
+# interface, an observation-only witness solves each instance, the verifier
+# rejects each known-bad solution for the stated reason, and the untouched
+# workspace fails. Needs no brain checkout and no model, so unlike the rest of
+# the learning targets it runs anywhere python3 does.
+samples/learning/audit:
+	@set -e; \
+	found=0; \
+	for family in $(LEARNING_DIR)/tasks/*/; do \
+		[ -f "$$family/family.toml" ] || continue; \
+		found=$$((found + 1)); \
+		echo "== $$family"; \
+		( cd "$$family" && python3 -m unittest discover -s world -p 'test_*.py' -q ); \
+		( cd "$$family" && python3 world/audit.py ); \
+	done; \
+	if [ "$$found" -eq 0 ]; then echo "samples/learning/audit: no families found"; exit 1; fi; \
+	echo "samples/learning/audit: OK ($$found famil(y/ies))"
+
 ## samples/learning/check - build + test the learning samples (skips without brain)
-samples/learning/check:
+samples/learning/check: samples/learning/audit
 	@if [ ! -d "$(BRAIN_DIR)" ]; then \
 		echo "samples/learning: SKIPPED - no brain checkout at $(BRAIN_DIR)"; \
 		echo "  These samples link brain directly; set BRAIN_DIR=<path> to point at one."; \

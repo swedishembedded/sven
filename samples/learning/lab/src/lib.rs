@@ -34,6 +34,8 @@
 //!   not a mistake to catch in review.
 //! * [`Verdict`] / [`PredicateSet`] - the only source of a "solved". There is
 //!   no constructor a sample could use to mark its own work correct.
+//! * [`Family`] - a task contract that does not load unless every predicate it
+//!   scores says where it came from.
 //!
 //! # Making the expensive mistakes impossible rather than noticed
 //!
@@ -45,11 +47,13 @@
 //! unrepresentable instead, that is what these types do.
 
 mod endpoint;
+mod family;
 mod model_id;
 mod score;
 mod verdict;
 
 pub use endpoint::{AdapterPath, NoAdapterPath};
+pub use family::{Family, FamilyError};
 pub use model_id::ServedModel;
 pub use score::{ArmScore, Outcome};
 pub use verdict::{PredicateSet, Unevaluated, Verdict};
