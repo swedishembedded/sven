@@ -16,6 +16,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::Verdict;
+
 /// What happened on one instance.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "outcome")]
@@ -29,14 +31,42 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    pub fn solved() -> Outcome {
-        Outcome::Answered { solved: true }
+    /// The only way to produce a scored outcome: hand over a [`Verdict`], and
+    /// a [`Verdict`] can only come from evaluating a task's declared
+    /// predicates. There is deliberately no `Outcome::solved()` - a sample
+    /// that could write one could mark its own work correct, and then the
+    /// difference between a measurement and a claim would rest on nobody
+    /// having taken a shortcut.
+    pub fn from_verdict(verdict: &Verdict) -> Outcome {
+        Outcome::Answered {
+            solved: verdict.solved(),
+        }
     }
-    pub fn unsolved() -> Outcome {
-        Outcome::Answered { solved: false }
-    }
+
+    /// An instance that never reached a verdict.
+    ///
+    /// Note what this is NOT: an unsolved task. An episode that failed on
+    /// transport, or a verifier that could not run, produced no evidence in
+    /// either direction, and recording it as a failure would let an
+    /// infrastructure problem masquerade as a model that could not do the
+    /// work. [`ArmScore`] keeps these out of both the numerator and the
+    /// denominator for that reason.
     pub fn errored(reason: impl Into<String>) -> Outcome {
-        Outcome::Errored { reason: reason.into() }
+        Outcome::Errored {
+            reason: reason.into(),
+        }
+    }
+
+    /// Classify the result of running one episode.
+    ///
+    /// Written once, here, rather than at each call site, because the tempting
+    /// shortcut at a call site is `Err(_) => unsolved` - which is exactly the
+    /// conflation this type exists to prevent.
+    pub fn from_episode<E: std::fmt::Display>(episode: Result<&Verdict, E>) -> Outcome {
+        match episode {
+            Ok(verdict) => Outcome::from_verdict(verdict),
+            Err(e) => Outcome::errored(e.to_string()),
+        }
     }
 }
 
@@ -54,7 +84,11 @@ pub struct ArmScore {
 
 impl ArmScore {
     pub fn new(label: impl Into<String>, model: impl Into<String>) -> ArmScore {
-        ArmScore { label: label.into(), model: model.into(), ..ArmScore::default() }
+        ArmScore {
+            label: label.into(),
+            model: model.into(),
+            ..ArmScore::default()
+        }
     }
 
     pub fn record(&mut self, outcome: &Outcome) {
@@ -103,13 +137,21 @@ impl ArmScore {
 mod tests {
     use super::*;
 
+    /// A verdict can only come from evaluating predicates, so even the tests
+    /// go through the real path rather than fabricating one.
+    fn verdict(pass: bool) -> crate::Verdict {
+        let set = crate::PredicateSet::new(["done"]).expect("one predicate");
+        set.evaluate(&[("done".to_string(), pass)].into_iter().collect())
+            .expect("evaluated")
+    }
+
     fn arm_with(solved: usize, unsolved: usize, errored: usize) -> ArmScore {
         let mut a = ArmScore::new("t", "brain/qwen3");
         for _ in 0..solved {
-            a.record(&Outcome::solved());
+            a.record(&Outcome::from_verdict(&verdict(true)));
         }
         for _ in 0..unsolved {
-            a.record(&Outcome::unsolved());
+            a.record(&Outcome::from_verdict(&verdict(false)));
         }
         for _ in 0..errored {
             a.record(&Outcome::errored("transport"));
@@ -122,8 +164,16 @@ mod tests {
         let clean = arm_with(3, 1, 0);
         let faulted = arm_with(3, 1, 6);
         assert_eq!(clean.rate(), Some(0.75));
-        assert_eq!(faulted.rate(), Some(0.75), "errors must not depress the score");
-        assert_eq!(faulted.denominator(), 4, "the denominator is verdicts, not attempts");
+        assert_eq!(
+            faulted.rate(),
+            Some(0.75),
+            "errors must not depress the score"
+        );
+        assert_eq!(
+            faulted.denominator(),
+            4,
+            "the denominator is verdicts, not attempts"
+        );
     }
 
     #[test]
@@ -132,7 +182,10 @@ mod tests {
         assert!(arm_with(3, 1, 0).caveat().is_none());
         let faulted = arm_with(3, 1, 6);
         assert!(!faulted.comparable());
-        assert!(faulted.caveat().expect("a caveat").contains("not comparable"));
+        assert!(faulted
+            .caveat()
+            .expect("a caveat")
+            .contains("not comparable"));
     }
 
     #[test]

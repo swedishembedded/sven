@@ -43,7 +43,9 @@ impl ServedModel {
     /// (`Qwen/Qwen3-0.6B`) is not a resident and cannot receive an adapter, so
     /// there is deliberately no way to build a `ServedModel` from one.
     pub fn resident(manifest_id: impl Into<String>) -> ServedModel {
-        ServedModel { manifest_id: manifest_id.into() }
+        ServedModel {
+            manifest_id: manifest_id.into(),
+        }
     }
 
     /// Qwen3 as brain's resident serves it. The size is not part of the id:

@@ -29,9 +29,27 @@
 //! * [`ArmScore`] / [`Outcome`] - what an arm measured and what it refuses to
 //!   claim, including the rule that an infrastructure fault is excluded from
 //!   both the numerator and the denominator.
+//! * [`AdapterPath`] - proof that promoted adapters reach the model an arm is
+//!   about to measure. Scoring requires one, so measuring the wrong weights is
+//!   not a mistake to catch in review.
+//! * [`Verdict`] / [`PredicateSet`] - the only source of a "solved". There is
+//!   no constructor a sample could use to mark its own work correct.
+//!
+//! # Making the expensive mistakes impossible rather than noticed
+//!
+//! Three of these types exist because of failures that were observed while
+//! building this harness, and each shares a shape: the run completes, reports
+//! a plausible number, and the number is wrong. A warning is a poor defence
+//! against that - one of these failures HAD a warning available and it
+//! scrolled past in a log - so where it was possible to make the mistake
+//! unrepresentable instead, that is what these types do.
 
+mod endpoint;
 mod model_id;
 mod score;
+mod verdict;
 
+pub use endpoint::{AdapterPath, NoAdapterPath};
 pub use model_id::ServedModel;
 pub use score::{ArmScore, Outcome};
+pub use verdict::{PredicateSet, Unevaluated, Verdict};

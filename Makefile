@@ -313,6 +313,8 @@ samples/learning/check:
 		exit 0; \
 	fi; \
 	echo "samples/learning: building and testing against $(BRAIN_DIR)"; \
+	$(CARGO) fmt --manifest-path $(LEARNING_DIR)/Cargo.toml -p sample-learning-lab -- --check && \
+	$(CARGO) clippy --manifest-path $(LEARNING_DIR)/Cargo.toml --workspace --all-targets -- -D warnings && \
 	$(CARGO) test --manifest-path $(LEARNING_DIR)/Cargo.toml --workspace
 
 ## samples/learning/build - build the learning samples in release
