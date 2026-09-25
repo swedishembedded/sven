@@ -45,6 +45,11 @@ options for baseline:
   --base-url URL           the served endpoint (default: sven's own configuration)
   --api-key KEY            key for that endpoint (default: BRAIN_API_KEY)
   --report FILE.json       write the machine-readable result here
+  --hint TEXT              appended to the request for THIS arm only
+
+A hint is an exploration aid, not a change to the task. Collection may use one;
+the measured arms must not, or the number says what the prompt did rather than
+what the model learned.
 
 The model is ordinary sven configuration, not a flag: point sven at a served
 brain and the same binary measures whatever it is serving. The id must name the
@@ -109,6 +114,9 @@ struct BaselineOptions {
     base_url: Option<String>,
     api_key: Option<String>,
     report: Option<PathBuf>,
+    /// Appended to the frozen request. Recorded in the report so an arm that
+    /// used one can never be mistaken for one that did not.
+    hint: Option<String>,
 }
 
 fn parse_baseline(args: &[String]) -> anyhow::Result<BaselineOptions> {
@@ -118,6 +126,7 @@ fn parse_baseline(args: &[String]) -> anyhow::Result<BaselineOptions> {
     let mut base_url = None;
     let mut api_key = std::env::var("BRAIN_API_KEY").ok();
     let mut report = None;
+    let mut hint = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -134,6 +143,7 @@ fn parse_baseline(args: &[String]) -> anyhow::Result<BaselineOptions> {
             "--base-url" => base_url = Some(take(&mut i)?),
             "--api-key" => api_key = Some(take(&mut i)?),
             "--report" => report = Some(PathBuf::from(take(&mut i)?)),
+            "--hint" => hint = Some(take(&mut i)?),
             other => anyhow::bail!("unknown option {other:?}"),
         }
         i += 1;
@@ -145,6 +155,7 @@ fn parse_baseline(args: &[String]) -> anyhow::Result<BaselineOptions> {
         base_url,
         api_key,
         report,
+        hint,
     })
 }
 
@@ -225,6 +236,7 @@ fn baseline(args: &[String]) -> anyhow::Result<()> {
     if let Some(path) = options.report {
         let body = serde_json::json!({
             "family": family.id(), "arm": "baseline", "model": options.model.api_model(),
+            "hint": options.hint,
             "score": {
                 "solved": score.solved, "answered": score.answered, "errored": score.errored,
                 "rate": score.rate(),
@@ -264,28 +276,31 @@ async fn one_episode(
     // be able to change.
     episode.stop();
 
-    let tool_calls = result?;
+    let activity = result?;
     let predicates = run_verifier(family, &episode, &before).map_err(|e| anyhow::anyhow!("{e}"))?;
     let verdict = family
         .predicates()
         .evaluate(&predicates)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let detail = if verdict.solved() {
-        format!("{tool_calls} tool call(s)")
-    } else {
-        format!(
-            "{tool_calls} tool call(s), unmet: {}",
-            verdict.failed().join(", ")
-        )
-    };
+    let mut detail = format!("{} tool call(s)", activity.calls);
+    if !verdict.solved() {
+        detail.push_str(&format!(", unmet: {}", verdict.failed().join(", ")));
+    }
+    if !activity.failures.is_empty() {
+        detail.push_str(&format!(
+            "; {} failed: {}",
+            activity.failures.len(),
+            activity.failures.join(" | ")
+        ));
+    }
     Ok((verdict, detail))
 }
 
 /// Give the agent the request and let its tool loop run. Returns how many tool
 /// calls it made, counted from the kernel's own event stream rather than from
 /// anything the model reports about itself.
-async fn run_agent(family: &Family, options: &BaselineOptions) -> anyhow::Result<usize> {
+async fn run_agent(family: &Family, options: &BaselineOptions) -> anyhow::Result<ToolActivity> {
     // `SVEN_MODEL` is an argument of the `sven` binary, not something the
     // SDK's loader reads, and the auto-detected default is a sentinel that
     // only resolves when exactly one chat model is served. An experiment has
@@ -308,20 +323,60 @@ async fn run_agent(family: &Family, options: &BaselineOptions) -> anyhow::Result
 
     let mut agent = engine.agent("agent");
     let mut events = agent.events();
+    // Counting calls is not enough to interpret an episode. A call that fails
+    // because the model got the arguments wrong and a call that fails because
+    // the harness is broken are the same number and opposite conclusions, and
+    // the audit ledger records that a tool failed without recording why.
     let counter = tokio::spawn(async move {
-        let mut calls = 0usize;
+        let mut activity = ToolActivity::default();
         while let Ok(event) = events.recv().await {
             match event {
-                SessionEvent::ToolCallStarted(_) => calls += 1,
+                SessionEvent::ToolCallStarted(_) => activity.calls += 1,
+                SessionEvent::ToolCallFinished {
+                    tool_name,
+                    output,
+                    is_error,
+                    ..
+                } => {
+                    if is_error {
+                        activity
+                            .failures
+                            .push(format!("{tool_name}: {}", first_line(&output)));
+                    }
+                }
                 SessionEvent::TurnComplete | SessionEvent::Aborted { .. } => break,
                 _ => {}
             }
         }
-        calls
+        activity
     });
 
-    let sent = agent.send(family.request()).await;
-    let calls = counter.await.unwrap_or(0);
+    let request = match &options.hint {
+        Some(hint) => format!("{}\n\n{hint}", family.request()),
+        None => family.request().to_string(),
+    };
+    let sent = agent.send(&request).await;
+    let activity = counter.await.unwrap_or_default();
     sent.map_err(|e| anyhow::anyhow!("{e}"))?;
-    Ok(calls)
+    Ok(activity)
+}
+
+/// What the agent's tools actually did, as the kernel reported it.
+#[derive(Clone, Debug, Default)]
+struct ToolActivity {
+    calls: usize,
+    /// One entry per failed call: the tool and the first line of what it
+    /// said. Kept because "11 tool calls and nothing changed" is not a
+    /// diagnosis, and the difference between a model that cannot form a call
+    /// and a harness that cannot serve one is the whole question.
+    failures: Vec<String>,
+}
+
+fn first_line(text: &str) -> String {
+    text.lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(120)
+        .collect()
 }
