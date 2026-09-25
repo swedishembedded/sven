@@ -28,8 +28,8 @@
 use std::path::PathBuf;
 
 use sample_learning_lab::{
-    baseline_effective, capture_path, run_verifier, run_witness, upstream_of, ArmScore, Episode,
-    Family, Outcome, Recorder, ServedModel,
+    baseline_effective, capture_path, record_from_requests, run_verifier, run_witness, to_jsonl,
+    upstream_of, ArmScore, Demonstrator, Episode, Family, Outcome, Recorder, ServedModel, Step,
 };
 use sven_sdk::{config, ApprovalPolicy, Engine, SessionEvent};
 
@@ -38,6 +38,8 @@ usage: sample-learning-tool-syntax <command> [options]
 
   audit                    check the task catalog: no model, no GPU, no network
   baseline [options]       measure the base model on the frozen instances
+  demonstrate [options]    drive correct episodes with a scripted model and
+                           emit the verified ones as training data
 
 options for baseline:
   --instances N            episodes per twin (default 4)
@@ -63,6 +65,7 @@ fn main() -> anyhow::Result<()> {
     match args.first().map(String::as_str) {
         Some("audit") => audit(),
         Some("baseline") => baseline(&args[1..]),
+        Some("demonstrate") => demonstrate(&args[1..]),
         Some("--help") | Some("-h") | None => {
             print!("{USAGE}");
             Ok(())
@@ -431,4 +434,215 @@ fn first_line(text: &str) -> String {
         .chars()
         .take(120)
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// demonstrate - verified episodes from a scripted model
+// ---------------------------------------------------------------------------
+
+/// The demonstration, as decisions only.
+///
+/// Deliberately the plodding version: ask which deployment is live, look at
+/// it, change it, check the change. A demonstration that jumped straight to
+/// the right file would teach the model to guess correctly rather than to find
+/// out, and finding out is the capability under test.
+fn script(family: &Family, active: &str) -> anyhow::Result<Vec<Step>> {
+    let config = format!("config/{active}.json");
+
+    // The demonstration rewrites the whole file, so it must preserve what was
+    // there: `production` overrides only the timeout, and dropping that would
+    // change what the deployment does - which the verifier would rightly
+    // reject. Read the real template and add the one key.
+    //
+    // Built in Rust rather than by a shell one-liner because the shell tool
+    // runs non-interactive commands only: a heredoc feeding `python3 -` waits
+    // on stdin forever, which is exactly how the first version of this script
+    // hung. Writing the file is the more natural action to demonstrate anyway.
+    let template = family.root().join("workspace").join(&config);
+    let mut contents: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&template)?)?;
+    contents
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("{} is not a JSON object", template.display()))?
+        .insert("retry_attempts".into(), serde_json::json!(3));
+    let text = format!("{}\n", serde_json::to_string_pretty(&contents)?);
+
+    Ok(vec![
+        Step::call(
+            "shell",
+            &serde_json::json!({
+                "shell_command": "./svctl status",
+                "description": "find out which deployment this host runs"
+            })
+            .to_string(),
+        ),
+        // Looking at the file before changing it, via the shell. `read_file`
+        // would be the natural choice and is what this used first: it returns
+        // instantly when called directly, and inside an agent turn it starts
+        // and never finishes, so the episode waits forever on a tool that has
+        // already done its work. Left as a shell read until that is
+        // understood - the demonstration still shows looking before writing,
+        // which is the behaviour being taught.
+        Step::call(
+            "shell",
+            &serde_json::json!({
+                "shell_command": format!("cat {config}"),
+                "description": "look at the live deployment's configuration"
+            })
+            .to_string(),
+        ),
+        Step::call(
+            "write_file",
+            &serde_json::json!({ "path": config, "text": text, "append": false }).to_string(),
+        ),
+        Step::call(
+            "shell",
+            &serde_json::json!({
+                "shell_command": "./svctl validate",
+                "description": "check the service accepts the change"
+            })
+            .to_string(),
+        ),
+        Step::say("The live deployment now has three retry attempts and the service validates it."),
+    ])
+}
+
+fn demonstrate(args: &[String]) -> anyhow::Result<()> {
+    let options = parse_baseline(args)?;
+    let family = Family::load(&family_root()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
+    println!("demonstrate: {}", family.id());
+    println!();
+
+    let mut records = Vec::new();
+    let mut solved = 0usize;
+    let mut attempted = 0usize;
+
+    for (index, hidden) in family
+        .live_choices()
+        .iter()
+        .cycle()
+        .take(options.instances * family.live_choices().len())
+        .enumerate()
+    {
+        attempted += 1;
+        let dir = options.run_dir.join(format!("demo-{index:03}-{hidden}"));
+        match runtime.block_on(one_demonstration(&family, &dir, hidden)) {
+            Ok((verdict, requests, detail)) => {
+                if verdict.solved() {
+                    solved += 1;
+                }
+                println!(
+                    "  demo-{index:03} [{hidden:<10}] {}  {detail}",
+                    if verdict.solved() { "SOLVED" } else { "failed" }
+                );
+                match record_from_requests(family.id(), hidden, &requests, &verdict) {
+                    Ok(record) => records.push(record),
+                    Err(why) => println!("             not usable as training data: {why}"),
+                }
+            }
+            Err(e) => println!("  demo-{index:03} [{hidden:<10}] ERROR   {e}"),
+        }
+    }
+
+    println!();
+    println!(
+        "demonstrate: {solved}/{attempted} verified; {} record(s)",
+        records.len()
+    );
+
+    if records.is_empty() {
+        anyhow::bail!(
+            "no verified demonstration produced a record, so there is nothing to train on"
+        );
+    }
+
+    std::fs::create_dir_all(&options.run_dir)?;
+    let out = options.run_dir.join("train.jsonl");
+    std::fs::write(&out, to_jsonl(&records)?)?;
+    // Checked by the parser that will train on it, before anything claims a GPU.
+    match brain::validate_chat_dataset(&out) {
+        Ok(summary) => println!(
+            "dataset: {} ({} record(s), {} message(s), {} supervised)",
+            out.display(),
+            summary.records,
+            summary.messages,
+            summary.trained_messages
+        ),
+        Err(e) => anyhow::bail!("the trainer would reject this dataset: {e}"),
+    }
+    Ok(())
+}
+
+/// One demonstrated episode: a scripted model, a real agent, a real verdict.
+async fn one_demonstration(
+    family: &Family,
+    dir: &std::path::Path,
+    hidden: &str,
+) -> anyhow::Result<(sample_learning_lab::Verdict, Vec<serde_json::Value>, String)> {
+    let mut episode = Episode::start(family, dir, hidden).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let before = baseline_effective(family, &episode).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let demo = Demonstrator::start(script(family, hidden)?).await?;
+    let base_url = demo.base_url();
+
+    for (key, value) in episode.agent_env() {
+        std::env::set_var(key, value);
+    }
+    let previous = std::env::current_dir()?;
+    std::env::set_current_dir(episode.workspace())?;
+
+    let options = BaselineOptions {
+        instances: 1,
+        run_dir: dir.to_path_buf(),
+        model: ServedModel::qwen3(),
+        base_url: Some(base_url.clone()),
+        api_key: Some("demonstration".into()),
+        report: None,
+        hint: None,
+    };
+    // A demonstration that hangs must report where it got to. Without a
+    // deadline the episode waits forever on a reply that is not coming, and
+    // the only evidence is an audit ledger with a tool that never finished.
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        run_agent(family, &options, Some(&base_url)),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!(
+            "the agent stopped responding after {} of {} scripted step(s); \
+             the demonstration was not completed",
+            demo.consumed().await,
+            script(family, hidden)?.len()
+        )),
+    };
+
+    std::env::set_current_dir(previous)?;
+    episode.stop();
+
+    let activity = result?;
+    let predicates = run_verifier(family, &episode, &before).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let verdict = family
+        .predicates()
+        .evaluate(&predicates)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let requests = demo.requests().await;
+    let consumed = demo.consumed().await;
+    let mut detail = format!(
+        "{} tool call(s), {consumed} scripted step(s) used",
+        activity.calls
+    );
+    if !verdict.solved() {
+        detail.push_str(&format!(", unmet: {}", verdict.failed().join(", ")));
+    }
+    if !activity.failures.is_empty() {
+        detail.push_str(&format!("; failed: {}", activity.failures.join(" | ")));
+    }
+    Ok((verdict, requests, detail))
 }

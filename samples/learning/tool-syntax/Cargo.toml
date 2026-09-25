@@ -12,6 +12,7 @@ publish.workspace = true
 [dependencies]
 sample-learning-lab = { path = "../lab" }
 sven-sdk = { workspace = true }
+brain = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

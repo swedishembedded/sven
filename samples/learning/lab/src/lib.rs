@@ -36,6 +36,8 @@
 //!   no constructor a sample could use to mark its own work correct.
 //! * [`Family`] - a task contract that does not load unless every predicate it
 //!   scores says where it came from.
+//! * [`Demonstrator`] - a scripted model at the wire, so a demonstration's
+//!   observations are produced by the real tool executor rather than invented.
 //! * [`Recorder`] - the exact request the agent sent, captured at the wire.
 //!   An agent's stored history holds neither the system prompt nor the tool
 //!   schemas, so it is not enough to train on.
@@ -53,6 +55,7 @@
 //! unrepresentable instead, that is what these types do.
 
 mod dataset;
+mod demonstrate;
 mod endpoint;
 mod episode;
 mod family;
@@ -61,7 +64,11 @@ mod recorder;
 mod score;
 mod verdict;
 
-pub use dataset::{record_from_episode, to_jsonl, Excluded, Provenance, Record, RecordMetadata};
+pub use dataset::{
+    record_from_episode, record_from_requests, to_jsonl, Excluded, Provenance, Record,
+    RecordMetadata,
+};
+pub use demonstrate::{Demonstrator, Step};
 pub use endpoint::{AdapterPath, NoAdapterPath};
 pub use episode::{baseline_effective, run_verifier, run_witness, Episode, EpisodeError};
 pub use family::{Family, FamilyError};

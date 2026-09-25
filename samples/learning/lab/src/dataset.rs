@@ -247,6 +247,112 @@ pub fn to_jsonl(records: &[Record]) -> Result<String, serde_json::Error> {
     Ok(out)
 }
 
+/// Derive a training record from the requests an agent actually sent.
+///
+/// The last request's `messages` array is the whole conversation as the server
+/// was given it: the real system prompt, every real tool result, and the
+/// assistant turns in between. Using it rather than the agent's stored history
+/// is what makes the record render at training time the way the prompt renders
+/// at inference - the history holds neither the system prompt nor the tools.
+///
+/// `tools` is carried across for the same reason. A record without it is
+/// rendered by a template that omits the tools preamble, so the model would be
+/// trained on a prompt it never meets.
+pub fn record_from_requests(
+    family: &str,
+    hidden_state: &str,
+    requests: &[serde_json::Value],
+    verdict: &Verdict,
+) -> Result<Record, Excluded> {
+    if !verdict.solved() {
+        return Err(Excluded::NotSolved {
+            unmet: verdict.failed().to_vec(),
+        });
+    }
+    let last = requests.last().ok_or(Excluded::NothingToLearn)?;
+    let wire = last
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .ok_or(Excluded::NothingToLearn)?;
+
+    let mut messages = Vec::new();
+    for message in wire {
+        let role = message
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if role.is_empty() {
+            return Err(Excluded::OpaqueTurn {
+                role: "(none)".into(),
+            });
+        }
+        let content = match message.get("content") {
+            Some(serde_json::Value::String(text)) => text.clone(),
+            Some(serde_json::Value::Null) | None => String::new(),
+            // A structured content block is a message this harness cannot
+            // flatten without inventing a rendering for it.
+            Some(_) => return Err(Excluded::OpaqueTurn { role }),
+        };
+
+        let tool_calls = message
+            .get("tool_calls")
+            .and_then(|c| c.as_array())
+            .map(|calls| {
+                calls
+                    .iter()
+                    .map(|call| WireToolCall {
+                        id: call.get("id").and_then(|i| i.as_str()).map(String::from),
+                        kind: "function".into(),
+                        function: WireFunction {
+                            name: call
+                                .pointer("/function/name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                            arguments: call
+                                .pointer("/function/arguments")
+                                .and_then(|a| a.as_str())
+                                .unwrap_or("{}")
+                                .to_string(),
+                        },
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let train = role == "assistant";
+        messages.push(WireMessage {
+            role,
+            content,
+            tool_calls,
+            tool_call_id: message
+                .get("tool_call_id")
+                .and_then(|i| i.as_str())
+                .map(String::from),
+            train,
+        });
+    }
+
+    if !messages.iter().any(|m| m.train) {
+        return Err(Excluded::NothingToLearn);
+    }
+
+    Ok(Record {
+        messages,
+        tools: last
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        metadata: RecordMetadata {
+            family: family.to_string(),
+            provenance: Provenance::Scripted,
+            hidden_state: hidden_state.to_string(),
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
