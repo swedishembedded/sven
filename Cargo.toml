@@ -64,6 +64,24 @@ members = [
     "samples/study/svf",
 ]
 
+# `samples/learning/` is a SEPARATE workspace, deliberately excluded from this
+# one. Those samples link brain (the edge-AI training engine) directly, because
+# a learning experiment that reaches its trainer over a wire protocol is mostly
+# a demonstration of the wire protocol. That dependency must not enter sven's
+# own build: `scripts/gates/check-no-brain-dependency.sh` exists because sven
+# has to build, test and ship on a machine with no brain checkout, and a
+# workspace member would put brain in this workspace's `Cargo.lock` and break
+# exactly that. Excluding them keeps the guarantee intact while letting them
+# link what they need.
+#
+# The cost is the one `samples/README.md` warns about - a sample outside the
+# build is a sample that rots - so `make samples/learning/check` builds and
+# tests them, and skips with a stated reason when brain is absent rather than
+# failing a clone that legitimately does not have it.
+exclude = [
+    "samples/learning",
+]
+
 # Single source of truth for the sven release version. The top-level `sven`
 # binary crate's `[package]` inherits this (see below), and so does
 # `crates/input` — the ATIF trace writer reads `env!("CARGO_PKG_VERSION")`

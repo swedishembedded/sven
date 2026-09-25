@@ -24,6 +24,31 @@ it is enough to build something that is *not* the CLI on.
    package `sample-study-svf`. The `samples/%/build` and `samples/%/run` rules
    depend on that mapping, and `make check/samples` enforces it too.
 
+Rule 1 is about *this* workspace. A sample may depend on whatever it needs
+from outside it - that is what makes it an application rather than a test -
+subject to the exception below being the only one.
+
+## The one exception: `samples/learning/`
+
+[`samples/learning/`](learning/README.md) is a separate cargo workspace,
+excluded from the repository root's, and its samples may depend on **brain**.
+They demonstrate a model learning from its own verified experience, and brain
+is what moves the weights; reaching it over a wire protocol would make each
+sample mostly a demonstration of the wire protocol.
+
+That dependency must never enter sven's own build -
+`scripts/gates/check-no-brain-dependency.sh` exists because sven has to build,
+test and ship on a machine with no brain checkout - which is exactly what the
+separate workspace buys: nothing those samples declare can reach this
+workspace's `Cargo.lock`. `make check/samples` enforces the boundary in the
+other direction too, failing any sample **outside** `samples/learning/` that
+declares a brain dependency.
+
+The cost is that they are not covered by the root `make build`, `make test` or
+`make check`, which is how a sample rots. `make samples/learning/check` is the
+compensating control, and it skips with a stated reason when brain is absent
+rather than failing a clone that does not have it.
+
 ## Every sample is a directory
 
 `samples/<category>/<name>/`, containing at least:
@@ -45,11 +70,19 @@ the path it is about to execute and when that file was built.
 
 ## Samples are workspace members, and they are built and tested
 
-Unlike some sibling repos, a sample here is **not** excluded from `make build`,
-`make test` or `make check`. It depends only on the SDK facade, so including it
-costs almost nothing - and excluding it is how a sample rots into something
-that no longer compiles against the framework it is supposed to demonstrate.
-A sample that does not build is a broken sample and should fail the build.
+Unlike some sibling repos, a sample here is **not** excluded from `make test`
+or `make check`. It depends only on the SDK facade, so including it costs
+almost nothing - and excluding it is how a sample rots into something that no
+longer compiles against the framework it is supposed to demonstrate. A sample
+that does not build is a broken sample and should fail the build.
+
+`make build` is the exception, and not a deliberate one: it runs `cargo build`
+with no `--workspace`, and the repository root is itself the `sven` package, so
+it builds the binary alone. `make test` (`cargo test --workspace`) and `make
+check` (clippy `--workspace --all-targets`) are what actually cover samples.
+
+`samples/learning/` is covered by neither, being a separate workspace - see the
+exception above and `make samples/learning/check`.
 
 ## Adding one
 

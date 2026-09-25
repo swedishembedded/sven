@@ -7,6 +7,14 @@
 .cargo/
 Cargo.lock
 
+# samples/learning/ is a separate cargo workspace (see its README), so its
+# build output lands here rather than in the root target/. It has to be
+# ignored explicitly: `/target/` above is anchored at the repository root, and
+# `make check/gates` scans untracked-but-unignored files, so an unignored
+# nested target/ fails the machine-path gate with thousands of hits from
+# generated build scripts.
+/samples/learning/target/
+
 # Python cache
 __pycache__
 

@@ -292,6 +292,36 @@ samples/%/run:
 	echo "running $$bin (built $$(date -r "$$bin" '+%Y-%m-%d %H:%M:%S'))"; \
 	exec "$$bin" $(ARGS)
 
+# samples/learning/ is a SEPARATE cargo workspace (see the root Cargo.toml's
+# `exclude` and samples/learning/Cargo.toml for why). That keeps brain out of
+# sven's build and lockfile, at the cost samples/README.md warns about: a
+# sample outside the build is a sample that rots. These targets are the
+# compensating control.
+#
+# They SKIP, loudly and successfully, when there is no brain checkout to build
+# against. A clone that legitimately does not have brain must not fail its
+# checks over a sample it cannot build - but it must also never be left
+# guessing why nothing ran, so the skip says which path was missing.
+LEARNING_DIR = samples/learning
+BRAIN_DIR ?= ../edgeai/brain
+
+## samples/learning/check - build + test the learning samples (skips without brain)
+samples/learning/check:
+	@if [ ! -d "$(BRAIN_DIR)" ]; then \
+		echo "samples/learning: SKIPPED - no brain checkout at $(BRAIN_DIR)"; \
+		echo "  These samples link brain directly; set BRAIN_DIR=<path> to point at one."; \
+		exit 0; \
+	fi; \
+	echo "samples/learning: building and testing against $(BRAIN_DIR)"; \
+	$(CARGO) test --manifest-path $(LEARNING_DIR)/Cargo.toml --workspace
+
+## samples/learning/build - build the learning samples in release
+samples/learning/build:
+	@if [ ! -d "$(BRAIN_DIR)" ]; then \
+		echo "samples/learning: SKIPPED - no brain checkout at $(BRAIN_DIR)"; exit 0; \
+	fi; \
+	$(CARGO) build --release --manifest-path $(LEARNING_DIR)/Cargo.toml --workspace
+
 ## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
 ##              and the `minimal` cargo feature profile's forbidden-crate list)
 check/arch:
