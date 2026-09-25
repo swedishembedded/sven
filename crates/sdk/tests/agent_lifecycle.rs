@@ -188,3 +188,33 @@ async fn a_failed_turn_still_leaves_the_agent_resumable() {
         "the user message that provoked the failed turn is still in history"
     );
 }
+
+#[tokio::test]
+async fn an_application_can_read_what_the_agent_exchanged_without_naming_kernel_types() {
+    // The gap this closes: `history()` returns the kernel's message type,
+    // which the facade deliberately does not publish, so an application built
+    // on the facade alone could obtain the history and had no way to name it.
+    // Anything recording a run or deriving training data from it had to reach
+    // past the facade, which is what the facade exists to prevent.
+    let (engine, _p) = engine_with(vec![says("the answer is 42")]);
+    let mut agent = engine.agent("agent");
+    agent.send("what is the answer?").await.expect("a reply");
+
+    let transcript = agent.state().transcript();
+    assert!(
+        transcript.iter().any(
+            |t| matches!(t, sven_sdk::Turn::User { text } if text.contains("what is the answer"))
+        ),
+        "the caller's own message must be in the transcript: {transcript:?}"
+    );
+    assert!(
+        transcript
+            .iter()
+            .any(|t| matches!(t, sven_sdk::Turn::Assistant { text, .. } if text.contains("42"))),
+        "the model's answer must be in the transcript: {transcript:?}"
+    );
+    // It round-trips, because a run record that cannot be written down is not
+    // a run record.
+    let json = serde_json::to_string(&transcript).expect("a transcript is serialisable");
+    assert!(json.contains("\"turn\""), "{json}");
+}

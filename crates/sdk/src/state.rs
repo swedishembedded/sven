@@ -53,6 +53,17 @@ impl AgentState {
 
     /// The conversation so far.
     #[must_use]
+    /// What this agent exchanged with the model, in a form an application
+    /// built on the facade alone can read.
+    ///
+    /// `history` returns the kernel's own message type, which the facade
+    /// deliberately does not publish; this is the same content as a small
+    /// read-only view. See [`crate::Turn`].
+    pub fn transcript(&self) -> Vec<crate::Turn> {
+        crate::transcript::from_history(&self.history)
+    }
+
+    /// The raw kernel message history this agent will resume from.
     pub fn history(&self) -> &[Message] {
         &self.history
     }

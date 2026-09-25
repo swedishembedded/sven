@@ -49,12 +49,14 @@ mod engine;
 mod error;
 mod method;
 mod state;
+mod transcript;
 
 pub use agent::Agent;
 pub use engine::{ApprovalPolicy, Engine, EngineBuilder};
 pub use error::CallError;
 pub use method::{Method, Strategy};
 pub use state::AgentState;
+pub use transcript::{ToolCallRecord, Turn};
 
 /// Sven's configuration - which model, which provider, which limits.
 ///
