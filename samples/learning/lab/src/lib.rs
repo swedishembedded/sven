@@ -36,6 +36,9 @@
 //!   no constructor a sample could use to mark its own work correct.
 //! * [`Family`] - a task contract that does not load unless every predicate it
 //!   scores says where it came from.
+//! * [`Recorder`] - the exact request the agent sent, captured at the wire.
+//!   An agent's stored history holds neither the system prompt nor the tool
+//!   schemas, so it is not enough to train on.
 //! * [`record_from_episode`] - training data from a VERIFIED episode only,
 //!   supervising assistant turns and nothing else, and refusing a transcript
 //!   with a hole in it.
@@ -54,6 +57,7 @@ mod endpoint;
 mod episode;
 mod family;
 mod model_id;
+mod recorder;
 mod score;
 mod verdict;
 
@@ -62,5 +66,6 @@ pub use endpoint::{AdapterPath, NoAdapterPath};
 pub use episode::{baseline_effective, run_verifier, run_witness, Episode, EpisodeError};
 pub use family::{Family, FamilyError};
 pub use model_id::ServedModel;
+pub use recorder::{capture_path, upstream_of, Recorder};
 pub use score::{ArmScore, Outcome};
 pub use verdict::{PredicateSet, Unevaluated, Verdict};

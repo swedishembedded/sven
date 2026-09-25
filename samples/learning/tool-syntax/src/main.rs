@@ -28,7 +28,8 @@
 use std::path::PathBuf;
 
 use sample_learning_lab::{
-    baseline_effective, run_verifier, run_witness, ArmScore, Episode, Family, Outcome, ServedModel,
+    baseline_effective, capture_path, run_verifier, run_witness, upstream_of, ArmScore, Episode,
+    Family, Outcome, Recorder, ServedModel,
 };
 use sven_sdk::{config, ApprovalPolicy, Engine, SessionEvent};
 
@@ -190,6 +191,24 @@ fn baseline(args: &[String]) -> anyhow::Result<()> {
         println!();
     }
 
+    // Everything the model is actually shown goes through here. An agent's
+    // stored history has neither the system prompt nor the tool schemas, so
+    // without this an episode cannot be turned into training data that
+    // renders the way inference does.
+    let recorder = match options.base_url.as_deref().and_then(upstream_of) {
+        Some(upstream) => match runtime.block_on(Recorder::start(&upstream)) {
+            Ok(recorder) => Some(recorder),
+            Err(e) => {
+                eprintln!("note: not recording model input ({e}); episodes will still run");
+                None
+            }
+        },
+        None => None,
+    };
+    if let Some(recorder) = &recorder {
+        println!("recording model input via {}", recorder.base_url());
+    }
+
     let mut score = ArmScore::new("baseline", options.model.api_model());
     let mut records = Vec::new();
 
@@ -201,7 +220,14 @@ fn baseline(args: &[String]) -> anyhow::Result<()> {
         .enumerate()
     {
         let dir = options.run_dir.join(format!("ep-{index:03}-{hidden}"));
-        let outcome = runtime.block_on(one_episode(&family, &dir, hidden, &options));
+        let through = recorder.as_ref().map(|r| r.base_url());
+        let outcome = runtime.block_on(one_episode(
+            &family,
+            &dir,
+            hidden,
+            &options,
+            through.as_deref(),
+        ));
         let (outcome, detail) = match outcome {
             Ok((verdict, detail)) => (Outcome::from_verdict(&verdict), detail),
             Err(e) => (Outcome::errored(e.to_string()), format!("{e}")),
@@ -233,6 +259,15 @@ fn baseline(args: &[String]) -> anyhow::Result<()> {
         eprintln!("{caveat}");
     }
 
+    if let Some(recorder) = &recorder {
+        let path = capture_path(&options.run_dir);
+        if let Err(e) = runtime.block_on(recorder.dump(&path)) {
+            eprintln!("note: could not write the captured model input: {e}");
+        } else {
+            println!("model input: {}", path.display());
+        }
+    }
+
     if let Some(path) = options.report {
         let body = serde_json::json!({
             "family": family.id(), "arm": "baseline", "model": options.model.api_model(),
@@ -255,6 +290,7 @@ async fn one_episode(
     dir: &std::path::Path,
     hidden: &str,
     options: &BaselineOptions,
+    through: Option<&str>,
 ) -> anyhow::Result<(sample_learning_lab::Verdict, String)> {
     let mut episode = Episode::start(family, dir, hidden).map_err(|e| anyhow::anyhow!("{e}"))?;
     let before = baseline_effective(family, &episode).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -269,7 +305,7 @@ async fn one_episode(
     let previous = std::env::current_dir()?;
     std::env::set_current_dir(episode.workspace())?;
 
-    let result = run_agent(family, options).await;
+    let result = run_agent(family, options, through).await;
 
     std::env::set_current_dir(previous)?;
     // Stop the world before verifying: nothing the verifier reads should still
@@ -282,6 +318,10 @@ async fn one_episode(
         .predicates()
         .evaluate(&predicates)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let Ok(json) = serde_json::to_string_pretty(&activity.transcript) {
+        let _ = std::fs::write(episode.dir().join("transcript.json"), json);
+    }
 
     let mut detail = format!("{} tool call(s)", activity.calls);
     if !verdict.solved() {
@@ -300,7 +340,11 @@ async fn one_episode(
 /// Give the agent the request and let its tool loop run. Returns how many tool
 /// calls it made, counted from the kernel's own event stream rather than from
 /// anything the model reports about itself.
-async fn run_agent(family: &Family, options: &BaselineOptions) -> anyhow::Result<ToolActivity> {
+async fn run_agent(
+    family: &Family,
+    options: &BaselineOptions,
+    through: Option<&str>,
+) -> anyhow::Result<ToolActivity> {
     // `SVEN_MODEL` is an argument of the `sven` binary, not something the
     // SDK's loader reads, and the auto-detected default is a sentinel that
     // only resolves when exactly one chat model is served. An experiment has
@@ -308,8 +352,10 @@ async fn run_agent(family: &Family, options: &BaselineOptions) -> anyhow::Result
     let mut settings = config::load(None)?;
     settings.model.provider = options.model.provider().to_string();
     settings.model.name = options.model.api_model().to_string();
-    if let Some(url) = &options.base_url {
-        settings.model.base_url = Some(url.clone());
+    // Through the recorder when there is one, so the captured request is the
+    // one the server really answered.
+    if let Some(url) = through.or(options.base_url.as_deref()) {
+        settings.model.base_url = Some(url.to_string());
     }
     if let Some(key) = &options.api_key {
         settings.model.api_key = Some(key.clone());
@@ -356,7 +402,11 @@ async fn run_agent(family: &Family, options: &BaselineOptions) -> anyhow::Result
         None => family.request().to_string(),
     };
     let sent = agent.send(&request).await;
-    let activity = counter.await.unwrap_or_default();
+    let mut activity = counter.await.unwrap_or_default();
+    // The transcript is the episode's evidence, and it is captured whether
+    // the turn succeeded or not: a failed episode is exactly the one whose
+    // record explains why.
+    activity.transcript = agent.state().transcript();
     sent.map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(activity)
 }
@@ -365,6 +415,8 @@ async fn run_agent(family: &Family, options: &BaselineOptions) -> anyhow::Result
 #[derive(Clone, Debug, Default)]
 struct ToolActivity {
     calls: usize,
+    /// Everything the model was shown and everything it said.
+    transcript: Vec<sven_sdk::Turn>,
     /// One entry per failed call: the tool and the first line of what it
     /// said. Kept because "11 tool calls and nothing changed" is not a
     /// diagnosis, and the difference between a model that cannot form a call
