@@ -86,3 +86,27 @@ actually measured so a number cannot be attributed to the wrong weights.
 workspace), `brain`, and `sample-learning-lab`. A sample that reaches past the
 facade stops being evidence that the facade is sufficient, which is half of
 why `samples/` exists at all.
+
+## Open findings, for whoever picks this up
+
+Two things were measured here that are not defects in these samples but will
+be met again by anything built on them.
+
+**An SDK application gets no tracing.** `RUST_LOG` has no effect on a sample:
+the subscriber is installed by the `sven` binary, not by the SDK. Diagnosing a
+kernel stall from inside an embedding application therefore means decoding
+`.sven/audit.jsonl` by hand, which is how the stall below was characterised.
+
+**The agent loop stalls after two scripted rounds.** Driving the agent with a
+scripted model at the wire, the kernel records `TOOL <name> Started` and then
+nothing - no result, no further request - on the third round. It is not the
+tools (each hung command runs instantly via `sven tool call`), not the scripted
+server (a unit test drives it through six consecutive requests), and not step
+alignment (a separate bug, fixed). The same loop reaches eleven tool calls
+driven by a real model, so the difference is in what a real provider's stream
+carries and this one omits - a `usage` chunk, or arguments delivered across
+several deltas rather than one.
+
+Neither is on the path to a result: demonstrations are performed through
+`sven tool call`, and the measured arms use the real model, where the loop
+works. Both are recorded rather than worked around silently.
