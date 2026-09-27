@@ -344,6 +344,34 @@ samples/learning/build:
 	fi; \
 	$(CARGO) build --release --manifest-path $(LEARNING_DIR)/Cargo.toml --workspace
 
+# samples/agent/ is a SECOND separate cargo workspace under the same rule as
+# samples/learning/ (see the root Cargo.toml's exclude and
+# scripts/gates/check-no-brain-dependency.sh): the loop sample links both
+# sven's SDK facade and brain directly, and must not put brain into this
+# workspace's build. Same compensating control, same skip-when-absent rule.
+AGENT_DIR = samples/agent
+
+## samples/agent/check - build + test the agent samples (skips without brain)
+samples/agent/check:
+	@if [ ! -d "$(BRAIN_DIR)" ]; then \
+		echo "samples/agent: SKIPPED - no brain checkout at $(BRAIN_DIR)"; \
+		echo "  These samples link brain directly; set BRAIN_DIR=<path> to point at one."; \
+		exit 0; \
+	fi; \
+	echo "samples/agent: building and testing against $(BRAIN_DIR)"; \
+	# Package-scoped: cargo fmt's --all follows path dependencies into the
+	# brain checkout, which is not part of this workspace's formatting.
+	$(CARGO) fmt --manifest-path $(AGENT_DIR)/Cargo.toml -p sample-agent-loop -- --check && \
+	$(CARGO) clippy --manifest-path $(AGENT_DIR)/Cargo.toml --workspace --all-targets -- -D warnings && \
+	$(CARGO) test --manifest-path $(AGENT_DIR)/Cargo.toml --workspace
+
+## samples/agent/build - build the agent samples in release
+samples/agent/build:
+	@if [ ! -d "$(BRAIN_DIR)" ]; then \
+		echo "samples/agent: SKIPPED - no brain checkout at $(BRAIN_DIR)"; exit 0; \
+	fi; \
+	$(CARGO) build --release --manifest-path $(AGENT_DIR)/Cargo.toml --workspace
+
 ## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
 ##              and the `minimal` cargo feature profile's forbidden-crate list)
 check/arch:

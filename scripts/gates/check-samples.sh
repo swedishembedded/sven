@@ -10,10 +10,10 @@
 #   2. A sample reaches this workspace only through `sven-sdk`. A sample that
 #      reaches past the facade stops being evidence that the facade is
 #      sufficient, which is the only reason samples/ exists.
-#   3. Only a `samples/learning/*` sample may depend on brain. Those live in a
-#      separate cargo workspace (see the repository root Cargo.toml's
-#      `exclude`) so the dependency cannot reach sven's own build or lockfile;
-#      anywhere else it would defeat check-no-brain-dependency.sh.
+#   3. Only a `samples/learning/*` or `samples/agent/*` sample may depend on
+#      brain. Those live in separate cargo workspaces (see the repository root
+#      Cargo.toml's `exclude`) so the dependency cannot reach sven's own build
+#      or lockfile; anywhere else it would defeat check-no-brain-dependency.sh.
 #
 # Manifests are parsed as TOML rather than sliced with a regex. The previous
 # version scanned from `^\[dependencies\]` to `^\[[^d]`, which is wrong in two
@@ -72,11 +72,12 @@ for manifest in manifests:
     if past_facade:
         failures.append(f"{manifest}: reaches past the facade: {' '.join(past_facade)}")
 
-    # Rule 3 - brain only under samples/learning/.
+    # Rule 3 - brain only under samples/learning/ or samples/agent/.
     brain = sorted(d for d in declared if d == "brain" or d.startswith(("brain-", "brain_")))
-    if brain and category != "learning":
+    if brain and category not in ("learning", "agent"):
         failures.append(
-            f"{manifest}: depends on brain ({' '.join(brain)}) outside samples/learning/ - "
+            f"{manifest}: depends on brain ({' '.join(brain)}) outside samples/learning/ "
+            "and samples/agent/ - "
             "that would put brain into sven's own workspace, which "
             "check-no-brain-dependency.sh exists to prevent"
         )

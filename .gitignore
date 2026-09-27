@@ -15,6 +15,9 @@ Cargo.lock
 # generated build scripts.
 /samples/learning/target/
 
+# samples/agent/ is a second separate cargo workspace, same situation.
+/samples/agent/target/
+
 # Python cache
 __pycache__
 

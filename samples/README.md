@@ -49,6 +49,14 @@ The cost is that they are not covered by the root `make build`, `make test` or
 compensating control, and it skips with a stated reason when brain is absent
 rather than failing a clone that does not have it.
 
+## The second exception: `samples/agent/`
+
+[`samples/agent/`](agent/README.md) is a second separate cargo workspace under
+the same rule, for the same reason: the loop sample there is an application
+that links both sven's SDK facade and brain directly - it runs the agent, and
+it moves the weights - so it gets the same exclusion, the same gate exemption,
+and the same compensating control (`make samples/agent/check`).
+
 ## Every sample is a directory
 
 `samples/<category>/<name>/`, containing at least:

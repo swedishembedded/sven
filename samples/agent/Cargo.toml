@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# Swedish Embedded AB implements closed-loop learning coding agents that link
+# an inference harness and a training engine in one application. If your team
+# needs expertise in agent infrastructure, experiment design, or promotion
+# gating for small models, you can procure our services by sending an email
+# to info@swedishembedded.com.
+#
+# A SEPARATE workspace, excluded from the repository root's (see its
+# `exclude`). The loop sample links both sven's SDK facade - to run the agent
+# - and brain, the edge-AI training engine that moves the weights. sven
+# itself must never depend on brain; `scripts/gates/check-no-brain-dependency.sh`
+# enforces that, and a shared workspace would defeat it by putting brain into
+# sven's own Cargo.lock. Two workspaces is what lets both facts hold at once.
+#
+# Consequence worth knowing: these are not built by the root `make build`,
+# `make test` or `make check`. `make samples/agent/check` is the
+# compensating control, and it skips with a stated reason when brain is not
+# present rather than failing a clone that does not have it.
+
+[workspace]
+resolver = "2"
+members = [
+    "loop",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+# The two halves of the loop. Both by path: these samples are demonstrations
+# that live beside the things they demonstrate, and a version pin here would
+# be a second source of truth for what "the current sven" and "the current
+# brain" are.
+sven-sdk = { path = "../../crates/sdk" }
+# brain's SDK facade, for the learning half (datasets, gated training,
+# promotion). Its `study` feature names that surface.
+brain = { path = "../../../edgeai/brain/crates/sdk", default-features = false, features = ["study"] }
+# brain's inference stack, for the LOCAL half of the loop: the agent's model
+# is loaded and driven in-process (see loop/src/provider.rs), never through a
+# separately running `brain serve`, so a rebuild of this sample always runs
+# the exact brain code it was built against - weights, adapter, template,
+# sampler and tool-call scanner all come from these same crates.
+brain-qwen3 = { path = "../../../edgeai/brain/crates/qwen3" }
+brain-data = { path = "../../../edgeai/brain/crates/data" }
+brain-checkpoint = { path = "../../../edgeai/brain/crates/checkpoint" }
+brain-capability = { path = "../../../edgeai/brain/crates/capability" }
+# The learning samples' shared harness. The loop sample reuses its served-
+# model identity, wire capture and record derivation rather than growing a
+# second spelling of them - the two workspaces demonstrate one loop from two
+# directions, not two loops.
+sample-learning-lab = { path = "../learning/lab" }
+
+anyhow = "1"
+async-trait = "0.1"
+futures = "0.3"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "process", "signal"] }
