@@ -49,6 +49,8 @@ brain-qwen3 = { path = "../../../edgeai/brain/crates/qwen3" }
 brain-data = { path = "../../../edgeai/brain/crates/data" }
 brain-checkpoint = { path = "../../../edgeai/brain/crates/checkpoint" }
 brain-capability = { path = "../../../edgeai/brain/crates/capability" }
+brain-model = { path = "../../../edgeai/brain/crates/model" }
+brain-gpu-core = { path = "../../../edgeai/brain/crates/gpu-core" }
 # The learning samples' shared harness. The loop sample reuses its served-
 # model identity, wire capture and record derivation rather than growing a
 # second spelling of them - the two workspaces demonstrate one loop from two

@@ -19,6 +19,9 @@ sample-agent-loop run --workspace DIR --task TEXT [--check CMD ...]
                       [--record-input] [--json]
 sample-agent-loop show [--run ID | --list]
 sample-agent-loop resume --run ID [run options]
+sample-agent-loop learn --run ID
+sample-agent-loop train [--dataset FILE] [--local-weights DIR]
+                        [--steps N] [--rank N] [--alpha F]
 ```
 
 `--task-file FILE` reads the task from a file instead of `--task`. Any
@@ -55,3 +58,22 @@ Under `~/.sven/loop/runs/<run-id>/` (override the root with
 
 The manifest is written atomically at every transition; trace sequence
 numbers survive process restarts (a resumed run continues the numbering).
+
+## The training gate (`learn` -> `train`)
+
+`learn --run ID` appends one run's experience to
+`~/.sven/loop/datasets/experience.jsonl` - but only a run the reviewer
+could already trust: the attempt completed AND at least one completion
+check passed AND the run has a final reply. Anything else is refused with
+the reason. Learning the same run twice is a no-op.
+
+`train` fine-tunes a LoRA adapter on the pool through brain's own trainer
+and holds the newest record out as the held-out sample. The adapter is
+promoted (a pointer written to `~/.sven/loop/adapter.json`) only when the
+held-out loss strictly improved at the same weight tier on both sides of
+the comparison; a rejected attempt keeps its scores on disk but no
+pointer, and exits non-zero. Both scores land in the attempt's
+`decision.json` either way, so a rejected adapter is evidence, not folklore.
+`--adapter` serves the promoted one: it names either a LoRA safetensors file
+or the promotion pointer itself (`~/.sven/loop/adapter.json`), so a serving
+invocation stays valid as later trainings promote new adapters over it.

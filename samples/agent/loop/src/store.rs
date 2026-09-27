@@ -61,18 +61,32 @@ pub fn run_dir(run_id: &str) -> PathBuf {
     state_root().join("runs").join(run_id)
 }
 
+/// Test-only guard for `SVEN_LOOP_STATE`: the env var is process-global,
+/// and cargo runs a crate's tests in parallel threads, so any test that
+/// points it at its own state root must hold this lock.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Generates a stable run id: time-ordered, so a directory listing reads as
 /// a history, with a random suffix so two runs started in the same second
 /// never collide.
 #[must_use]
 pub fn new_run_id() -> String {
+    new_id_with_prefix("loop")
+}
+
+/// [`new_run_id`] with a different leading tag, so records from a different
+/// stage (e.g. training attempts) never sort into the run history.
+#[must_use]
+pub fn new_id_with_prefix(prefix: &str) -> String {
     let t = crate::clock::now();
     let rand = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .subsec_nanos();
     format!(
-        "loop-{:04}{:02}{:02}T{:02}{:02}{:02}.{:03}-{:04x}",
+        "{}-{:04}{:02}{:02}T{:02}{:02}{:02}.{:03}-{:04x}",
+        prefix,
         t.year,
         t.month,
         t.day,

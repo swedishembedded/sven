@@ -20,11 +20,13 @@
 
 mod clock;
 mod events;
+mod learn;
 mod outcome;
 mod provider;
 mod runner;
 mod store;
 mod trace;
+mod train;
 
 use runner::AttemptOptions;
 use std::path::PathBuf;
@@ -39,6 +41,13 @@ usage: sample-agent-loop <command> [options]
   resume --run ID [run options]
       continue an interrupted run from its checkpoint, reconciling against
       its own trace before acting
+  learn --run ID
+      append a verified run's experience to the training pool (refuses a
+      failed or unverified run)
+  train [--dataset FILE] [--local-weights DIR] [--steps N] [--rank N]
+        [--alpha F]
+      fine-tune a LoRA adapter on the pool and promote it only when the
+      held-out loss improved; non-zero exit on rejection
 
 options for run / resume:
   --task-file FILE       read the task from FILE instead of --task
@@ -72,6 +81,8 @@ fn main() -> anyhow::Result<()> {
         Some("run") => run(&args[1..]),
         Some("show") => show(&args[1..]),
         Some("resume") => resume(&args[1..]),
+        Some("learn") => learn_cmd(&args[1..]),
+        Some("train") => train_cmd(&args[1..]),
         Some("--help") | Some("-h") | None => {
             print!("{USAGE}");
             Ok(())
@@ -99,7 +110,15 @@ struct Flags {
     record_input: bool,
     json: bool,
     run: Option<String>,
+    dataset: Option<PathBuf>,
+    steps: u32,
+    rank: u32,
+    alpha: f32,
 }
+
+const DEFAULT_TRAIN_STEPS: u32 = 40;
+const DEFAULT_LORA_RANK: u32 = 8;
+const DEFAULT_LORA_ALPHA: f32 = 16.0;
 
 fn parse(args: &[String]) -> anyhow::Result<Flags> {
     let mut flags = Flags {
@@ -117,6 +136,10 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
         record_input: false,
         json: false,
         run: None,
+        dataset: None,
+        steps: DEFAULT_TRAIN_STEPS,
+        rank: DEFAULT_LORA_RANK,
+        alpha: DEFAULT_LORA_ALPHA,
     };
     let mut i = 0;
     let mut task_file: Option<PathBuf> = None;
@@ -143,6 +166,10 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
             "--record-input" => flags.record_input = true,
             "--json" => flags.json = true,
             "--run" => flags.run = Some(take(&mut i)?),
+            "--dataset" => flags.dataset = Some(PathBuf::from(take(&mut i)?)),
+            "--steps" => flags.steps = take(&mut i)?.parse()?,
+            "--rank" => flags.rank = take(&mut i)?.parse()?,
+            "--alpha" => flags.alpha = take(&mut i)?.parse()?,
             "--list" => {}
             other => anyhow::bail!("unknown option {other:?}"),
         }
@@ -164,6 +191,7 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
 
 fn run(args: &[String]) -> anyhow::Result<()> {
     let flags = parse(args)?;
+    allow_slow_local_prefill(&flags);
     let run_id = flags.run.clone().unwrap_or_default();
     let options = options_from(&flags, &run_id)?;
     let (outcome, _manifest) = runner::run(options)?;
@@ -172,6 +200,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
 
 fn resume(args: &[String]) -> anyhow::Result<()> {
     let flags = parse(args)?;
+    allow_slow_local_prefill(&flags);
     let run_id = flags
         .run
         .clone()
@@ -179,6 +208,70 @@ fn resume(args: &[String]) -> anyhow::Result<()> {
     let options = options_from(&flags, &run_id)?;
     let (outcome, _manifest) = runner::resume(&run_id, options)?;
     report(&outcome, flags.json)
+}
+
+/// `learn --run ID`: append a verified run's experience to the training
+/// pool. Refuses anything the reviewer could not already trust.
+fn learn_cmd(args: &[String]) -> anyhow::Result<()> {
+    let flags = parse(args)?;
+    let run_id = flags
+        .run
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("learn needs --run ID"))?;
+    match learn::learn_run(&run_id)? {
+        learn::Learned::Appended => println!(
+            "learned {run_id}: appended to {}",
+            learn::pool_path().display()
+        ),
+        learn::Learned::AlreadyRecorded => {
+            println!("learned {run_id}: already in the pool, no duplicate written")
+        }
+    }
+    Ok(())
+}
+
+/// `train`: fine-tune a LoRA adapter on the pool and let the held-out gate
+/// decide. Prints both scores either way; exits non-zero on rejection so a
+/// delegating script never reads "worse model" as progress.
+fn train_cmd(args: &[String]) -> anyhow::Result<()> {
+    let flags = parse(args)?;
+    let options = train::TrainOptions {
+        model_dir: flags.local_weights.unwrap_or_else(default_local_weights),
+        dataset: flags.dataset,
+        steps: flags.steps,
+        rank: flags.rank,
+        alpha: flags.alpha,
+    };
+    let (decision, dir) = train::run(&options)?;
+    match decision {
+        train::Decision::Promoted => {
+            println!("promoted: adapter and scores in {}", dir.display());
+            Ok(())
+        }
+        train::Decision::Rejected => {
+            println!(
+                "rejected: held-out loss did not improve; scores in {}/decision.json",
+                dir.display()
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+/// The engine's stream watchdog declares a connection dead after 300 s of
+/// silence between chunks - a guard for a REMOTE wire going stale. A local
+/// provider is silent for a different reason: its prefill is one GPU submit
+/// per prompt token, tens of seconds before the first chunk leaves the
+/// process, and no chunk in between is honest to invent. When serving
+/// locally, the attempt's own `--timeout-secs` is the bound that matters -
+/// the timeout race stops the generation through the cancel token - so the
+/// stream watchdog is raised to match instead of racing the prefill it was
+/// never meant to judge. Set before the engine turns run, which read the
+/// value per turn.
+fn allow_slow_local_prefill(flags: &Flags) {
+    if flags.model.is_none() {
+        std::env::set_var("SVEN_STREAM_CHUNK_TIMEOUT_SECS", flags.timeout_secs.to_string());
+    }
 }
 
 /// The task a resume continues: an explicit `--task` wins; otherwise the
@@ -391,6 +484,7 @@ mod tests {
     /// retyping would silently change what the recovered attempt works on.
     #[test]
     fn a_resume_without_a_task_continues_the_runs_recorded_task() {
+        let _guard = store::ENV_LOCK.lock().unwrap();
         let root = std::env::temp_dir().join(format!("loop-resume-task-{}", std::process::id()));
         std::env::set_var("SVEN_LOOP_STATE", &root);
         let dir = store::run_dir("loop-test-resume-task");
