@@ -17,6 +17,12 @@ Cargo.lock
 
 # samples/agent/ is a second separate cargo workspace, same situation.
 /samples/agent/target/
+# ...but its .cargo/config.toml is tracked: it points the workspace's build
+# at the root target/ (one build directory, artifact reuse), and `.cargo/`
+# above would otherwise hide it.
+!/samples/agent/.cargo/
+/samples/agent/.cargo/registry/
+/samples/agent/.cargo/git/
 
 # Python cache
 __pycache__
