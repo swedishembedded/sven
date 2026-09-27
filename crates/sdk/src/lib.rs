@@ -108,3 +108,20 @@ pub use sven_sdk_macros::agent;
 /// Re-exported so a consumer never needs to name a kernel crate to render
 /// progress; it is the same value the TUI and the headless runner consume.
 pub use sven_vocab::SessionEvent;
+
+/// Everything needed to back the agent with a model of your own.
+///
+/// Implement [`model::ModelProvider`] and hand it to
+/// [`EngineBuilder::model_provider`](crate::EngineBuilder::model_provider) -
+/// the same seam the built-in OpenAI/Anthropic/OpenRouter providers hang
+/// off, so an in-process model (a local inference engine, a recorder, a
+/// test double) is a peer of the remote ones, not a special case.
+///
+/// Re-exported here so an application never has to name a kernel crate to
+/// serve the agent's model.
+pub mod model {
+    pub use sven_model::{
+        CompletionRequest, ContentPart, FunctionCall, Message, MessageContent, ModelProvider,
+        ResponseEvent, ResponseStream, Role, ToolResultContent, ToolSchema,
+    };
+}
