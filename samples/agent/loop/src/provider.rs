@@ -141,6 +141,7 @@ impl LocalQwen {
         // mmap streaming load, which never materializes the whole model on
         // the host.
         let model = if let Some(adapter) = &weights.adapter {
+            let adapter = resolve_adapter_file(adapter)?;
             let adapter = adapter.to_string_lossy().into_owned();
             let mut tensors = checkpoint::load(&base).into_by_role("");
             lora::fold_adapter_into(&mut tensors, &adapter)
@@ -194,9 +195,42 @@ impl LocalQwen {
     }
 }
 
+/// The adapter to fold: `--adapter` names either a LoRA safetensors file
+/// directly or the loop's own promotion pointer (`train`'s `adapter.json`,
+/// which names the currently promoted adapter). Accepting the pointer is
+/// the whole point of writing it: a serving invocation keeps working as
+/// adapters are re-trained, without being rewritten per promotion.
+fn resolve_adapter_file(specified: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+    if specified.extension().and_then(|e| e.to_str()) != Some("json") {
+        return Ok(specified.to_path_buf());
+    }
+    let pointer: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(specified).map_err(|e| {
+            anyhow::anyhow!("reading adapter pointer {}: {e}", specified.display())
+        })?)
+        .map_err(|e| anyhow::anyhow!("parsing adapter pointer {}: {e}", specified.display()))?;
+    let target = pointer
+        .get("adapter")
+        .and_then(|a| a.as_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "adapter pointer {} has no \"adapter\" path",
+                specified.display()
+            )
+        })?;
+    let target = std::path::PathBuf::from(target);
+    anyhow::ensure!(
+        target.is_file(),
+        "adapter pointer {} names {} which does not exist",
+        specified.display(),
+        target.display()
+    );
+    Ok(target)
+}
+
 /// A directory pointing at a checkpoint resolves to the checkpoint inside
 /// it; a file passes through. Mirrors brain's own `resolve_base`.
-fn resolve_base(specified: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+pub(crate) fn resolve_base(specified: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
     if specified.is_file() {
         return Ok(specified.to_path_buf());
     }
@@ -473,6 +507,12 @@ fn generate_once(model: &Qwen, inv: &Invocation, gen: &Generation<'_>) -> anyhow
         req.max_new
     );
     let mut rng = Rng::new(req.seed);
+    // Two numbers an operator needs to tell a slow device from a wedged
+    // generation: how much prompt there is, and how long the first token
+    // took to arrive after it.
+    let started = std::time::Instant::now();
+    eprintln!("serve: prompt {} tokens", req.ids.len());
+    let mut first_token: Option<std::time::Duration> = None;
     // A clone of the token outlives the sequence: the emit path arms it when
     // the consumer above this stream is gone.
     let abandon = gen.cancel.clone();
@@ -483,6 +523,14 @@ fn generate_once(model: &Qwen, inv: &Invocation, gen: &Generation<'_>) -> anyhow
     // and ends the sequence.
     let emit = &mut |p: Progress| {
         if let Some(text) = p.delta {
+            if first_token.is_none() {
+                first_token = Some(started.elapsed());
+                eprintln!(
+                    "serve: prompt {} tokens, first token after {:.1}s",
+                    req.ids.len(),
+                    first_token.unwrap().as_secs_f32()
+                );
+            }
             if gen
                 .tx
                 .blocking_send(Ok(ResponseEvent::TextDelta(text)))
@@ -678,6 +726,44 @@ mod tests {
         assert!(resolve_base(&dir).is_err(), "nothing inside, no resolution");
         std::fs::write(dir.join("model.safetensors"), b"x").unwrap();
         assert_eq!(resolve_base(&dir).unwrap(), dir.join("model.safetensors"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_promotion_pointer_resolves_to_the_adapter_it_names() {
+        let dir =
+            std::env::temp_dir().join(format!("loop-provider-adapter-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let adapter = dir.join("adapter.safetensors");
+        std::fs::write(&adapter, b"x").unwrap();
+
+        // A pointer written by `train`'s promotion resolves to the file it
+        // names, so a serving invocation can keep passing the stable path.
+        let pointer = dir.join("adapter.json");
+        std::fs::write(
+            &pointer,
+            serde_json::json!({"adapter": adapter.display().to_string()}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(resolve_adapter_file(&pointer).unwrap(), adapter);
+
+        // A direct safetensors path passes through untouched.
+        assert_eq!(resolve_adapter_file(&adapter).unwrap(), adapter);
+
+        // A broken pointer fails loudly, naming what is missing.
+        let dangling = dir.join("dangling.json");
+        std::fs::write(
+            &dangling,
+            serde_json::json!({"adapter": dir.join("gone.safetensors").display().to_string()})
+                .to_string(),
+        )
+        .unwrap();
+        let err = resolve_adapter_file(&dangling).unwrap_err().to_string();
+        assert!(
+            err.contains("does not exist"),
+            "refusal must name the missing target: {err}"
+        );
+
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -270,7 +270,10 @@ fn train_cmd(args: &[String]) -> anyhow::Result<()> {
 /// value per turn.
 fn allow_slow_local_prefill(flags: &Flags) {
     if flags.model.is_none() {
-        std::env::set_var("SVEN_STREAM_CHUNK_TIMEOUT_SECS", flags.timeout_secs.to_string());
+        std::env::set_var(
+            "SVEN_STREAM_CHUNK_TIMEOUT_SECS",
+            flags.timeout_secs.to_string(),
+        );
     }
 }
 

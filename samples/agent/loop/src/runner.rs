@@ -466,17 +466,16 @@ async fn drive(
     std::fs::create_dir_all(dir.join("checkpoint"))?;
     write_atomic(&dir.join("checkpoint").join("state.json"), &checkpoint_text)?;
 
-    // On a raced end the turn was dropped mid-generation; stopping the
-    // in-flight decode now (bounded by the grace window) is what lets the
-    // process exit cleanly afterwards - exiting under a live device call
-    // segfaulted instead of ending the attempt. A turn that ended on its own
-    // has no generation left to stop, and the call is a no-op there.
-    if raced.is_some() {
-        if let Some(provider) = &local_provider {
-            let stopped = provider.stop_generation(Duration::from_secs(60));
-            let mut note = serde_json::json!({ "stopped": stopped });
-            let _ = trace.event("generation_stopped", &mut note);
-        }
+    // On a raced end the turn was dropped mid-generation; on an errored end
+    // (the engine's own stream watchdog, say) the turn future returned while
+    // the generation thread is still running. Either way the process must
+    // not tear the device down under it - that is the crash this call
+    // exists to prevent - so stop unconditionally: with nothing in flight
+    // it is a no-op.
+    if let Some(provider) = &local_provider {
+        let stopped = provider.stop_generation(Duration::from_secs(60));
+        let mut note = serde_json::json!({ "stopped": stopped });
+        let _ = trace.event("generation_stopped", &mut note);
     }
 
     // Close the agent so the broadcast channel drains, then wait (bounded)
