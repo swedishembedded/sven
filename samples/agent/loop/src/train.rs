@@ -197,14 +197,7 @@ pub(crate) fn run(options: &TrainOptions) -> anyhow::Result<(Decision, PathBuf)>
         dt,
     );
 
-    let out = store::state_root()
-        .join("train")
-        .join(store::new_id_with_prefix("train"));
-    std::fs::create_dir_all(&out)?;
-    let out = store::state_root()
-        .join("train")
-        .join(store::new_id_with_prefix("train"));
-    std::fs::create_dir_all(&out)?;
+    let out = attempt_dir()?;
     let adapter = out.join("adapter.safetensors");
     let fit_opts = opts(options.steps, block);
     // finetune_from writes a full training checkpoint (adapter tensors on
@@ -288,23 +281,51 @@ pub(crate) fn run(options: &TrainOptions) -> anyhow::Result<(Decision, PathBuf)>
         &serde_json::to_string_pretty(&record)?,
     )?;
 
-    match decision {
-        Decision::Promoted => {
-            let pointer = serde_json::json!({
-                "adapter": adapter,
-                "model_dir": model_dir,
-                "scores": { "base_loss": base.loss, "tuned_loss": tuned.loss },
-                "decision_record": out.join("decision.json"),
-            });
-            store::write_atomic(&adapter_pointer(), &serde_json::to_string_pretty(&pointer)?)?;
-        }
-        Decision::Rejected => {
-            // No pointer: serving code looks for the pointer, so a rejected
-            // adapter can exist on disk without being servable.
-            let _ = std::fs::remove_file(adapter_pointer());
-        }
-    }
+    apply_decision(
+        &decision,
+        &adapter_pointer(),
+        &adapter,
+        &model_dir,
+        &scores,
+        &out.join("decision.json"),
+    )?;
     Ok((decision, out))
+}
+
+/// Applies the gate's verdict to durable state. Promotion repoints the
+/// adapter pointer at the new adapter, so serving follows the promotion.
+/// Rejection changes nothing: the pointer names the previous known-good
+/// adapter, and a failed training attempt must not take it out of service -
+/// "no pointer" means this attempt wrote none, never that the standing
+/// promotion was torn down.
+fn apply_decision(
+    decision: &Decision,
+    pointer: &std::path::Path,
+    adapter: &std::path::Path,
+    model_dir: &std::path::Path,
+    scores: &Scores,
+    decision_record: &std::path::Path,
+) -> anyhow::Result<()> {
+    if *decision != Decision::Promoted {
+        return Ok(());
+    }
+    let record = serde_json::json!({
+        "adapter": adapter,
+        "model_dir": model_dir,
+        "scores": { "base_loss": scores.base_loss, "tuned_loss": scores.tuned_loss },
+        "decision_record": decision_record,
+    });
+    store::write_atomic(pointer, &serde_json::to_string_pretty(&record)?)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", pointer.display()))
+}
+
+/// One training attempt's own output directory, created exactly once.
+fn attempt_dir() -> anyhow::Result<PathBuf> {
+    let dir = store::state_root()
+        .join("train")
+        .join(store::new_id_with_prefix("train"));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 fn train_dir() -> anyhow::Result<PathBuf> {
@@ -321,6 +342,59 @@ pub(crate) fn adapter_pointer() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rejected_attempt_leaves_the_promoted_adapter_in_service() {
+        let _guard = crate::store::ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("loop-train-gate-{}", std::process::id()));
+        std::env::set_var("SVEN_LOOP_STATE", &root);
+        let pointer = store::state_root().join("adapter.json");
+        std::fs::create_dir_all(pointer.parent().unwrap()).unwrap();
+        let standing = serde_json::json!({ "adapter": "/previous/good-adapter.safetensors" });
+        std::fs::write(&pointer, serde_json::to_string_pretty(&standing).unwrap()).unwrap();
+
+        // A rejection writes nothing and tears nothing down: the standing
+        // promotion stays servable.
+        apply_decision(
+            &Decision::Rejected,
+            &pointer,
+            std::path::Path::new("/this/attempt/adapter.safetensors"),
+            std::path::Path::new("/base"),
+            &Scores {
+                base_loss: 1.0,
+                tuned_loss: 1.2,
+            },
+            std::path::Path::new("/this/attempt/decision.json"),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&pointer).unwrap(),
+            serde_json::to_string_pretty(&standing).unwrap(),
+            "a failed training must not remove the known-good promotion"
+        );
+
+        // A promotion repoints the pointer at the new adapter.
+        let adapter = std::path::Path::new("/this/attempt/adapter.safetensors");
+        apply_decision(
+            &Decision::Promoted,
+            &pointer,
+            adapter,
+            std::path::Path::new("/base"),
+            &Scores {
+                base_loss: 1.2,
+                tuned_loss: 1.0,
+            },
+            std::path::Path::new("/this/attempt/decision.json"),
+        )
+        .unwrap();
+        let promoted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&pointer).unwrap()).unwrap();
+        assert_eq!(promoted["adapter"], adapter.display().to_string());
+        assert_eq!(promoted["scores"]["tuned_loss"], 1.0);
+
+        std::env::remove_var("SVEN_LOOP_STATE");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn promotion_requires_a_strictly_lower_heldout_loss() {
