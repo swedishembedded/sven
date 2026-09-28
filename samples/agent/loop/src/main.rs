@@ -20,6 +20,7 @@
 
 mod clock;
 mod events;
+pub(crate) mod eval;
 mod learn;
 mod outcome;
 mod provider;
@@ -55,6 +56,11 @@ usage: sample-agent-loop <command> [options]
   ask --question TEXT
       one-shot question; prints only the parsed {\"answer\": ...} JSON
       object; exit 2 when the reply is not strictly parseable
+  eval-facts --dataset FILE.jsonl --out REPORT.json [--adapter FILE]
+             [--shuffle] [--limit N]
+      ask the configured model every question in a facts dataset and
+      score each reply against its reference answer; writes a JSON
+      report (per-question verdicts) and prints a one-line summary
 
 options for run / resume:
   --task-file FILE       read the task from FILE instead of --task
@@ -92,6 +98,7 @@ fn main() -> anyhow::Result<()> {
         Some("train") => train_cmd(&args[1..]),
         Some("explore") => explore_cmd(&args[1..]),
         Some("ask") => ask_cmd(&args[1..]),
+        Some("eval-facts") => eval_facts_cmd(&args[1..]),
         Some("--help") | Some("-h") | None => {
             print!("{USAGE}");
             Ok(())
@@ -127,6 +134,8 @@ struct Flags {
     out: Option<PathBuf>,
     chunk_lines: Option<usize>,
     question: Option<String>,
+    shuffle: bool,
+    limit: Option<usize>,
 }
 
 pub(crate) mod explore;
@@ -158,6 +167,8 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
         out: None,
         chunk_lines: None,
         question: None,
+        shuffle: false,
+        limit: None,
     };
     let mut i = 0;
     let mut task_file: Option<PathBuf> = None;
@@ -192,6 +203,8 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
             "--out" => flags.out = Some(PathBuf::from(take(&mut i)?)),
             "--chunk-lines" => flags.chunk_lines = Some(take(&mut i)?.parse()?),
             "--question" => flags.question = Some(take(&mut i)?),
+            "--shuffle" => flags.shuffle = true,
+            "--limit" => flags.limit = Some(take(&mut i)?.parse()?),
             "--list" => {}
             other => anyhow::bail!("unknown option {other:?}"),
         }
@@ -341,6 +354,42 @@ fn ask_cmd(args: &[String]) -> anyhow::Result<()> {
             std::process::exit(2);
         }
     }
+}
+
+/// `eval-facts --dataset FILE.jsonl --out REPORT.json [--adapter FILE]
+/// [--shuffle] [--limit N]`: ask the model every dataset question and
+/// score each reply against its reference, writing a JSON report with
+/// per-question verdicts and printing a one-line summary.
+fn eval_facts_cmd(args: &[String]) -> anyhow::Result<()> {
+    let flags = parse(args)?;
+    let dataset = flags
+        .dataset
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("eval-facts needs --dataset FILE.jsonl"))?;
+    let out = flags
+        .out
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("eval-facts needs --out REPORT.json"))?;
+    let options = eval::EvalOptions {
+        dataset,
+        out: out.clone(),
+        model: flags.model.clone(),
+        base_url: flags.base_url.clone(),
+        api_key: flags.api_key.clone(),
+        local: local_weights_of(&flags),
+        shuffle: flags.shuffle,
+        limit: flags.limit,
+    };
+    let report = eval::run(options)?;
+    println!(
+        "eval-facts: {}/{} correct (accuracy {:.3}, {} parse failure(s)) - report in {}",
+        report.correct,
+        report.total,
+        report.accuracy,
+        report.parse_failures,
+        out.display(),
+    );
+    Ok(())
 }
 
 /// The local weights `run` would serve from, when no `--model` was given -
