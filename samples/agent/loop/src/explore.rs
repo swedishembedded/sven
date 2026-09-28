@@ -81,12 +81,21 @@ pub struct Facts {
 ///   which is how coverage collapses. The split point is a paragraph
 ///   boundary, and a heading is never parked alone: if the content in
 ///   flight is only a heading, it stays for the paragraph that follows.
+/// - Every section carries the document's title line (the first `#`
+///   heading). Chunking cuts later sections off from the document's
+///   subject, and the generator is told to use the identifiers its
+///   section shows - a chunk that no longer names the device cannot
+///   produce an anchored question about it.
 pub(crate) fn split_sections(text: &str, chunk_lines: Option<usize>) -> Vec<String> {
     let mut sections: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut overflow = false;
+    let mut title: Option<&str> = None;
     for line in text.lines() {
         let is_heading = line.starts_with("## ") || line.starts_with("### ");
+        if title.is_none() && line.starts_with("# ") {
+            title = Some(line);
+        }
         let mut close = is_heading && (!current.trim().is_empty() || overflow);
         if !close {
             if let Some(cap) = chunk_lines {
@@ -118,6 +127,18 @@ pub(crate) fn split_sections(text: &str, chunk_lines: Option<usize>) -> Vec<Stri
     }
     if !current.trim().is_empty() {
         sections.push(current);
+    }
+    // Re-unite every section with the document's subject, and drop a
+    // section that holds nothing but it - a title with no content gives
+    // the generator no facts to enumerate.
+    if let Some(title) = title {
+        for section in &mut sections {
+            if !section.contains(title) {
+                let content = section.trim_start();
+                *section = format!("{title}\n\n{content}");
+            }
+        }
+        sections.retain(|section| section.lines().any(|l| !l.trim().is_empty() && l != title));
     }
     sections
 }
@@ -502,11 +523,31 @@ mod tests {
     fn a_chunk_boundary_never_orphans_a_heading() {
         let text = "# Device\n\n## Clocks\n\nHSI is 16 MHz.\n\nLSI is 32 kHz.\n";
         let sections = split_sections(text, Some(2));
-        assert_eq!(sections.len(), 3, "{sections:#?}");
-        assert!(sections[1].contains("## Clocks"));
+        assert_eq!(sections.len(), 2, "{sections:#?}");
+        assert!(sections[0].contains("## Clocks"));
         // The heading rides with its first paragraph, never alone.
-        assert!(sections[1].contains("HSI is 16 MHz."), "{}", sections[1]);
-        assert!(sections[2].contains("LSI is 32 kHz."), "{}", sections[2]);
+        assert!(sections[0].contains("HSI is 16 MHz."), "{}", sections[0]);
+        assert!(sections[1].contains("LSI is 32 kHz."), "{}", sections[1]);
+    }
+
+    /// Chunks past the document's own section are cut off from the
+    /// document's subject: the generator is told to use the exact
+    /// identifiers from the section it sees, so a chunk that no longer
+    /// contains the chip name produces unanchored questions ("What is the
+    /// maximum frequency of the SPI/I²S?") - the anchoring instruction
+    /// cannot be followed from a section that never names the device.
+    /// Every chunk therefore carries the document's title line.
+    #[test]
+    fn every_chunk_carries_the_document_subject() {
+        let text = "# STM32F407 fact sheet\n\n## Clocks\n\nHSI is 16 MHz.\n\n## Timers\n\nTIM1 is 16-bit.\n";
+        let sections = split_sections(text, None);
+        assert_eq!(sections.len(), 2, "{sections:#?}");
+        for s in &sections {
+            assert!(
+                s.contains("STM32F407 fact sheet"),
+                "chunk lost the document subject: {s}"
+            );
+        }
     }
 
     /// A well-formed reply parses into its question/answer pairs.
