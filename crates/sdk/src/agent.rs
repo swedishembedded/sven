@@ -202,10 +202,21 @@ impl Agent {
             ..RuntimeContext::default()
         };
 
+        // The configured tool-round budget reaches the machine as a context
+        // fact: `AgentConfig.max_tool_rounds` is the one place it is set, and
+        // the reactive machine reads the fact on its first turn (falling back
+        // to its own default when absent). Method facts keep their own keys
+        // and win - they are seeded after this map is extended.
+        let mut facts = options.facts.clone();
+        facts.insert(
+            sven_machines::MAX_TOOL_ROUNDS_FACT.to_string(),
+            serde_json::json!(self.engine.config().agent.max_tool_rounds),
+        );
+
         let mut builder = RuntimeBuilder::new(self.engine.config(), self.state.mode.clone())
             .with_allow_interactive_oauth(false)
             .with_runtime_context(runtime_ctx)
-            .with_context_facts(options.facts.clone())
+            .with_context_facts(facts)
             .with_extra_tools(self.engine.tools())
             .with_initial_history(self.state.history.clone());
         if let Some(registry) = self.engine.machines() {

@@ -71,6 +71,24 @@ pub const CHAT_THREAD: &str = "chat";
 /// Default maximum tool-call rounds before a forced wrap-up turn.
 const DEFAULT_MAX_TOOL_ROUNDS: u32 = 16;
 
+/// The context fact the configured round limit arrives under. Seed it with
+/// `RuntimeBuilder::with_context_facts` (the sdk agent does, from
+/// `AgentConfig.max_tool_rounds`); without it [`DEFAULT_MAX_TOOL_ROUNDS`]
+/// stands.
+pub const MAX_TOOL_ROUNDS_FACT: &str = "agent.max_tool_rounds";
+
+/// The configured tool-round budget, from the session's context facts.
+/// A fact that is absent, not a number, or zero (a zero budget would stall
+/// the loop before its first turn) falls back to the built-in default.
+fn configured_max_tool_rounds(ctx: &Context) -> u32 {
+    ctx.facts
+        .get(MAX_TOOL_ROUNDS_FACT)
+        .and_then(|v| v.as_u64())
+        .filter(|n| *n > 0)
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(DEFAULT_MAX_TOOL_ROUNDS)
+}
+
 /// Default mode for all-tools resolution.
 const AGENT_MODE: &str = "agent";
 
@@ -415,7 +433,13 @@ impl Machine for ReactiveAgentMachine {
             // Idle: a user message starts a new turn.
             Idle => match event {
                 Event::UserMessage { text } => {
-                    init_loop(ctx, CHAT_THREAD, &[], AGENT_MODE, DEFAULT_MAX_TOOL_ROUNDS);
+                    init_loop(
+                        ctx,
+                        CHAT_THREAD,
+                        &[],
+                        AGENT_MODE,
+                        configured_max_tool_rounds(ctx),
+                    );
                     Reaction::transition(
                         Generating,
                         vec![Self::first_turn_effect(text)],
@@ -517,6 +541,44 @@ mod tests {
     /// produces a real human act, so the call must go through it, in every mode
     /// that can reach the tool. Granting it lets the call through - the gate
     /// asks, it does not forbid.
+    /// The machine's round budget is configured, not hardcoded: the session
+    /// context carries the configured limit as a fact, and `init_loop` uses
+    /// it. Without this, a caller that raises `max_tool_rounds` (the headless
+    /// loop sample does) is silently capped at the built-in default, and one
+    /// that lowers it is silently granted more rounds.
+    #[test]
+    fn the_round_budget_comes_from_the_context_fact_when_present() {
+        // No fact: the built-in default applies.
+        let (mut hsm, mut ctx) = make_hsm();
+        hsm.dispatch(&Event::user_message("hi"), &mut ctx);
+        assert_eq!(
+            LoopState::load(&ctx).max_rounds,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            "no configured fact, the default stands"
+        );
+
+        // A configured fact wins over the default.
+        let (mut hsm, mut ctx) = make_hsm();
+        ctx.set_fact("agent.max_tool_rounds", json!(60));
+        hsm.dispatch(&Event::user_message("hi"), &mut ctx);
+        assert_eq!(
+            LoopState::load(&ctx).max_rounds,
+            60,
+            "the configured limit, not the hardcoded default"
+        );
+
+        // Zero would stall the loop instantly; the default stands instead of
+        // honouring a nonsensical value.
+        let (mut hsm, mut ctx) = make_hsm();
+        ctx.set_fact("agent.max_tool_rounds", json!(0));
+        hsm.dispatch(&Event::user_message("hi"), &mut ctx);
+        assert_eq!(
+            LoopState::load(&ctx).max_rounds,
+            DEFAULT_MAX_TOOL_ROUNDS,
+            "a zero budget is refused in favour of the default"
+        );
+    }
+
     #[test]
     fn ingesting_a_document_needs_a_human_approval_in_every_mode() {
         use sven_hsm::permissions::{capability_for_tool_name, classify, EffectDisposition};

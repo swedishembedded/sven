@@ -32,7 +32,7 @@ pub use sven_turn::{system_prompt, CollabEvent};
 pub use completion::development_complete;
 pub use events::{AgentEvent, CompactionStrategyUsed, PeerInfo};
 pub use machines::{
-    reactive_agent::ReactiveAgentMachine,
+    reactive_agent::{ReactiveAgentMachine, MAX_TOOL_ROUNDS_FACT},
     sdlc::task::TaskMachine,
     sdlc::SdlcMachine,
     ui_test::UiTestMachine,
