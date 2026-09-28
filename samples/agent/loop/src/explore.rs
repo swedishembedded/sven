@@ -218,6 +218,11 @@ pub(crate) async fn complete_text(
         // provider ignores the override (its 512-token budget and
         // context check are its own), so this stays remote-only.
         max_output_tokens_override: Some(32_768),
+        // Observed drift: a full-sheet extraction prompt once drew a
+        // markdown answer despite the JSON-only instruction. Drivers that
+        // support it accept a JSON-object constraint on the wire; drivers
+        // that don't ignore the field, and the strict parse stays the gate.
+        response_format: Some(sven_sdk::model::ResponseFormat::JsonObject),
         ..Default::default()
     };
     let mut stream = provider.complete(req).await?;
@@ -473,6 +478,55 @@ mod tests {
         );
         assert_eq!(record["metadata"]["run_id"], "explore-test");
         assert_eq!(record["metadata"]["verified_by"], serde_json::json!([]));
+    }
+
+    /// Captures the request a completion carries, so tests can assert on the
+    /// wire contract without a server.
+    struct CapturingProvider {
+        reply: &'static str,
+        seen: std::sync::Mutex<Vec<CompletionRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelProvider for CapturingProvider {
+        fn name(&self) -> &str {
+            "capturing"
+        }
+        fn model_name(&self) -> &str {
+            "capture-1"
+        }
+        async fn complete(
+            &self,
+            req: CompletionRequest,
+        ) -> anyhow::Result<sven_sdk::model::ResponseStream> {
+            self.seen.lock().unwrap().push(req);
+            let reply = self.reply;
+            Ok(Box::pin(futures::stream::iter(vec![
+                Ok(ResponseEvent::TextDelta(reply.to_string())),
+                Ok(ResponseEvent::Done),
+            ])))
+        }
+    }
+
+    /// Facts extraction runs against models that drift out of the requested
+    /// shape (a full-sheet prompt produced a markdown answer in one observed
+    /// run). Drivers that support it accept a JSON-object constraint, so the
+    /// completion must ask for one; the strict parser stays as the gate.
+    #[tokio::test]
+    async fn completions_constrain_the_reply_to_a_json_object() {
+        let provider = CapturingProvider {
+            reply: r#"{"facts": []}"#,
+            seen: std::sync::Mutex::new(Vec::new()),
+        };
+        let text = complete_text(&provider, "extract facts").await.unwrap();
+        assert_eq!(text, r#"{"facts": []}"#);
+        let seen = provider.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen[0].response_format,
+            Some(sven_sdk::model::ResponseFormat::JsonObject)
+        );
+        assert!(seen[0].stream, "driver parses every reply as SSE");
     }
 }
 
