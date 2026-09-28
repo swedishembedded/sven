@@ -27,6 +27,11 @@ pub(crate) struct Tally {
     compactions: AtomicU64,
     input_tokens: AtomicU64,
     output_tokens: AtomicU64,
+    /// Tokens served from / written to the provider's prompt cache. The
+    /// `input_tokens` cell is fresh-only (the providers report it that way),
+    /// so these two are the rest of what was actually processed.
+    cache_read_tokens: AtomicU64,
+    cache_write_tokens: AtomicU64,
     /// Provider-reported cost, accumulated in units of 1e-5 USD. The
     /// outcome's cost stays `None` unless some report carried a price:
     /// unmeasured is not free.
@@ -45,6 +50,8 @@ impl Tally {
             compactions: self.compactions.load(Ordering::Relaxed),
             input_tokens: self.input_tokens.load(Ordering::Relaxed),
             output_tokens: self.output_tokens.load(Ordering::Relaxed),
+            cache_read_tokens: self.cache_read_tokens.load(Ordering::Relaxed),
+            cache_write_tokens: self.cache_write_tokens.load(Ordering::Relaxed),
             cost_usd: if self.saw_cost.load(Ordering::Relaxed) > 0 {
                 Some(self.cost_e5.load(Ordering::Relaxed) as f64 / 100_000.0)
             } else {
@@ -152,6 +159,8 @@ fn payload_of(event: SessionEvent, tally: &Tally) -> serde_json::Value {
         SessionEvent::TokenUsage {
             input,
             output,
+            cache_read,
+            cache_write,
             cost_usd,
             ..
         } => {
@@ -161,6 +170,12 @@ fn payload_of(event: SessionEvent, tally: &Tally) -> serde_json::Value {
             tally
                 .output_tokens
                 .fetch_add(output as u64, Ordering::Relaxed);
+            tally
+                .cache_read_tokens
+                .fetch_add(cache_read as u64, Ordering::Relaxed);
+            tally
+                .cache_write_tokens
+                .fetch_add(cache_write as u64, Ordering::Relaxed);
             if let Some(cost) = cost_usd {
                 tally.saw_cost.store(1, Ordering::Relaxed);
                 let e5 = (cost * 100_000.0) as i64;
@@ -168,7 +183,7 @@ fn payload_of(event: SessionEvent, tally: &Tally) -> serde_json::Value {
                     tally.cost_e5.fetch_add(e5 as u64, Ordering::Relaxed);
                 }
             }
-            serde_json::json!({ "input": input, "output": output })
+            serde_json::json!({ "input": input, "output": output, "cache_read": cache_read, "cache_write": cache_write })
         }
         SessionEvent::TurnComplete => serde_json::json!({}),
         SessionEvent::Aborted { partial_text } => {
@@ -184,5 +199,39 @@ fn payload_of(event: SessionEvent, tally: &Tally) -> serde_json::Value {
         }
         SessionEvent::ModelChanged(spec) => serde_json::json!({ "spec": spec }),
         _ => serde_json::json!({}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The provider's `input` is fresh-only - tokens served from its prompt
+    /// cache are reported separately, and dropping them makes the outcome's
+    /// token sums meaningless (a fully cached 30k-token turn reads as 30).
+    /// The trace event and the tally must both carry the cache counts.
+    #[test]
+    fn cache_hits_are_tallied_and_traced() {
+        let tally = Tally::default();
+        let payload = payload_of(
+            SessionEvent::TokenUsage {
+                input: 100,
+                output: 50,
+                cache_read: 4000,
+                cache_write: 200,
+                cache_read_total: 4000,
+                cache_write_total: 200,
+                max_tokens: 0,
+                max_output_tokens: 0,
+                cost_usd: Some(0.01),
+            },
+            &tally,
+        );
+        assert_eq!(payload["cache_read"], 4000, "trace keeps the cache counts");
+        assert_eq!(payload["cache_write"], 200);
+        let usage = tally.usage(0);
+        assert_eq!(usage.cache_read_tokens, 4000);
+        assert_eq!(usage.cache_write_tokens, 200);
+        assert_eq!(usage.cost_usd, Some(0.01));
     }
 }

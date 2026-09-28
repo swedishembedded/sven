@@ -108,10 +108,17 @@ pub struct Usage {
     pub failed_tool_calls: u64,
     pub compactions: u64,
     /// Model input/output tokens, summed over the usage reports the kernel
-    /// emitted. Local providers may report partial counters; the trace
-    /// carries every raw report, so the sums stay auditable.
+    /// emitted. `input_tokens` is fresh-only - the providers report cached
+    /// prompt tokens separately - so the cache counts below are the rest of
+    /// what a turn actually processed. Local providers may report partial
+    /// counters; the trace carries every raw report, so the sums stay
+    /// auditable.
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Tokens served from / written to the provider's prompt cache, summed
+    /// like `input_tokens`.
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
     /// USD cost where the provider reported one (OpenRouter does; a local
     /// serve does not). `null` means unmeasured, never free.
     pub cost_usd: Option<f64>,
