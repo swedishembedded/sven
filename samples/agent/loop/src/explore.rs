@@ -205,6 +205,19 @@ pub(crate) async fn complete_text(
             role: Role::User,
             content: sven_sdk::model::MessageContent::Text(prompt.to_string()),
         }],
+        // The OpenAI-compat driver parses every response as SSE, so a
+        // non-streaming request would return a plain JSON object the
+        // parser extracts nothing from - the stream would end empty and
+        // every strict parse would fail on it.
+        stream: true,
+        // A reasoning model spends its output budget on thinking before
+        // any answer text arrives; the drivers' 4096-token default ends
+        // such a turn at `MaxTokens` with zero visible text. One section
+        // asking for EVERY fact needs room for the reasoning AND the
+        // object, so the completion carries its own cap. The local
+        // provider ignores the override (its 512-token budget and
+        // context check are its own), so this stays remote-only.
+        max_output_tokens_override: Some(32_768),
         ..Default::default()
     };
     let mut stream = provider.complete(req).await?;
