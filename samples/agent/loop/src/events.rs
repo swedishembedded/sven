@@ -40,6 +40,9 @@ pub(crate) struct Tally {
     tool_failures: Mutex<Vec<String>>,
     mutated_paths: Mutex<Vec<String>>,
     asked_questions: AtomicU64,
+    /// Per-kind counts of high-frequency events traced as one summary line
+    /// instead of a record each.
+    summarized: Mutex<std::collections::BTreeMap<&'static str, u64>>,
 }
 
 impl Tally {
@@ -72,6 +75,24 @@ impl Tally {
     pub(crate) fn tool_failures(&self) -> Vec<String> {
         self.tool_failures.lock().unwrap().clone()
     }
+
+    pub(crate) fn note_summarized(&self, kind: &'static str) {
+        *self.summarized.lock().unwrap().entry(kind).or_insert(0) += 1;
+    }
+
+    /// The summarized counts as a JSON object; empty when nothing was
+    /// summarized, so `collect` writes no line at all.
+    pub(crate) fn summarized_summary(&self) -> serde_json::Value {
+        let map = self.summarized.lock().unwrap();
+        if map.is_empty() {
+            return serde_json::json!({});
+        }
+        let counts: serde_json::Map<String, serde_json::Value> = map
+            .iter()
+            .map(|(k, n)| (k.to_string(), serde_json::json!(n)))
+            .collect();
+        serde_json::json!({ "counts": counts })
+    }
 }
 
 /// Consumes the kernel's event stream into the trace, tallying what the
@@ -83,9 +104,36 @@ pub(crate) async fn collect(
     tally: Arc<Tally>,
 ) {
     while let Ok(event) = stream.recv().await {
-        let kind = kind_of(&event);
-        let mut payload = payload_of(event, &tally);
-        let _ = trace.event(kind, &mut payload);
+        // Deltas and HSM transitions are counted for the closing summary
+        // instead of traced per event: the complete texts already carry
+        // what the deltas added up to, and a transition is kernel
+        // bookkeeping behind every dispatch.
+        if summarized_kind(&event).is_none() {
+            let kind = kind_of(&event);
+            let mut payload = payload_of(event, &tally);
+            let _ = trace.event(kind, &mut payload);
+        } else {
+            let _ = payload_of(event, &tally);
+        }
+    }
+    let summary = tally.summarized_summary();
+    if summary != serde_json::json!({}) {
+        let mut payload = summary;
+        let _ = trace.event("stream_summary", &mut payload);
+    }
+}
+
+/// Event kinds too frequent for one trace line apiece: streaming deltas
+/// (the `*Complete` events record their accumulated text) and the kernel's
+/// per-dispatch HSM transitions. Each occurrence is counted; `collect`
+/// writes one `stream_summary` line at the end of the stream instead of
+/// thousands of empty records. Any other kind is none of these.
+fn summarized_kind(event: &SessionEvent) -> Option<&'static str> {
+    match event {
+        SessionEvent::TextDelta(_) => Some("text_deltas"),
+        SessionEvent::ThinkingDelta(_) => Some("thinking_deltas"),
+        SessionEvent::Transition { .. } => Some("transitions"),
+        _ => None,
     }
 }
 
@@ -109,6 +157,10 @@ fn kind_of(event: &SessionEvent) -> &'static str {
 
 fn payload_of(event: SessionEvent, tally: &Tally) -> serde_json::Value {
     use Ordering::Relaxed;
+    if let Some(kind) = summarized_kind(&event) {
+        tally.note_summarized(kind);
+        return serde_json::json!({});
+    }
     match event {
         SessionEvent::TextComplete(text) => serde_json::json!({ "text": text }),
         SessionEvent::ThinkingComplete(text) => serde_json::json!({ "text": text }),
@@ -205,6 +257,43 @@ fn payload_of(event: SessionEvent, tally: &Tally) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Streaming deltas and HSM transitions arrive dozens of times a second
+    /// and the complete texts already record what the deltas added up to, so
+    /// one trace line apiece would be pure write amplification (a real run
+    /// measured 97% of trace volume as empty "other" lines, each fsynced).
+    /// They are counted and summarized instead - summarized, not dropped, so
+    /// a reader can still see that they happened and how many.
+    #[test]
+    fn deltas_and_transitions_are_summarized_not_per_event_traced() {
+        let tally = Tally::default();
+        let events = [
+            SessionEvent::TextDelta("hel".into()),
+            SessionEvent::TextDelta("lo".into()),
+            SessionEvent::ThinkingDelta("hmm".into()),
+            SessionEvent::Transition {
+                from: "idle".into(),
+                to: "working".into(),
+                event: "user_input".into(),
+            },
+        ];
+        for e in &events {
+            assert!(
+                summarized_kind(e).is_some(),
+                "{e:?} should be recognized as summary-only"
+            );
+            let _ = payload_of(e.clone(), &tally);
+        }
+        // Nothing else gets swept into the summary bucket.
+        assert_eq!(summarized_kind(&SessionEvent::TurnComplete), None);
+        assert_eq!(summarized_kind(&SessionEvent::Error("x".into())), None);
+        // The counts land in the tally, which the collector turns into the
+        // one `stream_summary` line.
+        let summary = tally.summarized_summary();
+        assert_eq!(summary["counts"]["transitions"], 1);
+        assert_eq!(summary["counts"]["text_deltas"], 2);
+        assert_eq!(summary["counts"]["thinking_deltas"], 1);
+    }
 
     /// The provider's `input` is fresh-only - tokens served from its prompt
     /// cache are reported separately, and dropping them makes the outcome's

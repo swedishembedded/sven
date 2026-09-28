@@ -212,6 +212,13 @@ fn finish(
     ));
     std::env::set_current_dir(previous_cwd)?;
 
+    // Dropping a multi-thread runtime waits for every blocking task it ever
+    // spawned; one wedged backend thread would then hang the process after
+    // the outcome is already on disk. Bound the wait instead - past this
+    // point everything the attempt owed the store has been written, so a
+    // straggler is safe to abandon.
+    runtime.shutdown_timeout(Duration::from_secs(10));
+
     let outcome = result?;
     outcome.save(&dir)?;
     manifest.status = outcome.status.as_str().into();
