@@ -55,7 +55,7 @@ impl Tool for TodoTool {
                 },
                 "todos": {
                     "type": "array",
-                    "description": "Items for add/update/set. For `update` only `id` and `status` are required.",
+                    "description": "Items for add/update/set. Every item needs `id`, `content` and `status`; for `update` the `content` may be omitted (it leaves the text unchanged).",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -66,7 +66,7 @@ impl Tool for TodoTool {
                                 "enum": ["pending", "in_progress", "completed", "cancelled"]
                             }
                         },
-                        "required": ["id", "status"],
+                        "required": ["id", "content", "status"],
                         "additionalProperties": false
                     }
                 }
@@ -512,5 +512,31 @@ mod tests {
         })))
         .await;
         assert!(matches!(rx.try_recv(), Ok(ToolEvent::TodoUpdate(_))));
+    }
+
+    // ── schema/validator agreement ────────────────────────────────────────────
+
+    /// The schema the model sees must demand everything the tool rejects on.
+    /// `add`/`set` refuse an item without a `content` string, so an item
+    /// missing `content` must not be schema-valid: a schema that permits what
+    /// the tool refuses sends the model into exactly the retry storm it
+    /// cannot reason its way out of - it conforms to the schema, is told the
+    /// call is wrong, and has nothing to change.
+    #[test]
+    fn the_schema_requires_what_the_tool_validates() {
+        let (tool, _todos, _rx) = make_tool();
+        let schema = tool.parameters_schema();
+        let required = schema["properties"]["todos"]["items"]["required"]
+            .as_array()
+            .expect("todo items declare their required fields");
+        let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            names.contains(&"content"),
+            "the schema must require 'content' (add/set reject items without it): {names:?}"
+        );
+        assert!(
+            names.contains(&"id") && names.contains(&"status"),
+            "add/set require 'id' and 'status' too (TodoItem deserializes no default): {names:?}"
+        );
     }
 }
