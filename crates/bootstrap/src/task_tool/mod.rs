@@ -176,6 +176,8 @@ impl Tool for TaskTool {
     fn description(&self) -> &str {
         "Run a focused sub-agent to completion and return its final answer, or inspect\n\
          a finished one's output. The 'action' parameter lists what it can do.\n\
+         'prompt' is required for spawning (action=spawn, the default); 'handle' is\n\
+         required for inspecting an existing buffer (action=status|read|grep).\n\
          Spawning blocks until the sub-agent finishes; several may run at once by\n\
          issuing several calls.\n\
          'mode' takes a built-in role (research/plan/agent) or the name of a discovered\n\
@@ -246,6 +248,10 @@ impl Tool for TaskTool {
                     "description": "[action=grep] Max matches (default 50)"
                 }
             },
+            // What `execute` refuses a call without: spawn needs `prompt`,
+            // buffer actions need `handle`. Stating it here keeps a
+            // schema-conformant model out of a guaranteed error round.
+            "required": ["prompt", "handle"],
             "additionalProperties": false
         })
     }
@@ -728,6 +734,20 @@ mod tests {
         let names: Vec<&str> = mode_enum.iter().filter_map(|v| v.as_str()).collect();
         assert!(names.contains(&"agent"));
         assert!(names.contains(&"knowledge-extract"));
+    }
+
+    /// The schema must state every parameter `execute` refuses a call for:
+    /// `prompt` is mandatory for spawn, `handle` for status/read/grep. A
+    /// model conforming to a schema silent about this produces a guaranteed
+    /// error round - observed as a real 8-call retry storm.
+    #[test]
+    fn the_schema_requires_what_execute_validates() {
+        let t = make_task();
+        let schema = t.parameters_schema();
+        let required = schema["required"].as_array().expect("required list present");
+        let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(names.contains(&"prompt"), "prompt must be required");
+        assert!(names.contains(&"handle"), "handle must be required");
     }
 
     #[tokio::test]
