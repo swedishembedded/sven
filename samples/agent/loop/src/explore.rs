@@ -175,10 +175,15 @@ fn normalize(question: &str) -> String {
 /// the question as context (not supervised), the answer as the supervised
 /// turn.
 pub(crate) fn training_record(run_id: &str, question: &str, answer: &str) -> serde_json::Value {
+    // The assistant side teaches the reply shape `ask` parses, not just the
+    // fact: fine-tuning on bare answers trains the wrapper away, and a
+    // model that answers "84 MHz" without the {"answer": ...} object then
+    // fails every strict parse of its own correct reply.
+    let reply = serde_json::json!({ "answer": answer }).to_string();
     serde_json::json!({
         "messages": [
             { "role": "user", "content": question, "train": false },
-            { "role": "assistant", "content": answer, "train": true },
+            { "role": "assistant", "content": reply, "train": true },
         ],
         "metadata": { "run_id": run_id, "verified_by": [] },
     })
@@ -467,7 +472,11 @@ mod tests {
         assert!(!seen.insert(normalize("what is  the max?")));
     }
 
-    /// An explore-produced record is exactly what learn::read_pool parses.
+    /// An explore-produced record is exactly what learn::read_pool parses,
+    /// and the assistant side teaches the shape `ask` parses: the answer
+    /// wrapped as one {"answer": ...} object. Training on bare answers
+    /// makes a fine-tuned model drop the wrapper and every strict parse
+    /// then fails on the model's own (correct) reply.
     #[test]
     fn an_explore_record_is_valid_pool_input() {
         let record = training_record("explore-test", "What is the max?", "42 Mbit/s");
@@ -477,7 +486,7 @@ mod tests {
         );
         assert_eq!(
             record["messages"][1],
-            serde_json::json!({"role": "assistant", "content": "42 Mbit/s", "train": true})
+            serde_json::json!({"role": "assistant", "content": r#"{"answer":"42 Mbit/s"}"#, "train": true})
         );
         assert_eq!(record["metadata"]["run_id"], "explore-test");
         assert_eq!(record["metadata"]["verified_by"], serde_json::json!([]));
