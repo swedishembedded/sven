@@ -73,7 +73,7 @@ pub fn verdict(turn: Status, checks: &[Check]) -> Status {
 /// rather than leaving "completed" to imply a summary that is not there.
 #[must_use]
 pub fn reply_is_blank(reply: Option<&str>) -> bool {
-    reply.map_or(true, |r| r.trim().is_empty())
+    reply.is_none_or(|r| r.trim().is_empty())
 }
 
 /// One file the attempt touched, with its hash after the attempt. When the
