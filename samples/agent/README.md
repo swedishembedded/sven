@@ -14,16 +14,6 @@ rebuild of this sample runs the exact brain code it was built against.
 Remote providers (OpenRouter and the other configured ones) are the
 development bridge: opt in per run with `--model`. The default is local.
 
-## Why this is a separate cargo workspace
-
-Same reason as [`samples/learning/`](../README.md): these samples link both
-halves - sven's SDK facade to run the agent, and brain's crates to serve the
-model and train on verified experience. sven itself must never depend on
-brain; `scripts/gates/check-no-brain-dependency.sh` enforces that, and a
-shared workspace would defeat it by putting brain into sven's own
-`Cargo.lock`. `make samples/agent/check` is the compensating control; it
-skips with a stated reason when brain is not present.
-
 ## Build and check
 
 ```bash

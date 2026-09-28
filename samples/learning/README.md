@@ -17,25 +17,6 @@ Each sample attacks that from a different angle - what is being learned, and
 from which evidence - so a null result in one does not hide a real result in
 another.
 
-## Why this is a separate cargo workspace
-
-These samples link **both** halves of the loop directly: sven's SDK facade to
-run the agent, and [brain](../../../edgeai/brain) to train the adapter and
-gate its promotion. sven itself must never depend on brain -
-`scripts/gates/check-no-brain-dependency.sh` enforces that, because sven has
-to build, test and ship on a machine with no brain checkout - and a shared
-workspace would defeat it by putting brain into sven's own `Cargo.lock`.
-
-Two workspaces is what lets both facts hold at once. The cost is the one
-[`samples/README.md`](../README.md) warns about - a sample outside the build is
-a sample that rots - so `make samples/learning/check` builds and tests them,
-and skips with a stated reason when brain is absent rather than failing a
-clone that does not have one.
-
-Reaching brain over its wire protocol instead would have avoided the split, at
-the price of making each sample mostly a demonstration of the wire protocol.
-The training half is the subject here, so it is linked.
-
 ## Running one
 
 ```bash
@@ -79,13 +60,6 @@ brain serve --openai 8791 --watch-adapters ./adapters --ready-file ./ready
 The harness derives both spellings from one `ServedModel` (`lab/src/model_id.rs`)
 rather than leaving them to each sample, and every arm records the model it
 actually measured so a number cannot be attributed to the wrong weights.
-
-## What a sample may depend on
-
-`make check/samples` enforces it: `sven-sdk` (never anything else from sven's
-workspace), `brain`, and `sample-learning-lab`. A sample that reaches past the
-facade stops being evidence that the facade is sufficient, which is half of
-why `samples/` exists at all.
 
 ## Open findings, for whoever picks this up
 
