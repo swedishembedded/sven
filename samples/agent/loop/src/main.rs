@@ -30,6 +30,7 @@ mod train;
 
 use runner::AttemptOptions;
 use std::path::PathBuf;
+pub(crate) mod ask;
 
 const USAGE: &str = "\
 usage: sample-agent-loop <command> [options]
@@ -48,6 +49,12 @@ usage: sample-agent-loop <command> [options]
         [--alpha F]
       fine-tune a LoRA adapter on the pool and promote it only when the
       held-out loss improved; non-zero exit on rejection
+  explore --file FILE --out OUT.jsonl [--chunk-lines N]
+      extract a question/answer training dataset from a markdown fact
+      sheet: one JSONL record per fact, in the schema `learn` writes
+  ask --question TEXT
+      one-shot question; prints only the parsed {\"answer\": ...} JSON
+      object; exit 2 when the reply is not strictly parseable
 
 options for run / resume:
   --task-file FILE       read the task from FILE instead of --task
@@ -83,6 +90,8 @@ fn main() -> anyhow::Result<()> {
         Some("resume") => resume(&args[1..]),
         Some("learn") => learn_cmd(&args[1..]),
         Some("train") => train_cmd(&args[1..]),
+        Some("explore") => explore_cmd(&args[1..]),
+        Some("ask") => ask_cmd(&args[1..]),
         Some("--help") | Some("-h") | None => {
             print!("{USAGE}");
             Ok(())
@@ -114,8 +123,13 @@ struct Flags {
     steps: u32,
     rank: u32,
     alpha: f32,
+    file: Option<PathBuf>,
+    out: Option<PathBuf>,
+    chunk_lines: Option<usize>,
+    question: Option<String>,
 }
 
+pub(crate) mod explore;
 const DEFAULT_TRAIN_STEPS: u32 = 40;
 const DEFAULT_LORA_RANK: u32 = 8;
 const DEFAULT_LORA_ALPHA: f32 = 16.0;
@@ -140,6 +154,10 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
         steps: DEFAULT_TRAIN_STEPS,
         rank: DEFAULT_LORA_RANK,
         alpha: DEFAULT_LORA_ALPHA,
+        file: None,
+        out: None,
+        chunk_lines: None,
+        question: None,
     };
     let mut i = 0;
     let mut task_file: Option<PathBuf> = None;
@@ -170,6 +188,10 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
             "--steps" => flags.steps = take(&mut i)?.parse()?,
             "--rank" => flags.rank = take(&mut i)?.parse()?,
             "--alpha" => flags.alpha = take(&mut i)?.parse()?,
+            "--file" => flags.file = Some(PathBuf::from(take(&mut i)?)),
+            "--out" => flags.out = Some(PathBuf::from(take(&mut i)?)),
+            "--chunk-lines" => flags.chunk_lines = Some(take(&mut i)?.parse()?),
+            "--question" => flags.question = Some(take(&mut i)?),
             "--list" => {}
             other => anyhow::bail!("unknown option {other:?}"),
         }
@@ -256,6 +278,93 @@ fn train_cmd(args: &[String]) -> anyhow::Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+/// `explore --file FILE --out OUT.jsonl [--chunk-lines N]`: turn a markdown
+/// fact sheet into question/answer training records, traced like a run.
+fn explore_cmd(args: &[String]) -> anyhow::Result<()> {
+    let flags = parse(args)?;
+    let file = flags
+        .file
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("explore needs --file FILE"))?;
+    let out = flags
+        .out
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("explore needs --out OUT.jsonl"))?;
+    let options = explore::ExploreOptions {
+        file,
+        out,
+        chunk_lines: flags.chunk_lines,
+        model: flags.model.clone(),
+        base_url: flags.base_url.clone(),
+        api_key: flags.api_key.clone(),
+        local: local_weights_of(&flags),
+    };
+    let summary = explore::run(options)?;
+    println!(
+        "explored {}: {} section(s), {} fact(s), {} parse failure(s)\nrun:     {}\nout:     {}",
+        summary.run_id,
+        summary.sections,
+        summary.facts,
+        summary.parse_failures,
+        store::run_dir(&summary.run_id).display(),
+        flags.out.map(|o| o.display().to_string()).unwrap_or_default(),
+    );
+    Ok(())
+}
+
+/// `ask --question TEXT`: one-shot strict-JSON question. Prints ONLY the
+/// parsed object; exit 2 on an unparseable reply.
+fn ask_cmd(args: &[String]) -> anyhow::Result<()> {
+    let flags = parse(args)?;
+    let question = flags
+        .question
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("ask needs --question TEXT"))?;
+    let options = ask::AskOptions {
+        question,
+        model: flags.model.clone(),
+        base_url: flags.base_url.clone(),
+        api_key: flags.api_key.clone(),
+        local: local_weights_of(&flags),
+    };
+    match ask::run(options) {
+        Ok(answer) => {
+            // Print the parsed object, not the raw reply - the caller reads
+            // JSON or nothing.
+            println!("{}", serde_json::to_string(&serde_json::json!({ "answer": answer }))?);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("ask: {e:#}");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// The local weights `run` would serve from, when no `--model` was given -
+/// the same local-first selection, including the `--adapter` promotion
+/// pointer fold.
+fn local_weights_of(flags: &Flags) -> Option<provider::LocalWeights> {
+    if flags.model.is_some() {
+        return None;
+    }
+    let base = flags
+        .local_weights
+        .clone()
+        .or_else(|| {
+            std::env::var("BRAIN_QWEN_WEIGHTS")
+                .ok()
+                .filter(|p| !p.is_empty())
+                .map(PathBuf::from)
+        })
+        .unwrap_or_else(default_local_weights);
+    Some(provider::LocalWeights {
+        base,
+        adapter: flags.adapter.clone(),
+        context_tokens: flags.context_tokens,
+    })
 }
 
 /// The engine's stream watchdog declares a connection dead after 300 s of

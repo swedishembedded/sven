@@ -17,6 +17,7 @@ publish.workspace = true
 
 [dependencies]
 sven-sdk = { workspace = true }
+sven-model-drivers = { path = "../../../crates/model-drivers" }
 brain = { workspace = true }
 brain-qwen3 = { workspace = true }
 brain-data = { workspace = true }

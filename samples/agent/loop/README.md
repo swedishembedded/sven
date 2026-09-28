@@ -22,7 +22,30 @@ sample-agent-loop resume --run ID [run options]
 sample-agent-loop learn --run ID
 sample-agent-loop train [--dataset FILE] [--local-weights DIR]
                         [--steps N] [--rank N] [--alpha F]
+sample-agent-loop explore --file FILE --out OUT.jsonl [--chunk-lines N]
+                      [--model provider/name] [--local-weights DIR]
+                      [--adapter FILE] [--ctx N] [--base-url URL]
+                      [--api-key KEY]
+sample-agent-loop ask --question TEXT [model options as for run]
 ```
+
+`explore` turns a markdown fact sheet (e.g.
+`examples/stm32_datasheet.md`) into a question/answer training dataset:
+the file is split at headings, each section is asked for EVERY factual
+claim as `{"facts": [{"question", "answer"}, ...]}`, replies are parsed
+strictly (a non-conforming reply is counted as a parse failure and its
+section skipped), and one JSONL record per fact is written atomically to
+`--out` in the exact schema `learn` uses for the experience pool. Facts
+are deduplicated by normalized question text. The whole exploration is
+traced to its own run directory (manifest, `events.jsonl` with one event
+per section, `outcome.json` with the counts). `--chunk-lines N` caps a
+section's size, starting a new chunk at the next heading.
+
+`ask` asks one question one-shot: the model must reply with exactly one
+`{"answer": string}` JSON object, the reply is parsed strictly (optional
+markdown code fences are stripped), and ONLY the parsed object is printed
+to stdout. An unparseable reply exits with code 2. Like `run` and
+`explore`, it traces to its own run directory.
 
 `--task-file FILE` reads the task from a file instead of `--task`. Any
 `--check CMD` is run by the agent itself after its turn; a non-zero exit

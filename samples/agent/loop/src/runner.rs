@@ -257,6 +257,12 @@ fn local_model_name(weights: &crate::provider::LocalWeights) -> String {
     }
 }
 
+/// [`local_model_name`] for callers outside the runner (explore/ask), which
+/// trace the same model identity a run would record.
+pub(crate) fn local_model_name_of(weights: &crate::provider::LocalWeights) -> String {
+    local_model_name(weights)
+}
+
 /// The model identity a manifest records: the remote spec when one was
 /// named, otherwise the local weights this attempt will actually serve from
 /// (`brain/<checkpoint-dir>`, plus the adapter when one rides along), so the
