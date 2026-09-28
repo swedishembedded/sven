@@ -47,7 +47,8 @@ pub(crate) fn run(options: AskOptions) -> anyhow::Result<String> {
     let prompt = prompt(&options.question);
     let provider = provider_from(&options)?;
     let rt = tokio::runtime::Runtime::new()?;
-    let reply: String = rt.block_on(async { complete_text(provider.as_ref(), &prompt).await })
+    let reply: String = rt
+        .block_on(async { complete_text(provider.as_ref(), &prompt).await })
         .context("the model produced no reply")?;
     crate::explore::parse_answer_reply(&reply)
 }

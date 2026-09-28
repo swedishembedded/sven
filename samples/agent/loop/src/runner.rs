@@ -76,10 +76,7 @@ pub fn run(options: AttemptOptions) -> anyhow::Result<(Outcome, RunManifest)> {
         updated_ts: utc_now(),
         model: model_identity(&options),
         base_url: options.base_url.clone(),
-        local_adapter: options
-            .local
-            .as_ref()
-            .and_then(|w| w.adapter.clone()),
+        local_adapter: options.local.as_ref().and_then(|w| w.adapter.clone()),
         limits: Limits {
             timeout_secs: options.timeout_secs,
             max_tool_rounds: options.max_tool_rounds,
@@ -138,10 +135,7 @@ pub fn resume(run_id: &str, options: AttemptOptions) -> anyhow::Result<(Outcome,
     // that does know the adapter backfills it, so every later resume
     // inherits the configuration this attempt actually serves from.
     if manifest.local_adapter.is_none() {
-        manifest.local_adapter = options
-            .local
-            .as_ref()
-            .and_then(|w| w.adapter.clone());
+        manifest.local_adapter = options.local.as_ref().and_then(|w| w.adapter.clone());
     }
     save_manifest(&manifest)?;
 
@@ -542,7 +536,10 @@ async fn build_outcome(
     });
 
     let mut unresolved = Vec::new();
-    let reply_text = sent.as_ref().and_then(|r| r.as_ref().ok()).map(String::as_str);
+    let reply_text = sent
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .map(String::as_str);
     if status == Status::Completed && crate::outcome::reply_is_blank(reply_text) {
         unresolved.push(
             "the turn ended with an empty final reply; whatever the model meant to say about \

@@ -84,8 +84,8 @@ struct Record {
 /// and `explore` write - user message is the question, assistant message
 /// the reference answer.
 fn read_dataset(path: &std::path::Path) -> anyhow::Result<Vec<Record>> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let mut records = Vec::new();
     for (n, line) in text.lines().enumerate() {
         let line = line.trim();
@@ -104,9 +104,7 @@ fn read_dataset(path: &std::path::Path) -> anyhow::Result<Vec<Record>> {
                 .find(|m| m.get("role").and_then(|r| r.as_str()) == Some(role))
                 .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                 .map(str::to_string)
-                .with_context(|| {
-                    format!("{} line {}: no {role} message", path.display(), n + 1)
-                })
+                .with_context(|| format!("{} line {}: no {role} message", path.display(), n + 1))
         };
         let expected = content("assistant")?;
         // A training file fed here by mistake carries the reply wrapper in
@@ -266,18 +264,15 @@ fn numeric_matches(expected: &str, got: &str) -> bool {
     let answer = extract_numbers(got);
     let mut used = vec![false; answer.len()];
     for want in extract_numbers(expected) {
-        let found = answer
-            .iter()
-            .zip(&used)
-            .position(|(have, &used)| {
-                !used
-                    && have.unit == want.unit
-                    && if want.integer_written {
-                        have.value == want.value
-                    } else {
-                        (have.value - want.value).abs() <= 0.01 * want.value.abs()
-                    }
-            });
+        let found = answer.iter().zip(&used).position(|(have, &used)| {
+            !used
+                && have.unit == want.unit
+                && if want.integer_written {
+                    have.value == want.value
+                } else {
+                    (have.value - want.value).abs() <= 0.01 * want.value.abs()
+                }
+        });
         match found {
             Some(index) => used[index] = true,
             None => return false,
@@ -322,9 +317,12 @@ pub(crate) fn run(options: EvalOptions) -> anyhow::Result<Report> {
         Some(spec) => spec.clone(),
         None => format!(
             "brain/{}",
-            crate::runner::local_model_name_of(options.local.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("no local weights configured")
-            })?)
+            crate::runner::local_model_name_of(
+                options
+                    .local
+                    .as_ref()
+                    .ok_or_else(|| { anyhow::anyhow!("no local weights configured") })?
+            )
         ),
     };
 
@@ -399,7 +397,10 @@ mod tests {
     /// Unit-spacing variance must not fail the text way.
     #[test]
     fn unit_spacing_variance_normalizes_away() {
-        assert_eq!(normalize_answer("10.5 Mbit/s"), normalize_answer("10.5Mbps"));
+        assert_eq!(
+            normalize_answer("10.5 Mbit/s"),
+            normalize_answer("10.5Mbps")
+        );
         assert_eq!(normalize_answer("3.3 V"), normalize_answer("3.3V"));
         assert!(text_matches("10.5 Mbit/s", "10.5Mbps"));
     }
@@ -407,8 +408,14 @@ mod tests {
     /// Case, punctuation and whitespace collapse.
     #[test]
     fn case_punctuation_and_whitespace_collapse() {
-        assert!(text_matches("The max clock is 168 MHz.", "the max clock is 168 mhz"));
-        assert!(text_matches("Three SPI controllers", "three   spi controllers"));
+        assert!(text_matches(
+            "The max clock is 168 MHz.",
+            "the max clock is 168 mhz"
+        ));
+        assert!(text_matches(
+            "Three SPI controllers",
+            "three   spi controllers"
+        ));
         // A decimal point inside a number survives; one between words does not.
         assert!(text_matches("10.5 Mbps", "10.5Mbps"));
         assert!(text_matches("1. stop", "1 stop"));
@@ -442,7 +449,10 @@ mod tests {
     /// would find nothing to check and must not be the gate.
     #[test]
     fn numberless_references_judge_by_text() {
-        assert_eq!(judge("Yes, the HSI is trimmable", "yes the hsi is trimmable"), (true, "text"));
+        assert_eq!(
+            judge("Yes, the HSI is trimmable", "yes the hsi is trimmable"),
+            (true, "text")
+        );
         assert_eq!(judge("Yes", "No"), (false, "text"));
     }
 
@@ -451,11 +461,13 @@ mod tests {
     #[test]
     fn fenced_answers_parse_and_prose_wrapped_json_is_refused() {
         assert_eq!(
-            crate::explore::parse_answer_reply("```json\n{\"answer\": \"42 Mbit/s\"}\n```").unwrap(),
+            crate::explore::parse_answer_reply("```json\n{\"answer\": \"42 Mbit/s\"}\n```")
+                .unwrap(),
             "42 Mbit/s"
         );
         assert!(
-            crate::explore::parse_answer_reply("The answer is {\"answer\": \"42 Mbit/s\"}").is_err(),
+            crate::explore::parse_answer_reply("The answer is {\"answer\": \"42 Mbit/s\"}")
+                .is_err(),
             "prose around the object is a parse failure"
         );
     }
@@ -481,8 +493,14 @@ mod tests {
         assert_eq!(
             records,
             vec![
-                Record { question: "Q1".into(), expected: "A1".into() },
-                Record { question: "Q2".into(), expected: "A2".into() },
+                Record {
+                    question: "Q1".into(),
+                    expected: "A1".into()
+                },
+                Record {
+                    question: "Q2".into(),
+                    expected: "A2".into()
+                },
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);
