@@ -47,10 +47,11 @@ Every chunk carries the document's title line, every question must name
 a device the title names (the anchor gate refuses the rest - an
 unanchored question would train this device's answers onto other
 devices' questions), and `--scope-negatives ID1,ID2,...` adds negative
-variants: the same question with an out-of-scope device substituted,
-answered by a fixed abstention, so the adapter learns where its
-knowledge ends instead of answering other chips with this chip's
-numbers. The whole exploration is traced to its own run directory
+variants: the same question with an out-of-scope device substituted
+(the whole slash-separated device run goes, so a negative names only
+out-of-scope devices), answered by a fixed abstention, so the adapter
+learns where its knowledge ends instead of answering other chips with
+this chip's numbers. The whole exploration is traced to its own run directory
 (manifest, `events.jsonl` with one event per section, `outcome.json`
 with the counts).
 
