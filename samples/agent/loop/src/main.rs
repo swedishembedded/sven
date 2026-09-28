@@ -359,12 +359,14 @@ fn explore_cmd(args: &[String]) -> anyhow::Result<()> {
     let summary = explore::run(options)?;
     println!(
         "explored {}: {} section(s), {} fact(s), {} parse failure(s), \
-         {} unanchored question(s) refused\nrun:     {}\nout:     {}",
+         {} unanchored question(s) refused, {} answer(s) with untraceable numbers refused\n\
+         run:     {}\nout:     {}",
         summary.run_id,
         summary.sections,
         summary.facts,
         summary.parse_failures,
         summary.unanchored,
+        summary.untraceable,
         store::run_dir(&summary.run_id).display(),
         flags
             .out

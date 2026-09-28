@@ -65,6 +65,9 @@ pub struct ExploreSummary {
     /// Questions the anchor gate refused: the generator produced them
     /// without the device identifier the title carries.
     pub unanchored: usize,
+    /// Facts the traceability gate refused: the answer states a number
+    /// the section does not carry.
+    pub untraceable: usize,
 }
 
 /// One strict parse of a facts reply.
@@ -240,6 +243,95 @@ fn negative_question(question: &str, identifier: &str, negative: &str) -> Option
         &question[..start],
         &question[end..]
     ))
+}
+
+/// The number tokens of `text`, each with the unit word that binds to it
+/// (one optional space, then a run of letters / ° / /, plural-insensitive).
+/// Thousand separators are part of the token and normalized on compare.
+fn number_tokens(text: &str) -> Vec<(String, Option<String>)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut j = i;
+        while j < chars.len() {
+            if chars[j].is_ascii_digit() {
+                j += 1;
+            } else if (chars[j] == ',' || chars[j] == '.')
+                && j + 1 < chars.len()
+                && chars[j + 1].is_ascii_digit()
+            {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        let number = chars[start..j].iter().collect::<String>().replace(',', "");
+        let mut k = j;
+        if k < chars.len() && chars[k] == ' ' {
+            k += 1;
+        }
+        let unit_start = k;
+        while k < chars.len() && (chars[k].is_alphabetic() || chars[k] == '°' || chars[k] == '/') {
+            k += 1;
+        }
+        let unit = if k > unit_start {
+            let word: String = chars[unit_start..k].iter().collect();
+            // Plural-insensitive, but keep genuine short units ("ms") whole.
+            let trimmed = word.trim_end_matches('s');
+            Some(if word.len() > 2 && trimmed.len() < word.len() {
+                trimmed.to_lowercase()
+            } else {
+                word.to_lowercase()
+            })
+        } else {
+            None
+        };
+        out.push((number, unit));
+        i = j;
+    }
+    out
+}
+
+/// Does `line` carry `number` as a standalone token? A digit on either
+/// side means the match is inside a larger number ("14" is not in "114");
+/// a '.' after it means the match is the head of a decimal ("4" is not in
+/// "4.223").
+fn line_has_number(line: &str, number: &str) -> bool {
+    for (at, _) in line.match_indices(number) {
+        let before = line[..at].chars().next_back();
+        let after = line[at + number.len()..].chars().next();
+        let standalone = before.is_none_or(|c| !c.is_ascii_digit())
+            && after.is_none_or(|c| !c.is_ascii_digit() && c != '.');
+        if standalone {
+            return true;
+        }
+    }
+    false
+}
+
+/// The traceability gate: every number the answer states must be
+/// traceable to the section. The generator's measured failure mode is
+/// inventing plausible numbers ("160 MHz" for a 168 MHz rating, four DMA
+/// streams for eight, 100,000,000 erase cycles for 10,000), a trained
+/// wrong number is worse than no fact, and the recall score cannot catch
+/// it because recall compares against the same wrong reference. A number
+/// matches when one section line carries it as a standalone token and -
+/// when the answer binds it to a unit word - that unit too.
+fn answer_numbers_traceable(answer: &str, section: &str) -> bool {
+    number_tokens(answer).into_iter().all(|(number, unit)| {
+        section.lines().any(|line| {
+            line_has_number(line, &number)
+                && unit
+                    .as_deref()
+                    .is_none_or(|u| line.to_lowercase().contains(u))
+        })
+    })
 }
 
 /// Normalized question text for dedup: lowercase, whitespace collapsed.
@@ -470,6 +562,7 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut parse_failures = 0usize;
     let mut unanchored = 0usize;
+    let mut untraceable = 0usize;
     let mut negatives_emitted = 0usize;
     for (n, section) in sections.iter().enumerate() {
         let prompt = facts_prompt(section);
@@ -480,6 +573,7 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
                 Ok(facts) => {
                     let mut added = 0usize;
                     let mut rejected = 0usize;
+                    let mut untraceable_section = 0usize;
                     for (question, answer) in facts.pairs {
                         let key = normalize(&question);
                         if !seen.insert(key) {
@@ -491,6 +585,14 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
                         // answers onto other chips' questions.
                         if !question_is_anchored(&question, &identifiers) {
                             rejected += 1;
+                            continue;
+                        }
+                        // The traceability gate refuses invented numbers:
+                        // a trained wrong number is worse than no fact,
+                        // and recall against the same wrong reference can
+                        // never catch it.
+                        if !answer_numbers_traceable(&answer, section) {
+                            untraceable_section += 1;
                             continue;
                         }
                         records.push(training_record(&run_id, &question, &answer));
@@ -514,7 +616,11 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
                         }
                     }
                     unanchored += rejected;
-                    serde_json::json!({ "section": n, "facts": added, "unanchored": rejected })
+                    untraceable += untraceable_section;
+                    serde_json::json!({
+                        "section": n, "facts": added,
+                        "unanchored": rejected, "untraceable": untraceable_section
+                    })
                 }
                 Err(e) => {
                     parse_failures += 1;
@@ -544,6 +650,7 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
         facts: records.len(),
         parse_failures,
         unanchored,
+        untraceable,
     };
     let mut outcome = serde_json::json!({
         "schema": 1,
@@ -555,6 +662,7 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
         "facts": summary.facts,
         "parse_failures": summary.parse_failures,
         "unanchored": summary.unanchored,
+        "untraceable": summary.untraceable,
     });
     trace.event("explore_outcome", &mut outcome)?;
     write_atomic(
@@ -782,6 +890,41 @@ mod tests {
             negative_question("What is 2+2?", "STM32F407", "STM32F103"),
             None
         );
+    }
+
+    /// The traceability gate: every number an answer states must be
+    /// traceable to the section. The generator's measured failure mode is
+    /// inventing plausible numbers - "160 MHz" for a 168 MHz rating, four
+    /// DMA streams for eight, 100,000,000 erase cycles for 10,000 - and
+    /// the recall score cannot catch it, because recall compares against
+    /// the same wrong reference. Unit words bind to the number they
+    /// follow (plural-insensitive, case-insensitive) and must co-occur on
+    /// one section line; thousand separators are normalized.
+    #[test]
+    fn an_answer_number_untraceable_to_the_section_is_refused() {
+        let section = "- **CPU:** up to **168 MHz**. - **DMA:** DMA1 and DMA2, 8 streams each.\n- Endurance: 10,000 erase cycles. 3 × 12-bit ADCs.\n";
+        assert!(answer_numbers_traceable(
+            "The maximum CPU clock frequency is 168 MHz.",
+            section
+        ));
+        assert!(answer_numbers_traceable("8 streams", section));
+        assert!(answer_numbers_traceable("12-bit ADCs", section));
+        assert!(!answer_numbers_traceable(
+            "The maximum CPU clock frequency is 160 MHz.",
+            section
+        ));
+        assert!(!answer_numbers_traceable("4 streams", section));
+        assert!(!answer_numbers_traceable(
+            "The maximum flash endurance is 100,000,000 operations.",
+            section
+        ));
+        // A number inside a larger number is not a match ("14" is not in
+        // "114"); a bare number matches a decimal that starts with it only
+        // at a token boundary ("4" is not in "4.223").
+        let sizes = "WLCSP90, approximately 4.223×3.969 mm / 72; LQFP144, 20×20 mm / 114.";
+        assert!(!answer_numbers_traceable("114 GPIO pins", sizes));
+        assert!(answer_numbers_traceable("4.223 mm", sizes));
+        assert!(!answer_numbers_traceable("14 mm", sizes));
     }
 
     /// An explore-produced record is exactly what learn::read_pool parses,
