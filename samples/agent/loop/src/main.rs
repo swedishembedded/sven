@@ -311,7 +311,7 @@ fn explore_cmd(args: &[String]) -> anyhow::Result<()> {
         chunk_lines: flags.chunk_lines,
         model: flags.model.clone(),
         base_url: flags.base_url.clone(),
-        api_key: flags.api_key.clone(),
+        api_key: api_key_of(&flags),
         local: local_weights_of(&flags),
     };
     let summary = explore::run(options)?;
@@ -339,7 +339,7 @@ fn ask_cmd(args: &[String]) -> anyhow::Result<()> {
         question,
         model: flags.model.clone(),
         base_url: flags.base_url.clone(),
-        api_key: flags.api_key.clone(),
+        api_key: api_key_of(&flags),
         local: local_weights_of(&flags),
     };
     match ask::run(options) {
@@ -375,7 +375,7 @@ fn eval_facts_cmd(args: &[String]) -> anyhow::Result<()> {
         out: out.clone(),
         model: flags.model.clone(),
         base_url: flags.base_url.clone(),
-        api_key: flags.api_key.clone(),
+        api_key: api_key_of(&flags),
         local: local_weights_of(&flags),
         shuffle: flags.shuffle,
         limit: flags.limit,
@@ -446,6 +446,24 @@ fn task_for_resume(flags: &Flags, run_id: &str) -> anyhow::Result<String> {
     Ok(store::read_manifest(run_id)?.task)
 }
 
+/// The api key follows the provider actually configured: OpenRouter's key
+/// lives in its own environment name, everything else keeps the generic
+/// one. Unset is not filled in here - a provider that needs a key fails
+/// with its own error naming it. Every model-touching command shares this
+/// rule; only `run` used to honor it, which made `ask --model openrouter/...`
+/// need an explicit --api-key the same call through `run` never did.
+fn api_key_of(flags: &Flags) -> Option<String> {
+    flags
+        .api_key
+        .clone()
+        .or_else(|| match flags.model.as_deref() {
+            Some(spec) if spec.starts_with("openrouter/") => {
+                std::env::var("AGENT_OPENROUTER_KEY").ok()
+            }
+            _ => std::env::var("BRAIN_API_KEY").ok(),
+        })
+}
+
 fn options_from(flags: &Flags, run_id: &str) -> anyhow::Result<AttemptOptions> {
     let workspace = flags
         .workspace
@@ -481,19 +499,7 @@ fn options_from(flags: &Flags, run_id: &str) -> anyhow::Result<AttemptOptions> {
             context_tokens: flags.context_tokens,
         })
     };
-    // The api key follows the provider actually configured: OpenRouter's key
-    // lives in its own environment name, everything else keeps the generic
-    // one. Unset is not filled in here - a provider that needs a key fails
-    // with its own error naming it.
-    let api_key = flags
-        .api_key
-        .clone()
-        .or_else(|| match flags.model.as_deref() {
-            Some(spec) if spec.starts_with("openrouter/") => {
-                std::env::var("AGENT_OPENROUTER_KEY").ok()
-            }
-            _ => std::env::var("BRAIN_API_KEY").ok(),
-        });
+    let api_key = api_key_of(flags);
     Ok(AttemptOptions {
         workspace,
         task,

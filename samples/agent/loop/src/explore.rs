@@ -239,6 +239,17 @@ pub(crate) async fn complete_text(
     while let Some(event) = stream.next().await {
         match event? {
             ResponseEvent::TextDelta(delta) => text.push_str(&delta),
+            // The budget ran out with no visible answer - likely a reasoning
+            // model that spent everything on thinking. An empty Ok here would
+            // surface downstream as a parse failure on a reply that never
+            // existed; name the real cause instead.
+            ResponseEvent::MaxTokens if text.is_empty() => {
+                anyhow::bail!("completion hit the output-token limit before any answer text; \
+                    raise max_output_tokens_override or simplify the prompt");
+            }
+            ResponseEvent::Error(what) => {
+                anyhow::bail!("stream failed: {what}");
+            }
             ResponseEvent::Done => break,
             _ => {}
         }
@@ -499,6 +510,33 @@ mod tests {
         seen: std::sync::Mutex<Vec<CompletionRequest>>,
     }
 
+    /// Plays a fixed event script, for testing stream failure paths.
+    struct ScriptedProvider(Vec<anyhow::Result<ResponseEvent>>);
+
+    #[async_trait::async_trait]
+    impl ModelProvider for ScriptedProvider {
+        fn name(&self) -> &str {
+            "scripted"
+        }
+        fn model_name(&self) -> &str {
+            "script-1"
+        }
+        async fn complete(
+            &self,
+            _req: CompletionRequest,
+        ) -> anyhow::Result<sven_sdk::model::ResponseStream> {
+            let script = self
+                .0
+                .iter()
+                .map(|e| match e {
+                    Ok(ev) => Ok(ev.clone()),
+                    Err(e) => Err(anyhow::anyhow!("{e}")),
+                })
+                .collect::<Vec<_>>();
+            Ok(Box::pin(futures::stream::iter(script.into_iter())))
+        }
+    }
+
     #[async_trait::async_trait]
     impl ModelProvider for CapturingProvider {
         fn name(&self) -> &str {
@@ -518,6 +556,54 @@ mod tests {
                 Ok(ResponseEvent::Done),
             ])))
         }
+    }
+
+    /// A reasoning model that burns its whole output budget on thinking ends
+    /// at MaxTokens with ZERO visible text. That must surface as an error
+    /// naming the budget, not Ok("") - an empty Ok sends the caller chasing
+    /// a parse failure on a reply that never existed.
+    #[tokio::test]
+    async fn max_tokens_with_no_text_is_an_error_not_an_empty_ok() {
+        let provider = ScriptedProvider(vec![
+            Ok(ResponseEvent::ThinkingDelta("pondering...".into())),
+            Ok(ResponseEvent::MaxTokens),
+            Ok(ResponseEvent::Done),
+        ]);
+        let err = complete_text(&provider, "extract facts")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("output-token limit"),
+            "error should name the output-token limit, got: {err:#}"
+        );
+    }
+
+    /// Text before the limit is not lost to the same error: it flows on to
+    /// the strict parser, which reports the raw reply as evidence.
+    #[tokio::test]
+    async fn max_tokens_with_text_keeps_the_text() {
+        let provider = ScriptedProvider(vec![
+            Ok(ResponseEvent::TextDelta(r#"{"answer": "168 MHz"}"#.into())),
+            Ok(ResponseEvent::MaxTokens),
+            Ok(ResponseEvent::Done),
+        ]);
+        let text = complete_text(&provider, "q").await.unwrap();
+        assert_eq!(text, r#"{"answer": "168 MHz"}"#);
+    }
+
+    /// A fatal mid-stream error is a hard failure of the completion, per the
+    /// ResponseEvent::Error contract - never a silently truncated Ok.
+    #[tokio::test]
+    async fn stream_error_events_fail_the_completion() {
+        let provider = ScriptedProvider(vec![
+            Ok(ResponseEvent::TextDelta("partial".into())),
+            Ok(ResponseEvent::Error("connection reset".into())),
+        ]);
+        let err = complete_text(&provider, "q").await.unwrap_err();
+        assert!(
+            err.to_string().contains("connection reset"),
+            "error should carry the stream failure, got: {err:#}"
+        );
     }
 
     /// Facts extraction runs against models that drift out of the requested
