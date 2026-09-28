@@ -130,6 +130,35 @@ impl sven_model::ModelProvider for RecordingCappedProvider {
 /// answers (e.g. a server that silently discards a request it can't serve).
 struct EmptyProvider;
 
+/// Streams only whitespace text and nothing else, every turn. Whitespace is
+/// not content: the model said nothing, and the empty-turn accounting must
+/// treat it identically to no text at all.
+struct WhitespaceProvider;
+
+#[async_trait]
+impl sven_model::ModelProvider for WhitespaceProvider {
+    fn name(&self) -> &str {
+        "whitespace"
+    }
+    fn model_name(&self) -> &str {
+        "whitespace"
+    }
+    async fn complete(
+        &self,
+        _req: sven_model::CompletionRequest,
+    ) -> anyhow::Result<
+        std::pin::Pin<
+            Box<dyn futures::Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>,
+        >,
+    > {
+        let events: Vec<anyhow::Result<sven_model::ResponseEvent>> = vec![
+            Ok(sven_model::ResponseEvent::TextDelta(" \n\t".into())),
+            Ok(sven_model::ResponseEvent::Done),
+        ];
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
+}
+
 #[async_trait]
 impl sven_model::ModelProvider for EmptyProvider {
     fn name(&self) -> &str {
@@ -406,6 +435,25 @@ async fn cancelling_mid_stream_preserves_partial_text_and_reports_aborted() {
 /// must emit `UiEvent::Error` before `UiEvent::TurnComplete`.
 #[tokio::test]
 async fn empty_provider_fails_loudly_instead_of_silent_success() {
+    let (rt, events) = silent_provider_run(Arc::new(EmptyProvider)).await;
+    assert_loud_empty_turn_failure(&events);
+    rt.abort();
+}
+
+/// Same contract for a provider that streams whitespace: whitespace is not
+/// content, so the identical loud-failure path applies.
+#[tokio::test]
+async fn whitespace_only_provider_fails_loudly_instead_of_silent_success() {
+    let (rt, events) = silent_provider_run(Arc::new(WhitespaceProvider)).await;
+    assert_loud_empty_turn_failure(&events);
+    rt.abort();
+}
+
+/// Drives a reactive agent against a provider that never produces usable
+/// content, collecting observations until the turn ends or the bound expires.
+async fn silent_provider_run(
+    provider: Arc<dyn sven_model::ModelProvider>,
+) -> (ErasedRuntime, Vec<UiEvent>) {
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
     use sven_machines::ReactiveAgentMachine;
@@ -417,7 +465,7 @@ async fn empty_provider_fails_loudly_instead_of_silent_success() {
     >::new()));
     let cancel_handle = Arc::new(Mutex::new(None));
     let turn_exec = sven_executors::TurnExecutor::new(
-        Arc::new(EmptyProvider),
+        provider,
         None,
         Arc::new(sven_tools::ToolRegistry::new()),
         store,
@@ -464,7 +512,12 @@ async fn empty_provider_fails_loudly_instead_of_silent_success() {
             _ = tokio::time::sleep(remaining) => break,
         }
     }
+    (rt, events)
+}
 
+/// The shared contract: exactly one TurnComplete, an Error naming the
+/// consecutive-empty-turn failure, and that Error before the TurnComplete.
+fn assert_loud_empty_turn_failure(events: &[UiEvent]) {
     let turn_complete_count = events
         .iter()
         .filter(|e| **e == UiEvent::TurnComplete)
@@ -492,8 +545,6 @@ async fn empty_provider_fails_loudly_instead_of_silent_success() {
         error_idx < turn_complete_idx,
         "Error must be emitted before the terminal TurnComplete: {events:?}"
     );
-
-    rt.abort();
 }
 
 /// A prompt that exceeds the model's known effective window must fail before
