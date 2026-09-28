@@ -292,85 +292,24 @@ samples/%/run:
 	echo "running $$bin (built $$(date -r "$$bin" '+%Y-%m-%d %H:%M:%S'))"; \
 	exec "$$bin" $(ARGS)
 
-# samples/learning/ is a SEPARATE cargo workspace (see the root Cargo.toml's
-# `exclude` and samples/learning/Cargo.toml for why). That keeps brain out of
-# sven's build and lockfile, at the cost samples/README.md warns about: a
-# sample outside the build is a sample that rots. These targets are the
-# compensating control.
+# samples/learning/ and samples/agent/ are SEPARATE cargo workspaces (see
+# the root Cargo.toml's `exclude` and scripts/gates/check-no-brain-dependency.sh):
+# their samples link brain directly, and must not put brain into this
+# workspace's build. Their targets live beside them - every sample workspace
+# carries its own Makefile, included below - and keep the same
+# skip-when-absent rule: no brain checkout, a stated skip, exit 0.
 #
-# They SKIP, loudly and successfully, when there is no brain checkout to build
-# against. A clone that legitimately does not have brain must not fail its
-# checks over a sample it cannot build - but it must also never be left
-# guessing why nothing ran, so the skip says which path was missing.
-LEARNING_DIR = samples/learning
-BRAIN_DIR ?= ../edgeai/brain
+# Every sample's Makefile is included by wildcard, so a new sample workspace
+# picks up its targets by dropping a Makefile beside it - no edit here. The
+# guard keeps a tree with no sample Makefiles working unchanged.
 
-## samples/learning/audit - offline task-catalog audit: no model, no GPU, no network
-#
-# L1-L5 for every family in samples/learning/tasks/: the world drives its own
-# interface, an observation-only witness solves each instance, the verifier
-# rejects each known-bad solution for the stated reason, and the untouched
-# workspace fails. Needs no brain checkout and no model, so unlike the rest of
-# the learning targets it runs anywhere python3 does.
-samples/learning/audit:
-	@set -e; \
-	found=0; \
-	for family in $(LEARNING_DIR)/tasks/*/; do \
-		[ -f "$$family/family.toml" ] || continue; \
-		found=$$((found + 1)); \
-		echo "== $$family"; \
-		( cd "$$family" && python3 -m unittest discover -s world -p 'test_*.py' -q ); \
-		( cd "$$family" && python3 world/audit.py ); \
-	done; \
-	if [ "$$found" -eq 0 ]; then echo "samples/learning/audit: no families found"; exit 1; fi; \
-	echo "samples/learning/audit: OK ($$found famil(y/ies))"
-
-## samples/learning/check - build + test the learning samples (skips without brain)
-samples/learning/check: samples/learning/audit
-	@if [ ! -d "$(BRAIN_DIR)" ]; then \
-		echo "samples/learning: SKIPPED - no brain checkout at $(BRAIN_DIR)"; \
-		echo "  These samples link brain directly; set BRAIN_DIR=<path> to point at one."; \
-		exit 0; \
-	fi; \
-	echo "samples/learning: building and testing against $(BRAIN_DIR)"; \
-	$(CARGO) fmt --manifest-path $(LEARNING_DIR)/Cargo.toml -p sample-learning-lab -- --check && \
-	$(CARGO) clippy --manifest-path $(LEARNING_DIR)/Cargo.toml --workspace --all-targets -- -D warnings && \
-	$(CARGO) test --manifest-path $(LEARNING_DIR)/Cargo.toml --workspace
-
-## samples/learning/build - build the learning samples in release
-samples/learning/build:
-	@if [ ! -d "$(BRAIN_DIR)" ]; then \
-		echo "samples/learning: SKIPPED - no brain checkout at $(BRAIN_DIR)"; exit 0; \
-	fi; \
-	$(CARGO) build --release --manifest-path $(LEARNING_DIR)/Cargo.toml --workspace
-
-# samples/agent/ is a SECOND separate cargo workspace under the same rule as
-# samples/learning/ (see the root Cargo.toml's exclude and
-# scripts/gates/check-no-brain-dependency.sh): the loop sample links both
-# sven's SDK facade and brain directly, and must not put brain into this
-# workspace's build. Same compensating control, same skip-when-absent rule.
-AGENT_DIR = samples/agent
-
-## samples/agent/check - build + test the agent samples (skips without brain)
-samples/agent/check:
-	@if [ ! -d "$(BRAIN_DIR)" ]; then \
-		echo "samples/agent: SKIPPED - no brain checkout at $(BRAIN_DIR)"; \
-		echo "  These samples link brain directly; set BRAIN_DIR=<path> to point at one."; \
-		exit 0; \
-	fi; \
-	echo "samples/agent: building and testing against $(BRAIN_DIR)"; \
-	# Package-scoped: cargo fmt's --all follows path dependencies into the
-	# brain checkout, which is not part of this workspace's formatting.
-	$(CARGO) fmt --manifest-path $(AGENT_DIR)/Cargo.toml -p sample-agent-loop -- --check && \
-	$(CARGO) clippy --manifest-path $(AGENT_DIR)/Cargo.toml --workspace --all-targets -- -D warnings && \
-	$(CARGO) test --manifest-path $(AGENT_DIR)/Cargo.toml --workspace
-
-## samples/agent/build - build the agent samples in release
-samples/agent/build:
-	@if [ ! -d "$(BRAIN_DIR)" ]; then \
-		echo "samples/agent: SKIPPED - no brain checkout at $(BRAIN_DIR)"; exit 0; \
-	fi; \
-	$(CARGO) build --release --manifest-path $(AGENT_DIR)/Cargo.toml --workspace
+# ── Sample Makefiles (samples/*/Makefile) ─────────────────────────────────────
+SAMPLE_MAKEFILES := $(wildcard samples/*/Makefile)
+ifeq ($(strip $(SAMPLE_MAKEFILES)),)
+$(warning no samples/*/Makefile found - sample targets are unavailable)
+else
+include $(SAMPLE_MAKEFILES)
+endif
 
 ## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
 ##              and the `minimal` cargo feature profile's forbidden-crate list)
@@ -407,6 +346,9 @@ clean:
 ## help      - show this message
 help:
 	@grep -E '^##' Makefile | sed 's/^## /  /'
+	@echo ""
+	@echo "  Sample targets (samples/*/Makefile):"
+	@for mk in $(SAMPLE_MAKEFILES); do grep -E '^##' $$mk | sed 's/^## /    /'; done
 	@echo ""
 	@echo "  Site targets:"
 	@grep -E '^##' site/Makefile 2>/dev/null | sed 's/^## /    /' || true
