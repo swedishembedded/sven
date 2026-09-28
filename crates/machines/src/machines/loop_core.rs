@@ -122,14 +122,19 @@ impl LoopState {
     /// Build a continuation `CallLlm { kind:"turn" }` from the current state.
     ///
     /// Consumes [`LoopState::stall_nudge`] when one is armed, delivering it as
-    /// the turn's instruction.
+    /// the turn's instruction; otherwise the budget-progress guidance rides
+    /// along when the round counter crosses one of its thresholds.
     pub fn continuation_turn(&mut self) -> Effect {
+        let instruction = self
+            .stall_nudge
+            .take()
+            .or_else(|| self.progress_instruction());
         build_turn_effect(
             &self.thread,
             &self.tools,
             &self.all_tools_mode,
             None,
-            self.stall_nudge.take().as_deref(),
+            instruction.as_deref(),
             None,
             self.max_rounds,
             None,
@@ -142,12 +147,16 @@ impl LoopState {
     /// Consumes [`LoopState::stall_nudge`] like [`LoopState::continuation_turn`];
     /// when both are armed the redirect rides along with the schema demand.
     pub fn continuation_turn_with_schema(&mut self, schema: Value, schema_name: &str) -> Effect {
+        let instruction = self
+            .stall_nudge
+            .take()
+            .or_else(|| self.progress_instruction());
         build_turn_effect(
             &self.thread,
             &self.tools,
             &self.all_tools_mode,
             None,
-            self.stall_nudge.take().as_deref(),
+            instruction.as_deref(),
             None,
             self.max_rounds,
             Some(schema),
@@ -161,6 +170,39 @@ impl LoopState {
 /// One failure is a normal outcome; the second identical one is a stall the
 /// model must be told to stop repeating.
 pub const STALL_REDIRECT_THRESHOLD: u32 = 2;
+
+impl LoopState {
+    /// Budget-progress guidance for the continuation turn, if one is due.
+    ///
+    /// A model that spends its whole round budget on discovery never learns to
+    /// switch to making changes until the terminal wrap-up fires, which is too
+    /// late to act on. The machine tells it where it stands twice: at half the
+    /// budget, and shortly before the end. Stateless by construction - the
+    /// round counter crosses each threshold exactly once, so no extra
+    /// persisted stage is needed. Never fires when the stall redirect is
+    /// armed: that redirect is the more urgent instruction.
+    fn progress_instruction(&self) -> Option<String> {
+        let max = self.max_rounds;
+        let round = self.round;
+        let half = max.div_ceil(2);
+        let late = max.saturating_sub(max / 5);
+        if round == half && round < late {
+            Some(format!(
+                "You have used {round} of your {max} tool-call rounds - half the budget. \
+                 Move from reading and exploring to making the required changes now; \
+                 keep further tool calls economical."
+            ))
+        } else if round == late {
+            Some(format!(
+                "You have {} of {max} tool-call rounds left. Finish the required \
+                 changes within them; do not start new exploration.",
+                max.saturating_sub(round)
+            ))
+        } else {
+            None
+        }
+    }
+}
 
 /// Bounds the error text embedded in the redirect so a huge tool error cannot
 /// inflate the persisted loop state.
@@ -302,6 +344,7 @@ pub fn init_loop(
 // ─── `LlmTurnComplete` handler ────────────────────────────────────────────────
 
 /// The action the machine should take after [`Event::LlmTurnComplete`].
+#[derive(Debug)]
 pub enum GeneratingAction {
     /// The model produced no tool calls — `text` is the final answer.
     FinalAnswer { thread: String, text: String },
@@ -329,9 +372,15 @@ const EMPTY_TURN_NUDGE: &str =
      use one of the available tools to make progress.";
 
 /// Instruction appended when `max_tool_rounds` is exceeded.
+///
+/// This path is always schema-less (see the wrap-up construction), and it is
+/// the moment a pressured model is most likely to describe work it never did
+/// as if it existed. The wording demands a faithful report.
 const MAX_ROUNDS_NUDGE: &str =
     "You have reached the maximum tool-call budget. Do not call any more tools. \
-     Respond now with your final structured decision per the required schema.";
+     Respond now with your final reply. Report faithfully what you actually \
+     changed and what the checks showed; if the task is incomplete, say \
+     precisely what remains - do not describe changes you have not made.";
 
 /// Decide what the machine in its generating state should do after receiving
 /// [`Event::LlmTurnComplete`].
@@ -1092,6 +1141,122 @@ mod tests {
         assert!(
             matches!(action, GeneratingAction::EmptyTurn { .. }),
             "whitespace-only text is not a final answer"
+        );
+    }
+
+    /// Propose one tool call and settle it, returning the continuation's
+    /// instruction. Each round needs a fresh call id.
+    fn round_instruction(ctx: &mut Context) -> String {
+        let call = ToolCallId::new();
+        on_llm_turn_complete(
+            ctx,
+            &Event::LlmTurnComplete {
+                thread: "chat".into(),
+                text: String::new(),
+                tool_calls: vec![sven_hsm::ProposedToolCall {
+                    call_id: call,
+                    name: "grep".into(),
+                    args: serde_json::json!({"pattern": "x"}),
+                    capability: ToolCapability::ReadFile,
+                }],
+            },
+        );
+        let settled = Event::ToolSucceeded {
+            call_id: call,
+            observation: serde_json::json!("ok"),
+        };
+        continuation_instruction(handle_tool_event(ctx, |ls| ls.continuation_turn(), &settled))
+    }
+
+    /// A model that spends its whole round budget on discovery never learns to
+    /// switch to making changes until the terminal wrap-up fires, which is too
+    /// late to act on (observed in the wild: a full budget of reads and greps,
+    /// no file written, and a final reply narrating files that were never
+    /// created). The continuation turn must tell the model where it stands -
+    /// halfway, and again shortly before the end - so it moves to action in
+    /// time. Stateless by construction: the round counter crosses each
+    /// threshold exactly once.
+    #[test]
+    fn the_round_budget_tells_the_model_to_act_at_halfway_and_near_the_end() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &["grep".to_string()], "agent", 40);
+
+        // Rounds 1..=19: ordinary continuation, no budget guidance.
+        for round in 1..=19u32 {
+            let instruction = round_instruction(&mut ctx);
+            assert!(
+                instruction.is_empty(),
+                "round {round} of 40 must carry no budget guidance: {instruction}"
+            );
+        }
+        // Round 20 (halfway): told to start making changes.
+        let instruction = round_instruction(&mut ctx);
+        assert!(
+            instruction.contains("20") && instruction.contains("40"),
+            "the halfway guidance must state the budget position: {instruction}"
+        );
+        assert!(
+            instruction.contains("changes"),
+            "the halfway guidance must direct the model to act: {instruction}"
+        );
+        // Rounds 21..=31: guidance already delivered, none repeated.
+        for round in 21..=31u32 {
+            let instruction = round_instruction(&mut ctx);
+            assert!(
+                instruction.is_empty(),
+                "round {round} of 40 must carry no repeated guidance: {instruction}"
+            );
+        }
+        // Round 32 (80%): told to finish within what is left.
+        let instruction = round_instruction(&mut ctx);
+        assert!(
+            instruction.contains("left") || instruction.contains("finish"),
+            "the near-end guidance must urge completion: {instruction}"
+        );
+        // Round 33: delivered once; no repeat.
+        let instruction = round_instruction(&mut ctx);
+        assert!(
+            instruction.is_empty(),
+            "round 33 of 40 must carry no repeated guidance: {instruction}"
+        );
+    }
+
+    /// The terminal wrap-up must not invite the model to narrate fiction:
+    /// pressured to finish, a model will otherwise describe changes it never
+    /// made as if they existed. The wrap-up instruction has to demand a
+    /// faithful report.
+    #[test]
+    fn the_wrap_up_demands_a_faithful_report() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "agent", 1);
+
+        // First propose: round 1 of 1, ordinary continuation.
+        let _: String = round_instruction(&mut ctx);
+        // Second propose: round 2 > max with tool calls - the wrap-up fires.
+        let call = ToolCallId::new();
+        let action = on_llm_turn_complete(
+            &mut ctx,
+            &Event::LlmTurnComplete {
+                thread: "chat".into(),
+                text: String::new(),
+                tool_calls: vec![sven_hsm::ProposedToolCall {
+                    call_id: call,
+                    name: "grep".into(),
+                    args: serde_json::json!({"pattern": "x"}),
+                    capability: ToolCapability::ReadFile,
+                }],
+            },
+        );
+        let GeneratingAction::MaxRoundsReached { wrapup_effect } = action else {
+            panic!("expected the wrap-up, got {action:?}");
+        };
+        let Effect::CallLlm { request } = &wrapup_effect else {
+            panic!("expected a CallLlm wrap-up effect");
+        };
+        let instruction = request["instruction"].as_str().expect("instruction");
+        assert!(
+            instruction.contains("do not describe changes you have not made"),
+            "the wrap-up must forbid narrating unmade changes: {instruction}"
         );
     }
 }
