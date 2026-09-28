@@ -38,7 +38,7 @@ pub struct ExploreOptions {
     /// The JSONL training file to write atomically at the end.
     pub out: std::path::PathBuf,
     /// Section size cap in lines; a section past it starts a new chunk at
-    /// the next heading. `None` means uncapped.
+    /// the next heading or paragraph boundary. `None` means uncapped.
     pub chunk_lines: Option<usize>,
     /// Model selection, exactly as `run` reads it: local weights by
     /// default, `--model` for remote, `--adapter` folds the promotion
