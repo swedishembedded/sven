@@ -151,8 +151,11 @@ pub(crate) fn parse_facts_reply(reply: &str) -> anyhow::Result<Facts> {
 /// Strict parse for `ask`: the reply must be exactly one
 /// `{"answer": string}` object (fences tolerated, prose is not).
 pub(crate) fn parse_answer_reply(reply: &str) -> anyhow::Result<String> {
-    let value: serde_json::Value = serde_json::from_str(strip_fences(reply))
-        .context("reply is not exactly one JSON object")?;
+    let value: serde_json::Value = serde_json::from_str(strip_fences(reply)).with_context(|| {
+        // A parse failure is a scored event; the raw reply is the evidence
+        // a repair decision needs, so it rides in the error chain.
+        format!("reply is not exactly one JSON object: {reply:?}")
+    })?;
     let object = value
         .as_object()
         .with_context(|| "reply is not a JSON object".to_string())?;
