@@ -125,3 +125,20 @@ pub mod model {
         ResponseEvent, ResponseFormat, ResponseStream, Role, ToolResultContent, ToolSchema,
     };
 }
+
+/// The built-in model providers, selected from [`config::Config`].
+///
+/// [`from_config`](drivers::from_config) constructs whichever provider the
+/// configuration names - OpenAI, Anthropic, OpenRouter, a brain-served local
+/// model, the mock - already clamped to the configured context window and
+/// output limit, ready for
+/// [`EngineBuilder::model_provider`](crate::EngineBuilder::model_provider).
+/// [`from_config_probed`](drivers::from_config_probed) additionally probes a
+/// live server for its real context window before clamping.
+///
+/// The [`model`](crate::model) module is the seam; this is what the shipped
+/// drivers hanging off it look like. Re-exported so an application that is
+/// content with the built-ins never has to reach past the facade.
+pub mod drivers {
+    pub use sven_model_drivers::{from_config, from_config_probed};
+}

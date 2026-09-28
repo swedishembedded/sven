@@ -11,6 +11,7 @@ sven-config    = { path = "../config" }
 sven-hsm       = { path = "../hsm" }
 sven-machines  = { path = "../machines" }
 sven-model     = { path = "../model" }
+sven-model-drivers = { path = "../model-drivers" }
 sven-tool-api  = { path = "../tool-api" }
 sven-sdk-macros = { path = "../sdk-macros" }
 sven-session-model = { path = "../session-model" }
