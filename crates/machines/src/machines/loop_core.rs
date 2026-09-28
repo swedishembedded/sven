@@ -27,7 +27,7 @@
 //! [`LOOP_STATE_KEY`].  This replaces the six `KEY_*` string-keyed JSON facts
 //! used previously and makes state access type-safe and refactor-friendly.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -76,6 +76,22 @@ pub struct LoopState {
     /// not idle and not failed - it is waiting, possibly indefinitely.
     #[serde(default)]
     pub awaiting_answer: Option<QuestionId>,
+    /// In-flight calls by id, mapped to their [`CallIdentity`] (tool name plus
+    /// fingerprint). Written when calls are proposed, drained as results
+    /// arrive; lets a `ToolFailed` event - which carries only the call id -
+    /// be attributed to the call shape that keeps failing.
+    #[serde(default)]
+    pub call_registry: HashMap<ToolCallId, CallIdentity>,
+    /// Consecutive identical failures per call fingerprint. An identical
+    /// failing call repeated is a stall, not progress; crossing
+    /// [`STALL_REDIRECT_THRESHOLD`] arms [`LoopState::stall_nudge`].
+    #[serde(default)]
+    pub failure_streaks: HashMap<String, u32>,
+    /// Redirect instruction to embed in the next continuation turn. Consumed
+    /// by [`LoopState::continuation_turn`]; re-armed by the next identical
+    /// failure if the model did not change its behavior.
+    #[serde(default)]
+    pub stall_nudge: Option<String>,
 }
 
 impl LoopState {
@@ -104,14 +120,16 @@ impl LoopState {
     }
 
     /// Build a continuation `CallLlm { kind:"turn" }` from the current state.
-    #[must_use]
-    pub fn continuation_turn(&self) -> Effect {
+    ///
+    /// Consumes [`LoopState::stall_nudge`] when one is armed, delivering it as
+    /// the turn's instruction.
+    pub fn continuation_turn(&mut self) -> Effect {
         build_turn_effect(
             &self.thread,
             &self.tools,
             &self.all_tools_mode,
             None,
-            None,
+            self.stall_nudge.take().as_deref(),
             None,
             self.max_rounds,
             None,
@@ -120,19 +138,101 @@ impl LoopState {
     }
 
     /// Build a continuation turn that also enforces a JSON response schema.
-    #[must_use]
-    pub fn continuation_turn_with_schema(&self, schema: Value, schema_name: &str) -> Effect {
+    ///
+    /// Consumes [`LoopState::stall_nudge`] like [`LoopState::continuation_turn`];
+    /// when both are armed the redirect rides along with the schema demand.
+    pub fn continuation_turn_with_schema(&mut self, schema: Value, schema_name: &str) -> Effect {
         build_turn_effect(
             &self.thread,
             &self.tools,
             &self.all_tools_mode,
             None,
-            None,
+            self.stall_nudge.take().as_deref(),
             None,
             self.max_rounds,
             Some(schema),
             Some(schema_name),
         )
+    }
+}
+
+/// How many identical failures of the same call shape arm the redirect.
+///
+/// One failure is a normal outcome; the second identical one is a stall the
+/// model must be told to stop repeating.
+pub const STALL_REDIRECT_THRESHOLD: u32 = 2;
+
+/// Bounds the error text embedded in the redirect so a huge tool error cannot
+/// inflate the persisted loop state.
+const STALL_ERROR_EXCERPT: usize = 300;
+
+/// Identity of an in-flight call: its tool name (for the redirect text) and
+/// its fingerprint (tool name plus a hash of the arguments - the whole call
+/// shape, so changed arguments are a different identity).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallIdentity {
+    /// Tool name as proposed.
+    pub name: String,
+    /// Hash of name + canonical argument serialization. Deterministic across
+    /// processes (`DefaultHasher::new()` uses fixed keys), so event-sourced
+    /// replay reproduces the same fingerprints the live run recorded.
+    pub fingerprint: String,
+}
+
+/// Identity of a tool call for stall detection.
+fn call_fingerprint(name: &str, args: &Value) -> String {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(name.as_bytes());
+    hasher.write_u8(0);
+    hasher.write(serde_json::to_string(args).unwrap_or_default().as_bytes());
+    format!("{:016x}", hasher.finish())
+}
+
+/// Attribute proposed calls to their identities, keeping only the calls now
+/// in flight.
+fn register_calls(ls: &mut LoopState, tool_calls: &[ProposedToolCall]) {
+    let identities: HashMap<ToolCallId, CallIdentity> = tool_calls
+        .iter()
+        .map(|tc| {
+            (
+                tc.call_id,
+                CallIdentity {
+                    name: tc.name.clone(),
+                    fingerprint: call_fingerprint(&tc.name, &tc.args),
+                },
+            )
+        })
+        .collect();
+    ls.call_registry.retain(|id, _| identities.contains_key(id));
+    ls.call_registry.extend(identities);
+}
+
+/// Record a finished call's outcome: a success clears its streak, a failure
+/// extends it and - past the threshold - arms the redirect. Returns the
+/// redirect text to embed in the next continuation turn, if any.
+fn record_outcome(ls: &mut LoopState, call_id: &ToolCallId, error: Option<&str>) {
+    let Some(identity) = ls.call_registry.remove(call_id) else {
+        return;
+    };
+    match error {
+        None => {
+            ls.failure_streaks.remove(&identity.fingerprint);
+        }
+        Some(err) => {
+            let streak = ls.failure_streaks.entry(identity.fingerprint).or_default();
+            *streak += 1;
+            if *streak >= STALL_REDIRECT_THRESHOLD {
+                let excerpt: String = err.chars().take(STALL_ERROR_EXCERPT).collect();
+                ls.stall_nudge = Some(format!(
+                    "You have now made the same tool call (`{}`) {} times and it failed \
+                     identically every time. The last error was: {excerpt}. Do not repeat \
+                     this identical call. Change the arguments, use a different tool or \
+                     approach, or report the blocker in your final reply.",
+                    identity.name, *streak,
+                ));
+            }
+        }
     }
 }
 
@@ -192,6 +292,9 @@ pub fn init_loop(
         pending: HashSet::new(),
         awaiting_tool_approval: None,
         awaiting_answer: None,
+        call_registry: HashMap::new(),
+        failure_streaks: HashMap::new(),
+        stall_nudge: None,
     };
     ls.store(ctx);
 }
@@ -275,7 +378,7 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
 
     if tool_calls.is_empty() {
         ls.store(ctx);
-        if text.is_empty() {
+        if text.trim().is_empty() {
             let nudge_effect = build_turn_effect(
                 &thread,
                 &ls.tools,
@@ -294,6 +397,7 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
 
     // Tool calls proposed: register them as pending and return their effects.
     ls.pending = tool_calls.iter().map(|tc| tc.call_id).collect();
+    register_calls(&mut ls, tool_calls.as_slice());
     ls.store(ctx);
 
     let tool_effects: Vec<Effect> = tool_calls
@@ -323,19 +427,34 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
 ///
 /// `make_turn` is a closure that builds the continuation `CallLlm` effect.
 /// SDLC phases pass a closure that includes the decision schema; the reactive
-/// agent passes a plain `continuation_turn`.
+/// agent passes a plain `continuation_turn`. Either receives the armed stall
+/// redirect (if any) as part of the state.
 pub fn handle_tool_event<S>(
     ctx: &mut Context,
-    make_turn: impl Fn(&LoopState) -> Effect,
+    make_turn: impl Fn(&mut LoopState) -> Effect,
     event: &Event,
 ) -> Option<Reaction<S>> {
     match event {
         // ── Tool results: drain pending, emit continuation when all done ──────
-        Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
+        Event::ToolSucceeded { call_id, .. } => {
             let mut ls = LoopState::load(ctx);
             ls.pending.remove(call_id);
+            record_outcome(&mut ls, call_id, None);
             if ls.is_idle() {
-                let cont = make_turn(&ls);
+                let cont = make_turn(&mut ls);
+                ls.store(ctx);
+                Some(Reaction::effects(vec![cont]))
+            } else {
+                ls.store(ctx);
+                Some(Reaction::handled())
+            }
+        }
+        Event::ToolFailed { call_id, error } => {
+            let mut ls = LoopState::load(ctx);
+            ls.pending.remove(call_id);
+            record_outcome(&mut ls, call_id, Some(error.as_str()));
+            if ls.is_idle() {
+                let cont = make_turn(&mut ls);
                 ls.store(ctx);
                 Some(Reaction::effects(vec![cont]))
             } else {
@@ -382,7 +501,7 @@ pub fn handle_tool_event<S>(
                 ctx.approve(*approval_id);
                 ls.awaiting_tool_approval = None;
                 if ls.is_idle() {
-                    let cont = make_turn(&ls);
+                    let cont = make_turn(&mut ls);
                     ls.store(ctx);
                     Some(Reaction::effects(vec![cont]))
                 } else {
@@ -401,7 +520,7 @@ pub fn handle_tool_event<S>(
                 ls.awaiting_tool_approval = None;
                 // Rejected tool: resume loop (LLM sees the failure result).
                 if ls.is_idle() {
-                    let cont = make_turn(&ls);
+                    let cont = make_turn(&mut ls);
                     ls.store(ctx);
                     Some(Reaction::effects(vec![cont]))
                 } else {
@@ -452,7 +571,7 @@ pub fn handle_tool_event<S>(
                 ctx.resolve_question(*question_id);
                 ls.awaiting_answer = None;
                 if ls.is_idle() {
-                    let cont = make_turn(&ls);
+                    let cont = make_turn(&mut ls);
                     ls.store(ctx);
                     Some(Reaction::effects(vec![cont]))
                 } else {
@@ -508,6 +627,7 @@ pub fn current_tools(ctx: &Context) -> Vec<String> {
 pub fn mark_calls_pending(ctx: &mut Context, calls: &[ProposedToolCall]) {
     let mut ls = LoopState::load(ctx);
     ls.pending = calls.iter().map(|c| c.call_id).collect();
+    register_calls(&mut ls, calls);
     ls.store(ctx);
 }
 
@@ -812,6 +932,166 @@ mod tests {
             LoopState::load(&replayed).awaiting_answer,
             Some(recorded),
             "replay must derive the same question id, not mint a fresh one"
+        );
+    }
+
+    /// The instruction a continuation `CallLlm` effect carries, for asserting
+    /// on the redirect text.
+    fn continuation_instruction(reaction: Option<Reaction<u8>>) -> String {
+        let Some(Reaction::Handled(effects)) = reaction else {
+            panic!("expected the loop to continue");
+        };
+        let Effect::CallLlm { request } = &effects[0] else {
+            panic!("expected a CallLlm effect, got {:?}", effects[0]);
+        };
+        request["instruction"]
+            .as_str()
+            .expect("instruction is a string")
+            .to_string()
+    }
+
+    /// A tool call proposed, failed, and re-proposed verbatim is a stall, not
+    /// progress. From the second identical failure on, the continuation turn
+    /// must carry an explicit redirect so the model stops burning rounds on the
+    /// same payload (observed in the wild as a 12-round identical-`todo` storm
+    /// that ignored the schema error in the result it was shown).
+    #[test]
+    fn an_identical_failing_call_repeated_gets_a_redirect() {
+        fn propose(call_id: ToolCallId) -> Event {
+            Event::LlmTurnComplete {
+                thread: "chat".into(),
+                text: String::new(),
+                tool_calls: vec![sven_hsm::ProposedToolCall {
+                    call_id,
+                    name: "todo".into(),
+                    args: serde_json::json!({ "action": "add", "items": ["1"] }),
+                    capability: ToolCapability::WriteFile,
+                }],
+            }
+        }
+        fn fail(call_id: ToolCallId) -> Event {
+            Event::ToolFailed {
+                call_id,
+                error: "todo '1' is missing required field 'content'".into(),
+            }
+        }
+
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &["todo".to_string()], "agent", 16);
+
+        // First failure of the shape: an ordinary failure, no redirect yet.
+        let first = ToolCallId::new();
+        on_llm_turn_complete(&mut ctx, &propose(first));
+        let reaction: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &fail(first));
+        let instruction = continuation_instruction(reaction);
+        assert!(
+            !instruction.contains("same tool call"),
+            "the first failure must not trigger the redirect: {instruction}"
+        );
+
+        // Second identical failure (a fresh call id, the same payload): the
+        // continuation turn now redirects instead of inviting another blind
+        // retry.
+        let second = ToolCallId::new();
+        on_llm_turn_complete(&mut ctx, &propose(second));
+        let reaction: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &fail(second));
+        let instruction = continuation_instruction(reaction);
+        assert!(
+            instruction.contains("same tool call") && instruction.contains("todo"),
+            "the repeated failure must carry a redirect naming the call: {instruction}"
+        );
+    }
+
+    /// The redirect keys on the whole call - name and arguments - so a model
+    /// that changed its arguments (or switched tools) is not treated as
+    /// stuck, and a success clears the streak: a failure after real progress
+    /// is an ordinary failure again.
+    #[test]
+    fn changed_arguments_or_a_success_reset_the_stall() {
+        fn propose(name: &str, args: serde_json::Value, call_id: ToolCallId) -> Event {
+            Event::LlmTurnComplete {
+                thread: "chat".into(),
+                text: String::new(),
+                tool_calls: vec![sven_hsm::ProposedToolCall {
+                    call_id,
+                    name: name.into(),
+                    args,
+                    capability: ToolCapability::WriteFile,
+                }],
+            }
+        }
+        let fail = |call_id: ToolCallId| Event::ToolFailed {
+            call_id,
+            error: "missing required field 'content'".into(),
+        };
+        let succeed = |call_id: ToolCallId| Event::ToolSucceeded {
+            call_id,
+            observation: serde_json::json!("ok"),
+        };
+
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &["todo".to_string()], "agent", 16);
+
+        // Fail twice identically - the stall is armed - then propose the same
+        // call with different arguments: that is not the same failing call.
+        let a = ToolCallId::new();
+        on_llm_turn_complete(&mut ctx, &propose("todo", serde_json::json!({"items": ["1"]}), a));
+        let _: Option<Reaction<u8>> = handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &fail(a));
+        let b = ToolCallId::new();
+        on_llm_turn_complete(&mut ctx, &propose("todo", serde_json::json!({"items": ["1"]}), b));
+        let _: Option<Reaction<u8>> = handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &fail(b));
+
+        let c = ToolCallId::new();
+        on_llm_turn_complete(
+            &mut ctx,
+            &propose("todo", serde_json::json!({"action": "add", "items": [{"id": "1", "content": "x"}]}), c),
+        );
+        let instruction = continuation_instruction(handle_tool_event(
+            &mut ctx,
+            |ls| ls.continuation_turn(),
+            &fail(c),
+        ));
+        assert!(
+            !instruction.contains("same tool call"),
+            "changed arguments are a new attempt, not the same failing call: {instruction}"
+        );
+
+        // A success clears the streak: fail once after succeeding and there is
+        // again no redirect.
+        let d = ToolCallId::new();
+        on_llm_turn_complete(&mut ctx, &propose("todo", serde_json::json!({"items": ["1"]}), d));
+        let _: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &succeed(d));
+        let e = ToolCallId::new();
+        on_llm_turn_complete(&mut ctx, &propose("todo", serde_json::json!({"items": ["1"]}), e));
+        let instruction = continuation_instruction(handle_tool_event(
+            &mut ctx,
+            |ls| ls.continuation_turn(),
+            &fail(e),
+        ));
+        assert!(
+            !instruction.contains("same tool call"),
+            "a success must clear the streak: {instruction}"
+        );
+    }
+
+    /// A reply made of nothing but whitespace is an empty turn: the model said
+    /// nothing, and the nudge - not a silent final answer - is the response.
+    #[test]
+    fn a_whitespace_only_reply_is_an_empty_turn() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "agent", 16);
+        let event = Event::LlmTurnComplete {
+            thread: "chat".into(),
+            text: "   \n\t".into(),
+            tool_calls: vec![],
+        };
+        let action = on_llm_turn_complete(&mut ctx, &event);
+        assert!(
+            matches!(action, GeneratingAction::EmptyTurn { .. }),
+            "whitespace-only text is not a final answer"
         );
     }
 }

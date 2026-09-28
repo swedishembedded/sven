@@ -225,7 +225,7 @@ impl ReactiveAgentMachine {
     }
 
     /// Build a continuation turn from the current `LoopState`.
-    fn continuation_turn(ls: &LoopState) -> Effect {
+    fn continuation_turn(ls: &mut LoopState) -> Effect {
         ls.continuation_turn()
     }
 

@@ -369,7 +369,7 @@ pub(crate) fn parse_sdlc_decision(raw: &str) -> Option<Value> {
 }
 
 /// Build a continuation turn for a phase with the decision schema.
-fn phase_continuation_turn(ls: &LoopState) -> Effect {
+fn phase_continuation_turn(ls: &mut LoopState) -> Effect {
     ls.continuation_turn_with_schema(decision_schema(), "decision")
 }
 
@@ -424,8 +424,8 @@ fn handle_phase_action(
                     Reaction::effects(vec![ask_user_effect(&decision)])
                 }
                 DecisionStatus::NeedTools => {
-                    let ls = LoopState::load(ctx);
-                    Reaction::effects(vec![phase_continuation_turn(&ls)])
+                    let mut ls = LoopState::load(ctx);
+                    Reaction::effects(vec![phase_continuation_turn(&mut ls)])
                 }
                 DecisionStatus::Failed => {
                     to_recovery(ctx, state, &format!("{} failed", spec.phase_name))
