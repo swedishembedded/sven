@@ -62,15 +62,30 @@ pub(crate) enum Decision {
 /// The gate: an adapter is adopted only when the held-out loss strictly
 /// improved, and a non-finite score is a rejection, never an adoption -
 /// "the evaluator failed" must not read as "the model improved".
-pub(crate) fn decide(scores: &Scores) -> Decision {
-    if scores.base_loss.is_finite()
-        && scores.tuned_loss.is_finite()
-        && scores.tuned_loss < scores.base_loss
-    {
-        Decision::Promoted
-    } else {
-        Decision::Rejected
+/// The gate. A candidate is promoted only when its held-out loss strictly
+/// improves on the base AND, when a standing champion measured on the same
+/// pool and split (equal base loss - same data, same holdout), on the
+/// champion too. Losses from different held-out sets do not compare, so an
+/// unmatched champion never bounds a candidate. A candidate that beats the
+/// base but not the champion is rejected: promoting it would make serving
+/// worse than what it replaces.
+pub(crate) fn decide(scores: &Scores, champion: Option<&Scores>) -> Decision {
+    if !scores.base_loss.is_finite() || !scores.tuned_loss.is_finite() {
+        return Decision::Rejected;
     }
+    if scores.tuned_loss >= scores.base_loss {
+        return Decision::Rejected;
+    }
+    if let Some(champ) = champion {
+        if champ.base_loss == scores.base_loss
+            && champ.base_loss.is_finite()
+            && champ.tuned_loss.is_finite()
+            && scores.tuned_loss >= champ.tuned_loss
+        {
+            return Decision::Rejected;
+        }
+    }
+    Decision::Promoted
 }
 
 /// One held-out sample is the minimum honest evaluation; anything less has
@@ -263,7 +278,12 @@ pub(crate) fn run(options: &TrainOptions) -> anyhow::Result<(Decision, PathBuf)>
         base_loss: base.loss,
         tuned_loss: tuned.loss,
     };
-    let decision = decide(&scores);
+    // The standing champion's scores, from the pointer: beats-base is not
+    // enough when a better adapter already serves - the gate must not let a
+    // regression displace it. Only a champion scored on the same pool and
+    // split bounds a candidate; `decide` checks that by base loss.
+    let champion = read_champion_scores(&adapter_pointer());
+    let decision = decide(&scores, champion.as_ref());
 
     let record = serde_json::json!({
         "dataset": pool,
@@ -339,6 +359,19 @@ pub(crate) fn adapter_pointer() -> PathBuf {
     store::state_root().join("adapter.json")
 }
 
+/// The champion's recorded gate scores, when a pointer is in place. A
+/// missing or malformed pointer is no champion - the base-only rule
+/// applies - never an error: a rejected first attempt leaves no pointer,
+/// and training must still work from there.
+fn read_champion_scores(pointer: &std::path::Path) -> Option<Scores> {
+    let text = std::fs::read_to_string(pointer).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    Some(Scores {
+        base_loss: value.get("scores")?.get("base_loss")?.as_f64()? as f32,
+        tuned_loss: value.get("scores")?.get("tuned_loss")?.as_f64()? as f32,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,40 +432,119 @@ mod tests {
     #[test]
     fn promotion_requires_a_strictly_lower_heldout_loss() {
         assert_eq!(
-            decide(&Scores {
-                base_loss: 2.0,
-                tuned_loss: 1.9
-            }),
+            decide(
+                &Scores {
+                    base_loss: 2.0,
+                    tuned_loss: 1.9
+                },
+                None,
+            ),
             Decision::Promoted
         );
         assert_eq!(
-            decide(&Scores {
-                base_loss: 1.9,
-                tuned_loss: 1.9
-            }),
+            decide(
+                &Scores {
+                    base_loss: 1.9,
+                    tuned_loss: 1.9
+                },
+                None,
+            ),
             Decision::Rejected
         );
         assert_eq!(
-            decide(&Scores {
-                base_loss: 1.9,
-                tuned_loss: 2.0
-            }),
+            decide(
+                &Scores {
+                    base_loss: 1.9,
+                    tuned_loss: 2.0
+                },
+                None,
+            ),
             Decision::Rejected
         );
         // A failed evaluation (NaN) is never an improvement.
         assert_eq!(
-            decide(&Scores {
-                base_loss: f32::NAN,
-                tuned_loss: 1.0
-            }),
+            decide(
+                &Scores {
+                    base_loss: f32::NAN,
+                    tuned_loss: 1.0
+                },
+                None,
+            ),
             Decision::Rejected
         );
         assert_eq!(
-            decide(&Scores {
-                base_loss: 2.0,
-                tuned_loss: f32::NAN
-            }),
+            decide(
+                &Scores {
+                    base_loss: 2.0,
+                    tuned_loss: f32::NAN
+                },
+                None,
+            ),
             Decision::Rejected
+        );
+    }
+
+    /// A candidate that beats the base but not the standing champion must
+    /// not displace it: the gate exists so serving never gets worse, and
+    /// the champion's held-out loss is the bar when the two attempts
+    /// measured on the same pool, split, and base (equal base loss).
+    #[test]
+    fn a_candidate_worse_than_the_champion_is_rejected() {
+        // Same base loss: comparable. Champion tuned 0.165; candidate 0.9
+        // beats the base (4.8) but not the champion - rejected.
+        assert_eq!(
+            decide(
+                &Scores {
+                    base_loss: 4.8,
+                    tuned_loss: 0.9
+                },
+                Some(&Scores {
+                    base_loss: 4.8,
+                    tuned_loss: 0.165
+                }),
+            ),
+            Decision::Rejected
+        );
+        // A candidate better than both is promoted.
+        assert_eq!(
+            decide(
+                &Scores {
+                    base_loss: 4.8,
+                    tuned_loss: 0.1
+                },
+                Some(&Scores {
+                    base_loss: 4.8,
+                    tuned_loss: 0.165
+                }),
+            ),
+            Decision::Promoted
+        );
+        // Champion scores from a DIFFERENT pool (base loss differs) do not
+        // bound the candidate: losses measured on different held-out data
+        // do not compare, so the base-only rule applies.
+        assert_eq!(
+            decide(
+                &Scores {
+                    base_loss: 4.8,
+                    tuned_loss: 0.9
+                },
+                Some(&Scores {
+                    base_loss: 3.0,
+                    tuned_loss: 0.165
+                }),
+            ),
+            Decision::Promoted
+        );
+        // No champion recorded: base-only rule.
+        assert_eq!(
+            decide(
+                &Scores {
+                    base_loss: 4.8,
+                    tuned_loss: 0.9
+                },
+                None,
+            ),
+            Decision::Promoted
         );
     }
 
