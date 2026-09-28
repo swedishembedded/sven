@@ -235,9 +235,36 @@ pub(crate) const NOT_COVERED: &str = "That device is not covered by this fact sh
 /// identifier is replaced with an out-of-scope one, keeping the question
 /// otherwise verbatim. `None` when the question does not name the
 /// identifier (the anchor gate makes that rare, not impossible).
-fn negative_question(question: &str, identifier: &str, negative: &str) -> Option<String> {
+fn negative_question(
+    question: &str,
+    identifier: &str,
+    negative: &str,
+    identifiers: &[String],
+) -> Option<String> {
     let start = question.find(identifier)?;
-    let end = start + identifier.len();
+    let mut end = start + identifier.len();
+    // A question names the fact sheet's devices as a slash-separated run
+    // ("STM32F405 / STM32F407"). Substituting one member leaves a covered
+    // device in the question, which trains a compound-question refusal
+    // instead of the scope boundary the probe asks for; the whole run goes.
+    loop {
+        let tail = &question[end..];
+        let ws = tail.len() - tail.trim_start().len();
+        let Some(after) = tail[ws..].strip_prefix('/') else {
+            break;
+        };
+        let ws2 = after.len() - after.trim_start().len();
+        let candidate = &question[end + ws + 1 + ws2..];
+        let Some((_, id_len)) = identifiers.iter().find_map(|id| {
+            candidate
+                .get(..id.len())
+                .filter(|head| head.eq_ignore_ascii_case(id))
+                .map(|_| (id, id.len()))
+        }) else {
+            break;
+        };
+        end += ws + 1 + ws2 + id_len;
+    }
     Some(format!(
         "{}{negative}{}",
         &question[..start],
@@ -609,7 +636,9 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
                                     .get(negatives_emitted % options.scope_negatives.len()),
                             ) {
                                 negatives_emitted += 1;
-                                if let Some(negative) = negative_question(&question, id, negative) {
+                                if let Some(negative) =
+                                    negative_question(&question, id, negative, &identifiers)
+                                {
                                     records.push(training_record(&run_id, &negative, NOT_COVERED));
                                 }
                             }
@@ -879,16 +908,40 @@ mod tests {
     /// worse than an honest refusal.
     #[test]
     fn a_scope_negative_swaps_the_device_and_trains_the_boundary() {
+        let ids: Vec<String> = ["STM32F405", "STM32F407"].iter().map(|s| s.to_string()).collect();
         let question = "What is the maximum CPU clock frequency of the STM32F407?";
-        let negative = negative_question(question, "STM32F407", "STM32F103").unwrap();
+        let negative = negative_question(question, "STM32F407", "STM32F103", &ids).unwrap();
         assert_eq!(
             negative,
             "What is the maximum CPU clock frequency of the STM32F103?"
         );
         // No identifier in the question: no negative variant exists.
         assert_eq!(
-            negative_question("What is 2+2?", "STM32F407", "STM32F103"),
+            negative_question("What is 2+2?", "STM32F407", "STM32F103", &ids),
             None
+        );
+    }
+
+    /// A question usually names the fact sheet's devices as a
+    /// slash-separated run ("STM32F405 / STM32F407"). Substituting one
+    /// member leaves the covered device in the question, which trains a
+    /// compound-question refusal instead of the scope boundary - the probe
+    /// asks about one out-of-scope device alone. The whole run must go.
+    #[test]
+    fn a_scope_negative_replaces_the_whole_device_run() {
+        let ids: Vec<String> = ["STM32F405", "STM32F407"].iter().map(|s| s.to_string()).collect();
+        let question = "What is the maximum CPU clock frequency of the STM32F405 / STM32F407?";
+        let negative = negative_question(question, "STM32F405", "STM32F103", &ids).unwrap();
+        assert_eq!(
+            negative,
+            "What is the maximum CPU clock frequency of the STM32F103?"
+        );
+        // A non-identifier token after the slash stops the run.
+        let question = "How many streams does DMA1 on the STM32F405 / its sibling have?";
+        let negative = negative_question(question, "STM32F405", "STM32F103", &ids).unwrap();
+        assert_eq!(
+            negative,
+            "How many streams does DMA1 on the STM32F103 / its sibling have?"
         );
     }
 
