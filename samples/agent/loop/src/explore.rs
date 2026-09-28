@@ -106,7 +106,10 @@ fn strip_fences(reply: &str) -> &str {
     let trimmed = reply.trim();
     let without = trimmed
         .strip_prefix("```")
-        .and_then(|r| r.trim_start_matches(|c: char| c.is_ascii_alphanumeric()).strip_prefix('\n'))
+        .and_then(|r| {
+            r.trim_start_matches(|c: char| c.is_ascii_alphanumeric())
+                .strip_prefix('\n')
+        })
         .unwrap_or(trimmed);
     without
         .strip_suffix("```")
@@ -151,11 +154,12 @@ pub(crate) fn parse_facts_reply(reply: &str) -> anyhow::Result<Facts> {
 /// Strict parse for `ask`: the reply must be exactly one
 /// `{"answer": string}` object (fences tolerated, prose is not).
 pub(crate) fn parse_answer_reply(reply: &str) -> anyhow::Result<String> {
-    let value: serde_json::Value = serde_json::from_str(strip_fences(reply)).with_context(|| {
-        // A parse failure is a scored event; the raw reply is the evidence
-        // a repair decision needs, so it rides in the error chain.
-        format!("reply is not exactly one JSON object: {reply:?}")
-    })?;
+    let value: serde_json::Value =
+        serde_json::from_str(strip_fences(reply)).with_context(|| {
+            // A parse failure is a scored event; the raw reply is the evidence
+            // a repair decision needs, so it rides in the error chain.
+            format!("reply is not exactly one JSON object: {reply:?}")
+        })?;
     let object = value
         .as_object()
         .with_context(|| "reply is not a JSON object".to_string())?;
@@ -168,7 +172,11 @@ pub(crate) fn parse_answer_reply(reply: &str) -> anyhow::Result<String> {
 
 /// Normalized question text for dedup: lowercase, whitespace collapsed.
 fn normalize(question: &str) -> String {
-    question.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    question
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// One training record, in the SAME schema `learn` appends to the pool:
@@ -191,12 +199,24 @@ pub(crate) fn training_record(run_id: &str, question: &str, answer: &str) -> ser
 
 /// The exact prompt one section sees. It demands the whole shape, and it
 /// says what "covers the section" means: every factual claim, not a sample.
+/// It also demands subject-anchored questions: a fine-tuned model learns
+/// whatever association the question text carries, so "What is the maximum
+/// CPU clock frequency?" taught without the chip's name answers any chip
+/// question with this chip's number - and hallucinates when the family IS
+/// named, because the named form was never seen. The question is the
+/// retrieval key; it must carry the subject.
 fn facts_prompt(section: &str) -> String {
     format!(
         "Below is one section of a hardware fact sheet. Enumerate EVERY factual claim it \
          makes - every number, unit, limit, relationship and conditional - as question/answer \
          pairs. Do not sample, do not summarize: each distinct fact gets its own pair, and a \
          question must be answerable from this section alone.\n\n\
+         Every question must NAME THE SPECIFIC DEVICE OR COMPONENT it is about, so the \
+         question is self-contained and answerable with no other context. Use the exact \
+         identifiers from the section: not \"What is the maximum frequency?\" but \"What is \
+         the maximum CPU clock frequency of the STM32F407?\"; not \"How many streams does \
+         DMA have?\" but \"How many streams does DMA1 have on the STM32F407?\" A question \
+         that would fit a different chip unchanged is wrong.\n\n\
          Reply with EXACTLY one JSON object and nothing else - no prose, no code fences:\n\
          {{\"facts\": [{{\"question\": string, \"answer\": string}}, ...]}}\n\n\
          SECTION:\n{section}"
@@ -244,8 +264,10 @@ pub(crate) async fn complete_text(
             // surface downstream as a parse failure on a reply that never
             // existed; name the real cause instead.
             ResponseEvent::MaxTokens if text.is_empty() => {
-                anyhow::bail!("completion hit the output-token limit before any answer text; \
-                    raise max_output_tokens_override or simplify the prompt");
+                anyhow::bail!(
+                    "completion hit the output-token limit before any answer text; \
+                    raise max_output_tokens_override or simplify the prompt"
+                );
             }
             ResponseEvent::Error(what) => {
                 anyhow::bail!("stream failed: {what}");
@@ -257,7 +279,9 @@ pub(crate) async fn complete_text(
     Ok(text)
 }
 
-pub(crate) fn provider_from_shared(options: &ExploreOptions) -> anyhow::Result<Box<dyn ModelProvider>> {
+pub(crate) fn provider_from_shared(
+    options: &ExploreOptions,
+) -> anyhow::Result<Box<dyn ModelProvider>> {
     provider_from(options)
 }
 
@@ -273,7 +297,7 @@ fn provider_from(options: &ExploreOptions) -> anyhow::Result<Box<dyn ModelProvid
         settings.model.name = name.to_string();
         settings.model.base_url = options.base_url.clone();
         settings.model.api_key = options.api_key.clone();
-        return sven_model_drivers::from_config(&settings.model);
+        return sven_sdk::drivers::from_config(&settings.model);
     }
     let weights = options
         .local
@@ -290,7 +314,11 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
     let text = std::fs::read_to_string(&options.file)
         .with_context(|| format!("reading {}", options.file.display()))?;
     let sections = split_sections(&text, options.chunk_lines);
-    anyhow::ensure!(!sections.is_empty(), "{}: no sections found", options.file.display());
+    anyhow::ensure!(
+        !sections.is_empty(),
+        "{}: no sections found",
+        options.file.display()
+    );
 
     let run_id = store::new_id_with_prefix("explore");
     let dir = store::run_dir(&run_id);
@@ -309,16 +337,11 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
             Some(spec) => spec.clone(),
             None => format!(
                 "brain/{}",
-                crate::runner::local_model_name_of(
-                    options.local.as_ref().expect("local weights")
-                )
+                crate::runner::local_model_name_of(options.local.as_ref().expect("local weights"))
             ),
         },
         base_url: options.base_url.clone(),
-        local_adapter: options
-            .local
-            .as_ref()
-            .and_then(|w| w.adapter.clone()),
+        local_adapter: options.local.as_ref().and_then(|w| w.adapter.clone()),
         limits: store::Limits::default(),
     };
     store::write_atomic(
@@ -454,8 +477,12 @@ mod tests {
         assert!(parse_facts_reply("{\"facts\": []").is_err());
         // An array, not an object.
         assert!(parse_facts_reply("[{\"facts\": []}]").is_err());
-        let wrapped = "Here are the facts:\n{\"facts\": [{\"question\": \"q\", \"answer\": \"a\"}]}";
-        assert!(parse_facts_reply(wrapped).is_err(), "prose around the object is a parse failure");
+        let wrapped =
+            "Here are the facts:\n{\"facts\": [{\"question\": \"q\", \"answer\": \"a\"}]}";
+        assert!(
+            parse_facts_reply(wrapped).is_err(),
+            "prose around the object is a parse failure"
+        );
     }
 
     /// Fences ARE tolerated - they are decoration, not prose.
@@ -466,10 +493,35 @@ mod tests {
         assert_eq!(facts.pairs.len(), 1);
     }
 
+    /// The generator instruction must demand subject-anchored questions.
+    /// A question that does not name its subject trains a string-matcher:
+    /// the adapter answers "What is the maximum CPU clock frequency?" and
+    /// breaks the moment "of the STM32F407" is appended - measured on the
+    /// first STM32 training run (168 MHz learned, "48 MHz" hallucinated
+    /// when the chip family was named). The prompt is the contract.
+    #[test]
+    fn the_generator_instruction_demands_subject_anchored_questions() {
+        let prompt = facts_prompt("## Clocks\n\nHSI is 16 MHz.\n");
+        let lower = prompt.to_lowercase();
+        for phrase in [
+            "name the specific device",
+            "not \"what is the maximum frequency?\" but",
+            "fit a different chip unchanged",
+        ] {
+            assert!(
+                lower.contains(phrase),
+                "the instruction must say {phrase:?}; prompt:\n{prompt}"
+            );
+        }
+    }
+
     /// An ask reply parses to its answer string; prose is a refusal.
     #[test]
     fn ask_replies_parse_strictly() {
-        assert_eq!(parse_answer_reply("{\"answer\": \"42 Mbit/s\"}").unwrap(), "42 Mbit/s");
+        assert_eq!(
+            parse_answer_reply("{\"answer\": \"42 Mbit/s\"}").unwrap(),
+            "42 Mbit/s"
+        );
         assert_eq!(
             parse_answer_reply("```\n{\"answer\": \"168 MHz\"}\n```").unwrap(),
             "168 MHz"
@@ -481,7 +533,10 @@ mod tests {
     /// Dedup is by normalized question text: case and whitespace collapse.
     #[test]
     fn question_dedup_normalizes_text() {
-        assert_eq!(normalize("  What  is the MAX? "), normalize("what is the max?"));
+        assert_eq!(
+            normalize("  What  is the MAX? "),
+            normalize("what is the max?")
+        );
         let mut seen = std::collections::HashSet::new();
         assert!(seen.insert(normalize("What is the max?")));
         assert!(!seen.insert(normalize("what is  the max?")));
@@ -573,9 +628,7 @@ mod tests {
             Ok(ResponseEvent::MaxTokens),
             Ok(ResponseEvent::Done),
         ]);
-        let err = complete_text(&provider, "extract facts")
-            .await
-            .unwrap_err();
+        let err = complete_text(&provider, "extract facts").await.unwrap_err();
         assert!(
             err.to_string().contains("output-token limit"),
             "error should name the output-token limit, got: {err:#}"
@@ -631,4 +684,3 @@ mod tests {
         assert!(seen[0].stream, "driver parses every reply as SSE");
     }
 }
-

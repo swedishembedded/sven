@@ -27,6 +27,10 @@ sample-agent-loop explore --file FILE --out OUT.jsonl [--chunk-lines N]
                       [--adapter FILE] [--ctx N] [--base-url URL]
                       [--api-key KEY]
 sample-agent-loop ask --question TEXT [model options as for run]
+sample-agent-loop eval-facts --file FILE [--adapter FILE] [--base]
+                      [model options as for run]
+sample-agent-loop facts --file FILE [--work-dir DIR]
+                      [--holdout-one-in N] [train options] [model options]
 ```
 
 `explore` turns a markdown fact sheet (e.g.
@@ -46,6 +50,37 @@ section's size, starting a new chunk at the next heading.
 markdown code fences are stripped), and ONLY the parsed object is printed
 to stdout. An unparseable reply exits with code 2. Like `run` and
 `explore`, it traces to its own run directory.
+
+`eval-facts` scores a question/answer file against bare model replies and
+prints the exact-match rate. Questions without a trained answer shape are
+useless to a wrapped training set, so the reference answers must be bare
+strings or bare `{"answer": ...}` objects - a wrapped training record is
+refused.
+
+Question commands (`ask`, `eval-facts`) serve the PROMOTED adapter by
+default: when no adapter is named, the pointer at
+`~/.sven/loop/adapter.json` is used if it exists. `--base` asks the base
+model for the contrast (a promoted adapter without it is the fastest way
+to see what training bought); `--base` together with `--adapter` or
+`--model` is refused as ambiguous. `run` and `explore` keep base-only
+defaults: a facts adapter's reply shape leaks into a coding loop.
+
+`facts` runs the whole document-learning pipeline as one command:
+
+```bash
+sample-agent-loop facts --file examples/stm32_datasheet.md --work-dir DIR
+```
+
+Document -> `explore` extracts every fact -> split into train and held-out
+eval sets (`--holdout-one-in N`, default 5: every Nth fact is held out) ->
+gated LoRA `train` on the training split (the same champion-bounded
+promote/reject rule as `train` itself) -> recall scored on the trained
+questions -> generalization scored on the held-out questions. Each stage
+reuses its artifacts when they already exist in `--work-dir` (a second run
+re-scores instead of re-exploring), and `facts-report.json` in the work
+dir carries the counts and the promotion decision. Exit is non-zero when
+the gate rejects the candidate, so a delegating script never reads a
+rejection as success.
 
 `--task-file FILE` reads the task from a file instead of `--task`. Any
 `--check CMD` is run by the agent itself after its turn; a non-zero exit

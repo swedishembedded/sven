@@ -19,8 +19,9 @@
 //! nothing depends on the process that wrote it still being alive.
 
 mod clock;
-mod events;
 pub(crate) mod eval;
+mod events;
+mod facts;
 mod learn;
 mod outcome;
 mod provider;
@@ -57,10 +58,21 @@ usage: sample-agent-loop <command> [options]
       one-shot question; prints only the parsed {\"answer\": ...} JSON
       object; exit 2 when the reply is not strictly parseable
   eval-facts --dataset FILE.jsonl --out REPORT.json [--adapter FILE]
-             [--shuffle] [--limit N]
+             [--shuffle] [--limit N] [--base]
       ask the configured model every question in a facts dataset and
       score each reply against its reference answer; writes a JSON
-      report (per-question verdicts) and prints a one-line summary
+      report (per-question verdicts) and prints a one-line summary.
+      Serves the promoted adapter by default; --base forces the
+      untouched base model (the adapter-vs-base contrast)
+  facts --file FILE [--work-dir DIR] [--out DATASET.jsonl]
+        [--holdout-one-in N] [--steps N] [--rank N] [--alpha F]
+        [--chunk-lines N] [model options as for run]
+      learn a markdown fact sheet end to end: explore every fact,
+      split (1-in-N held out), fine-tune a LoRA behind the held-out
+      gate, and score recall on the trained questions plus
+      generalization on the held-out ones. Artifacts and the JSON
+      report land in --work-dir (default: facts/ under the state
+      root); exit non-zero when the gate rejected the adapter
 
 options for run / resume:
   --task-file FILE       read the task from FILE instead of --task
@@ -99,6 +111,7 @@ fn main() -> anyhow::Result<()> {
         Some("explore") => explore_cmd(&args[1..]),
         Some("ask") => ask_cmd(&args[1..]),
         Some("eval-facts") => eval_facts_cmd(&args[1..]),
+        Some("facts") => facts_cmd(&args[1..]),
         Some("--help") | Some("-h") | None => {
             print!("{USAGE}");
             Ok(())
@@ -136,12 +149,18 @@ struct Flags {
     question: Option<String>,
     shuffle: bool,
     limit: Option<usize>,
+    work_dir: Option<PathBuf>,
+    holdout_one_in: usize,
+    force_base: bool,
 }
 
 pub(crate) mod explore;
 const DEFAULT_TRAIN_STEPS: u32 = 40;
 const DEFAULT_LORA_RANK: u32 = 8;
 const DEFAULT_LORA_ALPHA: f32 = 16.0;
+/// Every Nth explored fact is held out of training, so the pipeline's
+/// generalization score always has something to measure.
+const DEFAULT_HOLDOUT_ONE_IN: usize = 5;
 
 fn parse(args: &[String]) -> anyhow::Result<Flags> {
     let mut flags = Flags {
@@ -169,6 +188,9 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
         question: None,
         shuffle: false,
         limit: None,
+        work_dir: None,
+        holdout_one_in: DEFAULT_HOLDOUT_ONE_IN,
+        force_base: false,
     };
     let mut i = 0;
     let mut task_file: Option<PathBuf> = None;
@@ -205,6 +227,9 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
             "--question" => flags.question = Some(take(&mut i)?),
             "--shuffle" => flags.shuffle = true,
             "--limit" => flags.limit = Some(take(&mut i)?.parse()?),
+            "--work-dir" => flags.work_dir = Some(PathBuf::from(take(&mut i)?)),
+            "--holdout-one-in" => flags.holdout_one_in = take(&mut i)?.parse()?,
+            "--base" => flags.force_base = true,
             "--list" => {}
             other => anyhow::bail!("unknown option {other:?}"),
         }
@@ -322,7 +347,10 @@ fn explore_cmd(args: &[String]) -> anyhow::Result<()> {
         summary.facts,
         summary.parse_failures,
         store::run_dir(&summary.run_id).display(),
-        flags.out.map(|o| o.display().to_string()).unwrap_or_default(),
+        flags
+            .out
+            .map(|o| o.display().to_string())
+            .unwrap_or_default(),
     );
     Ok(())
 }
@@ -340,13 +368,16 @@ fn ask_cmd(args: &[String]) -> anyhow::Result<()> {
         model: flags.model.clone(),
         base_url: flags.base_url.clone(),
         api_key: api_key_of(&flags),
-        local: local_weights_of(&flags),
+        local: query_weights_of(&flags)?,
     };
     match ask::run(options) {
         Ok(answer) => {
             // Print the parsed object, not the raw reply - the caller reads
             // JSON or nothing.
-            println!("{}", serde_json::to_string(&serde_json::json!({ "answer": answer }))?);
+            println!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({ "answer": answer }))?
+            );
             Ok(())
         }
         Err(e) => {
@@ -376,7 +407,7 @@ fn eval_facts_cmd(args: &[String]) -> anyhow::Result<()> {
         model: flags.model.clone(),
         base_url: flags.base_url.clone(),
         api_key: api_key_of(&flags),
-        local: local_weights_of(&flags),
+        local: query_weights_of(&flags)?,
         shuffle: flags.shuffle,
         limit: flags.limit,
     };
@@ -389,6 +420,62 @@ fn eval_facts_cmd(args: &[String]) -> anyhow::Result<()> {
         report.parse_failures,
         out.display(),
     );
+    Ok(())
+}
+
+/// `facts --file FILE`: the whole document-learning pipeline in one
+/// command. Prints a two-line verdict - what was learned and what the
+/// scores are - and exits non-zero when the gate rejected the adapter, so
+/// a delegating script never reads a rejected candidate as progress.
+fn facts_cmd(args: &[String]) -> anyhow::Result<()> {
+    let flags = parse(args)?;
+    let work_dir = flags
+        .work_dir
+        .clone()
+        .unwrap_or_else(|| store::state_root().join("facts"));
+    let options = facts::FactsOptions {
+        file: flags.file.clone(),
+        out: flags.out.clone(),
+        work_dir,
+        holdout_one_in: flags.holdout_one_in,
+        chunk_lines: flags.chunk_lines,
+        steps: flags.steps,
+        rank: flags.rank,
+        alpha: flags.alpha,
+        model: flags.model.clone(),
+        base_url: flags.base_url.clone(),
+        api_key: api_key_of(&flags),
+        local: local_weights_of(&flags),
+    };
+    let report = facts::run(options)?;
+    println!(
+        "facts: {} fact(s) from {} ({} train / {} eval), training {}",
+        report.facts,
+        flags
+            .file
+            .as_ref()
+            .map(|f| f.display().to_string())
+            .unwrap_or_else(|| "existing dataset".into()),
+        report.train_records,
+        report.eval_records,
+        if report.promoted {
+            format!("promoted ({})", report.train_id)
+        } else {
+            "REJECTED by the held-out gate".into()
+        },
+    );
+    println!(
+        "facts: recall {}/{} = {:.3}, holdout {}/{} = {:.3}",
+        report.recall_correct,
+        report.recall_total,
+        report.recall_correct as f64 / report.recall_total.max(1) as f64,
+        report.holdout_correct,
+        report.holdout_total,
+        report.holdout_correct as f64 / report.holdout_total.max(1) as f64,
+    );
+    if !report.promoted {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -414,6 +501,36 @@ fn local_weights_of(flags: &Flags) -> Option<provider::LocalWeights> {
         adapter: flags.adapter.clone(),
         context_tokens: flags.context_tokens,
     })
+}
+
+/// The local weights a QUESTION command (`ask`, `eval-facts`) serves from:
+/// the promoted adapter by default, so querying what the pipeline learned
+/// needs no flag at all. `--base` forces the untouched base model - the
+/// adapter-vs-base contrast - and refuses to combine with an explicit
+/// `--adapter`, which would leave the intent ambiguous. Delegating
+/// commands (`run`, `explore`) keep `local_weights_of`: a facts adapter's
+/// `{"answer": ...}` reply shape leaks into a coding loop and ends the
+/// run answer-less, so serving it there by default would trade a working
+/// agent for convenience.
+fn query_weights_of(flags: &Flags) -> anyhow::Result<Option<provider::LocalWeights>> {
+    anyhow::ensure!(
+        !(flags.force_base && flags.adapter.is_some()),
+        "--base and --adapter are exclusive: one names the base model, the other an adapter"
+    );
+    anyhow::ensure!(
+        !(flags.force_base && flags.model.is_some()),
+        "--base applies to the local model; drop --model to query locally"
+    );
+    let mut weights = local_weights_of(flags);
+    if let Some(local) = weights.as_mut() {
+        if local.adapter.is_none() && !flags.force_base {
+            let pointer = train::adapter_pointer();
+            if pointer.is_file() {
+                local.adapter = Some(pointer);
+            }
+        }
+    }
+    Ok(weights)
 }
 
 /// The engine's stream watchdog declares a connection dead after 300 s of
@@ -451,10 +568,7 @@ fn task_for_resume(flags: &Flags, run_id: &str) -> anyhow::Result<String> {
 /// not have to restate what the run carries, and dropping it silently turns
 /// a resumed attempt into a base-model run while the manifest still says an
 /// adapter rode along.
-fn adapter_for_resume(
-    flags: &Flags,
-    run_id: &str,
-) -> anyhow::Result<Option<std::path::PathBuf>> {
+fn adapter_for_resume(flags: &Flags, run_id: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
     if flags.adapter.is_some() {
         return Ok(flags.adapter.clone());
     }
@@ -719,7 +833,9 @@ mod tests {
         std::env::set_var("SVEN_LOOP_STATE", &root);
         let dir = store::run_dir("loop-test-resume-adapter");
         std::fs::create_dir_all(&dir).unwrap();
-        let recorded = std::path::PathBuf::from("/tmp/recorded-adapter.safetensors");
+        let scratch =
+            std::env::temp_dir().join(format!("loop-resume-adapter-{}", std::process::id()));
+        let recorded = scratch.join("recorded-adapter.safetensors");
         let manifest = store::RunManifest {
             task: "fix it".into(),
             local_adapter: Some(recorded.clone()),
@@ -732,10 +848,11 @@ mod tests {
         .unwrap();
 
         // Explicit flag wins over the recorded one.
-        let explicit = parse(&["--adapter".into(), "/tmp/explicit.safetensors".into()]).unwrap();
+        let explicit_path = scratch.join("explicit.safetensors");
+        let explicit = parse(&["--adapter".into(), explicit_path.display().to_string()]).unwrap();
         assert_eq!(
             adapter_for_resume(&explicit, "loop-test-resume-adapter").unwrap(),
-            Some(std::path::PathBuf::from("/tmp/explicit.safetensors")),
+            Some(explicit_path),
             "an explicit adapter wins"
         );
 
@@ -753,7 +870,11 @@ mod tests {
             task: "fix it".into(),
             ..Default::default()
         };
-        store::write_atomic(&dir.join("run.json"), &serde_json::to_string(&bare).unwrap()).unwrap();
+        store::write_atomic(
+            &dir.join("run.json"),
+            &serde_json::to_string(&bare).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             adapter_for_resume(&defaulted, "loop-test-resume-adapter").unwrap(),
             None,
@@ -762,6 +883,77 @@ mod tests {
         assert!(
             adapter_for_resume(&defaulted, "loop-test-missing").is_err(),
             "a run with no manifest has no adapter to continue"
+        );
+
+        std::env::remove_var("SVEN_LOOP_STATE");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A question command serves the promoted adapter by default - querying
+    /// what the pipeline learned needs no flag - while `--base` forces the
+    /// untouched base model for the contrast, and the two never combine
+    /// with an explicit `--adapter`.
+    #[test]
+    fn question_commands_serve_the_promoted_adapter_until_base_is_asked() {
+        let _guard = store::ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("loop-query-w-{}", std::process::id()));
+        std::env::set_var("SVEN_LOOP_STATE", &root);
+        let pointer = store::state_root().join("adapter.json");
+        std::fs::create_dir_all(pointer.parent().unwrap()).unwrap();
+        std::fs::write(
+            &pointer,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "adapter": "/somewhere/adapter.safetensors"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // No flags: the promotion pointer rides along.
+        let defaulted = parse(&[]).unwrap();
+        let weights = query_weights_of(&defaulted).unwrap().unwrap();
+        assert_eq!(
+            weights.adapter,
+            Some(pointer.clone()),
+            "the promoted adapter is the default"
+        );
+
+        // --base: no adapter, even with a pointer in place.
+        let base = parse(&["--base".into()]).unwrap();
+        let weights = query_weights_of(&base).unwrap().unwrap();
+        assert_eq!(weights.adapter, None, "--base serves the base model");
+
+        // --adapter is explicit and wins over the default.
+        let explicit = parse(&["--adapter".into(), "/mine.safetensors".into()]).unwrap();
+        let weights = query_weights_of(&explicit).unwrap().unwrap();
+        assert_eq!(
+            weights.adapter,
+            Some(std::path::PathBuf::from("/mine.safetensors"))
+        );
+
+        // The ambiguous combinations are refused, not resolved silently.
+        assert!(query_weights_of(
+            &parse(&["--base".into(), "--adapter".into(), "/m.safetensors".into()]).unwrap()
+        )
+        .is_err());
+        assert!(query_weights_of(
+            &parse(&[
+                "--base".into(),
+                "--model".into(),
+                "openrouter/z-ai/glm-5.3-flash".into()
+            ])
+            .unwrap()
+        )
+        .is_err());
+
+        // A delegating command keeps the base-only default even when a
+        // pointer exists: a facts adapter's reply shape ends a coding run
+        // answer-less.
+        let run_flags = parse(&[]).unwrap();
+        assert_eq!(
+            local_weights_of(&run_flags).unwrap().adapter,
+            None,
+            "run/explore never serve the promotion pointer by default"
         );
 
         std::env::remove_var("SVEN_LOOP_STATE");

@@ -259,7 +259,16 @@ impl ModelProvider for LocalQwen {
         &self,
         req: CompletionRequest,
     ) -> anyhow::Result<sven_sdk::model::ResponseStream> {
-        let invocation = invocation_from(&req, self.max_new_tokens, self.temperature)?;
+        // A caller may ask for more output than the default (explore wants
+        // one WHOLE JSON object per section). Give it all the room the KV
+        // cache allows: clamped here, where the context size is known, so a
+        // big ask degrades to "every token the engine can still hold"
+        // instead of failing generate_once's prompt+max_new check.
+        let mut bounded = req;
+        if let Some(n) = bounded.max_output_tokens_override {
+            bounded.max_output_tokens_override = Some(n.min(self.context_tokens));
+        }
+        let invocation = invocation_from(&bounded, self.max_new_tokens, self.temperature)?;
         // Generation owns the model's KV cache; hold the lock across the
         // whole decode, off the async runtime's threads. The Arcs make the
         // generation closure `'static` without copying the (hundreds-of-MB)
@@ -373,6 +382,13 @@ fn invocation_from(
     max_new: usize,
     temperature: f64,
 ) -> anyhow::Result<Invocation> {
+    // The request's output budget is a contract: a caller asking for more
+    // than the default (explore wants one WHOLE JSON object per section)
+    // must get it. complete() clamps the ask to the KV cache first; what
+    // survives to here is what the engine will be told.
+    let max_new = req
+        .max_output_tokens_override
+        .map_or(max_new, |n| n as usize);
     let messages: Vec<serde_json::Value> = req.messages.iter().map(message_json).collect();
     let tools: Vec<serde_json::Value> = req.tools.iter().map(tool_json).collect();
     let mut inv = Invocation::new();
@@ -498,14 +514,19 @@ struct Generation<'a> {
 /// turn stops within one chunk of where it is, not after the whole prompt
 /// or the whole generation cap.
 fn generate_once(model: &Qwen, inv: &Invocation, gen: &Generation<'_>) -> anyhow::Result<Outcome> {
-    let req = chat::parse_request(gen.tok, inv).map_err(anyhow::Error::msg)?;
+    let mut req = chat::parse_request(gen.tok, inv).map_err(anyhow::Error::msg)?;
     let context = usize::try_from(gen.context_tokens).unwrap_or(usize::MAX);
     anyhow::ensure!(
-        req.ids.len() + req.max_new <= context,
-        "prompt ({} tokens) plus generation ({}) exceeds the engine's context ({context})",
-        req.ids.len(),
-        req.max_new
+        req.ids.len() < context,
+        "prompt ({} tokens) fills the engine's context ({context}); nothing left to generate",
+        req.ids.len()
     );
+    // A prompt leaves exactly so much room. A caller that asked for more
+    // than fits (explore's 32k object budget against a 16k cache) gets the
+    // remaining room, not an error: the budget was an upper bound, and the
+    // rendered prompt's size is only known here, after the chat-template
+    // render. An oversized PROMPT is the hard error above.
+    req.max_new = req.max_new.min(context - req.ids.len());
     let mut rng = Rng::new(req.seed);
     // Two numbers an operator needs to tell a slow device from a wedged
     // generation: how much prompt there is, and how long the first token
@@ -624,6 +645,37 @@ mod tests {
 
     fn message(role: Role, content: MessageContent) -> Message {
         Message { role, content }
+    }
+
+    /// A request's output budget is a contract with the caller: `explore`
+    /// asks for 32k because a section's facts reply must arrive as ONE
+    /// complete JSON object - a reply truncated at the provider's own
+    /// default mid-string is a parse failure and the section's facts are
+    /// lost (observed: "EOF while parsing a string"). The override must
+    /// reach the engine, clamped to what the KV cache can hold.
+    #[test]
+    fn a_requests_output_budget_reaches_the_invocation() {
+        let req = CompletionRequest {
+            messages: vec![message(Role::User, MessageContent::Text("q".into()))],
+            max_output_tokens_override: Some(32_768),
+            ..CompletionRequest::default()
+        };
+        let inv = invocation_from(&req, DEFAULT_MAX_NEW_TOKENS, 0.7).unwrap();
+        assert_eq!(
+            inv.params.get("max_new"),
+            Some(&serde_json::json!(32_768)),
+            "the request's output budget must override the provider default"
+        );
+        // No override: the provider default stands.
+        let plain = CompletionRequest {
+            messages: vec![message(Role::User, MessageContent::Text("q".into()))],
+            ..CompletionRequest::default()
+        };
+        let inv = invocation_from(&plain, DEFAULT_MAX_NEW_TOKENS, 0.7).unwrap();
+        assert_eq!(
+            inv.params.get("max_new"),
+            Some(&serde_json::json!(DEFAULT_MAX_NEW_TOKENS))
+        );
     }
 
     #[test]
