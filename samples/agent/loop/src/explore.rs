@@ -315,6 +315,10 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
             ),
         },
         base_url: options.base_url.clone(),
+        local_adapter: options
+            .local
+            .as_ref()
+            .and_then(|w| w.adapter.clone()),
         limits: store::Limits::default(),
     };
     store::write_atomic(

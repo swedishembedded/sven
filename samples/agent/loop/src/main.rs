@@ -446,6 +446,21 @@ fn task_for_resume(flags: &Flags, run_id: &str) -> anyhow::Result<String> {
     Ok(store::read_manifest(run_id)?.task)
 }
 
+/// The adapter a resume serves from: an explicit `--adapter` wins; otherwise
+/// the run's recorded one. Same rule as the task fallback - the caller must
+/// not have to restate what the run carries, and dropping it silently turns
+/// a resumed attempt into a base-model run while the manifest still says an
+/// adapter rode along.
+fn adapter_for_resume(
+    flags: &Flags,
+    run_id: &str,
+) -> anyhow::Result<Option<std::path::PathBuf>> {
+    if flags.adapter.is_some() {
+        return Ok(flags.adapter.clone());
+    }
+    Ok(store::read_manifest(run_id)?.local_adapter)
+}
+
 /// The api key follows the provider actually configured: OpenRouter's key
 /// lives in its own environment name, everything else keeps the generic
 /// one. Unset is not filled in here - a provider that needs a key fails
@@ -492,7 +507,13 @@ fn options_from(flags: &Flags, run_id: &str) -> anyhow::Result<AttemptOptions> {
                     .map(PathBuf::from)
             })
             .unwrap_or_else(default_local_weights);
-        let adapter = flags.adapter.clone();
+        // A resume keeps the adapter the run was recorded with unless the
+        // caller overrides it; see `adapter_for_resume`.
+        let adapter = if run_id.is_empty() {
+            flags.adapter.clone()
+        } else {
+            adapter_for_resume(flags, run_id)?
+        };
         Some(provider::LocalWeights {
             base,
             adapter,
@@ -680,6 +701,67 @@ mod tests {
         assert!(
             unknown.is_err(),
             "a run with no manifest has no task to continue"
+        );
+
+        std::env::remove_var("SVEN_LOOP_STATE");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A resume without `--adapter` serves the adapter the run was recorded
+    /// with - same rule as the task fallback: the caller must not have to
+    /// restate what the run carries, and dropping it silently turns a
+    /// resumed attempt into a base-model run while the manifest still says
+    /// an adapter rode along.
+    #[test]
+    fn a_resume_without_an_adapter_serves_the_runs_recorded_adapter() {
+        let _guard = store::ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("loop-resume-adapter-{}", std::process::id()));
+        std::env::set_var("SVEN_LOOP_STATE", &root);
+        let dir = store::run_dir("loop-test-resume-adapter");
+        std::fs::create_dir_all(&dir).unwrap();
+        let recorded = std::path::PathBuf::from("/tmp/recorded-adapter.safetensors");
+        let manifest = store::RunManifest {
+            task: "fix it".into(),
+            local_adapter: Some(recorded.clone()),
+            ..Default::default()
+        };
+        store::write_atomic(
+            &dir.join("run.json"),
+            &serde_json::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        // Explicit flag wins over the recorded one.
+        let explicit = parse(&["--adapter".into(), "/tmp/explicit.safetensors".into()]).unwrap();
+        assert_eq!(
+            adapter_for_resume(&explicit, "loop-test-resume-adapter").unwrap(),
+            Some(std::path::PathBuf::from("/tmp/explicit.safetensors")),
+            "an explicit adapter wins"
+        );
+
+        // No flag: the run's recorded adapter continues.
+        let defaulted = parse(&[]).unwrap();
+        assert_eq!(
+            adapter_for_resume(&defaulted, "loop-test-resume-adapter").unwrap(),
+            Some(recorded),
+            "the run's recorded adapter continues"
+        );
+
+        // A run recorded without an adapter resumes on base weights, and an
+        // unknown run id has nothing to fall back to.
+        let bare = store::RunManifest {
+            task: "fix it".into(),
+            ..Default::default()
+        };
+        store::write_atomic(&dir.join("run.json"), &serde_json::to_string(&bare).unwrap()).unwrap();
+        assert_eq!(
+            adapter_for_resume(&defaulted, "loop-test-resume-adapter").unwrap(),
+            None,
+            "no recorded adapter resumes on base weights"
+        );
+        assert!(
+            adapter_for_resume(&defaulted, "loop-test-missing").is_err(),
+            "a run with no manifest has no adapter to continue"
         );
 
         std::env::remove_var("SVEN_LOOP_STATE");

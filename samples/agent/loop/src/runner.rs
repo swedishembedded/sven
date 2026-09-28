@@ -76,6 +76,10 @@ pub fn run(options: AttemptOptions) -> anyhow::Result<(Outcome, RunManifest)> {
         updated_ts: utc_now(),
         model: model_identity(&options),
         base_url: options.base_url.clone(),
+        local_adapter: options
+            .local
+            .as_ref()
+            .and_then(|w| w.adapter.clone()),
         limits: Limits {
             timeout_secs: options.timeout_secs,
             max_tool_rounds: options.max_tool_rounds,
@@ -130,6 +134,15 @@ pub fn resume(run_id: &str, options: AttemptOptions) -> anyhow::Result<(Outcome,
     manifest.attempts += 1;
     manifest.status = "pending".into();
     manifest.updated_ts = utc_now();
+    // Manifests written before local_adapter existed read as None; a resume
+    // that does know the adapter backfills it, so every later resume
+    // inherits the configuration this attempt actually serves from.
+    if manifest.local_adapter.is_none() {
+        manifest.local_adapter = options
+            .local
+            .as_ref()
+            .and_then(|w| w.adapter.clone());
+    }
     save_manifest(&manifest)?;
 
     let mut opts = options;

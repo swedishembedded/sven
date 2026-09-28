@@ -134,6 +134,10 @@ pub struct RunManifest {
     pub updated_ts: String,
     pub model: String,
     pub base_url: Option<String>,
+    /// The local adapter this run serves from, when one was configured -
+    /// the path, not the display name, so a resume can restore the exact
+    /// configuration instead of a base-model run wearing the same label.
+    pub local_adapter: Option<std::path::PathBuf>,
     /// The configured limits, as configured - recorded so "why did it stop"
     /// has an answer that does not require guessing what was set.
     pub limits: Limits,
