@@ -56,6 +56,9 @@ pub struct ExploreSummary {
     pub sections: usize,
     pub facts: usize,
     pub parse_failures: usize,
+    /// Questions the anchor gate refused: the generator produced them
+    /// without the device identifier the title carries.
+    pub unanchored: usize,
 }
 
 /// One strict parse of a facts reply.
@@ -90,12 +93,9 @@ pub(crate) fn split_sections(text: &str, chunk_lines: Option<usize>) -> Vec<Stri
     let mut sections: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut overflow = false;
-    let mut title: Option<&str> = None;
+    let title = document_title(text);
     for line in text.lines() {
         let is_heading = line.starts_with("## ") || line.starts_with("### ");
-        if title.is_none() && line.starts_with("# ") {
-            title = Some(line);
-        }
         let mut close = is_heading && (!current.trim().is_empty() || overflow);
         if !close {
             if let Some(cap) = chunk_lines {
@@ -223,6 +223,34 @@ fn normalize(question: &str) -> String {
         .to_lowercase()
 }
 
+/// The device identifiers a document title names: alphanumeric tokens of
+/// four or more characters that mix letters and digits ("STM32F407",
+/// "DS8626"). A pure-word title names no device, and the anchor gate
+/// disables itself for such a document rather than rejecting everything.
+fn title_identifiers(title: &str) -> Vec<String> {
+    title
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| {
+            t.len() >= 4
+                && t.chars().any(|c| c.is_ascii_digit())
+                && t.chars().any(|c| c.is_ascii_alphabetic())
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// The anchor gate: does the question name a device the document's title
+/// names? The check is case-insensitive containment on the title's
+/// identifiers. With no identifiers to anchor on, every question passes -
+/// the gate refuses only what it can name.
+fn question_is_anchored(question: &str, identifiers: &[String]) -> bool {
+    let lower = question.to_lowercase();
+    identifiers.is_empty()
+        || identifiers
+            .iter()
+            .any(|id| lower.contains(&id.to_lowercase()))
+}
+
 /// One training record, in the SAME schema `learn` appends to the pool:
 /// the question as context (not supervised), the answer as the supervised
 /// turn.
@@ -258,9 +286,12 @@ fn facts_prompt(section: &str) -> String {
          Every question must NAME THE SPECIFIC DEVICE OR COMPONENT it is about, so the \
          question is self-contained and answerable with no other context. Use the exact \
          identifiers from the section: not \"What is the maximum frequency?\" but \"What is \
-         the maximum CPU clock frequency of the STM32F407?\"; not \"How many streams does \
-         DMA have?\" but \"How many streams does DMA1 have on the STM32F407?\" A question \
-         that would fit a different chip unchanged is wrong.\n\n\
+         the maximum CPU clock frequency of <device>?\"; not \"How many streams does DMA \
+         have?\" but \"How many streams does DMA1 have on <device>?\" - where <device> is \
+         the device the title names, spelled exactly as the title spells it. A question \
+         that would fit a different device unchanged is wrong. The section opens with the \
+         document's title, which names the device this fact sheet describes: every question \
+         must name that device exactly as the title spells it.\n\n\
          Reply with EXACTLY one JSON object and nothing else - no prose, no code fences:\n\
          {{\"facts\": [{{\"question\": string, \"answer\": string}}, ...]}}\n\n\
          SECTION:\n{section}"
@@ -354,6 +385,12 @@ fn provider_from(options: &ExploreOptions) -> anyhow::Result<Box<dyn ModelProvid
 
 /// Runs the whole exploration, tracing to its own run dir like `run` does:
 /// manifest, one event per section, and an outcome with the counts.
+/// The document's title line - the first level-1 heading - which names
+/// the subject every chunk must carry and every question must anchor on.
+fn document_title(text: &str) -> Option<&str> {
+    text.lines().find(|l| l.starts_with("# "))
+}
+
 pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
     let text = std::fs::read_to_string(&options.file)
         .with_context(|| format!("reading {}", options.file.display()))?;
@@ -363,6 +400,9 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
         "{}: no sections found",
         options.file.display()
     );
+    let identifiers = document_title(&text)
+        .map(title_identifiers)
+        .unwrap_or_default();
 
     let run_id = store::new_id_with_prefix("explore");
     let dir = store::run_dir(&run_id);
@@ -401,6 +441,7 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
     let mut records: Vec<serde_json::Value> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut parse_failures = 0usize;
+    let mut unanchored = 0usize;
     for (n, section) in sections.iter().enumerate() {
         let prompt = facts_prompt(section);
         let result: anyhow::Result<String> =
@@ -409,15 +450,25 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
             Ok(reply) => match parse_facts_reply(&reply) {
                 Ok(facts) => {
                     let mut added = 0usize;
+                    let mut rejected = 0usize;
                     for (question, answer) in facts.pairs {
                         let key = normalize(&question);
                         if !seen.insert(key) {
                             continue; // already present: skipped, not rewritten
                         }
+                        // The gate refuses what the instruction asked for
+                        // and the generator half-delivered: a question the
+                        // title cannot anchor would train this chip's
+                        // answers onto other chips' questions.
+                        if !question_is_anchored(&question, &identifiers) {
+                            rejected += 1;
+                            continue;
+                        }
                         records.push(training_record(&run_id, &question, &answer));
                         added += 1;
                     }
-                    serde_json::json!({ "section": n, "facts": added })
+                    unanchored += rejected;
+                    serde_json::json!({ "section": n, "facts": added, "unanchored": rejected })
                 }
                 Err(e) => {
                     parse_failures += 1;
@@ -446,6 +497,7 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
         sections: sections.len(),
         facts: records.len(),
         parse_failures,
+        unanchored,
     };
     let mut outcome = serde_json::json!({
         "schema": 1,
@@ -456,6 +508,7 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
         "sections": summary.sections,
         "facts": summary.facts,
         "parse_failures": summary.parse_failures,
+        "unanchored": summary.unanchored,
     });
     trace.event("explore_outcome", &mut outcome)?;
     write_atomic(
@@ -600,7 +653,10 @@ mod tests {
         for phrase in [
             "name the specific device",
             "not \"what is the maximum frequency?\" but",
-            "fit a different chip unchanged",
+            "fit a different device unchanged",
+            // The title line rides in every chunk precisely so the
+            // instruction can point the generator at it.
+            "the section opens with the document's title",
         ] {
             assert!(
                 lower.contains(phrase),
@@ -634,6 +690,31 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         assert!(seen.insert(normalize("What is the max?")));
         assert!(!seen.insert(normalize("what is  the max?")));
+    }
+
+    /// The anchor gate is the pipeline-side enforcement of the generator
+    /// instruction. An unanchored question is the retrieval key that leaks
+    /// this chip's answers onto other chips' questions (the measured defect:
+    /// a trained adapter answering a CPU-clock question about the wrong
+    /// family with this family's SDIO number), so the pipeline drops it
+    /// rather than training it.
+    #[test]
+    fn the_anchor_gate_refuses_questions_the_title_does_not_anchor() {
+        let ids = title_identifiers("# STM32F405 / STM32F407 — Technical Fact Sheet");
+        assert_eq!(ids, vec!["STM32F405", "STM32F407"], "{ids:?}");
+        assert!(question_is_anchored(
+            "What is the maximum CPU clock frequency of the STM32F407?",
+            &ids
+        ));
+        assert!(!question_is_anchored(
+            "What is the maximum frequency of the USART/UART?",
+            &ids
+        ));
+        // A title without an identifier names no device: the gate disables
+        // itself instead of rejecting every question.
+        let generic = title_identifiers("A Technical Fact Sheet");
+        assert!(generic.is_empty());
+        assert!(question_is_anchored("Any question at all", &generic));
     }
 
     /// An explore-produced record is exactly what learn::read_pool parses,

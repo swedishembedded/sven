@@ -341,11 +341,13 @@ fn explore_cmd(args: &[String]) -> anyhow::Result<()> {
     };
     let summary = explore::run(options)?;
     println!(
-        "explored {}: {} section(s), {} fact(s), {} parse failure(s)\nrun:     {}\nout:     {}",
+        "explored {}: {} section(s), {} fact(s), {} parse failure(s), \
+         {} unanchored question(s) refused\nrun:     {}\nout:     {}",
         summary.run_id,
         summary.sections,
         summary.facts,
         summary.parse_failures,
+        summary.unanchored,
         store::run_dir(&summary.run_id).display(),
         flags
             .out
