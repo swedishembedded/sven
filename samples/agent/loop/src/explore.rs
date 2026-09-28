@@ -66,29 +66,52 @@ pub struct Facts {
 
 /// Splits `text` into sections at markdown headings (`##` / `###`).
 ///
-/// Two invariants:
-/// - A table row is never split from its section: only a heading line
-///   opens a new section, so a table under a heading stays whole.
+/// Three invariants:
+/// - A table row is never split from its section: a heading line or a
+///   blank line opens a new chunk, and a markdown table contains neither,
+///   so a table always stays whole.
 /// - `chunk_lines` caps a section's size: when a section exceeds the cap,
-///   the NEXT heading starts a fresh chunk (content in flight is kept
+///   the next heading starts a fresh chunk (content in flight is kept
 ///   with the section that holds it - splitting mid-table is what the
 ///   cap must never cause).
+/// - A section that stays over the cap with no heading in sight (the
+///   common fact-sheet shape: one `#`, then bullets) also chunks at the
+///   next blank line. Without this, a heading-less document was ONE
+///   section however large - too much for a small generator to enumerate,
+///   which is how coverage collapses. The split point is a paragraph
+///   boundary, and a heading is never parked alone: if the content in
+///   flight is only a heading, it stays for the paragraph that follows.
 pub(crate) fn split_sections(text: &str, chunk_lines: Option<usize>) -> Vec<String> {
     let mut sections: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut overflow = false;
     for line in text.lines() {
         let is_heading = line.starts_with("## ") || line.starts_with("### ");
-        if is_heading && (!current.trim().is_empty() || overflow) {
+        let mut close = is_heading && (!current.trim().is_empty() || overflow);
+        if !close {
+            if let Some(cap) = chunk_lines {
+                let is_blank = line.trim().is_empty();
+                let last_non_empty_is_heading = current
+                    .lines()
+                    .rev()
+                    .find(|l| !l.trim().is_empty())
+                    .is_some_and(|l| l.starts_with('#'));
+                close = is_blank
+                    && !current.trim().is_empty()
+                    && !last_non_empty_is_heading
+                    && current.lines().count() >= cap;
+            }
+        }
+        if close {
             sections.push(std::mem::take(&mut current));
             overflow = false;
         }
         current.push_str(line);
         current.push('\n');
         if let Some(cap) = chunk_lines {
-            let lines = current.lines().count();
-            if lines >= cap {
-                // Over the cap: the next heading MUST open a new chunk.
+            if current.lines().count() >= cap {
+                // Over the cap: the next heading or paragraph boundary
+                // MUST open a new chunk.
                 overflow = true;
             }
         }
@@ -454,6 +477,36 @@ mod tests {
         assert!(sections[0].starts_with("## A"));
         assert!(sections[1].starts_with("## B"));
         assert!(sections[2].starts_with("## C"));
+    }
+
+    /// A heading-less document must still chunk: many fact sheets use a
+    /// single `#` plus bullets, and under the old heading-only rule the
+    /// whole document was one section - too large for a small generator,
+    /// which then enumerates a fraction of the claims. Blank lines are the
+    /// paragraph boundaries every markdown document has.
+    #[test]
+    fn an_overflowing_headingless_document_chunks_at_paragraph_boundaries() {
+        let text = "# Device\n\nalpha fact\n\nbeta fact\n\ngamma fact\n\ndelta fact\n";
+        let sections = split_sections(text, Some(2));
+        assert_eq!(sections.len(), 4, "{sections:#?}");
+        assert!(sections[0].contains("# Device"));
+        assert!(sections[0].contains("alpha fact"), "{}", sections[0]);
+        assert!(sections[1].contains("beta fact"), "{}", sections[1]);
+        assert!(sections[2].contains("gamma fact"), "{}", sections[2]);
+        assert!(sections[3].contains("delta fact"), "{}", sections[3]);
+    }
+
+    /// The boundary rule must never park a heading alone: a heading with
+    /// nothing under it gives the generator no facts to enumerate.
+    #[test]
+    fn a_chunk_boundary_never_orphans_a_heading() {
+        let text = "# Device\n\n## Clocks\n\nHSI is 16 MHz.\n\nLSI is 32 kHz.\n";
+        let sections = split_sections(text, Some(2));
+        assert_eq!(sections.len(), 3, "{sections:#?}");
+        assert!(sections[1].contains("## Clocks"));
+        // The heading rides with its first paragraph, never alone.
+        assert!(sections[1].contains("HSI is 16 MHz."), "{}", sections[1]);
+        assert!(sections[2].contains("LSI is 32 kHz."), "{}", sections[2]);
     }
 
     /// A well-formed reply parses into its question/answer pairs.
