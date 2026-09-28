@@ -97,7 +97,13 @@ pub(crate) fn split(samples: &[ChatSample]) -> Option<(&[ChatSample], &[ChatSamp
     if samples.len() < 2 {
         return None;
     }
-    let (train, val) = samples.split_at(samples.len() - 1);
+    // 10% held out, at least one: a single record's 20-odd token positions
+    // cannot carry a promotion verdict on a pool of hundreds - its noise
+    // would masquerade as improvement or regression. The newest records are
+    // held out: the pool is appended in run order, so the most recent
+    // verified experience is the one that must still generalize.
+    let val = (samples.len() / 10).max(1);
+    let (train, val) = samples.split_at(samples.len() - val);
     Some((train, val))
 }
 
@@ -563,6 +569,25 @@ mod tests {
         // Pointer identity: the held-out sample is the LAST one, the
         // newest verified experience.
         assert!(std::ptr::eq(val.as_ptr(), &three[2]));
+    }
+
+    /// One held-out sample cannot gate a large pool: 21 token positions of
+    /// one record decided a promotion that the train split contradicted.
+    /// The holdout grows with the pool (10%, minimum one) so a promotion
+    /// verdict rests on more than one record's noise.
+    #[test]
+    fn the_holdout_grows_with_the_pool() {
+        let mut big: Vec<ChatSample> = (0..150).map(|_| ChatSample::default()).collect();
+        let (train, val) = split(&big).unwrap();
+        assert_eq!(val.len(), 15, "10% of 150");
+        assert_eq!(train.len(), 135);
+        // Newest records are the held-out ones.
+        assert!(std::ptr::eq(val.as_ptr(), &big[135]));
+
+        let mut small: Vec<ChatSample> = (0..9).map(|_| ChatSample::default()).collect();
+        let (train, val) = split(&small).unwrap();
+        assert_eq!(val.len(), 1, "at least one, even at 10% < 1");
+        assert_eq!(train.len(), 8);
     }
 
     #[test]
