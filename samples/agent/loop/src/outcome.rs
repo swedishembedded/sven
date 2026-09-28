@@ -65,6 +65,17 @@ pub fn verdict(turn: Status, checks: &[Check]) -> Status {
     }
 }
 
+/// Whether the attempt's final reply is missing or carries nothing but
+/// whitespace. A blank reply after a completed turn is a real observation a
+/// reviewer must not have to discover by reading the transcript: the model
+/// ended its turn without saying what it did (observed with a remote
+/// provider after a long tool loop), and the outcome names it as unresolved
+/// rather than leaving "completed" to imply a summary that is not there.
+#[must_use]
+pub fn reply_is_blank(reply: Option<&str>) -> bool {
+    reply.map_or(true, |r| r.trim().is_empty())
+}
+
 /// One file the attempt touched, with its hash after the attempt. When the
 /// workspace is a git repository the before-state is also derivable - the
 /// outcome names which case applies rather than guessing.
@@ -333,6 +344,14 @@ mod tests {
         assert_eq!(Status::Cancelled.as_str(), "cancelled");
         assert_eq!(Status::Errored.as_str(), "errored");
         assert_eq!(Status::Failed.as_str(), "failed");
+    }
+
+    #[test]
+    fn a_whitespace_only_reply_is_blank_and_a_summary_is_not() {
+        assert!(reply_is_blank(None));
+        assert!(reply_is_blank(Some("")));
+        assert!(reply_is_blank(Some("   \n  ")));
+        assert!(!reply_is_blank(Some("changed src/calc.py; tests pass")));
     }
 
     #[test]

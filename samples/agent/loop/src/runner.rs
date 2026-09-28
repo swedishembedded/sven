@@ -516,6 +516,14 @@ async fn build_outcome(
     });
 
     let mut unresolved = Vec::new();
+    let reply_text = sent.as_ref().and_then(|r| r.as_ref().ok()).map(String::as_str);
+    if status == Status::Completed && crate::outcome::reply_is_blank(reply_text) {
+        unresolved.push(
+            "the turn ended with an empty final reply; whatever the model meant to say about \
+             its work is not recorded here"
+                .into(),
+        );
+    }
     let mut diff_artifacts: Vec<String> = Vec::new();
     if status == Status::Timeout || status == Status::Cancelled {
         unresolved.push(
