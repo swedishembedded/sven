@@ -9,8 +9,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use common::{AgentMachine, GuardMachine, TState, TimerMachine};
-use sven_hsm::{Context, Effect, Event, Hsm, ObservationSink, PermissionPolicy};
-use sven_kernel::{Clock, EffectExecutor, EventSink, Runtime, TimerService, VirtualClock};
+use serde_json::Value;
+use sven_hsm::{
+    Context, Effect, Event, Hsm, ObservationSink, PermissionPolicy, ToolCapability,
+};
+use sven_kernel::{Clock, EffectExecutor, ErasedRuntime, EventSink, Runtime, TimerService, VirtualClock};
 
 /// Executor that turns `ScheduleTimeout`/`CancelTimeout` into real timer tasks
 /// via a [`TimerService`] backed by the injected clock.
@@ -134,6 +137,161 @@ impl EffectExecutor for LlmExec {
             .await;
         }
     }
+}
+
+/// How long the spawned "tool" in [`SpawnedToolExec`] takes to produce its
+/// result. Long enough that a capture served during the flight is unmistakable.
+const TOOL_DELAY: Duration = Duration::from_millis(150);
+
+/// Executor that mimics the real `ToolExecutor`'s concurrency contract:
+/// `CallTool` is spawn-and-forget (the task runs concurrently and its result
+/// event re-enters the queue when it finishes). Other effects are ignored.
+struct SpawnedToolExec;
+
+#[async_trait]
+impl EffectExecutor for SpawnedToolExec {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
+        if let Effect::CallTool { call_id, .. } = effect {
+            let sink = sink.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(TOOL_DELAY).await;
+                sink.emit(Event::ToolSucceeded {
+                    call_id,
+                    observation: Value::Null,
+                })
+                .await;
+            });
+        }
+    }
+}
+
+/// Minimal machine for the capture test:
+///
+///   Top
+///    +- Idle      (UserMessage -> Busy, entry emits a CallTool)
+///    +- Busy      (ToolSucceeded -> Idle)
+///
+/// The tool capability is `ReadFile`, which needs no approval, so the call is
+/// dispatched immediately - reproducing the spawn-and-forget window without
+/// approval-flow semantics.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum CState {
+    Top,
+    Idle,
+    Busy,
+}
+
+struct ToolThenWait {
+    id: sven_hsm::MachineId,
+}
+
+impl Default for ToolThenWait {
+    fn default() -> Self {
+        Self {
+            id: sven_hsm::MachineId::new(),
+        }
+    }
+}
+
+impl sven_hsm::Machine for ToolThenWait {
+    type State = CState;
+
+    fn id(&self) -> sven_hsm::MachineId {
+        self.id
+    }
+
+    fn top(&self) -> CState {
+        CState::Top
+    }
+
+    fn initial(&self) -> CState {
+        CState::Idle
+    }
+
+    fn superstate(&self, _state: CState) -> CState {
+        CState::Top
+    }
+
+    fn all_states(&self) -> Vec<CState> {
+        vec![CState::Idle, CState::Busy]
+    }
+
+    fn dispatch_state(
+        &mut self,
+        state: CState,
+        event: &Event,
+        _ctx: &mut sven_hsm::Context,
+    ) -> sven_hsm::Reaction<CState> {
+        use sven_hsm::Reaction;
+        match state {
+            CState::Top => Reaction::Ignored,
+            CState::Idle => match event {
+                Event::UserMessage { .. } => Reaction::transition(
+                    CState::Busy,
+                    [Effect::CallTool {
+                        call_id: common::fixed_tool_id(),
+                        name: "reader".into(),
+                        capability: ToolCapability::ReadFile,
+                        args: Value::Null,
+                    }],
+                    "run the tool",
+                ),
+                _ => Reaction::parent(CState::Top),
+            },
+            CState::Busy => match event {
+                Event::ToolSucceeded { .. } => Reaction::transition(CState::Idle, [], "settled"),
+                _ => Reaction::parent(CState::Top),
+            },
+        }
+    }
+}
+
+/// A capture must not be served while a dispatched tool call is still awaiting
+/// its result event.
+///
+/// The capture is the engine's "nothing left to do" signal: `Agent::send`
+/// races it against the observation stream and treats a served snapshot as the
+/// end of the turn. With tools spawned concurrently, the event queue drains
+/// *while the tools run* - so an unguarded capture hands back a mid-turn
+/// snapshot, `send` returns whatever text it has collected so far, and the
+/// spawned tool is torn down with the session: the turn ends with tool calls
+/// pending and no result ever dispatched (observed in production as a
+/// "completed" run whose reply was whitespace while a grep was in flight).
+#[tokio::test]
+async fn a_capture_is_not_served_while_dispatched_tools_are_in_flight() {
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(ToolThenWait::default())),
+        Context::new(),
+        PermissionPolicy::builder()
+            .allow_globally([ToolCapability::ReadFile])
+            .build(),
+        SpawnedToolExec,
+        16,
+    );
+
+    // Kick the machine into Busy; its entry emits `CallTool`, which the
+    // executor spawns and returns from - the event queue is empty while the
+    // "tool" still runs for TOOL_DELAY.
+    assert!(rt.post(Event::user_message("hi")).await);
+    rt.wait_for_state("Busy").await;
+
+    // Request the capture mid-flight - exactly where `Agent::send` does.
+    let started = std::time::Instant::now();
+    let snapshot = rt.capture().await.expect("a snapshot is served");
+
+    // The snapshot must be taken only after the tool result was dispatched,
+    // i.e. the machine has moved past the state it was in while the tool ran.
+    // (Unguarded, the capture resolves immediately and snapshots "Busy".)
+    assert_ne!(
+        snapshot.state, "Busy",
+        "capture must not snapshot the machine while its tool is in flight"
+    );
+    assert!(
+        started.elapsed() >= TOOL_DELAY,
+        "capture resolved {:?} in, before the tool result could have arrived",
+        started.elapsed()
+    );
+    rt.abort();
 }
 
 #[tokio::test]

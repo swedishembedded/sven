@@ -28,7 +28,7 @@
 
 mod abort_on_drop;
 use abort_on_drop::AbortOnDrop;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -40,7 +40,7 @@ use sven_hsm::{
     classify, validate_effects_are_allowed, AuditRecord, AuditTrailHandle, Context, Effect,
     EffectDisposition, ErasedMachine, ErasedReport, Event, EventKind, Hsm, InternalEvent, Machine,
     MachineId, ObservationSink, PermissionPolicy, RuntimeReport, RuntimeStatus, Snapshot,
-    StateLabel, ToolAuditRecord, UiEvent,
+    StateLabel, ToolAuditRecord, ToolCallId, UiEvent,
 };
 
 mod clock;
@@ -339,6 +339,10 @@ where
     let mut processed: u64 = 0;
     let mut last_error: Option<String> = None;
     let mut children: ChildRegistry = HashMap::new();
+    // Same in-flight registry as the erased loop. The typed runtime exposes no
+    // quiescence-based capture, so the set is only fed; keeping the bookkeeping
+    // identical means run_effects has one contract.
+    let mut inflight_tools: HashSet<ToolCallId> = HashSet::new();
 
     // Initial transitions run inside the single consumer task, so their entry
     // effects go through the same validate-then-execute path as everything else.
@@ -355,6 +359,7 @@ where
         EventKind::Init,
         init_effects,
         &mut last_error,
+        &mut inflight_tools,
     )
     .await;
 
@@ -393,6 +398,7 @@ where
             event_kind,
             effects,
             &mut last_error,
+            &mut inflight_tools,
         )
         .await;
 
@@ -419,12 +425,17 @@ where
 ///
 /// * `CallTool` effects are classified **per-call**:
 ///   - `Allowed` → dispatched to executor immediately (spawn-like; the executor
-///     is responsible for its own concurrency).
+///     is responsible for its own concurrency). The call id is recorded in
+///     `inflight` until its result event re-enters the queue: with tool
+///     execution spawned concurrently, an empty event queue is *not* "nothing
+///     left to do", and quiescence-based captures must wait for the result.
 ///   - `Forbidden` → `Event::ToolFailed` is emitted directly into the sink so
 ///     the machine sees the denial as a normal tool result (graceful, no abort).
+///     Denied calls never enter `inflight`: their result is already queued.
 ///   - `NeedsApproval` → `Event::ToolApprovalRequired` is emitted; the machine
 ///     handles the approval flow (`RequestHumanApproval` → `HumanApproved` →
-///     re-emit `CallTool`).
+///     re-emit `CallTool`). Unapproved calls never enter `inflight`: the
+///     machine is genuinely waiting for outside input.
 /// * All other effects are validated all-or-nothing (batch reject) as before,
 ///   because non-tool effects cannot fail gracefully mid-stream.
 #[allow(clippy::too_many_arguments)]
@@ -439,6 +450,7 @@ async fn run_effects<S, E>(
     event: EventKind,
     effects: Vec<Effect>,
     last_error: &mut Option<String>,
+    inflight: &mut HashSet<ToolCallId>,
 ) where
     S: std::fmt::Debug + Send,
     E: EffectExecutor,
@@ -498,6 +510,10 @@ async fn run_effects<S, E>(
                     capability,
                 ));
                 *last_error = None;
+                // Register before execution so the consumer loop holds the
+                // quiescence signal until the result event re-enters the
+                // queue, no matter how the executor runs the tool.
+                inflight.insert(*call_id);
                 executor.execute(effect, sink, obs).await;
             }
             EffectDisposition::Forbidden(reason) => {
@@ -806,6 +822,12 @@ where
     let mut processed: u64 = 0;
     let mut last_error: Option<String> = None;
     let mut children: ChildRegistry = HashMap::new();
+    // Dispatched `CallTool` effects whose result event has not re-entered the
+    // queue yet. Tool execution is spawned concurrently by the executor, so an
+    // empty event queue does not mean the machine has nothing left to do -
+    // quiescence-based captures must wait these out. Effect- and event-derived
+    // only: replay reproduces the same set without any live executor state.
+    let mut inflight_tools: HashSet<ToolCallId> = HashSet::new();
 
     let init_effects = machine.init(&mut ctx);
     let init_effects = spawn_children(init_effects, &child_spawner, &mut children, &sink).await;
@@ -823,6 +845,7 @@ where
         EventKind::Init,
         init_effects,
         &mut last_error,
+        &mut inflight_tools,
     )
     .await;
 
@@ -851,20 +874,24 @@ where
     }
 
     loop {
-        // A capture is served only when no event is pending, and never
-        // mid-dispatch. `biased` is load-bearing, not a fairness preference:
-        // an unbiased select would sometimes hand out a snapshot taken while
-        // the machine still had queued work, capturing a transient mid-turn
-        // state. Resuming from one of those would drop the agent back into a
-        // state that ignores the next user message, and it would do so only
-        // occasionally.
+        // A capture is served only when no event is pending, no dispatched
+        // tool call is still awaiting its result, and never mid-dispatch.
+        // `biased` is load-bearing, not a fairness preference: an unbiased
+        // select would sometimes hand out a snapshot taken while the machine
+        // still had queued work, capturing a transient mid-turn state.
+        // Resuming from one of those would drop the agent back into a state
+        // that ignores the next user message, and it would do so only
+        // occasionally. The tool-call guard is what makes an empty queue a
+        // true "nothing left to do" signal: tool executors spawn their work
+        // concurrently, so between dispatching a `CallTool` and receiving its
+        // result the queue is empty while the turn is very much still running.
         let event = tokio::select! {
             biased;
             event = rx.recv() => match event {
                 Some(event) => event,
                 None => break,
             },
-            Some(reply) = capture_rx.recv() => {
+            Some(reply) = capture_rx.recv(), if inflight_tools.is_empty() => {
                 let _ = reply.send(Snapshot {
                     state: machine.state_label(),
                     context: ctx.clone(),
@@ -872,6 +899,14 @@ where
                 continue;
             }
         };
+        // Retire in-flight calls whose result just arrived, before the
+        // dispatch that consumes it.
+        match &event {
+            Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
+                inflight_tools.remove(call_id);
+            }
+            _ => {}
+        }
         note_child_completion(&mut children, &event);
         let outcome = machine.dispatch(&event, &mut ctx);
         let event_kind = outcome.event;
@@ -894,6 +929,7 @@ where
             event_kind,
             effects,
             &mut last_error,
+            &mut inflight_tools,
         )
         .await;
 
