@@ -333,6 +333,7 @@ pub(crate) fn run(options: EvalOptions) -> anyhow::Result<Report> {
         file: std::path::PathBuf::new(),
         out: std::path::PathBuf::new(),
         chunk_lines: None,
+        scope_negatives: Vec::new(),
         model: options.model.clone(),
         base_url: options.base_url.clone(),
         api_key: options.api_key.clone(),

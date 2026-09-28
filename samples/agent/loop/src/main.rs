@@ -52,8 +52,14 @@ usage: sample-agent-loop <command> [options]
       fine-tune a LoRA adapter on the pool and promote it only when the
       held-out loss improved; non-zero exit on rejection
   explore --file FILE --out OUT.jsonl [--chunk-lines N]
+          [--scope-negatives ID1,ID2,...]
       extract a question/answer training dataset from a markdown fact
-      sheet: one JSONL record per fact, in the schema `learn` writes
+      sheet: one JSONL record per fact, in the schema `learn` writes.
+      Every question must name a device the document's title names; one
+      that does not is refused. The identifiers listed in
+      --scope-negatives lie outside the document: for every other fact a
+      negative variant trains the fixed abstention reply, so the adapter
+      learns where its knowledge ends
   ask --question TEXT
       one-shot question; prints only the parsed {\"answer\": ...} JSON
       object; exit 2 when the reply is not strictly parseable
@@ -66,7 +72,8 @@ usage: sample-agent-loop <command> [options]
       untouched base model (the adapter-vs-base contrast)
   facts --file FILE [--work-dir DIR] [--out DATASET.jsonl]
         [--holdout-one-in N] [--steps N] [--rank N] [--alpha F]
-        [--chunk-lines N] [model options as for run]
+        [--chunk-lines N] [--scope-negatives ID1,ID2,...]
+        [model options as for run]
       learn a markdown fact sheet end to end: explore every fact,
       split (1-in-N held out), fine-tune a LoRA behind the held-out
       gate, and score recall on the trained questions plus
@@ -152,6 +159,7 @@ struct Flags {
     work_dir: Option<PathBuf>,
     holdout_one_in: usize,
     force_base: bool,
+    scope_negatives: Vec<String>,
 }
 
 pub(crate) mod explore;
@@ -191,6 +199,7 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
         work_dir: None,
         holdout_one_in: DEFAULT_HOLDOUT_ONE_IN,
         force_base: false,
+        scope_negatives: Vec::new(),
     };
     let mut i = 0;
     let mut task_file: Option<PathBuf> = None;
@@ -229,6 +238,13 @@ fn parse(args: &[String]) -> anyhow::Result<Flags> {
             "--limit" => flags.limit = Some(take(&mut i)?.parse()?),
             "--work-dir" => flags.work_dir = Some(PathBuf::from(take(&mut i)?)),
             "--holdout-one-in" => flags.holdout_one_in = take(&mut i)?.parse()?,
+            "--scope-negatives" => {
+                flags.scope_negatives = take(&mut i)?
+                    .split(',')
+                    .map(str::trim)
+                    .map(str::to_string)
+                    .collect()
+            }
             "--base" => flags.force_base = true,
             "--list" => {}
             other => anyhow::bail!("unknown option {other:?}"),
@@ -338,6 +354,7 @@ fn explore_cmd(args: &[String]) -> anyhow::Result<()> {
         base_url: flags.base_url.clone(),
         api_key: api_key_of(&flags),
         local: local_weights_of(&flags),
+        scope_negatives: flags.scope_negatives.clone(),
     };
     let summary = explore::run(options)?;
     println!(
@@ -441,6 +458,7 @@ fn facts_cmd(args: &[String]) -> anyhow::Result<()> {
         work_dir,
         holdout_one_in: flags.holdout_one_in,
         chunk_lines: flags.chunk_lines,
+        scope_negatives: flags.scope_negatives.clone(),
         steps: flags.steps,
         rank: flags.rank,
         alpha: flags.alpha,

@@ -30,20 +30,29 @@ sample-agent-loop ask --question TEXT [model options as for run]
 sample-agent-loop eval-facts --file FILE [--adapter FILE] [--base]
                       [model options as for run]
 sample-agent-loop facts --file FILE [--work-dir DIR]
-                      [--holdout-one-in N] [train options] [model options]
+                      [--holdout-one-in N] [--scope-negatives IDS]
+                      [train options] [model options]
 ```
 
 `explore` turns a markdown fact sheet (e.g.
 `examples/stm32_datasheet.md`) into a question/answer training dataset:
-the file is split at headings, each section is asked for EVERY factual
-claim as `{"facts": [{"question", "answer"}, ...]}`, replies are parsed
-strictly (a non-conforming reply is counted as a parse failure and its
-section skipped), and one JSONL record per fact is written atomically to
-`--out` in the exact schema `learn` uses for the experience pool. Facts
-are deduplicated by normalized question text. The whole exploration is
-traced to its own run directory (manifest, `events.jsonl` with one event
-per section, `outcome.json` with the counts). `--chunk-lines N` caps a
-section's size, starting a new chunk at the next heading.
+the file is split at headings - or, once a section exceeds
+`--chunk-lines N`, at paragraph boundaries - each section is asked for
+EVERY factual claim as `{"facts": [{"question", "answer"}, ...]}`,
+replies are parsed strictly (a non-conforming reply is counted as a
+parse failure and its section skipped), and one JSONL record per fact is
+written atomically to `--out` in the exact schema `learn` uses for the
+experience pool. Facts are deduplicated by normalized question text.
+Every chunk carries the document's title line, every question must name
+a device the title names (the anchor gate refuses the rest - an
+unanchored question would train this device's answers onto other
+devices' questions), and `--scope-negatives ID1,ID2,...` adds negative
+variants: the same question with an out-of-scope device substituted,
+answered by a fixed abstention, so the adapter learns where its
+knowledge ends instead of answering other chips with this chip's
+numbers. The whole exploration is traced to its own run directory
+(manifest, `events.jsonl` with one event per section, `outcome.json`
+with the counts).
 
 `ask` asks one question one-shot: the model must reply with exactly one
 `{"answer": string}` JSON object, the reply is parsed strictly (optional

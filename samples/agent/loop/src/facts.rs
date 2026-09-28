@@ -181,6 +181,9 @@ pub(crate) struct FactsOptions {
     /// Every Nth record is held out of training for evaluation.
     pub holdout_one_in: usize,
     pub chunk_lines: Option<usize>,
+    /// Device identifiers outside the document's scope; see
+    /// [`crate::explore::ExploreOptions::scope_negatives`].
+    pub scope_negatives: Vec<String>,
     pub steps: u32,
     pub rank: u32,
     pub alpha: f32,
@@ -219,6 +222,7 @@ pub(crate) fn run(options: FactsOptions) -> anyhow::Result<FactsReport> {
             file,
             out: dataset.clone(),
             chunk_lines: options.chunk_lines,
+            scope_negatives: options.scope_negatives.clone(),
             model: options.model.clone(),
             base_url: options.base_url.clone(),
             api_key: options.api_key.clone(),

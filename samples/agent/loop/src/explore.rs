@@ -47,6 +47,12 @@ pub struct ExploreOptions {
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub local: Option<LocalWeights>,
+    /// Device identifiers OUTSIDE the document's scope. Every other
+    /// accepted fact also trains a negative variant with one of these
+    /// substituted, answered by [`NOT_COVERED`], so the adapter learns
+    /// where its knowledge ends instead of answering other chips with
+    /// this chip's numbers.
+    pub scope_negatives: Vec<String>,
 }
 
 /// What one exploration produced, for the CLI's summary line.
@@ -212,6 +218,28 @@ pub(crate) fn parse_answer_reply(reply: &str) -> anyhow::Result<String> {
         .and_then(|v| v.as_str())
         .with_context(|| "reply object has no string \"answer\"".to_string())?;
     Ok(answer.to_string())
+}
+
+/// The fixed reply a question about an out-of-scope device trains toward:
+/// the scope boundary. Without such examples an adapter answers
+/// out-of-family questions with in-family numbers - the measured probe
+/// returned "168 MHz" for an STM32F103 whose true maximum is 72 MHz - and
+/// a confident wrong number on the wrong chip is worse than an honest
+/// refusal.
+pub(crate) const NOT_COVERED: &str = "That device is not covered by this fact sheet.";
+
+/// The negative variant of one anchored question: the in-scope device
+/// identifier is replaced with an out-of-scope one, keeping the question
+/// otherwise verbatim. `None` when the question does not name the
+/// identifier (the anchor gate makes that rare, not impossible).
+fn negative_question(question: &str, identifier: &str, negative: &str) -> Option<String> {
+    let start = question.find(identifier)?;
+    let end = start + identifier.len();
+    Some(format!(
+        "{}{negative}{}",
+        &question[..start],
+        &question[end..]
+    ))
 }
 
 /// Normalized question text for dedup: lowercase, whitespace collapsed.
@@ -442,6 +470,7 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut parse_failures = 0usize;
     let mut unanchored = 0usize;
+    let mut negatives_emitted = 0usize;
     for (n, section) in sections.iter().enumerate() {
         let prompt = facts_prompt(section);
         let result: anyhow::Result<String> =
@@ -466,6 +495,23 @@ pub(crate) fn run(options: ExploreOptions) -> anyhow::Result<ExploreSummary> {
                         }
                         records.push(training_record(&run_id, &question, &answer));
                         added += 1;
+                        // One negative per second accepted fact: enough to
+                        // teach the boundary without letting the shared
+                        // abstention target outweigh the facts themselves.
+                        if added % 2 == 0 && !options.scope_negatives.is_empty() {
+                            let id = identifiers.iter().find(|id| question.contains(id.as_str()));
+                            if let (Some(id), Some(negative)) = (
+                                id,
+                                options
+                                    .scope_negatives
+                                    .get(negatives_emitted % options.scope_negatives.len()),
+                            ) {
+                                negatives_emitted += 1;
+                                if let Some(negative) = negative_question(&question, id, negative) {
+                                    records.push(training_record(&run_id, &negative, NOT_COVERED));
+                                }
+                            }
+                        }
                     }
                     unanchored += rejected;
                     serde_json::json!({ "section": n, "facts": added, "unanchored": rejected })
@@ -715,6 +761,27 @@ mod tests {
         let generic = title_identifiers("A Technical Fact Sheet");
         assert!(generic.is_empty());
         assert!(question_is_anchored("Any question at all", &generic));
+    }
+
+    /// Scope negatives teach the boundary an all-positive dataset cannot
+    /// express: the same question with an out-of-scope device substituted
+    /// must train the abstention, because the measured alternative - a
+    /// facts-only adapter - answered "168 MHz" for an STM32F103 whose true
+    /// maximum is 72 MHz. A confident wrong number on the wrong chip is
+    /// worse than an honest refusal.
+    #[test]
+    fn a_scope_negative_swaps_the_device_and_trains_the_boundary() {
+        let question = "What is the maximum CPU clock frequency of the STM32F407?";
+        let negative = negative_question(question, "STM32F407", "STM32F103").unwrap();
+        assert_eq!(
+            negative,
+            "What is the maximum CPU clock frequency of the STM32F103?"
+        );
+        // No identifier in the question: no negative variant exists.
+        assert_eq!(
+            negative_question("What is 2+2?", "STM32F407", "STM32F103"),
+            None
+        );
     }
 
     /// An explore-produced record is exactly what learn::read_pool parses,
