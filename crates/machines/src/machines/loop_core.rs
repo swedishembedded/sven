@@ -92,6 +92,12 @@ pub struct LoopState {
     /// failure if the model did not change its behavior.
     #[serde(default)]
     pub stall_nudge: Option<String>,
+    /// Consecutive empty turns seen so far. Reset by any turn that produced
+    /// text or tool calls; past [`EMPTY_TURN_NUDGE_BUDGET`] the loop stops
+    /// nudging and fires the wrap-up instead. `#[serde(default)]` because it
+    /// postdates persisted states.
+    #[serde(default)]
+    pub empty_turns: u32,
 }
 
 impl LoopState {
@@ -170,6 +176,15 @@ impl LoopState {
 /// One failure is a normal outcome; the second identical one is a stall the
 /// model must be told to stop repeating.
 pub const STALL_REDIRECT_THRESHOLD: u32 = 2;
+
+/// How many consecutive empty turns the nudge covers before the loop gives
+/// up on the turn with the wrap-up instruction.
+///
+/// Every nudge is a full model round, so without this cap a model stuck
+/// emitting nothing burns the entire wall-clock budget one empty reply at a
+/// time - the nudge alone cannot fix a model that answers every nudge with
+/// another empty reply. A handful of nudges is generous; more never helped.
+pub const EMPTY_TURN_NUDGE_BUDGET: u32 = 3;
 
 impl LoopState {
     /// Budget-progress guidance for the continuation turn, if one is due.
@@ -337,6 +352,7 @@ pub fn init_loop(
         call_registry: HashMap::new(),
         failure_streaks: HashMap::new(),
         stall_nudge: None,
+        empty_turns: 0,
     };
     ls.store(ctx);
 }
@@ -370,6 +386,16 @@ pub enum GeneratingAction {
 const EMPTY_TURN_NUDGE: &str =
     "Your last response was empty. Please provide your analysis, answer, or \
      use one of the available tools to make progress.";
+
+/// Wrap-up instruction fired when the model has answered the empty-turn
+/// nudge with more empty turns past [`EMPTY_TURN_NUDGE_BUDGET`]. Same
+/// faithful-report demands as [`MAX_ROUNDS_NUDGE`] - a pressured model is
+/// most likely to narrate unmade work exactly here.
+const EMPTY_TURN_WRAPUP_NUDGE: &str =
+    "Your last several responses were all empty, so this turn is being \
+     ended rather than nudged again. Respond now with whatever you have - \
+     even a partial answer. Report faithfully what you actually did and \
+     know; do not describe changes you have not made.";
 
 /// Instruction appended when `max_tool_rounds` is exceeded.
 ///
@@ -426,8 +452,26 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
     }
 
     if tool_calls.is_empty() {
-        ls.store(ctx);
         if text.trim().is_empty() {
+            ls.empty_turns += 1;
+            if ls.empty_turns > EMPTY_TURN_NUDGE_BUDGET {
+                // The nudge had its chances; the model keeps returning
+                // nothing. End the turn the same way an exceeded round
+                // budget ends it, with a wrap-up that says why.
+                let wrapup_effect = build_turn_effect(
+                    &thread,
+                    &[],
+                    "",
+                    None,
+                    Some(EMPTY_TURN_WRAPUP_NUDGE),
+                    None,
+                    0,
+                    None,
+                    None,
+                );
+                ls.store(ctx);
+                return GeneratingAction::MaxRoundsReached { wrapup_effect };
+            }
             let nudge_effect = build_turn_effect(
                 &thread,
                 &ls.tools,
@@ -439,8 +483,11 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
                 None,
                 None,
             );
+            ls.store(ctx);
             return GeneratingAction::EmptyTurn { nudge_effect };
         }
+        ls.empty_turns = 0;
+        ls.store(ctx);
         return GeneratingAction::FinalAnswer { thread, text };
     }
 
@@ -999,6 +1046,17 @@ mod tests {
             .to_string()
     }
 
+    /// The instruction inside a wrap-up `CallLlm` effect.
+    fn wrapup_turn_instruction(effect: &Effect) -> String {
+        let Effect::CallLlm { request } = effect else {
+            panic!("expected a CallLlm effect");
+        };
+        request["instruction"]
+            .as_str()
+            .expect("instruction is a string")
+            .to_string()
+    }
+
     /// A tool call proposed, failed, and re-proposed verbatim is a stall, not
     /// progress. From the second identical failure on, the continuation turn
     /// must carry an explicit redirect so the model stops burning rounds on the
@@ -1141,6 +1199,76 @@ mod tests {
         assert!(
             matches!(action, GeneratingAction::EmptyTurn { .. }),
             "whitespace-only text is not a final answer"
+        );
+    }
+
+    /// An unbounded run of empty turns must not be nudged forever: every
+    /// nudge is a full model round, so a model stuck emitting nothing burns
+    /// the whole wall-clock budget one empty reply at a time. Past a small
+    /// budget of consecutive empty turns the loop gives up the same way it
+    /// gives up on an exceeded round budget - with the wrap-up turn - and a
+    /// productive (non-empty) turn re-arms the counter.
+    #[test]
+    fn consecutive_empty_turns_are_capped_by_a_wrap_up_turn() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "agent", 16);
+        let event = || Event::LlmTurnComplete {
+            thread: "chat".into(),
+            text: "  ".into(),
+            tool_calls: vec![],
+        };
+        // The first EMPTY_TURN_NUDGE_BUDGET empties still nudge ...
+        for _ in 0..EMPTY_TURN_NUDGE_BUDGET {
+            assert!(
+                matches!(on_llm_turn_complete(&mut ctx, &event()), GeneratingAction::EmptyTurn { .. }),
+                "early empty turns are nudged, not wrapped up"
+            );
+        }
+        // ... and the one after the budget ends the loop with the wrap-up.
+        let action = on_llm_turn_complete(&mut ctx, &event());
+        match action {
+            GeneratingAction::MaxRoundsReached { wrapup_effect } => {
+                let instruction = wrapup_turn_instruction(&wrapup_effect);
+                assert!(
+                    instruction.contains("empty"),
+                    "the wrap-up must say why it fired: {instruction}"
+                );
+            }
+            other => panic!("expected MaxRoundsReached wrap-up, got {other:?}"),
+        }
+    }
+
+    /// A productive turn clears the consecutive-empty counter: a model that
+    /// occasionally emits nothing between useful rounds keeps its full nudge
+    /// budget each time.
+    #[test]
+    fn a_non_empty_turn_re_arms_the_empty_turn_budget() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "agent", 16);
+        let empty = || Event::LlmTurnComplete {
+            thread: "chat".into(),
+            text: "  ".into(),
+            tool_calls: vec![],
+        };
+        for _ in 0..EMPTY_TURN_NUDGE_BUDGET - 1 {
+            let _ = on_llm_turn_complete(&mut ctx, &empty());
+        }
+        // One real answer lands ...
+        let answer = Event::LlmTurnComplete {
+            thread: "chat".into(),
+            text: "Partial progress: found the failing test.".into(),
+            tool_calls: vec![],
+        };
+        assert!(matches!(
+            on_llm_turn_complete(&mut ctx, &answer),
+            GeneratingAction::FinalAnswer { .. }
+        ));
+        // ... but this machine stays in generating for the next user turn;
+        // the counter must be reset, so a fresh run of empties nudges again
+        // instead of immediately wrapping up.
+        assert!(
+            matches!(on_llm_turn_complete(&mut ctx, &empty()), GeneratingAction::EmptyTurn { .. }),
+            "a productive turn re-arms the empty-turn nudge budget"
         );
     }
 
