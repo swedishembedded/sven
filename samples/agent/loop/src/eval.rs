@@ -108,9 +108,26 @@ fn read_dataset(path: &std::path::Path) -> anyhow::Result<Vec<Record>> {
                     format!("{} line {}: no {role} message", path.display(), n + 1)
                 })
         };
+        let expected = content("assistant")?;
+        // A training file fed here by mistake carries the reply wrapper in
+        // the reference (train wraps, eval doesn't). No correct reply could
+        // match such a reference, so the report would read near-zero and lie
+        // about the model - refuse the file instead of scoring it.
+        if serde_json::from_str::<serde_json::Value>(&expected)
+            .ok()
+            .and_then(|v| v.get("answer").and_then(|a| a.as_str()).map(str::to_string))
+            .is_some()
+        {
+            anyhow::bail!(
+                "{} line {}: the reference is wrapped in an {{\"answer\": ...}} object - \
+                 this looks like a TRAINING file; eval-facts needs bare reference answers",
+                path.display(),
+                n + 1
+            );
+        }
         records.push(Record {
             question: content("user")?,
-            expected: content("assistant")?,
+            expected,
         });
     }
     Ok(records)
@@ -467,6 +484,32 @@ mod tests {
                 Record { question: "Q1".into(), expected: "A1".into() },
                 Record { question: "Q2".into(), expected: "A2".into() },
             ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A training file fed to the evaluator by mistake carries the reply
+    /// wrapper in the reference - no correct reply could ever match it, so
+    /// the whole report would read 0/37 and LIE about the model. The gate
+    /// refuses the file instead.
+    #[test]
+    fn a_wrapped_reference_is_refused_not_scored() {
+        let dir = std::env::temp_dir().join(format!("loop-eval-ds-w-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("train.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"Q1\",\"train\":false},",
+                "{\"role\":\"assistant\",\"content\":\"{\\\"answer\\\": \\\"A1\\\"}\",",
+                "\"train\":true}]}\n",
+            ),
+        )
+        .unwrap();
+        let err = read_dataset(&path).unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("training file"),
+            "error should name the training-file mixup, got: {err:#}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
