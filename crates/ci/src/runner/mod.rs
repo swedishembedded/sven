@@ -517,9 +517,10 @@ impl CiRunner {
         // `--regen-system-prompt` has no additional effect on trace-loaded
         // runs (see its doc comment on `CiOptions`).
         //
-        // A missing `--load-trace`/`--trace` path is treated as "nothing to
-        // load yet", not an error, so `--trace PATH` on a fresh path creates
-        // the file on first write rather than failing the run.
+        // A missing path is treated as "nothing to load yet", not an error,
+        // so `--trace PATH` on a fresh path creates the file on first write
+        // rather than failing the run. (The CLI refuses a missing
+        // `--load-trace` before it gets here: that flag only reads.)
         let (mut existing_steps, existing_session_id, existing_meta, loaded_subagents): (
             Vec<TraceStep>,
             Option<String>,

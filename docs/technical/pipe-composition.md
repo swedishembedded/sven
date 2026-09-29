@@ -236,7 +236,8 @@ Stderr lines use structured `[sven:tag]` prefixes:
 | Piped conversation fails to parse | warning + treat as plain text (single step) | `[sven:warn] Failed to parse piped input as conversation (...)` |
 | Piped NDJSON trace steps fail to parse | warning + treat as plain text (single step) | `[sven:warn] Failed to parse piped input as JSONL trace steps (...)` |
 | `--load-trace`/`--trace` file fails to load (malformed JSON) | `2` | `[sven:error] Failed to load --load-trace <path>: ...` |
-| `--load-trace`/`--trace` file does not exist yet | *(none - not an error)* | run proceeds with empty history; the file is created on first write |
+| `--load-trace` file does not exist | `1` | `Error: --load-trace <path>: no such file` |
+| `--trace` file does not exist yet | *(none - not an error)* | run proceeds with empty history; the file is created on first write |
 
 The error message for the "no pending task" case also prints an example
 showing how to fix it:

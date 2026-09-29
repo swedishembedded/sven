@@ -242,7 +242,7 @@ pub(crate) async fn run_tui(mut cli: Cli, config: Arc<sven_config::Config>) -> a
     // goes to --output-trace (or --trace which combines both). This is the
     // ONE session-persistence flag family for the TUI - loaded and saved as
     // a native ATIF trajectory (see `crates/tui/src/app/mod.rs`/`chat_ops.rs`).
-    let trace_load_path = cli.effective_load_trace().cloned();
+    let trace_load_path = cli.effective_load_trace()?.cloned();
     let trace_save_path = cli.effective_output_trace().cloned();
 
     // Auto-detect node-proxy mode: when SVEN_NODE_URL and SVEN_NODE_TOKEN

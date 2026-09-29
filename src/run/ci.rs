@@ -85,7 +85,7 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
         .map(|e| e.eq_ignore_ascii_case("json"))
         .unwrap_or(false);
 
-    let load_trace = cli.effective_load_trace().cloned().or_else(|| {
+    let load_trace = cli.effective_load_trace()?.cloned().or_else(|| {
         if file_is_trace {
             cli.file.clone()
         } else {

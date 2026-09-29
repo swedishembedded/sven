@@ -599,8 +599,19 @@ impl Cli {
     }
 
     /// Resolve the effective trace input path: --load-trace takes priority, then --trace.
-    pub fn effective_load_trace(&self) -> Option<&PathBuf> {
-        self.load_trace.as_ref().or(self.trace.as_ref())
+    ///
+    /// `--trace` on a missing file starts a fresh session there, but
+    /// `--load-trace` only reads: a missing file is an error rather than a
+    /// silent fresh start, which would run the task without its history.
+    pub fn effective_load_trace(&self) -> anyhow::Result<Option<&PathBuf>> {
+        if let Some(path) = &self.load_trace {
+            anyhow::ensure!(
+                path.exists(),
+                "--load-trace {}: no such file",
+                path.display()
+            );
+        }
+        Ok(self.load_trace.as_ref().or(self.trace.as_ref()))
     }
 
     /// Resolve the effective trace output path: --output-trace takes priority, then --trace.

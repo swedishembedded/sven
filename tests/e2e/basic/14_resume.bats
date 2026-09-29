@@ -72,3 +72,15 @@ assert d.get('subagent_trajectories'), 'subagent_trajectories must survive a res
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"no session found"* ]]
 }
+
+@test "14.03 --load-trace of a missing file fails clearly instead of silently starting fresh" {
+    run bash -c '"$BIN" --headless --model mock --load-trace "${XDG_DATA_HOME}/missing.json" "ping" </dev/null'
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"missing.json"* ]]
+}
+
+@test "14.04 --trace on a fresh path starts a new session and creates the file" {
+    run bash -c '"$BIN" --headless --model mock --trace "${XDG_DATA_HOME}/fresh.json" "ping" </dev/null'
+    [ "${status}" -eq 0 ]
+    [ -s "${XDG_DATA_HOME}/fresh.json" ]
+}
