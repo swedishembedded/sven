@@ -724,13 +724,11 @@ impl EffectExecutor for TurnExecutor {
             }
         };
 
-        // Track consecutive empty turns (no usable text, no tool calls) per
-        // thread. Whitespace-only text is empty: the model said nothing, and
-        // counting it as content would let a thread stay silent forever. A
-        // single empty turn is tolerated - the machine's
+        // Track consecutive empty turns (no tool calls, and no text beyond
+        // whitespace) per thread. One is tolerated - the machine's
         // `GeneratingAction::EmptyTurn` nudges the model to try again - but a
-        // thread that keeps returning nothing must fail loudly rather than
-        // let the run be treated as a successful (if silent) completion.
+        // thread that keeps returning nothing must fail loudly, not end as a
+        // silent success.
         let is_empty_turn = text.trim().is_empty() && tool_calls.is_empty();
         let empty_turn_count = {
             let mut counts = self

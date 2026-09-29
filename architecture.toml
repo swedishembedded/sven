@@ -263,7 +263,7 @@ path = "crates/team/src/spawn.rs"
 lines = 1232
 [[allow.large_file]]
 path = "crates/executors/tests/pipeline_integration.rs"
-lines = 1195
+lines = 1066
 [[allow.large_file]]
 path = "crates/tui/src/app/chat_ops.rs"
 lines = 1164
