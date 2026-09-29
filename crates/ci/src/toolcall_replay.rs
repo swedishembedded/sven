@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use atif::{MessageBody, TraceStep};
-use sven_tools::{ToolCall, ToolRegistry};
+use sven_tool_registry::{ToolCall, ToolRegistry};
 
 /// Re-execute every tool call recorded across `steps` with fresh results.
 ///
@@ -65,7 +65,7 @@ mod tests {
     use super::*;
     use atif::{ObservationEntry, StepObservation, StepOrigin, ToolInvocation};
     use std::sync::Arc;
-    use sven_tools::{ApprovalPolicy, Tool, ToolOutput, ToolRegistry};
+    use sven_tool_registry::{ApprovalPolicy, Tool, ToolOutput, ToolRegistry};
 
     struct EchoTool;
 

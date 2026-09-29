@@ -10,7 +10,7 @@ name = "sven-mcp"
 path = "src/bin/sven-mcp.rs"
 
 [dependencies]
-sven-tools           = { path = "../tools" }
+sven-tool-registry   = { path = "../tool-registry" }
 sven-tools-exec      = { path = "../tools-exec" }
 sven-tools-fs        = { path = "../tools-fs" }
 sven-tools-web       = { path = "../tools-web" }

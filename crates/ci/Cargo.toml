@@ -7,7 +7,8 @@ edition = "2021"
 sven-config    = { path = "../config" }
 sven-model     = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
-sven-tools     = { path = "../tools" }
+sven-tool-api  = { path = "../tool-api" }
+sven-tool-registry = { path = "../tool-registry" }
 sven-tools-fs  = { path = "../tools-fs" }
 sven-session-model = { path = "../session-model" }
 sven-machines      = { path = "../machines" }
@@ -27,6 +28,5 @@ tracing        = { workspace = true }
 
 [dev-dependencies]
 sven-session-store   = { path = "../session-store" }
-sven-tools   = { path = "../tools" }
 async-trait  = { workspace = true }
 tempfile     = { workspace = true }

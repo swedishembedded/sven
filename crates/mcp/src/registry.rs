@@ -16,7 +16,7 @@
 //! MCP client or the agent sees. A second tool for a job the first already
 //! does is a choice pushed onto the caller with nothing to decide it on.
 
-use sven_tools::ToolRegistry;
+use sven_tool_registry::ToolRegistry;
 use sven_tools_exec::ShellTool;
 use sven_tools_fs::{EditFileTool, FindFileTool, ReadFileTool, WriteTool};
 use sven_tools_web::{GrepTool, ReadLintsTool, WebFetchTool, WebSearchTool};

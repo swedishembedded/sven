@@ -2,7 +2,7 @@
 name        = "sven-tools-gdb"
 version.workspace = true
 edition     = "2021"
-description = "GDB/MI debugging tools (connect, start-server, command, interrupt, stop, wait-stopped, and the compound GdbTool dispatcher), plus GDB-server-binary discovery. Domain tier. Unix only -- GDB signal APIs are not available on Windows. Split out of sven-tools's builtin/gdb/ (5.7 of the refactor plan's god-crate splits); verified fully self-contained (zero cross-refs into any other builtin/ subdirectory) before the move."
+description = "GDB/MI debugging tools (connect, start-server, command, interrupt, stop, wait-stopped, and the compound GdbTool dispatcher), plus GDB-server-binary discovery. Domain tier. Unix only -- GDB signal APIs are not available on Windows."
 license     = "Apache-2.0"
 
 [dependencies]

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use sven_config::CompactionStrategy;
 use sven_model::{Message, Role};
-use sven_tools::OutputCategory;
+use sven_tool_api::OutputCategory;
 
 // ─── Compaction prompts ───────────────────────────────────────────────────────
 

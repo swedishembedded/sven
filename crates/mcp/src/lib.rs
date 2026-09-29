@@ -59,7 +59,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use rmcp::ServiceExt;
-use sven_tools::ToolRegistry;
+use sven_tool_registry::ToolRegistry;
 
 /// Start an MCP stdio server, serving the tools in `registry` on
 /// `stdin` / `stdout`.

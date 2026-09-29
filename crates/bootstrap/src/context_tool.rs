@@ -19,7 +19,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
-use sven_tools::{
+use sven_tool_api::{
     events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
@@ -250,7 +250,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use sven_tools::tool::ToolCall;
+    use sven_tool_api::tool::ToolCall;
 
     // ContextTool requires a model provider for query/reduce; we only test
     // the routing logic and the actions that don't need a live model.

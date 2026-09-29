@@ -55,7 +55,7 @@ use tokio::sync::Mutex;
 use tracing::debug;
 
 use sven_config::AgentMode;
-use sven_tools::{
+use sven_tool_api::{
     events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
@@ -580,7 +580,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{mpsc, Mutex};
 
-    use sven_tools::tool::{Tool, ToolCall};
+    use sven_tool_api::tool::{Tool, ToolCall};
     use sven_tools_fs::OutputBufferStore;
     use sven_workspace::{AgentInfo, SharedAgents};
 

@@ -30,7 +30,7 @@ use tracing::{debug, info, warn};
 
 use sven_config::{AgentMode, Config};
 use sven_model::{CompletionRequest, Message, ModelProvider, ResponseEvent};
-use sven_tools::{
+use sven_tool_api::{
     events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{OutputCategory, Tool, ToolCall, ToolOutput},

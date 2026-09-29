@@ -90,7 +90,7 @@ fn append_messages(store: &Mutex<ThreadStore>, thread_id: &str, messages: Vec<Me
 fn register_calls(
     registry: &Mutex<HashMap<ToolCallId, (String, String)>>,
     thread_id: &str,
-    calls: &[sven_tools::ToolCall],
+    calls: &[sven_tool_api::ToolCall],
     tools: &ToolRegistry,
 ) -> Vec<ProposedToolCall> {
     let mut proposed = Vec::with_capacity(calls.len());
@@ -117,7 +117,7 @@ use sven_hsm::{
 use sven_kernel::{EffectExecutor, EventSink};
 use sven_llm::{ThreadStore, TurnRequest};
 use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
-use sven_tools::ToolRegistry;
+use sven_tool_registry::ToolRegistry;
 use sven_turn::{stream_turn, to_model_schemas, AbortedError, ModelResolver};
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 

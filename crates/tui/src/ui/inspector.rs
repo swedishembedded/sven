@@ -24,7 +24,8 @@ use tokio::sync::Mutex;
 
 use chrono::Local;
 use sven_mcp_client::ServerStatusSummary;
-use sven_tools::{format_tools_list, ToolSchema};
+use sven_tool_api::format_tools_list;
+use sven_tool_registry::ToolSchema;
 use sven_tools_fs::OutputBufferStore;
 use sven_workspace::{
     find_workspace_root, format_agents_list, format_skills_tree, AgentInfo, SkillInfo,

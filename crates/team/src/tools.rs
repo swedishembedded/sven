@@ -14,7 +14,7 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
+use sven_tool_api::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
 
 use crate::config::{is_process_alive, MemberStatus, TeamMember};
 use crate::spawn::TeamConfigHandle;
@@ -620,7 +620,7 @@ mod tests {
     use tempfile::TempDir;
     use tokio::sync::Mutex;
 
-    use sven_tools::{Tool, ToolCall};
+    use sven_tool_api::{Tool, ToolCall};
 
     use crate::config::TeamConfig;
     use crate::spawn::TeamConfigHandle;
@@ -717,7 +717,7 @@ mod tests {
     #[test]
     fn all_tools_have_auto_policy() {
         let h = empty_config();
-        use sven_tools::ApprovalPolicy;
+        use sven_tool_api::ApprovalPolicy;
         assert_eq!(
             CreateTaskTool {
                 team_config: h.clone(),

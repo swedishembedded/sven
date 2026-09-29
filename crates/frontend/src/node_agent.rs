@@ -26,7 +26,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use serde::Serialize;
 use sven_machines::AgentEvent;
-use sven_tools::ToolSchema;
+use sven_tool_registry::ToolSchema;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, warn};
 use uuid::Uuid;

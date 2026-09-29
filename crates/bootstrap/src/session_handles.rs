@@ -19,7 +19,7 @@ use sven_hsm::{Event, RuntimeStatus};
 use sven_kernel::EventSink;
 use sven_llm::ThreadStore;
 use sven_model::Message;
-use sven_tools::ToolRegistry;
+use sven_tool_registry::ToolRegistry;
 
 // ── KernelChannels ────────────────────────────────────────────────────────────
 

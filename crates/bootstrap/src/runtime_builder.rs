@@ -37,8 +37,8 @@ use sven_llm::ThreadStore;
 use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine, UiTestMachine};
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
-use sven_tools::events::ToolEvent;
-use sven_tools::PermissionRequester;
+use sven_tool_api::events::ToolEvent;
+use sven_tool_api::PermissionRequester;
 use sven_tools_agent::QuestionRequest;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -114,7 +114,7 @@ pub struct RuntimeBuilder {
     context_facts: serde_json::Map<String, serde_json::Value>,
     /// Tools registered on top of the built-in set. See
     /// [`RuntimeBuilder::with_extra_tools`].
-    extra_tools: Vec<Arc<dyn sven_tools::Tool>>,
+    extra_tools: Vec<Arc<dyn sven_tool_api::Tool>>,
     /// Mode registry to look the machine up in, when not the default one.
     /// See [`RuntimeBuilder::with_mode_registry`].
     mode_registry: Option<Arc<sven_machines::ModeRegistry>>,
@@ -335,7 +335,7 @@ impl RuntimeBuilder {
     /// This is how an application gives its agents capabilities the kernel has
     /// never heard of. They are registered after the built-ins and after MCP
     /// tools, so a name collision resolves in the caller's favour.
-    pub fn with_extra_tools(mut self, tools: Vec<Arc<dyn sven_tools::Tool>>) -> Self {
+    pub fn with_extra_tools(mut self, tools: Vec<Arc<dyn sven_tool_api::Tool>>) -> Self {
         self.extra_tools = tools;
         self
     }
@@ -489,16 +489,16 @@ impl RuntimeBuilder {
             self.agent_mode.unwrap_or(sven_config::AgentMode::Agent),
         ));
         let (tool_event_tx, tool_event_rx) =
-            tokio::sync::mpsc::channel::<sven_tools::events::ToolEvent>(64);
+            tokio::sync::mpsc::channel::<sven_tool_api::events::ToolEvent>(64);
         let mut runtime = self.runtime_ctx.to_agent_runtime();
         runtime.append_system_prompt = self.runtime_ctx.append_system_prompt;
         runtime.system_prompt_override = self.runtime_ctx.system_prompt_override;
         runtime.no_system = self.runtime_ctx.no_system;
         runtime.no_tools = self.runtime_ctx.no_tools;
 
-        let todos = Arc::new(tokio::sync::Mutex::new(
-            Vec::<sven_tools::events::TodoItem>::new(),
-        ));
+        let todos = Arc::new(tokio::sync::Mutex::new(Vec::<
+            sven_tool_api::events::TodoItem,
+        >::new()));
         let buffer_store = Arc::new(tokio::sync::Mutex::new(
             sven_tools_fs::OutputBufferStore::new(),
         ));
@@ -907,7 +907,7 @@ pub struct SessionBundle {
 ///
 /// # Why this exists
 ///
-/// `sven_tools::events::ToolEvent` predates the HSM kernel: it was how tools
+/// `sven_tool_api::events::ToolEvent` predates the HSM kernel: it was how tools
 /// reported side-band state changes (todo list updates, mode/model switches,
 /// subagent lifecycle, delegate summaries) back to the old `sven_machines::Agent`
 /// loop. Several tools still send through it — `TodoTool`, `TaskTool`

@@ -11,7 +11,7 @@ license     = "Apache-2.0"
 [dependencies]
 # The kernel vocabulary the control protocol maps to/from (Event, UiEvent,
 # ApprovalId), plus the tool-call vocabulary (ToolSchema) — deliberately no
-# libp2p/axum and no sven-tools, so a frontend can depend on the protocol +
+# libp2p/axum and no sven-tool-registry, so a frontend can depend on the protocol +
 # mappings without the heavy node stack or the full tool-registry crate.
 sven-hsm    = { path = "../hsm" }
 sven-config = { path = "../config" }

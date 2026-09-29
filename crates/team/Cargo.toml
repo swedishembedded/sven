@@ -5,7 +5,7 @@ edition = "2021"
 description = "Agent team coordination: shared task lists, team config, and lifecycle tools"
 
 [dependencies]
-sven-tools  = { path = "../tools" }
+sven-tool-api = { path = "../tool-api" }
 
 fs4         = { workspace = true }
 anyhow      = { workspace = true }

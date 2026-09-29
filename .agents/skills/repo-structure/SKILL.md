@@ -58,7 +58,15 @@ sven/
 | `sven-mcp` | MCP (Model Context Protocol) client integration |
 | `sven-model` | LLM provider drivers (OpenAI, Anthropic, mock, ...) |
 | `sven-workspace` | Tokio runtime wiring and process lifecycle |
-| `sven-tools` | 18-tool toolkit (file, shell, grep, todo, GDB, ...) |
+| `sven-tool-api` | `Tool` trait, `ToolCall`/`ToolOutput`, approval policy, `PermissionRequester`, tool events |
+| `sven-tool-registry` | `ToolRegistry`, `ToolSchema`, `SharedTools`, `ToolPolicy` |
+| `sven-tools-fs` | File read/write/edit/find tools and subprocess output buffer tools |
+| `sven-tools-exec` | `shell` tool |
+| `sven-tools-web` | `web_fetch`, `web_search`, `grep`, `read_lints` |
+| `sven-tools-ctx` | RLM context tools (`context_open`/`read`/`grep`), knowledge tools, `memory` |
+| `sven-tools-agent` | `system`, `todo`, `ask_question`, `skill` |
+| `sven-tools-gdb` | GDB/MI debugging tools (Unix only) |
+| `sven-tools-android` | Typed Android device control over ADB |
 | `sven-tui` | Terminal UI: `UiMode` enum, `MachineProjection` consumer, key bindings |
 
 ## Key Makefile targets

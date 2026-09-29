@@ -20,7 +20,7 @@ use crate::{AgentInfo, SkillInfo};
 /// `title` and the total count.
 ///
 /// This is the shared engine behind `format_skills_tree`, `format_agents_list`,
-/// and `format_tools_list` (in `sven-tools`) - all three share the same
+/// and `format_tools_list` (in `sven-tool-api`) - all three share the same
 /// `BTreeMap` grouping + `## Title (N total)\n### ns\n` skeleton.
 pub fn format_grouped_list<T, G, F>(
     items: &[T],

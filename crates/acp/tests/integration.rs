@@ -88,7 +88,7 @@ fn error_becomes_agent_message_chunk() {
 
 #[test]
 fn todo_update_becomes_plan() {
-    use sven_tools::events::{TodoItem, TodoStatus};
+    use sven_tool_api::events::{TodoItem, TodoStatus};
     let todos = vec![
         TodoItem {
             id: "t1".into(),
@@ -119,7 +119,7 @@ fn mode_changed_becomes_current_mode_update() {
 
 #[test]
 fn tool_call_started_becomes_tool_call() {
-    use sven_tools::ToolCall;
+    use sven_tool_api::ToolCall;
     let tc = ToolCall {
         id: "call-1".into(),
         name: "read_file".into(),

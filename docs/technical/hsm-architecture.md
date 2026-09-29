@@ -459,9 +459,9 @@ calls, tool results), `ResponseEvent` (the streamed `TextDelta` /
 
 ---
 
-## Tools (`sven-tools`)
+## Tools (`sven-tool-api`, `sven-tool-registry`)
 
-`ToolRegistry` (`tools/src/registry.rs`) holds all available tools behind a
+`ToolRegistry` (`tool-registry/src/registry.rs`) holds all available tools behind a
 `RwLock` (so MCP tools can be swapped at runtime). Beyond execution it provides
 the **tool-subset API** the `SdlcMachine` relies on:
 
@@ -558,7 +558,9 @@ E2E bats tests use `--model mock` so no real API key is required.
 | `sven-hsm` | HSM kernel: dispatch, `Machine` trait, `Runtime`/`ErasedRuntime` (Active Object), permissions, audit/replay, `Clock`/timers, `Submachine`/`ChildSpawner`, `ObservationSink`/`UiEvent` |
 | `sven-model` | Stateless provider abstraction: `ModelProvider`, `CompletionRequest` (incl. `response_format`), `Message`, `ResponseEvent`, `ResponseFormat` |
 | `sven-llm` | Conversation primitives: `ConversationStore` (append-only per-thread history), `TurnRequest`, `strip_code_fences`. (Typed `LlmRequest` / `LlmAdapter` / `DefaultLlmAdapter` paths removed.) |
-| `sven-tools` | `ToolRegistry` (incl. tool-subset API), `Tool` trait, approval policy / `PermissionRequester` |
+| `sven-tool-api` | `Tool` trait, `ToolCall` / `ToolOutput`, approval policy / `PermissionRequester`, tool events and display |
+| `sven-tool-registry` | `ToolRegistry` (incl. tool-subset API), `ToolSchema`, `SharedTools`, `ToolPolicy` |
+| `sven-tools-*` | Concrete tool implementations by domain: `fs`, `exec`, `web`, `ctx`, `agent`, `gdb`, `android` |
 | `sven-core` | Concrete machines (`ReactiveAgentMachine`, `SdlcMachine` + `TaskMachine`), `loop_core` shared state handlers, `stream_turn`, `Agent` (legacy), `Session`, `ModeRegistry` |
 | `sven-executors` | Effect executors: `TurnExecutor`, tool, user, timer, checkpoint, audit, internal, and the `CompositeExecutor` router |
 | `sven-bootstrap` | `RuntimeBuilder` (per-session factory), `SessionSupervisor`, `SdlcChildSpawner` |

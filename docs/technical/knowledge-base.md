@@ -109,7 +109,7 @@ Subsystem                      Covers                                   Updated 
 ----------------------------------------------------------------------------------------------------
 Agent Loop & Compaction        crates/turn/**                      2026-03-01   sven-turn.md
 HSM Kernel                     crates/hsm/**, crates/kernel/**     2026-03-01   sven-hsm.md
-Tool System                    crates/tools/**                     2026-03-01   sven-tools.md
+Tool System                    crates/tool-*/**, crates/tools-*/** 2026-03-01   sven-tools.md
 
 Use `search_knowledge "<query>"` to find relevant content across all docs.
 ```
@@ -214,7 +214,7 @@ high-level descriptions.
 |-------|----------------|
 | `sven-workspace` | `KnowledgeInfo`, `SharedKnowledge`; `discover_knowledge()`; `check_knowledge_drift()`; `format_drift_warnings()` |
 | `sven-core` | `build_knowledge_section()` - knowledge overview in system prompt; `PromptContext.knowledge` and `.knowledge_drift_note` fields |
-| `sven-tools` | `ListKnowledgeTool`, `SearchKnowledgeTool` |
+| `sven-tools-ctx` | `ListKnowledgeTool`, `SearchKnowledgeTool` |
 | `sven-bootstrap` | Calls `discover_knowledge()` and `check_knowledge_drift()` in `RuntimeContext::auto_detect()`; registers both tools in `build_tool_registry()` |
 
 ---

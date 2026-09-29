@@ -149,7 +149,7 @@ type ProviderFactory = Box<
 /// Optional test seam: supply the MCP tool set a `RefreshMcpTools` request
 /// installs. Production passes `None` and the tools are pulled from the live
 /// [`McpManager`].
-type McpToolsSource = Box<dyn Fn() -> Vec<Arc<dyn sven_tools::Tool>> + Send + Sync>;
+type McpToolsSource = Box<dyn Fn() -> Vec<Arc<dyn sven_tool_api::Tool>> + Send + Sync>;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn kernel_session_task(
@@ -472,7 +472,7 @@ mod tests {
     use sven_config::{AgentMode, Config, ModelConfig};
     use sven_model::{CompletionRequest, ModelProvider, ResponseEvent};
     use sven_model_mock::ScriptedMockProvider;
-    use sven_tools::{policy::ApprovalPolicy, Tool, ToolCall, ToolOutput};
+    use sven_tool_api::{policy::ApprovalPolicy, Tool, ToolCall, ToolOutput};
     use sven_workspace::{SharedAgents, SharedSkills};
     use tokio::sync::{mpsc, Mutex};
     use tokio::task::JoinHandle;

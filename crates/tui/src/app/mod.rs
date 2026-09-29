@@ -106,7 +106,7 @@ pub struct App {
     /// Shared tool snapshot - populated by the runtime builder after the local
     /// tool registry is built.  Empty in node-proxy mode (tools are fetched live
     /// from the node when `/tools` is opened).
-    pub(crate) shared_tools: sven_tools::SharedTools,
+    pub(crate) shared_tools: sven_tool_registry::SharedTools,
     /// MCP manager - populated in local mode after the agent is built.
     /// `None` in node-proxy mode.  Used by `/mcp` to display server status.
     pub(crate) mcp_manager: Option<Arc<McpManager>>,
@@ -121,7 +121,7 @@ pub struct App {
     pub(crate) mcp_refresh_tx: Option<tokio::sync::broadcast::Sender<()>>,
     /// Tool display registry - set by the runtime builder after the registry is built.
     /// Used for chat view (collapsed summary, display name) when present.
-    pub(crate) shared_tool_displays: sven_tools::SharedToolDisplays,
+    pub(crate) shared_tool_displays: sven_tool_registry::SharedToolDisplays,
     /// Set to `true` after a tool call completes - triggers a terminal-state
     /// recovery pass before the next draw.
     pub(crate) needs_terminal_recover: bool,

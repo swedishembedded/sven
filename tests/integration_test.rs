@@ -55,7 +55,7 @@ fn config_defaults_are_valid() {
 #[test]
 fn tool_policy_auto_approve() {
     use sven_config::ToolsConfig;
-    use sven_tools::{ApprovalPolicy, ToolPolicy};
+    use sven_tool_registry::{ApprovalPolicy, ToolPolicy};
 
     let cfg = ToolsConfig::default();
     let policy = ToolPolicy::from_config(&cfg);
@@ -66,7 +66,7 @@ fn tool_policy_auto_approve() {
 #[test]
 fn tool_policy_deny() {
     use sven_config::ToolsConfig;
-    use sven_tools::{ApprovalPolicy, ToolPolicy};
+    use sven_tool_registry::{ApprovalPolicy, ToolPolicy};
 
     let cfg = ToolsConfig {
         deny_patterns: vec!["rm -rf /*".into()],
@@ -78,8 +78,8 @@ fn tool_policy_deny() {
 
 #[tokio::test]
 async fn shell_tool_executes_echo() {
-    use sven_tools::Tool;
-    use sven_tools::ToolCall;
+    use sven_tool_api::Tool;
+    use sven_tool_api::ToolCall;
     use sven_tools_exec::ShellTool;
 
     let tool = ShellTool::default();
@@ -95,7 +95,7 @@ async fn shell_tool_executes_echo() {
 
 #[tokio::test]
 async fn fs_tool_write_read_roundtrip() {
-    use sven_tools::{Tool, ToolCall};
+    use sven_tool_api::{Tool, ToolCall};
     use sven_tools_fs::{ReadFileTool, WriteTool};
 
     let tmp_dir = tempfile::tempdir().unwrap();

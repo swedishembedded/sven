@@ -25,7 +25,7 @@ use rmcp::{
     service::{RequestContext, RoleServer},
     ErrorData as McpError,
 };
-use sven_tools::{PermissionRequester, ToolCall, ToolRegistry};
+use sven_tool_registry::{PermissionRequester, ToolCall, ToolRegistry};
 use uuid::Uuid;
 
 use crate::bridge::{output_to_call_result, schema_to_mcp_tool};
@@ -39,7 +39,7 @@ use crate::bridge::{output_to_call_result, schema_to_mcp_tool};
 ///
 /// MCP clients call tools without a human in the loop, so `call_tool` uses
 /// [`ToolRegistry::execute_with_requester`]: tools whose
-/// [`ApprovalPolicy`](sven_tools::ApprovalPolicy) is `Ask` (shell,
+/// [`ApprovalPolicy`](sven_tool_registry::ApprovalPolicy) is `Ask` (shell,
 /// `write_file`, `delete_file`, ...) are **denied by default**. Wire a
 /// [`PermissionRequester`] via
 /// [`with_permission_requester`](Self::with_permission_requester) to route
@@ -135,7 +135,7 @@ impl ServerHandler for SvenMcpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sven_tools::ToolRegistry;
+    use sven_tool_registry::ToolRegistry;
 
     fn make_server_with(tools: impl FnOnce(&mut ToolRegistry)) -> SvenMcpServer {
         let mut reg = ToolRegistry::new();

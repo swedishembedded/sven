@@ -15,7 +15,7 @@ use agent_client_protocol::{
 use sven_config::AgentMode;
 use sven_hsm::UiEvent;
 use sven_machines::AgentEvent;
-use sven_tools::events::{TodoItem, TodoStatus};
+use sven_tool_api::events::{TodoItem, TodoStatus};
 
 // ─── Mode mapping ─────────────────────────────────────────────────────────────
 

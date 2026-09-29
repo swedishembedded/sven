@@ -2,7 +2,7 @@
 name        = "sven-tools-web"
 version.workspace = true
 edition     = "2021"
-description = "Information-gathering tools: internet fetch/search (web_fetch, web_search) and read-only codebase diagnostics that shell out to an external binary (grep, search_codebase, read_lints). Domain tier. Split out of sven-tools's builtin/web/ + builtin/search/{grep,search_codebase}.rs + builtin/system/read_lints.rs (5.5 of the refactor plan's god-crate splits)."
+description = "Information-gathering tools: internet fetch/search (web_fetch, web_search) and read-only codebase diagnostics that shell out to an external binary (grep, read_lints). Domain tier."
 license     = "Apache-2.0"
 
 [dependencies]

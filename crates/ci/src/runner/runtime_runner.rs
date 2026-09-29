@@ -33,7 +33,7 @@ use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
 use sven_session_store::{
     apply_outcome_to_trajectory, make_title, OutcomeFold, RunConclusion, Verdict,
 };
-use sven_tools::ToolCall;
+use sven_tool_api::ToolCall;
 
 use crate::output::{
     finalise_stdout, format_token_usage_line, tool_output_snippet, write_progress, write_stderr,
@@ -849,12 +849,12 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         UiEvent::SubagentEvent {
             handle_id, update, ..
         } => match update {
-            sven_tools::events::SubagentUpdate::Finished { .. } => {
+            sven_tool_api::events::SubagentUpdate::Finished { .. } => {
                 write_stderr(&format!(
                     "[sven:subagent:finished] handle_id=\"{handle_id}\""
                 ));
             }
-            sven_tools::events::SubagentUpdate::Failed { reason } => {
+            sven_tool_api::events::SubagentUpdate::Failed { reason } => {
                 write_stderr(&format!(
                     "[sven:subagent:failed] handle_id=\"{handle_id}\" reason={reason:?}"
                 ));

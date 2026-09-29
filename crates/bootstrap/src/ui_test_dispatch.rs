@@ -37,7 +37,7 @@ use sven_config::Config;
 use sven_executors::ToolExecutor;
 use sven_hsm::Event;
 use sven_machines::machines::ui_test::{ask_user_binding, ERROR_FACT, RESULTS_FACT};
-use sven_tools::{Tool, ToolRegistry};
+use sven_tool_registry::{Tool, ToolRegistry};
 use sven_tools_android::adb::{self, DeviceLister, RealDeviceLister, SerialPick};
 
 use crate::runtime_builder::{RuntimeBuilder, ToolExecutorFactory};
@@ -388,8 +388,8 @@ mod tests {
     use async_trait::async_trait;
     use sven_config::Config;
     use sven_model_mock::ScriptedMockProvider;
-    use sven_tools::policy::ApprovalPolicy;
-    use sven_tools::{ToolCall, ToolOutput};
+    use sven_tool_api::policy::ApprovalPolicy;
+    use sven_tool_api::{ToolCall, ToolOutput};
 
     fn test_config() -> Config {
         let mut cfg = Config::default();

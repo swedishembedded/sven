@@ -23,10 +23,8 @@ use tokio::sync::{mpsc, Mutex};
 
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
-use sven_tools::{
-    events::{TodoItem, ToolEvent},
-    ToolRegistry,
-};
+use sven_tool_api::events::{TodoItem, ToolEvent};
+use sven_tool_registry::ToolRegistry;
 use sven_tools_agent::{
     AskQuestionTool, ModelCatalogEntry, QuestionRequest, SkillTool, SystemTool, TodoTool,
 };
@@ -75,7 +73,7 @@ pub struct IntegrationProviders {
 }
 
 /// Converts the model catalog into the slice-of-fields `SystemTool`'s
-/// `switch_model` fuzzy search needs, without giving `sven-tools` a direct
+/// `switch_model` fuzzy search needs, without giving `sven-tools-agent` a direct
 /// dependency on `sven-model` for the sake of one tool's lookup.
 fn model_catalog_for_tools() -> Vec<ModelCatalogEntry> {
     sven_model::catalog::static_catalog()

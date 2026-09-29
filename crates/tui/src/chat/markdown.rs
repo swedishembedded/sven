@@ -11,7 +11,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::sync::{Arc, RwLock};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
-use sven_tools::{TodoItem, ToolDisplayRegistry};
+use sven_tool_api::{TodoItem, ToolDisplayRegistry};
 
 use crate::chat::segment::ChatSegment;
 use crate::markdown::StyledLines;
@@ -40,7 +40,7 @@ pub const SYM_EXPAND: &str = "▶";
 pub fn format_todos_markdown(todos: &[TodoItem]) -> String {
     let mut result = String::from("\n**Todo List Updated:**\n\n");
     for todo in todos {
-        use sven_tools::events::TodoStatus;
+        use sven_tool_api::events::TodoStatus;
         let (checkbox, label) = match todo.status {
             TodoStatus::Completed => ("- [x] ", ""),
             TodoStatus::Cancelled => ("- [x] ~~", "~~"),
@@ -140,7 +140,7 @@ pub type ToolDisplayRegistryRef = Option<Arc<RwLock<ToolDisplayRegistry>>>;
 
 /// Render a single-line collapsed preview for a segment (ratatui-only mode).
 ///
-/// When `tool_display_registry` is set, tools that implement [`sven_tools::ToolDisplay`]
+/// When `tool_display_registry` is set, tools that implement [`sven_tool_api::ToolDisplay`]
 /// use their display name and collapsed summary instead of the generic fallback.
 ///
 /// The preview is a compact, information-dense one-liner:
@@ -385,10 +385,10 @@ pub(crate) fn message_to_markdown(
 
 /// Return the last `n` non-empty path components joined by `/`.
 ///
-/// Delegates to `sven_tools::shorten_path`.
+/// Delegates to `sven_tool_api::shorten_path`.
 #[allow(dead_code)]
 pub fn shorten_path(path: &str, n: usize) -> String {
-    sven_tools::shorten_path(path, n)
+    sven_tool_api::shorten_path(path, n)
 }
 
 /// Strip internal anchor/role-prefix lines from a markdown string before
@@ -428,13 +428,13 @@ pub fn strip_display_anchors(md: &str) -> String {
 }
 
 /// Build a human-readable one-line description of a tool call for the collapsed
-/// tier-0 display.  Delegates to the canonical implementation in `sven-tools`.
+/// tier-0 display.  Delegates to the canonical implementation in `sven-tool-api`.
 pub fn tool_smart_summary(name: &str, args_json: &str) -> String {
     let v: serde_json::Value = match serde_json::from_str(args_json) {
         Ok(v) => v,
         Err(_) => return truncate_to_width(args_json, 55),
     };
-    sven_tools::tool_smart_summary(name, &v)
+    sven_tool_api::tool_smart_summary(name, &v)
 }
 
 // ── Parse helpers ─────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ edition = "2021"
 description = "Semantic (vector + BM25) memory store for sven agents"
 
 [dependencies]
-sven-tools   = { path = "../tools" }
+sven-tool-api = { path = "../tool-api" }
 # The learning submitter is selected by config value (`local`, `none`, and a
 # remote one later), so the config->submitter factory lives beside the
 # submitters rather than being re-derived at every call site. domain ->

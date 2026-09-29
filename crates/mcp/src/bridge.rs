@@ -6,18 +6,18 @@
 //!
 //! These are pure, stateless functions - no allocation beyond what the output
 //! types require.  The bridge sits at the seam between the existing
-//! [`sven_tools`] crate and the MCP wire protocol so neither side needs to
+//! `sven-tool-registry` crate and the MCP wire protocol so neither side needs to
 //! know about the other.
 
 use std::sync::Arc;
 
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool as McpTool};
-use sven_tools::{ToolOutput, ToolOutputPart, ToolSchema};
+use sven_tool_registry::{ToolOutput, ToolOutputPart, ToolSchema};
 
 /// Convert a [`ToolSchema`] (sven) into an rmcp [`Tool`] descriptor.
 ///
 /// The JSON Schema stored in [`ToolSchema::parameters`] is already valid
-/// JSON Schema produced by each tool's [`sven_tools::Tool::parameters_schema`]
+/// JSON Schema produced by each tool's [`sven_tool_registry::Tool::parameters_schema`]
 /// implementation, so we pass it through as the `input_schema` without
 /// further processing.
 pub fn schema_to_mcp_tool(schema: ToolSchema) -> McpTool {
@@ -107,7 +107,7 @@ fn parse_data_uri(uri: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use serde_json::{json, Value};
-    use sven_tools::{ToolOutput, ToolOutputPart, ToolSchema};
+    use sven_tool_registry::{ToolOutput, ToolOutputPart, ToolSchema};
 
     use super::*;
 

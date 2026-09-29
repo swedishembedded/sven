@@ -34,7 +34,7 @@ use tokio::time::Instant;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, warn};
 
-use sven_tools::{
+use sven_tool_api::{
     events::{SubagentUpdate, ToolEvent},
     tool::ToolOutput,
 };

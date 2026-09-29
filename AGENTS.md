@@ -47,7 +47,7 @@ CHANGELOG.md is history and exempt.
   untrusted reasoning service; tools are invoked exclusively through typed
   `Effect` values emitted by HSM transitions. **Transition functions must stay
   pure (no I/O).** `sven-machines` (the `Machine` impls) has no path to
-  `sven-model`/`sven-tools` at all. The outside world is touched only by
+  `sven-model`/`sven-tool-registry` at all. The outside world is touched only by
   `sven-executors`' `EffectExecutor`s and the impure turn primitives they call
   into (`sven-turn`'s `stream_turn`/`compact`) - never from a transition.
 - **One event type.** `sven_hsm::UiEvent` and `sven_machines::AgentEvent` are
@@ -179,7 +179,7 @@ closure excludes `ratatui`/`libp2p`/`git2`/`webauthn-rs`/`portable-pty`/
 
 The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) →
 { `sven-machines` (machines), `sven-executors` (I/O), `sven-model` (LLM),
-`sven-tool-api`/`sven-tool-registry`/`sven-tools` }. Every workspace crate is
+`sven-tool-api`/`sven-tool-registry` }. Every workspace crate is
 organized into 11 tiers (`foundation` < `kernel` < `services` < `domain` <
 `machines` < `assembly` < `wiring` < `sdk` < `surface` < `composite` <
 `binary`) -
@@ -204,8 +204,7 @@ Sven` codec) · `sven-tool-api` (`Tool` trait + `ToolDisplay`)
 ### services
 `sven-session-store` (ATIF trajectory-backed session store, legacy YAML chat
 import, `sven migrate-sessions`) · `sven-llm` (`ThreadStore` + fence helper)
-· `sven-tools` (thin re-export shim over `sven-tool-api`/`sven-tool-registry`
-- **not** where tool implementations live, see below) · `sven-tool-registry`
+· `sven-tool-registry`
 (`ToolRegistry`, `ApprovalPolicy`, fs_root jail) · `sven-mcp-client` (MCP
 client: stdio + Streamable HTTP, OAuth) · `sven-kernel` (`ErasedRuntime`,
 `EffectExecutor`, `EventSink`, `ChildSpawner`) · `sven-model-drivers` (34
@@ -265,7 +264,7 @@ modules, one per subcommand group)
                   │
             sven-hsm (kernel: pure transitions → Vec<Effect>)
            /        |          \
-     sven-machines  sven-model  sven-executors ──────► sven-tools
+     sven-machines  sven-model  sven-executors ──────► sven-tool-registry
      (machines)   (LLM svc)   (ONLY I/O layer)
 ```
 
@@ -313,8 +312,8 @@ touching any crate here, and the same goes for machines
 own capability set.
 
 Tool implementations live in the domain-tier `sven-tools-*` crates, split by
-concern (see the crate table above) - **not** in `sven-tools` itself, which is
-now only a thin re-export shim over `sven-tool-api`/`sven-tool-registry`.
+concern (see the crate table above). `sven-tool-api` holds the `Tool` trait
+and `sven-tool-registry` the registry; neither holds a concrete tool.
 1. Pick (or create) the right `sven-tools-*` crate for the new tool's concern;
    implement `Tool` (+ `parameters_schema`, `kernel_capability`,
    `default_policy`, `modes`) and `ToolDisplay`.

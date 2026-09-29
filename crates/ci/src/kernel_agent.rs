@@ -29,7 +29,7 @@ use sven_hsm::{Event, UiEvent};
 use sven_machines::AgentEvent;
 use sven_model::Message;
 use sven_session_model::reduce_history;
-use sven_tools::ToolRegistry;
+use sven_tool_registry::ToolRegistry;
 
 /// A kernel-backed replacement for the headless runners' use of
 /// `sven_machines::Agent`.
@@ -114,7 +114,7 @@ impl KernelAgent {
             .context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
         let mode_lock = Arc::new(tokio::sync::Mutex::new(AgentMode::Agent));
-        let (tool_event_tx, _tool_event_rx) = mpsc::channel::<sven_tools::events::ToolEvent>(64);
+        let (tool_event_tx, _tool_event_rx) = mpsc::channel::<sven_tool_api::events::ToolEvent>(64);
         let todos = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let buffer_store = Arc::new(tokio::sync::Mutex::new(
             sven_tools_fs::OutputBufferStore::new(),

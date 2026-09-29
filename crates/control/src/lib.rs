@@ -20,7 +20,7 @@
 //!   the [`Event`](sven_hsm::Event) posted onto the kernel queue.
 //!
 //! The crate depends only on `sven-hsm` + `sven-config` + `sven-vocab` (plus
-//! serde / uuid / ciborium) — **not** on `sven-tools` or any transport stack.
+//! serde / uuid / ciborium) — **not** on `sven-tool-registry` or any transport stack.
 //! That is what lets `sven-frontend` reuse the protocol and mappings without
 //! bloating the interactive binaries.
 

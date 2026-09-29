@@ -8,7 +8,7 @@
 //! consistently without duplicating extraction logic.
 
 use serde_json::Value;
-use sven_tools::ToolDisplay;
+use sven_tool_api::ToolDisplay;
 
 /// Structured view data for a tool call, suitable for rendering in any frontend.
 #[derive(Debug, Clone)]
@@ -44,10 +44,10 @@ pub fn extract_tool_view(
         )
     } else {
         (
-            sven_tools::tool_icon(tool_name).to_string(),
+            sven_tool_api::tool_icon(tool_name).to_string(),
             tool_name.to_string(),
-            sven_tools::tool_category(tool_name).to_string(),
-            sven_tools::tool_smart_summary(tool_name, args),
+            sven_tool_api::tool_category(tool_name).to_string(),
+            sven_tool_api::tool_smart_summary(tool_name, args),
         )
     };
 

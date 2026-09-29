@@ -11,7 +11,7 @@ use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use sven_tools::{
+use sven_tool_api::{
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolDisplay, ToolOutput},
 };

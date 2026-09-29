@@ -6,11 +6,10 @@
 //! consumer that only needs to *name* a tool (rather than hold a live
 //! `ToolRegistry`) depends on.
 //!
-//! Split out of the god-crate `sven-tools` (Phase 5.1 of the refactor plan):
-//! this crate holds the trait/type side, `sven-tool-registry` (one tier up)
+//! This crate holds the trait/type side; `sven-tool-registry` (one tier up)
 //! holds the concrete `ToolRegistry` and the config-driven policy engines.
-//! See that crate's docs for why `ApprovalPolicy` lives here rather than
-//! there, despite the plan's original one-line split description.
+//! See the `policy` module docs for why `ApprovalPolicy` lives here rather
+//! than there.
 pub mod display;
 pub mod events;
 pub mod grep_match;

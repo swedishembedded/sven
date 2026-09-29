@@ -95,8 +95,8 @@ impl App {
             .map(|nb| (Some(nb.url.clone()), Some(nb.token.clone()), nb.insecure))
             .unwrap_or((None, None, false));
         let buffer_store = Arc::new(tokio::sync::Mutex::new(OutputBufferStore::new()));
-        let shared_tools = sven_tools::SharedTools::empty();
-        let shared_tool_displays = sven_tools::SharedToolDisplays::new();
+        let shared_tools = sven_tool_registry::SharedTools::empty();
+        let shared_tool_displays = sven_tool_registry::SharedToolDisplays::new();
 
         // ── Session manager initialization ────────────────────────────────────
         let (mut session_manager, mut initial_session_entry) = SessionManager::new();

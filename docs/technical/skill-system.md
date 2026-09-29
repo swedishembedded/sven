@@ -185,7 +185,7 @@ autonomously; the user can invoke it explicitly with `/command`.
 
 ---
 
-## On-demand loading: `LoadSkillTool` (`sven-tools`)
+## On-demand loading: `SkillTool` (`sven-tools-agent`)
 
 When the model decides a skill is relevant it calls `load_skill`:
 
@@ -275,8 +275,8 @@ sent.  The model discovers and loads children via the sub-skill hint returned by
 |-------|---------------|
 | `sven-workspace` | `SkillInfo`, `SvenSkillMeta`, `ParsedSkill`; `parse_skill_file()`; `discover_skills()` and the recursive scanner; requirement checking (`requires_bins`, `requires_env`) |
 | `sven-core` | `build_skills_section()` - serialises skill metadata into the system-prompt XML block; `PromptContext.skills` field |
-| `sven-tools` | `LoadSkillTool` - tool implementation, child-detection logic, bundled-file collection |
-| `sven-bootstrap` | Calls `discover_skills()`, stores the `Arc<[SkillInfo]>` in `RuntimeContext`, wires it into `AgentRuntimeContext` and registers `LoadSkillTool` |
+| `sven-tools-agent` | `SkillTool` - tool implementation, child-detection logic, bundled-file collection |
+| `sven-bootstrap` | Calls `discover_skills()`, stores the `Arc<[SkillInfo]>` in `RuntimeContext`, wires it into `AgentRuntimeContext` and registers `SkillTool` |
 | `sven-tui` | `SkillCommand`, `make_skill_commands()`, `sanitize_command_name()`; `register_skills()` in `CommandRegistry`; wires discovery into `App::new()` |
 
 ---

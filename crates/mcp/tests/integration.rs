@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use rmcp::ServiceExt;
 use serde_json::{json, Value};
 use sven_mcp::SvenMcpServer;
-use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput, ToolRegistry};
+use sven_tool_registry::{ApprovalPolicy, Tool, ToolCall, ToolOutput, ToolRegistry};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, WriteHalf};
 
 // ── Test tool fixtures ────────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ impl Tool for AskPolicyTool {
 struct FixedRequester(bool);
 
 #[async_trait]
-impl sven_tools::PermissionRequester for FixedRequester {
+impl sven_tool_registry::PermissionRequester for FixedRequester {
     async fn request_permission(&self, _call: &ToolCall) -> bool {
         self.0
     }

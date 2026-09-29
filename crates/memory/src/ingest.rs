@@ -49,7 +49,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use sven_tools::{
+use sven_tool_api::{
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolDisplay, ToolOutput},
     ToolCapability,

@@ -26,7 +26,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use sven_hsm::{AuditTrailHandle, Effect, EffectKind, ObservationSink};
 use sven_kernel::{Clock, EffectExecutor, EventSink};
-use sven_tools::ToolRegistry;
+use sven_tool_registry::ToolRegistry;
 use tokio::sync::mpsc;
 
 use crate::audit::AuditExecutor;
@@ -349,7 +349,7 @@ mod tests {
     use serde_json::json;
     use sven_hsm::{Context, Effect, Event, Hsm, MachineId, PermissionPolicy, Reaction};
     use sven_kernel::{EffectExecutor, Runtime};
-    use sven_tools::ToolRegistry;
+    use sven_tool_registry::ToolRegistry;
 
     use super::{CompositeExecutor, CompositeExecutorBuilder};
     use crate::user::{ApprovalRequest, UserQuestion};

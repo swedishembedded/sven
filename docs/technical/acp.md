@@ -13,7 +13,7 @@ flowchart TD
     IDE <-->|"stdio\nJSON-RPC 2.0"| LOCAL
 
     subgraph local ["sven acp serve"]
-        LOCAL["SvenAcpAgent\n─────────────────\nsven_core::Agent loop\nToolRegistry / sven-tools\nsven-model provider\ntokio LocalSet"]
+        LOCAL["SvenAcpAgent\n─────────────────\nsven_core::Agent loop\nToolRegistry / sven-tool-registry\nsven-model provider\ntokio LocalSet"]
     end
 ```
 

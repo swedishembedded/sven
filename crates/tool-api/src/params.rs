@@ -7,9 +7,8 @@
 //! `call.args.get(key).and_then(|v| v.as_str())` + a custom error message
 //! that appears across most tool implementations.
 //!
-//! `pub` (not `pub(crate)`, as when this lived inside the monolithic
-//! `sven-tools`): every domain-tool crate that implements [`crate::Tool`]
-//! needs these, so the helper has to be visible across the crate boundary.
+//! `pub`: every domain-tool crate that implements [`crate::Tool`] needs
+//! these, so the helper has to be visible across the crate boundary.
 
 use crate::tool::{ToolCall, ToolOutput};
 

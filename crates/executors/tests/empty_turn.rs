@@ -115,7 +115,7 @@ async fn silent_provider_run(
     let turn_exec = sven_executors::TurnExecutor::new(
         provider,
         None,
-        Arc::new(sven_tools::ToolRegistry::new()),
+        Arc::new(sven_tool_registry::ToolRegistry::new()),
         store,
         call_id_to_thread,
         cancel_handle,

@@ -58,7 +58,6 @@ sven-tool-api = "kernel"
 # services
 sven-session-store = "services"
 sven-llm        = "services"
-sven-tools      = "services"
 sven-tool-registry = "services"
 sven-mcp-client = "services"
 sven-kernel     = "services"
@@ -118,35 +117,6 @@ sample-study-svf = "sample"
 
 # ── Legitimate same-tier edges. Each needs a `why`. ─────────────────────────
 [[same_layer]]
-from = "sven-tools"
-to   = "sven-tool-registry"
-why  = """
-UPDATED, Phase 5.2-5.8 of the refactor plan (god-crate splits): builtin/'s
-~18k LOC of concrete tool *implementations* has now been fully carved into
-sven-tools-{fs,exec,web,ctx,agent,gdb} -- crates/tools/src/builtin/ is empty
-and deleted. sven-tools itself is left as a Phase 5.1 re-export shim purely
-over sven-tool-api (kernel: the Tool trait) and sven-tool-registry (services:
-the concrete ToolRegistry + config-driven policy engines), so the ~20 crates
-still writing `sven_tools::ToolRegistry` / `sven_tools::Tool` / etc. (shared
-kernel-tier vocabulary, not a concrete tool -- those call sites were never
-part of this split) keep compiling.
-
-This edge -- and this exception -- is NOT resolved by finishing the builtin/
-split alone, correcting the plan's stated resolution condition: sven-tools
-depends on sven-tool-registry (services tier) for its `registry` re-export,
-which forces sven-tools itself to services tier regardless of whether
-builtin/ holds any code, and a services-tier crate depending on another
-services-tier crate is exactly what this same-tier exception exists for.
-Deleting the exception requires deleting sven-tools outright and repointing
-every one of its ~20 consumers directly at sven-tool-api/sven-tool-registry
--- out of scope for the builtin/ split itself (a much larger, separate
-mechanical sweep across the whole workspace) and left as the tracked
-follow-up. sven-tools -> sven-tool-api is already a legal downward edge
-(kernel < services) and needs no exception. No cycle risk: sven-tool-registry
-does not and cannot depend back on sven-tools.
-"""
-
-[[same_layer]]
 from = "sven-config"
 to   = "sven-vocab"
 why  = """
@@ -164,10 +134,9 @@ from = "sven-model"
 to   = "sven-model-catalog"
 why  = """
 Both are "kernel" tier: pure trait/type vocabulary crates, no heavy deps (no
-reqwest, no cloud SDKs). Phase 5 of the refactor plan split sven-model's
-static catalog data (ModelCatalogEntry, static_catalog(), lookup(), the
-on-disk live-cache overlay) out into sven-model-catalog so sven-tools et al.
-could depend on just the data without the ~10k-LOC god-crate. sven-model
+reqwest, no cloud SDKs). sven-model-catalog holds the static catalog data
+(ModelCatalogEntry, static_catalog(), lookup(), the on-disk live-cache
+overlay) so the tool crates can depend on just the data without sven-model. sven-model
 still needs it directly: ModelProvider's default trait methods
 (catalog_max_output_tokens, input_modalities, ...) call straight into the
 catalog, and sanitize::strip_images_if_unsupported needs InputModality. No
@@ -178,7 +147,7 @@ cycle risk: sven-model-catalog has zero sven-tier dependencies of its own.
 from = "sven-model-drivers"
 to   = "sven-model-mock"
 why  = """
-TEMPORARY, precedented by the sven-mcp-client -> sven-tools entry above.
+TEMPORARY.
 Both are "services" tier: concrete ModelProvider implementations built on
 the sven-model kernel vocabulary. sven-model-drivers's from_config() factory
 constructs a mock provider unconditionally for `provider: "mock"` today (see
@@ -219,9 +188,7 @@ dependencies of its own, so this can never become a cycle.
 """
 
 # ── Known upward (illegal) edges, each with a fix owner and a why. ─────────
-# None currently outstanding. sven-control depended on sven-tools only for
-# ToolCall/ToolOutput/ToolSchema, which moved to sven-vocab (foundation tier)
-# in Phase 2.1-2.2 -- deleting the edge rather than legitimizing it.
+# None currently outstanding.
 
 # ── Known dead/unused internal dependencies. ────────────────────────────────
 # A dependency is "dead" here if crate `crate` declares a normal (non-dev) dep

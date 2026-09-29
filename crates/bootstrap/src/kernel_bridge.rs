@@ -242,7 +242,7 @@ impl KernelAgentSession {
 
     /// The session's live [`ToolRegistry`] (for MCP tool hot-swap).
     #[must_use]
-    pub fn tool_registry(&self) -> Arc<sven_tools::ToolRegistry> {
+    pub fn tool_registry(&self) -> Arc<sven_tool_registry::ToolRegistry> {
         self.handle.tool_registry()
     }
 
@@ -282,9 +282,9 @@ impl KernelAgentSession {
     /// usable mid-session without rebuilding the kernel.
     pub async fn refresh_mcp_tools(&self) {
         let mcp_tools = self.mcp_manager.tools().await;
-        let tools: Vec<Arc<dyn sven_tools::Tool>> = mcp_tools
+        let tools: Vec<Arc<dyn sven_tool_api::Tool>> = mcp_tools
             .into_iter()
-            .map(|t| Arc::new(t) as Arc<dyn sven_tools::Tool>)
+            .map(|t| Arc::new(t) as Arc<dyn sven_tool_api::Tool>)
             .collect();
         self.handle.tool_registry().replace_mcp_tools(tools);
     }
@@ -307,7 +307,7 @@ mod tests {
     use sven_executors::user::{ApprovalRequest, UserQuestion};
     use sven_hsm::{ApprovalId, ObservationSink, ToolCapability};
     use sven_model_mock::ScriptedMockProvider;
-    use sven_tools::ToolCall;
+    use sven_tool_api::ToolCall;
 
     use super::*;
     use crate::runtime_builder::RuntimeBuilder;

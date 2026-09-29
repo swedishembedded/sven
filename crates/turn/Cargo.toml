@@ -6,7 +6,8 @@ edition = "2021"
 [dependencies]
 sven-config = { path = "../config" }
 sven-model  = { path = "../model" }
-sven-tools  = { path = "../tools" }
+sven-tool-api = { path = "../tool-api" }
+sven-tool-registry = { path = "../tool-registry" }
 sven-workspace = { path = "../workspace" }
 sven-vocab  = { path = "../vocab" }
 sven-session-model = { path = "../session-model" }

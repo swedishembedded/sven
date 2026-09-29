@@ -11,7 +11,7 @@ use chrono::Utc;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
-use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
+use sven_tool_api::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
 
 use crate::{
     config::{MemberStatus, TeamConfig, TeamConfigStore, TeamMember, TeamRole},
@@ -1237,7 +1237,7 @@ mod tests {
     use serde_json::json;
     use tokio::sync::Mutex;
 
-    use sven_tools::{Tool, ToolCall};
+    use sven_tool_api::{Tool, ToolCall};
 
     use super::*;
 

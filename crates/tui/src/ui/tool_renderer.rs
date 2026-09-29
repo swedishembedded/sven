@@ -6,13 +6,13 @@
 //! Produces styled [`Line`]s from tool-call data so each tool category gets
 //! visually distinct, informative rendering.  All functions receive plain data
 //! (strings, JSON) and produce ratatui types; the only ratatui dependency is
-//! here, not in `sven-tools`.
+//! here, not in `sven-tool-api`.
 
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
-use sven_tools::ToolDisplay;
+use sven_tool_api::ToolDisplay;
 
 use super::theme::{BAR_ERROR, BAR_TOOL, TEXT, TEXT_DIM};
 use super::width_utils::truncate_to_width;
@@ -67,10 +67,10 @@ pub fn render_tool_call_collapsed(
         )
     } else {
         (
-            sven_tools::tool_icon(tool_name).to_string(),
+            sven_tool_api::tool_icon(tool_name).to_string(),
             tool_name.to_string(),
-            sven_tools::tool_smart_summary(tool_name, args),
-            sven_tools::tool_category(tool_name).to_string(),
+            sven_tool_api::tool_smart_summary(tool_name, args),
+            sven_tool_api::tool_category(tool_name).to_string(),
         )
     };
 
@@ -123,9 +123,9 @@ pub fn render_tool_result_collapsed(
         )
     } else {
         (
-            sven_tools::tool_icon(tool_name).to_string(),
+            sven_tool_api::tool_icon(tool_name).to_string(),
             label_override.unwrap_or_else(|| tool_name.to_string()),
-            sven_tools::tool_category(tool_name).to_string(),
+            sven_tool_api::tool_category(tool_name).to_string(),
         )
     };
 
@@ -175,7 +175,7 @@ pub fn render_tool_call_expanded(
 ) -> Vec<Line<'static>> {
     let category = display
         .map(|d| d.category().to_string())
-        .unwrap_or_else(|| sven_tools::tool_category(tool_name).to_string());
+        .unwrap_or_else(|| sven_tool_api::tool_category(tool_name).to_string());
 
     let accent = category_color(&category);
 
@@ -204,7 +204,7 @@ pub fn render_tool_result_expanded(
 ) -> Vec<Line<'static>> {
     let category = display
         .map(|d| d.category().to_string())
-        .unwrap_or_else(|| sven_tools::tool_category(tool_name).to_string());
+        .unwrap_or_else(|| sven_tool_api::tool_category(tool_name).to_string());
 
     let _accent = category_color(&category);
     let status_color = if is_error {
@@ -445,7 +445,7 @@ fn render_shell_tool_call(
         .or_else(|| args.get("working_directory"))
         .and_then(|v| v.as_str());
     if let Some(wd) = wd_opt {
-        let short_wd = sven_tools::shorten_path(wd, 3);
+        let short_wd = sven_tool_api::shorten_path(wd, 3);
         lines.push(Line::from(Span::styled(
             format!("  cwd: {short_wd}"),
             Style::default().fg(TEXT_DIM),
@@ -473,7 +473,7 @@ fn render_search_tool_call(
         .or_else(|| args.get("target_directory"))
         .or_else(|| args.get("target_directories"))
         .and_then(|v| v.as_str())
-        .map(|p| sven_tools::shorten_path(p, 3))
+        .map(|p| sven_tool_api::shorten_path(p, 3))
         .unwrap_or_default();
 
     if pattern.is_empty() {
@@ -594,7 +594,7 @@ fn render_system_tool_call(
                     .iter()
                     .take(3)
                     .filter_map(|v| v.as_str())
-                    .map(|p| sven_tools::shorten_path(p, 2))
+                    .map(|p| sven_tool_api::shorten_path(p, 2))
                     .collect();
                 if !names.is_empty() {
                     return vec![Line::from(Span::styled(

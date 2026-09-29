@@ -12,7 +12,8 @@ sven-model       = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-session-store       = { path = "../session-store" }
 sven-session-model = { path = "../session-model" }
-sven-tools       = { path = "../tools" }
+sven-tool-api    = { path = "../tool-api" }
+sven-tool-registry = { path = "../tool-registry" }
 sven-tools-agent = { path = "../tools-agent" }
 sven-machines        = { path = "../machines" }
 sven-bootstrap   = { path = "../bootstrap" }

@@ -2,7 +2,7 @@
 name        = "sven-tools-ctx"
 version.workspace = true
 edition     = "2021"
-description = "Context/reference tools: the memory-mapped RLM context store (context_open/context_read/context_grep), project knowledge (list_knowledge/search_knowledge), and the compound memory tool. Domain tier. Split out of sven-tools's builtin/context/ + builtin/knowledge/ (5.4 of the refactor plan's god-crate splits), with search_knowledge and builtin/system/memory.rs pulled in from their literal directory locations to follow their real SharedKnowledge/ListKnowledgeTool/SearchKnowledgeTool coupling instead."
+description = "Context/reference tools: the memory-mapped RLM context store (context_open/context_read/context_grep), project knowledge (list_knowledge/search_knowledge), and the compound memory tool. Domain tier."
 license     = "Apache-2.0"
 
 [dependencies]

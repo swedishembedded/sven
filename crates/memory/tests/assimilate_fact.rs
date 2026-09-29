@@ -24,7 +24,7 @@ use sven_memory::{
     AssimilateFactTool, DocId, DocSummary, Document, DocumentRecord, FrozenProbe,
     PendingFactsLedger, ProvenanceIndex, SearchResult, VectorStore,
 };
-use sven_tools::tool::{Tool, ToolCall};
+use sven_tool_api::tool::{Tool, ToolCall};
 use sven_vocab::provenance::{ContentDigest, FactSource, KnowledgeApprovals};
 
 /// An in-memory [`VectorStore`] so these tests exercise the admissibility rule

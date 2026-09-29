@@ -929,7 +929,7 @@ fn render_segment_rich(
                     // Add a header line with the icon + name.
                     let icon = display
                         .map(|d| d.icon().to_string())
-                        .unwrap_or_else(|| sven_tools::tool_icon(&function.name).to_string());
+                        .unwrap_or_else(|| sven_tool_api::tool_icon(&function.name).to_string());
                     let display_name = display
                         .map(|d| d.display_name().to_string())
                         .unwrap_or_else(|| function.name.clone());
@@ -1026,7 +1026,7 @@ fn build_grouped_rich_line(
     result_seg: &ChatSegment,
     _tool_args: &std::collections::HashMap<String, String>,
     tool_durations: &std::collections::HashMap<String, f32>,
-    display: Option<&dyn sven_tools::ToolDisplay>,
+    display: Option<&dyn sven_tool_api::ToolDisplay>,
     _tool_display_registry: ToolDisplayRegistryRef,
 ) -> Vec<Span<'static>> {
     use crate::ui::theme::BAR_ERROR;
@@ -1146,12 +1146,12 @@ fn render_tool_result_lines(
 
 /// Get the accent colour for a tool from its display entry or name.
 fn tool_renderer_accent(
-    display: Option<&dyn sven_tools::ToolDisplay>,
+    display: Option<&dyn sven_tool_api::ToolDisplay>,
     tool_name: &str,
 ) -> ratatui::style::Color {
     let category = display
         .map(|d| d.category().to_string())
-        .unwrap_or_else(|| sven_tools::tool_category(tool_name).to_string());
+        .unwrap_or_else(|| sven_tool_api::tool_category(tool_name).to_string());
     match category.as_str() {
         "file" => ratatui::style::Color::Rgb(100, 180, 255),
         "shell" => ratatui::style::Color::Rgb(120, 220, 130),

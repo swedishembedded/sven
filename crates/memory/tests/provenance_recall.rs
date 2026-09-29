@@ -25,7 +25,7 @@ use sven_memory::{
     AssimilateFactTool, DocId, DocSummary, Document, PendingFactsLedger, ProvenanceIndex,
     SearchResult, SemanticMemoryTool, SessionScope, VectorStore,
 };
-use sven_tools::tool::{Tool, ToolCall};
+use sven_tool_api::tool::{Tool, ToolCall};
 use sven_vocab::provenance::{ContentDigest, FactSource, KnowledgeApprovals};
 
 /// A [`VectorStore`] shared by both sessions in these tests, standing in for

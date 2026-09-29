@@ -5,14 +5,10 @@
 //!
 //! [`ToolCall`], [`ToolOutput`]/[`ToolOutputPart`], [`ToolSchema`], and
 //! [`OutputCategory`] are pure data types with no behavior — no execution,
-//! no registry, no permission policy. They exist here, below `sven-tools`,
-//! so that crates which only need to *name* a tool call or its result (a
-//! wire protocol, a control protocol) don't have to depend on the full
-//! tool-implementation crate to do it.
-//!
-//! `sven-tools` re-exports all of these at its crate root, so existing
-//! `sven_tools::ToolCall` (etc.) call sites are unaffected by where the
-//! types are actually defined.
+//! no registry, no permission policy. They exist here, below
+//! `sven-tool-api`, so that crates which only need to *name* a tool call or
+//! its result (a wire protocol, a control protocol) don't have to depend on
+//! the tool trait crate to do it. `sven-tool-api` re-exports them.
 //!
 //! [`SessionEvent`] is the unified session-event stream (re-exported as
 //! `sven_machines::AgentEvent` and `sven_hsm::UiEvent`) and its payload types
@@ -308,10 +304,10 @@ pub struct ToolSchema {
 
 // ─── Session/event vocabulary ──────────────────────────────────────────────
 //
-// Pure data types named by the (to-be-unified) agent/UI event streams. They
-// live here, below `sven-config`/`sven-core`/`sven-tools`, so a future
-// `SessionEvent` enum in this same crate can name them without pulling in
-// config schema parsing, the machine implementations, or tool execution.
+// Pure data types named by the agent/UI event stream. They live here, below
+// `sven-config`/`sven-machines`/`sven-tool-api`, so `SessionEvent` in this
+// same crate can name them without pulling in config schema parsing, the
+// machine implementations, or tool execution.
 
 /// The agent's current operating mode, selectable via `--mode`/`/mode`.
 #[derive(

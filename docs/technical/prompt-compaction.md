@@ -245,7 +245,7 @@ excess before the next model call.
 By putting `output_category()` on the `Tool` trait rather than in
 `compact.rs`, sven achieves clean crate independence:
 
-- `sven-tools` owns *what shape* each tool's output has.
+- Each tool crate owns *what shape* each tool's output has.
 - `sven-core` owns *how to truncate* each shape.
 - Adding a new tool never requires editing `sven-core`. The tool just overrides
   `output_category()`.

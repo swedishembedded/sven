@@ -21,9 +21,9 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use sven_memory::{IngestDocumentTool, PendingFactsLedger};
-use sven_tools::policy::ApprovalPolicy;
-use sven_tools::tool::{Tool, ToolCall};
-use sven_tools::ToolCapability;
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{Tool, ToolCall};
+use sven_tool_api::ToolCapability;
 use sven_vocab::provenance::{ContentDigest, FactSource};
 
 fn real_digest(bytes: &[u8]) -> ContentDigest {

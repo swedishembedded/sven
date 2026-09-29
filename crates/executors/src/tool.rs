@@ -35,7 +35,7 @@ use sven_vocab::provenance::ProvenanceSink;
 const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(600);
 use sven_llm::ThreadStore;
 use sven_model::Message;
-use sven_tools::{ToolCall, ToolOutput, ToolRegistry};
+use sven_tool_registry::{ToolCall, ToolOutput, ToolRegistry};
 
 /// Executes [`Effect::CallTool`] using the injected [`ToolRegistry`].
 pub struct ToolExecutor {
@@ -382,7 +382,7 @@ mod tests {
         ToolCallId, ToolCapability,
     };
     use sven_kernel::{EffectExecutor, EventSink, Runtime};
-    use sven_tools::ToolRegistry;
+    use sven_tool_registry::ToolRegistry;
     use sven_vocab::provenance::ProvenanceSink;
 
     use super::ToolExecutor;
@@ -505,7 +505,7 @@ mod tests {
     struct MarkerTool(Arc<std::sync::atomic::AtomicBool>);
 
     #[async_trait::async_trait]
-    impl sven_tools::Tool for MarkerTool {
+    impl sven_tool_api::Tool for MarkerTool {
         fn name(&self) -> &str {
             "marker"
         }
@@ -515,12 +515,12 @@ mod tests {
         fn parameters_schema(&self) -> serde_json::Value {
             serde_json::json!({"type": "object", "properties": {}})
         }
-        fn default_policy(&self) -> sven_tools::ApprovalPolicy {
-            sven_tools::ApprovalPolicy::Auto
+        fn default_policy(&self) -> sven_tool_api::ApprovalPolicy {
+            sven_tool_api::ApprovalPolicy::Auto
         }
-        async fn execute(&self, call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
+        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
             self.0.store(true, std::sync::atomic::Ordering::SeqCst);
-            sven_tools::ToolOutput::ok(call.id.clone(), "ran")
+            sven_tool_api::ToolOutput::ok(call.id.clone(), "ran")
         }
     }
 
@@ -572,7 +572,7 @@ mod tests {
     struct ParkingTool;
 
     #[async_trait::async_trait]
-    impl sven_tools::Tool for ParkingTool {
+    impl sven_tool_api::Tool for ParkingTool {
         fn name(&self) -> &str {
             "parking"
         }
@@ -582,11 +582,15 @@ mod tests {
         fn parameters_schema(&self) -> serde_json::Value {
             serde_json::json!({"type": "object", "properties": {}})
         }
-        fn default_policy(&self) -> sven_tools::ApprovalPolicy {
-            sven_tools::ApprovalPolicy::Auto
+        fn default_policy(&self) -> sven_tool_api::ApprovalPolicy {
+            sven_tool_api::ApprovalPolicy::Auto
         }
-        async fn execute(&self, call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
-            sven_tools::ToolOutput::parked(call.id.clone(), "Which framework?", vec!["Axum".into()])
+        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
+            sven_tool_api::ToolOutput::parked(
+                call.id.clone(),
+                "Which framework?",
+                vec!["Axum".into()],
+            )
         }
     }
 
@@ -635,7 +639,7 @@ mod tests {
     struct ResolvingTool;
 
     #[async_trait::async_trait]
-    impl sven_tools::Tool for ResolvingTool {
+    impl sven_tool_api::Tool for ResolvingTool {
         fn name(&self) -> &str {
             "resolving"
         }
@@ -645,11 +649,11 @@ mod tests {
         fn parameters_schema(&self) -> serde_json::Value {
             serde_json::json!({"type": "object", "properties": {}})
         }
-        fn default_policy(&self) -> sven_tools::ApprovalPolicy {
-            sven_tools::ApprovalPolicy::Auto
+        fn default_policy(&self) -> sven_tool_api::ApprovalPolicy {
+            sven_tool_api::ApprovalPolicy::Auto
         }
-        async fn execute(&self, call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
-            sven_tools::ToolOutput::ok(call.id.clone(), "resolved")
+        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
+            sven_tool_api::ToolOutput::ok(call.id.clone(), "resolved")
                 .with_provenance(sven_vocab::provenance::FactSource::UserStated)
         }
     }
@@ -721,12 +725,12 @@ mod tests {
     /// A registered tool that always returns a large, fixed-category output
     /// so truncation behavior can be observed deterministically.
     struct BigOutputTool {
-        category: sven_tools::OutputCategory,
+        category: sven_tool_api::OutputCategory,
         is_error: bool,
     }
 
     #[async_trait::async_trait]
-    impl sven_tools::Tool for BigOutputTool {
+    impl sven_tool_api::Tool for BigOutputTool {
         fn name(&self) -> &str {
             "big"
         }
@@ -736,22 +740,22 @@ mod tests {
         fn parameters_schema(&self) -> serde_json::Value {
             serde_json::json!({"type": "object", "properties": {}})
         }
-        fn default_policy(&self) -> sven_tools::ApprovalPolicy {
-            sven_tools::ApprovalPolicy::Auto
+        fn default_policy(&self) -> sven_tool_api::ApprovalPolicy {
+            sven_tool_api::ApprovalPolicy::Auto
         }
-        fn output_category(&self) -> sven_tools::OutputCategory {
+        fn output_category(&self) -> sven_tool_api::OutputCategory {
             self.category
         }
-        async fn execute(&self, call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
+        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
             // 100 numbered lines, comfortably over any small token cap.
             let content = (0..100)
                 .map(|i| format!("line {i}"))
                 .collect::<Vec<_>>()
                 .join("\n");
             if self.is_error {
-                sven_tools::ToolOutput::err(call.id.clone(), content)
+                sven_tool_api::ToolOutput::err(call.id.clone(), content)
             } else {
-                sven_tools::ToolOutput::ok(call.id.clone(), content)
+                sven_tool_api::ToolOutput::ok(call.id.clone(), content)
             }
         }
     }
@@ -812,7 +816,7 @@ mod tests {
     async fn tool_result_token_cap_zero_disables_truncation() {
         let mut registry = ToolRegistry::new();
         registry.register(BigOutputTool {
-            category: sven_tools::OutputCategory::Generic,
+            category: sven_tool_api::OutputCategory::Generic,
             is_error: false,
         });
         let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
@@ -840,7 +844,7 @@ mod tests {
     async fn tool_result_token_cap_truncates_large_output() {
         let mut registry = ToolRegistry::new();
         registry.register(BigOutputTool {
-            category: sven_tools::OutputCategory::Generic,
+            category: sven_tool_api::OutputCategory::Generic,
             is_error: false,
         });
         let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
@@ -874,7 +878,7 @@ mod tests {
 
         let mut generic_registry = ToolRegistry::new();
         generic_registry.register(BigOutputTool {
-            category: sven_tools::OutputCategory::Generic,
+            category: sven_tool_api::OutputCategory::Generic,
             is_error: false,
         });
         let mut generic_exec =
@@ -890,7 +894,7 @@ mod tests {
 
         let mut headtail_registry = ToolRegistry::new();
         headtail_registry.register(BigOutputTool {
-            category: sven_tools::OutputCategory::HeadTail,
+            category: sven_tool_api::OutputCategory::HeadTail,
             is_error: false,
         });
         let mut headtail_exec =
@@ -918,7 +922,7 @@ mod tests {
     async fn tool_result_token_cap_applies_to_error_output_too() {
         let mut registry = ToolRegistry::new();
         registry.register(BigOutputTool {
-            category: sven_tools::OutputCategory::Generic,
+            category: sven_tool_api::OutputCategory::Generic,
             is_error: true,
         });
         let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
@@ -951,7 +955,7 @@ mod watchdog_tests {
     use std::time::Duration;
 
     use sven_hsm::{Effect, ToolCallId};
-    use sven_tools::{ApprovalPolicy, Tool, ToolRegistry};
+    use sven_tool_registry::{ApprovalPolicy, Tool, ToolRegistry};
 
     use super::tests::run_tool_effect;
     use super::ToolExecutor;
@@ -971,7 +975,7 @@ mod watchdog_tests {
         fn default_policy(&self) -> ApprovalPolicy {
             ApprovalPolicy::Auto
         }
-        async fn execute(&self, _call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
+        async fn execute(&self, _call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
             std::future::pending::<()>().await;
             unreachable!()
         }
@@ -992,7 +996,7 @@ mod watchdog_tests {
         fn default_policy(&self) -> ApprovalPolicy {
             ApprovalPolicy::Auto
         }
-        async fn execute(&self, _call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
+        async fn execute(&self, _call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
             panic!("boom");
         }
     }

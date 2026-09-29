@@ -20,7 +20,7 @@ use sven_hsm::{
 };
 use sven_kernel::{EffectExecutor, ErasedRuntime, EventSink, Runtime};
 use sven_llm::ThreadStore;
-use sven_tools::ToolRegistry;
+use sven_tool_registry::ToolRegistry;
 use tokio::sync::Mutex as TokioMutex;
 
 // ── Minimal one-shot machine that records the first non-lifecycle event ────────

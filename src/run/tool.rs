@@ -13,7 +13,7 @@ pub(crate) async fn run_tool_command(
     cmd: &ToolCommands,
     cfg: &sven_config::Config,
 ) -> anyhow::Result<()> {
-    use sven_tools::tool::ToolCall;
+    use sven_tool_api::tool::ToolCall;
 
     match cmd {
         // ── sven tool list ────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ pub(crate) fn parse_kv_args(params: &[String]) -> anyhow::Result<serde_json::Val
 ///
 /// This is what `sven tool call --help` (and `sven tool call` with no args)
 /// displays: a complete reference for all available tools.
-pub(crate) fn print_all_tools_help(reg: &sven_tools::ToolRegistry) {
+pub(crate) fn print_all_tools_help(reg: &sven_tool_registry::ToolRegistry) {
     let mut schemas = reg.schemas();
     schemas.sort_by(|a, b| a.name.cmp(&b.name));
     println!("sven built-in tools ({} total)\n", schemas.len());

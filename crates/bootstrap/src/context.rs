@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 use sven_machines::AgentRuntimeContext;
-use sven_tools::events::TodoItem;
+use sven_tool_api::events::TodoItem;
 use sven_tools_agent::QuestionRequest;
 use sven_tools_fs::OutputBufferStore;
 use sven_workspace::{CiContext, GitContext, SharedAgents, SharedKnowledge, SharedSkills};
@@ -348,7 +348,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use sven_config::AgentMode;
-    use sven_tools::events::TodoItem;
+    use sven_tool_api::events::TodoItem;
     use sven_tools_fs::OutputBufferStore;
     use sven_workspace::{SharedAgents, SharedSkills};
 

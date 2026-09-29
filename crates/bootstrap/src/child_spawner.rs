@@ -35,7 +35,7 @@ use sven_hsm::{
 use sven_kernel::{ChildSpawner, ErasedRuntime, EventSink, SystemClock};
 use sven_llm::ThreadStore;
 use sven_machines::TaskMachine;
-use sven_tools::ToolRegistry;
+use sven_tool_registry::ToolRegistry;
 
 /// Spawns isolated child task kernels for parallel SDLC execution.
 pub struct SdlcChildSpawner {

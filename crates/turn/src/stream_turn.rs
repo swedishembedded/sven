@@ -28,12 +28,12 @@ use tracing::warn;
 use sven_model::{
     CompletionRequest, Message, ModelProvider, ResponseEvent, ResponseFormat, ToolSchema,
 };
-use sven_tools::ToolCall;
+use sven_tool_api::ToolCall;
 
 /// Convert tool-registry schemas into model-API schemas, preserving the order
-/// produced by [`sven_tools::ToolRegistry::schemas_for_names`].
+/// produced by [`sven_tool_registry::ToolRegistry::schemas_for_names`].
 #[must_use]
-pub fn to_model_schemas(schemas: Vec<sven_tools::ToolSchema>) -> Vec<ToolSchema> {
+pub fn to_model_schemas(schemas: Vec<sven_tool_registry::ToolSchema>) -> Vec<ToolSchema> {
     schemas
         .into_iter()
         .map(|s| ToolSchema {

@@ -26,7 +26,7 @@ correctly without external orchestration.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  sven-tools crate                                                    │
+│  sven-tools-ctx crate                                                │
 │                                                                      │
 │  ContextStore (Arc<Mutex<ContextStore>>, one per session)            │
 │  ┌──────────────────────────────────────────────────────────────┐   │
@@ -56,7 +56,7 @@ correctly without external orchestration.
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Dependency rule**: `sven-tools` never imports `sven-model`.  The
+**Dependency rule**: `sven-tools-ctx` never imports `sven-model`.  The
 `SubQueryRunner` trait is the boundary that keeps the crates decoupled.  The
 concrete `ModelSubQueryRunner` implementation lives in `sven-bootstrap`
 alongside `TaskTool`, which follows the same pattern.
@@ -65,7 +65,7 @@ alongside `TaskTool`, which follows the same pattern.
 
 ## ContextStore
 
-**Source**: `crates/tools/src/builtin/context/store.rs`
+**Source**: `crates/tools-ctx/src/context/store.rs`
 
 One instance is created per agent session in `build_tool_registry` and wrapped
 in `Arc<Mutex<ContextStore>>`.  All five tools share the same pointer.
@@ -117,7 +117,7 @@ An optional include pattern is applied using a small wildcard matcher (supports
 
 ## context_open
 
-**Source**: `crates/tools/src/builtin/context/open.rs`
+**Source**: `crates/tools-ctx/src/context/open.rs`
 
 Accepts a `path` (file or directory), an optional `include_pattern`, and an
 optional `recursive` flag (default `true`).
@@ -144,7 +144,7 @@ special head/tail treatment - the output is already bounded by design).
 
 ## context_read
 
-**Source**: `crates/tools/src/builtin/context/read.rs`
+**Source**: `crates/tools-ctx/src/context/read.rs`
 
 Accepts a handle ID, `start_line`, `end_line` (1-indexed, inclusive), and an
 optional `file` path-substring for directory handles.
@@ -170,7 +170,7 @@ head-only truncation applies.
 
 ## context_grep
 
-**Source**: `crates/tools/src/builtin/context/grep.rs`
+**Source**: `crates/tools-ctx/src/context/grep.rs`
 
 Accepts a handle ID, a Rust-regex `pattern`, an optional `file` hint, a
 `context_lines` count (default 2), and a `limit` (default 50).
@@ -190,7 +190,7 @@ truncation.
 
 ## SubQueryRunner trait
 
-**Source**: `crates/tools/src/builtin/context/query_runner.rs`
+**Source**: `crates/tools-ctx/src/context/query_runner.rs`
 
 ```rust
 #[async_trait]
@@ -353,7 +353,7 @@ relying solely on the individual tool descriptions.
 ## File layout
 
 ```
-crates/tools/src/builtin/context/
+crates/tools-ctx/src/context/
   mod.rs             module declarations and re-exports
   store.rs           ContextStore, ContextHandle, ContextKind, build_line_index
   open.rs            ContextOpenTool

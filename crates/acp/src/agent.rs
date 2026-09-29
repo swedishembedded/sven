@@ -78,7 +78,7 @@ pub enum ConnMessage {
 
 // ─── AcpPermissionRequester ───────────────────────────────────────────────────
 
-/// Implements [`sven_tools::PermissionRequester`] by forwarding permission
+/// Implements [`sven_tool_api::PermissionRequester`] by forwarding permission
 /// requests to the IDE over ACP via the `session/request_permission` method.
 ///
 /// Created per session in [`SvenAcpAgent::new_session`] and passed to
@@ -90,8 +90,8 @@ struct AcpPermissionRequester {
 }
 
 #[async_trait::async_trait]
-impl sven_tools::PermissionRequester for AcpPermissionRequester {
-    async fn request_permission(&self, call: &sven_tools::ToolCall) -> bool {
+impl sven_tool_api::PermissionRequester for AcpPermissionRequester {
+    async fn request_permission(&self, call: &sven_tool_api::ToolCall) -> bool {
         // Clone all borrowed data up-front so the future is 'static and Send.
         let call_id = call.id.clone();
         let call_name = call.name.clone();

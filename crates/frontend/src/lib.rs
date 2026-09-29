@@ -23,7 +23,7 @@
 //! sven-frontend
 //!       │
 //! ┌─────┼─────┬─────────────┬──────────────┐
-//! sven-bootstrap  sven-machines  sven-tools  sven-control  sven-commands
+//! sven-bootstrap  sven-machines  sven-tool-registry  sven-control  sven-commands
 //! ```
 //!
 //! The slash-command vocabulary (`SlashCommand`, `CommandRegistry`, and the

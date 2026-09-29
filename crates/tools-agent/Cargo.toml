@@ -2,7 +2,7 @@
 name        = "sven-tools-agent"
 version.workspace = true
 edition     = "2021"
-description = "Agent self-management tools: the compound system tool (mode/model switching, MCP server add/remove), todo (session task planning), ask_question (mid-turn human-in-the-loop questions), and skill (load/list the agent's own available skills). Domain tier. Split out of sven-tools's builtin/system/ (5.6 of the refactor plan's god-crate splits)."
+description = "Agent self-management tools: the compound system tool (mode/model switching, MCP server add/remove), todo (session task planning), ask_question (mid-turn human-in-the-loop questions), and skill (load/list the agent's own available skills). Domain tier."
 license     = "Apache-2.0"
 
 [dependencies]

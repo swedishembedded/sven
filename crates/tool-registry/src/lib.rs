@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The concrete tool registry and the config-driven policy engine built on
 //! top of `sven-tool-api`'s trait/type vocabulary.
-//!
-//! Split out of the god-crate `sven-tools` (Phase 5.1 of the refactor plan).
 pub mod policy;
 pub mod registry;
 
