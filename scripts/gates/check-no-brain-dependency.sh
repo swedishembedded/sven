@@ -40,8 +40,8 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 # Matches a dependency KEY at the start of a TOML line -- `brain = ...`,
 # `brain-model = ...`, `brain_serving = ...` -- and the `package = "brain-*"`
 # form used when a dependency is renamed. Deliberately anchored: the word
-# "brain" in a description or a comment is fine and says something useful
-# (crates/tools-ground's does), it is the dependency edge that is forbidden.
+# "brain" in a description or a comment is fine and says something useful;
+# it is the dependency edge that is forbidden.
 DEP_KEY='^[[:space:]]*"?(brain([-_][A-Za-z0-9_-]+)?)"?[[:space:]]*='
 # Unanchored on purpose: the renamed form shows up both as its own line under
 # `[dependencies.foo]` and inline as `foo = { package = "brain-x", ... }`.

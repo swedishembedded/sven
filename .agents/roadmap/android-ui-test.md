@@ -1074,12 +1074,11 @@ suite: 11 passed, 0 failed.
 - **The host side of 9b.** sven now accepts and uses `apps`; the orchestrator
   that dispatches to it must actually put its declared list into the
   request. That half is a change in the calling repo, not this one.
-- **`sven-tools-ground` still shells out to a `brain` CLI by default.** The
-  `GroundBackend` trait already makes that a swappable default rather than a
-  hard dependency (this crate names no brain type), which is the right
-  shape - but the default itself still assumes a specific binary on `PATH`,
-  and the crate description still says so. Worth deciding whether the
-  standalone default should instead be "no backend configured".
+- **Visual grounding was removed unwired.** `sven-tools-ground` (the
+  `ground` tool, backed by a grounding model through a `GroundBackend`) was
+  never registered in any runtime and no machine called it: `UiTestMachine`
+  locates elements through the `android` tool's accessibility tree. It comes
+  back with its first caller, as a provider rather than a CLI shell-out.
 - **`.agents/roadmap/*.md` still names a specific orchestrator throughout**
   (3 files). 9a deliberately covered code and doc comments only; whether
   these internal planning notes should be reworded too, or left as accurate

@@ -345,6 +345,5 @@ directly. Both must survive.
   one is fetched; transcription can be fully verified.
 - Whether brain's HTTP substrate should require auth per-dialect as the
   existing surfaces do, or carry one key for the generic surface.
-- Whether `ground` (`crates/tools-ground`, currently shelling out to the `brain`
-  CLI per call) folds onto `ActionProvider` once it exists. It should; it is the
-  same call through a worse transport.
+- Visual grounding, when it returns, should be an `ActionProvider` call, not a
+  CLI shell-out per call.

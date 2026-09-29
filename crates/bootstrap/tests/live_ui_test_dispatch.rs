@@ -4,13 +4,12 @@
 //! Real-device, real-checkpoint integration test for
 //! [`sven_bootstrap::dispatch_ui_test_step`]: proves the default (no
 //! overrides) wiring actually drives a real attached Android device through
-//! the real `sven-tools-android`/`sven-tools-ground` tool implementations,
-//! not just against the fakes `ui_test_dispatch`'s own unit tests use.
+//! the real `sven-tools-android` tool implementation, not just against the
+//! fakes `ui_test_dispatch`'s own unit tests use.
 //!
 //! Skips cleanly (not a failure) unless a single ready ADB device is
-//! attached AND live grounding is opted into, mirroring
-//! `sven-tools-android/tests/live_device.rs` and
-//! `sven-tools-ground/tests/live_ground.rs`'s own hardware gates - so
+//! attached AND the live run is opted into, mirroring
+//! `sven-tools-android/tests/live_device.rs`'s own hardware gate - so
 //! `make test` stays green on a box with neither present. The step
 //! compiler's model call still goes through whatever `sven_config::Config`
 //! resolves for real (no model override): if the environment has no usable
@@ -39,25 +38,10 @@ async fn ready_serial() -> Option<String> {
     }
 }
 
-/// Mirrors `sven-tools-ground/tests/live_ground.rs::live_grounding_opted_in`:
-/// an explicit opt-in plus a resolvable command, rather than a sniff for one
-/// particular model's staged weights. See that file's own module doc for why
-/// sven deliberately does not know where a given implementation keeps its
-/// checkpoint.
-fn live_grounding_opted_in() -> bool {
-    let opted_in = std::env::var("SVEN_GROUND_LIVE_TEST")
-        .ok()
-        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
-    if !opted_in {
-        return false;
-    }
-    let command = std::env::var("SVEN_GROUND_COMMAND").unwrap_or_else(|_| "brain".to_string());
-    std::process::Command::new(&command)
-        .arg("--help")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+/// An explicit opt-in: the step compiler's model call goes through the real
+/// configuration, which a box without a usable provider cannot serve.
+fn live_run_opted_in() -> bool {
+    std::env::var("SVEN_UI_TEST_LIVE").is_ok_and(|v| v == "1")
 }
 
 #[tokio::test]
@@ -66,8 +50,8 @@ async fn a_real_non_destructive_step_runs_against_a_real_device_with_real_tools(
         eprintln!("skipping: no single ready ADB device attached");
         return;
     };
-    if !live_grounding_opted_in() {
-        eprintln!("skipping: set SVEN_GROUND_LIVE_TEST=1 to run this against a real model");
+    if !live_run_opted_in() {
+        eprintln!("skipping: set SVEN_UI_TEST_LIVE=1 to run this against a real model");
         return;
     }
 
