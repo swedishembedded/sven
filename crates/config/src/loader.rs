@@ -248,8 +248,8 @@ fn resolve_named_model_provider(config: &mut Config) {
 
 // ── Local brain auto-detection ────────────────────────────────────────────────
 
-/// Is a locally running `brain` server (edge-AI model server, see
-/// `applications/edgeai/brain`) detectable without any network I/O?
+/// Is a locally running `brain` model server detectable without any network
+/// I/O?
 ///
 /// Deliberately sync and cheap (env var reads + one `fs::metadata` stat) so
 /// it can run inside [`load`], which must stay synchronous. This is a HINT,

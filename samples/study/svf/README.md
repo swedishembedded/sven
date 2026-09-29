@@ -78,9 +78,9 @@ wrong the task is wrong - stop and fix it rather than training against it.
   makes such an adapter worth publishing or not.
 * **It does not rule out retrieval.** An agent that writes the errata into its
   own memory store and reads it back has not learned anything, and looks
-  identical from here. Separating the two needs the four-configuration
-  ablation - weights old/new against memory wiped/retained - described in
-  `.agents/roadmap/document-to-capability.md`.
+  identical from here. Separating the two needs a four-configuration
+  ablation: weights old or new, crossed with the memory store wiped or
+  retained.
 * **It does not check every secret.** The hygiene scan covers the signature and
   the CRC parameters, which are high-entropy strings. The length bias and the
   body-order rule are prose; scanning for `3` or `reversed` would report a leak

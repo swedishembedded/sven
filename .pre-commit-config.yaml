@@ -46,6 +46,15 @@ repos:
         files: '(^|/)Cargo\.(toml|lock)$'
         pass_filenames: false
 
+      # No tracked file names a project outside sven's scope (AGENTS.md,
+      # Repository scope). Also run by `make check/scope`.
+      - id: repo-scope
+        name: no out-of-scope project names
+        entry: bash scripts/gates/check-repo-scope.sh
+        language: system
+        types: [text]
+        pass_filenames: true
+
       # Replace common non-ASCII punctuation (em/en dashes, curly quotes,
       # ellipsis, non-breaking spaces) with plain ASCII equivalents so the
       # repository stays pure ASCII in all text and markdown files.

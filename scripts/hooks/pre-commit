@@ -36,3 +36,4 @@ mapfile -d '' -t staged < <(git diff --cached --name-only --diff-filter=ACM -z)
 
 bash scripts/gates/check-no-machine-paths.sh "${staged[@]}"
 bash scripts/gates/check-no-brain-dependency.sh
+bash scripts/gates/check-repo-scope.sh "${staged[@]}"

@@ -1,9 +1,9 @@
 # sdk-framework
 
 **Status: planned.** What an application embedding sven through `sven-sdk`
-still cannot do, found by building the brain-linked learning applications
-(now Splinter, a separate repository) on the facade. Each item below is a
-gap in the facade, not in that application.
+still cannot do, found by building an embedding application that runs its
+own in-process model on the facade. Each item below is a gap in the facade,
+not in that application.
 
 The acceptance test: an application provides one model and a small toolset,
 runs a bounded task, handles human input, suspends and resumes it, and gets

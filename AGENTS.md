@@ -5,6 +5,36 @@ interactive TUI (`sven`) and as a headless CI runner - both from the same
 multi-crate workspace. (A Slint desktop GUI, `crates/gui`, existed briefly
 and was removed - the TUI is the only interactive local surface.)
 
+## Repository scope
+
+sven is an **agent execution framework** and the coding agent built on it.
+Everything in this repository serves one of those two.
+
+**In scope**
+- The execution kernel: the HSM, typed effects, permissions, cancellation,
+  delegation, sessions, persistence, traces (ATIF) and audit.
+- The embedding surface (`sven-sdk`) and the adapters behind it: model
+  providers, MCP, ACP, process execution, media input.
+- Tool packages an agent is given explicitly: files, search, shell, web,
+  context, GDB, Android device control.
+- The coding application: TUI, headless CI runner, slash commands, skills,
+  project knowledge, teams.
+- Verification of a task's outcome (verifier effects and executors).
+
+**Out of scope** - lives in the application or service that needs it:
+- Training models, curating training data, deciding what a model should
+  learn, and releasing model artifacts.
+- Personal-assistant integrations: messaging channels, email, calendar,
+  voice calls, schedulers and proactive jobs.
+- Fleet orchestration: placement, scheduling and remote resource management.
+
+**Naming other projects.** A tracked file names another project only when
+sven depends on it. brain may be named in its one role here - a model
+provider sven talks to at runtime - and never as a build dependency (see
+`check/deps`). A project built on sven is never named: describe the need
+generically ("an embedding application"). `make check/scope` enforces this;
+CHANGELOG.md is history and exempt.
+
 ## For AI Agents Working on This Codebase
 
 - **Language**: Rust. Follow idiomatic patterns, ownership, and error handling.

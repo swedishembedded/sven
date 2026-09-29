@@ -28,7 +28,7 @@ DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
 .PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
-        check check/fmt check/features check/clippy check/gates check/paths check/deps check/samples check/arch hooks/install docs docs-pdf \
+        check check/fmt check/features check/clippy check/gates check/paths check/deps check/samples check/scope check/arch hooks/install docs docs-pdf \
         formal \
         samples/list \
         release/build release/publish release/tag \
@@ -240,7 +240,7 @@ check/clippy:
 ## check/gates - every text gate: no absolute machine paths, no brain dependency,
 ##              samples that stay behind the SDK facade.
 ##              Together they cost well under a second.
-check/gates: check/paths check/deps check/samples
+check/gates: check/paths check/deps check/samples check/scope
 
 ## check/paths - no baked-in absolute machine path in any tracked (or new,
 ##              not-yet-tracked) file
@@ -251,6 +251,11 @@ check/paths:
 ##              dependency, declared or transitively resolved
 check/deps:
 	bash scripts/gates/check-no-brain-dependency.sh
+
+## check/scope - no tracked file names a project outside sven's scope (see
+##               the Repository scope section of AGENTS.md)
+check/scope:
+	bash scripts/gates/check-repo-scope.sh
 
 ## check/samples - a sample depends on the SDK facade and nothing else, and its
 ##              package name matches its path (see samples/README.md)

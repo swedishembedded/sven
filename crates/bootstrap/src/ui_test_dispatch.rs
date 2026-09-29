@@ -124,8 +124,8 @@ pub struct UiTestDispatchOverrides {
     /// ask and a step that hangs forever helps none of them.
     ///
     /// That default is only defensible while it is TRUE that nobody is
-    /// listening. A host with a person attached - whale's workflow runner
-    /// is one - passing `None` is deciding on that person's behalf and not
+    /// listening. A host with a person attached - a workflow runner with an
+    /// operator, say - passing `None` is deciding on that person's behalf and not
     /// telling them, which is exactly what `deny_all`'s own doc warns
     /// about. Such a host passes a responder, and then it is the host's
     /// business whether it asks, denies, or approves-and-records.
