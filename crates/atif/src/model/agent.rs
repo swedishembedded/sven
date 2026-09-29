@@ -45,3 +45,16 @@ impl AgentProfile {
         self
     }
 }
+
+/// One `tool_definitions` entry in OpenAI's function-calling shape:
+/// `{"type": "function", "function": {name, description, parameters}}`.
+pub fn function_tool(name: &str, description: &str, parameters: &Value) -> Value {
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        }
+    })
+}

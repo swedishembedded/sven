@@ -66,6 +66,25 @@ impl Agent {
         &self.state
     }
 
+    /// What the agent did, as an ATIF trajectory: every message, every tool
+    /// call with its result, the model and the tools it was offered.
+    ///
+    /// Built from the conversation the kernel holds, so it is complete even
+    /// when progress events were dropped, and a resumed agent exports the
+    /// same document. Carries no reward: whether the work was right is for a
+    /// verifier to say, not the agent.
+    #[must_use]
+    pub fn trajectory(&self) -> atif::Trajectory {
+        let mut agent = sven_session_store::default_agent_profile();
+        agent.model_name.clone_from(&self.state.model);
+        if !self.state.tools.is_empty() {
+            agent.tool_definitions = Some(self.state.tools.clone());
+        }
+        let mut trajectory = atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
+        trajectory.steps = sven_session_store::messages_to_steps(&self.state.history);
+        trajectory
+    }
+
     /// Suspends the agent, yielding the state needed to resume it later.
     #[must_use]
     pub fn suspend(self) -> AgentState {
@@ -382,6 +401,17 @@ impl Agent {
         }
 
         let bundle = builder.build_session().await?;
+        self.state.model = Some(match self.engine.provider() {
+            Some(provider) => provider.model_name().to_string(),
+            None => self.engine.config().model.name.clone(),
+        });
+        self.state.tools = bundle
+            .handle
+            .tool_registry()
+            .schemas()
+            .iter()
+            .map(|s| atif::function_tool(&s.name, &s.description, &s.parameters))
+            .collect();
 
         match self.engine.approvals() {
             ApprovalPolicy::AutoApprove => {

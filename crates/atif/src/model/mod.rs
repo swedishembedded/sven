@@ -18,7 +18,7 @@ mod subagent;
 mod tool;
 mod trajectory;
 
-pub use agent::AgentProfile;
+pub use agent::{function_tool, AgentProfile};
 pub use content::{ContentSegment, ImageMediaType, ImageRef, MessageBody};
 pub use context_mgmt::ContextManagement;
 pub use metrics::StepMetrics;

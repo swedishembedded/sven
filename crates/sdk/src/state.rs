@@ -31,6 +31,12 @@ pub struct AgentState {
     /// `None` for an agent that has not run yet, which resumes from its
     /// machine's initial state.
     pub(crate) kernel: Option<Snapshot>,
+    /// The model the last step ran on, for the trajectory.
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+    /// The tools the last step offered the model, as ATIF tool definitions.
+    #[serde(default)]
+    pub(crate) tools: Vec<serde_json::Value>,
 }
 
 impl AgentState {
@@ -42,6 +48,8 @@ impl AgentState {
             history: Vec::new(),
             role: None,
             kernel: None,
+            model: None,
+            tools: Vec::new(),
         }
     }
 

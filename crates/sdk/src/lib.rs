@@ -53,6 +53,8 @@ mod state;
 mod transcript;
 
 pub use agent::Agent;
+/// The trajectory interchange format [`Agent::trajectory`] exports.
+pub use atif;
 pub use engine::{ApprovalPolicy, Engine, EngineBuilder, Toolset};
 pub use error::CallError;
 pub use method::{Method, Strategy};

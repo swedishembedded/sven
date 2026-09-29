@@ -329,6 +329,23 @@ runner consume, so a custom surface renders progress without naming a kernel
 crate. Subscribe before calling `send`; a receiver created afterwards sees only
 what is still buffered.
 
+sven logs through `tracing` (targets `sven_*`). The SDK installs no
+subscriber: the application's own subscriber, whatever it is, receives them.
+
+## Trajectories
+
+`Agent::trajectory()` exports what the agent did as an ATIF document
+(`sven_sdk::atif`): every message, every tool call with its result, the model
+and the tool definitions it was offered. It is built from the conversation the
+kernel holds, so it is complete even when progress events were dropped, and a
+resumed agent exports the same document. It carries no reward: whether the
+work was right is for a verifier to decide.
+
+```rust
+let trajectory = agent.trajectory();
+sven_sdk::atif::persist::write_trajectory_atomic(&path, &trajectory, None)?;
+```
+
 ## Where the state comes from
 
 `AgentState` carries the conversation history and a kernel `Snapshot`. The
