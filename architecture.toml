@@ -9,6 +9,8 @@
 #   - A crate may depend (as a normal, non-dev dependency) only on crates at a
 #     STRICTLY LOWER tier, unless the ordered pair is listed in [[same_layer]].
 #   - dev-dependencies are exempt from the tier check entirely.
+#   - A [[forbidden]] pair is a design invariant, not an exception: `to` must
+#     not be reachable from `from` over normal dependencies, at any depth.
 #   - Every [[allow.*]] entry below is a REVIEWED, TEMPORARY exception with a
 #     `why` explaining what it is and when it goes away. A stale entry (the
 #     violation it names no longer exists) is itself a failure — delete it when
@@ -113,6 +115,67 @@ xtask = "foundation"
 # workspace is below this one. `make check/samples` is what enforces that, by
 # reading the manifest. Both gates run in `make check`.
 sample-study-svf = "sample"
+
+# ── Forbidden reachability. Checked transitively over normal dependencies. ─
+[[forbidden]]
+from = "sven-machines"
+to   = "sven-model"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-machines"
+to   = "sven-tool-api"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-machines"
+to   = "sven-tool-registry"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-machines"
+to   = "sven-turn"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-machines"
+to   = "sven-executors"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-machines"
+to   = "sven-kernel"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-machines"
+to   = "sven-config"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-machines"
+to   = "sven-workspace"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-hsm"
+to   = "sven-model"
+why  = "The kernel owns dispatch, effects and permissions; it names tools and models only through sven-vocab's data types."
+
+[[forbidden]]
+from = "sven-hsm"
+to   = "sven-tool-api"
+why  = "The kernel owns dispatch, effects and permissions; it names tools and models only through sven-vocab's data types."
+
+[[forbidden]]
+from = "sven-hsm"
+to   = "sven-tool-registry"
+why  = "The kernel owns dispatch, effects and permissions; it names tools and models only through sven-vocab's data types."
+
+[[forbidden]]
+from = "sven-hsm"
+to   = "sven-config"
+why  = "The kernel owns dispatch, effects and permissions; it names tools and models only through sven-vocab's data types."
 
 # ── Legitimate same-tier edges. Each needs a `why`. ─────────────────────────
 [[same_layer]]

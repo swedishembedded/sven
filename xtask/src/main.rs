@@ -17,6 +17,10 @@
 //!     looking for the dependency's snake_case identifier as a whole word.
 //!     This is deliberately stricter than `cargo-machete`, which would treat
 //!     an intra-doc link like `` /// [`sven_executors::Foo`] `` as a real use.
+//!   - `[[forbidden]]` rules are checked transitively over normal
+//!     dependencies: the tier matrix sees only direct edges, so it cannot
+//!     notice a pure crate becoming able to reach I/O through a crate it is
+//!     allowed to use.
 //!   - `--bless` regenerates only the `[[allow.large_file]]` section from the
 //!     live tree. It does not touch `[[allow.upward]]` / `[[allow.dead_dep]]`
 //!     / `[[same_layer]]`, which carry human-authored `why` text that must be
@@ -84,6 +88,10 @@ struct ArchConfig {
     crates: BTreeMap<String, String>,
     #[serde(default)]
     same_layer: Vec<Pair>,
+    /// Crates that must never be reachable from another crate through
+    /// normal dependencies, directly or transitively.
+    #[serde(default)]
+    forbidden: Vec<Pair>,
     #[serde(default)]
     allow: AllowSections,
 }
@@ -326,6 +334,8 @@ fn run_arch(workspace_root: &Path, profile: Option<&str>) -> Result<Vec<String>>
         }
     }
 
+    violations.extend(check_forbidden(&packages, &cfg.forbidden));
+
     // File-size ratchet.
     violations.extend(check_large_files(workspace_root, &cfg.allow.large_file)?);
 
@@ -334,6 +344,74 @@ fn run_arch(workspace_root: &Path, profile: Option<&str>) -> Result<Vec<String>>
     }
 
     Ok(violations)
+}
+
+/// `[[forbidden]]`: `to` must not be reachable from `from` over normal
+/// dependencies. The tier matrix only sees direct edges; this is what keeps
+/// a pure crate pure when a crate it is allowed to use gains a dependency.
+fn check_forbidden(packages: &[Package], forbidden: &[Pair]) -> Vec<String> {
+    let graph: BTreeMap<&str, Vec<&str>> = packages
+        .iter()
+        .map(|p| {
+            let deps = p
+                .deps
+                .iter()
+                .filter(|(_, is_normal)| *is_normal)
+                .map(|(name, _)| name.as_str())
+                .collect();
+            (p.name.as_str(), deps)
+        })
+        .collect();
+    let mut violations = Vec::new();
+    for rule in forbidden {
+        if !graph.contains_key(rule.from.as_str()) {
+            violations.push(format!(
+                "error[ARCH-011]: [[forbidden]] names an unknown crate\n  {} is not a workspace member\n  = help: fix or delete this entry in architecture.toml",
+                rule.from
+            ));
+            continue;
+        }
+        if let Some(path) = dependency_path(&graph, &rule.from, &rule.to) {
+            violations.push(format!(
+                "error[ARCH-010]: forbidden dependency\n  {} reaches {} via {}\n  = note: {}\n  = help: cut the edge that introduced it; the rule is a design invariant, not a ratchet",
+                rule.from,
+                rule.to,
+                path.join(" -> "),
+                rule.why.trim()
+            ));
+        }
+    }
+    violations
+}
+
+/// The shortest normal-dependency path from `from` to `to`, if `to` is
+/// reachable at all. A crate is not its own dependency.
+fn dependency_path(graph: &BTreeMap<&str, Vec<&str>>, from: &str, to: &str) -> Option<Vec<String>> {
+    if from == to {
+        return None;
+    }
+    let mut parent: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut queue = std::collections::VecDeque::from([from]);
+    let mut seen = BTreeSet::from([from]);
+    while let Some(node) = queue.pop_front() {
+        for &dep in graph.get(node).map(Vec::as_slice).unwrap_or_default() {
+            if dep == to {
+                let mut path = vec![to.to_string(), node.to_string()];
+                let mut cur = node;
+                while let Some(&p) = parent.get(cur) {
+                    path.push(p.to_string());
+                    cur = p;
+                }
+                path.reverse();
+                return Some(path);
+            }
+            if seen.insert(dep) {
+                parent.insert(dep, node);
+                queue.push_back(dep);
+            }
+        }
+    }
+    None
 }
 
 /// Scans `dir` recursively for `.rs` files and checks whether any, after
@@ -656,4 +734,39 @@ fn bless_large_files(workspace_root: &Path) -> Result<()> {
 /// and double-quote.
 fn toml_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn graph(edges: &[(&'static str, &'static str)]) -> BTreeMap<&'static str, Vec<&'static str>> {
+        let mut g: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (from, to) in edges {
+            g.entry(from).or_default().push(to);
+        }
+        g
+    }
+
+    /// A forbidden edge is caught however many hops away it is, and the
+    /// report names the path so the offending link can be found.
+    #[test]
+    fn a_forbidden_dependency_is_found_through_intermediate_crates() {
+        let g = graph(&[("machines", "vocab"), ("machines", "hsm"), ("hsm", "model")]);
+        assert_eq!(
+            dependency_path(&g, "machines", "model"),
+            Some(vec!["machines".into(), "hsm".into(), "model".into()])
+        );
+        assert_eq!(
+            dependency_path(&g, "machines", "vocab"),
+            Some(vec!["machines".into(), "vocab".into()])
+        );
+    }
+
+    #[test]
+    fn an_unreachable_crate_is_not_a_dependency_even_across_a_cycle() {
+        let g = graph(&[("a", "b"), ("b", "a"), ("c", "d")]);
+        assert_eq!(dependency_path(&g, "a", "d"), None);
+        assert_eq!(dependency_path(&g, "a", "a"), None);
+    }
 }
