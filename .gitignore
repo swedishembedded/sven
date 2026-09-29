@@ -7,23 +7,6 @@
 .cargo/
 Cargo.lock
 
-# samples/learning/ is a separate cargo workspace (see its README), so its
-# build output lands here rather than in the root target/. It has to be
-# ignored explicitly: `/target/` above is anchored at the repository root, and
-# `make check/gates` scans untracked-but-unignored files, so an unignored
-# nested target/ fails the machine-path gate with thousands of hits from
-# generated build scripts.
-/samples/learning/target/
-
-# samples/agent/ is a second separate cargo workspace, same situation.
-/samples/agent/target/
-# ...but its .cargo/config.toml is tracked: it points the workspace's build
-# at the root target/ (one build directory, artifact reuse), and `.cargo/`
-# above would otherwise hide it.
-!/samples/agent/.cargo/
-/samples/agent/.cargo/registry/
-/samples/agent/.cargo/git/
-
 # Python cache
 __pycache__
 

@@ -47,21 +47,7 @@ DEP_KEY='^[[:space:]]*"?(brain([-_][A-Za-z0-9_-]+)?)"?[[:space:]]*='
 # `[dependencies.foo]` and inline as `foo = { package = "brain-x", ... }`.
 RENAMED='package[[:space:]]*=[[:space:]]*"brain([-_][A-Za-z0-9_-]+)?"'
 
-# `samples/learning/` and `samples/agent/` are exempt, and are the ONLY
-# exemptions. Each is a separate cargo workspace (see this repo's root
-# Cargo.toml `exclude`), so nothing they declare can reach this workspace's
-# Cargo.lock or its build -- which is precisely the property this gate
-# protects. Those samples exist to demonstrate a model learning from its own
-# verified experience, and the trainer is brain; reaching it over a wire
-# protocol would make each sample a demonstration of the wire protocol
-# instead.
-#
-# The exemption is scoped to the manifest scan only. The Cargo.lock check
-# below is NOT relaxed: this repo's lockfile must stay brain-free no matter
-# what, and a sample that somehow re-entered the main workspace would fail
-# there even while its manifest was skipped here.
-mapfile -d '' -t manifests < <(git ls-files -z '*Cargo.toml' 'Cargo.toml' |
-    grep -zv -e '^samples/learning/' -e '^samples/agent/')
+mapfile -d '' -t manifests < <(git ls-files -z '*Cargo.toml' 'Cargo.toml')
 
 hits=""
 if [ "${#manifests[@]}" -gt 0 ]; then

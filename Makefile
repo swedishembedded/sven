@@ -292,25 +292,6 @@ samples/%/run:
 	echo "running $$bin (built $$(date -r "$$bin" '+%Y-%m-%d %H:%M:%S'))"; \
 	exec "$$bin" $(ARGS)
 
-# samples/learning/ and samples/agent/ are SEPARATE cargo workspaces (see
-# the root Cargo.toml's `exclude` and scripts/gates/check-no-brain-dependency.sh):
-# their samples link brain directly, and must not put brain into this
-# workspace's build. Their targets live beside them - every sample workspace
-# carries its own Makefile, included below - and keep the same
-# skip-when-absent rule: no brain checkout, a stated skip, exit 0.
-#
-# Every sample's Makefile is included by wildcard, so a new sample workspace
-# picks up its targets by dropping a Makefile beside it - no edit here. The
-# guard keeps a tree with no sample Makefiles working unchanged.
-
-# ── Sample Makefiles (samples/*/Makefile) ─────────────────────────────────────
-SAMPLE_MAKEFILES := $(wildcard samples/*/Makefile)
-ifeq ($(strip $(SAMPLE_MAKEFILES)),)
-$(warning no samples/*/Makefile found - sample targets are unavailable)
-else
-include $(SAMPLE_MAKEFILES)
-endif
-
 ## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
 ##              and the `minimal` cargo feature profile's forbidden-crate list)
 check/arch:
