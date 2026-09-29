@@ -15,9 +15,10 @@ use sven_hsm::{Effect, Event};
 ///
 /// An effect whose result a machine already knows how to receive as a
 /// failure gets that event, so no machine needs a second failure path:
-/// `CallLlm` answers with [`Event::LlmFailed`] and `CallTool` with
-/// [`Event::ToolFailed`]. Everything else answers with
-/// [`Event::EffectFailed`].
+/// `CallLlm` answers with [`Event::LlmFailed`], `CallTool` with
+/// [`Event::ToolFailed`], and an approval request that was never put to
+/// anyone with [`Event::HumanRejected`] - not approved is not approved.
+/// Everything else answers with [`Event::EffectFailed`].
 #[must_use]
 pub fn failure_event(effect: &Effect, error: &str) -> Option<Event> {
     let error = error.to_string();
@@ -26,6 +27,9 @@ pub fn failure_event(effect: &Effect, error: &str) -> Option<Event> {
         Effect::CallTool { call_id, .. } => Some(Event::ToolFailed {
             call_id: *call_id,
             error,
+        }),
+        Effect::RequestHumanApproval { approval_id, .. } => Some(Event::HumanRejected {
+            approval_id: *approval_id,
         }),
         Effect::PersistAudit | Effect::EmitInternal { .. } | Effect::CancelTimeout { .. } => None,
         other => Some(Event::EffectFailed {

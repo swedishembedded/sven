@@ -73,20 +73,44 @@ impl Toolset {
     }
 }
 
-/// What an agent does when the kernel asks a human to approve something.
+/// What an agent does when the kernel asks a human to approve something or
+/// to answer a question.
 ///
-/// An agent running without a human attached must still answer the gate, or
-/// the turn blocks until it is cancelled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The gate must be answered, or the turn blocks until it is cancelled or
+/// its deadline passes.
+#[derive(Clone)]
 pub enum ApprovalPolicy {
-    /// Refuse every request. The default: a service with nobody watching
-    /// should not silently grant a dangerous capability.
+    /// Refuse every request and answer every question with nothing. The
+    /// default: a service with nobody watching should not silently grant a
+    /// dangerous capability.
     Deny,
     /// Grant every request, as the headless CI runner does.
     ///
     /// Appropriate only where the workspace is already disposable - a
     /// container, a sandbox, a scratch clone.
     AutoApprove,
+    /// Hand every gate to the application, which answers each through the
+    /// reply channel it carries - now, or later, after asking someone. A gate
+    /// dropped without a reply leaves the turn waiting, exactly as an
+    /// unanswered person would. Build one with [`ApprovalPolicy::ask`].
+    Ask(sven_bootstrap::session_handles::HumanGateResponder),
+}
+
+impl ApprovalPolicy {
+    /// Answers each gate with `answer`.
+    pub fn ask(answer: impl Fn(crate::HumanGate) + Send + Sync + 'static) -> Self {
+        Self::Ask(Arc::new(answer))
+    }
+}
+
+impl std::fmt::Debug for ApprovalPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Deny => "Deny",
+            Self::AutoApprove => "AutoApprove",
+            Self::Ask(_) => "Ask",
+        })
+    }
 }
 
 impl Engine {
@@ -173,7 +197,7 @@ impl Engine {
     }
 
     pub(crate) fn approvals(&self) -> ApprovalPolicy {
-        self.approvals
+        self.approvals.clone()
     }
 
     pub(crate) fn tools(&self) -> Vec<Arc<dyn sven_tool_api::Tool>> {

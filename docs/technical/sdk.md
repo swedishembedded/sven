@@ -53,6 +53,31 @@ let engine = Engine::builder()
 audited like a built-in one: its `kernel_capability` picks the permission
 bucket and its `default_policy` whether it needs approval.
 
+## Human gates
+
+When the kernel needs a human - an inherently dangerous capability such as
+`ExecuteShell`, or a question - the engine's `ApprovalPolicy` answers:
+`Deny` (the default), `AutoApprove` (disposable workspaces only), or `Ask`,
+which hands each gate to the application:
+
+```rust
+let engine = Engine::builder()
+    .approvals(ApprovalPolicy::ask(|gate| match gate {
+        HumanGate::Approval { capability, prompt, reply_tx } => {
+            // ask someone; reply now or later
+            let _ = reply_tx.send(policy_allows(capability, &prompt));
+        }
+        HumanGate::Question { prompt, reply_tx } => {
+            let _ = reply_tx.send(answer_for(&prompt));
+        }
+    }))
+    .build()?;
+```
+
+The run waits for the reply, bounded by its cancel token and deadline; a
+gate dropped without a reply leaves the turn waiting. An approved call runs
+exactly as the model proposed it.
+
 ## Bounded runs
 
 `send` returns a `RunOutcome`: how the run ended (`conclusion`), the `reply`,

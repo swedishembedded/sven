@@ -37,9 +37,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 use serde_json::Value;
 
 use sven_hsm::{
-    classify, validate_effects_are_allowed, AuditRecord, AuditTrailHandle, Context, Effect,
-    EffectDisposition, ErasedMachine, ErasedReport, Event, EventKind, Hsm, InternalEvent, Machine,
-    MachineId, ObservationSink, PermissionPolicy, RuntimeReport, RuntimeStatus, Snapshot,
+    classify, validate_effects_are_allowed, ApprovalId, AuditRecord, AuditTrailHandle, Context,
+    Effect, EffectDisposition, ErasedMachine, ErasedReport, Event, EventKind, Hsm, InternalEvent,
+    Machine, MachineId, ObservationSink, PermissionPolicy, RuntimeReport, RuntimeStatus, Snapshot,
     StateLabel, ToolAuditRecord, ToolCallId, UiEvent,
 };
 
@@ -159,6 +159,40 @@ impl Children {
                 spawner.spawn_child(machine, descriptor, sink.clone()).await;
             }
             (effect, _) => executor.execute(effect, sink, obs).await,
+        }
+    }
+}
+
+/// Work the kernel has started and whose answer has not re-entered the
+/// queue yet. While any is outstanding an empty queue is not "nothing left to
+/// do", so a capture is not served.
+///
+/// A tool call is outstanding from dispatch to its result. An approval
+/// request is outstanding until `HumanApproved`/`HumanRejected` for it: the
+/// host may answer at once or after asking someone, and either way the turn
+/// is not over. A parked question (`RequestHumanAnswer`) is deliberately not
+/// tracked - parking exists so a run can stop and resume when it is answered.
+#[derive(Default)]
+struct InFlight {
+    tools: HashSet<ToolCallId>,
+    approvals: HashSet<ApprovalId>,
+}
+
+impl InFlight {
+    fn is_empty(&self) -> bool {
+        self.tools.is_empty() && self.approvals.is_empty()
+    }
+
+    /// Retires what `event` answers, before the dispatch that consumes it.
+    fn retire(&mut self, event: &Event) {
+        match event {
+            Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
+                self.tools.remove(call_id);
+            }
+            Event::HumanApproved { approval_id } | Event::HumanRejected { approval_id } => {
+                self.approvals.remove(approval_id);
+            }
+            _ => {}
         }
     }
 }
@@ -351,7 +385,7 @@ where
     // Same in-flight registry as the erased loop. The typed runtime exposes no
     // quiescence-based capture, so the set is only fed; keeping the bookkeeping
     // identical means run_effects has one contract.
-    let mut inflight_tools: HashSet<ToolCallId> = HashSet::new();
+    let mut inflight = InFlight::default();
 
     // Initial transitions run inside the single consumer task, so their entry
     // effects go through the same validate-then-execute path as everything else.
@@ -367,7 +401,7 @@ where
         EventKind::Init,
         init_effects,
         &mut last_error,
-        &mut inflight_tools,
+        &mut inflight,
         &mut children,
     )
     .await;
@@ -407,7 +441,7 @@ where
             event_kind,
             effects,
             &mut last_error,
-            &mut inflight_tools,
+            &mut inflight,
             &mut children,
         )
         .await;
@@ -461,7 +495,7 @@ async fn run_effects<S, E>(
     event: EventKind,
     effects: Vec<Effect>,
     last_error: &mut Option<String>,
-    inflight: &mut HashSet<ToolCallId>,
+    inflight: &mut InFlight,
     children: &mut Children,
 ) where
     S: std::fmt::Debug + Send,
@@ -489,6 +523,9 @@ async fn run_effects<S, E>(
             Ok(()) => {
                 *last_error = None;
                 for effect in other_effects {
+                    if let Effect::RequestHumanApproval { approval_id, .. } = &effect {
+                        inflight.approvals.insert(*approval_id);
+                    }
                     children.execute(effect, executor, sink, obs).await;
                 }
             }
@@ -533,7 +570,7 @@ async fn run_effects<S, E>(
                 // Register before execution so the consumer loop holds the
                 // quiescence signal until the result event re-enters the
                 // queue, no matter how the executor runs the tool.
-                inflight.insert(*call_id);
+                inflight.tools.insert(*call_id);
                 executor.execute(effect, sink, obs).await;
             }
             EffectDisposition::Forbidden(reason) => {
@@ -847,7 +884,7 @@ where
     // empty event queue does not mean the machine has nothing left to do -
     // quiescence-based captures must wait these out. Effect- and event-derived
     // only: replay reproduces the same set without any live executor state.
-    let mut inflight_tools: HashSet<ToolCallId> = HashSet::new();
+    let mut inflight = InFlight::default();
 
     let init_effects = machine.init(&mut ctx);
     // Mirror the audit trail *before* running effects so a `PersistAudit`
@@ -864,7 +901,7 @@ where
         EventKind::Init,
         init_effects,
         &mut last_error,
-        &mut inflight_tools,
+        &mut inflight,
         &mut children,
     )
     .await;
@@ -911,7 +948,7 @@ where
                 Some(event) => event,
                 None => break,
             },
-            Some(reply) = capture_rx.recv(), if inflight_tools.is_empty() => {
+            Some(reply) = capture_rx.recv(), if inflight.is_empty() => {
                 let _ = reply.send(Snapshot {
                     state: machine.state_label(),
                     context: ctx.clone(),
@@ -921,12 +958,7 @@ where
         };
         // Retire in-flight calls whose result just arrived, before the
         // dispatch that consumes it.
-        match &event {
-            Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
-                inflight_tools.remove(call_id);
-            }
-            _ => {}
-        }
+        inflight.retire(&event);
         note_child_completion(&mut children, &event);
         let outcome = machine.dispatch(&event, &mut ctx);
         let event_kind = outcome.event;
@@ -949,7 +981,7 @@ where
             event_kind,
             effects,
             &mut last_error,
-            &mut inflight_tools,
+            &mut inflight,
             &mut children,
         )
         .await;

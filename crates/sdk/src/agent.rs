@@ -301,6 +301,9 @@ impl Agent {
             ApprovalPolicy::Deny => {
                 tokio::spawn(bundle.channels.deny_all());
             }
+            ApprovalPolicy::Ask(responder) => {
+                tokio::spawn(bundle.channels.forward_to(responder));
+            }
         }
 
         let mut observations = bundle.handle.subscribe_observations();

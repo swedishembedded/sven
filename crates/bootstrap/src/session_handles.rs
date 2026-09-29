@@ -37,15 +37,6 @@ pub struct KernelChannels {
 }
 
 impl KernelChannels {
-    /// Refuses every kernel-level question and approval gate, replying
-    /// immediately so the session never blocks on a human who isn't there:
-    /// an empty string for every `AskUser`, `false` (deny) for every
-    /// `RequestHumanApproval`. Returns once both channels close.
-    ///
-    /// The counterpart to [`Self::auto_approve`], and the safe default for an
-    /// unattended session: answering the gate is mandatory - a turn that
-    /// ignores it hangs - but answering it with "yes" hands a dangerous
-    /// capability to nobody's judgement.
     /// Hands every kernel-level question and approval gate to `responder`,
     /// which owns replying to each.
     ///
@@ -74,6 +65,15 @@ impl KernelChannels {
         }
     }
 
+    /// Refuses every kernel-level question and approval gate, replying
+    /// immediately so the session never blocks on a human who isn't there:
+    /// an empty string for every `AskUser`, `false` (deny) for every
+    /// `RequestHumanApproval`. Returns once both channels close.
+    ///
+    /// The counterpart to [`Self::auto_approve`], and the safe default for an
+    /// unattended session: answering the gate is mandatory - a turn that
+    /// ignores it hangs - but answering it with "yes" hands a dangerous
+    /// capability to nobody's judgement.
     pub async fn deny_all(mut self) {
         loop {
             tokio::select! {
@@ -96,10 +96,6 @@ impl KernelChannels {
     ///
     /// This is the unattended path - CI runs and one-shot test/demo wiring.
     /// Typically driven with `tokio::spawn(channels.auto_approve())`.
-    ///
-    /// Its doc comment used to be glued onto [`Self::deny_all`] above, which
-    /// left the more dangerous of the two functions looking documented while
-    /// being the undocumented one.
     ///
     /// **Prefer [`Self::forward_to`] whenever the host CAN answer.** A host
     /// with a person attached that calls this is deciding on their behalf

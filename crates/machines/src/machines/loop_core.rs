@@ -98,6 +98,11 @@ pub struct LoopState {
     /// postdates persisted states.
     #[serde(default)]
     pub empty_turns: u32,
+    /// The current batch's calls as proposed, so a call held at an approval
+    /// gate can be issued exactly as proposed once it is approved. Replaced
+    /// with each new batch, like [`LoopState::call_registry`].
+    #[serde(default)]
+    pub proposed: HashMap<ToolCallId, ProposedToolCall>,
 }
 
 impl LoopState {
@@ -263,6 +268,10 @@ fn register_calls(ls: &mut LoopState, tool_calls: &[ProposedToolCall]) {
         .collect();
     ls.call_registry.retain(|id, _| identities.contains_key(id));
     ls.call_registry.extend(identities);
+    ls.proposed = tool_calls
+        .iter()
+        .map(|tc| (tc.call_id, tc.clone()))
+        .collect();
 }
 
 /// Record a finished call's outcome: a success clears its streak, a failure
@@ -355,6 +364,7 @@ pub fn init_loop(
         awaiting_tool_approval: None,
         awaiting_answer: None,
         call_registry: HashMap::new(),
+        proposed: HashMap::new(),
         failure_streaks: HashMap::new(),
         stall_nudge: None,
         empty_turns: 0,
@@ -600,9 +610,23 @@ pub fn handle_tool_event<S>(
         Event::HumanApproved { approval_id } => {
             let mut ls = LoopState::load(ctx);
             if ls.awaiting_tool_approval == Some(*approval_id) {
-                // Grant the capability so the continuation turn can use it.
+                // Grant the capability, then issue the held call exactly as it
+                // was proposed: the approval was for that call, and the model
+                // already has it in its history awaiting a result. The
+                // approval id is derived from the call id it gates.
                 ctx.approve(*approval_id);
                 ls.awaiting_tool_approval = None;
+                let call_id = ToolCallId::from_uuid(approval_id.as_uuid());
+                if let Some(call) = ls.proposed.get(&call_id).cloned() {
+                    ls.pending.insert(call_id);
+                    ls.store(ctx);
+                    return Some(Reaction::effects(vec![Effect::CallTool {
+                        call_id,
+                        name: call.name,
+                        capability: call.capability,
+                        args: call.args,
+                    }]));
+                }
                 if ls.is_idle() {
                     let cont = make_turn(&mut ls);
                     ls.store(ctx);

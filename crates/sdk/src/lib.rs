@@ -58,6 +58,7 @@ pub use error::CallError;
 pub use method::{Method, Strategy};
 pub use run::{CancelToken, RunConclusion, RunOptions, RunOutcome, Usage};
 pub use state::AgentState;
+pub use sven_bootstrap::session_handles::HumanGate;
 pub use transcript::{ToolCallRecord, Turn};
 
 /// Sven's configuration - which model, which provider, which limits.
