@@ -13,8 +13,10 @@
 //! `ModelProvider` trait + request/response types (`sven-model`) no longer
 //! pay for any of it transitively.
 mod anthropic;
+mod api_key;
 mod aws;
 mod cohere;
+mod dbus;
 mod google;
 mod openai;
 pub(crate) mod openai_compat;
@@ -23,6 +25,7 @@ pub use anthropic::AnthropicProvider;
 pub use openai::OpenAiProvider;
 
 use anyhow::bail;
+use api_key::{read_key_from_file, resolve_api_key};
 use async_trait::async_trait;
 use futures::Stream;
 use openai_compat::{AuthStyle, OpenAICompatProvider};
@@ -478,6 +481,9 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
             ))
         }
 
+        // brain over D-Bus: not HTTP, so never the catch-all below.
+        "dbus" => dbus::provider(cfg, resolved_max_tokens, cfg.temperature)?,
+
         // ── Testing / Mock ────────────────────────────────────────────────────
         "mock" => {
             let responses_path = std::env::var("SVEN_MOCK_RESPONSES")
@@ -658,78 +664,6 @@ async fn resolve_empty_brain_model_name(cfg: &ModelConfig) -> ModelConfig {
     }
 }
 
-/// Path to a provider's local keys file, when it has one.
-///
-/// Only "brain" has this today: it mints a fresh random `sk-brain-<32hex>`
-/// key on every start and can write it (plus every other surface's key) to
-/// a JSON file via `--api-keys-out`. Reading that file each time a provider
-/// is constructed (rather than caching) means a brain restart with a new
-/// key just works on the next `sven` invocation, with no env var to
-/// re-export by hand.
-///
-/// Precedence: `$BRAIN_API_KEYS_FILE` (explicit override) → per-user
-/// `$XDG_RUNTIME_DIR/brain/api-keys.json` (tmpfs, appropriate for a value
-/// that's regenerated every server start and shouldn't outlive a reboot) →
-/// `~/.local/state/brain/api-keys.json` (falls back when no runtime dir is
-/// set, e.g. some container/service setups).
-fn key_file_for(provider: &str) -> Option<std::path::PathBuf> {
-    if provider != "brain" {
-        return None;
-    }
-    if let Ok(p) = std::env::var("BRAIN_API_KEYS_FILE") {
-        if !p.is_empty() {
-            return Some(std::path::PathBuf::from(p));
-        }
-    }
-    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        if !runtime_dir.is_empty() {
-            return Some(std::path::Path::new(&runtime_dir).join("brain/api-keys.json"));
-        }
-    }
-    dirs::state_dir().map(|d| d.join("brain/api-keys.json"))
-}
-
-/// Read a single dialect's key out of a brain-shaped keys JSON file:
-/// `{"<dialect>": "<key>", ...}`. Pure and path-parameterised (no env
-/// lookup) so it is directly unit-testable without touching process state.
-fn read_key_from_json_file(path: &std::path::Path, dialect_key: &str) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-    json.get(dialect_key)?.as_str().map(str::to_string)
-}
-
-/// Read a provider's key out of its keys file (see [`key_file_for`]).
-///
-/// brain's `--api-keys-out` format is `{"<dialect>": "<key>", ...}` - one
-/// entry per surface it serves (`"openai"`/`"anthropic"`/`"openrouter"`,
-/// brain's `Provider::as_str()`), NOT `"brain"` - sven's driver id and
-/// brain's dialect name are different namespaces that happen to both exist.
-/// sven's "brain" driver always targets brain's OpenAI-compatible surface
-/// (base_url ends in `/v1`, throughout this codebase), so the JSON lookup
-/// is hardcoded to `"openai"` regardless of what `provider` (sven's id) is.
-fn read_key_from_file(provider: &str) -> Option<String> {
-    read_key_from_json_file(&key_file_for(provider)?, "openai")
-}
-
-fn resolve_api_key(cfg: &ModelConfig) -> Option<String> {
-    if let Some(k) = &cfg.api_key {
-        return Some(k.clone());
-    }
-    if let Some(env) = &cfg.api_key_env {
-        return std::env::var(env).ok();
-    }
-    // Auto-resolve from registry default env var if neither is set.
-    if let Some(meta) = registry::get_driver(&cfg.provider) {
-        if let Some(env_var) = meta.default_api_key_env {
-            if let Ok(key) = std::env::var(env_var) {
-                return Some(key);
-            }
-        }
-    }
-    // Last resort: a provider-specific keys file (see key_file_for).
-    read_key_from_file(&cfg.provider)
-}
-
 /// Spawn a background tokio task to refresh the OpenRouter model catalog cache.
 ///
 /// The task fetches `GET <base_url>/models`, parses the rich OpenRouter
@@ -809,6 +743,7 @@ fn portkey_extra_headers(cfg: &ModelConfig) -> Vec<(String, String)> {
 
 #[cfg(test)]
 mod tests {
+    use super::api_key::{key_file_for, read_key_from_json_file};
     use super::*;
     use sven_model::{get_driver, list_drivers};
 
@@ -858,6 +793,18 @@ mod tests {
                 "unexpected error (provider should be recognized): {e}"
             ),
         }
+    }
+
+    /// `provider: dbus` selects brain's D-Bus transport. It must never fall
+    /// through to the OpenAI-compatible catch-all, which either refuses it
+    /// for want of a base URL or - given one - silently speaks HTTP instead.
+    #[cfg(all(unix, feature = "dbus"))]
+    #[test]
+    fn from_config_dbus_builds_the_dbus_provider() {
+        let cfg = minimal_config("dbus", "brain/qwen3");
+        let provider = from_config(&cfg).expect("the dbus provider is built without a base URL");
+        assert_eq!(provider.name(), "dbus");
+        assert_eq!(provider.model_name(), "brain/qwen3");
     }
 
     #[test]

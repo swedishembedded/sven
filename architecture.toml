@@ -297,6 +297,3 @@ lines = 814
 [[allow.large_file]]
 path = "crates/executors/src/turn.rs"
 lines = 812
-[[allow.large_file]]
-path = "crates/model-drivers/src/lib.rs"
-lines = 809

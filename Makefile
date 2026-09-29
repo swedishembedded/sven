@@ -28,7 +28,7 @@ DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
 .PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
-        check check/fmt check/clippy check/gates check/paths check/deps check/samples check/arch hooks/install docs docs-pdf \
+        check check/fmt check/features check/clippy check/gates check/paths check/deps check/samples check/arch hooks/install docs docs-pdf \
         formal \
         samples/list \
         release/build release/publish release/tag \
@@ -217,7 +217,7 @@ formal:
 # Every gate below is reachable from HERE, not only from an installed git
 # hook -- a check that lives only in `make hooks/install` enforces nothing on a
 # fresh clone that never ran it.
-check: check/fmt check/gates check/arch check/clippy
+check: check/fmt check/gates check/arch check/features check/clippy
 
 ## check/fmt - rustfmt shape, checked not applied (`make fmt` fixes it)
 # First, because it is the cheapest thing that can fail and the least
@@ -226,6 +226,12 @@ check: check/fmt check/gates check/arch check/clippy
 # zero and the script went with it.
 check/fmt:
 	$(CARGO) fmt --all -- --check
+
+## check/features - crates with feature-gated transports still build with the
+##                  features off (the workspace build always unifies them on,
+##                  so nothing else would ever compile that configuration)
+check/features:
+	$(CARGO) check -q -p sven-model -p sven-model-drivers --no-default-features
 
 ## check/clippy - lint the workspace, warnings are errors
 check/clippy:

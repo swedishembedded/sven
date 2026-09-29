@@ -6,7 +6,7 @@ description = "Concrete ModelProvider driver implementations (34 providers) and 
 
 [dependencies]
 sven-config      = { path = "../config" }
-sven-model       = { path = "../model" }
+sven-model       = { path = "../model", default-features = false }
 sven-model-mock  = { path = "../model-mock" }
 anyhow      = { workspace = true }
 async-trait = { workspace = true }
@@ -20,3 +20,9 @@ sha2        = { workspace = true }
 hex         = { workspace = true }
 chrono      = { workspace = true }
 dirs        = { workspace = true }
+
+[features]
+# brain's D-Bus transport (`provider: dbus`). Unix only; forwards to the
+# transport's implementation in sven-model.
+default = ["dbus"]
+dbus = ["sven-model/dbus"]

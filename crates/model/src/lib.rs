@@ -42,6 +42,7 @@ mod types;
 pub use catalog::{InputModality, ModelCatalogEntry};
 #[cfg(all(unix, feature = "dbus"))]
 pub use dbus::action::{ActionClient, ActionInput, ActionOutcome};
+#[cfg(all(unix, feature = "dbus"))]
 pub use dbus::{BusKind, DbusOptions, DbusProvider};
 pub use provider::{ModelProvider, ResponseStream};
 pub use registry::{get_driver, list_drivers, DriverMeta};
