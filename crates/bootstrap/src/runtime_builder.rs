@@ -595,10 +595,7 @@ impl RuntimeBuilder {
                 runtime.clone(),
                 integration_providers,
             ),
-            None => {
-                drop((tool_event_tx, integration_providers));
-                sven_tool_registry::ToolRegistry::new()
-            }
+            None => sven_tool_registry::ToolRegistry::new(),
         };
 
         let mcp_tools: Vec<McpTool> = mcp_manager.tools().await;
