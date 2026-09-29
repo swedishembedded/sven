@@ -295,12 +295,13 @@ impl EffectExecutor for ToolExecutor {
                 // a headless run recognise "parked" and stop waiting instead
                 // of running until its timeout, with zero new frontend wiring.
                 obs.emit(UiEvent::Question {
-                    id: display_id,
+                    id: display_id.clone(),
                     questions: vec![parked.prompt.clone()],
                 });
                 let _ = sink
                     .emit(Event::QuestionAsked {
                         call_id,
+                        call_ref: display_id,
                         prompt: parked.prompt,
                         options: parked.options,
                     })

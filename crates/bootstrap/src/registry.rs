@@ -25,9 +25,7 @@ use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 use sven_tool_api::events::{TodoItem, ToolEvent};
 use sven_tool_registry::ToolRegistry;
-use sven_tools_agent::{
-    AskQuestionTool, ModelCatalogEntry, QuestionRequest, SkillTool, SystemTool, TodoTool,
-};
+use sven_tools_agent::{AskQuestionTool, ModelCatalogEntry, SkillTool, SystemTool, TodoTool};
 use sven_tools_ctx::{ContextStore, MemoryTool};
 use sven_tools_exec::ShellTool;
 use sven_tools_fs::{
@@ -40,7 +38,7 @@ use sven_workspace::Shared;
 
 use sven_turn::AgentRuntimeContext;
 
-use crate::context::ToolSetProfile;
+use crate::context::{Questions, ToolSetProfile};
 use crate::context_tool::ContextTool;
 use crate::task_tool::TaskTool;
 #[cfg(all(unix, feature = "gdb"))]
@@ -139,14 +137,14 @@ pub fn build_tool_registry_with_integrations(
 ) -> ToolRegistry {
     let mut reg = match profile {
         ToolSetProfile::Full {
-            question_tx,
+            questions,
             todos,
             buffer_store,
         } => build_profile_full(FullProfileParams {
             cfg,
             model,
             mode_lock,
-            question_tx,
+            questions,
             todos,
             tool_event_tx,
             runtime: &sub_agent_runtime,
@@ -154,24 +152,24 @@ pub fn build_tool_registry_with_integrations(
             include_gdb_context: true,
         }),
         ToolSetProfile::Coding {
-            question_tx,
+            questions,
             todos,
             buffer_store,
         } => build_profile_full(FullProfileParams {
             cfg,
             model,
             mode_lock,
-            question_tx,
+            questions,
             todos,
             tool_event_tx,
             runtime: &sub_agent_runtime,
             buffer_store,
             include_gdb_context: false,
         }),
-        ToolSetProfile::Research { question_tx, todos } => build_profile_research(
+        ToolSetProfile::Research { questions, todos } => build_profile_research(
             cfg,
             mode_lock,
-            question_tx,
+            questions,
             todos,
             tool_event_tx,
             &sub_agent_runtime,
@@ -240,12 +238,21 @@ fn register_integration_tools(_reg: &mut ToolRegistry, _providers: IntegrationPr
     }
 }
 
+/// Offers `ask_question` routed as `questions` says, if at all.
+fn register_ask_question(reg: &mut ToolRegistry, questions: Questions) {
+    match questions {
+        Questions::Answered(tx) => reg.register(AskQuestionTool::new_tui(tx)),
+        Questions::Parked => reg.register(AskQuestionTool::new_headless()),
+        Questions::Unavailable => {}
+    }
+}
+
 /// Parameters shared by the Full and Coding profile builders.
 struct FullProfileParams<'a> {
     cfg: &'a Config,
     model: Arc<dyn ModelProvider>,
     mode_lock: Arc<Mutex<AgentMode>>,
-    question_tx: Option<mpsc::Sender<QuestionRequest>>,
+    questions: Questions,
     todos: Arc<Mutex<Vec<TodoItem>>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     runtime: &'a AgentRuntimeContext,
@@ -274,9 +281,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
         p.include_gdb_context,
     );
 
-    if let Some(tx) = p.question_tx {
-        reg.register(AskQuestionTool::new_tui(tx));
-    }
+    register_ask_question(&mut reg, p.questions);
     reg.register(TodoTool::new(p.todos, p.tool_event_tx.clone()));
 
     reg.register(TaskTool::new(
@@ -295,7 +300,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
 fn build_profile_research(
     cfg: &Config,
     mode_lock: Arc<Mutex<AgentMode>>,
-    question_tx: Option<mpsc::Sender<QuestionRequest>>,
+    questions: Questions,
     todos: Arc<Mutex<Vec<TodoItem>>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     runtime: &AgentRuntimeContext,
@@ -321,9 +326,7 @@ fn build_profile_research(
         model_catalog_for_tools(),
     ));
 
-    if let Some(tx) = question_tx {
-        reg.register(AskQuestionTool::new_tui(tx));
-    }
+    register_ask_question(&mut reg, questions);
     reg.register(TodoTool::new(todos, tool_event_tx.clone()));
 
     // Task is included for delegation; its children are held to read-only
@@ -534,7 +537,7 @@ mod tests {
             &Config::default(),
             Arc::new(MockProvider),
             ToolSetProfile::Full {
-                question_tx: None,
+                questions: Questions::Unavailable,
                 todos: Arc::new(Mutex::new(Vec::new())),
                 buffer_store: Arc::new(Mutex::new(OutputBufferStore::default())),
             },

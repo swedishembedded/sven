@@ -24,7 +24,7 @@ pub mod supervisor;
 pub mod task_tool;
 pub mod ui_test_dispatch;
 
-pub use context::{BuiltinTools, RuntimeContext, ToolSetProfile};
+pub use context::{BuiltinTools, Questions, RuntimeContext, ToolSetProfile};
 pub use context_query::{
     build_context_query_tools, ContextQueryTool, ContextReduceTool, ModelSubQueryRunner,
 };

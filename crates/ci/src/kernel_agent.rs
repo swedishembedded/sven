@@ -120,7 +120,7 @@ impl KernelAgent {
             sven_tools_fs::OutputBufferStore::new(),
         ));
         let profile = ToolSetProfile::Full {
-            question_tx: None,
+            questions: sven_bootstrap::Questions::Unavailable,
             todos,
             buffer_store,
         };

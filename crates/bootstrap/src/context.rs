@@ -190,6 +190,27 @@ pub enum BuiltinTools {
     None,
 }
 
+// ─── Questions ────────────────────────────────────────────────────────────────
+
+/// Where the `ask_question` tool takes what the model asks.
+pub enum Questions {
+    /// To a surface that answers while the run waits (the TUI).
+    Answered(mpsc::Sender<QuestionRequest>),
+    /// Parked: the run stops on the question and resumes when an answer is
+    /// posted for it, however much later that is.
+    Parked,
+    /// Not offered: the session has no `ask_question` tool.
+    Unavailable,
+}
+
+impl Questions {
+    /// A surface's question channel, or no `ask_question` tool without one:
+    /// what a session the application assembles runs with.
+    fn answered_or_unavailable(tx: Option<mpsc::Sender<QuestionRequest>>) -> Self {
+        tx.map_or(Self::Unavailable, Self::Answered)
+    }
+}
+
 // ─── ToolSetProfile ───────────────────────────────────────────────────────────
 
 /// Session-locked profile that selects the tool set for an entire session.
@@ -198,15 +219,13 @@ pub enum BuiltinTools {
 /// never change mid-session, which keeps the Anthropic prefix-cache for the
 /// tools array stable across all turns.
 ///
-/// `question_tx` is `Some` when ask_question routes to the TUI; `None` for
-/// headless/CI/sub-agent contexts where no UI is attached.
 pub enum ToolSetProfile {
     /// Full tool set (TUI and headless/CI, with GDB and context tools).
     ///
     /// Use when the project has GDB configuration or large-content analysis
     /// is expected.
     Full {
-        question_tx: Option<mpsc::Sender<QuestionRequest>>,
+        questions: Questions,
         todos: Arc<Mutex<Vec<TodoItem>>>,
         buffer_store: Arc<Mutex<OutputBufferStore>>,
     },
@@ -216,7 +235,7 @@ pub enum ToolSetProfile {
     /// For typical software engineering sessions without embedded debugging
     /// or large-file analysis. Leaner tools array caches more efficiently.
     Coding {
-        question_tx: Option<mpsc::Sender<QuestionRequest>>,
+        questions: Questions,
         todos: Arc<Mutex<Vec<TodoItem>>>,
         buffer_store: Arc<Mutex<OutputBufferStore>>,
     },
@@ -226,7 +245,7 @@ pub enum ToolSetProfile {
     /// For exploration sessions where the agent should not modify files.
     /// No edit_file, write, shell (modifying commands), or task.
     Research {
-        question_tx: Option<mpsc::Sender<QuestionRequest>>,
+        questions: Questions,
         todos: Arc<Mutex<Vec<TodoItem>>>,
     },
 
@@ -263,20 +282,21 @@ impl ToolSetProfile {
             };
         }
 
+        let questions = Questions::answered_or_unavailable(question_tx);
         if mode == sven_config::AgentMode::Research {
-            return ToolSetProfile::Research { question_tx, todos };
+            return ToolSetProfile::Research { questions, todos };
         }
 
         if has_gdb_config(project_root) {
             return ToolSetProfile::Full {
-                question_tx,
+                questions,
                 todos,
                 buffer_store,
             };
         }
 
         ToolSetProfile::Coding {
-            question_tx,
+            questions,
             todos,
             buffer_store,
         }
@@ -329,12 +349,17 @@ impl ToolSetProfile {
                 todos,
                 buffer_store,
             )),
+            // An explicit preset is an embedding host's choice; with no
+            // surface to answer a question, asking parks the run.
             BuiltinTools::Coding => Some(ToolSetProfile::Coding {
-                question_tx,
+                questions: question_tx.map_or(Questions::Parked, Questions::Answered),
                 todos,
                 buffer_store,
             }),
-            BuiltinTools::Research => Some(ToolSetProfile::Research { question_tx, todos }),
+            BuiltinTools::Research => Some(ToolSetProfile::Research {
+                questions: question_tx.map_or(Questions::Parked, Questions::Answered),
+                todos,
+            }),
             BuiltinTools::None => None,
         }
     }

@@ -438,16 +438,9 @@ fn conclusion_for(exit: i32) -> RunConclusion {
         EXIT_SUCCESS => RunConclusion::Success,
         EXIT_TIMEOUT => RunConclusion::Timeout,
         EXIT_BUDGET_EXHAUSTED => RunConclusion::BudgetExhausted,
+        EXIT_NEEDS_HUMAN => RunConclusion::Waiting,
         _ => RunConclusion::AgentError,
     }
-}
-
-/// `false` only for [`EXIT_NEEDS_HUMAN`]: a parked run must leave
-/// `final_metrics.extra.reward` absent (unknown), never stamp a reward -
-/// including `0.0`, which would read back as a real failure rather than
-/// "still pending". Every other exit code concludes normally.
-fn should_stamp_reward(exit: i32) -> bool {
-    exit != EXIT_NEEDS_HUMAN
 }
 
 /// Write this run's ATIF trajectory to the project auto-log, stamped with the
@@ -532,28 +525,18 @@ fn write_trajectory(
     meta.mode = Some(mode.to_string());
     meta.apply_to_trajectory(&mut trajectory);
 
-    // A parked run has not concluded - it is neither a success nor a
-    // failure, it is still pending. Stamping any reward here (even 0.0)
-    // would be indistinguishable from a real failure to the trainer that
-    // reads it; leaving `final_metrics.extra.reward` absent is what the
-    // wire contract already treats as "outcome unknown, skip" (see
-    // `sven_session_store::reward`'s module doc). The steps recorded so far
-    // are still written, so `--resume` has the full history to continue
-    // from once a human answers. `conclusion_for` has no mapping for
-    // EXIT_NEEDS_HUMAN (it would otherwise fall into the `AgentError`
-    // bucket, a *confident* failure - wrong for a run that is merely
-    // pending), so this guard stays even though `conclude` below already
-    // treats an unverified claim as unknown on its own.
+    // A parked run has not concluded: `Waiting` concludes as unknown, so no
+    // reward (not even 0.0, which would read back as a real failure) is
+    // stamped. The steps recorded so far are still written, so `--resume`
+    // has the full history to continue from once a human answers.
     //
     // Only the verified-task machine ever produces a real `verdict` (via
     // `verdict_from_context`, above); every other mode passes `None` here, so
     // a claimed success is honestly unverified and `conclude` reflects that
     // as `SessionOutcome::Unknown` rather than the mechanical `1.0` this
     // runner used to stamp.
-    if should_stamp_reward(exit) {
-        let outcome = state.outcome.conclude(conclusion_for(exit), verdict);
-        apply_outcome_to_trajectory(&mut trajectory, &outcome);
-    }
+    let outcome = state.outcome.conclude(conclusion_for(exit), verdict);
+    apply_outcome_to_trajectory(&mut trajectory, &outcome);
 
     match atif::persist::write_trajectory_atomic(&path, &trajectory, None) {
         Ok(()) => write_progress(&format!("[sven:trace] Trace written to {}", path.display())),
@@ -1234,25 +1217,9 @@ mod tests {
             RunConclusion::BudgetExhausted
         );
         assert_eq!(conclusion_for(EXIT_AGENT_ERROR), RunConclusion::AgentError);
+        assert_eq!(conclusion_for(EXIT_NEEDS_HUMAN), RunConclusion::Waiting);
         // Anything unexpected is a failure, never a silent success.
         assert_eq!(conclusion_for(42), RunConclusion::AgentError);
-    }
-
-    #[test]
-    fn only_needs_human_skips_reward_stamping() {
-        assert!(!should_stamp_reward(EXIT_NEEDS_HUMAN));
-        for exit in [
-            EXIT_SUCCESS,
-            EXIT_AGENT_ERROR,
-            EXIT_TIMEOUT,
-            EXIT_BUDGET_EXHAUSTED,
-            42,
-        ] {
-            assert!(
-                should_stamp_reward(exit),
-                "exit {exit} must still conclude normally"
-            );
-        }
     }
 
     #[test]

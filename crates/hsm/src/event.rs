@@ -175,6 +175,10 @@ pub enum Event {
     QuestionAsked {
         /// Matches the [`ToolCallId`] of the pending `CallTool` effect.
         call_id: ToolCallId,
+        /// The id the conversation knows the call by; see
+        /// [`crate::context::PendingQuestion::call_ref`].
+        #[serde(default)]
+        call_ref: String,
         /// The question text shown to the human.
         prompt: String,
         /// Offered choices, if any (empty for a free-form question).

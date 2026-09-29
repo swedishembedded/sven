@@ -77,6 +77,29 @@ let engine = Engine::builder()
 The run waits for the reply, bounded by its cancel token and deadline; a
 gate dropped without a reply leaves the turn waiting. An approved call runs
 exactly as the model proposed it.
+A refused call is answered in the conversation with the reason, so the next
+request is valid for every provider and the model learns why.
+
+## Questions that wait
+
+The `ask_question` tool in the coding and research presets does not block:
+the run parks on the question and ends with `RunConclusion::Waiting`, carrying
+it in `outcome.question`. The answer may come from someone else, much later,
+in another process:
+
+```rust
+let outcome = agent.send("start a web service").await?;
+if let Some(question) = outcome.question {
+    let state = agent.suspend();                 // store it anywhere
+    // ... later, anywhere ...
+    let mut agent = engine.resume(state)?;
+    let outcome = agent.answer(&question.id, "Axum").await?;
+}
+```
+
+The answer becomes the result of the call that asked, so the model reads it as
+if it had been given on the spot. A parked run is neither a success nor a
+failure; its trajectory carries no reward until it concludes.
 
 ## Bounded runs
 
@@ -96,6 +119,7 @@ match outcome.conclusion {
     RunConclusion::Success => println!("{}", outcome.reply),
     RunConclusion::BudgetExhausted => { /* out of tokens or tool rounds */ }
     RunConclusion::Cancelled | RunConclusion::Timeout => { /* stopped from outside */ }
+    RunConclusion::Waiting => { /* see outcome.question */ }
     other => { /* not produced by send */ }
 }
 ```

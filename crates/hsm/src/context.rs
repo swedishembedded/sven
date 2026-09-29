@@ -71,9 +71,13 @@ pub struct PendingApproval {
 pub struct PendingQuestion {
     /// The question being awaited.
     pub question_id: QuestionId,
-    /// The tool call this question was asked on behalf of, so the caller
-    /// resuming it knows which call to append a result for.
+    /// The tool call this question was asked on behalf of.
     pub call_id: ToolCallId,
+    /// The id the conversation knows that call by (the model's own id), so
+    /// whoever answers appends the answer as that call's result - also after
+    /// the session that asked is gone and `call_id` maps to nothing.
+    #[serde(default)]
+    pub call_ref: String,
     /// The question text shown to the human.
     pub prompt: String,
     /// Offered choices, if any (empty for a free-form question).
@@ -277,6 +281,7 @@ mod tests {
         ctx.set_pending_question(PendingQuestion {
             question_id,
             call_id,
+            call_ref: "q1".into(),
             prompt: "Which framework?".into(),
             options: vec!["Axum".into(), "Actix".into()],
         });
@@ -290,6 +295,7 @@ mod tests {
         ctx.set_pending_question(PendingQuestion {
             question_id: QuestionId::new(),
             call_id: ToolCallId::new(),
+            call_ref: "q1".into(),
             prompt: "x".into(),
             options: vec![],
         });

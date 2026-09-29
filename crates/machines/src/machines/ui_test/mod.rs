@@ -475,6 +475,7 @@ impl Machine for UiTestMachine {
                 }
                 Event::QuestionAsked {
                     call_id,
+                    call_ref,
                     prompt,
                     options,
                 } => {
@@ -485,6 +486,7 @@ impl Machine for UiTestMachine {
                     ctx.set_pending_question(sven_hsm::context::PendingQuestion {
                         question_id,
                         call_id: *call_id,
+                        call_ref: call_ref.clone(),
                         prompt: prompt.clone(),
                         options: options.clone(),
                     });
@@ -1119,6 +1121,7 @@ mod tests {
             &mut state,
             Event::QuestionAsked {
                 call_id: ask_id,
+                call_ref: "ask".into(),
                 prompt: "What is the code?".to_string(),
                 options: vec!["Provide the value".into(), "Skip this step".into()],
             },

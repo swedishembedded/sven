@@ -681,6 +681,7 @@ pub fn handle_tool_event<S>(
         // ── Question parked: remove from pending, wait for a human ────────────
         Event::QuestionAsked {
             call_id,
+            call_ref,
             prompt,
             options,
         } => {
@@ -697,6 +698,7 @@ pub fn handle_tool_event<S>(
             ctx.set_pending_question(PendingQuestion {
                 question_id,
                 call_id: *call_id,
+                call_ref: call_ref.clone(),
                 prompt: prompt.clone(),
                 options: options.clone(),
             });
@@ -981,6 +983,7 @@ mod tests {
         }
         let asked = Event::QuestionAsked {
             call_id,
+            call_ref: "q1".into(),
             prompt: "Which framework?".into(),
             options: vec!["Axum".into(), "Actix".into()],
         };
@@ -1012,6 +1015,7 @@ mod tests {
         }
         let asked = Event::QuestionAsked {
             call_id,
+            call_ref: "q1".into(),
             prompt: "Which framework?".into(),
             options: vec![],
         };
@@ -1059,6 +1063,7 @@ mod tests {
         let call_id = ToolCallId::new();
         let asked = Event::QuestionAsked {
             call_id,
+            call_ref: "q1".into(),
             prompt: "x".into(),
             options: vec![],
         };

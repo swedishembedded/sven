@@ -113,8 +113,33 @@ impl Usage {
     }
 }
 
+/// A question the agent is waiting on, reported with
+/// [`RunConclusion::Waiting`] and answered with
+/// [`Agent::answer`](crate::Agent::answer).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Question {
+    /// Identifies the question to [`Agent::answer`](crate::Agent::answer).
+    pub id: String,
+    /// What the agent asked.
+    pub prompt: String,
+    /// The choices it offered, if any; empty for a free-form question.
+    pub options: Vec<String>,
+}
+
+impl Question {
+    pub(crate) fn from_pending(pending: &sven_hsm::context::PendingQuestion) -> Self {
+        Self {
+            id: pending.question_id.as_uuid().to_string(),
+            prompt: pending.prompt.clone(),
+            options: pending.options.clone(),
+        }
+    }
+}
+
 /// How a run ended and what it produced.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct RunOutcome {
     /// Why the run stopped. [`RunConclusion::Success`] is the only ending in
     /// which the agent finished its turn on its own terms;
@@ -125,4 +150,7 @@ pub struct RunOutcome {
     pub reply: String,
     /// Tokens used by this run.
     pub usage: Usage,
+    /// What the agent is waiting on when the run ended
+    /// [`RunConclusion::Waiting`]; `None` otherwise.
+    pub question: Option<Question>,
 }

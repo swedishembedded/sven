@@ -186,7 +186,11 @@ impl InFlight {
     /// Retires what `event` answers, before the dispatch that consumes it.
     fn retire(&mut self, event: &Event) {
         match event {
-            Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
+            // A parked call has answered as far as the kernel is concerned:
+            // it resumes only from `HumanAnswered`, however much later.
+            Event::ToolSucceeded { call_id, .. }
+            | Event::ToolFailed { call_id, .. }
+            | Event::QuestionAsked { call_id, .. } => {
                 self.tools.remove(call_id);
             }
             Event::HumanApproved { approval_id } | Event::HumanRejected { approval_id } => {

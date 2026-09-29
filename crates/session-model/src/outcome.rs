@@ -55,6 +55,9 @@ pub enum RunConclusion {
     Timeout,
     /// The token budget was exhausted mid-run.
     BudgetExhausted,
+    /// The run is parked on a question for a human and resumes when it is
+    /// answered. Not an ending: neither a success nor a failure.
+    Waiting,
 }
 
 /// Running tally of the outcome-bearing events seen during one session.
@@ -170,6 +173,12 @@ impl OutcomeFold {
         };
 
         let confident_failure = match conclusion {
+            // Still pending: scoring it at all would be a guess.
+            RunConclusion::Waiting => {
+                return SessionOutcome::Unknown {
+                    reason: "waiting_for_human",
+                }
+            }
             RunConclusion::AgentError => Some("agent_error"),
             RunConclusion::Cancelled => Some("cancelled"),
             RunConclusion::Timeout => Some("timeout"),
@@ -261,6 +270,17 @@ mod tests {
             f.observe(&tool_result(&format!("c{i}"), i < errors));
         }
         f
+    }
+
+    #[test]
+    fn a_waiting_run_is_unknown_even_after_errors() {
+        let outcome = fold_with_tools(2, 2).conclude(RunConclusion::Waiting, None);
+        assert_eq!(
+            outcome,
+            SessionOutcome::Unknown {
+                reason: "waiting_for_human"
+            }
+        );
     }
 
     #[test]

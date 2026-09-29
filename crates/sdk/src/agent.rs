@@ -21,7 +21,7 @@ use sven_machines::machines::loop_core::MAX_ROUNDS_REACHED_FACT;
 use crate::engine::{ApprovalPolicy, Engine};
 use crate::error::CallError;
 use crate::method::{Method, Strategy};
-use crate::run::{RunConclusion, RunOptions, RunOutcome, Usage};
+use crate::run::{Question, RunConclusion, RunOptions, RunOutcome, Usage};
 use crate::state::AgentState;
 
 /// Capacity of the per-agent event broadcast channel.
@@ -103,7 +103,65 @@ impl Agent {
         text: &str,
         bounds: RunOptions,
     ) -> Result<RunOutcome, CallError> {
-        self.run_turn(text, &TurnOptions::default(), &bounds).await
+        self.run(
+            Entry::Message(text.to_string()),
+            &TurnOptions::default(),
+            &bounds,
+        )
+        .await
+    }
+
+    /// Answers the question the agent is waiting on and continues the run.
+    /// See [`Self::answer_with`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::answer_with`].
+    pub async fn answer(&mut self, question_id: &str, text: &str) -> Result<RunOutcome, CallError> {
+        self.answer_with(question_id, text, RunOptions::default())
+            .await
+    }
+
+    /// Answers the question a run ended [`RunConclusion::Waiting`] on, and
+    /// continues that run within `bounds`.
+    ///
+    /// The answer becomes the result of the tool call that asked, so the
+    /// model reads it exactly as if the question had been answered on the
+    /// spot. Works on a resumed agent as well as on the one that asked.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CallError::Precondition`] if the agent is not waiting on
+    /// `question_id`, and otherwise fails as [`Self::send_with`].
+    pub async fn answer_with(
+        &mut self,
+        question_id: &str,
+        text: &str,
+        bounds: RunOptions,
+    ) -> Result<RunOutcome, CallError> {
+        let pending = self
+            .state
+            .kernel
+            .as_ref()
+            .and_then(|snapshot| snapshot.context.pending_question.as_ref())
+            .filter(|q| q.question_id.as_uuid().to_string() == question_id)
+            .ok_or_else(|| {
+                CallError::Precondition(format!(
+                    "the agent is not waiting on question {question_id:?}"
+                ))
+            })?;
+        if pending.call_ref.is_empty() {
+            return Err(CallError::Precondition(format!(
+                "question {question_id:?} was parked without the id of the call that asked, \
+                 so its answer has nowhere to go"
+            )));
+        }
+        let entry = Entry::Answer {
+            question_id: pending.question_id,
+            call_ref: pending.call_ref.clone(),
+            answer: text.to_string(),
+        };
+        self.run(entry, &TurnOptions::default(), &bounds).await
     }
 
     /// Calls a model-driven method with typed input and a validated result.
@@ -151,7 +209,11 @@ impl Agent {
         // rather than being asked again from a clean slate.
         loop {
             let last = self
-                .run_turn(&message, &options, &RunOptions::default())
+                .run(
+                    Entry::Message(message.clone()),
+                    &options,
+                    &RunOptions::default(),
+                )
                 .await?
                 .reply;
             attempts += 1;
@@ -239,10 +301,11 @@ impl Agent {
         }
     }
 
-    /// Builds a session, posts one message, and folds the result back in.
-    async fn run_turn(
+    /// Builds a session, posts what starts the run, and folds the result
+    /// back in.
+    async fn run(
         &mut self,
-        text: &str,
+        entry: Entry,
         options: &TurnOptions,
         bounds: &RunOptions,
     ) -> Result<RunOutcome, CallError> {
@@ -270,6 +333,32 @@ impl Agent {
             sven_machines::MAX_TOOL_ROUNDS_FACT.to_string(),
             serde_json::json!(self.engine.config().agent.max_tool_rounds),
         );
+
+        // An answer is the result of the call that asked. It goes into the
+        // history the session is seeded with, so it is in the thread before
+        // the machine resumes and reads it.
+        let (event, prompt) = match entry {
+            Entry::Message(text) => (
+                Event::UserMessage { text: text.clone() },
+                Some(Message::user(text)),
+            ),
+            Entry::Answer {
+                question_id,
+                call_ref,
+                answer,
+            } => {
+                self.state
+                    .history
+                    .push(Message::tool_result(call_ref, answer.clone()));
+                (
+                    Event::HumanAnswered {
+                        question_id,
+                        answer,
+                    },
+                    None,
+                )
+            }
+        };
 
         // The turn executor parks the abort sender for the model call in
         // flight here; taking it interrupts that call.
@@ -310,16 +399,9 @@ impl Agent {
         // The history as seeded, so the store can be checked for this turn's
         // messages once it ends (see `take_history`).
         let seeded = self.state.history.len();
-        self.state.history.push(Message::user(text));
+        self.state.history.extend(prompt);
 
-        if !bundle
-            .handle
-            .sink()
-            .emit(Event::UserMessage {
-                text: text.to_string(),
-            })
-            .await
-        {
+        if !bundle.handle.sink().emit(event).await {
             return Err(CallError::Infrastructure(anyhow::anyhow!(
                 "kernel event queue closed before the message was delivered"
             )));
@@ -437,7 +519,15 @@ impl Agent {
         let rounds_ran_out = self.state.kernel.as_ref().is_some_and(|snapshot| {
             snapshot.context.fact(MAX_ROUNDS_REACHED_FACT) == Some(&serde_json::json!(true))
         });
-        let conclusion = stopped.unwrap_or(if rounds_ran_out {
+        let question = self
+            .state
+            .kernel
+            .as_ref()
+            .and_then(|snapshot| snapshot.context.pending_question.as_ref())
+            .map(Question::from_pending);
+        let conclusion = stopped.unwrap_or(if question.is_some() {
+            RunConclusion::Waiting
+        } else if rounds_ran_out {
             RunConclusion::BudgetExhausted
         } else {
             RunConclusion::Success
@@ -446,6 +536,7 @@ impl Agent {
             conclusion,
             reply,
             usage,
+            question: question.filter(|_| conclusion == RunConclusion::Waiting),
         })
     }
 }
@@ -465,6 +556,19 @@ async fn stop(
     }
     let _ = handle.cancel().await;
     wind_down.reset(tokio::time::Instant::now() + WIND_DOWN);
+}
+
+/// What starts a run.
+enum Entry {
+    /// A message from the user.
+    Message(String),
+    /// The answer to the question the agent is waiting on.
+    Answer {
+        question_id: sven_hsm::QuestionId,
+        /// The conversation's id for the call that asked.
+        call_ref: String,
+        answer: String,
+    },
 }
 
 /// Per-turn overrides that do not belong to the agent's durable state.
