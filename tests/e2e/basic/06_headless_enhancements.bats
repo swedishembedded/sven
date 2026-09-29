@@ -38,7 +38,7 @@ load helpers
     run bash -c \
         'echo "ping" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     [ "${status}" -eq 0 ]
     [ -n "${output}" ]
 }

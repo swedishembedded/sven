@@ -85,7 +85,7 @@ pub enum OutputFormat {
     /// streamed to stdout in real-time as each step is known complete.
     /// Designed for piping:
     ///
-    ///   sven 'task 1' --output-format jsonl | sven 'task 2'
+    ///   sven 'task 1' --output-format jsonl | sven --stdin 'task 2'
     ///
     /// The receiving sven instance detects the JSONL format automatically via
     /// `is_jsonl_format()` and loads it as prior conversation history.  See
@@ -356,7 +356,7 @@ impl CiRunner {
                          \n\
                          To continue a piped conversation provide a prompt:\n\
                          \n\
-                         \tsven 'task1' | sven 'task2'\n\
+                         \tsven 'task1' | sven --stdin 'task2'\n\
                          \n\
                          Or end the piped output with an unanswered ## User section\n\
                          so the next sven instance picks it up automatically."
@@ -382,7 +382,7 @@ impl CiRunner {
             }
         } else {
             // Stdin (no -f): plain text as a single step; no workflow parsing.
-            // If a positional prompt was also supplied (e.g. `echo "data" | sven "analyse"`),
+            // If a positional prompt was also supplied (e.g. `echo "data" | sven --stdin "analyse"`),
             // prepend it so both the context and the task appear in the same user message.
             let body = markdown_body.trim().to_string();
             let content = match &opts.extra_prompt {

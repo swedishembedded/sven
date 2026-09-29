@@ -104,7 +104,7 @@ load helpers
     run bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     [ "${status}" -eq 0 ]
 }
 
@@ -112,7 +112,7 @@ load helpers
     run bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     [ -n "${output}" ]
 }
 
@@ -120,7 +120,7 @@ load helpers
     run bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     assert_output_contains "Summary"
 }
 
@@ -128,8 +128,8 @@ load helpers
     run bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "implement the plan above" 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "implement the plan above" 2>/dev/null \
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     [ "${status}" -eq 0 ]
     assert_output_contains "Summary"
 }
@@ -139,7 +139,7 @@ load helpers
     run_split_output bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above"'
+           | "$BIN" --headless --model mock --stdin "summarize the above"'
     [[ "${STDERR_OUT}" == *"[sven:info] Loaded"* ]]
 }
 
@@ -149,7 +149,7 @@ load helpers
     run_split_output bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above"'
+           | "$BIN" --headless --model mock --stdin "summarize the above"'
     [[ "${STDERR_OUT}" != *'label="Sven"'* ]]
 }
 
@@ -157,7 +157,7 @@ load helpers
     run_split_output bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     [[ "${STDOUT_OUT}" == *"## User"* ]]
     [[ "${STDOUT_OUT}" == *"## Sven"* ]]
 }
@@ -166,9 +166,9 @@ load helpers
     run bash -c \
         'echo "ping" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "plan something" 2>/dev/null \
-           | "$BIN" --headless --model mock "implement the plan above" 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "plan something" 2>/dev/null \
+           | "$BIN" --headless --model mock --stdin "implement the plan above" 2>/dev/null \
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     [ "${status}" -eq 0 ]
 }
 
@@ -176,7 +176,7 @@ load helpers
     run bash -euc \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null \
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null \
            > /dev/null'
     [ "${status}" -eq 0 ]
 }

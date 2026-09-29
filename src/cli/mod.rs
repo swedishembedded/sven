@@ -60,7 +60,7 @@ pub enum OutputFormatArg {
     /// per line, streamed as each step is known complete (messages,
     /// thinking, tool calls all folded into their turn-shaped step).
     /// Designed for piping between sven instances:
-    ///   sven 'task 1' --output-format jsonl | sven 'task 2'
+    ///   sven 'task 1' --output-format jsonl | sven --stdin 'task 2'
     /// The receiving sven instance automatically detects and loads the
     /// history. See --output-trace/--trace to persist the equivalent full
     /// trajectory document to a file instead of streaming step-by-step.
@@ -79,10 +79,16 @@ pub struct Cli {
     pub command: Option<Commands>,
 
     /// Optional initial prompt or task description.
-    /// When stdin is piped and a prompt is given, stdin is appended to the prompt
-    /// with a blank line and sent as one user message (e.g. `cmd | sven "fix these errors"`).
+    /// A piped stdin is read only when there is no PROMPT (stdin is then the
+    /// task) or when --stdin asks for it as additional context.
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
+
+    /// Read stdin to end and append it to PROMPT with a blank line, as one
+    /// user message (`cmd | sven --stdin "fix these errors"`). Without it, a
+    /// run with a PROMPT never reads or waits on stdin.
+    #[arg(long)]
+    pub stdin: bool,
 
     /// Run headless (no TUI); outputs clean text to stdout
     #[arg(long, short = 'H')]
@@ -572,7 +578,7 @@ impl Cli {
     /// - `--headless` flag
     /// - positional prompt (e.g. `sven "something"` - one-shot prompt implies headless)
     /// - stdin is not a terminal (piped input, e.g. `echo "task" | sven`)
-    /// - stdout is not a terminal (piped output, e.g. `sven 'hi' | sven 'follow up'`)
+    /// - stdout is not a terminal (piped output, e.g. `sven 'hi' | sven --stdin 'follow up'`)
     ///
     /// Checking stdout matters for the pipe case: the left side of a pipe has
     /// a TTY stdin but a piped stdout.  Without this check it would try to start
@@ -582,6 +588,14 @@ impl Cli {
             || self.prompt.is_some()
             || !std::io::stdin().is_terminal()
             || !std::io::stdout().is_terminal()
+    }
+
+    /// Whether a headless run reads stdin: when --stdin asks for it, or when
+    /// there is no PROMPT and stdin is not a terminal, so stdin is the task.
+    /// Deciding from the arguments alone means an inherited pipe that nobody
+    /// writes to or closes can never stall a run that already has its task.
+    pub fn reads_stdin(&self) -> bool {
+        self.stdin || (self.prompt.is_none() && !std::io::stdin().is_terminal())
     }
 
     /// Resolve the effective trace input path: --load-trace takes priority, then --trace.

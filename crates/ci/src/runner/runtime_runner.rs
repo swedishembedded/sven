@@ -73,7 +73,7 @@ pub struct RuntimeRunnerOptions {
     pub prompt: String,
     /// Prior conversation history to seed into the kernel thread before the
     /// prompt is posted. Used to replay a piped prior-conversation document
-    /// (`sven '…' | sven 'next task'`) as context. Empty for a fresh run.
+    /// (`sven '…' | sven --stdin 'next task'`) as context. Empty for a fresh run.
     pub history: Vec<Message>,
     /// Project root (used for checkpoint path, audit log, etc.).
     pub project_root: Option<std::path::PathBuf>,

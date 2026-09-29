@@ -78,23 +78,26 @@ sent an empty message to the model.
 ### Pattern 1 - Data transform (most idiomatic)
 
 ```bash
-cat report.md | sven 'summarise the key findings'
-find . -name '*.rs' | sven 'count lines in each file and sort by size'
-git diff HEAD~1 | sven 'write a commit message for these changes'
+cat report.md | sven --stdin 'summarise the key findings'
+find . -name '*.rs' | sven --stdin 'count lines in each file and sort by size'
+git diff HEAD~1 | sven --stdin 'write a commit message for these changes'
 ```
 
-The piped content is plain text (no `## User`/`## Sven` markers).  When you
-provide both a positional prompt and stdin, sven **combines them into a single
-user message**: the prompt, a blank line, then the stdin content.  So
-`cmd | sven "fix these errors"` sends one message: "fix these errors" followed
-by the command output.  This mirrors `grep`, `sed`, and `awk`: CLI arguments
+The piped content is plain text (no `## User`/`## Sven` markers).  A
+positional prompt makes stdin optional, so it is read only with `--stdin`;
+sven then **combines them into a single user message**: the prompt, a blank
+line, then the stdin content.  So `cmd | sven --stdin "fix these errors"`
+sends one message: "fix these errors" followed by the command output.  Without
+`--stdin`, a prompted run never reads stdin, so an inherited pipe that nobody
+writes to or closes (common under CI runners and tool harnesses) cannot stall
+it.  Without a prompt, stdin is the task and is always read.  This mirrors `grep`, `sed`, and `awk`: CLI arguments
 specify the operation, the pipe carries the data.
 
 ### Pattern 2 - Context seed with explicit task
 
 ```bash
 sven 'analyse the codebase and list all public APIs' \
-  | sven 'write integration tests for each API listed above'
+  | sven --stdin 'write integration tests for each API listed above'
 ```
 
 The first sven's conversation markdown is piped into the second.  The second
@@ -148,7 +151,7 @@ as a plain-text user message:
 
 ```bash
 sven 'find all null-pointer dereferences in src/' --output-format compact \
-  | sven 'fix each of the following bugs'
+  | sven --stdin 'fix each of the following bugs'
 ```
 
 The second sven receives the bug list as its user message and runs from a
@@ -182,7 +185,7 @@ rather than written to a file:
 # Every non-empty line of the first sven's --output-format jsonl output is
 # a standalone TraceStep JSON object, so the second instance auto-detects
 # it and seeds history from it.
-sven 'task1' --output-format jsonl | sven 'task2'
+sven 'task1' --output-format jsonl | sven --stdin 'task2'
 ```
 
 > **Note**: `--output-trace`/`--load-trace`/`--trace` write and read a
@@ -206,7 +209,7 @@ sven 'task' > result.md
 sven 'task' 2>&1 >/dev/null | grep '^\[sven:'
 
 # Pass stdout downstream while monitoring stderr in the terminal
-sven 'task' 2>/dev/null | sven 'follow-up'
+sven 'task' 2>/dev/null | sven --stdin 'follow-up'
 ```
 
 Stderr lines use structured `[sven:tag]` prefixes:
@@ -243,7 +246,7 @@ showing how to fix it:
 
 To continue a piped conversation provide a prompt:
 
-    sven 'task1' | sven 'task2'
+    sven 'task1' | sven --stdin 'task2'
 
 Or end the piped output with an unanswered ## User section
 so the next sven instance picks it up automatically.
@@ -266,7 +269,7 @@ sven 'Read src/ and list all exported public functions with their signatures' \
 
 # Stage 2: generate tests (uses stage 1 output as user message)
 cat /tmp/public-api.txt \
-  | sven 'Write a comprehensive test file for each function listed above' \
+  | sven --stdin 'Write a comprehensive test file for each function listed above' \
     --output-last-message tests/generated_tests.rs \
     2>/dev/null
 

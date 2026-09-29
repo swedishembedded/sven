@@ -612,7 +612,7 @@ another sven instance.  Diagnostics go to stderr so stdout stays uncontaminated.
 
 ### Input format detection
 
-When stdin is not a terminal, sven auto-detects the format:
+When sven reads stdin (no positional prompt, or `--stdin` alongside one), it auto-detects the format:
 
 | stdin content | Detected as | Effect |
 |---------------|-------------|--------|
@@ -630,21 +630,21 @@ CLI positional prompt  →  piped pending user turn  →  error (exit 2)
 ```
 
 This means `sven 'task1' | sven` exits with a clear error message, while
-`sven 'task1' | sven 'task2'` works as expected.
+`sven 'task1' | sven --stdin 'task2'` works as expected.
 
 ### Common pipe patterns
 
 ```bash
 # Data transform: stdin is data, CLI arg is the operation (most idiomatic)
-git diff HEAD~1 | sven 'write a commit message for these changes'
-cat report.md   | sven 'summarise the key findings'
+git diff HEAD~1 | sven --stdin 'write a commit message for these changes'
+cat report.md   | sven --stdin 'summarise the key findings'
 
 # Context seed: first conversation becomes history for the second agent
-sven 'list all public APIs' | sven 'write tests for each API listed above'
+sven 'list all public APIs' | sven --stdin 'write tests for each API listed above'
 
 # Compact relay: response text becomes next user message
 sven 'find null-pointer bugs' --output-format compact \
-  | sven 'fix each of the following bugs'
+  | sven --stdin 'fix each of the following bugs'
 
 # Multi-stage pipeline with full-fidelity ATIF trace handoff
 sven 'stage 1' --output-trace /tmp/run.json

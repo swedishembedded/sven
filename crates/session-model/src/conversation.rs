@@ -8,7 +8,7 @@
 //! Moved here from `sven-input` (Phase 3.7 of the crate-architecture refactor
 //! plan) because it is pure parsing/formatting logic with no file-I/O
 //! dependency, and both `sven-ci` (workflow-step/history files) and
-//! `sven-input` itself (`.sven/history/*.md`, piped `sven '…' | sven '…'`
+//! `sven-input` itself (`.sven/history/*.md`, piped `sven '…' | sven --stdin '…'`
 //! input) need it. `sven-tui`'s `chat/markdown.rs` has a *different* format
 //! (`**You:**`/`**Agent:**` bold-prefix, for round-tripping the live Neovim
 //! edit buffer) — despite the superficial resemblance, it is not a copy of

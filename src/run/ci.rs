@@ -9,7 +9,6 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use crate::cli::{Cli, OutputFormatArg};
-use crate::run::logging::is_stdin_tty;
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_config::AgentMode;
 
@@ -20,17 +19,10 @@ const STDIN_NOTICE_DELAY_MS: u64 = 2_000;
 
 /// Read stdin to end, announcing the wait if it does not finish promptly.
 ///
-/// Headless runs reach here whenever stdin is not a TTY, which is the right
-/// test for `producer | sven "task"`. It is not sufficient on its own: a CI
-/// runner, a service manager or a tool harness commonly hands a child an
-/// inherited pipe that nobody ever writes to and nobody closes. At the syscall
-/// level that is indistinguishable from a slow producer which has not sent its
-/// first byte yet, so sven cannot decide to stop waiting without breaking the
-/// pipe case it is documented to support.
-///
-/// What it can do is stop being SILENT about it. After a short grace period the
-/// wait is announced on stderr, naming the fix, so an operator sees why the run
-/// is sitting there instead of watching a process that merely appears hung.
+/// Only reached when stdin is input by contract ([`Cli::reads_stdin`]), so a
+/// slow producer is waited for. After a short grace period the wait is
+/// announced on stderr, so a stuck run explains itself instead of appearing
+/// hung.
 fn read_stdin_to_end() -> anyhow::Result<String> {
     use std::sync::mpsc;
 
@@ -46,8 +38,8 @@ fn read_stdin_to_end() -> anyhow::Result<String> {
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             eprintln!(
-                "[sven:info] waiting for stdin: it is redirected, but nothing has arrived yet. \
-                 If you did not mean to pipe input, run with `< /dev/null`."
+                "[sven:info] waiting for stdin: it is the task input, but nothing has arrived yet. \
+                 Pass the task as a PROMPT argument if stdin is not meant to be read."
             );
             rx.recv().context("reading stdin")?
         }
@@ -106,13 +98,14 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
     // ── Read workflow input ──────────────────────────────────────────────────
     // When --file points to a .json trace document, there is no separate
     // workflow file; we read from stdin (or use an empty input) for the new
-    // prompt. When stdin is piped and a positional prompt is given (e.g.
-    // `cmd | sven "fix these errors"`), we append stdin to the prompt with a
-    // blank line and pass that as the single user message.
+    // prompt. Stdin is read only when it is input by contract
+    // (`Cli::reads_stdin`); with --stdin and a positional prompt (e.g.
+    // `cmd | sven --stdin "fix these errors"`), stdin is appended to the prompt
+    // with a blank line and passed as the single user message.
     let (input, extra_prompt) = if file_is_trace {
         // The file is an ATIF trajectory document, not a workflow.  New
         // workflow input (if any) comes from stdin.
-        if !is_stdin_tty() {
+        if cli.reads_stdin() {
             (read_stdin_to_end()?, cli.prompt.clone())
         } else {
             (String::new(), cli.prompt.clone())
@@ -121,10 +114,10 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("reading input file {}", path.display()))?;
         (content, cli.prompt.clone())
-    } else if !is_stdin_tty() {
+    } else if cli.reads_stdin() {
         let stdin_content = read_stdin_to_end()?;
         // Keep positional prompt as extra_prompt so the runner can use it when
-        // stdin is a piped conversation (e.g. `sven 'plan' | sven 'summarize'`).
+        // stdin is a piped conversation (e.g. `sven 'plan' | sven --stdin 'summarize'`).
         // The runner merges it into the step for plain-text stdin, or uses it as
         // the new task for conversation/JSONL input.
         (stdin_content, cli.prompt.clone())
@@ -139,7 +132,7 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
     //   * `RuntimeRunner` — the reactive-agent single-turn path: it drives one
     //     turn to completion and streams a conversation document. It handles a
     //     fresh single prompt *and* a piped prior-conversation document replayed
-    //     as history (`sven '…' | sven 'next task'`).
+    //     as history (`sven '…' | sven --stdin 'next task'`).
     //   * `CiRunner` — the multi-step workflow orchestrator, also kernel-backed
     //     (it runs every turn on the kernel via `KernelAgent`). It owns the
     //     workflow features that `RuntimeRunner` does not: markdown `--file`,
@@ -164,7 +157,7 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
 
     // The kernel `RuntimeRunner` drives one reactive-agent turn to completion.
     // It handles both a fresh single prompt *and* a piped prior-conversation
-    // document replayed as history (`sven '…' | sven 'next task'`). Genuine
+    // document replayed as history (`sven '…' | sven --stdin 'next task'`). Genuine
     // multi-step workflow features (workflow `--file`, `--var` templating,
     // `--artifacts-dir`, `--dry-run`, JSON/JSONL/compact output, chat I/O,
     // `--system-prompt-file`, `--output-last-message`) live in `CiRunner`; a run
@@ -219,7 +212,7 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
                                  \n\
                                  To continue a piped conversation provide a prompt:\n\
                                  \n\
-                                 \tsven 'task1' | sven 'task2'\n\
+                                 \tsven 'task1' | sven --stdin 'task2'\n\
                                  \n\
                                  Or end the piped output with an unanswered ## User section\n\
                                  so the next sven instance picks it up automatically."

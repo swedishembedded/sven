@@ -113,9 +113,11 @@ sven opens the TUI, pre-fills the prompt, and submits it immediately.
 Sven runs headlessly - without a TUI - in two situations:
 
 - **Piped stdin**: when stdin is not a terminal, sven auto-detects this and
-  skips the TUI automatically.  If you also pass a positional prompt (e.g.
-  `cmd | sven "fix these errors"`), stdin is appended to the prompt with a
-  blank line and sent as one user message.
+  skips the TUI automatically.  Without a positional prompt, stdin is the
+  task.  With one, stdin is read only when you pass `--stdin` (e.g.
+  `cmd | sven --stdin "fix these errors"`): it is then appended to the prompt
+  with a blank line and sent as one user message.  Without `--stdin`, a run
+  that has a prompt never reads or waits on stdin.
 - **`--headless` flag**: required when invoking sven directly from a terminal
   prompt without piping, so that sven writes its response to stdout instead of
   opening the interactive TUI.
@@ -244,7 +246,7 @@ Output is valid conversation markdown that can be piped or loaded later:
 
 ```sh
 # Pipe into another instance for follow-up analysis
-sven --file review.md | sven "Summarise the main findings in one sentence."
+sven --file review.md | sven --stdin "Summarise the main findings in one sentence."
 ```
 
 ---

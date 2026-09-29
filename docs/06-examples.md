@@ -101,7 +101,7 @@ sven "Look at the test style in tests/utils/string.test.js and write similar tes
 A common CI task: take a diff and ask sven to find bugs or style issues.
 
 ```sh
-git diff main...HEAD | sven --mode research "Review this diff. Flag any bugs, security issues, or code style problems. Be specific about file names and line numbers."
+git diff main...HEAD | sven --stdin --mode research "Review this diff. Flag any bugs, security issues, or code style problems. Be specific about file names and line numbers."
 ```
 
 In a CI workflow:

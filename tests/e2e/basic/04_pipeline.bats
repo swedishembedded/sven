@@ -17,7 +17,7 @@ load helpers
     run bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     [ "${status}" -eq 0 ]
 }
 
@@ -25,7 +25,7 @@ load helpers
     run bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     [ -n "${output}" ]
 }
 
@@ -33,7 +33,7 @@ load helpers
     run bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     assert_output_contains "Summary"
 }
 
@@ -41,8 +41,8 @@ load helpers
     run bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "implement the plan above" 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "implement the plan above" 2>/dev/null \
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     [ "${status}" -eq 0 ]
     assert_output_contains "Summary"
 }
@@ -81,7 +81,7 @@ EOF'
     run_split_output bash -c \
         'echo "run echo test" \
            | "$BIN" --headless --model mock \
-           | "$BIN" --headless --model mock "summarize the above"'
+           | "$BIN" --headless --model mock --stdin "summarize the above"'
     [[ "${STDOUT_OUT}" != *"[tool"* ]]
 }
 
@@ -111,7 +111,7 @@ EOF'
     run bash -euc \
         'echo "ping" \
            | "$BIN" --headless --model mock 2>/dev/null \
-           | "$BIN" --headless --model mock "summarize" 2>/dev/null \
+           | "$BIN" --headless --model mock --stdin "summarize" 2>/dev/null \
            > /dev/null'
     [ "${status}" -eq 0 ]
 }
@@ -120,7 +120,7 @@ EOF'
 
 @test "04.14 echo pipe with explicit prompt arg" {
     run bash -c \
-        'echo "ping" | "$BIN" --headless --model mock "context: reply above" 2>/dev/null'
+        'echo "ping" | "$BIN" --headless --model mock --stdin "context: reply above" 2>/dev/null'
     [ "${status}" -eq 0 ]
     [ -n "${output}" ]
 }
@@ -161,7 +161,7 @@ EOF'
 @test "04.19 positional prompt combined with piped stdin" {
     run bash -c \
         'echo "make a plan" \
-           | "$BIN" --headless --model mock "summarize the above" 2>/dev/null'
+           | "$BIN" --headless --model mock --stdin "summarize the above" 2>/dev/null'
     [ "${status}" -eq 0 ]
     [ -n "${output}" ]
 }

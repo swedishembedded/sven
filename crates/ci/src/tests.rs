@@ -314,7 +314,7 @@ mod tests {
     }
 
     /// Simulates the correct pipe pattern:
-    ///   sven 'task1' | sven 'task2'
+    ///   sven 'task1' | sven --stdin 'task2'
     ///
     /// Second sven receives conversation markdown and an explicit CLI prompt.
     /// Expected: history is seeded, step content = CLI prompt.
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn compact_relay_with_extra_prompt_prepends_task() {
-        // Simulate: sven 'find bugs' --output-format compact | sven 'fix each bug'
+        // Simulate: sven 'find bugs' --output-format compact | sven --stdin 'fix each bug'
         // The compact output becomes a single step, and 'fix each bug' is prepended.
         let compact = "- line 10: null deref\n- line 42: off-by-one\n";
         let extra_prompt = Some("Fix each of the following bugs:".to_string());

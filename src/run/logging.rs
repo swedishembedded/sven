@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io;
-
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
 /// Environment variable set by task_tool when spawning a subagent.
@@ -70,9 +68,4 @@ pub(crate) fn init_logging(verbosity: u8, is_tui: bool, is_node: bool) {
         .with(layer)
         .with(filter)
         .try_init();
-}
-
-pub(crate) fn is_stdin_tty() -> bool {
-    use std::io::IsTerminal;
-    io::stdin().is_terminal()
 }
