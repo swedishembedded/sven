@@ -80,7 +80,7 @@ CHANGELOG.md is history and exempt.
   `formal/tla/` holds TLA+ models of `sven-hsm`'s dispatch algorithm, its
   submachine host and `sven-kernel`'s effect gate, run by `make formal`.
   Several configurations are *expected to fail* - they pin down designs the
-  engine rejected, two tracked gaps and one priced trade-off - so read
+  engine rejected, a tracked gap and a priced trade-off - so read
   `formal/README.md` before changing `dispatch.rs`, `submachine.rs` or
   `run_effects`: a change that makes an expected failure pass, or an expected
   pass fail, is telling you something.

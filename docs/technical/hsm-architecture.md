@@ -71,7 +71,10 @@ domain-agnostic.
 | `ToolApprovalRequired { call_id, capability, description }` | A tool call needs human approval before executing |
 | `HumanApproved { approval_id }` | A human approved a pending request |
 | `HumanRejected { approval_id }` | A human rejected a pending request |
+| `QuestionAsked { call_id, prompt, options }` / `HumanAnswered { .. }` | A tool parked a question for the human, and its answer |
 | `Timeout { timer_id }` | A scheduled timer elapsed |
+| `VerificationComplete { verdict }` | An `Effect::Verify` finished evaluating |
+| `EffectFailed { kind, error }` | An effect was refused or had no executor, and no more specific failure event exists for it (see below) |
 | `Internal(InternalEvent)` | A kernel-internal lifecycle or composition signal |
 
 `InternalEvent` carries the reserved framework signals plus composition signals:
@@ -102,11 +105,13 @@ The complete effect vocabulary (11 variants):
 | `CallTool { call_id, name, capability, args }` | Invoke a tool through the kernel. Requires the named `capability` to be permitted in the current state |
 | `AskUser { prompt }` | Ask the human a question (non-blocking; the answer arrives as a later event) |
 | `RequestHumanApproval { approval_id, capability, description }` | Request explicit approval before a dangerous capability is used |
+| `RequestHumanAnswer { question_id, call_id, prompt, options }` | Park a tool's question for the human; the answer arrives as `HumanAnswered` |
 | `ScheduleTimeout { timer_id, duration }` | Schedule a one-shot timer that posts `Timeout` |
 | `CancelTimeout { timer_id }` | Cancel a scheduled timer |
 | `PersistAudit` | Persist the audit log to durable storage |
 | `EmitInternal { name, payload }` | Re-enter a domain-internal event into the queue |
 | `InstantiateSubmachine { machine, descriptor }` | Spawn a child submachine and route its lifecycle through the runtime (see [Parallel Submachine Fan-out](parallel-submachines.md)) |
+| `Verify { spec }` | Evaluate a declarative predicate against the real world; the verdict arrives as `VerificationComplete` |
 
 Each effect exposes `kind()` (a payload-free `EffectKind` for audit/coverage)
 and `required_capability()` - only `CallTool` reports a capability, so only
@@ -132,7 +137,9 @@ independently receives one of three verdicts:
   `HumanRejected` a `ToolFailed` is emitted.
 
 Non-tool effects (`AskUser`, `PersistAudit`, timers, etc.) remain
-all-or-nothing: a forbidden batch is recorded in the audit trail but not executed.
+all-or-nothing: a forbidden batch is recorded in the audit trail, not executed,
+and each effect in it that a machine may be waiting on is answered with its
+failure event (see [Effect executors](#effect-executors)).
 
 Capabilities are coarse buckets (`ToolCapability`): `ReadFile`, `WriteFile`,
 `DeleteFile`, `ExecuteShell`, `NetworkAccess`, `GitOperation`,
@@ -385,18 +392,26 @@ effects, streaming `UiEvent`s outward and posting result `Event`s inward. The
 |----------|-----------------|
 | `TurnExecutor` | `CallLlm` with `kind: "turn"` - single-pass model streaming; accumulates tool proposals; posts `LlmTurnComplete` |
 | `ToolExecutor` | `CallTool` - kernel-gated, spawn-and-forget; the **only** executor that calls `registry.execute` |
-| `UserExecutor` | `AskUser`, `RequestHumanApproval` |
+| `UserExecutor` | `AskUser`, `RequestHumanApproval`, `RequestHumanAnswer` |
 | `TimerExecutor` | `ScheduleTimeout`, `CancelTimeout` |
 | `AuditExecutor` | `PersistAudit` |
 | `InternalExecutor` | `EmitInternal` |
+| `VerifyExecutor` | `Verify` - jailed to the project root; posts `VerificationComplete` |
 
 All `CallLlm` effects use `kind: "turn"` and are routed to `TurnExecutor`.
-`CompositeExecutor` warns and no-ops on any unrecognised `kind` value.
+An effect is never dropped silently. When the permission gate refuses a
+non-tool batch, or the `CompositeExecutor` has no slot for an effect (an
+unrecognised `CallLlm` kind, an unconfigured executor), the machine is
+answered with `sven_kernel::failure_event`: `LlmFailed` for `CallLlm`,
+`ToolFailed` for `CallTool`, and `EffectFailed { kind, error }` for anything
+else a machine may be waiting on (fire-and-forget effects - `PersistAudit`,
+`EmitInternal`, `CancelTimeout` - get no answer). Every machine leaves a
+waiting state on `EffectFailed` the way it does on `LlmFailed`.
 
-`InstantiateSubmachine` is **not** handled by the `CompositeExecutor` - the
-runtime intercepts it before the executor and hands it to the `ChildSpawner`
-(see below). The composite's `InstantiateSubmachine` branch only warns and is a
-no-op for that legacy path.
+`InstantiateSubmachine` is validated with the rest of its dispatch's
+non-tool batch and then handed to the runtime's `ChildSpawner` (see below).
+Without a spawner it reaches the `CompositeExecutor`, which answers it with
+`EffectFailed`.
 
 ---
 

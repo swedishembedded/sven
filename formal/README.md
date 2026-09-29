@@ -33,8 +33,7 @@ in which everything passes cannot tell you whether it is checking anything.
 code does not satisfy and closing it is real work, the failing configuration
 stays in the suite as a `gap:` entry. It is reported as `ok (GAP)`, separately
 from a rejected design, and the runner tells you to promote it the day it
-starts passing. `Submachine.tla`'s `NoOrphanedChild` and
-`EffectDelivery.tla`'s `NoSilentStall` are the two today.
+starts passing. `Submachine.tla`'s `NoOrphanedChild` is the one today.
 
 A third kind is kept apart from both: a `tradeoff:` entry is a property the
 code gives up ON PURPOSE, priced by a sibling configuration that shows what
@@ -159,26 +158,24 @@ somebody else delivering an answer.
 The kernel treats the two kinds of effect differently, and says so. A
 `CallTool` is classified per call, so a refused tool comes back as
 `Event::ToolFailed`, which the machine sees as an ordinary tool result and can
-act on. Everything else is validated all-or-nothing, "because non-tool effects
-cannot fail gracefully mid-stream": the refusal goes to the audit trail and to
-observers, and nothing at all goes back into the machine.
+act on. Everything else is validated all-or-nothing: the refusal goes to the
+audit trail and to observers, and each refused effect a machine may be
+waiting on is answered with `sven_kernel::failure_event` (`LlmFailed`,
+`ToolFailed` or `EffectFailed`).
 
-The model asks what a machine waiting on that batch does next. Nothing: it sat
-in the state the transition moved it into, waiting for a reply nobody would
-post -- no error, no timeout, no retry -- with a healthy looking state label.
+The model asks what a machine waiting on that batch does next. Without the
+answer, nothing: it sits in the state the transition moved it into, waiting
+for a reply nobody will post -- no error, no timeout, no retry -- with a
+healthy looking state label.
 
 Checked: `TypeOK`, `NoSilentStall`, `InnocentEffectSurvivesARefusal`.
 
-`EffectDeliveryRefusalAnswered.cfg` and `EffectDeliveryPerEffect.cfg` are the
-two designs that pass, and they cost different amounts: answering the refusal
-closes the stall while keeping the indivisible batch; gating each effect
-separately -- what the tool path already does -- also keeps the allowed
-effects of a refused dispatch running.
-
-**`EffectDeliveryAsShipped.cfg` is a tracked GAP.** Closing it is not a
-missing `if`: the machine has to be told, which means a refusal event in
-`sven_vocab::SessionEvent` that machines can act on, and a decision about what
-a machine that ignores it should then do.
+`EffectDeliveryAsShipped.cfg` and `EffectDeliveryPerEffect.cfg` are the two
+designs that pass, and they cost different amounts: answering the refusal
+(what ships) closes the stall while keeping the indivisible batch; gating each
+effect separately -- what the tool path already does -- also keeps the allowed
+effects of a refused dispatch running. `EffectDeliveryUnanswered.cfg` is the
+rejected alternative and must fail on `NoSilentStall`.
 
 **`EffectDeliveryBatchDrop.cfg` is a priced TRADE-OFF, not a gap.** The
 all-or-nothing batch is deliberate: a dispatch that wanted a gated side
@@ -188,8 +185,8 @@ configuration is checked in failing so the price stays visible and so that
 changing the batch rule cannot happen silently.
 
 Reachability today: no non-tool effect carries a capability, so the policy
-refuses none and the stall is a property of the kernel's contract rather than
-a live incident. It is modelled because the contract is what the first
+refuses none; the same answer is what an executor gives an effect it has no
+slot for, which is reachable. The model pins the contract the first
 capability-carrying non-tool effect will rely on.
 
 ## The tools

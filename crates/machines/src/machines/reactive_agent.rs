@@ -488,7 +488,7 @@ impl Machine for ReactiveAgentMachine {
                         }
                     },
 
-                    Event::LlmFailed { error } => {
+                    Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                         ctx.set_fact("last_error", json!(error));
                         Reaction::transition(Idle, vec![], "turn failed")
                     }
@@ -751,6 +751,24 @@ mod tests {
         );
         assert_eq!(hsm.state(), ReactiveState::Idle);
         assert!(out.transitioned);
+    }
+
+    /// A refused or undeliverable effect (an approval request, a
+    /// clarification question) ends the turn instead of leaving the agent
+    /// generating forever.
+    #[test]
+    fn a_failed_effect_ends_the_turn() {
+        let (mut hsm, mut ctx) = make_hsm();
+        hsm.dispatch(&Event::user_message("hi"), &mut ctx);
+        hsm.dispatch(
+            &Event::EffectFailed {
+                kind: sven_hsm::EffectKind::RequestHumanApproval,
+                error: "no user executor is configured".into(),
+            },
+            &mut ctx,
+        );
+        assert_eq!(hsm.state(), ReactiveState::Idle);
+        assert!(ctx.fact("last_error").is_some());
     }
 
     #[test]

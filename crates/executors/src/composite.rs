@@ -2,7 +2,8 @@
 //!
 //! Dispatches each [`Effect`] to the appropriate sub-executor based on its
 //! variant.  All `CallLlm` effects must carry `kind="turn"` (handled by
-//! [`TurnExecutor`]).  Other variants log a warning and no-op.
+//! [`TurnExecutor`]). An effect with no configured executor is answered with
+//! its failure event (`sven_kernel::failure_event`) rather than dropped.
 //!
 //! # Wiring
 //!
@@ -78,15 +79,12 @@ impl EffectExecutor for CompositeExecutor {
                     if let Some(exec) = &mut self.turn {
                         exec.execute(effect, sink, obs).await;
                     } else {
-                        tracing::warn!(
-                            "CompositeExecutor: no Turn executor configured; dropping turn CallLlm"
-                        );
+                        answer_undeliverable(&effect, sink, "no turn executor is configured").await;
                     }
                 } else {
-                    tracing::warn!(
-                        kind = ?request_kind,
-                        "CompositeExecutor: unrecognised CallLlm kind; dropping (use kind=turn)"
-                    );
+                    let error =
+                        format!("unrecognised CallLlm kind {request_kind:?} (use kind=turn)");
+                    answer_undeliverable(&effect, sink, &error).await;
                 }
             }
 
@@ -94,9 +92,7 @@ impl EffectExecutor for CompositeExecutor {
                 if let Some(exec) = &mut self.tool {
                     exec.execute(effect, sink, obs).await;
                 } else {
-                    tracing::warn!(
-                        "CompositeExecutor: no Tool executor configured; dropping CallTool"
-                    );
+                    answer_undeliverable(&effect, sink, "no tool executor is configured").await;
                 }
             }
 
@@ -106,10 +102,7 @@ impl EffectExecutor for CompositeExecutor {
                 if let Some(exec) = &mut self.user {
                     exec.execute(effect, sink, obs).await;
                 } else {
-                    tracing::warn!(
-                        ?kind,
-                        "CompositeExecutor: no User executor configured; dropping user effect"
-                    );
+                    answer_undeliverable(&effect, sink, "no user executor is configured").await;
                 }
             }
 
@@ -117,10 +110,7 @@ impl EffectExecutor for CompositeExecutor {
                 if let Some(exec) = &mut self.timer {
                     exec.execute(effect, sink, obs).await;
                 } else {
-                    tracing::warn!(
-                        ?kind,
-                        "CompositeExecutor: no Timer executor configured; dropping timer effect"
-                    );
+                    answer_undeliverable(&effect, sink, "no timer executor is configured").await;
                 }
             }
 
@@ -135,20 +125,28 @@ impl EffectExecutor for CompositeExecutor {
                 self.internal.execute(effect, sink, obs).await;
             }
 
+            // Reaches an executor only when the runtime has no child spawner.
             EffectKind::InstantiateSubmachine => {
-                tracing::warn!("CompositeExecutor: InstantiateSubmachine not yet wired; ignored");
+                answer_undeliverable(&effect, sink, "no child spawner is configured").await;
             }
 
             EffectKind::Verify => {
                 if let Some(exec) = &mut self.verify {
                     exec.execute(effect, sink, obs).await;
                 } else {
-                    tracing::warn!(
-                        "CompositeExecutor: no Verify executor configured; dropping Verify effect"
-                    );
+                    answer_undeliverable(&effect, sink, "no verify executor is configured").await;
                 }
             }
         }
+    }
+}
+
+/// Answers an effect no configured executor can carry out, so the machine
+/// that emitted it is not left waiting (see [`sven_kernel::failure_event`]).
+async fn answer_undeliverable(effect: &Effect, sink: &EventSink, error: &str) {
+    tracing::warn!(kind = ?effect.kind(), error, "CompositeExecutor: effect not delivered");
+    if let Some(answer) = sven_kernel::failure_event(effect, error) {
+        let _ = sink.emit(answer).await;
     }
 }
 
@@ -410,28 +408,54 @@ mod tests {
         assert_eq!(kind, "Custom");
     }
 
+    /// An effect with nowhere to go is answered, never silently dropped: a
+    /// machine waiting for its result would otherwise wait forever. The
+    /// answer is the failure event the machine already waits for when one
+    /// exists (`LlmFailed`, `ToolFailed`), and `EffectFailed` otherwise.
     #[tokio::test]
-    async fn composite_no_llm_executor_logs_and_noops() {
-        let mut exec = CompositeExecutorBuilder::default().build();
-        let effect = Effect::CallLlm {
-            request: json!({"kind": "unknown_kind_xyz"}),
-        };
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
-            Context::new(),
-            PermissionPolicy::builder().build(),
-            CompositeExecutorBuilder::default().build(),
-            16,
-        );
-        let sink = rt.sink();
-        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
-            .await;
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        assert!(
-            !rt.status().done,
-            "machine should remain in Idle with no executor"
-        );
-        rt.abort();
+    async fn an_effect_with_no_executor_is_answered_with_a_failure() {
+        let cases = [
+            (
+                Effect::CallLlm {
+                    request: json!({"kind": "unknown_kind_xyz"}),
+                },
+                "LlmFailed",
+            ),
+            (
+                Effect::CallLlm {
+                    request: json!({"kind": sven_vocab::TURN_KIND}),
+                },
+                "LlmFailed",
+            ),
+            (
+                Effect::CallTool {
+                    call_id: sven_hsm::ToolCallId::new(),
+                    name: "read_file".into(),
+                    args: json!({}),
+                    capability: sven_hsm::ToolCapability::ReadFile,
+                },
+                "ToolFailed",
+            ),
+            (
+                Effect::AskUser {
+                    prompt: "which one?".into(),
+                },
+                "EffectFailed",
+            ),
+            (
+                Effect::ScheduleTimeout {
+                    timer_id: sven_hsm::TimerId::new(),
+                    duration: std::time::Duration::from_secs(1),
+                },
+                "EffectFailed",
+            ),
+        ];
+        for (effect, want) in cases {
+            let described = format!("{effect:?}");
+            let mut exec = CompositeExecutorBuilder::default().build();
+            let got = run_composite_effect(&mut exec, effect).await;
+            assert_eq!(got, want, "{described}");
+        }
     }
 
     /// Records every effect it receives; used to prove custom executors can

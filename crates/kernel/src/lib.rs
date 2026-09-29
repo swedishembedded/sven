@@ -45,6 +45,8 @@ use sven_hsm::{
 
 mod clock;
 pub use clock::{Clock, SystemClock, TimerService, VirtualClock};
+mod effect_failure;
+pub use effect_failure::failure_event;
 
 /// Default capacity of the per-runtime observation broadcast channel.
 const OBSERVATION_CAPACITY: usize = 1024;
@@ -114,52 +116,59 @@ pub trait ChildSpawner: Send + Sync {
     async fn spawn_child(&self, machine: MachineId, descriptor: Value, parent: EventSink);
 }
 
-/// Tracks the set of child submachines currently in flight for a parent loop.
+/// The child submachines in flight for a parent loop, and the spawner that
+/// starts them.
 ///
 /// The parent machine drives aggregation (it owns the append-only thread), so
 /// the kernel only needs a lightweight liveness map: insert on spawn, remove on
 /// [`InternalEvent::SubmachineCompleted`]. Keeping it here gives the runtime an
 /// authoritative concurrent-child count for observability and shutdown.
-type ChildRegistry = HashMap<MachineId, ()>;
+struct Children {
+    spawner: Option<Arc<dyn ChildSpawner>>,
+    live: HashMap<MachineId, ()>,
+}
 
-/// Pulls [`Effect::InstantiateSubmachine`] out of an effect batch and hands each
-/// to the `spawner`, returning the remaining (non-child) effects for the normal
-/// validate-then-execute path.
-///
-/// When no spawner is configured the instantiate effects are left in place so
-/// they flow to the [`EffectExecutor`] (preserving the historical no-op), which
-/// keeps every existing `Runtime`/`ErasedRuntime` caller behaving unchanged.
-async fn spawn_children(
-    effects: Vec<Effect>,
-    spawner: &Option<Arc<dyn ChildSpawner>>,
-    children: &mut ChildRegistry,
-    sink: &EventSink,
-) -> Vec<Effect> {
-    let Some(spawner) = spawner else {
-        return effects;
-    };
-    let mut remaining = Vec::with_capacity(effects.len());
-    for effect in effects {
-        match effect {
-            Effect::InstantiateSubmachine {
-                machine,
-                descriptor,
-            } => {
-                children.insert(machine, ());
-                spawner.spawn_child(machine, descriptor, sink.clone()).await;
-            }
-            other => remaining.push(other),
+impl Children {
+    fn new(spawner: Option<Arc<dyn ChildSpawner>>) -> Self {
+        Self {
+            spawner,
+            live: HashMap::new(),
         }
     }
-    remaining
+
+    /// Runs one effect the permission gate already allowed: an
+    /// [`Effect::InstantiateSubmachine`] goes to the spawner when one is
+    /// configured, everything else to `executor` (which answers an
+    /// instantiate it cannot serve with a failure event).
+    async fn execute<E: EffectExecutor>(
+        &mut self,
+        effect: Effect,
+        executor: &mut E,
+        sink: &EventSink,
+        obs: &ObservationSink,
+    ) {
+        match (effect, &self.spawner) {
+            (
+                Effect::InstantiateSubmachine {
+                    machine,
+                    descriptor,
+                },
+                Some(spawner),
+            ) => {
+                self.live.insert(machine, ());
+                spawner.spawn_child(machine, descriptor, sink.clone()).await;
+            }
+            (effect, _) => executor.execute(effect, sink, obs).await,
+        }
+    }
 }
 
 /// Drops a completed child from the registry so the parent's concurrent-child
 /// count stays accurate.
-fn note_child_completion(children: &mut ChildRegistry, event: &Event) {
+fn note_child_completion(children: &mut Children, event: &Event) {
     if let Event::Internal(InternalEvent::SubmachineCompleted { machine, .. }) = event {
         if let Ok(uuid) = uuid::Uuid::parse_str(machine) {
-            children.remove(&MachineId::from_uuid(uuid));
+            children.live.remove(&MachineId::from_uuid(uuid));
         }
     }
 }
@@ -338,7 +347,7 @@ where
 {
     let mut processed: u64 = 0;
     let mut last_error: Option<String> = None;
-    let mut children: ChildRegistry = HashMap::new();
+    let mut children = Children::new(child_spawner);
     // Same in-flight registry as the erased loop. The typed runtime exposes no
     // quiescence-based capture, so the set is only fed; keeping the bookkeeping
     // identical means run_effects has one contract.
@@ -347,7 +356,6 @@ where
     // Initial transitions run inside the single consumer task, so their entry
     // effects go through the same validate-then-execute path as everything else.
     let init_effects = hsm.init(&mut ctx);
-    let init_effects = spawn_children(init_effects, &child_spawner, &mut children, &sink).await;
     run_effects(
         &policy,
         hsm.state(),
@@ -360,6 +368,7 @@ where
         init_effects,
         &mut last_error,
         &mut inflight_tools,
+        &mut children,
     )
     .await;
 
@@ -386,7 +395,7 @@ where
             to: outcome.to.clone(),
             event: format!("{:?}", event_kind),
         });
-        let effects = spawn_children(outcome.effects, &child_spawner, &mut children, &sink).await;
+        let effects = outcome.effects;
         run_effects(
             &policy,
             hsm.state(),
@@ -399,6 +408,7 @@ where
             effects,
             &mut last_error,
             &mut inflight_tools,
+            &mut children,
         )
         .await;
 
@@ -436,8 +446,9 @@ where
 ///     handles the approval flow (`RequestHumanApproval` → `HumanApproved` →
 ///     re-emit `CallTool`). Unapproved calls never enter `inflight`: the
 ///     machine is genuinely waiting for outside input.
-/// * All other effects are validated all-or-nothing (batch reject) as before,
-///   because non-tool effects cannot fail gracefully mid-stream.
+/// * All other effects are validated all-or-nothing (batch reject): a refused
+///   batch is audited and each effect in it that a machine may be waiting on
+///   is answered with its [`failure_event`].
 #[allow(clippy::too_many_arguments)]
 async fn run_effects<S, E>(
     policy: &PermissionPolicy,
@@ -451,6 +462,7 @@ async fn run_effects<S, E>(
     effects: Vec<Effect>,
     last_error: &mut Option<String>,
     inflight: &mut HashSet<ToolCallId>,
+    children: &mut Children,
 ) where
     S: std::fmt::Debug + Send,
     E: EffectExecutor,
@@ -477,7 +489,7 @@ async fn run_effects<S, E>(
             Ok(()) => {
                 *last_error = None;
                 for effect in other_effects {
-                    executor.execute(effect, sink, obs).await;
+                    children.execute(effect, executor, sink, obs).await;
                 }
             }
             Err(err) => {
@@ -486,6 +498,14 @@ async fn run_effects<S, E>(
                 ctx.push_audit(record);
                 *last_error = Some(err.to_string());
                 obs.emit(UiEvent::Error(err.to_string()));
+                // A refused effect is answered, never dropped silently: the
+                // machine may be waiting on it (formal/tla/EffectDelivery.tla).
+                let reason = format!("permission denied: {err}");
+                for effect in &other_effects {
+                    if let Some(answer) = failure_event(effect, &reason) {
+                        let _ = sink.emit(answer).await;
+                    }
+                }
             }
         }
     }
@@ -821,7 +841,7 @@ where
 {
     let mut processed: u64 = 0;
     let mut last_error: Option<String> = None;
-    let mut children: ChildRegistry = HashMap::new();
+    let mut children = Children::new(child_spawner);
     // Dispatched `CallTool` effects whose result event has not re-entered the
     // queue yet. Tool execution is spawned concurrently by the executor, so an
     // empty event queue does not mean the machine has nothing left to do -
@@ -830,7 +850,6 @@ where
     let mut inflight_tools: HashSet<ToolCallId> = HashSet::new();
 
     let init_effects = machine.init(&mut ctx);
-    let init_effects = spawn_children(init_effects, &child_spawner, &mut children, &sink).await;
     // Mirror the audit trail *before* running effects so a `PersistAudit`
     // effect in this batch sees the records of the dispatch that emitted it.
     trail.sync_from(&ctx);
@@ -846,6 +865,7 @@ where
         init_effects,
         &mut last_error,
         &mut inflight_tools,
+        &mut children,
     )
     .await;
 
@@ -915,7 +935,7 @@ where
             to: outcome.to.clone(),
             event: format!("{:?}", event_kind),
         });
-        let effects = spawn_children(outcome.effects, &child_spawner, &mut children, &sink).await;
+        let effects = outcome.effects;
         // Mirror the audit trail *before* running effects (see init above).
         trail.sync_from(&ctx);
         run_effects(
@@ -930,6 +950,7 @@ where
             effects,
             &mut last_error,
             &mut inflight_tools,
+            &mut children,
         )
         .await;
 

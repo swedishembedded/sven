@@ -63,8 +63,8 @@ suite=(
   "Submachine|SubmachineNoCompleteOnInstall.cfg|violates:TerminalChildIsNotLeftInstalled|looking for completion only after an event leaves a finished child installed"
   "Submachine|SubmachineDoneChildKeepsReceiving.cfg|violates:NoEventReachesAFinishedChild|and routes the next event into a machine that had already ended"
   "Submachine|SubmachineParentLeaves.cfg|gap:NoOrphanedChild|a parent that transitions away from the state owning a child leaves it live and first in line"
-  "EffectDelivery|EffectDeliveryAsShipped.cfg|gap:NoSilentStall|a refused non-tool effect batch is never reported back to the machine that is waiting on it"
-  "EffectDelivery|EffectDeliveryRefusalAnswered.cfg|pass|answering the refusal the way a refused tool is answered closes the stall"
+  "EffectDelivery|EffectDeliveryAsShipped.cfg|pass|a refused non-tool effect is answered, so the machine waiting on it can leave"
+  "EffectDelivery|EffectDeliveryUnanswered.cfg|violates:NoSilentStall|a refused batch the machine is never told about leaves it waiting forever"
   "EffectDelivery|EffectDeliveryPerEffect.cfg|pass|and gating each effect on its own keeps the allowed ones running too"
   "EffectDelivery|EffectDeliveryBatchDrop.cfg|tradeoff:InnocentEffectSurvivesARefusal|the all-or-nothing batch drops an allowed effect because another in the same dispatch was refused"
 )

@@ -166,7 +166,7 @@ impl Machine for TaskMachine {
                         }
                     }
                 }
-                Event::LlmFailed { error } => {
+                Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                     ctx.set_fact(
                         Self::RESULT_FACT,
                         json!({

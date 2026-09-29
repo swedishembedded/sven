@@ -13,10 +13,9 @@
 \* The kernel treats the two kinds of effect differently, and says so:
 \* `CallTool` is classified per call, so a refused tool becomes an
 \* `Event::ToolFailed` the machine sees as an ordinary tool result and can act
-\* on. Everything else is validated all-or-nothing, "because non-tool effects
-\* cannot fail gracefully mid-stream" -- the refusal is written to the audit
-\* trail and published to observers, and nothing at all is sent back into the
-\* machine.
+\* on. Everything else is validated all-or-nothing -- the refusal is written
+\* to the audit trail and published to observers, and, as shipped, each
+\* refused effect a machine may wait on is answered with a failure event.
 \*
 \* That asymmetry is what this model is about. A machine that transitions into
 \* a state it can only leave on a reply, in a dispatch whose batch was
@@ -31,7 +30,7 @@
 \*                               is a deliberate decision rather than an
 \*                               oversight.
 \*   RefusalFeedsBackAnEvent  -- a refused non-tool effect answers the machine
-\*                               the way a refused tool already does. FALSE is
+\*                               the way a refused tool already does. TRUE is
 \*                               the kernel as written.
 \*
 \* Reachability today: no non-tool effect carries a capability, so the policy

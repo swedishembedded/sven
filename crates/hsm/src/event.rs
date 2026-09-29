@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sven_vocab::verify::VerifierVerdict;
 
+use crate::effect::EffectKind;
 use crate::ids::{ApprovalId, QuestionId, TimerId, ToolCallId};
 use crate::permissions::ToolCapability;
 
@@ -206,6 +207,22 @@ pub enum Event {
         verdict: VerifierVerdict,
     },
 
+    /// An effect the machine emitted was not carried out: the permission gate
+    /// refused it, or no executor handles it.
+    ///
+    /// Emitted only for effects that have no more specific failure event - a
+    /// refused or undeliverable `CallLlm` answers with [`Event::LlmFailed`] and
+    /// a `CallTool` with [`Event::ToolFailed`], because those are what a
+    /// machine waiting on them already handles. A machine must leave any state
+    /// that waits on the answer of an effect of this `kind`; otherwise it would
+    /// wait forever.
+    EffectFailed {
+        /// Which kind of effect failed.
+        kind: EffectKind,
+        /// Human-readable reason.
+        error: String,
+    },
+
     /// A kernel-internal event (lifecycle signals + composition signals).
     Internal(InternalEvent),
 }
@@ -314,6 +331,7 @@ impl Event {
             Event::HumanAnswered { .. } => EventKind::HumanAnswered,
             Event::Timeout { .. } => EventKind::Timeout,
             Event::VerificationComplete { .. } => EventKind::VerificationComplete,
+            Event::EffectFailed { .. } => EventKind::EffectFailed,
             Event::Internal(InternalEvent::Entry) => EventKind::Entry,
             Event::Internal(InternalEvent::Exit) => EventKind::Exit,
             Event::Internal(InternalEvent::Init) => EventKind::Init,
@@ -370,6 +388,8 @@ pub enum EventKind {
     Timeout,
     /// See [`Event::VerificationComplete`].
     VerificationComplete,
+    /// See [`Event::EffectFailed`].
+    EffectFailed,
     /// Reserved entry signal.
     Entry,
     /// Reserved exit signal.

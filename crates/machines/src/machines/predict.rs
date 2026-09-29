@@ -190,7 +190,7 @@ impl Machine for PredictMachine {
                     ctx.set_fact(RESULT_FACT, json!(text));
                     Reaction::transition(Idle, vec![], "turn complete; candidate recorded")
                 }
-                Event::LlmFailed { error } => {
+                Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                     ctx.set_fact(ERROR_FACT, json!(error));
                     Reaction::transition(Idle, vec![], "turn failed")
                 }

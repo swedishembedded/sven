@@ -384,7 +384,7 @@ impl Machine for VerifiedTaskMachine {
                         next_after_attempt(ctx)
                     }
                 },
-                Event::LlmFailed { error } => {
+                Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                     ctx.set_fact(
                         ERROR_FACT,
                         format!("attempt failed to reach the model: {error}"),
@@ -400,6 +400,11 @@ impl Machine for VerifiedTaskMachine {
             // ── Verifying: the only place a verdict can be trusted ─────────
             Verifying => match event {
                 Event::Internal(InternalEvent::Entry) => Reaction::handled(),
+                // No verdict is not a failed verdict: the task ends ungraded.
+                Event::EffectFailed { error, .. } => {
+                    ctx.set_fact(ERROR_FACT, format!("the verifier could not run: {error}"));
+                    Reaction::transition(Done, [], "verifier could not run")
+                }
                 Event::VerificationComplete { verdict } => {
                     let frozen: FrozenVerifier = ctx
                         .fact(FROZEN_VERIFIER_FACT)
@@ -626,6 +631,40 @@ mod tests {
             ctx.fact(VERDICT_FACT).is_none(),
             "a setup error must never read as a graded outcome"
         );
+        assert!(ctx.fact(ERROR_FACT).is_some());
+    }
+
+    /// A verifier that could not run gives no verdict: the task ends with
+    /// an error and is never graded as passed or failed.
+    #[test]
+    fn a_verifier_that_cannot_run_ends_without_a_verdict() {
+        let mut m = VerifiedTaskMachine::new();
+        let mut ctx = Context::new();
+        let mut state = m.initial();
+        let _ = m.dispatch_state(state, &Event::entry(), &mut ctx);
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: seed("t1", "write out.txt", file_exists_spec("out.txt"), 1),
+            },
+        );
+        drive(&mut m, &mut ctx, &mut state, final_turn("Done!"));
+        assert_eq!(state, VerifiedTaskState::Verifying);
+
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::EffectFailed {
+                kind: sven_hsm::EffectKind::Verify,
+                error: "no verify executor is configured".into(),
+            },
+        );
+
+        assert_eq!(state, VerifiedTaskState::Done);
+        assert!(ctx.fact(VERDICT_FACT).is_none());
         assert!(ctx.fact(ERROR_FACT).is_some());
     }
 

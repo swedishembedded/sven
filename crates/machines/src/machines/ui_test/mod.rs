@@ -425,7 +425,7 @@ impl Machine for UiTestMachine {
                         Err(reason) => fail_or_retry(ctx, format!("step compiler: {reason}")),
                     }
                 }
-                Event::LlmFailed { error } => {
+                Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                     fail_or_retry(ctx, format!("step-compiler call failed: {error}"))
                 }
                 _ => Reaction::Ignored,

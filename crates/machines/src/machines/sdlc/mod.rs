@@ -471,7 +471,9 @@ fn dispatch_phase(
             }
         },
 
-        Event::LlmFailed { error } => to_recovery(ctx, state, error),
+        Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
+            to_recovery(ctx, state, error)
+        }
 
         _ => Reaction::Super(SdlcState::Top),
     }
@@ -652,7 +654,9 @@ impl Machine for SdlcMachine {
                     Event::HumanRejected { .. } => {
                         to_recovery(ctx, Execution, "execution step rejected")
                     }
-                    Event::LlmFailed { error } => to_recovery(ctx, Execution, error),
+                    Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
+                        to_recovery(ctx, Execution, error)
+                    }
                     _ => Reaction::Super(Top),
                 }
             }
@@ -717,7 +721,7 @@ impl Machine for SdlcMachine {
                         )])
                     }
 
-                    Event::LlmFailed { .. } => Reaction::goto(Failed),
+                    Event::LlmFailed { .. } | Event::EffectFailed { .. } => Reaction::goto(Failed),
                     _ => Reaction::Super(Top),
                 }
             }
