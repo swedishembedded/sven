@@ -808,6 +808,13 @@ pub struct AgentConfig {
     /// `/think-limit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_timeout_secs: Option<u64>,
+
+    /// Longest silence, in seconds, between two chunks of a streamed model
+    /// response before the connection is declared stale and the turn fails.
+    /// Raise it for a slow but live provider, such as CPU prefill of a long
+    /// prompt. `None` (the default) is 300s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_idle_timeout_secs: Option<u64>,
 }
 
 fn default_compaction_keep_recent() -> usize {
@@ -835,6 +842,7 @@ impl Default for AgentConfig {
             max_run_timeout_secs: 0,
             max_thinking_tokens: None,
             thinking_timeout_secs: None,
+            stream_idle_timeout_secs: None,
         }
     }
 }

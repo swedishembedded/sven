@@ -764,9 +764,7 @@ impl RuntimeBuilder {
         .with_compaction_config(sven_executors::CompactionConfig::from_agent_config(
             &self.config.agent,
         ))
-        .with_thinking_budget(sven_turn::ThinkingBudget::from_agent_config(
-            &self.config.agent,
-        ));
+        .with_turn_limits(sven_turn::TurnLimits::from_agent_config(&self.config.agent));
 
         // A caller-supplied executor (see `with_effect_executor`) replaces the
         // default composite wholesale; otherwise wire the default composite,

@@ -392,6 +392,7 @@ Controls the agent's autonomy and defaults.
 | `system_prompt` | - | System prompt override (leave unset to use built-in) |
 | `max_thinking_tokens` | 10% of context window | Estimated reasoning-token cap per turn; see [Thinking-loop watchdog](#thinking-loop-watchdog) |
 | `thinking_timeout_secs` | `600` | Seconds a model may reason with no forward progress before the turn aborts |
+| `stream_idle_timeout_secs` | `300` | Seconds a streamed response may stay silent before the connection is declared stale and the turn fails; raise it for slow local prefill |
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.
 Decreasing it gives you more control by forcing sven to pause and ask.

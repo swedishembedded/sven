@@ -75,26 +75,49 @@ impl std::error::Error for AbortedError {}
 pub type ModelResolver =
     std::sync::Arc<dyn Fn(&str) -> anyhow::Result<std::sync::Arc<dyn ModelProvider>> + Send + Sync>;
 
-/// Default maximum idle time between stream chunks before the connection is
-/// declared stale, when `SVEN_STREAM_CHUNK_TIMEOUT_SECS` is unset.
-const DEFAULT_STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(300);
+/// Longest silence between two stream chunks before the connection is
+/// declared stale, when `agent.stream_idle_timeout_secs` is not set.
+const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Environment variable overriding [`DEFAULT_STREAM_CHUNK_TIMEOUT`]. A slow but
-/// live provider -- e.g. CPU-backed prefill of a large tool-schema-laden prompt,
-/// which can legitimately stay silent on the wire well past 300s before its
-/// first streamed token -- would otherwise be indistinguishable from a genuinely
-/// stale connection and abort the turn.
-const STREAM_CHUNK_TIMEOUT_ENV: &str = "SVEN_STREAM_CHUNK_TIMEOUT_SECS";
+/// Limits on one streamed model turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnLimits {
+    /// Bounds a runaway reasoning loop - see [`ThinkingBudget`].
+    pub thinking: ThinkingBudget,
+    /// Longest silence between two stream chunks before the connection is
+    /// declared stale and the turn fails. A slow but live provider (CPU
+    /// prefill of a long prompt) can legitimately stay silent for minutes
+    /// before its first token.
+    pub stream_idle: Duration,
+}
 
-/// Resolve the per-chunk stream idle timeout: [`STREAM_CHUNK_TIMEOUT_ENV`] if
-/// set to a valid positive integer, else [`DEFAULT_STREAM_CHUNK_TIMEOUT`].
-fn stream_chunk_timeout() -> Duration {
-    std::env::var(STREAM_CHUNK_TIMEOUT_ENV)
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|&secs| secs > 0)
-        .map(Duration::from_secs)
-        .unwrap_or(DEFAULT_STREAM_CHUNK_TIMEOUT)
+impl Default for TurnLimits {
+    fn default() -> Self {
+        ThinkingBudget::default().into()
+    }
+}
+
+impl From<ThinkingBudget> for TurnLimits {
+    fn from(thinking: ThinkingBudget) -> Self {
+        Self {
+            thinking,
+            stream_idle: DEFAULT_STREAM_IDLE_TIMEOUT,
+        }
+    }
+}
+
+impl TurnLimits {
+    /// The limits an [`sven_config::AgentConfig`] sets.
+    #[must_use]
+    pub fn from_agent_config(cfg: &sven_config::AgentConfig) -> Self {
+        Self {
+            thinking: ThinkingBudget::from_agent_config(cfg),
+            stream_idle: cfg
+                .stream_idle_timeout_secs
+                .filter(|&secs| secs > 0)
+                .map_or(DEFAULT_STREAM_IDLE_TIMEOUT, Duration::from_secs),
+        }
+    }
 }
 
 // ─── Thinking-loop watchdog ─────────────────────────────────────────────────
@@ -282,16 +305,17 @@ impl AccumSlot {
 /// rather than a fixed reservation). `None` lets the provider apply its own
 /// built-in default, unchanged from before this parameter existed.
 ///
-/// `thinking_budget` bounds a runaway reasoning loop - see [`ThinkingBudget`].
-/// When either cap is exceeded this returns `Err` wrapping an
+/// `limits` bounds the turn - see [`TurnLimits`]. A stream silent for longer
+/// than `limits.stream_idle` fails the turn. When either thinking cap is
+/// exceeded this returns `Err` wrapping an
 /// [`AbortedError`], which callers must route through the same
 /// `UserCancelled`/`Aborted` handling as a user-initiated cancel, not a
 /// genuine failure.
 ///
 /// # Errors
 ///
-/// Returns an error if the model API call fails, the stream stalls, or the
-/// thinking budget is exceeded.
+/// Returns an error if the model API call fails, the stream stays idle past
+/// its limit, or the thinking budget is exceeded.
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_turn(
     model: &dyn ModelProvider,
@@ -301,15 +325,16 @@ pub async fn stream_turn(
     dynamic_suffix: Option<String>,
     response_format: Option<ResponseFormat>,
     max_output_tokens_override: Option<u32>,
-    thinking_budget: ThinkingBudget,
+    limits: impl Into<TurnLimits>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> anyhow::Result<(String, Vec<ToolCall>)> {
+    let limits = limits.into();
     let core_tool_count = tools.iter().filter(|s| !s.is_mcp).count();
     let modalities = model.input_modalities();
     let messages = sven_model::sanitize::strip_images_if_unsupported(messages, &modalities);
 
     let (thinking_token_cap, thinking_time_cap) = thinking_budget_override()
-        .unwrap_or(thinking_budget)
+        .unwrap_or(limits.thinking)
         .resolve(model.catalog_context_window());
 
     let req = CompletionRequest {
@@ -337,7 +362,7 @@ pub async fn stream_turn(
     let mut slots: HashMap<u32, AccumSlot> = HashMap::new();
     let mut completed: Vec<ToolCall> = Vec::new();
     let mut completed_indices: Vec<u32> = Vec::new();
-    let chunk_timeout = stream_chunk_timeout();
+    let chunk_timeout = limits.stream_idle;
 
     loop {
         let maybe_event = tokio::time::timeout(chunk_timeout, stream.next())
@@ -624,75 +649,6 @@ pub(crate) fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolC
 }
 
 #[cfg(test)]
-mod stream_chunk_timeout_tests {
-    use super::*;
-
-    // Mutating a process-global env var races every other test in this
-    // module that touches the same name - cargo runs `#[test]`s in this
-    // binary concurrently on separate threads, and restoring the original
-    // value at the end of each test does not prevent one test's temporary
-    // value from being visible to another test's `stream_chunk_timeout()`
-    // call while both are mid-flight. (Previously unguarded - a genuine,
-    // reproducible flake: `falls_back_to_default_on_zero_or_garbage` could
-    // observe `honors_a_valid_override`'s "900" instead of its own "0".)
-    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn locked_env() -> std::sync::MutexGuard<'static, ()> {
-        ENV_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[test]
-    fn defaults_to_300s_when_unset() {
-        let _guard = locked_env();
-        let orig = std::env::var_os(STREAM_CHUNK_TIMEOUT_ENV);
-        unsafe { std::env::remove_var(STREAM_CHUNK_TIMEOUT_ENV) };
-        assert_eq!(stream_chunk_timeout(), DEFAULT_STREAM_CHUNK_TIMEOUT);
-        unsafe {
-            match &orig {
-                Some(v) => std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, v),
-                None => std::env::remove_var(STREAM_CHUNK_TIMEOUT_ENV),
-            }
-        }
-    }
-
-    #[test]
-    fn honors_a_valid_override() {
-        let _guard = locked_env();
-        let orig = std::env::var_os(STREAM_CHUNK_TIMEOUT_ENV);
-        unsafe { std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, "900") };
-        assert_eq!(stream_chunk_timeout(), Duration::from_secs(900));
-        unsafe {
-            match &orig {
-                Some(v) => std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, v),
-                None => std::env::remove_var(STREAM_CHUNK_TIMEOUT_ENV),
-            }
-        }
-    }
-
-    #[test]
-    fn falls_back_to_default_on_zero_or_garbage() {
-        let _guard = locked_env();
-        let orig = std::env::var_os(STREAM_CHUNK_TIMEOUT_ENV);
-        for bad in ["0", "-5", "not-a-number", ""] {
-            unsafe { std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, bad) };
-            assert_eq!(
-                stream_chunk_timeout(),
-                DEFAULT_STREAM_CHUNK_TIMEOUT,
-                "input {bad:?} should fall back to default"
-            );
-        }
-        unsafe {
-            match &orig {
-                Some(v) => std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, v),
-                None => std::env::remove_var(STREAM_CHUNK_TIMEOUT_ENV),
-            }
-        }
-    }
-}
-
-#[cfg(test)]
 // `OVERRIDE_TEST_LOCK` (below) is deliberately held across the `.await` of
 // `stream_turn`: the process-wide thinking-budget override must stay pinned
 // for the whole test body, which is exactly what the lint warns about and
@@ -755,6 +711,54 @@ mod thinking_watchdog_tests {
             });
             Ok(Box::pin(stream))
         }
+    }
+
+    /// A provider that connects and then never sends a chunk.
+    struct SilentProvider;
+
+    #[async_trait]
+    impl ModelProvider for SilentProvider {
+        fn name(&self) -> &str {
+            "silent"
+        }
+        fn model_name(&self) -> &str {
+            "silent"
+        }
+        async fn complete(
+            &self,
+            _req: CompletionRequest,
+        ) -> anyhow::Result<
+            std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<ResponseEvent>> + Send>>,
+        > {
+            Ok(Box::pin(futures::stream::pending()))
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stream_silent_past_the_configured_limit_fails_the_turn() {
+        let cfg = sven_config::AgentConfig {
+            stream_idle_timeout_secs: Some(7),
+            ..Default::default()
+        };
+        let (tx, drain) = drained_channel();
+        let started = tokio::time::Instant::now();
+        let result = stream_turn(
+            &SilentProvider,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            TurnLimits::from_agent_config(&cfg),
+            &tx,
+        )
+        .await;
+        drop(tx);
+        drain.await.unwrap();
+        let err = result.expect_err("a silent stream is stale");
+        assert!(err.to_string().contains("idle for >7 s"), "{err}");
+        assert_eq!(started.elapsed(), Duration::from_secs(7));
     }
 
     fn drained_channel() -> (mpsc::Sender<AgentEvent>, tokio::task::JoinHandle<()>) {

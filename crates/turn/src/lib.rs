@@ -29,5 +29,5 @@ pub use prompts::{system_prompt, CollabEvent};
 pub use runtime_context::AgentRuntimeContext;
 pub use stream_turn::{
     set_thinking_budget_override, stream_turn, thinking_budget_override, to_model_schemas,
-    AbortedError, ModelResolver, ThinkingBudget,
+    AbortedError, ModelResolver, ThinkingBudget, TurnLimits,
 };

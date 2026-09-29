@@ -160,10 +160,9 @@ pub struct TurnExecutor {
     /// existed, always came back `0` (`stream_turn` only sees one turn at a
     /// time and has no memory of prior ones).
     cache_totals: Arc<Mutex<HashMap<String, (u64, u64)>>>,
-    /// Thinking-loop watchdog caps forwarded to every `stream_turn` call
-    /// (main turn and compaction turn alike). See [`sven_turn::ThinkingBudget`]
-    /// and [`Self::with_thinking_budget`].
-    thinking_budget: sven_turn::ThinkingBudget,
+    /// Limits forwarded to every `stream_turn` call (main turn and
+    /// compaction turn alike). See [`Self::with_turn_limits`].
+    limits: sven_turn::TurnLimits,
 }
 
 /// Proactive-compaction settings, mirroring `sven_config::AgentConfig`'s
@@ -237,7 +236,7 @@ impl TurnExecutor {
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
-            thinking_budget: sven_turn::ThinkingBudget::default(),
+            limits: sven_turn::TurnLimits::default(),
         }
     }
 
@@ -256,12 +255,13 @@ impl TurnExecutor {
         self
     }
 
-    /// Configure the thinking-loop watchdog caps (see
-    /// [`sven_turn::ThinkingBudget`]). Defaults to `ThinkingBudget::default()`
-    /// (10% of the model's context window, 600s stall timeout) when not called.
+    /// Configure the limits on each streamed turn (see
+    /// [`sven_turn::TurnLimits`]). Defaults to `TurnLimits::default()` (10% of
+    /// the model's context window for thinking, 600s thinking stall, 300s
+    /// stream idle) when not called.
     #[must_use]
-    pub fn with_thinking_budget(mut self, thinking_budget: sven_turn::ThinkingBudget) -> Self {
-        self.thinking_budget = thinking_budget;
+    pub fn with_turn_limits(mut self, limits: sven_turn::TurnLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -418,7 +418,7 @@ impl TurnExecutor {
             None,
             None,
             max_output_tokens_override,
-            self.thinking_budget,
+            self.limits,
             &tx,
         )
         .await;
@@ -678,7 +678,7 @@ impl EffectExecutor for TurnExecutor {
                 req.dynamic_suffix.clone(),
                 response_format,
                 max_output_tokens_override,
-                self.thinking_budget,
+                self.limits,
                 &tx,
             ) => r,
         };
