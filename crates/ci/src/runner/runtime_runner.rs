@@ -92,7 +92,7 @@ pub struct RuntimeRunnerOptions {
     /// runner's `--append-system-prompt`). `None` leaves the prompt unchanged.
     pub append_system_prompt: Option<String>,
     /// Suppress Sven's built-in system prompt (`--no-system`). See
-    /// [`sven_machines::AgentRuntimeContext::build_system_message`] for exact
+    /// `sven_turn::AgentRuntimeContext::build_system_message` for exact
     /// semantics when combined with `append_system_prompt`.
     pub no_system: bool,
     /// Disable all tools for this session (`--no-tools`): no tool schemas are

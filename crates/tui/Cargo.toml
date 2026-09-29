@@ -12,6 +12,7 @@ sven-tool-registry = { path = "../tool-registry" }
 sven-tools-fs  = { path = "../tools-fs" }
 sven-tools-agent = { path = "../tools-agent" }
 sven-machines      = { path = "../machines" }
+sven-turn          = { path = "../turn" }
 sven-bootstrap = { path = "../bootstrap" }
 sven-mcp-client = { path = "../mcp-client" }
 sven-workspace   = { path = "../workspace" }

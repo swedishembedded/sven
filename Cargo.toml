@@ -42,7 +42,6 @@ members = [
     "crates/acp",
     "crates/team",
     "crates/memory",
-    "crates/llm",
     "crates/executors",
     # Transport-agnostic operator control protocol + kernel mappings
     "crates/control",

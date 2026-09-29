@@ -73,7 +73,7 @@ impl EffectExecutor for CompositeExecutor {
                         .map(str::to_string),
                     _ => None,
                 };
-                let is_turn = request_kind.as_deref() == Some(crate::turn::TURN_KIND);
+                let is_turn = request_kind.as_deref() == Some(sven_vocab::TURN_KIND);
                 if is_turn {
                     if let Some(exec) = &mut self.turn {
                         exec.execute(effect, sink, obs).await;

@@ -203,8 +203,7 @@ Sven` codec) · `sven-tool-api` (`Tool` trait + `ToolDisplay`)
 
 ### services
 `sven-session-store` (ATIF trajectory-backed session store, legacy YAML chat
-import, `sven migrate-sessions`) · `sven-llm` (`ThreadStore` + fence helper)
-· `sven-tool-registry`
+import, `sven migrate-sessions`) · `sven-tool-registry`
 (`ToolRegistry`, `ApprovalPolicy`, fs_root jail) · `sven-mcp-client` (MCP
 client: stdio + Streamable HTTP, OAuth) · `sven-kernel` (`ErasedRuntime`,
 `EffectExecutor`, `EventSink`, `ChildSpawner`) · `sven-model-drivers` (34
@@ -217,14 +216,15 @@ test/dev providers)
 agent self-management) · `sven-tools-web` (`web_fetch`/`web_search`, `grep`,
 `read_lints`) · `sven-tools-gdb` (GDB/MI debugging, unix
 only) · `sven-turn` (impure turn primitives: `stream_turn`,
-`compact`/`smart_truncate`, prompt assembly) · `sven-team` (agent-team
+`compact`/`smart_truncate`, prompt assembly, `AgentRuntimeContext`) · `sven-team` (agent-team
 coordination) · `sven-memory` (semantic memory store and tools, the `memory`
 feature of `sven-bootstrap`)
 
 ### machines
 `sven-machines` (pure `Machine` impls: `ReactiveAgentMachine`, `SdlcMachine`,
-`TaskMachine`, `ModeRegistry`, `loop_core`) · `sven-executors` (the real I/O
-layer: `CompositeExecutor` + its executor slots)
+`TaskMachine`, `ModeRegistry`, `loop_core`; depends only on `sven-hsm` and
+`sven-vocab`) · `sven-executors` (the real I/O layer: `CompositeExecutor` +
+its executor slots, `ThreadStore`)
 
 ### assembly
 `sven-bootstrap` (`RuntimeBuilder` - the one kernel-assembly point) ·

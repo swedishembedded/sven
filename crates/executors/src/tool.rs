@@ -33,7 +33,7 @@ use sven_vocab::provenance::ProvenanceSink;
 
 /// Default for [`ToolExecutor::tool_timeout`].
 const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(600);
-use sven_llm::ThreadStore;
+use crate::thread_store::ThreadStore;
 use sven_model::Message;
 use sven_tool_registry::{ToolCall, ToolOutput, ToolRegistry};
 
@@ -615,7 +615,7 @@ mod tests {
         let mut registry = ToolRegistry::new();
         registry.register(ParkingTool);
         let mut exec = ToolExecutor::unrestricted(Arc::new(registry));
-        let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
+        let store = Arc::new(Mutex::new(crate::thread_store::ThreadStore::new()));
         let call_id = ToolCallId::new();
 
         let content = run_tool_effect_and_get_stored_content(
@@ -767,7 +767,7 @@ mod tests {
     /// needed to assert on the *content* truncation produces.
     async fn run_tool_effect_and_get_stored_content(
         exec: &mut ToolExecutor,
-        store: Arc<Mutex<sven_llm::ThreadStore>>,
+        store: Arc<Mutex<crate::thread_store::ThreadStore>>,
         thread_id: &str,
         call_id: ToolCallId,
         tool_name: &str,
@@ -819,7 +819,7 @@ mod tests {
             category: sven_tool_api::OutputCategory::Generic,
             is_error: false,
         });
-        let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
+        let store = Arc::new(Mutex::new(crate::thread_store::ThreadStore::new()));
         let mut exec = ToolExecutor::unrestricted(Arc::new(registry)); // cap defaults to 0
 
         let content = run_tool_effect_and_get_stored_content(
@@ -847,7 +847,7 @@ mod tests {
             category: sven_tool_api::OutputCategory::Generic,
             is_error: false,
         });
-        let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
+        let store = Arc::new(Mutex::new(crate::thread_store::ThreadStore::new()));
         let mut exec =
             ToolExecutor::unrestricted(Arc::new(registry)).with_tool_result_token_cap(10);
 
@@ -874,7 +874,7 @@ mod tests {
         // HeadTail keeps both ends; Generic hard-cuts from the start only.
         // Same content, same cap, different category -> different result,
         // proving the category actually reaches smart_truncate.
-        let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
+        let store = Arc::new(Mutex::new(crate::thread_store::ThreadStore::new()));
 
         let mut generic_registry = ToolRegistry::new();
         generic_registry.register(BigOutputTool {
@@ -925,7 +925,7 @@ mod tests {
             category: sven_tool_api::OutputCategory::Generic,
             is_error: true,
         });
-        let store = Arc::new(Mutex::new(sven_llm::ThreadStore::new()));
+        let store = Arc::new(Mutex::new(crate::thread_store::ThreadStore::new()));
         let mut exec =
             ToolExecutor::unrestricted(Arc::new(registry)).with_tool_result_token_cap(10);
 

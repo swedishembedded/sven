@@ -27,7 +27,7 @@ pub struct AgentRuntimeContext {
     pub ci_context_note: Option<String>,
     /// Path of the project context file (`.sven/context.md`, `AGENTS.md`, ...),
     /// when one exists. The system prompt references this path rather than
-    /// inlining the file's content on every turn (see `sven_core::prompts`) -
+    /// inlining the file's content on every turn (see [`crate::prompts`]) -
     /// an agent that decides the file is relevant reads it itself with its
     /// normal file tool.
     pub project_context_file: Option<PathBuf>,

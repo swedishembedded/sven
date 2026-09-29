@@ -115,14 +115,13 @@ use sven_hsm::{
     CompactionStrategyUsed, Effect, Event, ObservationSink, ProposedToolCall, ToolCallId, UiEvent,
 };
 use sven_kernel::{EffectExecutor, EventSink};
-use sven_llm::{ThreadStore, TurnRequest};
 use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
 use sven_tool_registry::ToolRegistry;
 use sven_turn::{stream_turn, to_model_schemas, AbortedError, ModelResolver};
+use sven_vocab::TurnRequest;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
-/// The JSON `kind` tag that selects the single-turn engine.
-pub use sven_llm::TURN_KIND;
+use crate::thread_store::ThreadStore;
 
 /// Executes single-turn `CallLlm { kind: "turn" }` effects.
 ///

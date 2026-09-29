@@ -13,11 +13,11 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot, watch};
 
+use sven_executors::ThreadStore;
 use sven_executors::{ApprovalRequest, UserQuestion};
 use sven_hsm::ToolCapability;
 use sven_hsm::{Event, RuntimeStatus};
 use sven_kernel::EventSink;
-use sven_llm::ThreadStore;
 use sven_model::Message;
 use sven_tool_registry::ToolRegistry;
 

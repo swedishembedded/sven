@@ -47,7 +47,6 @@ sven/
 | Crate | Purpose |
 |-------|---------|
 | `sven-hsm` | HSM kernel: `Machine` trait, Samek dispatch, Active Object runtime, `PermissionPolicy`, `AuditRecord`, replay |
-| `sven-llm` | Typed LLM reasoning service: `LlmRequest`/response contracts, `LlmAdapter`, `MockLlmAdapter` |
 | `sven-executors` | Effect executors (only I/O layer): LLM, tool, user, timer, checkpoint, audit, internal, composite |
 | `sven-bootstrap` | `RuntimeBuilder` - assembles HSM kernel from config and mode string |
 | `sven-ci` | Headless/CI runner (`CiRunner` + `RuntimeRunner`) and output formatters |

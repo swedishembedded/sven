@@ -430,23 +430,17 @@ Fan-out](parallel-submachines.md)**.
 
 ---
 
-## LLM contracts (`sven-llm`)
+## Conversation primitives
 
-`sven-llm` provides the conversation primitives shared by all engines:
-
-- **`ConversationStore`** (`conversation.rs`) - append-only per-thread
-  `Vec<Message>` history with a cache-safety invariant. Each thread's prefix is
-  immutable; new messages are only ever appended. This keeps provider prompt
-  caches valid across successive turns on the same thread.
-- **`TurnRequest`** (`conversation.rs`) - the `kind: "turn"` request shape used
-  by every machine for a single model pass. Fields include `thread`, `tools`,
-  `all_tools_mode`, `model_override`, and `instruction`.
-- **`strip_code_fences`** - utility to strip Markdown code fences from model
-  output before structured-JSON parsing.
-
-The older typed `LlmRequest` / `DefaultLlmAdapter` / `MockLlmAdapter` /
-`LlmExecutor` path has been removed; `sven-llm` no longer carries request or
-adapter modules.
+- **`ThreadStore`** (`sven-executors`, `thread_store.rs`) - append-only
+  per-thread `Vec<Message>` history with a cache-safety invariant. Each
+  thread's prefix is immutable; new messages are only ever appended. This
+  keeps provider prompt caches valid across successive turns on the same
+  thread.
+- **`TurnRequest`** (`sven-vocab`, `turn.rs`) - the `kind: "turn"` request
+  shape every machine uses for a single model pass. Fields include `thread`,
+  `tools`, `all_tools_mode`, `model`, and `instruction`. It is pure data, so a
+  machine builds one without depending on the model or executor layers.
 
 The model layer (`sven-model`) carries the streaming primitives the engines
 share: `CompletionRequest` (now including an optional `response_format` for
@@ -555,11 +549,11 @@ E2E bats tests use `--model mock` so no real API key is required.
 |-------|------|
 | `sven-hsm` | HSM kernel: dispatch, `Machine` trait, `Runtime`/`ErasedRuntime` (Active Object), permissions, audit/replay, `Clock`/timers, `Submachine`/`ChildSpawner`, `ObservationSink`/`UiEvent` |
 | `sven-model` | Stateless provider abstraction: `ModelProvider`, `CompletionRequest` (incl. `response_format`), `Message`, `ResponseEvent`, `ResponseFormat` |
-| `sven-llm` | Conversation primitives: `ConversationStore` (append-only per-thread history), `TurnRequest`, `strip_code_fences`. (Typed `LlmRequest` / `LlmAdapter` / `DefaultLlmAdapter` paths removed.) |
 | `sven-tool-api` | `Tool` trait, `ToolCall` / `ToolOutput`, approval policy / `PermissionRequester`, tool events and display |
 | `sven-tool-registry` | `ToolRegistry` (incl. tool-subset API), `ToolSchema`, `SharedTools`, `ToolPolicy` |
 | `sven-tools-*` | Concrete tool implementations by domain: `fs`, `exec`, `web`, `ctx`, `agent`, `gdb`, `android` |
-| `sven-core` | Concrete machines (`ReactiveAgentMachine`, `SdlcMachine` + `TaskMachine`), `loop_core` shared state handlers, `stream_turn`, `Agent` (legacy), `Session`, `ModeRegistry` |
+| `sven-machines` | Concrete machines (`ReactiveAgentMachine`, `SdlcMachine` + `TaskMachine`, `VerifiedTaskMachine`, `UiTestMachine`), `loop_core` shared state handlers, `ModeRegistry`. Depends only on `sven-hsm` and `sven-vocab` |
+| `sven-turn` | Impure turn primitives: `stream_turn`, compaction, system-prompt assembly, `AgentRuntimeContext` |
 | `sven-executors` | Effect executors: `TurnExecutor`, tool, user, timer, checkpoint, audit, internal, and the `CompositeExecutor` router |
 | `sven-bootstrap` | `RuntimeBuilder` (per-session factory), `SessionSupervisor`, `SdlcChildSpawner` |
 | `sven-frontend` | Bridges kernel `UiEvent`s to renderer events for TUI/GUI |

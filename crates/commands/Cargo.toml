@@ -10,7 +10,7 @@ sven-config     = { path = "../config" }
 sven-workspace  = { path = "../workspace" }
 sven-mcp-client = { path = "../mcp-client" }
 sven-model      = { path = "../model" }
-sven-machines   = { path = "../machines" }
+sven-turn       = { path = "../turn" }
 tokio           = { workspace = true }
 unicode-width   = { workspace = true }
 

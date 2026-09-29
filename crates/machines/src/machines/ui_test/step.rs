@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sven_hsm::{context::Context, effect::Effect, ids::ToolCallId, permissions::ToolCapability};
-use sven_llm::TurnRequest;
+use sven_vocab::TurnRequest;
 
 use super::vars;
 

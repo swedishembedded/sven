@@ -16,12 +16,12 @@ sven-tools-agent   = { path = "../tools-agent" }
 sven-tools-web     = { path = "../tools-web" }
 sven-tools-android = { path = "../tools-android" }
 sven-machines          = { path = "../machines" }
+sven-turn              = { path = "../turn" }
 sven-workspace       = { path = "../workspace" }
 sven-mcp-client    = { path = "../mcp-client" }
 sven-hsm           = { path = "../hsm" }
 sven-kernel        = { path = "../kernel" }
 sven-executors     = { path = "../executors" }
-sven-llm           = { path = "../llm" }
 sven-vocab         = { path = "../vocab" }
 # New integration crates - optional at bootstrap level
 sven-memory        = { path = "../memory", optional = true }

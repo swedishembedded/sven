@@ -40,7 +40,7 @@ use sven_hsm::{
     ProposedToolCall,
 };
 
-use sven_llm::TurnRequest;
+use sven_vocab::TurnRequest;
 
 /// The single context key under which [`LoopState`] is serialized.
 pub const LOOP_STATE_KEY: &str = "lc_state";

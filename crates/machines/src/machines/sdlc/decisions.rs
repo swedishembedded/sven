@@ -149,6 +149,56 @@ pub fn decision_schema() -> Value {
     })
 }
 
+/// Strip leading/trailing markdown code fences (```` ```json ... ``` ````)
+/// a model wraps its JSON output in, so the raw JSON can be parsed.
+fn strip_code_fences(s: &str) -> &str {
+    let s = s.trim();
+    // Skip the opening fence and its optional language tag line.
+    let s = match s.strip_prefix("```") {
+        Some(rest) => rest.find('\n').map_or(rest, |nl| &rest[nl + 1..]),
+        None => s,
+    };
+    let s = s.rfind("```").map_or(s, |idx| &s[..idx]);
+    s.trim()
+}
+
+/// Parse a raw LLM response text as a JSON decision value.
+/// Tolerates code fences and extracts the first `{...}` object on failure.
+pub(crate) fn parse_sdlc_decision(raw: &str) -> Option<Value> {
+    let stripped = strip_code_fences(raw);
+    serde_json::from_str::<Value>(stripped).ok().or_else(|| {
+        let start = stripped.find('{')?;
+        let bytes = stripped.as_bytes();
+        let mut depth = 0i32;
+        let mut in_str = false;
+        let mut escaped = false;
+        for (i, &b) in bytes.iter().enumerate().skip(start) {
+            if in_str {
+                if escaped {
+                    escaped = false;
+                } else if b == b'\\' {
+                    escaped = true;
+                } else if b == b'"' {
+                    in_str = false;
+                }
+                continue;
+            }
+            match b {
+                b'"' => in_str = true,
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return serde_json::from_str::<Value>(&stripped[start..=i]).ok();
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

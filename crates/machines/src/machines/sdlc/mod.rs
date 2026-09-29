@@ -52,6 +52,7 @@ use sven_hsm::{
     status::Reaction,
 };
 
+pub(crate) use decisions::parse_sdlc_decision;
 use decisions::{
     approval_prompt_of, decision_schema, message_of, payload_of, questions_of, status_of,
     DecisionStatus,
@@ -329,43 +330,6 @@ fn to_recovery(
     ctx.set_fact("failed_phase", json!(format!("{failed_phase:?}")));
     ctx.set_fact("failure_context", json!(context_note));
     Reaction::goto(SdlcState::Recovery)
-}
-
-/// Parse a raw LLM response text as a JSON decision value.
-/// Tolerates code fences and extracts the first `{...}` object on failure.
-pub(crate) fn parse_sdlc_decision(raw: &str) -> Option<Value> {
-    let stripped = sven_llm::strip_code_fences(raw);
-    serde_json::from_str::<Value>(stripped).ok().or_else(|| {
-        let start = stripped.find('{')?;
-        let bytes = stripped.as_bytes();
-        let mut depth = 0i32;
-        let mut in_str = false;
-        let mut escaped = false;
-        for (i, &b) in bytes.iter().enumerate().skip(start) {
-            if in_str {
-                if escaped {
-                    escaped = false;
-                } else if b == b'\\' {
-                    escaped = true;
-                } else if b == b'"' {
-                    in_str = false;
-                }
-                continue;
-            }
-            match b {
-                b'"' => in_str = true,
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return serde_json::from_str::<Value>(&stripped[start..=i]).ok();
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    })
 }
 
 /// Build a continuation turn for a phase with the decision schema.

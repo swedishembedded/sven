@@ -27,13 +27,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sven_config::{AgentMode, Config, ModelConfig};
+use sven_executors::ThreadStore;
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
     CompositeExecutorBuilder, ToolExecutor, TurnExecutor,
 };
 use sven_hsm::{Context, ObservationSink, Principal, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, ErasedRuntime};
-use sven_llm::ThreadStore;
 use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine, UiTestMachine};
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
@@ -733,7 +733,7 @@ impl RuntimeBuilder {
         .with_compaction_config(sven_executors::CompactionConfig::from_agent_config(
             &self.config.agent,
         ))
-        .with_thinking_budget(sven_machines::ThinkingBudget::from_agent_config(
+        .with_thinking_budget(sven_turn::ThinkingBudget::from_agent_config(
             &self.config.agent,
         ));
 

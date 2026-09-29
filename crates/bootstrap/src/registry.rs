@@ -38,7 +38,7 @@ use sven_tools_gdb::GdbSessionState;
 use sven_tools_web::{GrepTool, WebFetchTool, WebSearchTool};
 use sven_workspace::Shared;
 
-use sven_machines::AgentRuntimeContext;
+use sven_turn::AgentRuntimeContext;
 
 use crate::context::ToolSetProfile;
 use crate::context_tool::ContextTool;

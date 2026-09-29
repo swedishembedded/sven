@@ -42,6 +42,7 @@
 pub mod audit;
 pub mod composite;
 pub mod internal;
+pub mod thread_store;
 pub mod timer;
 pub mod tool;
 pub mod turn;
@@ -54,6 +55,7 @@ pub use audit::{
 };
 pub use composite::{CompositeExecutor, CompositeExecutorBuilder};
 pub use internal::InternalExecutor;
+pub use thread_store::{ThreadId, ThreadStore};
 pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
 pub use turn::{CompactionConfig, TurnExecutor};

@@ -137,7 +137,7 @@ async fn reactive_agent_machine_routes_user_message_to_text_delta_on_obs_sink() 
 
     // Build a TurnExecutor backed by PongProvider so the machine's
     // kind="turn" CallLlm effect is handled end-to-end without a real LLM.
-    let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
+    let store = Arc::new(std::sync::Mutex::new(sven_executors::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
         sven_hsm::ToolCallId,
         (String, String),
@@ -263,7 +263,7 @@ async fn cancelling_mid_stream_preserves_partial_text_and_reports_aborted() {
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
     use sven_machines::ReactiveAgentMachine;
 
-    let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
+    let store = Arc::new(std::sync::Mutex::new(sven_executors::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
         sven_hsm::ToolCallId,
         (String, String),
@@ -378,7 +378,7 @@ async fn oversized_prompt_fails_before_any_network_call() {
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
     use sven_machines::ReactiveAgentMachine;
 
-    let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
+    let store = Arc::new(std::sync::Mutex::new(sven_executors::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
         sven_hsm::ToolCallId,
         (String, String),
@@ -472,7 +472,7 @@ async fn tiny_prompt_fits_a_small_window_with_a_full_size_output_cap() {
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
     use sven_machines::ReactiveAgentMachine;
 
-    let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
+    let store = Arc::new(std::sync::Mutex::new(sven_executors::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
         sven_hsm::ToolCallId,
         (String, String),
@@ -611,7 +611,7 @@ async fn long_thread_triggers_compaction_before_the_next_turn() {
     use sven_machines::machines::reactive_agent::CHAT_THREAD;
     use sven_machines::ReactiveAgentMachine;
 
-    let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
+    let store = Arc::new(std::sync::Mutex::new(sven_executors::ThreadStore::new()));
     // Seed a long-ish history so the (very low, for a fast test) compaction
     // threshold is comfortably crossed without needing thousands of messages.
     {
@@ -799,7 +799,7 @@ async fn compaction_falls_back_to_emergency_when_the_summarization_call_fails() 
     use sven_machines::machines::reactive_agent::CHAT_THREAD;
     use sven_machines::ReactiveAgentMachine;
 
-    let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
+    let store = Arc::new(std::sync::Mutex::new(sven_executors::ThreadStore::new()));
     {
         let mut s = store.lock().unwrap();
         for i in 0..20 {
@@ -955,7 +955,7 @@ async fn token_usage_reports_cumulative_cache_totals_and_model_capacity() {
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
     use sven_machines::ReactiveAgentMachine;
 
-    let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
+    let store = Arc::new(std::sync::Mutex::new(sven_executors::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
         sven_hsm::ToolCallId,
         (String, String),

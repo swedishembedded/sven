@@ -26,13 +26,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use sven_config::Config;
+use sven_executors::ThreadStore;
 use sven_executors::{CompositeExecutorBuilder, ToolExecutor, TurnExecutor};
 use sven_hsm::{
     event::InternalEvent, submachine::ErasedMachine, Context, Event, Hsm, MachineId,
     PermissionPolicy, ToolCallId, ToolCapability,
 };
 use sven_kernel::{ChildSpawner, ErasedRuntime, EventSink, SystemClock};
-use sven_llm::ThreadStore;
 use sven_machines::TaskMachine;
 use sven_tool_registry::ToolRegistry;
 
@@ -95,14 +95,14 @@ impl ChildSpawner for SdlcChildSpawner {
 
         let resolver_config = Arc::clone(&self.config);
         // Deliberately `from_config`, not `from_config_probed`: `ModelResolver`
-        // (`sven_machines::stream_turn::ModelResolver`) is a synchronous `Fn`,
+        // (`sven_turn::stream_turn::ModelResolver`) is a synchronous `Fn`,
         // called synchronously from `TurnExecutor::resolve_model`, and
         // `from_config_probed` needs an `.await`. Probing here would require
         // making `ModelResolver` itself async across every call site — a
         // larger, separate refactor. The primary session model IS probed
         // (`runtime_builder.rs::build`); only a per-state/per-child model
         // override (this path) is not.
-        let model_resolver: sven_machines::ModelResolver = Arc::new(move |model_str: &str| {
+        let model_resolver: sven_turn::ModelResolver = Arc::new(move |model_str: &str| {
             let model_cfg = sven_model::resolve_model_from_config(&resolver_config, model_str);
             let provider = sven_model_drivers::from_config(&model_cfg)?;
             Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
@@ -116,7 +116,7 @@ impl ChildSpawner for SdlcChildSpawner {
             Arc::clone(&call_id_to_thread),
             cancel_handle,
         )
-        .with_thinking_budget(sven_machines::ThinkingBudget::from_agent_config(
+        .with_thinking_budget(sven_turn::ThinkingBudget::from_agent_config(
             &self.config.agent,
         ));
 

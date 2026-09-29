@@ -4,13 +4,8 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
-sven-config  = { path = "../config" }
-sven-llm     = { path = "../llm" }
-sven-model   = { path = "../model" }
-sven-workspace = { path = "../workspace" }
 sven-hsm     = { path = "../hsm" }
 sven-vocab   = { path = "../vocab" }
-sven-turn    = { path = "../turn" }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 uuid        = { workspace = true }

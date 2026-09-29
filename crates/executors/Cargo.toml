@@ -10,7 +10,6 @@ sven-chain    = { path = "../chain" }
 sven-config   = { path = "../config" }
 sven-hsm      = { path = "../hsm" }
 sven-kernel   = { path = "../kernel" }
-sven-llm      = { path = "../llm" }
 sven-tool-api = { path = "../tool-api" }
 sven-tool-registry = { path = "../tool-registry" }
 sven-model    = { path = "../model" }

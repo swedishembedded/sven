@@ -106,7 +106,7 @@ async fn silent_provider_run(
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
     use sven_machines::ReactiveAgentMachine;
 
-    let store = Arc::new(std::sync::Mutex::new(sven_llm::ThreadStore::new()));
+    let store = Arc::new(std::sync::Mutex::new(sven_executors::ThreadStore::new()));
     let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
         sven_hsm::ToolCallId,
         (String, String),

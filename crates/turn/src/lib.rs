@@ -18,6 +18,7 @@ mod compact;
 mod tool_slots;
 
 pub mod prompts;
+mod runtime_context;
 pub mod stream_turn;
 
 pub use compact::{
@@ -25,6 +26,7 @@ pub use compact::{
     prepare_compaction, smart_truncate, CompactionPlan,
 };
 pub use prompts::{system_prompt, CollabEvent};
+pub use runtime_context::AgentRuntimeContext;
 pub use stream_turn::{
     set_thinking_budget_override, stream_turn, thinking_budget_override, to_model_schemas,
     AbortedError, ModelResolver, ThinkingBudget,

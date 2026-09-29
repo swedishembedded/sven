@@ -551,3 +551,22 @@ fn running_tools_state_removed_write_file_was_forbidden_there() {
         "WriteFile must be Forbidden in Discovery"
     );
 }
+
+/// A model that wraps its decision in a markdown fence, with or without a
+/// language tag, still yields the decision object.
+#[test]
+fn a_fenced_decision_parses() {
+    let want = serde_json::json!({"decision": "done"});
+    for raw in [
+        "```json\n{\"decision\": \"done\"}\n```",
+        "```\n{\"decision\": \"done\"}\n```",
+        "  {\"decision\": \"done\"}  ",
+        "Here you go: {\"decision\": \"done\"} hope that helps",
+    ] {
+        assert_eq!(
+            super::parse_sdlc_decision(raw),
+            Some(want.clone()),
+            "{raw:?}"
+        );
+    }
+}

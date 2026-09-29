@@ -12,7 +12,7 @@
 //!
 //! This module is a hard gate, not a compactor - it does not summarize or
 //! shrink anything itself. Proactive compaction (`sven_machines::compact`,
-//! `sven_machines::prepare_compaction`/`finish_compaction`) is wired into
+//! `sven_turn::prepare_compaction`/`finish_compaction`) is wired into
 //! `TurnExecutor` (`crates/executors/src/turn.rs`), which checks this
 //! module's [`effective_input_budget`] against the configured
 //! `compaction_threshold` *before* a turn and compacts the thread when

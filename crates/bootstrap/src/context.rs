@@ -14,10 +14,10 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 
-use sven_machines::AgentRuntimeContext;
 use sven_tool_api::events::TodoItem;
 use sven_tools_agent::QuestionRequest;
 use sven_tools_fs::OutputBufferStore;
+use sven_turn::AgentRuntimeContext;
 use sven_workspace::{CiContext, GitContext, SharedAgents, SharedKnowledge, SharedSkills};
 
 // ─── RuntimeContext ───────────────────────────────────────────────────────────
@@ -44,7 +44,7 @@ pub struct RuntimeContext {
     /// Full system prompt override (from `--system-prompt-file`).
     pub system_prompt_override: Option<String>,
     /// Suppress Sven's built-in identity/guidelines/context prompt
-    /// (from `--no-system`). See [`sven_machines::AgentRuntimeContext::build_system_message`].
+    /// (from `--no-system`). See [`sven_turn::AgentRuntimeContext::build_system_message`].
     pub no_system: bool,
     /// Suppress tool availability entirely (from `--no-tools`): no tool
     /// schemas are sent to the model and any tool call is refused.

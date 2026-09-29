@@ -704,7 +704,7 @@ pub struct AgentConfig {
     /// Token fraction at which proactive compaction triggers (0.0-1.0),
     /// checked by `TurnExecutor` before every turn against the usable input
     /// budget (`sven_model::budget::effective_input_budget`), minus
-    /// `compaction_overhead_reserve`. See `sven_machines::prepare_compaction`.
+    /// `compaction_overhead_reserve`. See `sven_turn::prepare_compaction`.
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: f32,
     /// Number of recent non-system messages preserved verbatim during
