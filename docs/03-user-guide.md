@@ -585,7 +585,7 @@ also a fully independent slash command:
 ```
 
 When the model loads a parent skill, it receives a compact list of the
-available sub-skills.  It then calls `load_skill("sven/plan")` etc. exactly
+available sub-skills.  It then loads `sven/plan` etc. with the `skill` tool exactly
 when it enters each phase - not before.  This means sub-skill instructions are
 loaded only when actually needed, keeping each turn's token usage minimal.
 
@@ -673,10 +673,10 @@ description: |
 
 Follow these phases in order:
 
-1. Pre-flight checks - call `load_skill("deploy/pre-flight")` before touching
+1. Pre-flight checks - load the `deploy/pre-flight` skill before touching
    any infrastructure.
 2. Deploy the artefact.
-3. If anything fails - call `load_skill("deploy/rollback")` immediately.
+3. If anything fails - load the `deploy/rollback` skill immediately.
 ```
 
 Sub-skills are automatically listed to the model when the parent is loaded, so
@@ -705,7 +705,7 @@ a script, reference document, template, or data file the skill's instructions
 may use.  Subdirectories without their own `SKILL.md` are support directories,
 not sub-skills.
 
-When a skill is loaded via `load_skill`, the agent receives a listing of up to
+When a skill is loaded, the agent receives a listing of up to
 20 bundled file paths relative to the skill directory.  The skill body can
 reference them:
 
@@ -774,7 +774,7 @@ or agent first.
 
 The routing table is written for the AI, not for humans.  When Sven sees
 "Project Instructions" in its system prompt, it treats the table as binding
-rules.  The model will call `load_skill` or suggest the indicated agent before
+rules.  The model will load the skill or suggest the indicated agent before
 touching matching files.
 
 ### Tips

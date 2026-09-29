@@ -86,8 +86,8 @@ pub struct AgentInfo {
     pub agent_md_path: std::path::PathBuf,
     /// Knowledge document filenames cross-referenced by this agent spec.
     ///
-    /// When set, `load_skill` appends a hint pointing the model to these
-    /// knowledge docs.  Files are resolved from `.sven/knowledge/`.
+    /// Shown with the agent in listings. Files are resolved from
+    /// `.sven/knowledge/`.
     pub knowledge: Vec<String>,
 }
 

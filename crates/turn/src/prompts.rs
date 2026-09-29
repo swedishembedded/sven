@@ -316,9 +316,10 @@ pub fn build_skills_section(skills: &[SkillInfo]) -> String {
     format!(
         "## Skills\n\n\
          When you recognize that the current task matches one of the available skills listed \
-         below, call the `load_skill` tool to load the full skill instructions before \
-         proceeding. Use the skill `<description>` to decide which skill is absolutely needed for the task.
-         Load at most one skill per task; do not load a skill unless it clearly applies.\
+         below, call the `skill` tool with `action: \"load\"` and the skill's command as `name` \
+         to load the full skill instructions before proceeding. Use the skill `<description>` \
+         to decide which skill is absolutely needed for the task. Load at most one skill per \
+         task; do not load a skill unless it clearly applies.\
          {truncation_note}\n\n\
          <available_skills>\n{}\n</available_skills>",
         all_entries.join("\n")
@@ -1057,9 +1058,16 @@ mod tests {
             pr.contains("available_skills"),
             "prompt should include available_skills block"
         );
+        // The tool the prompt sends the model to must be the one registered
+        // (`SkillTool`, named `skill`, loading with `action: "load"`).
         assert!(
-            pr.contains("load_skill"),
-            "prompt should mention load_skill tool"
+            pr.contains("`skill` tool with `action: \"load\"`"),
+            "prompt should name the skill tool and its load action: {pr}"
+        );
+        assert!(!pr.contains("load_skill"), "no such tool: {pr}");
+        assert!(
+            pr.contains("for the task. Load at most one skill"),
+            "one paragraph, no source indentation: {pr}"
         );
     }
 

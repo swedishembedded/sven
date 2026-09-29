@@ -113,7 +113,7 @@ sven:                        # optional sven-specific block
 # Skill body
 
 Instructions the model will follow when this skill is loaded.
-Reference sub-skills with load_skill("command") calls.
+Reference sub-skills by command; the model loads them with the `skill` tool.
 ```
 
 Only `description` is required.  `name` defaults to the directory name when
@@ -151,7 +151,8 @@ XML block that is appended to the system prompt:
 ## Skills
 
 When you recognize that the current task matches one of the available skills
-listed below, call the `load_skill` tool to load the full skill instructions
+listed below, call the `skill` tool with `action: "load"` and the skill's command as `name`
+to load the full skill instructions
 before proceeding. ...
 
 <available_skills>
@@ -187,10 +188,10 @@ autonomously; the user can invoke it explicitly with `/command`.
 
 ## On-demand loading: `SkillTool` (`sven-tools-agent`)
 
-When the model decides a skill is relevant it calls `load_skill`:
+When the model decides a skill is relevant it calls the `skill` tool:
 
 ```
-load_skill({"name": "sven/plan"})
+skill({"action": "load", "name": "sven/plan"})
 ```
 
 The tool returns a `<skill_content>` block containing:
@@ -204,10 +205,10 @@ The tool returns a `<skill_content>` block containing:
    separate packages).
 4. **Sub-skill navigation hint** - a compact `<sub_skills>` block listing the
    skill's **direct children** (one level only) by command and one-line
-   description.  The model calls `load_skill` again for whichever child it
+   description.  The model loads whichever child it
    needs next.
 
-Example output for `load_skill("sven")`:
+Example output for loading `sven`:
 
 ```xml
 <skill_content command="sven" name="Sven Methodology">
@@ -220,7 +221,7 @@ Relative paths in this skill (scripts/, references/, assets/) are relative to
 this base directory.
 
 <sub_skills>
-<!-- Call load_skill(command) to load any sub-skill's full instructions. -->
+<!-- Call skill(action=load, name=<command>) to load any sub-skill's full instructions. -->
   <sub_skill command="sven/plan" name="Sven Plan">Planning phase.</sub_skill>
   <sub_skill command="sven/implement" name="Sven Implement">Implementation phase.</sub_skill>
   <sub_skill command="sven/review" name="Sven Review">Review phase.</sub_skill>
@@ -265,7 +266,7 @@ Message sent:
 
 Sub-skill bodies are never pre-loaded.  Only the invoked skill's own body is
 sent.  The model discovers and loads children via the sub-skill hint returned by
-`load_skill`.
+the `skill` tool.
 
 ---
 
@@ -332,14 +333,6 @@ knowledge:
 ... embedded domain facts that are always needed ...
 ```
 
-When an agent spec declares `knowledge:` files, `load_skill` appends a hint:
-
-```
-Relevant knowledge docs (use search_knowledge or read_file to load):
-  - .sven/knowledge/sven-hsm.md    (HSM Kernel)
-  - .sven/knowledge/sven-kernel.md (Active Object Runtime)
-```
-
 **Guideline:** embed the core correctness invariants and most-common failure
 modes directly in the skill/agent spec (they are always needed), and link to
 the knowledge base for the full architecture narrative and extended failure
@@ -354,8 +347,8 @@ Token efficiency is a first-class concern:
 - **Metadata only in system prompt.** The `<available_skills>` block carries
   command, name, and description - never the body.  A typical body is 300-2000
   tokens; keeping only metadata saves the vast majority of that cost.
-- **Body loaded on demand.** `load_skill` is called at most once per skill per
-  session, and only when the model judges it necessary.
+- **Body loaded on demand.** A skill is loaded at most once per session, and
+  only when the model judges it necessary.
 - **Sub-skill hint, not body.** When a parent skill is loaded, its children are
   listed as one-liner hints.  The full child body is loaded only if the model
   decides it is needed for the current task.

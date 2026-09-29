@@ -29,7 +29,7 @@
 //!
 //! Each skill in the tree has a unique **command** string derived from its path
 //! relative to the skills root (e.g. `"sven/plan"`).  Commands are the keys
-//! used with the `load_skill` tool.
+//! used with the `skill` tool (`action: "load"`).
 //!
 //! ## Discovery order (later sources take precedence on command collision)
 //!
@@ -125,7 +125,7 @@ pub struct SkillInfo {
     /// Slash-command key derived from the directory path relative to the skills
     /// root.  Top-level skills use the directory name (e.g. `"sven"`); nested
     /// skills use `/`-separated segments (e.g. `"sven/plan"`).  This is the
-    /// value passed to `load_skill(command)`.
+    /// `name` passed to the `skill` tool's `load` action.
     pub command: String,
     /// Human-readable display name.  Comes from the `name:` frontmatter field;
     /// falls back to the last segment of `command` when not set.
