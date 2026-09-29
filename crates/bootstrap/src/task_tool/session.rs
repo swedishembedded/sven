@@ -71,8 +71,13 @@ impl Drop for CancelGuard {
 
 /// Minimal ACP `Client` for subagent task execution.
 ///
-/// Forwards `session_notification` updates through a channel and auto-approves
-/// tool permission requests so subagents run unattended.
+/// Forwards `session_notification` updates through a channel and approves the
+/// child's tool permission requests.
+///
+/// What bounds the child is the spawn itself: `task` asks the parent's human
+/// (its default policy is `Ask`), and [`super::child_mode_allowed`] keeps the
+/// child's mode no more permissive than the parent's. Per-call approvals
+/// inside the child are not yet routed back to the parent's approver.
 struct AcpTaskClient {
     notification_tx: futures::channel::mpsc::UnboundedSender<SessionNotification>,
 }

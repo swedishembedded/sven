@@ -84,6 +84,10 @@ pub struct TaskTool {
     /// persona its own system prompt (persona `content`) and tool profile
     /// (`readonly` selects the ACP session mode - see [`resolve_mode_and_prompt`]).
     agents: SharedAgents,
+    /// The parent session's live mode (the same lock `SystemTool` switches).
+    /// Read on every spawn: a child never gets more authority than its parent
+    /// has at that moment - see [`child_mode_allowed`].
+    parent_mode: Arc<Mutex<AgentMode>>,
 }
 
 impl TaskTool {
@@ -92,13 +96,57 @@ impl TaskTool {
         tool_event_tx: mpsc::Sender<ToolEvent>,
         default_model: Option<String>,
         agents: SharedAgents,
+        parent_mode: Arc<Mutex<AgentMode>>,
     ) -> Self {
         Self {
             buffer_store,
             tool_event_tx,
             default_model,
             agents,
+            parent_mode,
         }
+    }
+}
+
+/// Whether a parent in `parent` mode may start a child in ACP mode `child`.
+///
+/// Only a parent that may itself write (`agent`, `sdlc`) may start a writing
+/// child. Every other mode is read-only, and its children are held to
+/// `research`/`plan`. This check is what makes the tool's `ReadFile` kernel
+/// capability honest: the kernel admits a `task` call wherever reads are
+/// allowed, so the tool itself must not turn a read into a write.
+pub(crate) fn child_mode_allowed(parent: AgentMode, child: &str) -> Result<(), String> {
+    let parent_writes = matches!(parent, AgentMode::Agent | AgentMode::Sdlc);
+    if parent_writes || matches!(child, "research" | "plan") {
+        return Ok(());
+    }
+    Err(format!(
+        "a {parent:?} session is read-only and cannot delegate to a writing \
+         '{child}' sub-agent; use mode 'research' or 'plan'"
+    ))
+}
+
+/// The directory the child runs in: `requested` resolved against `root`,
+/// which it must stay inside. A child confined to the parent's tree cannot be
+/// pointed at another repository by the model.
+fn child_workdir(requested: Option<&str>, root: &std::path::Path) -> Result<PathBuf, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve the session root {}: {e}", root.display()))?;
+    let Some(requested) = requested else {
+        return Ok(root);
+    };
+    let dir = root
+        .join(requested)
+        .canonicalize()
+        .map_err(|e| format!("workdir '{requested}' does not exist: {e}"))?;
+    if dir.starts_with(&root) {
+        Ok(dir)
+    } else {
+        Err(format!(
+            "workdir '{requested}' is outside the session root {}",
+            root.display()
+        ))
     }
 }
 
@@ -403,13 +451,19 @@ impl Tool for TaskTool {
             .unwrap_or("agent")
             .to_string();
 
-        let workdir = call
-            .args
-            .get("workdir")
-            .and_then(|v| v.as_str())
-            .map(PathBuf::from)
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("/"));
+        let session_root = match std::env::current_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                return ToolOutput::err(&call.id, format!("cannot read the working directory: {e}"))
+            }
+        };
+        let workdir = match child_workdir(
+            call.args.get("workdir").and_then(|v| v.as_str()),
+            &session_root,
+        ) {
+            Ok(dir) => dir,
+            Err(e) => return ToolOutput::err(&call.id, e),
+        };
 
         let requested_model = call
             .args
@@ -425,6 +479,10 @@ impl Tool for TaskTool {
             Err(e) => return ToolOutput::err(&call.id, e),
         };
         let acp_mode = resolved.acp_mode;
+        let parent_mode = *self.parent_mode.lock().await;
+        if let Err(e) = child_mode_allowed(parent_mode, &acp_mode) {
+            return ToolOutput::err(&call.id, e);
+        }
         let prompt = resolved.prompt;
         let model_override =
             effective_model(requested_model, resolved.model, self.default_model.clone());
@@ -527,15 +585,87 @@ mod tests {
     use sven_workspace::{AgentInfo, SharedAgents};
 
     use super::{resolve_mode_and_prompt, TaskTool};
+    use sven_config::AgentMode;
 
     fn make_task() -> TaskTool {
         make_task_with_agents(SharedAgents::empty())
     }
 
     fn make_task_with_agents(agents: SharedAgents) -> TaskTool {
+        make_task_in(AgentMode::Agent, agents)
+    }
+
+    /// A task tool whose parent session is in `mode`.
+    fn make_task_in(mode: AgentMode, agents: SharedAgents) -> TaskTool {
         let (tx, _rx) = mpsc::channel(8);
         let store = Arc::new(Mutex::new(OutputBufferStore::new()));
-        TaskTool::new(store, tx, None, agents)
+        TaskTool::new(store, tx, None, agents, Arc::new(Mutex::new(mode)))
+    }
+
+    /// A read-only parent must never delegate to a child with more authority
+    /// than it has itself: the spawn is refused before any process starts.
+    #[tokio::test]
+    async fn a_read_only_parent_cannot_spawn_a_writing_child() {
+        for parent in [AgentMode::Research, AgentMode::Plan, AgentMode::Chat] {
+            let task = make_task_in(parent, SharedAgents::empty());
+            let out = task
+                .execute(&call(json!({"prompt": "edit main.rs", "mode": "agent"})))
+                .await;
+            assert!(out.is_error, "{parent:?} parent spawned a writing child");
+            assert!(
+                out.content.contains("cannot delegate"),
+                "refusal must say why: {}",
+                out.content
+            );
+        }
+    }
+
+    /// A persona that is not read-only resolves to the writing mode, so it is
+    /// refused under a read-only parent exactly like `mode: agent`.
+    #[tokio::test]
+    async fn a_read_only_parent_cannot_spawn_a_writing_persona() {
+        let agents = SharedAgents::new(vec![persona("fixer", "fix things", false)]);
+        let task = make_task_in(AgentMode::Research, agents);
+        let out = task
+            .execute(&call(json!({"prompt": "fix it", "mode": "fixer"})))
+            .await;
+        assert!(out.is_error && out.content.contains("cannot delegate"));
+    }
+
+    #[test]
+    fn the_child_mode_ceiling_follows_the_parent_mode() {
+        use super::child_mode_allowed;
+        for parent in [AgentMode::Agent, AgentMode::Sdlc] {
+            for child in ["research", "plan", "agent"] {
+                assert!(
+                    child_mode_allowed(parent, child).is_ok(),
+                    "{parent:?} -> {child}"
+                );
+            }
+        }
+        for parent in [AgentMode::Research, AgentMode::Plan, AgentMode::Chat] {
+            assert!(child_mode_allowed(parent, "research").is_ok());
+            assert!(child_mode_allowed(parent, "plan").is_ok());
+            assert!(
+                child_mode_allowed(parent, "agent").is_err(),
+                "{parent:?} -> agent"
+            );
+        }
+    }
+
+    /// The child runs inside the parent's working tree, never wherever the
+    /// model points it.
+    #[tokio::test]
+    async fn a_child_workdir_outside_the_session_root_is_refused() {
+        let task = make_task();
+        let out = task
+            .execute(&call(json!({"prompt": "look around", "workdir": "../.."})))
+            .await;
+        assert!(
+            out.is_error,
+            "a workdir outside the session root was accepted"
+        );
+        assert!(out.content.contains("outside"), "{}", out.content);
     }
 
     /// A persona that declares a `model:`, for the model-precedence specs.

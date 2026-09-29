@@ -317,6 +317,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
 
     // Capture the model identity before p.model is moved into register_base_tools.
     let model_id = format!("{}/{}", p.model.name(), p.model.model_name());
+    let parent_mode = Arc::clone(&p.mode_lock);
 
     register_base_tools(
         &mut reg,
@@ -339,12 +340,14 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
         p.tool_event_tx,
         Some(model_id),
         p.runtime.agents.clone(),
+        parent_mode,
     ));
 
     reg
 }
 
-/// Research profile: read-only, no write tools, no task spawning.
+/// Research profile: read-only tools; `task` may delegate only to read-only
+/// children (the tool enforces the ceiling against the live mode).
 fn build_profile_research(
     cfg: &Config,
     model: Arc<dyn sven_model::ModelProvider>,
@@ -370,7 +373,7 @@ fn build_profile_research(
     ));
     reg.register(SkillTool::new(runtime.skills.clone()));
     reg.register(SystemTool::new(
-        mode_lock,
+        Arc::clone(&mode_lock),
         tool_event_tx.clone(),
         model_catalog_for_tools(),
     ));
@@ -380,13 +383,15 @@ fn build_profile_research(
     }
     reg.register(TodoTool::new(todos, tool_event_tx.clone()));
 
-    // Task is included for delegation but limited to research mode.
+    // Task is included for delegation; its children are held to read-only
+    // modes for as long as this session is.
     let buffer_store = Arc::new(Mutex::new(OutputBufferStore::new()));
     reg.register(TaskTool::new(
         buffer_store,
         tool_event_tx,
         Some(format!("{}/{}", model.name(), model.model_name())),
         runtime.agents.clone(),
+        mode_lock,
     ));
 
     reg
