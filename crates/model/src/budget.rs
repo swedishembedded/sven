@@ -6,13 +6,11 @@
 //! Estimates a request's token count and compares it against the model's
 //! effective input budget *before* the request is built and sent, so an
 //! oversized prompt fails fast with an actionable message instead of
-//! reaching the server and being rejected only after admission — or, before
-//! the fail-loudly fix in [`crate::openai_compat::stream`], being silently
-//! swallowed into an empty "successful" completion.
+//! reaching the server and being rejected only after admission.
 //!
 //! This module is a hard gate, not a compactor - it does not summarize or
-//! shrink anything itself. Proactive compaction (`sven_machines::compact`,
-//! `sven_turn::prepare_compaction`/`finish_compaction`) is wired into
+//! shrink anything itself. Proactive compaction
+//! (`sven_turn::prepare_compaction`/`finish_compaction`) is wired into
 //! `TurnExecutor` (`crates/executors/src/turn.rs`), which checks this
 //! module's [`effective_input_budget`] against the configured
 //! `compaction_threshold` *before* a turn and compacts the thread when

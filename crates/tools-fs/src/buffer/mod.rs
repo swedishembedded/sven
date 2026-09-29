@@ -4,8 +4,7 @@
 //! Streaming output buffer tools.
 //!
 //! These tools implement the read-side of the buffer abstraction.  Buffers
-//! are created by the `task` and (future) `shell` tools as they stream
-//! subprocess output.  The model uses these tools to inspect results without
+//! are created by the `task` tool as it streams subprocess output.  The model uses these tools to inspect results without
 //! loading the full output into the context window:
 //!
 //! - [`BufStatusTool`] (`buf_status`) - poll status, line count, elapsed time

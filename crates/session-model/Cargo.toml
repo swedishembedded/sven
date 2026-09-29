@@ -2,7 +2,7 @@
 name        = "sven-session-model"
 version.workspace = true
 edition     = "2021"
-description = "Pure, surface-agnostic session/chat rendering model: ChatSegment and the segment-slice helpers every frontend (TUI, CI, GUI) needs to fold a SessionEvent stream into a displayable conversation. No tokio, no I/O."
+description = "Pure, surface-agnostic session/chat rendering model: ChatSegment and the segment-slice helpers every frontend (TUI, CI) needs to fold a SessionEvent stream into a displayable conversation. No tokio, no I/O."
 license     = "Apache-2.0"
 
 [dependencies]

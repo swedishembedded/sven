@@ -8,29 +8,23 @@
 //! (`sanitize`), the static driver registry (`registry`), and the
 //! `ModelResolver`/`resolve_model_cfg` config-resolution logic.
 //!
-//! Deliberately **not** here (refactor plan Phase 5 — this crate used to
-//! bundle all of it as one ~10k-LOC god crate): the concrete driver
-//! implementations and the `from_config`/`from_config_probed` factory that
-//! constructs them (now [`sven_model_drivers`], which owns `reqwest` and
-//! every provider's own dependency closure), the static catalog data (now
-//! [`sven_model_catalog`], re-exported here at [`catalog`] for source
-//! compatibility), and the `--model mock` test/dev providers (now
-//! [`sven_model_mock`]). `ModelResolver`/`resolve_model_cfg` stay here
-//! rather than moving to the drivers crate — on inspection they never
+//! Deliberately **not** here: the concrete driver implementations and the
+//! `from_config`/`from_config_probed` factory that constructs them
+//! ([`sven_model_drivers`], which owns `reqwest` and every provider's own
+//! dependency closure), the static catalog data ([`sven_model_catalog`],
+//! re-exported here at [`catalog`]), and the `--model mock` test/dev
+//! providers ([`sven_model_mock`]). `ModelResolver`/`resolve_model_cfg`
+//! belong here rather than in the drivers crate because they never
 //! construct a driver, only a [`sven_config::ModelConfig`] (see
-//! [`ModelResolver::resolve`]), so they have no reqwest dependency and
-//! belong with the rest of the pure vocabulary.
+//! [`ModelResolver::resolve`]), so they have no reqwest dependency.
 pub mod budget;
-/// Re-exported from the standalone [`sven_model_catalog`] crate, kept at
-/// this path (`sven_model::catalog::*`) so the ~20 existing call sites
-/// across the workspace (`sven_model::catalog::static_catalog()`,
-/// `sven_model::InputModality`, ...) do not all need to change in the same
-/// commit that pulls the catalog data out into its own kernel-tier crate.
-/// The catalog itself (`ModelCatalogEntry`, `static_catalog()`, `lookup()`,
-/// the on-disk live-cache overlay) now lives in `sven-model-catalog`, which
-/// has zero heavy dependencies (no reqwest, no cloud SDKs) — exactly like
-/// `sven-model` itself post-split, so re-exporting it here does not undo
-/// the point of the split.
+/// Re-exported from the standalone [`sven_model_catalog`] crate at this path
+/// (`sven_model::catalog::*`), which call sites across the workspace use
+/// (`sven_model::catalog::static_catalog()`, ...). The catalog itself
+/// (`ModelCatalogEntry`, `static_catalog()`, `lookup()`, the on-disk
+/// live-cache overlay) lives in `sven-model-catalog`, which has zero heavy
+/// dependencies (no reqwest, no cloud SDKs) — like `sven-model` itself — so
+/// re-exporting it here adds no heavy dependency.
 pub use sven_model_catalog as catalog;
 #[cfg(all(unix, feature = "dbus"))]
 pub mod dbus;

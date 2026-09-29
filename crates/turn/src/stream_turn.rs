@@ -69,9 +69,9 @@ impl std::fmt::Display for AbortedError {
 impl std::error::Error for AbortedError {}
 
 /// Callback that resolves a model string (e.g. `"anthropic/claude-opus"`) to a
-/// live [`ModelProvider`].  Provided by the bootstrap layer so that `sven-core`
-/// can switch models mid-turn without depending on the full
-/// `sven-config::Config`.
+/// live [`ModelProvider`].  Provided by the bootstrap layer so that the turn
+/// executor (`sven-executors`) can switch models mid-turn without depending
+/// on the full `sven-config::Config`.
 pub type ModelResolver =
     std::sync::Arc<dyn Fn(&str) -> anyhow::Result<std::sync::Arc<dyn ModelProvider>> + Send + Sync>;
 

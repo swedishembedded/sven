@@ -217,7 +217,7 @@ pub struct Cli {
     /// Combined load + output trace: equivalent to --load-trace PATH --output-trace PATH.
     /// Loads an existing ATIF trajectory from PATH, runs, and writes back to the same file.
     /// This is the ONE session-persistence flag for both headless runs and
-    /// interactive TUI/GUI launches - in TUI/GUI mode the file is kept in
+    /// interactive TUI launches - in TUI mode the file is kept in
     /// sync after every turn. If the file does not exist it is created
     /// automatically with a fresh session ID.
     #[arg(long, value_name = "PATH")]

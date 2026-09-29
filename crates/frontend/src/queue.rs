@@ -4,7 +4,7 @@
 //! Message queue state shared by all frontends.
 //!
 //! When the agent is busy, user messages are queued here and dispatched one
-//! at a time as turns complete.  Both the TUI and GUI use this state to
+//! at a time as turns complete.  Frontends use this state so they all
 //! implement the same queuing semantics.
 
 use std::collections::VecDeque;
@@ -16,7 +16,7 @@ use crate::types::QueuedMessage;
 pub struct QueueState {
     /// Messages waiting to be sent to the agent.
     pub messages: VecDeque<QueuedMessage>,
-    /// Keyboard-selected row in the queue panel (GUI/TUI).
+    /// Keyboard-selected row in the queue panel.
     pub selected: Option<usize>,
     /// After an abort, new messages are queued rather than auto-sent until
     /// the user manually submits.

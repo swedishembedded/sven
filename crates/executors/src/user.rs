@@ -2,8 +2,8 @@
 //!
 //! Handles [`Effect::AskUser`], [`Effect::RequestHumanApproval`] and
 //! [`Effect::RequestHumanAnswer`] by forwarding them to a caller-supplied
-//! channel.  The other end of the channel is held by the TUI, GUI, CI
-//! headless runner, or any frontend.
+//! channel.  The other end of the channel is held by the TUI, the CI
+//! headless runner, or any other frontend.
 //!
 //! # Protocol
 //!

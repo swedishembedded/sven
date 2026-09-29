@@ -524,11 +524,22 @@ for both command names and their arguments.
 | `/tasks` | Show the current team task list (also `Alt+T`). |
 | `/quit` | Exit sven. In the Neovim buffer, use `:q` or `:qa`. |
 
-### Skill commands
+### Custom commands
 
-Every skill you have installed is also available as a slash command named after
-its directory path - for example `/sven`, `/sven/plan`, or `/git-workflow`.
-See the [Skills](#skills) section for details.
+Every markdown file in a `commands/` directory (`.sven/commands/`,
+`.cursor/commands/`, `.claude/commands/`, `.codex/commands/` or
+`.agents/commands/`, in your project or a parent directory) is a slash command
+named after its path without the `.md` extension - for example
+`.sven/commands/review-code.md` → `/review-code` and
+`.sven/commands/sven/plan.md` → `/sven/plan`. Submitting the command sends the
+file's content as your message; any text after the command is appended as
+`Task: <text>`:
+
+```
+/sven/plan analyse the authentication module
+```
+
+Skills are not slash commands - see the [Skills](#skills) section.
 
 ---
 
@@ -545,29 +556,19 @@ right place and it appears immediately.
 
 ---
 
-### Invoking a skill with a slash command
+### Using a skill
 
-Every discovered skill is registered as a slash command named after its
-directory path.  Type `/` followed by the skill name in the input box:
-
-```
-/sven
-/sven/plan
-/git-workflow
-/docker/compose
-```
-
-You can optionally follow the command with a task description on the same line:
+Skills are not registered as slash commands. The model sees every discovered
+skill's name and description in its system prompt and loads the matching one
+with the `skill` tool when your request fits. To use a specific skill, name it
+in your message:
 
 ```
-/sven implement the rate-limiting feature described in the issue
-/sven/plan analyse the authentication module
-/git-workflow rebase my branch onto main
+Use the sven/plan skill to analyse the authentication module
 ```
 
-When you submit, sven receives the skill's full instruction set as your message,
-with your task appended at the end.  The skill guides the agent's behaviour for
-the rest of that turn.
+For a reusable `/command`, put a markdown file in a `commands/` directory
+instead (see [Custom commands](#custom-commands)).
 
 ---
 
@@ -575,14 +576,8 @@ the rest of that turn.
 
 Skills can be nested.  A top-level skill like `sven` describes a high-level
 workflow and lists the sub-skills that handle each phase.  Each sub-skill is
-also a fully independent slash command:
-
-```
-/sven               run the full three-phase workflow
-/sven/plan          run only the planning phase
-/sven/implement     run only the implementation phase
-/sven/review        run only the review checklist
-```
+also a skill in its own right, loadable by its command (`sven/plan`,
+`sven/implement`, `sven/review`).
 
 When the model loads a parent skill, it receives a compact list of the
 available sub-skills.  It then loads `sven/plan` etc. with the `skill` tool exactly
@@ -694,7 +689,7 @@ you do not need to declare them in the frontmatter.  Just create the directory.
 | `sven.always` | bool | no | Always include this skill's metadata in the system prompt, regardless of the token budget. Useful for a project-wide coding-style skill. Default: `false`. |
 | `sven.requires_bins` | list | no | Skip this skill if any of the listed binaries are absent from `PATH` (e.g. `[docker, kubectl]`). |
 | `sven.requires_env` | list | no | Skip this skill if any of the listed environment variables are unset (e.g. `[AWS_PROFILE]`). |
-| `sven.user_invocable_only` | bool | no | Hide the skill from the model's automatic matching. It still appears as a `/command`. Use for skills you always want to invoke deliberately. Default: `false`. |
+| `sven.user_invocable_only` | bool | no | Hide the skill from the model's skill listings, so it is loaded only when you name it. Use for skills you always want to invoke deliberately. Default: `false`. |
 
 ---
 

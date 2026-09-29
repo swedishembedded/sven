@@ -8,9 +8,9 @@ pub use shell::ShellTool;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
 //
-// Moved from sven-tools's builtin/mod.rs::output_category_tests along with
-// these tools themselves -- see that module's comment for why this contract
-// is pinned per-tool at compile time.
+// Pins each tool's declared `OutputCategory`: the executor's truncation
+// strategy depends on it, so a silent change would change what the model
+// sees of every oversized result.
 #[cfg(test)]
 mod output_category_tests {
     use sven_tool_api::tool::{OutputCategory, Tool};

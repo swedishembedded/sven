@@ -9,13 +9,14 @@
 //!
 //! ## Tool consolidation
 //!
-//! The registry now exposes 14-15 high-quality compound tools instead of 42
-//! individual tools. This reduces the model's decision surface, cuts input
-//! token cost, and keeps the Anthropic prefix-cache stable across turns.
+//! The registry exposes a small set of compound tools (e.g. one `gdb` tool
+//! with an action parameter) rather than one tool per operation. This
+//! reduces the model's decision surface, cuts input token cost, and keeps
+//! the Anthropic prefix-cache stable across turns.
 //!
-//! Individual tools (`gdb_start_server`, `buf_read`, etc.) are preserved as
-//! Rust types for testing and internal use but are no longer registered as
-//! separate entries in the tool registry.
+//! Individual tools (`gdb_start_server`, `buf_read`, etc.) remain Rust types
+//! for testing and internal use but are not registered as separate entries
+//! in the tool registry.
 
 use std::sync::Arc;
 
@@ -96,12 +97,11 @@ fn model_catalog_for_tools() -> Vec<ModelCatalogEntry> {
 ///   drained by the kernel's tool executor. `TodoTool` / `SystemTool` send
 ///   events here.
 ///
-/// The `buffer_store` is now bundled inside the `profile` variants that need it
+/// The `buffer_store` is bundled inside the `profile` variants that need it
 /// (`Full`, `Coding`, `SubAgent`).
 ///
-/// Pass `integrations` to register the messaging, email, calendar, voice, and
-/// memory tools. All fields are optional; only providers that are `Some` get
-/// registered.
+/// Pass `integrations` to register the memory tools. All fields are
+/// optional; only providers that are `Some` get registered.
 pub fn build_tool_registry(
     cfg: &Config,
     model: Arc<dyn ModelProvider>,
@@ -124,8 +124,7 @@ pub fn build_tool_registry(
 /// Build a [`ToolRegistry`] with optional integration tool providers.
 ///
 /// This is the extended version of [`build_tool_registry`] that also registers
-/// integration tools (messaging, email, calendar, voice, memory) when providers
-/// are supplied.
+/// the memory integration tools when providers are supplied.
 pub fn build_tool_registry_with_integrations(
     cfg: &Config,
     model: Arc<dyn ModelProvider>,

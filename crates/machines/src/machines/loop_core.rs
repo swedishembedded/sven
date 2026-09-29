@@ -4,10 +4,10 @@
 //! Shared agentic loop state-machine helpers.
 //!
 //! Every machine that runs the HSM-native model↔tool loop composes this module
-//! rather than duplicating the logic.  The loop pattern is now **in-state**:
+//! rather than duplicating the logic.  The loop pattern is **in-state**:
 //! the active phase/state emits `CallTool` effects and **stays put** (via
-//! `Reaction::Handled`) while tools execute.  There are no more shared
-//! `RunningTools` / `AwaitingApproval` sibling states.
+//! `Reaction::Handled`) while tools execute; there are no separate
+//! running-tools / awaiting-approval sibling states.
 //!
 //! # How it works
 //!
@@ -24,8 +24,7 @@
 //! # `LoopState` — one typed fact key
 //!
 //! All bookkeeping lives in a single [`LoopState`] value serialized under
-//! [`LOOP_STATE_KEY`].  This replaces the six `KEY_*` string-keyed JSON facts
-//! used previously and makes state access type-safe and refactor-friendly.
+//! [`LOOP_STATE_KEY`], which keeps state access type-safe.
 
 use std::collections::{HashMap, HashSet};
 
@@ -50,8 +49,6 @@ pub const LOOP_STATE_KEY: &str = "lc_state";
 /// All loop bookkeeping in one serializable struct.
 ///
 /// Stored under [`LOOP_STATE_KEY`] via [`LoopState::load`] / [`LoopState::store`].
-/// Type-safe and refactor-friendly compared to the previous six `KEY_*` JSON
-/// string keys.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LoopState {
     /// Conversation thread id (e.g. `"chat"`, `"intake"`).

@@ -6,11 +6,14 @@
 //! This crate consolidates all agent-bootstrapping concerns:
 //! - Tool-registry building (Full, SubAgent)
 //! - Runtime-context detection and conversion
-//! - The [`TaskTool`] implementation (moved here to avoid a circular dep
-//!   between `sven-core` and the tool-registry builder)
+//! - The [`TaskTool`] implementation (subagents spawned as `sven acp serve`
+//!   child processes)
+//! - Kernel runtime assembly ([`RuntimeBuilder`]) and the
+//!   [`KernelAgentSession`] adapter
 //!
-//! Frontends (`sven-ci`, `sven-tui`) depend on this crate instead of
-//! inlining their own registry-building loops.
+//! Frontends (`sven-ci`, `sven-tui`, `sven-acp`, `sven-frontend`,
+//! `sven-sdk`) depend on this crate instead of inlining their own
+//! registry-building loops.
 
 pub mod child_spawner;
 pub mod context;

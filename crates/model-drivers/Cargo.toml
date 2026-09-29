@@ -2,7 +2,7 @@
 name    = "sven-model-drivers"
 version.workspace = true
 edition = "2021"
-description = "Concrete ModelProvider driver implementations (34 providers) and the from_config/from_config_probed factory. Owns reqwest and every provider's own dependency closure so sven-model itself doesn't have to."
+description = "Concrete ModelProvider driver implementations (every provider in the driver registry) and the from_config/from_config_probed factory. Owns reqwest and every provider's own dependency closure so sven-model itself doesn't have to."
 
 [dependencies]
 sven-config      = { path = "../config" }

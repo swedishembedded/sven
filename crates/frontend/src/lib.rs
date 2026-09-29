@@ -40,9 +40,8 @@ pub mod segment;
 pub mod tool_view;
 pub mod types;
 
-/// Compatibility re-export: `sven-frontend`'s `commands` module used to hold
-/// the `SlashCommand` vocabulary directly. It now lives in `sven-commands`
-/// (a lower-tier crate — the commands only need `sven-config`,
+/// Compatibility re-export of the `SlashCommand` vocabulary, which lives in
+/// `sven-commands` (a lower-tier crate — the commands only need `sven-config`,
 /// `sven-workspace`, `sven-mcp-client`, `sven-model`, and `sven-machines`,
 /// never anything `sven-frontend`-specific), and this crate depends on it.
 /// Every existing `sven_frontend::commands::*` path keeps compiling.

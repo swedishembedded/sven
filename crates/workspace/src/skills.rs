@@ -113,8 +113,8 @@ pub struct SvenSkillMeta {
     pub requires_env: Vec<String>,
 
     /// When `true` the skill is excluded from the model's `<available_skills>`
-    /// list but still registered as a TUI slash command.  Useful for skills
-    /// that should only be invoked explicitly by the user.
+    /// list and the `skill` tool's listings (still loadable by exact command),
+    /// for skills that should only be invoked explicitly by the user.
     #[serde(default)]
     pub user_invocable_only: bool,
 }

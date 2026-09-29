@@ -1,9 +1,8 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Header-only quick read, adapted from `sven-input`'s `chat_document.rs`
-//! `ChatDocumentHeader` trick (find the marker before the large array, parse
-//! only what precedes it) — for JSON instead of YAML.
+//! Header-only quick read: find the marker before the large array and parse
+//! only what precedes it.
 //!
 //! [`crate::model::Trajectory`] deliberately declares `subagent_trajectories`
 //! and `steps` as its last Rust struct fields, and `serde_json` preserves

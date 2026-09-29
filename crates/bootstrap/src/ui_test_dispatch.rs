@@ -7,9 +7,7 @@
 //! [`dispatch_ui_test_step`] is the one function a `sven` CLI subcommand
 //! needs: it builds the machine through the SAME [`RuntimeBuilder`]/
 //! [`sven_machines::ModeRegistry`] path every other sven machine already
-//! uses (see `.agents/roadmap/android-ui-test.md`'s Phase 3 "not wired into
-//! mode.rs/RuntimeBuilder" gap, closed by this module), wires the REAL
-//! `sven-tools-android`/`sven-tools-agent` tool
+//! uses, wires the REAL `sven-tools-android`/`sven-tools-agent` tool
 //! implementations by default, and reports the run's outcome as a plain
 //! `Result<Value, String>` - exactly the shape a CLI wrapper turns into the
 //! `{"ok": true, "output": ...}` / `{"ok": false, "error": ...}` reply.
@@ -18,7 +16,7 @@
 //! granularity an orchestrating host works in: every other top-level
 //! `params` field (a value the host resolved from an upstream node) is
 //! seeded into `UiTestMachine`'s existing variable-binding mechanism
-//! (`UiTestScript::vars`, Phase 3's `vars.rs`) before the one step compiles,
+//! (`UiTestScript::vars`, `ui_test/vars.rs`) before the one step compiles,
 //! so an upstream node's output reaches this step's `value_ref` resolution
 //! without any new sven-side plumbing.
 //!
@@ -213,10 +211,10 @@ pub async fn dispatch_ui_test_step(
         .map_err(|e| format!("could not build the ui-test kernel session: {e:#}"))?;
 
     let sink = bundle.handle.sink();
-    // `UiTestMachine`'s own `ask_question` hand-off (Phase 1's FLAG_SECURE
+    // `UiTestMachine`'s own `ask_question` hand-off (the FLAG_SECURE
     // path, and any step the compiler resolves to a plain `ask_user` verb)
-    // still uses the kernel's ordinary human-gate channel - see this
-    // module's own doc and the roadmap update this closes. Nothing outside
+    // uses the kernel's ordinary human-gate channel - see this module's own
+    // doc. Nothing outside
     // this process is listening on that channel here, so auto-approve it
     // exactly like every other headless sven surface already does
     // (`sven_ci::RuntimeRunner` spawns the same `auto_approve` for CI runs)

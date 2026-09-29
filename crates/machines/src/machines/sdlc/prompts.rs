@@ -188,7 +188,8 @@ pub fn planning_request(discovery_summary: &str) -> Value {
     )
 }
 
-/// Execution: implement the approved plan (single-track in Phase 1).
+/// Execution: implement the approved plan on the parent's own thread (used
+/// when the plan is not fanned out into per-task children).
 #[must_use]
 pub fn execution_request(plan_summary: &str) -> Value {
     let instruction = format!(
@@ -214,7 +215,8 @@ pub fn execution_request(plan_summary: &str) -> Value {
     )
 }
 
-/// A single decomposed task executed by a child submachine (Phase 2 fan-out).
+/// A single decomposed task executed by a child submachine (parallel
+/// execution fan-out).
 ///
 /// Runs on its own isolated `task` thread with the write/build tool subset, so
 /// each child accumulates a private append-only conversation that never touches

@@ -1,17 +1,16 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Concrete [`sven_model::ModelProvider`] driver implementations (34
-//! providers: native Anthropic/Google/AWS Bedrock/Cohere clients plus the
-//! shared OpenAI-compatible wire format ~25 gateways speak) and the
-//! `from_config`/`from_config_probed` factory that selects and constructs
-//! one from a `sven_config::ModelConfig`.
+//! Concrete [`sven_model::ModelProvider`] driver implementations (native
+//! OpenAI/Anthropic/Google/AWS Bedrock/Cohere/D-Bus clients plus the shared
+//! OpenAI-compatible wire format that every other provider in
+//! `sven_model::registry` speaks) and the `from_config`/`from_config_probed`
+//! factory that selects and constructs one from a `sven_config::ModelConfig`.
 //!
-//! Split out of the `sven-model` god crate (refactor plan Phase 5): this is
-//! where `reqwest`, `aws-sdk`-style SigV4 signing, and every provider's own
-//! dependency closure live now, so crates that only need the
-//! `ModelProvider` trait + request/response types (`sven-model`) no longer
-//! pay for any of it transitively.
+//! This is where `reqwest`, `aws-sdk`-style SigV4 signing, and every
+//! provider's own dependency closure live, so crates that only need the
+//! `ModelProvider` trait + request/response types (`sven-model`) do not pay
+//! for any of it transitively.
 mod anthropic;
 mod api_key;
 mod aws;

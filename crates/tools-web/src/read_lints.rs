@@ -256,7 +256,7 @@ mod tests {
 
     #[tokio::test]
     async fn runs_on_sven_codebase() {
-        // Navigate from the crate root (sven-tools/) up to the workspace root.
+        // Navigate from the crate root (crates/tools-web/) up to the workspace root.
         let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent() // crates/
             .and_then(|p| p.parent()) // workspace root

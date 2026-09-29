@@ -10,16 +10,16 @@
 //! Each `CallTool` effect spawns an independent task — there is no sequential
 //! waiting.  The kernel's single consumer loop returns immediately after
 //! dispatching all effects, and tool results arrive back as events in whatever
-//! order the tasks finish.  This restores the parallel-tools behaviour that was
-//! lost when the old agent loop awaited each tool sequentially.
+//! order the tasks finish, so a batch of tool calls runs in parallel.
 //!
 //! ## `call_id → thread` registry
 //!
-//! An optional [`Arc<Mutex<HashMap<ToolCallId, String>>>`] maps call IDs to
-//! conversation thread IDs.  When set and a mapping exists for the completing
-//! call, the tool result is also appended to that thread in the shared
-//! [`ThreadStore`] (append-only; never mutates prior messages).  This
-//! registry is populated by the `TurnExecutor` in Phase B.
+//! A shared `Arc<Mutex<HashMap<ToolCallId, (String, String)>>>` maps call
+//! IDs to `(thread id, original call id)`.  When a mapping exists for the
+//! completing call, the tool result is also appended to that thread in
+//! the shared [`ThreadStore`] (append-only; never mutates prior messages)
+//! under the id the model assigned.  `TurnExecutor` populates this registry
+//! when it records the model's proposed calls.
 
 use std::collections::HashMap;
 use std::collections::HashSet;

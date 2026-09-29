@@ -122,7 +122,7 @@ load helpers
 # Regression tests for a real bug: --mode plan/research accepted the flag
 # (01.17/01.18 above) but never actually denied a write headlessly --
 # RuntimeBuilder::with_agent_mode (the only thing that selects the read-only
-# permission policy) was called from the TUI/GUI builder only, never from
+# permission policy) was called from the TUI builder only, never from
 # either headless runner. Fixed by threading AgentMode through KernelAgent
 # and RuntimeRunnerOptions into with_agent_mode. The "permission probe file"
 # mock trigger (tests/fixtures/mock_responses.yaml) scripts a write_file

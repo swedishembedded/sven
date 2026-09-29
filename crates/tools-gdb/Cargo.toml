@@ -16,10 +16,7 @@ tokio         = { workspace = true }
 tracing       = { workspace = true }
 regex         = { workspace = true }
 # This whole crate is Unix only (GDB signal APIs are not available on
-# Windows); unlike sven-tools's old builtin/gdb/, which lived inside a
-# cross-platform crate and so gated gdbmi/libc under
-# `target.'cfg(unix)'.dependencies` and the module declaration under
-# `#[cfg(unix)]`, this crate has no non-unix code path to protect -- every
+# Windows), so it has no non-unix code path to protect -- every
 # consumer already gates its `sven-tools-gdb` dependency itself under
 # `target.'cfg(unix)'.dependencies` (see crates/bootstrap/Cargo.toml), so
 # these can be plain, unconditional dependencies here.

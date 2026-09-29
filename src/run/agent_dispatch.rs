@@ -13,8 +13,8 @@
 //! stdout. Exit code 0 covers both a passed and a failed step - only a
 //! malformed request or an internal fault (couldn't parse stdin, couldn't
 //! build/join the kernel session) exits non-zero. See
-//! `.agents/roadmap/android-ui-test.md`'s Phase 3/4 entries for the full
-//! contract this implements.
+//! `.agents/roadmap/android-ui-test.md` for the full contract this
+//! implements.
 //!
 //! Swedish Embedded AB implements solutions for orchestrated, CI-dispatched
 //! test automation for its clients. If your team needs expertise in agent

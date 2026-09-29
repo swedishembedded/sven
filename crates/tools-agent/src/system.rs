@@ -439,9 +439,9 @@ fn remove_mcp_server_from_config(name: &str) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-/// Fuzzy subsequence scorer - identical algorithm to the one in `sven-tui`'s
-/// completion module.  Inlined here so `sven-tools` does not depend on
-/// `sven-tui`.
+/// Fuzzy subsequence scorer - mirrors `sven-commands`'
+/// `completion::fuzzy_score`.  Inlined here because `sven-tools-agent`
+/// (domain tier) may not depend on `sven-commands` (assembly tier).
 ///
 /// Returns `None` when `pattern` is not a subsequence of `candidate`.
 /// A higher score indicates a better match.  Bonuses:

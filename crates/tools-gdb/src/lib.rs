@@ -2,12 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! GDB/MI debugging tools (Unix only -- GDB signal APIs are not available on
-//! Windows). Split out of `sven-tools`'s `builtin/gdb/` (5.7 of the refactor
-//! plan's god-crate splits): this subtree was verified to have zero cross-refs
-//! into any other `builtin/` subdirectory, making it the cleanest, lowest-risk
-//! first candidate -- confirmed true, its only sven-tier dependencies are
-//! `sven-tool-api` (kernel) and the foundation crates `sven-config`/
-//! `sven-hsm`.
+//! Windows). Its only sven-tier dependencies are `sven-tool-api` (kernel)
+//! and the foundation crates `sven-config`/`sven-hsm`.
 pub mod command;
 pub mod compound;
 pub mod connect;
@@ -31,9 +27,9 @@ pub use wait_stopped::GdbWaitStoppedTool;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
 //
-// Moved from sven-tools's builtin/mod.rs::output_category_tests along with
-// the GDB tools themselves -- see that module's comment for why this
-// contract is pinned per-tool at compile time.
+// Pins each tool's declared `OutputCategory`: the executor's truncation
+// strategy depends on it, so a silent change would change what the model
+// sees of every oversized result.
 #[cfg(test)]
 mod output_category_tests {
     use super::*;

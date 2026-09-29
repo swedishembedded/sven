@@ -17,14 +17,15 @@
 //! abstraction: a [`SystemClock`] for production and a [`VirtualClock`] whose
 //! time only advances when the test calls [`VirtualClock::advance`].
 //!
-//! Split out of `sven-hsm` (Phase 4.4 of the crate-architecture refactor
-//! plan) so the kernel's pure vocabulary (`Machine`, `Effect`, `Event`,
-//! `Context`, `PermissionPolicy`, `AuditRecord`) has no tokio dependency of
-//! its own — only the active-object execution engine that drives it does.
+//! A crate separate from `sven-hsm` so the kernel's pure vocabulary
+//! (`Machine`, `Effect`, `Event`, `Context`, `PermissionPolicy`,
+//! `AuditRecord`) has no tokio dependency of its own — only the active-object
+//! execution engine that drives it does.
 //! `sven-hsm`'s outward observation plane (`ObservationSink`, a broadcast
 //! channel) stays in `sven-hsm`: it's part of the kernel's event vocabulary,
-//! not the execution engine, and moving it too would force a `sven-kernel`
-//! dependency onto every one of `UiEvent`'s many consumers for no benefit.
+//! not the execution engine, and placing it here would force a
+//! `sven-kernel` dependency onto every one of `UiEvent`'s many consumers for
+//! no benefit.
 
 mod abort_on_drop;
 use abort_on_drop::AbortOnDrop;

@@ -135,7 +135,7 @@ pub fn find_workspace_root(project_root: &Path) -> PathBuf {
 /// 3. `CLAUDE.md`          - Claude Code project file
 ///
 /// Returns the path only - the system prompt references it (see
-/// `sven_core::prompts`) rather than inlining its content on every turn, so
+/// `sven_turn::prompts`) rather than inlining its content on every turn, so
 /// an agent whose task doesn't touch it never pays for reading a file it
 /// never needed. An agent that decides the file is relevant reads it itself
 /// with its normal file tool.

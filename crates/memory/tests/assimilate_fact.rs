@@ -6,7 +6,7 @@
 //! `assimilate_fact` always writes to semantic memory, but only appends to the
 //! durable pending-facts ledger when the fact's *provenance* clears an
 //! admissibility rule. These tests pin that rule, and in particular pin the two
-//! properties the whole milestone exists to make true: a `confirmed` flag or a
+//! properties the rule exists to guarantee: a `confirmed` flag or a
 //! `source` field supplied by the model in its own tool-call arguments changes
 //! nothing.
 //!
@@ -210,7 +210,7 @@ async fn a_web_sourced_fact_still_requires_a_human_approved_event() {
 /// The human is shown, and approves, one specific thing. If that approval
 /// latches, every page the agent fetches afterwards - from URLs and digests no
 /// human ever saw - becomes durable training input for free, which is the exact
-/// laundering path this milestone exists to close. `UserProvidedDocument` is
+/// laundering path the per-fact approval exists to close. `UserProvidedDocument` is
 /// the variant that is deliberately admissible without a per-fact approval,
 /// and it is scoped to a digest a human handed over; `WebSourced` has neither
 /// property, so it must cost a human act every time.

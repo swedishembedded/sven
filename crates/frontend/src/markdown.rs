@@ -4,8 +4,7 @@
 //! Shared markdown block parser for Sven frontends.
 //!
 //! Parses markdown text into a flat list of [`MarkdownBlock`]s that can be
-//! rendered by any frontend.  The TUI maps these to styled ratatui `Line`s;
-//! the Slint GUI maps them to `RichBlock` structs for native rendering.
+//! rendered by any frontend.  The TUI maps these to styled ratatui `Line`s.
 //!
 //! Uses `pulldown-cmark` for reliable parsing.
 

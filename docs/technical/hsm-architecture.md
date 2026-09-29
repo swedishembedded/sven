@@ -181,7 +181,7 @@ an append-only JSONL log on the `PersistAudit` effect.
 
 ## Runtime - the Active Object
 
-The kernel runs inside a tokio **Active Object** (`hsm/src/runtime.rs`): a
+The kernel runs inside a tokio **Active Object** (`sven-kernel`, `kernel/src/lib.rs`): a
 single consumer task that owns the machine and drains an `mpsc` event queue.
 That single task is what guarantees **Run-to-Completion (RTC)**: one event is
 fully processed (dispatched, effects validated, effects executed) before the
@@ -196,10 +196,11 @@ next is pulled.
   │    2. note child completion (submachine registry bookkeeping)  │
   │    3. machine.dispatch(event) → DispatchOutcome { effects }    │
   │    4. emit UiEvent::Transition on the observation plane        │
-  │    5. spawn_children(): peel off InstantiateSubmachine effects │
-  │    6. validate_effects_are_allowed(policy, state, effects)?    │
-  │    7. executor.execute(effect, sink, obs)  for each effect     │
-  │    8. publish RuntimeStatus + audit snapshot                   │
+  │    5. run_effects(): classify each CallTool against policy;    │
+  │       validate the other effects all-or-nothing                │
+  │    6. InstantiateSubmachine → child spawner; every other       │
+  │       allowed effect → executor.execute(effect, sink, obs)     │
+  │    7. publish RuntimeStatus + audit snapshot                   │
   └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -310,7 +311,7 @@ A `Machine` (`hsm/src/machine.rs`) describes a state hierarchy: its states
 (`type State`), each state's `superstate`, and a single `dispatch_state`
 handler. The kernel's `Hsm<M>` drives any `Machine` generically.
 
-`ModeRegistry` (`core/src/mode.rs`) maps a mode **string** to a machine
+`ModeRegistry` (`machines/src/mode.rs`) maps a mode **string** to a machine
 factory. This is the authoritative wiring; `RuntimeBuilder` looks up the machine
 by the mode string and builds an `ErasedRuntime` around it.
 
@@ -333,7 +334,7 @@ Mode selection at startup (see `src/main.rs`) is, in priority order:
 
 ### `ReactiveAgentMachine` (modes `agent` / `reactive` / `chat`)
 
-The default streaming coding agent (`core/src/machines/reactive_agent.rs`).
+The default streaming coding agent (`machines/src/machines/reactive_agent.rs`).
 A turn-lifecycle machine driven by the shared `loop_core` state handlers:
 
 ```
@@ -355,7 +356,7 @@ returns to `Idle`.
 ### `SdlcMachine` (mode `sdlc`)
 
 The deliberation-driven software-development lifecycle machine
-(`core/src/machines/sdlc/`). Every phase is a *deliberation*: the state
+(`machines/src/machines/sdlc/`). Every phase is a *deliberation*: the state
 issues one comprehensive instruction on its own append-only conversation thread
 with a state-scoped tool subset, and the model returns a structured decision
 whose `status` drives the transition.
@@ -428,17 +429,16 @@ The kernel supports two forms of composition:
 
 - **Concurrent child kernels (`ChildSpawner` + `spawn_with_children`).** This is
   the production fan-out path. When a machine emits
-  `Effect::InstantiateSubmachine`, the runtime peels it out of the effect batch
-  (`spawn_children`), records it in a lightweight child registry, and hands it to
+  `Effect::InstantiateSubmachine`, the runtime validates it with the rest of the
+  batch, records it in a lightweight child registry, and hands it to
   the installed `ChildSpawner`, which runs the child as its **own concurrent
   kernel with an isolated `Context`**. When a child finishes it posts
   `InternalEvent::SubmachineCompleted { machine, result }` back to the parent,
   carrying the child's structured result for append-only aggregation. The runtime
   drops the child from its registry on completion.
 
-`Effect::InstantiateSubmachine` used to be a no-op; it is now genuinely
-implemented at the runtime layer, and `InternalEvent::SubmachineCompleted`
-carries a `result` payload. The full design, the `TaskMachine`, the
+`Effect::InstantiateSubmachine` is implemented at the runtime layer, and
+`InternalEvent::SubmachineCompleted` carries a `result` payload. The full design, the `TaskMachine`, the
 `SdlcChildSpawner`, the Execution fan-out/aggregation flow, and the documented
 child user-gate limitation are in **[Parallel Submachine
 Fan-out](parallel-submachines.md)**.
@@ -562,16 +562,17 @@ E2E bats tests use `--model mock` so no real API key is required.
 
 | Crate | Role |
 |-------|------|
-| `sven-hsm` | HSM kernel: dispatch, `Machine` trait, `Runtime`/`ErasedRuntime` (Active Object), permissions, audit/replay, `Clock`/timers, `Submachine`/`ChildSpawner`, `ObservationSink`/`UiEvent` |
+| `sven-hsm` | HSM kernel vocabulary and pure dispatch: `Machine` trait, `Hsm`, permissions, audit/replay, snapshots, `Submachine`, `ObservationSink`/`UiEvent` |
+| `sven-kernel` | Active Object runtime: `Runtime`/`ErasedRuntime`, `EffectExecutor`, `EventSink`, `ChildSpawner`, `Clock`/timers |
 | `sven-model` | Stateless provider abstraction: `ModelProvider`, `CompletionRequest` (incl. `response_format`), `Message`, `ResponseEvent`, `ResponseFormat` |
 | `sven-tool-api` | `Tool` trait, `ToolCall` / `ToolOutput`, approval policy / `PermissionRequester`, tool events and display |
 | `sven-tool-registry` | `ToolRegistry` (incl. tool-subset API), `ToolSchema`, `SharedTools`, `ToolPolicy` |
 | `sven-tools-*` | Concrete tool implementations by domain: `fs`, `exec`, `web`, `ctx`, `agent`, `gdb`, `android` |
 | `sven-machines` | Concrete machines (`ReactiveAgentMachine`, `SdlcMachine` + `TaskMachine`, `VerifiedTaskMachine`, `UiTestMachine`), `loop_core` shared state handlers, `ModeRegistry`. Depends only on `sven-hsm` and `sven-vocab` |
 | `sven-turn` | Impure turn primitives: `stream_turn`, compaction, system-prompt assembly, `AgentRuntimeContext` |
-| `sven-executors` | Effect executors: `TurnExecutor`, tool, user, timer, checkpoint, audit, internal, and the `CompositeExecutor` router |
+| `sven-executors` | Effect executors: `TurnExecutor`, tool, user, timer, audit, internal, verify, and the `CompositeExecutor` router |
 | `sven-bootstrap` | `RuntimeBuilder` (per-session factory), `SessionSupervisor`, `SdlcChildSpawner` |
-| `sven-frontend` | Bridges kernel `UiEvent`s to renderer events for TUI/GUI |
+| `sven-frontend` | Shared agent wiring for frontends: the kernel session task, request queue, tool-call view and markdown block parser |
 | `sven-ci` | `RuntimeRunner` - headless kernel driver for batch/CI runs |
 | `sven-acp` | ACP server backed by a per-session kernel |
 
@@ -588,6 +589,7 @@ E2E bats tests use `--model mock` so no real API key is required.
 - Miro Samek, *Practical UML Statecharts in C/C++, 2nd ed.* - the dispatch
   algorithm in `hsm/src/dispatch.rs` follows its two-phase design.
 - [sven-hsm tests](../../crates/hsm/tests/) - LCA ordering, permission
-  rejection, replay equality, virtual-time timeouts, and child-spawner fan-out.
-- [SdlcMachine source](../../crates/core/src/machines/sdlc/) ·
-  [ReactiveAgentMachine source](../../crates/core/src/machines/reactive_agent.rs)
+  rejection and replay equality; [sven-kernel tests](../../crates/kernel/tests/) -
+  virtual-time timeouts and child-spawner fan-out.
+- [SdlcMachine source](../../crates/machines/src/machines/sdlc/) ·
+  [ReactiveAgentMachine source](../../crates/machines/src/machines/reactive_agent.rs)

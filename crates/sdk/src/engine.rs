@@ -55,14 +55,18 @@ impl Toolset {
         Self(sven_bootstrap::BuiltinTools::None)
     }
 
-    /// Read, write and edit files, search, run shell commands, keep a todo
-    /// list and ask the user a question.
+    /// Read, write, edit and attach files, search, run shell commands, fetch
+    /// and search the web, keep a todo list and a memory file, load skills,
+    /// switch mode or model, delegate to sub-agents (`task`) and ask the user
+    /// a question.
     #[must_use]
     pub fn coding() -> Self {
         Self(sven_bootstrap::BuiltinTools::Coding)
     }
 
-    /// Read-only: read and search files, keep a todo list, ask a question.
+    /// Read-only: read and search files, fetch and search the web, keep a
+    /// todo list and a memory file, load skills, switch mode or model,
+    /// delegate to read-only sub-agents and ask a question.
     #[must_use]
     pub fn research() -> Self {
         Self(sven_bootstrap::BuiltinTools::Research)

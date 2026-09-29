@@ -7,7 +7,7 @@
 //!
 //! # Concrete vs generic
 //!
-//! Phase 1 deliberately uses a **concrete-but-minimal** `Event` set rather than
+//! The kernel deliberately uses a **concrete-but-minimal** `Event` set rather than
 //! making the kernel generic over an event type. Payloads that are inherently
 //! domain-specific (the text of an LLM proposal, the shape of a tool
 //! observation) are kept as [`serde_json::Value`] so the kernel stays fully

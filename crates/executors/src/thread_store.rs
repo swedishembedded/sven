@@ -73,8 +73,9 @@ impl ThreadStore {
     /// user edits and resubmits an earlier turn (edit-resubmit) or resumes a
     /// saved session. The frontend reconstructs the authoritative history and
     /// installs it here so the next turn streams against exactly those turns,
-    /// not the store's own accumulated version. Because the prefix changes, the
-    /// provider prompt cache for this thread is intentionally invalidated.
+    /// not the store's own accumulated version. `TurnExecutor` also uses it to
+    /// install a compacted history. Because the prefix changes, the provider
+    /// prompt cache for this thread is intentionally invalidated.
     pub fn replace_thread(&mut self, id: &str, messages: Vec<Message>) {
         self.threads.insert(id.to_string(), messages);
     }

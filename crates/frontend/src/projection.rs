@@ -13,8 +13,8 @@ pub use sven_session_model::{projection_to_session_state, MachineProjection};
 
 /// A broadcast channel carrying [`MachineProjection`] updates.
 ///
-/// The kernel task (or bridge task) publishes after every dispatch; the TUI,
-/// GUI, and node control service subscribe for rendering.
+/// The kernel task (or bridge task) publishes after every dispatch;
+/// subscribers render from it.
 pub type ProjectionTx = tokio::sync::broadcast::Sender<MachineProjection>;
 pub type ProjectionRx = tokio::sync::broadcast::Receiver<MachineProjection>;
 

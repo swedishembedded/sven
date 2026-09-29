@@ -478,12 +478,9 @@ mod tests {
 
     #[tokio::test]
     async fn finds_with_wildcard_name_pattern() {
-        // Fixture assumption: this crate's own src/ tree contains a file
-        // matching the pattern. Was `*lint*` / "read_lints" back when this
-        // test lived in sven-tools's builtin/file/ alongside builtin/system/
-        // read_lints.rs; that file stayed behind in sven-tools when this test
-        // moved to sven-tools-fs (5.2 of the refactor plan's god-crate
-        // splits), so the pattern now targets a file this crate does own.
+        // Fixture assumption: this crate's own src/ tree contains
+        // `read_file.rs` and no `*read_lint*` file (`read_lints` lives in
+        // sven-tools-web).
         let src = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
         let out = FindFileTool
             .execute(&call(json!({

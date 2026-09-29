@@ -1,22 +1,19 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Whole-document atomic writer, adapted from `sven-input`'s
-//! `chat_document.rs` YAML save path for JSON `Trajectory` documents.
+//! Whole-document writer for JSON `Trajectory` documents.
 //!
-//! Two write entry points, mirroring `save_chat_to` / `save_chat_to_atomic`:
+//! Two write entry points:
 //! - [`write_trajectory`] — a plain `fs::write`, no concurrency guarantees.
 //! - [`write_trajectory_atomic`] — temp file + `flock`-guarded sidecar lock
 //!   + inode/mtime identity check + atomic `rename`.
 //!
-//! One deliberate adaptation from `chat_document.rs`: `save_chat_to_atomic`
-//! re-stats the target file itself at call-entry, so it only catches a
-//! modification that happens *during* the save call (a narrow window).
-//! Here, [`write_trajectory_atomic`] instead takes the caller's previously
-//! captured [`FileFingerprint`] (from [`read_trajectory_with_fingerprint`])
-//! as an explicit `expected` parameter, so it can detect a modification that
-//! happened any time between the caller's read and this write — which is
-//! the guarantee a "read, edit, save" workflow actually needs.
+//! [`write_trajectory_atomic`] takes the caller's previously captured
+//! [`FileFingerprint`] (from [`read_trajectory_with_fingerprint`]) as an
+//! explicit `expected` parameter rather than re-statting the target at
+//! call-entry, so it detects a modification that happened any time between
+//! the caller's read and this write — not only one during the save call
+//! itself. That is the guarantee a "read, edit, save" workflow needs.
 
 use std::fs;
 use std::path::Path;

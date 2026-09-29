@@ -31,7 +31,7 @@ use sven_config::{AgentMode, Config};
 /// Identifies which inspector view to open.
 ///
 /// Used by `ImmediateAction::OpenInspector` to select the content rendered
-/// in the full-screen inspector overlay (TUI) or inspector panel (GUI).
+/// in the TUI's full-screen inspector overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectorKind {
     Skills,

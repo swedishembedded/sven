@@ -36,7 +36,7 @@ back to the parent for append-only aggregation.
 ### `ChildSpawner`
 
 The kernel is machine-agnostic, so it cannot build a concrete child from an
-opaque descriptor. The `ChildSpawner` trait (`hsm/src/runtime.rs`) bridges
+opaque descriptor. The `ChildSpawner` trait (`kernel/src/lib.rs`) bridges
 that gap:
 
 ```rust,ignore
@@ -60,10 +60,10 @@ parallel.
 Both `Runtime<M>` and `ErasedRuntime` expose `spawn_with_children`, which takes an
 optional `Arc<dyn ChildSpawner>`. Inside the consumer loop:
 
-- After each dispatch, `spawn_children` peels every `Effect::InstantiateSubmachine`
-  out of the effect batch, records it in a lightweight **child registry**
-  (`HashMap<MachineId, ()>`), and calls `spawner.spawn_child(...)`. The remaining
-  (non-child) effects continue down the normal validate-then-execute path.
+- After each dispatch, the effect batch is validated as usual; each allowed
+  `Effect::InstantiateSubmachine` is then recorded in a lightweight **child
+  registry** (`HashMap<MachineId, ()>`) and handed to `spawner.spawn_child(...)`,
+  while every other effect goes to the executor.
 - Before each dispatch, `note_child_completion` removes a child from the registry
   when a `SubmachineCompleted` event arrives, keeping an authoritative
   concurrent-child count for observability and shutdown.
@@ -88,7 +88,7 @@ flowchart TD
     subgraph Parent["Parent kernel (SdlcMachine, Execution state)"]
       P1[Entry: plan has N tasks<br/>and parallel_execution set] --> P2[emit N x InstantiateSubmachine]
     end
-    P2 -->|runtime peels effects| R[spawn_children:<br/>register + call spawner]
+    P2 -->|runtime validates effects| R[child registry:<br/>register + call spawner]
     R --> S[SdlcChildSpawner.spawn_child<br/> one per task]
     S --> C1[Child kernel 1<br/>fresh Context + store<br/>TaskMachine]
     S --> C2[Child kernel 2<br/>fresh Context + store<br/>TaskMachine]
@@ -105,14 +105,14 @@ flowchart TD
 
 ## The `TaskMachine`
 
-`TaskMachine` (`core/src/machines/sdlc/task.rs`) is the one-shot child the
-SDLC parent fans out to. It uses the `loop_core` state handlers to run a
+`TaskMachine` (`machines/src/machines/sdlc/task.rs`) is the one-shot child the
+SDLC parent fans out to. It uses the `loop_core` helpers to run a
 kernel-mediated multi-round turn loop for a single task on its own isolated
 `task` conversation thread, then completes:
 
 ```
 Top
-├── Run (Generating / RunningTools / AwaitingApproval)  ← loop_core turn loop
+├── Run   ← loop_core turn loop, tools executed in-state
 └── Done   ← terminal; stores the result fact "out"
 ```
 
@@ -139,7 +139,7 @@ a terminal state with a harvestable `out` fact.
 kernel**:
 
 - a fresh `Context`,
-- a `TurnExecutor` with its own isolated `ConversationStore` and
+- a `TurnExecutor` with its own isolated `ThreadStore` and
   `call_id → thread` registry,
 - a `CompositeExecutor` with `TurnExecutor` + `ToolExecutor` + timers,
 - a one-shot `TaskMachine` (using `loop_core` state handlers) running under its
@@ -166,7 +166,7 @@ spawner never emits orphaned `InstantiateSubmachine` effects.
 ## The Execution fan-out / aggregation flow
 
 Fan-out lives entirely in the `Execution` state of the `SdlcMachine`
-(`core/src/machines/sdlc/mod.rs`):
+(`machines/src/machines/sdlc/mod.rs`):
 
 1. **Decide to fan out.** On `Entry`, Execution reads `plan_payload` and extracts
    its `tasks` array (`tasks_of`). `should_fan_out` is true when there are **≥2
@@ -214,16 +214,16 @@ or recovery phases rather than relied upon to pause inside a child.
 
 ## Source of truth in code
 
-- `hsm/src/runtime.rs` - `ChildSpawner`, `spawn_children`, the child
-  registry, `note_child_completion`, `spawn_with_children`.
+- `kernel/src/lib.rs` - `ChildSpawner`, the child registry (`Children`),
+  `note_child_completion`, `spawn_with_children`.
 - `hsm/src/event.rs` - `InternalEvent::SubmachineCompleted { machine, result }`.
 - `hsm/src/submachine.rs` - the synchronous in-process `Submachine<P>` path.
-- `hsm/tests/child_spawner.rs` - proves concurrent fan-out and result
+- `kernel/tests/child_spawner.rs` - proves concurrent fan-out and result
   aggregation (peak concurrent children ≥ 2; summed child results).
-- `core/src/machines/loop_core.rs` - shared `Generating` / `RunningTools` /
-  `AwaitingApproval` state handlers used by `TaskMachine` and `SdlcMachine`.
-- `core/src/machines/sdlc/task.rs` - `TaskMachine`.
-- `core/src/machines/sdlc/mod.rs` - the Execution fan-out/aggregation logic
+- `machines/src/machines/loop_core.rs` - the shared in-state model↔tool loop
+  helpers used by `TaskMachine` and `SdlcMachine`.
+- `machines/src/machines/sdlc/task.rs` - `TaskMachine`.
+- `machines/src/machines/sdlc/mod.rs` - the Execution fan-out/aggregation logic
   (`tasks_of`, `should_fan_out`, `merge_child_results`).
 - `bootstrap/src/child_spawner.rs` - `SdlcChildSpawner` (uses `TurnExecutor`
   + `ToolExecutor` with tightened child policy).

@@ -1,9 +1,7 @@
 # Architecture ratchet for the sven workspace.
 #
 # Enforced by `cargo run -p xtask -- arch` (wired into `make check`, runs before
-# clippy). Method and rationale: the `programming/rust` architecture skill in the
-# surrounding monorepo's `.claude/skills/` tree, and the cargo-tree refactor plan
-# this file bootstraps.
+# clippy).
 #
 # Rules:
 #   - A crate may depend (as a normal, non-dev dependency) only on crates at a
@@ -183,9 +181,8 @@ from = "sven-config"
 to   = "sven-vocab"
 why  = """
 Both are leaf, no-further-layering "foundation" crates. sven-config needs
-AgentMode (now defined in sven-vocab alongside the other event/session
-payload types it groups with, per Phase 3 of the refactor plan) for its CLI
-schema. Not a same-tier violation in spirit -- config has zero dependents at
+AgentMode (defined in sven-vocab alongside the other event/session payload
+types it groups with) for its CLI schema. Not a same-tier violation in spirit -- config has zero dependents at
 the foundation tier itself, so this can never become a cycle -- but the
 checker only reasons about tiers, not sub-tier leaf status, so it is
 recorded explicitly rather than silently allowed.
@@ -214,11 +211,11 @@ Both are "services" tier: concrete ModelProvider implementations built on
 the sven-model kernel vocabulary. sven-model-drivers's from_config() factory
 constructs a mock provider unconditionally for `provider: "mock"` today (see
 DRIVERS.md) -- that match arm is the single call site pulling in
-sven-model-mock as a real (non-dev) dependency. Refactor plan Phase 6 is
-expected to put mock support behind a feature flag so it stops shipping in
-release builds; at that point sven-model-mock becomes an optional/dev-only
-dependency of sven-model-drivers and this edge either disappears or becomes
-a legitimate feature-gated same-tier edge recorded here with an updated why.
+sven-model-mock as a real (non-dev) dependency, so mock support ships in
+release builds. Putting that arm behind a feature flag would make
+sven-model-mock an optional/dev-only dependency of sven-model-drivers, and
+this edge would either disappear or become a feature-gated same-tier edge
+recorded here with an updated why.
 """
 
 [[same_layer]]
@@ -228,13 +225,11 @@ why  = """
 Both are "kernel" tier: pure trait/type vocabulary crates, no execution.
 sven-session-model needs sven_model::{Message, MessageContent, Role} to name
 the messages a ChatSegment/conversation-codec deals in. Placed at kernel
-(rather than services, where its only current sven-tier peer requirement
-would have been trivially satisfiable) specifically so sven-input (services)
-can depend on it downward without a second exception: sven-session-model is
-becoming the new home for sven-input's `## User`/`## Sven` markdown codec
-(Phase 3.7), and services strictly above kernel is exactly the edge that
-move needs. No cycle risk: sven-model has no sven-tier dependents at the
-kernel tier itself.
+(rather than services) so sven-session-store (services) can depend on it
+downward without a second exception: sven-session-model holds the
+`## User`/`## Sven` markdown codec that sven-session-store re-exports. No
+cycle risk: sven-model has no sven-tier dependents at the kernel tier
+itself.
 """
 
 [[same_layer]]
@@ -242,9 +237,9 @@ from = "sven-hsm"
 to   = "sven-vocab"
 why  = """
 Both are leaf "foundation" crates. sven-hsm's outward observation plane
-(UiEvent) is now `sven_vocab::SessionEvent` -- the unified event enum shared
-with sven-core's AgentEvent (Phase 3 of the refactor plan) -- rather than a
-kernel-local opaque-payload enum, since SessionEvent's typed payloads
+(UiEvent) is `sven_vocab::SessionEvent` -- the unified event enum that
+sven-machines re-exports as AgentEvent -- rather than a kernel-local
+opaque-payload enum, since SessionEvent's typed payloads
 (ToolCall, TodoItem, ...) live in sven-vocab. sven-vocab has zero
 dependencies of its own, so this can never become a cycle.
 """
@@ -255,13 +250,10 @@ dependencies of its own, so this can never become a cycle.
 # ── Known dead/unused internal dependencies. ────────────────────────────────
 # A dependency is "dead" here if crate `crate` declares a normal (non-dev) dep
 # on `dep` but has zero real (non-comment) `dep_ident::` references under its
-# own src/. All 16 originally-seeded entries (3 from the manual audit, 13
-# xtask found on its first run) were fixed in Phase 1.1; sven-gui's 2 entries
-# were dropped along with the crate in Phase 1.2. None currently outstanding.
+# own src/. None currently outstanding.
 
 # ── File-size ratchet. `lines` is a high-water mark: it may only shrink. ───
-# Regenerate with `cargo run -p xtask -- arch --bless`. Seeded from the
-# measured tree at the start of the refactor (2026-08-13).
+# Regenerate with `cargo run -p xtask -- arch --bless`.
 [[allow.large_file]]
 path = "crates/model-drivers/tests/wire_format_tests.rs"
 lines = 1729

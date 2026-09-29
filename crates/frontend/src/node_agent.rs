@@ -531,7 +531,7 @@ mod tests {
     use super::*;
 
     // A remote `SessionState{completed}` MUST map to `AgentEvent::TurnComplete`
-    // (the event that clears the TUI/GUI busy flag) and terminate the turn loop.
+    // (the event that clears the TUI busy flag) and terminate the turn loop.
     // If this regresses, `agent.busy` never clears in node-proxy mode and the
     // 80ms anim_tick repaints the screen forever.
     #[tokio::test]

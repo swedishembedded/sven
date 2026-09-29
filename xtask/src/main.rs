@@ -602,9 +602,8 @@ fn count_production_lines(text: &str) -> usize {
     count
 }
 
-/// Third-party crates a portable/minimal build must never resolve, per the
-/// refactor plan's Phase 6 target ("no GUI toolkit, no libp2p, no HTTP
-/// server"). Checked against `cargo tree`'s *normal*-edge closure only --
+/// Third-party crates a portable/minimal build must never resolve: no GUI
+/// toolkit, no libp2p, no HTTP server. Checked against `cargo tree`'s *normal*-edge closure only --
 /// dev-dependencies (test-only) are exempt by the same rule as the rest of
 /// this file's checks.
 const FORBIDDEN_IN_MINIMAL: &[&str] = &[

@@ -2,11 +2,11 @@
 
 This document describes the driver architecture in `sven-model-drivers` and
 explains how to add support for a new model provider. (`sven-model` itself
-is now just the `ModelProvider` trait + request/response types + the pure
+is just the `ModelProvider` trait + request/response types + the pure
 `ModelResolver`/`resolve_model_cfg` config-resolution logic — no reqwest, no
 per-provider dependency closure. See that crate's `lib.rs` for how the two
-fit together, and `sven-model-catalog`/`sven-model-mock` for the other two
-crates this one used to bundle.)
+fit together, and `sven-model-catalog`/`sven-model-mock` for the static
+catalog and the mock providers.)
 
 ## Architecture overview
 

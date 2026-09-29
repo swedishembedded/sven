@@ -21,9 +21,9 @@ pub use sven_vocab::CompactionStrategyUsed;
 /// A renderable event emitted on the outward observation plane.
 ///
 /// Re-exports [`sven_vocab::SessionEvent`] — the single, unified session
-/// event stream (`sven-core` re-exports the same type as `AgentEvent`). They
-/// never re-enter the inward event queue; they exist purely so frontends
-/// (TUI, GUI, CI, node, ACP) can render streaming output, tool progress,
+/// event stream (`sven-machines` re-exports the same type as `AgentEvent`).
+/// They never re-enter the inward event queue; they exist purely so frontends
+/// (TUI, CI, ACP) can render streaming output, tool progress,
 /// usage, and the transition trace while effects are in flight.
 pub use sven_vocab::SessionEvent as UiEvent;
 

@@ -12,7 +12,7 @@ loaded on demand by the model.
 | Term | Definition |
 |------|-----------|
 | **Skill package** | A directory containing a `SKILL.md` file |
-| **Command** | The slash-command key for a skill, derived from its directory path (e.g. `"sven/plan"`) |
+| **Command** | The key a skill is loaded by, derived from its directory path (e.g. `"sven/plan"`) |
 | **Sub-skill** | A skill package nested inside another skill package |
 | **Display name** | Human-readable label from the `name:` frontmatter field |
 | **Body** | Everything in `SKILL.md` after the closing `---` fence |
@@ -107,7 +107,7 @@ sven:                        # optional sven-specific block
   always: false              # always include in system prompt
   requires_bins: [docker]    # skip if these binaries are absent
   requires_env: [DOCKER_TOKEN] # skip if these env vars are unset
-  user_invocable_only: false # hide from model; show only as slash command
+  user_invocable_only: false # hide from the model's skill listings
 ---
 
 # Skill body
@@ -142,7 +142,7 @@ the `always` and `user_invocable_only` flags.
 
 ---
 
-## System prompt injection (`sven-core`)
+## System prompt injection (`sven-turn`)
 
 At startup, `build_skills_section()` serialises the discovered skills into an
 XML block that is appended to the system prompt:
@@ -180,9 +180,11 @@ bypass the cap; the remaining candidates are packed in discovery order until the
 budget would be exceeded.  A truncation notice is appended when any skills are
 left out.
 
-**`user_invocable_only: true`** hides a skill from the model's list but still
-registers it as a TUI slash command.  The model will never call it
-autonomously; the user can invoke it explicitly with `/command`.
+**`user_invocable_only: true`** hides a skill from the model's
+`<available_skills>` list and from the `skill` tool's description and
+`list` results, so the model does not discover it on its own. The `skill`
+tool still loads it when asked for its exact command (e.g. because the user
+named it).
 
 ---
 
@@ -234,39 +236,40 @@ The sub-skills hint is constructed by matching skills whose command starts with
 children only).  Grandchildren are not listed at the parent level; they appear
 in the child's own hint when that child is loaded.
 
+Sub-skill bodies are never pre-loaded.  Only the invoked skill's own body is
+sent.  The model discovers and loads children via the sub-skill hint returned by
+the `skill` tool.
+
 ---
 
-## TUI slash commands (`sven-tui`)
+## Slash commands are commands, not skills
 
-At TUI startup, `App::new()` calls `discover_skills()` and passes the slice to
-`register_skills()`, which converts each `SkillInfo` into a `SkillCommand` via
-`make_skill_commands()`.
+Skills are not registered as slash commands; the model reaches them through
+the `skill` tool. The TUI's user-defined slash commands come from **command**
+files instead: `sven_workspace::discover_commands()` scans `commands/`
+directories (`.agents/`, `.claude/`, `.codex/`, `.cursor/`, `.sven/`) with the
+same ancestor walk as skill discovery, and each `.md` file becomes one command
+named after its path relative to the commands root (`sven/plan.md` →
+`/sven/plan`). At startup the TUI passes them to
+`CommandRegistry::register_commands()` (`sven-commands`), which builds one
+`SkillCommand` per file via `make_command_slash_commands()`.
 
 Each `SkillCommand`:
-- has `name` = sanitized command path (e.g. `"sven/plan"`), preserving `/`
-- stores the full SKILL.md body
-- when executed, sends the body - optionally followed by a user task - as the
-  next agent message
-
-The sanitizer converts each `/`-separated path segment individually: spaces and
-hyphens become `_`, uppercase is lowercased, consecutive non-alnum runs are
-collapsed.  The `/` separator is preserved so the TUI sees `sven/plan` as one
-command with two levels.
+- has `name` = the lowercased command path (e.g. `"sven/plan"`), preserving
+  `/`, made unique if two files map to the same name
+- reads its `.md` file when executed
+- sends the file body - followed by `Task: <args>` when arguments were given -
+  as the next agent message
 
 Example:
 
 ```
 User types:  /sven/plan analyse the authentication module
-SkillCommand receives args: ["analyse", "the", "authentication", "module"]
 Message sent:
-  <full sven/plan SKILL.md body>
+  <full sven/plan.md body>
 
   Task: analyse the authentication module
 ```
-
-Sub-skill bodies are never pre-loaded.  Only the invoked skill's own body is
-sent.  The model discovers and loads children via the sub-skill hint returned by
-the `skill` tool.
 
 ---
 
@@ -275,10 +278,10 @@ the `skill` tool.
 | Crate | Responsibility |
 |-------|---------------|
 | `sven-workspace` | `SkillInfo`, `SvenSkillMeta`, `ParsedSkill`; `parse_skill_file()`; `discover_skills()` and the recursive scanner; requirement checking (`requires_bins`, `requires_env`) |
-| `sven-core` | `build_skills_section()` - serialises skill metadata into the system-prompt XML block; `PromptContext.skills` field |
+| `sven-turn` | `build_skills_section()` - serialises skill metadata into the system-prompt XML block; `PromptContext.skills` field |
 | `sven-tools-agent` | `SkillTool` - tool implementation, child-detection logic, bundled-file collection |
 | `sven-bootstrap` | Calls `discover_skills()`, stores the `Arc<[SkillInfo]>` in `RuntimeContext`, wires it into `AgentRuntimeContext` and registers `SkillTool` |
-| `sven-tui` | `SkillCommand`, `make_skill_commands()`, `sanitize_command_name()`; `register_skills()` in `CommandRegistry`; wires discovery into `App::new()` |
+| `sven-commands` | `SkillCommand`, `make_command_slash_commands()`; `CommandRegistry::register_commands()` for command `.md` files (not skills) |
 
 ---
 

@@ -266,9 +266,10 @@ mod tool_output_tests {
 
 /// Describes the shape of a tool's text output for context-aware truncation.
 ///
-/// When a tool result exceeds the configured token cap, `sven-core` uses
-/// this category to pick the right extraction strategy.  Each tool declares
-/// its own category; `sven-core` never hard-codes tool names.
+/// When a tool result exceeds the configured token cap, the tool executor
+/// (`sven-executors`) uses this category to pick the right extraction
+/// strategy.  Each tool declares its own category; the executor never
+/// hard-codes tool names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputCategory {
     /// Terminal / process output: keep the first 60 + last 40 lines so both
@@ -505,21 +506,12 @@ pub enum CollabEvent {
 
 /// The single, unified session event stream.
 ///
-/// Historically the codebase had two parallel enums for this: `AgentEvent`
-/// (typed payloads, produced by the legacy `sven_machines::Agent` loop) and
-/// `UiEvent` (opaque `Value`/`String` payloads, produced by the HSM kernel's
-/// outward observation plane). A translator pair converted between them on
-/// every event, and because both were hand-maintained, they had already
-/// diverged (`ui_event_to_agent_event`'s `_ => None` silently dropped
-/// variants no one had gotten around to mapping).
-///
-/// `SessionEvent` replaces both: it carries `AgentEvent`'s typed payloads
-/// (so consumers pattern-match on real types, not `Value`) plus
+/// One enum serves both the kernel's outward observation plane and every
+/// frontend, so there is no translator to keep in sync: it carries typed
+/// payloads (consumers pattern-match on real types, not `Value`) plus
 /// [`Transition`](SessionEvent::Transition), the kernel's per-dispatch trace
-/// event that had no `AgentEvent` equivalent. `sven-core` re-exports this as
-/// `AgentEvent` and `sven-hsm` re-exports it as `UiEvent`, so both names
-/// still resolve for existing call sites — see `docs/adr/` for the full
-/// migration.
+/// event. `sven-machines` re-exports it as `AgentEvent` and `sven-hsm` as
+/// `UiEvent`; both names refer to this type.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SessionEvent {
     /// A text chunk streamed from the model.

@@ -232,8 +232,8 @@ pub const MAX_SKILLS_PROMPT_CHARS: usize = 30_000;
 
 /// Format the available-skills block for injection into the system prompt.
 ///
-/// Skills with `user_invocable_only: true` are omitted (they are still
-/// registered as TUI slash commands but not shown to the model).
+/// Skills with `user_invocable_only: true` are omitted (the `skill` tool
+/// still loads one when asked for its exact command).
 /// Skills with `always: true` bypass the char-budget check and are always
 /// included.
 ///

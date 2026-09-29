@@ -4,7 +4,7 @@
 //! Shared tool-call view data extraction.
 //!
 //! Extracts structured display data from tool call arguments and optional
-//! `ToolDisplay` metadata so both the TUI and GUI can render tool calls
+//! `ToolDisplay` metadata so every frontend can render tool calls
 //! consistently without duplicating extraction logic.
 
 use serde_json::Value;

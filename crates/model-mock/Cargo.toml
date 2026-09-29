@@ -2,7 +2,7 @@
 name    = "sven-model-mock"
 version.workspace = true
 edition = "2021"
-description = "The --model mock test/dev ModelProvider implementations (MockProvider, YamlMockProvider), split out of sven-model so trait-only consumers don't pay for them."
+description = "The --model mock test/dev ModelProvider implementations (MockProvider, YamlMockProvider), kept out of sven-model so trait-only consumers don't pay for them."
 
 [dependencies]
 sven-model  = { path = "../model" }

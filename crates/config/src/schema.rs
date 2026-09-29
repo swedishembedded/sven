@@ -764,7 +764,7 @@ pub struct AgentConfig {
     /// 0 disables per-result truncation entirely.
     ///
     /// Only affects what's stored for the model's next turn - the full,
-    /// untruncated output still reaches `UiEvent::ToolFinished` (TUI/GUI
+    /// untruncated output still reaches `UiEvent::ToolFinished` (TUI
     /// display) and the audit trail.
     #[serde(default = "default_tool_result_token_cap")]
     pub tool_result_token_cap: usize,

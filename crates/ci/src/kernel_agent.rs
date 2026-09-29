@@ -1,22 +1,21 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Kernel-backed drop-in for the small slice of the legacy `sven_machines::Agent`
-//! API that the headless runner ([`CiRunner`](crate::CiRunner)) depends on.
+//! The small agent API the headless runner ([`CiRunner`](crate::CiRunner))
+//! depends on, backed by the HSM kernel.
 //!
-//! Instead of driving the retired `sven_machines::Agent` loop, [`KernelAgent`]
-//! runs each turn on the HSM kernel built by [`RuntimeBuilder`]. It preserves
-//! the exact `submit → AgentEvent stream` contract those runners consume, so
-//! the multi-step orchestration, output formatting, JSONL persistence, caching
-//! and artifact logic above it stay byte-for-byte identical.
+//! [`KernelAgent`] runs each turn on the HSM kernel built by
+//! [`RuntimeBuilder`] and exposes a `submit → AgentEvent stream` contract to
+//! the multi-step orchestration, output formatting, JSONL persistence,
+//! caching and artifact logic above it.
 //!
 //! Per-step **mode** and **model** overrides (from workflow `## step`
 //! `<!-- sven: mode=… model=… -->` comments and frontmatter `models`) are hon
 //! oured by rebuilding a fresh kernel [`SessionBundle`] for every turn, seeded
 //! with the accumulated conversation history — the exact single-shot pattern of
-//! [`RuntimeRunner`](crate::RuntimeRunner) applied per step. This keeps the
-//! per-step override semantics of the legacy runner without needing a live
-//! model/mode swap on a running kernel.
+//! [`RuntimeRunner`](crate::RuntimeRunner) applied per step. This gives
+//! per-step overrides without needing a live model/mode swap on a running
+//! kernel.
 
 use std::sync::Arc;
 
@@ -31,8 +30,7 @@ use sven_model::Message;
 use sven_session_model::reduce_history;
 use sven_tool_registry::ToolRegistry;
 
-/// A kernel-backed replacement for the headless runners' use of
-/// `sven_machines::Agent`.
+/// The kernel-backed agent the headless runner drives.
 ///
 /// Owns the reusable runtime context and accumulated conversation history, and
 /// exposes the exact method slice ([`submit`](Self::submit),

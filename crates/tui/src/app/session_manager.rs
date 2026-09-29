@@ -583,16 +583,16 @@ fn session_entry_from_unified(
 
 // ── SessionManager ────────────────────────────────────────────────────────────
 
-/// TUI multi-session UI state - the **session manager** that owns the set of active
-/// [`sven_machines::Session`]s and tracks which one is focused in the sidebar.
+/// TUI multi-session UI state - the **session manager** that owns the set of
+/// [`SessionEntry`]s and tracks which one is focused in the sidebar.
 ///
 /// # Layering note
 ///
 /// | Type | Crate | Role |
 /// |------|-------|------|
 /// | [`SessionManager`] | `sven-tui` | **TUI UI state** - tree of active sessions with sidebar selection and agent-event multiplexing. |
-/// | `sven_machines::Session` | `sven-core` | **Runtime state** - one live agent session with mutable message history and token accounting. |
-/// | `ConversationFile` | `sven-input` | **Persisted format** - a parsed `.md`/`.jsonl` snapshot used to seed session history on load. |
+/// | `KernelAgentSession` | `sven-bootstrap` | **Runtime state** - one fully-wired kernel session presented as an `AgentEvent` stream. |
+/// | `atif::Trajectory` | `atif` (via `sven-session-store`) | **Persisted format** - the ATIF `.json` file backing each entry (`SessionEntry::session_path`). |
 ///
 /// The sidebar is a tree: roots are in `display_order`; children are in
 /// `children`. Use [`SessionManager::tree_rows`] to get a flat list for

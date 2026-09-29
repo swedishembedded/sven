@@ -45,7 +45,8 @@ members = [
     "crates/executors",
     # Transport-agnostic operator control protocol + kernel mappings
     "crates/control",
-    # ATIF v1.7 trajectory format (standalone; not yet wired into sven)
+    # ATIF v1.7 trajectory format: the session store's on-disk format, the
+    # SDK's `Agent::trajectory` export and the CI runner's run log
     "crates/atif",
     # Workspace tooling: `cargo run -p xtask -- arch` enforces architecture.toml
     "xtask",
@@ -57,13 +58,12 @@ members = [
 ]
 
 # Single source of truth for the sven release version. The top-level `sven`
-# binary crate's `[package]` inherits this (see below), and so does
-# `crates/input` — the ATIF trace writer reads `env!("CARGO_PKG_VERSION")`
-# there to stamp `Trajectory.agent.version` (see `trace_session::default_agent_profile`).
-# Before this existed, `crates/input/Cargo.toml` carried its own frozen
-# `version = "1.0.0"`, so every trace this binary wrote claimed agent version
-# "1.0.0" instead of the real release version. Inheriting from here keeps the
-# two permanently in sync with no runtime plumbing required.
+# binary crate's `[package]` inherits this (see below), and so does every
+# workspace crate with `version.workspace = true`, including
+# `crates/session-store`: `trace_session::default_agent_profile` stamps
+# `Trajectory.agent.version` from that crate's `env!("CARGO_PKG_VERSION")`,
+# so every ATIF trajectory sven writes carries the real release version with
+# no runtime plumbing required.
 [workspace.package]
 version = "1.10.2"
 

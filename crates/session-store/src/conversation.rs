@@ -2,13 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Re-exports the `## User`/`## Sven` markdown conversation codec from
-//! [`sven_session_model`] (moved there in Phase 3.7 of the crate-architecture
-//! refactor plan — it is pure parsing/formatting logic with no file-I/O
-//! dependency, and `sven-ci` needs it too) and keeps the full-fidelity JSONL
-//! conversation format, which is a genuinely different concern (an
-//! adjacently-tagged, append-only line format capturing thinking blocks and
-//! compaction markers the markdown codec has no representation for) that
-//! stayed here.
+//! [`sven_session_model`] (it lives there because it is pure
+//! parsing/formatting logic with no file-I/O dependency, and `sven-ci` needs
+//! it too) and keeps the full-fidelity JSONL conversation format, which is a
+//! genuinely different concern (an adjacently-tagged, append-only line format
+//! capturing thinking blocks and compaction markers the markdown codec has no
+//! representation for).
 
 use serde::{Deserialize, Serialize};
 use sven_model::{Message, Role};

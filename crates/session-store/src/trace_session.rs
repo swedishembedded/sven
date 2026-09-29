@@ -1,15 +1,12 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! ATIF-trajectory-backed session storage — the additive replacement for
-//! [`crate::chat_document`]'s YAML `ChatDocument` and the `ConversationRecord`
-//! half of [`crate::conversation`].
+//! ATIF-trajectory-backed session storage — sven's session persistence
+//! format. [`crate::chat_document`]'s YAML `ChatDocument` is read-only legacy
+//! input that [`import_legacy_chat_document`] converts when it is opened.
 //!
-//! This module is purely additive (milestone 2 of the ATIF migration): it
-//! does not touch `chat_document.rs` or `conversation.rs`, which remain the
-//! production persistence path until a later cleanup milestone deletes them.
-//! Everything here is built on top of the standalone `trace` crate (ATIF
-//! v1.7 model, validator, and persistence helpers) and is additive-only.
+//! Everything here is built on top of the standalone `atif` crate (ATIF
+//! v1.7 model, validator, and persistence helpers).
 //!
 //! # Layout
 //!
@@ -53,16 +50,13 @@ pub const AGENT_NAME: &str = "sven";
 
 /// Build a default [`AgentProfile`] for a fresh trajectory: `name = "sven"`,
 /// `version` = this crate's own package version, which is `version.workspace
-/// = true` in `crates/input/Cargo.toml` — i.e. the *real* top-level `sven`
-/// binary version (`[workspace.package].version` in the root `Cargo.toml`),
-/// not an independently-versioned library crate. Prior to that inheritance
-/// being wired up, this returned a permanently-frozen `"1.0.0"` regardless of
-/// the actual release, because this crate had its own stale hardcoded
-/// `Cargo.toml` version. Callers embedding a *different* binary's trajectory
-/// (e.g. a subagent that could in principle run a different sven build)
-/// should still build their own `AgentProfile` instead of relying on this
-/// default; this is the reasonable default for the common case where the
-/// running process is that binary.
+/// = true` in `crates/session-store/Cargo.toml` — i.e. the sven release
+/// version (`[workspace.package].version` in the root `Cargo.toml`), not an
+/// independently-versioned library crate. Callers embedding a *different*
+/// binary's trajectory (e.g. a subagent that could in principle run a
+/// different sven build) should still build their own `AgentProfile` instead
+/// of relying on this default; this is the reasonable default for the common
+/// case where the running process is that binary.
 pub fn default_agent_profile() -> AgentProfile {
     AgentProfile::new(AGENT_NAME, env!("CARGO_PKG_VERSION"))
 }
@@ -83,8 +77,8 @@ pub fn default_agent_profile() -> AgentProfile {
 ///
 /// `parent_session_id` here is a convenience back-reference on a *child*
 /// trajectory, kept for O(1) "what's my parent" lookups without scanning
-/// every session file on disk — this is the field TUI/GUI/CI actually read
-/// today (`ChatDocument::parent_id`). It intentionally duplicates
+/// every session file on disk — this is the field the TUI reads to link a
+/// child session to its parent. It intentionally duplicates
 /// information that could, in principle, be derived by scanning every
 /// parent's `subagent_trajectories`/observation refs for one that points
 /// back at this session.
@@ -966,10 +960,8 @@ pub fn session_path(session_id: &str) -> PathBuf {
 /// Load a trajectory from an explicit file path.
 ///
 /// Callers that want to *write* a session go through
-/// [`atif::persist::write_trajectory_atomic`] directly (see the GUI's
-/// `save_session_to_disk` and the TUI's `save_history_async`); the old
-/// `save_session`/`save_session_atomic`/`load_session_with_fingerprint`
-/// wrappers here had no callers and were removed.
+/// [`atif::persist::write_trajectory_atomic`] directly (see the TUI's
+/// `save_history_async`).
 pub fn load_session_from(path: &Path) -> Result<Trajectory> {
     let (trajectory, _fingerprint) = atif::persist::read_trajectory_with_fingerprint(path)?;
     Ok(trajectory)

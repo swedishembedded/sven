@@ -4,16 +4,14 @@
 //! Reusable HSM-kernel → [`AgentEvent`] adapter.
 //!
 //! Every consumer-facing surface (headless CI, interactive TUI, local ACP)
-//! historically drove the legacy `sven_machines::Agent` loop and
-//! consumed its [`AgentEvent`] stream. The kernel ([`RuntimeBuilder`] /
-//! [`SessionBundle`]) instead exposes an outward observation plane of
-//! [`UiEvent`]s plus inward [`KernelChannels`] for user-question / approval
-//! round-trips.
+//! consumes an [`AgentEvent`] stream. The kernel ([`RuntimeBuilder`] /
+//! [`SessionBundle`]) exposes an outward observation plane of [`UiEvent`]s
+//! plus inward [`KernelChannels`] for user-question / approval round-trips.
 //!
-//! This module bridges the two so any surface can keep consuming the exact
-//! same [`AgentEvent`] contract while running on the kernel. `AgentEvent` and
+//! This module bridges the two so any surface consumes the same
+//! [`AgentEvent`] contract while running on the kernel. `AgentEvent` and
 //! `UiEvent` are both re-exports of the same [`sven_vocab::SessionEvent`]
-//! type, so the "bridge" is now just forwarding:
+//! type, so the "bridge" is just forwarding:
 //!
 //! * [`spawn_observation_bridge`] — forwards the whole [`UiEvent`] broadcast
 //!   into an [`AgentEvent`] `mpsc` channel (streamed text, tool progress,
@@ -28,7 +26,7 @@
 //!
 //! The adapter lives in `sven-bootstrap` (not `sven-frontend`) precisely so the
 //! headless `sven-ci` surface can depend on it without pulling
-//! in any TUI/GUI code, and without creating a dependency cycle — every surface
+//! in any TUI code, and without creating a dependency cycle — every surface
 //! already depends on `sven-bootstrap`.
 
 use std::sync::Arc;
@@ -83,7 +81,7 @@ pub fn spawn_observation_bridge(
 /// `Effect::RequestHumanApproval` as an
 /// [`ApprovalRequest`](sven_executors::user::ApprovalRequest) on
 /// [`KernelChannels`]. This task relays each to `question_tx` as a
-/// [`QuestionRequest`] (the same modal channel the TUI/GUI already select on)
+/// [`QuestionRequest`] (the same modal channel the TUI already selects on)
 /// and sends the user's answer back to the kernel:
 ///
 /// * `AskUser` → free-text question (empty `options`); the raw answer string is

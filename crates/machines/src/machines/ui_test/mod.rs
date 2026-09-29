@@ -4,7 +4,7 @@
 //! `UiTestMachine`: drives a fixed, declared sequence of natural-language UI
 //! test steps deterministically - screenshot -> ground -> act -> verify ->
 //! next step - with a bounded per-step retry budget. See
-//! `.agents/roadmap/android-ui-test.md`'s Phase 3 entry.
+//! `.agents/roadmap/android-ui-test.md`.
 //!
 //! Implements [`Machine`] directly with its own state list, the same shape
 //! [`super::reactive_agent::ReactiveAgentMachine`] uses - **not**
@@ -123,8 +123,8 @@ const RETRY_READY_SIGNAL: &str = "ui_test_retry_ready";
 /// upstream node's value into this run's `value_ref` resolution without any
 /// new plumbing: the dispatcher seeds it from every `params` field besides
 /// the instruction text, keyed by field name, and [`UiTestState::Seeding`]
-/// binds each one via [`vars::bind`] - the exact mechanism Phase 3 already
-/// built for an in-run `ask_user` answer - before compiling step 0.
+/// binds each one via [`vars::bind`] - the same mechanism an in-run
+/// `ask_user` answer uses - before compiling step 0.
 #[derive(Debug, Clone, Deserialize)]
 pub struct UiTestScript {
     pub steps: Vec<String>,

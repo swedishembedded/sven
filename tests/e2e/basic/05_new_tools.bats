@@ -1,6 +1,5 @@
 #!/usr/bin/env bats
-# 05_new_tools.bats - end-to-end tests for the 18-tool toolkit implemented
-# in the complete toolkit refactor.
+# 05_new_tools.bats - end-to-end tests for the built-in tool set.
 #
 # Tests verify:
 #   • run_terminal_command tool executes commands

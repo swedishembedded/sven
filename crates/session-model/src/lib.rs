@@ -5,7 +5,7 @@
 //!
 //! [`ChatSegment`] and the segment-slice helpers here are the one place the
 //! "fold a `SessionEvent` stream into a displayable conversation" logic
-//! lives. Every frontend (TUI, CI, GUI) needs some version of this — no
+//! lives. Every frontend (TUI, CI) needs some version of this — no
 //! tokio, no I/O, so it can be unit-tested without a runtime and shared
 //! without pulling in any frontend's plumbing.
 

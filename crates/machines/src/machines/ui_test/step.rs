@@ -44,8 +44,8 @@ pub const COMPILE_THREAD: &str = "ui_test_compile";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepVerb {
-    /// Bring an app to the foreground. `target` is a package-name hint (no
-    /// fuzzy app-name resolution yet - see the roadmap's Phase 3 gaps).
+    /// Bring an app to the foreground. `target` is a package-name hint; the
+    /// android tool resolves a loose hint to an installed package.
     LaunchApp,
     /// Force-stop an app. `target` is a package-name hint.
     ForceStop,

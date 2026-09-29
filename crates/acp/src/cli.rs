@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The `sven acp` clap grammar and handler, reusable both by the monolithic
 //! `sven` binary's `Commands::Acp` dispatch and the standalone `sven-acp`
-//! binary (Phase 6.2 of the refactor plan).
+//! binary.
 
 use clap::Subcommand;
 

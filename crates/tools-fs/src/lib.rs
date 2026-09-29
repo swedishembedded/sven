@@ -1,19 +1,13 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Filesystem tools: direct file read/write/edit/delete/find, and the
+//! Filesystem tools: direct file read/write/edit/find/attach, and the
 //! streaming subprocess-output buffer tools that let the model page through
 //! large command output without loading it all into the context window.
 //!
-//! Split out of `sven-tools`'s `builtin/file/` + `builtin/buffer/` (5.2 of
-//! the refactor plan's god-crate splits). The two subtrees were verified to
-//! have zero cross-refs into each other or into any other `builtin/`
-//! subdirectory; `buffer/mod.rs`'s doc comment claiming buffers are "created
-//! by the task and (future) shell tools" is aspirational, not a real
-//! dependency -- neither `shell/` nor `terminal/` reference
-//! `OutputBufferStore` today. `GrepMatch`, shared with `sven-tools-ctx`'s
-//! `context/store.rs`, moved to `sven-tool-api` (kernel tier) ahead of this
-//! split rather than living in either domain crate.
+//! The `file/` and `buffer/` modules do not reference each other.
+//! `GrepMatch`, shared with `sven-tools-ctx`'s `context/store.rs`, lives in
+//! `sven-tool-api` (kernel tier) rather than in either domain crate.
 pub mod buffer;
 pub mod file;
 
@@ -27,9 +21,9 @@ pub use file::{
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
 //
-// Moved from sven-tools's builtin/mod.rs::output_category_tests along with
-// these tools themselves -- see that module's comment for why this contract
-// is pinned per-tool at compile time.
+// Pins each tool's declared `OutputCategory`: the executor's truncation
+// strategy depends on it, so a silent change would change what the model
+// sees of every oversized result.
 #[cfg(test)]
 mod output_category_tests {
     use std::sync::Arc;

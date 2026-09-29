@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Background agent task and request/event channel types.
 //!
-//! This module is shared by all Sven frontends (TUI and GUI). It provides the
+//! This module is shared by Sven frontends. It provides the
 //! `AgentRequest` enum and the `kernel_session_task` that drives a full
 //! [`RuntimeBuilder`] kernel session (via the shared [`KernelAgentSession`]
 //! adapter) and bridges `UiEvent`s back to the existing
-//! [`AgentEvent`] renderers so the TUI/GUI require no changes.
+//! [`AgentEvent`] renderers.
 
 use std::sync::Arc;
 
@@ -125,7 +125,7 @@ async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Optio
 /// kernel's outward observation bus and bridges `UiEvent`s
 /// into the existing [`AgentEvent`] renderers plus relays kernel `AskUser` /
 /// approval prompts to the frontend's [`QuestionRequest`] modal channel. The
-/// TUI/GUI therefore keep consuming the exact same `AgentEvent` contract.
+/// TUI therefore consumes the same `AgentEvent` contract as every other surface.
 ///
 /// The startup model is passed as an already-resolved `ModelConfig` (the
 /// frontend applied the CLI `--model` override before spawning). Per-message

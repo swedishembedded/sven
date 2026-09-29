@@ -2,8 +2,7 @@
 
 Sven is a keyboard-driven AI coding agent built in Rust. It runs as an
 interactive TUI (`sven`) and as a headless CI runner - both from the same
-multi-crate workspace. (A Slint desktop GUI, `crates/gui`, existed briefly
-and was removed - the TUI is the only interactive local surface.)
+multi-crate workspace. The TUI is the only interactive local surface.
 
 ## Repository scope
 
@@ -354,7 +353,7 @@ and `sven-tool-registry` the registry; neither holds a concrete tool.
    concrete implementations live in `sven-model-drivers`.
 2. A driver module in `sven-model-drivers` (usually reuse `openai_compat`;
    bespoke only if the wire format differs).
-3. `model-catalog/src/catalog.rs` - model metadata.
+3. `model-catalog/models.yaml` - model metadata.
 
 ### Change what a session/agent run looks like on a SURFACE
 The kernel is one; the surfaces that drive it are the ones you must keep in sync.
@@ -371,12 +370,12 @@ must be applied to **each surface that constructs a kernel via
 `SessionEvent` lives in `sven-vocab` (foundation tier); `sven_hsm::UiEvent`
 and `sven_machines::AgentEvent` are both plain aliases for it, not separate
 types requiring a translator.
-1. `vocab/src/session_event.rs` (or wherever the variant's payload type
+1. `vocab/src/lib.rs` (or wherever the variant's payload type
    belongs - payloads are pushed down to foundation-tier leaves, never the
    enum pushed up).
 2. Every renderer that matches on it: `sven-frontend` (projection +
-   renderers), `sven-tui`, `sven-ci` output (`runner/event.rs`,
-   `conversation.rs` trace tokens), and `sven-acp` notification mapping.
+   renderers), `sven-tui`, `sven-ci` output (`runner/event.rs` trace
+   tokens), and `sven-acp` notification mapping.
    **Missing one silently drops the event on that surface - check all.** The
    plan originally intended `#[deny(clippy::wildcard_enum_match_arm)]` on
    `sven-tui`/`sven-ci`/`sven-acp`/`sven-frontend` to make this a compile

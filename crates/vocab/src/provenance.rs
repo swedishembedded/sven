@@ -251,8 +251,8 @@ pub trait ProvenanceSink: Send + Sync {
 /// digest a human handed over; a web fetch has no such scope, so it pays per
 /// fact. Binding an approval to the *specific* source it was granted for would
 /// be stronger still, but the approval request carries only a capability and a
-/// description today - the milestone that mints an `AssimilateKnowledge`
-/// approval request is the one that can add that scope.
+/// description; an `AssimilateKnowledge` approval request would be the place
+/// to add that scope.
 ///
 /// Shared as an `Arc` between the executor and the tool.
 #[derive(Debug, Default)]

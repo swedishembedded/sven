@@ -11,8 +11,8 @@ pub mod session_resolve;
 pub mod title;
 pub mod trace_session;
 
-// Legacy YAML chat support: only the read-only import surface the GUI/TUI
-// actually use is re-exported; the rest (`chat_dir`, `list_chats`,
+// Legacy YAML chat support: only the read-only import surface the TUI
+// actually uses is re-exported; the rest (`chat_dir`, `list_chats`,
 // `parse_chat_document`, `turns_to_records`, `ChatDocument`, ...) stays
 // reachable under `chat_document::` for the crate-internal legacy listing
 // and the importer.

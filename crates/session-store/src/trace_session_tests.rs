@@ -1,10 +1,9 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Unit tests for `trace_session` -- split into its own file (Phase 7 of the
-//! refactor plan) since it had grown to more than half of that file's 2609
-//! lines. Included via `#[path]` in `trace_session.rs`, so this is still
-//! logically `trace_session::tests`, just not inline.
+//! Unit tests for `trace_session`, kept in their own file for size. Included
+//! via `#[path]` in `trace_session.rs`, so this is still logically
+//! `trace_session::tests`, just not inline.
 
 use super::*;
 use crate::chat_document::SessionId;
@@ -152,18 +151,16 @@ fn parent_session_id_round_trips_on_child() {
 
 #[test]
 fn default_agent_profile_reports_the_real_sven_binary_version_not_a_frozen_crate_version() {
-    // Regression guard: `crates/input/Cargo.toml` used to carry its own
-    // permanently-frozen `version = "1.0.0"`, so every ATIF trace this
-    // crate wrote claimed `agent.version = "1.0.0"` no matter what the
-    // actual top-level `sven` binary release was. `crates/input` now
-    // inherits `version.workspace = true` from the root Cargo.toml's
-    // `[workspace.package].version`, so `env!("CARGO_PKG_VERSION")` here
-    // always matches the real release version.
+    // Guards against this crate carrying its own frozen `version = "1.0.0"`:
+    // `crates/session-store` inherits `version.workspace = true` from the
+    // root Cargo.toml's `[workspace.package].version`, so
+    // `env!("CARGO_PKG_VERSION")` here always matches the sven release
+    // version stamped into every ATIF trajectory.
     let profile = default_agent_profile();
     assert_ne!(
-            profile.version, "1.0.0",
-            "agent.version is still the old frozen crates/input version, not the real sven release version"
-        );
+        profile.version, "1.0.0",
+        "agent.version is a frozen crate version, not the sven release version"
+    );
     assert_eq!(profile.version, env!("CARGO_PKG_VERSION"));
 }
 

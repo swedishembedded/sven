@@ -65,11 +65,11 @@ jobs:
       - name: Release build
         run: make release
 
-  # Portability target (refactor plan Phase 6): a headless-only build with no
+  # Portability target: a headless-only build with no
   # TUI and no GDB tools - proves the
   # `minimal` cargo feature profile actually cross-compiles for a real
   # constrained target, not just `cargo check` on the host. aarch64-musl is
-  # the plan's chosen target: static libc, no glibc version skew, matches
+  # the chosen target: static libc, no glibc version skew, matches
   # common CI-runner/embedded-gateway hardware.
   minimal-profile:
     name: Minimal profile (aarch64-musl cross build)

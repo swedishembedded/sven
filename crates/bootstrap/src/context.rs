@@ -37,7 +37,7 @@ pub struct RuntimeContext {
     pub ci_context: Option<CiContext>,
     /// Path of `.sven/context.md`, `AGENTS.md`, or `CLAUDE.md`, when one
     /// exists. Referenced by path in the system prompt, not inlined — see
-    /// `sven_core::prompts`.
+    /// `sven_turn::prompts`.
     pub project_context_file: Option<PathBuf>,
     /// Text appended after the default system prompt Guidelines section.
     pub append_system_prompt: Option<String>,
@@ -182,9 +182,10 @@ pub enum BuiltinTools {
     /// what the sven application runs with.
     #[default]
     Detect,
-    /// The coding preset: files, search, shell, todo and `ask_question`.
+    /// The coding preset ([`ToolSetProfile::Coding`]): files, search, shell,
+    /// web, memory, skills, system, todo, `task` and `ask_question`.
     Coding,
-    /// The read-only research preset.
+    /// The read-only research preset ([`ToolSetProfile::Research`]).
     Research,
     /// No built-in tools and no MCP servers.
     None,
@@ -243,7 +244,8 @@ pub enum ToolSetProfile {
     /// Research profile (read-only, no write tools).
     ///
     /// For exploration sessions where the agent should not modify files.
-    /// No edit_file, write, shell (modifying commands), or task.
+    /// No edit_file, write or shell; `task` may delegate only to read-only
+    /// children.
     Research {
         questions: Questions,
         todos: Arc<Mutex<Vec<TodoItem>>>,

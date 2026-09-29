@@ -226,7 +226,7 @@ impl RuntimeBuilder {
     }
 
     /// Provide a tool-level question sender so tools can route `ask_user`
-    /// calls to the TUI/GUI question modal.
+    /// calls to the TUI question modal.
     pub fn with_tool_question_tx(mut self, tx: mpsc::Sender<QuestionRequest>) -> Self {
         self.tool_question_tx = Some(tx);
         self
@@ -941,33 +941,24 @@ pub struct SessionBundle {
 ///
 /// # Why this exists
 ///
-/// `sven_tool_api::events::ToolEvent` predates the HSM kernel: it was how tools
-/// reported side-band state changes (todo list updates, mode/model switches,
-/// subagent lifecycle, delegate summaries) back to the old `sven_machines::Agent`
-/// loop. Several tools still send through it — `TodoTool`, `TaskTool`
-/// (`SubagentStarted`/`SubagentEvent`), `SystemTool` (`ModeChanged`) — but
-/// [`build`](RuntimeBuilder::build) used to just `drop` the receiver ("all
-/// modes now use `TurnExecutor`"), on the assumption that `TurnExecutor` had
-/// a replacement path for all of it. It doesn't: `TurnExecutor` only reads
-/// the kernel's own `UiEvent` observation plane, which nothing was ever
-/// posting these to. The result was silent, total data loss — not just the
-/// `task`-tool `AgentEvent::SubagentStarted`/`SubagentEvent` this module was
-/// changed to fix (see `crates/ci/src/runner/event.rs`), but todo-list
-/// updates and mode changes reported by tools too, on every surface (TUI,
-/// GUI, CI, node, ACP), since `RuntimeBuilder` is the one assembly point
+/// Tools report side-band state changes through
+/// `sven_tool_api::events::ToolEvent` — `TodoTool` (todo list updates),
+/// `TaskTool` (`SubagentStarted`/`SubagentEvent`), `SystemTool`
+/// (`ModeChanged`). `TurnExecutor` only reads the kernel's own `UiEvent`
+/// observation plane, so without this forwarder those events would reach no
+/// surface (TUI, CI, ACP, SDK) — `RuntimeBuilder` is the one assembly point
 /// every one of them goes through.
 ///
-/// This function is the fix: it re-threads the side channel onto the
-/// observation plane, mapping each `ToolEvent` onto the `UiEvent` variant
-/// that reports the same fact (`AgentEvent`/`UiEvent` are the same
-/// `sven_vocab::SessionEvent` type, so a `ToolEvent` and the equivalent
-/// `AgentEvent` now produce literally the same value).
+/// This function re-threads the side channel onto the observation plane,
+/// mapping each `ToolEvent` onto the `UiEvent` variant that reports the same
+/// fact (`AgentEvent`/`UiEvent` are the same `sven_vocab::SessionEvent`
+/// type, so a `ToolEvent` and the equivalent `AgentEvent` produce the same
+/// value).
 ///
 /// `ToolEvent::McpServerAdded`/`McpServerRemoved` are deliberately **not**
 /// forwarded — they are registry mutations (add/remove a tool from the live
 /// `ToolRegistry`), not renderable observations, and have no `UiEvent`
-/// counterpart; wiring those up is a separate change (hot MCP registry
-/// reload), out of scope here.
+/// counterpart.
 fn spawn_tool_event_forwarder(mut rx: mpsc::Receiver<ToolEvent>, obs: ObservationSink) {
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {

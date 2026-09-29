@@ -4,7 +4,7 @@
 //! Abstraction for the sub-query capability used by `context_query` and
 //! `context_reduce`.
 //!
-//! Defined here in `sven-tools` so that the read-only context tools can hold
+//! Defined here in `sven-tools-ctx` so that the read-only context tools can hold
 //! a reference to a `SubQueryRunner` without depending on `sven-model`.  The
 //! concrete implementation [`ModelSubQueryRunner`] lives in `sven-bootstrap`
 //! where `sven-model` is available.

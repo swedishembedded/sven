@@ -1,13 +1,9 @@
 # The SDLC Deliberation Engine
 
-> **This document describes the architectural design intent.** The
-> `DeliberationExecutor` and `Deliberator` components described here have been
-> superseded by per-phase in-state tool loops (see
+> `SdlcMachine` implements this design with per-phase in-state tool loops
+> (`loop_core`) driven by `TurnExecutor`. See
 > [State Machine Reference](state-machines.md) and
-> [HSM Architecture](hsm-architecture.md)). The design principles - HSM as
-> authority, LLM as scoped tool, per-phase conversation threads, structured
-> decision schema - are still fully in effect and implemented in `SdlcMachine`
-> via `loop_core` and `TurnExecutor`.
+> [HSM Architecture](hsm-architecture.md) for machine-level details.
 
 The deliberation engine is how sven's `sdlc` mode does real engineering work
 while keeping the [HSM kernel](hsm-architecture.md) as the deterministic
@@ -77,17 +73,19 @@ the single policy evaluator and the audit trail captures every tool I/O entry.
 Each SDLC thread (`intake`, `discovery`, `planning`, `execution`,
 `verification`, `delivery`, `recovery`, and `task` for fan-out children) has its
 own conversation history, owned for the lifetime of the runtime by a
-`ConversationStore` (`llm/src/conversation.rs`):
+`ThreadStore` (`executors/src/thread_store.rs`):
 
 ```rust,ignore
-pub struct ConversationStore {
+pub struct ThreadStore {
     threads: HashMap<ThreadId, Vec<Message>>,
 }
 ```
 
-The store is **append-only**. The only mutation exposed is `append` (and a
-`thread()` accessor that callers must only push onto); earlier turns are never
-rewritten or removed. This is the **cache-safety invariant**: because the prefix
+The store is **append-only** during normal turns: turns are added with `append`
+(or pushed through the `thread()` accessor) and earlier turns are never
+rewritten or removed. The one escape hatch, `replace_thread`, is used only when
+a history is deliberately re-seeded (resume, edit-and-resubmit) or compacted
+(see [Prompt Compaction](prompt-compaction.md)). This is the **cache-safety invariant**: because the prefix
 of each thread never changes, the model provider's prompt cache stays valid
 across successive deliberations on the same thread, which keeps cost and latency
 down on long engagements.
@@ -98,8 +96,8 @@ example, when parallel execution children finish, the parent appends a single
 synthesis turn summarising their results to the `execution` thread rather than
 splicing anything into earlier messages.
 
-A thread accumulates, in order: the system role (pushed once, when the thread is
-empty), the per-turn instruction (a user turn), assistant text, assistant
+A thread accumulates, in order: the per-turn instruction (a user turn, with the
+SDLC prompts prepending the phase's role framing), assistant text, assistant
 tool-call messages, and tool-result messages.
 
 ---
@@ -108,23 +106,25 @@ tool-call messages, and tool-result messages.
 
 A state asks for a model turn by emitting `Effect::CallLlm` whose opaque
 `request` value carries a `kind: "turn"` discriminator. The wire shape mirrors
-`TurnRequest` (`llm/src/conversation.rs`):
+`TurnRequest` (`vocab/src/turn.rs`):
 
 | Field | Meaning |
 |-------|---------|
 | `thread` | Stable thread id (e.g. `"intake"`) selecting which append-only history to use |
-| `system_role` | Stable system-role framing for the thread (pushed once, cached) |
 | `instruction` | The comprehensive per-turn command, appended as a new user turn |
 | `tools` | Names of the tools available to the model this turn (state-scoped subset) |
+| `all_tools_mode` | When `tools` is empty, resolve every tool for this mode instead |
 | `schema` | JSON Schema the final response must conform to (may be null) |
 | `schema_name` | Short schema name (used for OpenAI strict mode) |
 | `model` | Optional per-state model override (resolved via the model resolver) |
-| `max_tool_rounds` | Maximum `Generating→RunningTools` rounds before a forced wrap-up |
+| `dynamic_suffix` | Volatile context sent as an uncached system block where supported |
+| `max_tool_rounds` | Maximum model↔tool rounds before a forced wrap-up |
+| `refused_calls` | Tool calls refused before they ran; answered in the thread before the model is called |
 
 `TurnRequest::is_turn` checks the `kind` tag; the `CompositeExecutor` uses it to
 route the effect to the `TurnExecutor`.
 
-The `SdlcMachine`'s prompts (`core/src/machines/sdlc/prompts.rs`) build
+The `SdlcMachine`'s prompts (`machines/src/machines/sdlc/prompts.rs`) build
 these values directly with the same wire shape. The **instruction is a real
 command, not raw JSON** - it frames the role, summarises the process step, states
 the explicit task, and tells the model how to answer.
@@ -137,7 +137,7 @@ the explicit task, and tells the model how to answer.
 the model (honouring a per-state override when a resolver is present), resolves
 the tool subset against the live registry (`ToolRegistry::schemas_for_names`),
 builds a `ResponseFormat` from the schema, and calls `stream_turn`
-(`core/src/stream_turn.rs`) against the thread.
+(`turn/src/stream_turn.rs`) against the thread.
 
 `stream_turn` performs a **single model pass**: it streams `TextDelta` /
 `ThinkingDelta` as `UiEvent`s and accumulates proposed tool calls - it does
@@ -145,16 +145,17 @@ builds a `ResponseFormat` from the schema, and calls `stream_turn`
 `LlmTurnComplete`.
 
 The machine (`SdlcMachine` / `TaskMachine`) then drives the loop using the shared
-`loop_core` state handlers (`core/src/machines/loop_core.rs`):
+`loop_core` helpers (`machines/src/machines/loop_core.rs`), staying in the
+current phase state while tools run:
 
 ```mermaid
 flowchart TD
-    A[State: Generating<br/>Entry → emit Effect::CallLlm kind=turn] --> B[TurnExecutor streams response]
+    A[Phase state<br/>emit Effect::CallLlm kind=turn] --> B[TurnExecutor streams response]
     B --> C{proposed tool calls?}
     C -- no --> D[parse text as decision<br/>emit LlmTurnComplete]
     D --> E[machine reads status → phase transition]
     C -- yes --> F[emit LlmTurnComplete with tool_calls]
-    F --> G[State: RunningTools<br/>machine emits Effect::CallTool per call]
+    F --> G[same phase state<br/>machine emits Effect::CallTool per call]
     G --> H[kernel permission gate]
     H -- Allowed --> I[ToolExecutor spawns task]
     H -- Forbidden --> J[Event::ToolFailed reason=denied]
@@ -177,8 +178,8 @@ Key behaviours:
   tool progress as `UiEvent`s on the outward observation plane. The **final
   tool-free text is *not* forwarded** as `TextComplete` when it is the raw
   structured decision - the machine parses it internally.
-- **Parallel tools.** All `Effect::CallTool`s emitted by the machine in one
-  `RunningTools` entry are handed concurrently to the `ToolExecutor`'s
+- **Parallel tools.** All `Effect::CallTool`s emitted by the machine for one
+  model turn are handed concurrently to the `ToolExecutor`'s
   spawn-and-forget tasks. Results arrive back as `ToolSucceeded` / `ToolFailed`
   events in whatever order the tasks finish.
 - **Kernel-gated.** Every tool call passes through the `PermissionPolicy` before
@@ -212,8 +213,8 @@ with belt-and-braces across heterogeneous providers:
 2. **Prompt fallback.** Every instruction also describes the decision contract in
    prose (the shared "answer contract" tail in `prompts.rs`), so models without
    `response_format` support still know the required shape.
-3. **Post-parse.** The executor always post-parses the final text
-   (`parse_decision`): it strips Markdown code fences and, if the whole string
+3. **Post-parse.** The machine always post-parses the final text
+   (`parse_sdlc_decision` in `decisions.rs`): it strips Markdown code fences and, if the whole string
    isn't valid JSON, extracts the first balanced top-level `{ … }` object
    (ignoring braces inside strings). This tolerates models that wrap JSON in
    fences or surround it with prose.
@@ -240,10 +241,9 @@ Each state restricts what the model can touch:
   error. (The shipped prompts leave it null, so every phase uses the session
   default, but the mechanism is wired end to end.)
 
-Tool calls now flow through the kernel as `Effect::CallTool` and are fully gated
-by the per-state `PermissionPolicy` before `ToolExecutor` executes them. There is
-no longer a separate `ApprovalPolicy` / `PermissionRequester` path on the
-registry for SDLC tool use; the kernel permission gate is the single enforcer.
+Tool calls flow through the kernel as `Effect::CallTool` and are fully gated
+by the per-state `PermissionPolicy` before `ToolExecutor` executes them; the
+kernel permission gate is the single enforcer for SDLC tool use.
 `AskUser` and `RequestHumanApproval` effects continue to gate phase-level
 decisions (scope confirmation, plan approval, delivery sign-off).
 
@@ -252,7 +252,7 @@ decisions (scope confirmation, plan approval, delivery sign-off).
 ## The decision envelope
 
 Every deliberation returns a JSON object matching the shared schema
-(`core/src/machines/sdlc/decisions.rs`). The authority field is `status`:
+(`machines/src/machines/sdlc/decisions.rs`). The authority field is `status`:
 
 | `status` | Machine behaviour |
 |----------|-------------------|
@@ -280,10 +280,10 @@ instruction can reference them.
 
 ## The SDLC phase walk
 
-`SdlcMachine` (`core/src/machines/sdlc/mod.rs`) is a flat hierarchy whose
+`SdlcMachine` (`machines/src/machines/sdlc/mod.rs`) is a flat hierarchy whose
 single superstate is `Top` (which handles global `UserCancelled` → `Cancelled`).
 Each phase handler is self-contained: it issues its deliberation on `Entry`,
-routes `DeliberationComplete` by `status`, re-deliberates on a developer
+routes the decision from the final tool-free `LlmTurnComplete` by `status`, re-deliberates on a developer
 `UserMessage` (carrying the answer forward append-only via `followup_request`),
 and handles approval replies inline.
 
@@ -382,16 +382,17 @@ unattended without changing the machine.
 
 Source of truth in code:
 
-- `core/src/machines/sdlc/` - `mod.rs` (the machine), `prompts.rs`
+- `machines/src/machines/sdlc/` - `mod.rs` (the machine), `prompts.rs`
   (instructions + subsets), `decisions.rs` (the envelope + schema), `task.rs`
   (the fan-out child).
-- `core/src/machines/loop_core.rs` - `Generating`, `RunningTools`,
-  `AwaitingApproval` shared state handlers.
-- `core/src/stream_turn.rs` - `stream_turn` (single-pass model streaming).
-- `executors/src/turn.rs` - `TurnExecutor` + decision parsing.
+- `machines/src/machines/loop_core.rs` - the shared in-state model↔tool loop
+  helpers and `LoopState`.
+- `turn/src/stream_turn.rs` - `stream_turn` (single-pass model streaming).
+- `executors/src/turn.rs` - `TurnExecutor`.
 - `executors/src/tool.rs` - `ToolExecutor` (spawn-and-forget, appends
   results to the right thread via the `call_id → thread` registry).
-- `llm/src/conversation.rs` - `ConversationStore` + `TurnRequest`.
+- `executors/src/thread_store.rs` - `ThreadStore`; `vocab/src/turn.rs` -
+  `TurnRequest`.
 - `model/src/types.rs` - `ResponseFormat` + `response_format` on
   `CompletionRequest`.
-- `tools/src/registry.rs` - `schemas_for_names` (the tool-subset API).
+- `tool-registry/src/registry.rs` - `schemas_for_names` (the tool-subset API).

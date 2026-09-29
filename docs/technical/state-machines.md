@@ -99,7 +99,7 @@ directly; it asks the kernel to do it by returning an effect.
 All `CallLlm` effects use `kind = "turn"`, handled by `TurnExecutor`:
 
 - Streams one model response from the configured LLM provider.
-- Appends the assistant turn (text + tool calls) to the `ConversationStore` thread.
+- Appends the assistant turn (text + tool calls) to the `ThreadStore` thread.
 - Posts `LlmTurnComplete { thread, text, tool_calls }` back into the kernel queue.
 - The machine then decides purely based on `tool_calls` and decision text what to
   do next - no I/O happens inside the machine.
@@ -517,11 +517,11 @@ PermissionPolicy (per-call classify for CallTool)
 
 **`TurnExecutor`** is the only component that calls the LLM. It streams a
 single model response, accumulates tool-call JSON slot-by-slot (without
-executing any tool), appends the assistant turn to the `ConversationStore`
+executing any tool), appends the assistant turn to the `ThreadStore`
 thread, and posts `LlmTurnComplete`. The machine then decides what to do next
 as a pure state transition.
 
 **`ToolExecutor`** is the only component that calls tools. It dispatches
 `CallTool` effects in parallel (spawn-and-forget), appends results to the
-`ConversationStore`, and posts `ToolSucceeded` / `ToolFailed`. No executor
+`ThreadStore`, and posts `ToolSucceeded` / `ToolFailed`. No executor
 ever calls another executor.

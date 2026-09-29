@@ -1,4 +1,4 @@
-//! Phase 2 kernel tests: `Effect::InstantiateSubmachine` fan-out.
+//! Kernel tests: `Effect::InstantiateSubmachine` fan-out.
 //!
 //! Verifies that the runtime hands `InstantiateSubmachine` effects to an
 //! injected [`ChildSpawner`] which runs each child **concurrently on its own

@@ -5,14 +5,13 @@
 //! context compaction, tool-argument-JSON repair, and system-prompt
 //! assembly.
 //!
-//! Moved out of `sven-core` (Phase 4.1 of the crate-architecture refactor
-//! plan) because they are not part of the pure `Machine` state-transition
-//! layer that gives `sven-core` (soon `sven-machines`) its "types go down,
-//! behaviour stays up" shape: `stream_turn` makes the real async LLM call
+//! These are deliberately not part of the pure `Machine` state-transition
+//! layer in `sven-machines`: `stream_turn` makes the real async LLM call
 //! (`sven_model::ModelProvider`) and `compact` decides what to summarize —
 //! both are I/O-adjacent turn primitives, not machine transitions. Sits at
-//! "domain" tier, below `sven-core`/`sven-executors` (both "machines"), so
-//! either can depend on it directly instead of on each other.
+//! "domain" tier, below `sven-executors` ("machines" tier), which drives
+//! them from effects; `architecture.toml` forbids `sven-machines` from
+//! reaching this crate at all.
 
 mod compact;
 mod tool_slots;

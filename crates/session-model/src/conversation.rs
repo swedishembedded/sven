@@ -5,14 +5,13 @@
 //! codec: the one place a `Vec<Message>` turns into (and back out of) a
 //! persisted `.md` conversation file.
 //!
-//! Moved here from `sven-input` (Phase 3.7 of the crate-architecture refactor
-//! plan) because it is pure parsing/formatting logic with no file-I/O
-//! dependency, and both `sven-ci` (workflow-step/history files) and
-//! `sven-input` itself (`.sven/history/*.md`, piped `sven '…' | sven --stdin '…'`
-//! input) need it. `sven-tui`'s `chat/markdown.rs` has a *different* format
-//! (`**You:**`/`**Agent:**` bold-prefix, for round-tripping the live Neovim
-//! edit buffer) — despite the superficial resemblance, it is not a copy of
-//! this codec and is not touched by this move.
+//! It lives here because it is pure parsing/formatting logic with no file-I/O
+//! dependency, and both `sven-ci` (workflow-step/history files) and the `sven`
+//! binary (piped `sven '…' | sven --stdin '…'` input) need it;
+//! `sven-session-store` re-exports it. `sven-tui`'s `chat/markdown.rs` has a
+//! *different* format (`**You:**`/`**Agent:**` bold-prefix, for
+//! round-tripping the live Neovim edit buffer) — despite the superficial
+//! resemblance, it is not a copy of this codec.
 
 use serde::{Deserialize, Serialize};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
@@ -86,17 +85,18 @@ impl TurnMetadata {
 /// | Type | Crate | Role |
 /// |------|-------|------|
 /// | `ConversationFile` | `sven-session-model` | **Persisted format** - a `.md` file parsed into messages. Read-only snapshot; no live session state. |
-/// | `Session` | `sven-core` | **Runtime state** - the active in-progress agent session with mutable message history, event channels, and tool state. |
-/// | `SessionManager` | `sven-tui` | **TUI multi-session UI state** - owns a list of live `Session`s and tracks which one is focused in the TUI. |
+/// | `KernelAgentSession` | `sven-bootstrap` | **Runtime state** - one fully-wired kernel session presented as an `AgentEvent` stream. |
+/// | `SessionManager` | `sven-tui` | **TUI multi-session UI state** - owns the list of session entries and tracks which one is focused in the TUI. |
 ///
 /// `ConversationFile` is produced by `parse_conversation` and consumed by the
-/// CI runner and TUI history loader to seed an agent's initial context.
+/// CI runner (workflow history and piped stdin) to seed an agent's initial
+/// context.
 #[derive(Debug, Default)]
 pub struct ConversationFile {
     /// Optional H1 title of the conversation.
     pub title: Option<String>,
     /// All complete turns that form the conversation history.
-    /// This is ready to pass to `Agent::replace_history_and_submit`.
+    /// This is ready to seed an agent's history.
     pub history: Vec<Message>,
     /// If the file ends with a `## User` section that has no corresponding
     /// `## Sven` response, it is treated as pending input to execute.
@@ -141,10 +141,10 @@ struct ToolCallEnvelope {
     pub args: serde_json::Value,
 }
 
-/// Parse error, shared with `sven-input`'s JSONL conversation format (whose
-/// `InvalidJsonlLine` variant lives here for the same reason `ParseError`
-/// itself does: one error type per "parse a persisted conversation" concept,
-/// not one per storage format).
+/// Parse error, shared with `sven-session-store`'s JSONL conversation format
+/// (whose `InvalidJsonlLine` variant lives here for the same reason
+/// `ParseError` itself does: one error type per "parse a persisted
+/// conversation" concept, not one per storage format).
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
     #[error("orphaned ## Tool Result without a preceding ## Tool section")]

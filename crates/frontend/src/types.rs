@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Shared types used by all Sven frontends (TUI and GUI).
+//! Shared types used by Sven frontends.
 
 use std::path::PathBuf;
 
@@ -63,7 +63,7 @@ pub struct NodeBackend {
     pub insecure: bool,
 }
 
-/// Options for launching any Sven frontend (shared subset used by both TUI and GUI).
+/// Options for launching any Sven frontend.
 pub struct FrontendOptions {
     pub mode: AgentMode,
     pub initial_prompt: Option<String>,

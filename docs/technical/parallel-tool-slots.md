@@ -1,190 +1,109 @@
-# Parallel Tool Slots
+# Parallel Tool Execution
 
-This document explains how sven executes multiple tool calls concurrently and
-why it can start executing a tool before the model finishes streaming its
-response.
+This document explains how sven turns the tool calls of one model response
+into concurrently running tool tasks, and how the results find their way back
+into the conversation.
 
----
+Three components share the work:
 
-## The problem with sequential execution
-
-When a model decides to call several tools in one turn it emits them all in a
-single streaming response.  Under the old architecture sven had to wait for the
-entire stream to finish before it could start executing anything:
-
-```
-stream fully done
-  → execute tool A
-  → execute tool B
-  → execute tool C
-  → push results to session
-  → next model call
-```
-
-Long-running tools (shell commands, `context_query`, `delegate_task`) could
-each take several seconds.  Running them one after another on top of the full
-stream wait added up to noticeable latency.
+| Stage | Component | Responsibility |
+|-------|-----------|----------------|
+| Accumulation | `sven_turn::stream_turn` | Collect streamed tool-call chunks into complete `ToolCall`s. Executes nothing. |
+| Dispatch | the machine's loop (`sven-machines`, `loop_core`) + the kernel | Emit one `Effect::CallTool` per proposed call and gate each through the permission policy. |
+| Execution | `ToolExecutor` (`crates/executors/src/tool.rs`) | Run each allowed call on its own tokio task and report the result. |
 
 ---
 
-## The new model - streaming dispatch
+## Accumulation - `stream_turn`
 
-The new architecture splits tool execution into three overlapping phases:
+Providers stream tool calls as indexed chunks (`ResponseEvent::ToolCall
+{ index, id, name, arguments }`). `stream_turn` keeps one accumulation slot per
+index and appends each argument chunk to that slot's buffer.
 
-```
-LLM stream:
-  slot 0 args stream in ... { complete } ──→ spawn task A  ─────────────────┐
-  slot 1 args stream in ... { complete } ──→ spawn task B  ──────────────┐  │
-  slot 2 args stream in ... { complete } ──→ spawn task C  ─────────┐   │  │
-  stream Done                                                      │   │  │
-                                                                   │   │  │
-  join_all: await C ◀────────────────────────────────────────────┘   │  │
-            await B ◀────────────────────────────────────────────────┘  │
-            await A ◀────────────────────────────────────────────────────┘
-  → push ToolCall × 3, then ToolResult × 3 (index order)
-  → next model call
-```
+Whenever a slot's buffer ends with `}`, the slot probe-parses it. The first
+time the buffer parses as JSON, the call is complete: `AgentEvent::ToolCallStarted`
+is emitted immediately, while the rest of the response is still streaming.
 
-Each tool slot is dispatched as soon as its JSON argument object is complete.
-Slots run in parallel with the remainder of the LLM stream and with each
-other.  `join_all` awaits them all using `FuturesUnordered` - completing in
-arrival order - then sorts results back into the original slot index order
-before pushing them to the session.
-
----
-
-## ToolSlotManager
-
-`ToolSlotManager` (in `crates/core/src/tool_slots.rs`) owns the entire
-lifecycle of a turn's tool calls.  One instance is created at the start of each
-`stream_one_turn` call and consumed by `join_all` at the end.
-
-### State machine per slot
-
-```
-Accumulating ──(JSON complete)──→ Dispatched(JoinHandle)
-```
-
-| State | Description |
-|-------|-------------|
-| `Accumulating(PendingSlot)` | Still receiving streaming argument chunks. |
-| `Dispatched { tc, handle }` | `tokio::spawn` task is in flight. |
-
-### Key methods
-
-| Method | Purpose |
-|--------|---------|
-| `feed(index, id, name, args_chunk)` | Apply a streaming chunk.  Returns `Some(ToolCall)` the first time a slot's args form valid JSON - the caller emits `AgentEvent::ToolCallStarted` at that point. |
-| `finalize_remaining()` | Called after `ResponseEvent::Done`.  Force-finalizes any slots whose JSON was still incomplete, using the JSON repair path.  Returns newly dispatched `ToolCall`s. |
-| `insert_call(index, tc)` | Insert a pre-built `ToolCall` (used for the inline XML `<invoke>` fallback). |
-| `is_empty()` | Returns `true` when no tool calls were seen - used to decide whether to check for the XML fallback. |
-| `join_all(tx)` | Await every `JoinHandle` via `FuturesUnordered`.  Emits `AgentEvent::ToolCallFinished` for each as it completes.  Returns results sorted by slot index. |
-
-### JSON readiness detection
-
-Each incoming chunk is appended to the slot's `args_buf`.  After every append
-the slot runs a probe-parse:
-
-```
-if args_buf.ends_with('}') {
-    serde_json::from_str(&args_buf)?  // → dispatch if Ok
-}
-```
-
-Parsing a partial JSON object fails in well under a microsecond.  The fast path
-dispatches the moment the model emits a closing brace, not at `Done`.
-
-When the stream ends and a slot is still `Accumulating`, `finalize_remaining`
-runs three repair strategies in order:
+When the stream ends, every slot that never parsed is finalized:
 
 1. Parse the buffer as-is.
-2. Fix invalid escape sequences (e.g. `\c` → `\\c`), then re-parse.
-3. Attempt structural repair (close open strings, append `}`), then re-parse.
-4. Substitute `{}` if all repairs fail, and log a warning.
+2. Otherwise run `attempt_json_repair` (`crates/turn/src/tool_slots.rs`):
+   fix invalid escape sequences, split fused keys, and close an open string
+   and object.
+3. If every repair fails, substitute `{}` and log a warning.
+
+A slot with an empty name is dropped (it cannot be dispatched); a slot with an
+empty id gets a synthetic `tc_synthetic_N` id.
+
+### `<invoke>` fallback
+
+Some models write tool calls as inline Anthropic-style XML instead of using the
+structured function-call API. When a response produced no native tool calls
+and its text contains `<invoke `, `stream_turn` extracts every
+`<invoke name="...">...</invoke>` block as a tool call and removes it from the
+text.
+
+---
+
+## Dispatch - `TurnExecutor`, the machine and the kernel
+
+After the stream finishes, `TurnExecutor`:
+
+1. Appends the assistant turn (text plus one tool-call message per call) to the
+   conversation thread in the shared `ThreadStore`.
+2. Records `call_id → (thread, original id)` so `ToolExecutor` can later append
+   each result to the right thread under the exact id the model assigned.
+3. Posts `Event::LlmTurnComplete { thread, text, tool_calls }` to the machine.
+
+The machine's loop (`loop_core::on_llm_turn_complete`) emits one
+`Effect::CallTool` per proposed call, records them in its pending set, and
+stays in its current state while they run. The kernel classifies each
+`CallTool` individually against the session's permission policy; allowed calls
+go straight to the executor.
+
+---
+
+## Execution - `ToolExecutor`
+
+Every `CallTool` effect is spawned on its own tokio task (spawn-and-forget), so
+the kernel's consumer loop returns immediately and all calls from one response
+run concurrently. Each invocation is bounded by a wall-clock watchdog (600 s by
+default) so a hung or panicking tool still produces a result instead of
+leaving the call pending forever.
+
+When a task finishes, `ToolExecutor`:
+
+1. Emits `UiEvent::ToolCallFinished` with the full, untruncated output.
+2. Appends the result to the call's thread, truncated by
+   `sven_turn::smart_truncate` according to the tool's `OutputCategory` (see
+   [prompt-compaction.md](prompt-compaction.md#layer-3---smart-tool-result-truncation)).
+3. Posts `Event::ToolSucceeded` or `Event::ToolFailed` to the machine.
+
+Results arrive in completion order, not call order. The machine removes each
+call from its pending set; once the set is empty it emits the next
+`CallLlm`.
+
+---
+
+## Thread ordering
+
+The assistant's tool-call messages are appended by `TurnExecutor` before any
+tool task can finish, so every tool result in a thread follows the call it
+answers. Before the next turn is sent, `TurnExecutor` also answers any call the
+kernel refused before it ran (`TurnRequest::refused_calls`), so every tool call
+in the thread has a result when the model sees it again.
 
 ---
 
 ## Event ordering
 
-`AgentEvent` consumers (TUI, CI runner, ACP) see this sequence per turn:
+`AgentEvent` consumers (TUI, CI runner, ACP) see, per turn:
 
 ```
-ToolCallStarted(slot 0)      ← emitted as soon as slot 0 args are complete
-ToolCallStarted(slot 1)      ← slot 1 may complete before slot 2 or after
-ToolCallStarted(slot 2)
-  ... tool progress events (ProgressUpdate, TodoUpdate, ModeChanged) ...
-ToolCallFinished(slot N)     ← whichever task finishes first
-ToolCallFinished(slot M)
-ToolCallFinished(slot K)
+ToolCallStarted(call A)      ← as soon as A's arguments parse, mid-stream
+ToolCallStarted(call B)
+  ... TurnComplete for the model turn ...
+  ... tool progress events (TodoUpdate, ModeChanged, ...) ...
+ToolCallFinished(whichever call finishes first)
+ToolCallFinished(the other)
 ```
-
-Progress events from in-flight tools arrive while the LLM is still streaming.
-The agentic loop drains the `tool_event_rx` channel both inside the stream loop
-and inside the `join_all` loop so these events reach the TUI in real time.
-
----
-
-## Session ordering invariant
-
-OpenAI's API requires all assistant `ToolCall` messages to precede any
-`ToolResult` messages within a single turn.  Because tools may complete in
-arbitrary order, the agent preserves this by:
-
-1. Collecting all `(ToolCall, ToolOutput)` pairs from `join_all`.
-2. Sorting by slot index.
-3. Pushing all `Message::ToolCall` entries first.
-4. Pushing all `Message::ToolResult` entries second.
-
-This means the session history is always well-formed regardless of which tool
-finishes first.
-
----
-
-## Cancellation
-
-`ToolSlotManager` implements `Drop`:
-
-```rust
-impl Drop for ToolSlotManager {
-    fn drop(&mut self) {
-        for (_, state) in self.slots.drain() {
-            if let SlotState::Dispatched { handle, .. } = state {
-                handle.abort();
-            }
-        }
-    }
-}
-```
-
-When the user cancels a running session (e.g. `Ctrl-C` in the TUI), the
-agentic loop's `tokio::select!` takes the cancellation branch, which drops the
-future that owns the `ToolSlotManager`.  The `Drop` impl aborts every
-in-flight task immediately, so tools do not continue running detached in the
-background.
-
----
-
-## XML `<invoke>` fallback
-
-Some providers emit tool calls as inline XML rather than the structured
-function-call API.  After the stream ends, if no JSON tool calls were seen,
-the agent parses `<invoke name="...">...</invoke>` blocks from the response text.
-These are inserted into the same `ToolSlotManager` via `insert_call` and then
-executed through `join_all` - the same parallel pipeline with the same session
-ordering guarantees.
-
----
-
-## Latency savings
-
-The savings per turn are approximately:
-
-```
-saved ≈ Σ max(0, exec_time(slot_N) − time_remaining_in_stream_after_slot_N_ready)
-```
-
-For a turn where the model emits two tool calls and the first one's arguments
-are complete halfway through the stream, that tool runs for its full execution
-time in parallel with the second half of the stream and the second tool's
-execution.  Empirically this eliminates most of the per-tool overhead for
-workloads that combine a fast tool with a slow one in the same turn.

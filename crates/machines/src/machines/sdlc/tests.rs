@@ -365,7 +365,7 @@ fn recovery_entry_fires_turn_then_failed_after_limit() {
     assert_eq!(first_turn_thread(&out.effects).as_deref(), Some("recovery"));
 }
 
-// ── Phase 2: parallel execution fan-out ───────────────────────────────────────
+// ── Parallel execution fan-out ──────────────────────────────────────────────
 
 #[test]
 fn execution_fans_out_when_plan_decomposes_and_spawner_present() {

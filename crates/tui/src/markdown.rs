@@ -15,8 +15,8 @@ pub type StyledLines = Vec<Line<'static>>;
 
 /// Convert a markdown string into a list of styled [`Line`]s for Ratatui.
 ///
-/// Uses the same block parser as the GUI (`parse_markdown_blocks`) so rendering
-/// is consistent across frontends. Each block type (paragraph, heading, list
+/// Uses the shared `sven-frontend` block parser (`parse_markdown_blocks`) so
+/// rendering is consistent across frontends. Each block type (paragraph, heading, list
 /// item, block quote, etc.) is rendered correctly without cross-contamination.
 ///
 /// `wrap_width` - wrap long text at this column (0 → 80).
@@ -31,10 +31,10 @@ pub fn render_markdown(md: &str, wrap_width: u16, ascii: bool) -> StyledLines {
     render_blocks_to_lines(&blocks, width, ascii)
 }
 
-// ── Blocks-based renderer (matches GUI parsing) ───────────────────────────────
+// ── Blocks-based renderer ─────────────────────────────────────────────────────
 
-/// Render parsed markdown blocks to styled lines. Uses the same block structure
-/// as the GUI so paragraphs, block quotes, list items, etc. are never confused.
+/// Render parsed markdown blocks to styled lines. Works on the shared block
+/// structure so paragraphs, block quotes, list items, etc. are never confused.
 fn render_blocks_to_lines(blocks: &[MarkdownBlock], width: usize, ascii: bool) -> StyledLines {
     let mut lines = Vec::new();
     let mut ordered_counter: u64 = 1;

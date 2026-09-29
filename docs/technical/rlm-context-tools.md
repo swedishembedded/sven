@@ -337,13 +337,13 @@ and can open independent contexts.
 
 ## System prompt integration
 
-**Source**: `crates/core/src/prompts.rs`, function `build_guidelines_section`
+**Source**: `crates/turn/src/prompts.rs`, function `build_guidelines_section`
 
 A `### Large Content Analysis` section is injected into every system prompt
 via the `guidelines::large_content()` static string.  It states when to
-prefer context tools over `read_file` and describes the recommended workflow
-(`context_open` → `context_grep` → `context_read` → `context_query` →
-`context_reduce`).
+prefer the compound `context` tool over `read_file` and describes the
+recommended workflow (`context(action=open)` → `grep` → `read` → `query` →
+`reduce`).
 
 This ensures the model selects the correct tool chain proactively, without
 relying solely on the individual tool descriptions.

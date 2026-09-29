@@ -586,7 +586,7 @@ pub enum ResponseEvent {
     /// A fatal error surfaced mid-stream by the provider.
     ///
     /// Consumers must treat this as a hard failure of the turn, not a
-    /// warning: `sven-core`'s `stream_turn` returns `Err` on receipt so it
+    /// warning: `sven-turn`'s `stream_turn` returns `Err` on receipt so it
     /// reaches the caller as a real failure instead of silently producing an
     /// empty "successful" completion.
     Error(String),

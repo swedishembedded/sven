@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Standalone `sven-mcp` binary (refactor plan Phase 6.2): the same MCP
+//! Standalone `sven-mcp` binary: the same MCP
 //! server as `sven mcp`, without linking the TUI closure of the
 //! monolithic `sven` binary.
 

@@ -13,13 +13,13 @@ flowchart TD
     IDE <-->|"stdio\nJSON-RPC 2.0"| LOCAL
 
     subgraph local ["sven acp serve"]
-        LOCAL["SvenAcpAgent\n─────────────────\nsven_core::Agent loop\nToolRegistry / sven-tool-registry\nsven-model provider\ntokio LocalSet"]
+        LOCAL["SvenAcpAgent\n─────────────────\nKernelAgentSession\n(HSM kernel via RuntimeBuilder)\nToolRegistry / sven-tool-registry\nsven-model provider\ntokio LocalSet"]
     end
 ```
 
 ### `sven acp serve`
 
-The process reads the sven configuration (`~/.config/sven/config.yaml`), builds a fresh `sven_core::Agent` per ACP session, and drives it directly.  Notifications (text deltas, tool calls, plan updates, mode changes) are streamed back to the client as `session/notification` messages.
+The process reads the sven configuration (`~/.config/sven/config.yaml`), builds a fresh kernel session per ACP session (`sven_bootstrap::RuntimeBuilder`, wrapped in a `KernelAgentSession`), and drives it directly.  Notifications (text deltas, tool calls, plan updates, mode changes) are streamed back to the client as `session/notification` messages.
 
 ## Running
 
@@ -91,7 +91,7 @@ Clients can switch modes at any time using the `session/setMode` RPC call.  Sven
 
 The bridge layer in `crates/acp/src/bridge.rs` translates sven's internal `AgentEvent` stream into ACP `SessionUpdate` notifications:
 
-| `sven_core::AgentEvent`          | ACP `SessionUpdate`             |
+| `sven_machines::AgentEvent`      | ACP `SessionUpdate`             |
 |----------------------------------|---------------------------------|
 | `TextDelta(s)` / `TextComplete(s)` | `AgentMessageChunk`           |
 | `ThinkingDelta(s)` / `ThinkingComplete(s)` | `AgentThoughtChunk`  |
@@ -106,6 +106,6 @@ Events not listed above (e.g. `TokenUsage`, `ContextCompacted`, collab events) a
 
 ## Concurrency model
 
-The ACP trait requires `?Send` futures, so the entire server runs inside a `tokio::task::LocalSet`.  Session state is held in a `RefCell<HashMap<...>>` (safe because `LocalSet` is single-threaded).  Each `sven_core::Agent` is wrapped in a `tokio::sync::Mutex` to prevent concurrent prompts on the same session, and cancellation is implemented via a `oneshot` channel stored inside the session entry.
+The ACP trait requires `?Send` futures, so the entire server runs inside a `tokio::task::LocalSet`.  Session state is held in a `RefCell<HashMap<...>>` (safe because `LocalSet` is single-threaded).  Each session's `AgentEvent` receiver is wrapped in a `tokio::sync::Mutex` so two prompts cannot drain the same session concurrently, and cancellation is implemented via a `oneshot` channel stored inside the session entry.
 
 Notifications flow through a `mpsc::UnboundedSender<ConnMessage>` that is shared between the agent task and the I/O forwarding task.  The I/O task calls `AgentSideConnection::session_notification` (from the `acp::Client` trait) and sends an acknowledgement back to the agent task before processing the next event.
