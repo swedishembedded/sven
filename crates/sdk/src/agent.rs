@@ -213,6 +213,32 @@ impl Agent {
         facts
     }
 
+    /// Replaces the history folded from observations with the conversation
+    /// the kernel actually holds: the thread the model reads from, minus the
+    /// system message the session seeds. The observation broadcast can lag
+    /// and drop events under load; the store cannot.
+    ///
+    /// A machine that keeps its conversation on threads of its own (`sdlc`
+    /// runs one per phase) leaves the primary thread at its seed; its folded
+    /// history is kept.
+    fn take_history(&mut self, handle: &sven_bootstrap::RuntimeHandle, seeded: usize) {
+        let thread = sven_machines::mode::primary_thread(&self.state.mode);
+        let Ok(store) = handle
+            .conversation_store()
+            .lock()
+            .map(|s| s.snapshot(thread))
+        else {
+            return;
+        };
+        let held: Vec<Message> = store
+            .into_iter()
+            .filter(|m| m.role != sven_model::Role::System)
+            .collect();
+        if held.len() > seeded {
+            self.state.history = held;
+        }
+    }
+
     /// Builds a session, posts one message, and folds the result back in.
     async fn run_turn(
         &mut self,
@@ -278,6 +304,9 @@ impl Agent {
         }
 
         let mut observations = bundle.handle.subscribe_observations();
+        // The history as seeded, so the store can be checked for this turn's
+        // messages once it ends (see `take_history`).
+        let seeded = self.state.history.len();
         self.state.history.push(Message::user(text));
 
         if !bundle
@@ -388,6 +417,7 @@ impl Agent {
             Some(snapshot) => Some(snapshot),
             None => bundle.runtime.capture().await,
         };
+        self.take_history(&bundle.handle, seeded);
 
         // Report the failure only after the kernel state above is stored, so a
         // caller that retries or inspects the agent resumes from where the
