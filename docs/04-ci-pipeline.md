@@ -48,7 +48,7 @@ The project contains the following top-level modules: ...
 ## Tool
 
 ```json
-{"name": "list_dir", "args": {"path": "."}}
+{"name": "find_file", "args": {"pattern": "*"}}
 ```
 
 ## Tool Result
@@ -206,11 +206,10 @@ system prompt as the **Project Context**:
 
 ```
 ## Project Context
-Project root directory: `<absolute path to your project>`
-- Use this absolute path for all file operations.
-- Pass this path as the `workdir` argument to `run_terminal_command`
-  so shell commands execute in the correct directory.
-- Prefer absolute paths over relative paths in every tool call.
+Project root: `<absolute path to your project>`
+Workspace root: same as project root.
+- When the user provides relative paths, resolve them relative to the project root.
+- Use absolute paths for all file read/write operations.
 ```
 
 This eliminates the common class of bugs where the agent uses relative
@@ -475,8 +474,8 @@ prefixes that are easy to scrape with grep or awk:
 
 ```
 [sven:step:start] 1/3 label="Analyse codebase"
-[sven:tool:call] name="list_dir" args={"path":"."}
-[sven:tool:ok] name="list_dir"
+[sven:tool:call] name="find_file" args={"pattern":"*"}
+[sven:tool:ok] name="find_file"
 [sven:step:complete] 1/3 label="Analyse codebase" duration_ms=4321 tools=2 success=true
 [sven:step:start] 2/3 label="Propose improvements"
 ...

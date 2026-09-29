@@ -222,9 +222,9 @@ directly.
 
 | Category | Tools | Strategy |
 |---|---|---|
-| `HeadTail` | `shell`, `run_terminal_command`, `gdb_command`, `gdb_interrupt`, `gdb_wait_stopped` | Keep first 60 + last 40 lines; both the command preamble and the final result remain visible |
-| `MatchList` | `grep`, `search_codebase`, `read_lints` | Keep leading matches only; later matches are less relevant |
-| `FileContent` | `read_file`, `fs` | Balanced head + tail split; preserves imports/declarations and the most recent changes |
+| `HeadTail` | `shell`, `gdb` | Keep first 60 + last 40 lines; both the command preamble and the final result remain visible |
+| `MatchList` | `grep`, `memory` search, `read_lints` (MCP server) | Keep leading matches only; later matches are less relevant |
+| `FileContent` | `read_file` | Balanced head + tail split; preserves imports/declarations and the most recent changes |
 | `Generic` | all others | Hard-truncate at the nearest line boundary |
 
 Every truncated result ends with an explicit notice:

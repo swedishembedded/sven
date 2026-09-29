@@ -3,64 +3,47 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Embedded per-state deliberation prompts for the SDLC machine.
 //!
-//! Each state issues **one comprehensive instruction** — a real command, not
-//! raw JSON data — together with a state-scoped tool subset and the shared
+//! Each state issues **one comprehensive instruction** - a real command, not
+//! raw JSON data - together with a state-scoped tool subset and the shared
 //! decision schema.  The instruction frames the role, summarises the process
 //! step, gives the explicit task, and tells the model to answer per the schema.
 //!
 //! The returned [`serde_json::Value`] is the opaque `request` of
 //! [`Effect::CallLlm`](sven_hsm::Effect::CallLlm); it carries the
-//! `kind: "deliberate"` discriminator so the deliberation executor routes it
-//! (mirrors [`sven_llm::DeliberationRequest`]'s wire shape without a crate
-//! dependency).
+//! `kind: "turn"` discriminator the turn executor routes on.
 
 use serde_json::{json, Value};
 
 use super::decisions::decision_schema;
 
 /// Read-only investigation tools (discovery, planning, verification).
-pub const READ_TOOLS: &[&str] = &[
-    "read_file",
-    "find_file",
-    "grep",
-    "search_codebase",
-    "read_lints",
-    "list_dir",
-    "glob",
-];
+///
+/// Every name here must be a tool the agent is actually offered: unknown names
+/// are skipped silently when schemas are resolved, so a stale entry is a
+/// capability that quietly is not there (bootstrap pins this in a test).
+pub const READ_TOOLS: &[&str] = &["read_file", "find_file", "grep"];
 
-/// Mutating tools available during execution (plus the read tools).
+/// Mutating tools available during execution (plus the read tools). Deleting
+/// and listing go through `shell`.
 pub const WRITE_TOOLS: &[&str] = &[
     "read_file",
     "find_file",
     "grep",
-    "search_codebase",
-    "read_lints",
-    "list_dir",
-    "glob",
+    "write_file",
     "edit_file",
-    "delete_file",
     "shell",
-    "run_terminal_command",
 ];
 
 /// Build-and-test tools (verification / delivery).
-pub const BUILD_TOOLS: &[&str] = &[
-    "read_file",
-    "grep",
-    "search_codebase",
-    "read_lints",
-    "shell",
-    "run_terminal_command",
-];
+pub const BUILD_TOOLS: &[&str] = &["read_file", "find_file", "grep", "shell"];
 
 /// Shared tail appended to every instruction: how to answer.
 pub const ANSWER_CONTRACT: &str =
     "Respond with a single JSON object matching the decision schema. Set \
      `status` to exactly one of: `proceed` (you are confident and the phase is \
-     complete), `need_user_input` (you must ask the developer something — put \
+     complete), `need_user_input` (you must ask the developer something - put \
      the questions in `questions`), `need_approval` (you need the developer to \
-     approve before continuing — describe it in `approval_prompt`), `need_tools` \
+     approve before continuing - describe it in `approval_prompt`), `need_tools` \
      (you still need to investigate further), or `failed` (you cannot proceed). \
      Put a concise human summary in `summary`, any user-facing text in \
      `message`, and structured results in `payload`. Do not output anything \
@@ -143,7 +126,7 @@ pub fn followup_request(thread: &str, system_role: &str, tools: &[&str], answer:
     turn_request(thread, system_role, instruction, tools, "decision", 6)
 }
 
-/// Generic follow-up after a rejected approval — ask the model to revise.
+/// Generic follow-up after a rejected approval - ask the model to revise.
 #[must_use]
 pub fn revise_request(thread: &str, system_role: &str, tools: &[&str], reason: &str) -> Value {
     let instruction = format!(

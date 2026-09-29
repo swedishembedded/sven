@@ -293,27 +293,24 @@ sven has a set of built-in tools it can call to complete tasks:
 
 | Tool | What it does |
 |------|-------------|
-| `run_terminal_command` | Run a shell command |
-| `read_file` | Read a file |
-| `write` | Write or create a file |
+| `read_file` | Read a file (images are detected and attached) |
+| `write_file` | Create or overwrite a file |
 | `edit_file` | Edit part of a file |
-| `delete_file` | Delete a file |
-| `list_dir` | List directory contents |
-| `glob_file_search` | Find files by pattern |
-| `grep` | Search file contents |
-| `search_codebase` | Semantic search of a codebase |
-| `apply_patch` | Apply a unified diff patch |
+| `attach_file` | Put an image, audio file or PDF into the model's context |
+| `find_file` | Find files by name pattern |
+| `grep` | Search file contents, in one file or the whole project |
+| `shell` | Run a shell command (also how files are deleted and directories listed) |
 | `web_fetch` | Fetch a URL |
 | `web_search` | Search the web |
-| `read_lints` | Read linter diagnostics |
+| `task` | Delegate a self-contained subtask to a sub-agent |
+| `context` | Work with content larger than the context window |
+| `memory` | Key-value notes and project knowledge documents |
+| `semantic_memory` | Remember and recall facts across sessions |
 | `todo` | Read or update the task list for the current session (call with no args to read) |
-| `ask_question` | Ask you a clarifying question |
-| `switch_mode` | Change the agent mode mid-session |
-| `gdb_start_server` | Start a GDB server in the background |
-| `gdb_connect` | Connect gdb-multiarch to the running server |
-| `gdb_command` | Run a GDB command and return its output |
-| `gdb_interrupt` | Interrupt execution (Ctrl+C equivalent) |
-| `gdb_stop` | Stop the debugging session and kill the server |
+| `skill` | Load a skill's instructions |
+| `system` | Change the agent mode or model mid-session |
+| `ask_question` | Ask you a clarifying question (interactive sessions) |
+| `gdb` | Drive a GDB debugging session (offered when the project has GDB configuration) |
 
 ### GDB debugging tools
 

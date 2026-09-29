@@ -185,8 +185,8 @@ agent:
   # Maximum tokens allowed for a single tool result before it is
   # deterministically truncated before entering the session.
   # Truncation is content-aware:
-  #   shell / run_terminal_command : keeps first 60 + last 40 lines
-  #   grep / search_codebase        : keeps leading matches
+  #   shell                         : keeps first 60 + last 40 lines
+  #   grep                          : keeps leading matches
   #   read_file                      : keeps head + tail lines
   #   everything else                : hard-truncates at the character limit
   # A truncation notice is always appended so the model knows more exists.

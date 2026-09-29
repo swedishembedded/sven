@@ -183,11 +183,10 @@ provider driver impls, `openai_compat`) · `sven-model-mock` (`--model mock`
 test/dev providers)
 
 ### domain (concrete tool implementations + integrations)
-`sven-tools-fs` (file I/O + output-buffer tools) · `sven-tools-exec` (`shell`,
-`run_terminal_command`) · `sven-tools-ctx` (RLM context store, knowledge,
+`sven-tools-fs` (file I/O + output-buffer tools) · `sven-tools-exec` (`shell`) · `sven-tools-ctx` (RLM context store, knowledge,
 `memory`) · `sven-tools-agent` (`system`, `todo`, `ask_question`, `skill` -
 agent self-management) · `sven-tools-web` (`web_fetch`/`web_search`, `grep`,
-`search_codebase`, `read_lints`) · `sven-tools-gdb` (GDB/MI debugging, unix
+`read_lints`) · `sven-tools-gdb` (GDB/MI debugging, unix
 only) · `sven-turn` (impure turn primitives: `stream_turn`,
 `compact`/`smart_truncate`, prompt assembly) · `sven-team` (agent-team
 coordination) · `sven-channels`/`sven-integrations`/`sven-memory`/`sven-scheduler`

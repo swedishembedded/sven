@@ -230,14 +230,11 @@ Each state restricts what the model can touch:
 - **Tool subset.** The request's `tools` list names the allowed tools, resolved
   against the live registry with `ToolRegistry::schemas_for_names` (unknown names
   are skipped). The SDLC prompts define three subsets:
-  - `READ_TOOLS` - `read_file`, `find_file`, `grep`, `search_codebase`,
-    `read_lints`, `list_dir`, `glob` (Intake, Discovery, Planning, Delivery,
+  - `READ_TOOLS` - `read_file`, `find_file`, `grep` (Intake, Discovery, Planning, Delivery,
     Recovery).
-  - `WRITE_TOOLS` - the read tools plus `edit_file`, `delete_file`, `shell`,
-    `run_terminal_command` (Execution and execution follow-ups, and each fan-out
-    task).
-  - `BUILD_TOOLS` - read tools plus `shell` / `run_terminal_command` for
-    build/test (Verification).
+  - `WRITE_TOOLS` - the read tools plus `write_file`, `edit_file` and `shell`
+    (Execution and execution follow-ups, and each fan-out task).
+  - `BUILD_TOOLS` - read tools plus `shell` for build/test (Verification).
 - **Per-state model.** The request's `model` field may name a model; the executor
   resolves it via the `ModelResolver` and falls back to the default model on
   error. (The shipped prompts leave it null, so every phase uses the session

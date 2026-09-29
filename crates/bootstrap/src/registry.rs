@@ -662,6 +662,41 @@ mod tests {
         assert_eq!(got, expected, "the agent's tool set changed");
     }
 
+    /// Every tool a machine allow-lists for a state must be one the agent is
+    /// actually offered.
+    ///
+    /// `schemas_for_names` silently skips unknown names, so a stale list
+    /// fails quietly: the SDLC execution phase listed `delete_file`, `glob`
+    /// and `run_terminal_command` (none exists) and omitted `write_file`, so
+    /// it - and the task and verified-task machines sharing the list - could
+    /// edit files but never create one.
+    #[test]
+    fn every_state_scoped_tool_is_a_registered_tool() {
+        use sven_machines::machines::sdlc::prompts::{BUILD_TOOLS, READ_TOOLS, WRITE_TOOLS};
+        let known: Vec<String> = agent_tools().into_iter().map(|(n, ..)| n).collect();
+        let mut unknown: Vec<(&str, &str)> = Vec::new();
+        for (list, names) in [
+            ("READ_TOOLS", READ_TOOLS),
+            ("WRITE_TOOLS", WRITE_TOOLS),
+            ("BUILD_TOOLS", BUILD_TOOLS),
+        ] {
+            unknown.extend(
+                names
+                    .iter()
+                    .filter(|n| !known.iter().any(|k| k == *n))
+                    .map(|n| (list, *n)),
+            );
+        }
+        assert!(
+            unknown.is_empty(),
+            "allow-listed tools that do not exist: {unknown:?}"
+        );
+        assert!(
+            WRITE_TOOLS.contains(&"write_file"),
+            "the execution phase must be able to create files"
+        );
+    }
+
     /// A tool description must describe that tool and nothing else.
     ///
     /// Naming a sibling makes the pair a unit that has to be changed together,

@@ -231,24 +231,15 @@ See [docs/technical/hsm-architecture.md](docs/technical/hsm-architecture.md) for
 
 | Category | Tools |
 |----------|-------|
-| **Files** | `read_file`, `write_file`, `edit_file`, `delete_file`, `list_dir` |
-| **Search** | `find_file`, `grep`, `search_codebase` |
-| **Shell** | `run_terminal_command`, `shell` |
+| **Files** | `read_file`, `write_file`, `edit_file`, `attach_file` (images, audio and PDFs into the model's context) |
+| **Search** | `find_file` (by name), `grep` (by content, one file or the whole project) |
+| **Shell** | `shell` - run commands, delete and list files, run linters |
 | **Web** | `web_fetch`, `web_search` |
-| **Images** | `read_image` |
-| **Sub-agents** | `task` - spawn a focused sub-agent for a self-contained subtask |
-| **GDB / hardware** | `gdb_start_server`, `gdb_connect`, `gdb_command`, `gdb_interrupt`, `gdb_wait_stopped`, `gdb_status`, `gdb_stop` |
-| **Messaging** | `send_message` - send to any configured channel |
-| **Teams** | `create_team`, `list_team`, `spawn_teammate`, `create_task`, `claim_task`, `complete_task`, `list_tasks`, `assign_task` |
-| **Scheduler** | `schedule` - create, list, enable, disable, delete jobs |
-| **Email** | `email` - list, read, send, reply to, and search email |
-| **Calendar** | `calendar` - query schedule, create/update/delete events |
-| **Voice** | `voice` - TTS, STT, outbound calls |
-| **Memory** | `semantic_memory` - remember, recall (BM25 + vector), forget, list, get |
-| **Large content** | `context_open`, `context_read`, `context_grep`, `context_query`, `context_reduce` - memory-map files/dirs and analyse content larger than the context window |
-| **Streaming buffers** | `buf_status`, `buf_read`, `buf_grep` - inspect live output from running sub-agents or shell commands |
-| **Knowledge** | `list_knowledge`, `search_knowledge` - query `.sven/knowledge/` project knowledge documents |
-| **Session** | `switch_mode`, `todo`, `update_memory`, `ask_question`†, `read_lints`, `load_skill` |
+| **Sub-agents** | `task` - spawn a focused sub-agent for a self-contained subtask, never with more authority than the session |
+| **Large content** | `context` - open, read, grep, query and reduce files and directories larger than the context window |
+| **GDB / hardware** | `gdb` - start a server, connect, run commands, interrupt, stop (offered when the project has GDB configuration) |
+| **Memory** | `memory` (key-value notes and `.sven/knowledge/` documents), `semantic_memory` (remember and recall across sessions) |
+| **Session** | `system` (switch mode or model), `todo`, `skill`, `ask_question`† |
 
 †`ask_question` is only available in interactive TUI sessions.
 
