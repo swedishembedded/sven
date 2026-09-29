@@ -744,7 +744,9 @@ mod tests {
     fn the_schema_requires_what_execute_validates() {
         let t = make_task();
         let schema = t.parameters_schema();
-        let required = schema["required"].as_array().expect("required list present");
+        let required = schema["required"]
+            .as_array()
+            .expect("required list present");
         let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
         assert!(names.contains(&"prompt"), "prompt must be required");
         assert!(names.contains(&"handle"), "handle must be required");

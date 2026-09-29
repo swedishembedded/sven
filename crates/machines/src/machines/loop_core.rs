@@ -1144,16 +1144,28 @@ mod tests {
         // Fail twice identically - the stall is armed - then propose the same
         // call with different arguments: that is not the same failing call.
         let a = ToolCallId::new();
-        on_llm_turn_complete(&mut ctx, &propose("todo", serde_json::json!({"items": ["1"]}), a));
-        let _: Option<Reaction<u8>> = handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &fail(a));
+        on_llm_turn_complete(
+            &mut ctx,
+            &propose("todo", serde_json::json!({"items": ["1"]}), a),
+        );
+        let _: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &fail(a));
         let b = ToolCallId::new();
-        on_llm_turn_complete(&mut ctx, &propose("todo", serde_json::json!({"items": ["1"]}), b));
-        let _: Option<Reaction<u8>> = handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &fail(b));
+        on_llm_turn_complete(
+            &mut ctx,
+            &propose("todo", serde_json::json!({"items": ["1"]}), b),
+        );
+        let _: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &fail(b));
 
         let c = ToolCallId::new();
         on_llm_turn_complete(
             &mut ctx,
-            &propose("todo", serde_json::json!({"action": "add", "items": [{"id": "1", "content": "x"}]}), c),
+            &propose(
+                "todo",
+                serde_json::json!({"action": "add", "items": [{"id": "1", "content": "x"}]}),
+                c,
+            ),
         );
         let instruction = continuation_instruction(handle_tool_event(
             &mut ctx,
@@ -1168,11 +1180,17 @@ mod tests {
         // A success clears the streak: fail once after succeeding and there is
         // again no redirect.
         let d = ToolCallId::new();
-        on_llm_turn_complete(&mut ctx, &propose("todo", serde_json::json!({"items": ["1"]}), d));
+        on_llm_turn_complete(
+            &mut ctx,
+            &propose("todo", serde_json::json!({"items": ["1"]}), d),
+        );
         let _: Option<Reaction<u8>> =
             handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &succeed(d));
         let e = ToolCallId::new();
-        on_llm_turn_complete(&mut ctx, &propose("todo", serde_json::json!({"items": ["1"]}), e));
+        on_llm_turn_complete(
+            &mut ctx,
+            &propose("todo", serde_json::json!({"items": ["1"]}), e),
+        );
         let instruction = continuation_instruction(handle_tool_event(
             &mut ctx,
             |ls| ls.continuation_turn(),
@@ -1220,7 +1238,10 @@ mod tests {
         // The first EMPTY_TURN_NUDGE_BUDGET empties still nudge ...
         for _ in 0..EMPTY_TURN_NUDGE_BUDGET {
             assert!(
-                matches!(on_llm_turn_complete(&mut ctx, &event()), GeneratingAction::EmptyTurn { .. }),
+                matches!(
+                    on_llm_turn_complete(&mut ctx, &event()),
+                    GeneratingAction::EmptyTurn { .. }
+                ),
                 "early empty turns are nudged, not wrapped up"
             );
         }
@@ -1267,7 +1288,10 @@ mod tests {
         // the counter must be reset, so a fresh run of empties nudges again
         // instead of immediately wrapping up.
         assert!(
-            matches!(on_llm_turn_complete(&mut ctx, &empty()), GeneratingAction::EmptyTurn { .. }),
+            matches!(
+                on_llm_turn_complete(&mut ctx, &empty()),
+                GeneratingAction::EmptyTurn { .. }
+            ),
             "a productive turn re-arms the empty-turn nudge budget"
         );
     }
@@ -1293,7 +1317,11 @@ mod tests {
             call_id: call,
             observation: serde_json::json!("ok"),
         };
-        continuation_instruction(handle_tool_event(ctx, |ls| ls.continuation_turn(), &settled))
+        continuation_instruction(handle_tool_event(
+            ctx,
+            |ls| ls.continuation_turn(),
+            &settled,
+        ))
     }
 
     /// A model that spends its whole round budget on discovery never learns to

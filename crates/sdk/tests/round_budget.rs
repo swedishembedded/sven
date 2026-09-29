@@ -42,7 +42,11 @@ async fn the_configured_round_budget_reaches_the_machine() {
     let reply = agent.send("hello").await.expect("a reply");
     assert!(reply.contains("done"), "the scripted reply came back");
 
-    let kernel = agent.state().kernel().cloned().expect("kernel state after a turn");
+    let kernel = agent
+        .state()
+        .kernel()
+        .cloned()
+        .expect("kernel state after a turn");
     let raw = kernel
         .context
         .facts
@@ -56,7 +60,10 @@ async fn the_configured_round_budget_reaches_the_machine() {
         "the machine must run with the configured budget, not its default"
     );
     assert_eq!(
-        kernel.context.facts.get(sven_machines::MAX_TOOL_ROUNDS_FACT),
+        kernel
+            .context
+            .facts
+            .get(sven_machines::MAX_TOOL_ROUNDS_FACT),
         Some(&serde_json::json!(40)),
         "the seeded fact is the budget the machine read"
     );

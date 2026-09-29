@@ -10,10 +10,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use common::{AgentMachine, GuardMachine, TState, TimerMachine};
 use serde_json::Value;
-use sven_hsm::{
-    Context, Effect, Event, Hsm, ObservationSink, PermissionPolicy, ToolCapability,
+use sven_hsm::{Context, Effect, Event, Hsm, ObservationSink, PermissionPolicy, ToolCapability};
+use sven_kernel::{
+    Clock, EffectExecutor, ErasedRuntime, EventSink, Runtime, TimerService, VirtualClock,
 };
-use sven_kernel::{Clock, EffectExecutor, ErasedRuntime, EventSink, Runtime, TimerService, VirtualClock};
 
 /// Executor that turns `ScheduleTimeout`/`CancelTimeout` into real timer tasks
 /// via a [`TimerService`] backed by the injected clock.
