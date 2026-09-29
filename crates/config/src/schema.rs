@@ -230,6 +230,35 @@ pub struct Config {
     pub mcp_servers: HashMap<String, McpServerConfig>,
 }
 
+impl Config {
+    /// `provider/model` naming the active model so that another sven process
+    /// loading the same config resolves the same endpoint, key and limits.
+    ///
+    /// A named `providers:` entry is expanded at load time, after which
+    /// `model.provider` holds only the driver id; handing a child process
+    /// `driver/model` would resolve the driver's defaults and silently drop the
+    /// entry's `base_url` and key. So the alias whose expansion produced the
+    /// active model (same driver, endpoint and key source) is named instead;
+    /// with no such entry the driver id is the right name.
+    pub fn model_reference(&self) -> String {
+        let model = &self.model;
+        // Several identical entries would all resolve the same; take the
+        // smallest name so the reference does not depend on map order.
+        let alias = self
+            .providers
+            .iter()
+            .filter(|(_, entry)| {
+                entry.name == model.provider
+                    && entry.base_url == model.base_url
+                    && entry.api_key_env == model.api_key_env
+                    && entry.api_key == model.api_key
+            })
+            .map(|(alias, _)| alias.as_str())
+            .min();
+        format!("{}/{}", alias.unwrap_or(&model.provider), model.name)
+    }
+}
+
 /// Per-model parameter overrides nested under a [`ProviderEntry`].
 ///
 /// All fields are optional; absent fields inherit from the provider-level
@@ -1651,5 +1680,40 @@ input_modalities: [text, image, audio]
     #[test]
     fn tools_config_exposes_asr_defaults() {
         assert_eq!(ToolsConfig::default().asr, AsrConfig::default());
+    }
+    #[test]
+    fn model_reference_names_the_provider_alias_the_model_came_from() {
+        let mut config = Config::default();
+        config.providers.insert(
+            "gateway".into(),
+            ProviderEntry {
+                name: "openai".into(),
+                base_url: Some("http://gateway:4000/v1".into()),
+                api_key_env: Some("GATEWAY_KEY".into()),
+                ..ProviderEntry::default()
+            },
+        );
+        config.model = config.providers["gateway"].to_model_config("main");
+        assert_eq!(config.model_reference(), "gateway/main");
+    }
+
+    #[test]
+    fn model_reference_is_the_driver_when_no_alias_matches() {
+        let mut config = Config::default();
+        config.providers.insert(
+            "gateway".into(),
+            ProviderEntry {
+                name: "openai".into(),
+                base_url: Some("http://gateway:4000/v1".into()),
+                ..ProviderEntry::default()
+            },
+        );
+        // Same driver, different endpoint: not the alias's config.
+        config.model = ModelConfig {
+            provider: "openai".into(),
+            name: "gpt-4o".into(),
+            ..ModelConfig::default()
+        };
+        assert_eq!(config.model_reference(), "openai/gpt-4o");
     }
 }

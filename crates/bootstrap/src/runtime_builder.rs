@@ -579,9 +579,15 @@ impl RuntimeBuilder {
         let q = self.tool_question_tx.clone();
         let tool_profile =
             ToolSetProfile::for_selection(self.builtin_tools, mode, root, q, todos, buffer_store);
+        // The registry describes the model this session actually runs on, which
+        // an override may have replaced (sub-agents are told to use it).
+        let registry_config = Config {
+            model: model_cfg.clone(),
+            ..(*self.config).clone()
+        };
         let mut tool_registry = match tool_profile {
             Some(profile) => build_tool_registry_with_integrations(
-                &self.config,
+                &registry_config,
                 model.clone(),
                 profile,
                 mode_lock.clone(),

@@ -170,7 +170,6 @@ pub fn build_tool_registry_with_integrations(
         }),
         ToolSetProfile::Research { question_tx, todos } => build_profile_research(
             cfg,
-            model,
             mode_lock,
             question_tx,
             todos,
@@ -259,8 +258,9 @@ struct FullProfileParams<'a> {
 fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
 
-    // Capture the model identity before p.model is moved into register_base_tools.
-    let model_id = format!("{}/{}", p.model.name(), p.model.model_name());
+    // What sub-agents are told to run on: resolvable by a child process
+    // loading the same config (a named provider stays named).
+    let model_id = p.cfg.model_reference();
     let parent_mode = Arc::clone(&p.mode_lock);
 
     register_base_tools(
@@ -294,7 +294,6 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
 /// children (the tool enforces the ceiling against the live mode).
 fn build_profile_research(
     cfg: &Config,
-    model: Arc<dyn sven_model::ModelProvider>,
     mode_lock: Arc<Mutex<AgentMode>>,
     question_tx: Option<mpsc::Sender<QuestionRequest>>,
     todos: Arc<Mutex<Vec<TodoItem>>>,
@@ -333,7 +332,7 @@ fn build_profile_research(
     reg.register(TaskTool::new(
         buffer_store,
         tool_event_tx,
-        Some(format!("{}/{}", model.name(), model.model_name())),
+        Some(cfg.model_reference()),
         runtime.agents.clone(),
         mode_lock,
     ));

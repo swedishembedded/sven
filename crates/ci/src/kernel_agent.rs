@@ -124,8 +124,12 @@ impl KernelAgent {
             todos,
             buffer_store,
         };
+        let config = sven_config::Config {
+            model: self.model_cfg.clone(),
+            ..(*self.config).clone()
+        };
         let reg = build_tool_registry(
-            &self.config,
+            &config,
             model,
             profile,
             mode_lock,
