@@ -101,6 +101,6 @@ async fn a_question_is_not_routed_to_a_tool_the_agent_does_not_have() {
         .build()
         .expect("an engine builds");
     let mut agent = engine.agent("agent");
-    let reply = agent.send("pick one").await.expect("a reply");
+    let reply = agent.send("pick one").await.expect("a reply").reply;
     assert!(reply.contains("Axum"), "{reply}");
 }

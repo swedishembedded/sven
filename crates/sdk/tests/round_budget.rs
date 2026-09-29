@@ -39,7 +39,7 @@ async fn the_configured_round_budget_reaches_the_machine() {
         .expect("an engine builds on the configured budget");
 
     let mut agent = engine.agent("agent");
-    let reply = agent.send("hello").await.expect("a reply");
+    let reply = agent.send("hello").await.expect("a reply").reply;
     assert!(reply.contains("done"), "the scripted reply came back");
 
     let kernel = agent

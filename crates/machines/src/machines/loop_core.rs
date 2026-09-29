@@ -333,6 +333,11 @@ pub fn build_turn_effect(
 ///
 /// Call this once from the phase entry handler before emitting the first
 /// `CallLlm` effect.
+/// Set when the current loop's tool-round budget ran out and the turn was
+/// wrapped up, cleared when a loop starts. How a caller tells a turn that
+/// finished from one the budget cut short: both end with an answer.
+pub const MAX_ROUNDS_REACHED_FACT: &str = "loop.max_rounds_reached";
+
 pub fn init_loop(
     ctx: &mut Context,
     thread: &str,
@@ -355,6 +360,7 @@ pub fn init_loop(
         empty_turns: 0,
     };
     ls.store(ctx);
+    ctx.set_fact(MAX_ROUNDS_REACHED_FACT, serde_json::json!(false));
 }
 
 // ─── `LlmTurnComplete` handler ────────────────────────────────────────────────
@@ -448,6 +454,7 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
             None,
         );
         ls.store(ctx);
+        ctx.set_fact(MAX_ROUNDS_REACHED_FACT, serde_json::json!(true));
         return GeneratingAction::MaxRoundsReached { wrapup_effect };
     }
 

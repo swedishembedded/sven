@@ -13,9 +13,15 @@ use sven_session_model::reduce_history;
 use sven_vocab::SessionEvent;
 use tokio::sync::broadcast;
 
+use std::sync::Arc;
+use std::time::Duration;
+
+use sven_machines::machines::loop_core::MAX_ROUNDS_REACHED_FACT;
+
 use crate::engine::{ApprovalPolicy, Engine};
 use crate::error::CallError;
 use crate::method::{Method, Strategy};
+use crate::run::{RunConclusion, RunOptions, RunOutcome, Usage};
 use crate::state::AgentState;
 
 /// Capacity of the per-agent event broadcast channel.
@@ -66,20 +72,38 @@ impl Agent {
         self.state
     }
 
-    /// Sends `text` to the agent and runs one turn, returning its reply.
+    /// Sends `text` to the agent and runs one turn with no bounds beyond the
+    /// engine's own. See [`Self::send_with`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::send_with`].
+    pub async fn send(&mut self, text: &str) -> Result<RunOutcome, CallError> {
+        self.send_with(text, RunOptions::default()).await
+    }
+
+    /// Sends `text` to the agent and runs one turn within `bounds`, returning
+    /// how it ended, the reply and the tokens it used.
     ///
     /// The turn's history and ending kernel state are folded back into this
     /// agent, so a subsequent `send` - or a `send` after a suspend/resume
-    /// round trip - continues the same conversation.
+    /// round trip - continues the same conversation, also after a run that
+    /// was cancelled or stopped by a bound.
     ///
     /// # Errors
     ///
     /// Returns [`CallError::Precondition`] if the agent's mode is not
     /// registered, and [`CallError::Infrastructure`] if the kernel session
-    /// cannot be built or the event queue closes mid-turn. A model that simply
-    /// answers badly is not an error - it is the reply.
-    pub async fn send(&mut self, text: &str) -> Result<String, CallError> {
-        self.run_turn(text, &TurnOptions::default()).await
+    /// cannot be built, the event queue closes mid-turn, or the turn itself
+    /// failed (the provider errored). A model that simply answers badly is
+    /// not an error - it is the reply - and a run stopped by one of `bounds`
+    /// is an outcome, not an error.
+    pub async fn send_with(
+        &mut self,
+        text: &str,
+        bounds: RunOptions,
+    ) -> Result<RunOutcome, CallError> {
+        self.run_turn(text, &TurnOptions::default(), &bounds).await
     }
 
     /// Calls a model-driven method with typed input and a validated result.
@@ -126,7 +150,10 @@ impl Agent {
         // diagnostic is appended after it, so the model sees what it got wrong
         // rather than being asked again from a clean slate.
         loop {
-            let last = self.run_turn(&message, &options).await?;
+            let last = self
+                .run_turn(&message, &options, &RunOptions::default())
+                .await?
+                .reply;
             attempts += 1;
 
             // `structural` separates "could not be read as the type at all"
@@ -187,7 +214,12 @@ impl Agent {
     }
 
     /// Builds a session, posts one message, and folds the result back in.
-    async fn run_turn(&mut self, text: &str, options: &TurnOptions) -> Result<String, CallError> {
+    async fn run_turn(
+        &mut self,
+        text: &str,
+        options: &TurnOptions,
+        bounds: &RunOptions,
+    ) -> Result<RunOutcome, CallError> {
         if !self.engine.modes().contains(&self.state.mode) {
             return Err(CallError::Precondition(format!(
                 "unknown mode {:?}; this engine can run {:?}",
@@ -213,7 +245,11 @@ impl Agent {
             serde_json::json!(self.engine.config().agent.max_tool_rounds),
         );
 
+        // The turn executor parks the abort sender for the model call in
+        // flight here; taking it interrupts that call.
+        let abort_slot = Arc::new(tokio::sync::Mutex::new(None));
         let mut builder = RuntimeBuilder::new(self.engine.config(), self.state.mode.clone())
+            .with_cancel_handle(Arc::clone(&abort_slot))
             .with_allow_interactive_oauth(false)
             .with_runtime_context(runtime_ctx)
             .with_context_facts(facts)
@@ -282,10 +318,28 @@ impl Agent {
         // failed is indistinguishable here from a turn that answered with an
         // empty string, and `send` returns `Ok("")` for both.
         let mut failure: Option<String> = None;
+        let mut usage = Usage::default();
+        // Set by the first bound that fires; the run then winds down and
+        // reports it rather than `Success`.
+        let mut stopped: Option<RunConclusion> = None;
+        let cancel = bounds.cancel.clone().unwrap_or_default();
+        let deadline = tokio::time::sleep(bounds.deadline.unwrap_or(Duration::MAX / 4));
+        tokio::pin!(deadline);
+        // How long a stopped run may take to wind down before it is left.
+        let mut wind_down = std::pin::pin!(tokio::time::sleep(Duration::MAX / 4));
 
         loop {
             tokio::select! {
                 biased;
+                () = cancel.cancelled(), if stopped.is_none() => {
+                    stopped = Some(RunConclusion::Cancelled);
+                    stop(&bundle.handle, &abort_slot, wind_down.as_mut()).await;
+                }
+                () = &mut deadline, if stopped.is_none() && bounds.deadline.is_some() => {
+                    stopped = Some(RunConclusion::Timeout);
+                    stop(&bundle.handle, &abort_slot, wind_down.as_mut()).await;
+                }
+                () = &mut wind_down, if stopped.is_some() => break,
                 event = observations.recv() => match event {
                     Ok(event) => {
                         let done = matches!(
@@ -293,6 +347,16 @@ impl Agent {
                             SessionEvent::TurnComplete | SessionEvent::Aborted { .. }
                         );
                         match &event {
+                            SessionEvent::TokenUsage { input, output, .. } => {
+                                usage.add(*input, *output);
+                                let spent = usage.output_tokens.unwrap_or(0);
+                                if stopped.is_none()
+                                    && bounds.max_output_tokens.is_some_and(|max| spent >= max)
+                                {
+                                    stopped = Some(RunConclusion::BudgetExhausted);
+                                    stop(&bundle.handle, &abort_slot, wind_down.as_mut()).await;
+                                }
+                            }
                             SessionEvent::TextComplete(text) => reply.push_str(text),
                             SessionEvent::Aborted { partial_text } => reply.push_str(partial_text),
                             SessionEvent::Error(message) => {
@@ -332,11 +396,42 @@ impl Agent {
         // returned: a partial answer from a turn that failed is not an answer,
         // and every other surface (ACP, the CI runner) already treats a
         // `SessionEvent::Error` as fatal to the turn.
-        if let Some(message) = failure {
-            return Err(CallError::Infrastructure(anyhow::anyhow!(message)));
+        if stopped.is_none() {
+            if let Some(message) = failure {
+                return Err(CallError::Infrastructure(anyhow::anyhow!(message)));
+            }
         }
-        Ok(reply)
+        let rounds_ran_out = self.state.kernel.as_ref().is_some_and(|snapshot| {
+            snapshot.context.fact(MAX_ROUNDS_REACHED_FACT) == Some(&serde_json::json!(true))
+        });
+        let conclusion = stopped.unwrap_or(if rounds_ran_out {
+            RunConclusion::BudgetExhausted
+        } else {
+            RunConclusion::Success
+        });
+        Ok(RunOutcome {
+            conclusion,
+            reply,
+            usage,
+        })
     }
+}
+
+/// How long a stopped run is given to report what it had before it is left.
+const WIND_DOWN: Duration = Duration::from_secs(5);
+
+/// Stops a run: interrupts the model call in flight, tells the machine the
+/// work is cancelled, and starts the wind-down clock.
+async fn stop(
+    handle: &sven_bootstrap::RuntimeHandle,
+    abort_slot: &tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    wind_down: std::pin::Pin<&mut tokio::time::Sleep>,
+) {
+    if let Some(abort) = abort_slot.lock().await.take() {
+        let _ = abort.send(());
+    }
+    let _ = handle.cancel().await;
+    wind_down.reset(tokio::time::Instant::now() + WIND_DOWN);
 }
 
 /// Per-turn overrides that do not belong to the agent's durable state.

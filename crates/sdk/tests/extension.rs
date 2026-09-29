@@ -108,7 +108,8 @@ async fn the_agent_can_actually_call_it_and_use_the_result() {
     let reply = agent
         .send("what is ACME trading at?")
         .await
-        .expect("a reply");
+        .expect("a reply")
+        .reply;
 
     assert!(
         reply.contains("42.00"),

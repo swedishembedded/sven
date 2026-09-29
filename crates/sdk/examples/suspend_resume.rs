@@ -23,7 +23,8 @@ async fn main() -> anyhow::Result<()> {
     let mut agent = engine.agent("agent");
     let first = agent
         .send("Pick a number between 1 and 100 and remember it.")
-        .await?;
+        .await?
+        .reply;
     println!("turn 1: {first}");
 
     // `suspend` consumes the agent: after this line nothing of the
@@ -33,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
     // ── Request 2, arbitrarily later ─────────────────────────────────────────
     let state: AgentState = serde_json::from_slice(&std::fs::read(&store)?)?;
     let mut resumed = engine.resume(state)?;
-    let second = resumed.send("What number did you pick?").await?;
+    let second = resumed.send("What number did you pick?").await?.reply;
     println!("turn 2: {second}");
 
     std::fs::remove_file(&store)?;

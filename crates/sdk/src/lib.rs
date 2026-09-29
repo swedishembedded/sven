@@ -27,7 +27,7 @@
 //! let engine = Engine::builder().build()?;
 //!
 //! let mut agent = engine.agent("agent");
-//! let reply = agent.send("summarise the build failure").await?;
+//! let reply = agent.send("summarise the build failure").await?.reply;
 //!
 //! // Put it down; pick it up later, in another process, on another engine.
 //! let stored = serde_json::to_string(&agent.suspend())?;
@@ -48,6 +48,7 @@ mod agent;
 mod engine;
 mod error;
 mod method;
+mod run;
 mod state;
 mod transcript;
 
@@ -55,6 +56,7 @@ pub use agent::Agent;
 pub use engine::{ApprovalPolicy, Engine, EngineBuilder, Toolset};
 pub use error::CallError;
 pub use method::{Method, Strategy};
+pub use run::{CancelToken, RunConclusion, RunOptions, RunOutcome, Usage};
 pub use state::AgentState;
 pub use transcript::{ToolCallRecord, Turn};
 

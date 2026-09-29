@@ -25,6 +25,7 @@ tokio          = { workspace = true }
 
 [dev-dependencies]
 async-trait     = { workspace = true }
+futures         = { workspace = true }
 schemars        = { workspace = true }
 sven-model-mock = { path = "../model-mock" }
 tempfile        = { workspace = true }

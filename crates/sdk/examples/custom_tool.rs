@@ -73,7 +73,8 @@ async fn main() -> anyhow::Result<()> {
     let mut agent = engine.agent("agent");
     let reply = agent
         .send("What is ACME trading at, and is that above 40?")
-        .await?;
+        .await?
+        .reply;
 
     println!("{reply}");
     Ok(())

@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use sven_sdk::{AgentState, ApprovalPolicy, Engine};
+use sven_sdk::{AgentState, ApprovalPolicy, Engine, RunConclusion, Toolset};
 
 use crate::cli::AgentCommands;
 
@@ -34,6 +34,9 @@ pub(crate) async fn run_agent_command(
         } => {
             let engine = Engine::builder()
                 .config(config)
+                // The coding application: the agent reads, edits and runs
+                // things in the working directory.
+                .toolset(Toolset::coding())
                 .approvals(if *yes {
                     ApprovalPolicy::AutoApprove
                 } else {
@@ -61,8 +64,11 @@ pub(crate) async fn run_agent_command(
                 }
             };
 
-            let reply = agent.send(message).await?;
-            println!("{reply}");
+            let outcome = agent.send(message).await?;
+            println!("{}", outcome.reply);
+            if outcome.conclusion != RunConclusion::Success {
+                eprintln!("[sven:agent] the turn ended: {:?}", outcome.conclusion);
+            }
 
             if let Some(path) = state {
                 let suspended = agent.suspend();

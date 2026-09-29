@@ -25,7 +25,7 @@ let engine = Engine::builder()
     .build()?;
 
 let mut agent = engine.agent("agent");
-let reply = agent.send("summarise the build failure").await?;
+let reply = agent.send("summarise the build failure").await?.reply;
 
 let stored = serde_json::to_string(&agent.suspend())?;
 // …another request, another process…
@@ -52,6 +52,33 @@ let engine = Engine::builder()
 `Toolset::research()` is the read-only preset. A registered tool is gated and
 audited like a built-in one: its `kernel_capability` picks the permission
 bucket and its `default_policy` whether it needs approval.
+
+## Bounded runs
+
+`send` returns a `RunOutcome`: how the run ended (`conclusion`), the `reply`,
+and the tokens it used (`usage`, `None` for a count the provider did not
+report). `send_with` adds bounds:
+
+```rust
+let cancel = CancelToken::new();
+let outcome = agent
+    .send_with("fix the failing test", RunOptions::new()
+        .cancel(cancel.clone())                  // cancel.cancel() from anywhere
+        .deadline(Duration::from_secs(300))
+        .max_output_tokens(20_000))
+    .await?;
+match outcome.conclusion {
+    RunConclusion::Success => println!("{}", outcome.reply),
+    RunConclusion::BudgetExhausted => { /* out of tokens or tool rounds */ }
+    RunConclusion::Cancelled | RunConclusion::Timeout => { /* stopped from outside */ }
+    other => { /* not produced by send */ }
+}
+```
+
+A bound that fires interrupts the model call in flight and cancels the turn;
+the agent keeps the history and kernel state it had, so it can be sent to
+again. The tool-round budget is `AgentConfig.max_tool_rounds`; a turn the
+budget cut short still ends with an answer, and reports `BudgetExhausted`.
 
 ## Typed model-driven methods
 

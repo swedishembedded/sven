@@ -40,7 +40,11 @@ async fn an_agent_answers_a_prompt() {
     let (engine, _p) = engine_with(vec![says("the answer is 42")]);
     let mut agent = engine.agent("agent");
 
-    let reply = agent.send("what is the answer?").await.expect("a reply");
+    let reply = agent
+        .send("what is the answer?")
+        .await
+        .expect("a reply")
+        .reply;
 
     assert!(
         reply.contains("42"),
@@ -92,7 +96,7 @@ async fn suspended_state_survives_without_the_engine_that_made_it() {
     let state: AgentState = serde_json::from_str(&stored).expect("deserializable");
     let mut resumed = fresh_engine.resume(state).expect("a resumable state");
 
-    let reply = resumed.send("again").await.expect("a reply");
+    let reply = resumed.send("again").await.expect("a reply").reply;
     assert!(
         reply.contains("two"),
         "state carrying no live handles must resume against any engine, got {reply:?}"
