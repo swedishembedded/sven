@@ -126,11 +126,11 @@ change that alters, removes, or disables user-visible behaviour updates its
 page **in the same commit**; a feature found to be unreachable gets its page
 corrected rather than left standing.
 
-This is not housekeeping. `docs/16-voice.md` described an ElevenLabs/Whisper/
-Twilio voice subsystem in full, with configuration and worked examples, for a
-tool whose provider fields are populated by no caller anywhere -- so every
-example in it was unrunnable and the config block it documented did nothing
-at all. Documentation that cannot be distinguished from working behaviour is
+This is not housekeeping. A voice-integration page once described an
+ElevenLabs/Whisper/Twilio subsystem in full, with configuration and worked
+examples, for a tool whose provider fields were populated by no caller
+anywhere -- so every example in it was unrunnable and the config block it
+documented did nothing at all. Documentation that cannot be distinguished from working behaviour is
 worse than a gap, because a reader has no way to find out except by trying
 it.
 
@@ -219,8 +219,8 @@ agent self-management) · `sven-tools-web` (`web_fetch`/`web_search`, `grep`,
 `read_lints`) · `sven-tools-gdb` (GDB/MI debugging, unix
 only) · `sven-turn` (impure turn primitives: `stream_turn`,
 `compact`/`smart_truncate`, prompt assembly) · `sven-team` (agent-team
-coordination) · `sven-channels`/`sven-integrations`/`sven-memory`/`sven-scheduler`
-(optional integration tool providers, feature-gated in `sven-bootstrap`)
+coordination) · `sven-memory` (semantic memory store and tools, the `memory`
+feature of `sven-bootstrap`)
 
 ### machines
 `sven-machines` (pure `Machine` impls: `ReactiveAgentMachine`, `SdlcMachine`,

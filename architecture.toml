@@ -66,10 +66,7 @@ sven-model-drivers = "services"
 sven-model-mock    = "services"
 
 # domain
-sven-channels      = "domain"
-sven-integrations  = "domain"
 sven-memory        = "domain"
-sven-scheduler     = "domain"
 sven-team          = "domain"
 sven-turn          = "domain"
 sven-tools-fs      = "domain"

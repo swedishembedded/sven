@@ -42,12 +42,7 @@ members = [
     "crates/mcp-client",
     "crates/acp",
     "crates/team",
-    # New integration crates
-    "crates/channels",
-    "crates/scheduler",
-    "crates/integrations",
     "crates/memory",
-    # HSM phase 2 crates
     "crates/llm",
     "crates/executors",
     # Transport-agnostic operator control protocol + kernel mappings
@@ -223,7 +218,6 @@ sven-tools-ctx   = { path = "crates/tools-ctx" }
 sven-tool-api    = { path = "crates/tool-api" }
 sven-config      = { path = "crates/config" }
 sven-model       = { path = "crates/model" }
-sven-channels    = { path = "crates/channels" }
 sven-vocab       = { path = "crates/vocab" }
 async-trait      = { workspace = true }
 tokio            = { workspace = true }

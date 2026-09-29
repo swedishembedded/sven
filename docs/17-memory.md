@@ -1,18 +1,18 @@
 # Semantic Memory
 
-Sven's semantic memory stores facts, notes, contact details, and any information
-worth remembering across sessions. It uses SQLite with FTS5 full-text search
+Sven's semantic memory stores facts, notes, decisions and any information worth
+remembering across sessions. It uses SQLite with FTS5 full-text search
 (BM25 ranking), making it fast and fully local - no external vector database needed.
 
 ## How It Works
 
 ```
-User: "Remember that Alice from Acme Corp prefers afternoon calls and dislikes email."
-Agent: semantic_memory.remember({ content: "...", entity: "Alice", source: "user" })
+User: "Remember that the firmware build needs arm-none-eabi-gcc 13 or newer."
+Agent: semantic_memory.remember({ content: "...", entity: "firmware build", source: "user" })
        → Stored with ID 42
 
-User: "What do I know about Alice?"
-Agent: semantic_memory.recall({ query: "Alice Acme preferences" })
+User: "What do we know about the firmware build?"
+Agent: semantic_memory.recall({ query: "firmware build toolchain" })
        → Returns relevant memories scored by BM25 similarity
 ```
 
@@ -69,44 +69,6 @@ The legacy JSON KV store is automatically migrated to SQLite on first run.
 
 ```json
 { "action": "list", "tag_filter": "contact" }
-```
-
-## Second Brain Pattern
-
-The simplest way to build a personal knowledge base:
-
-1. **Ingest via messaging**: Configure a Telegram channel. Text anything to remember - the agent saves it with `remember`.
-2. **Retrieve on demand**: Ask the agent to recall information; it runs a semantic search.
-3. **Automatic extraction**: During email/calendar triage, the agent extracts and saves contact details, action items, and preferences.
-
-### Example HEARTBEAT.md
-
-```markdown
-# Heartbeat Instructions
-
-After each email session:
-- Extract any new contact details mentioned and save with semantic_memory remember.
-- Save any commitments or action items mentioned in emails.
-- Update existing contact notes if preferences or details changed.
-```
-
-## CRM Integration
-
-The memory store is ideal for a lightweight CRM:
-
-```
-semantic_memory.remember({
-  content: "Meeting with Bob Smith (bob@techcorp.com) on 2026-04-15. Discussed Q2 partnership. Bob wants a proposal by April 30. Follow up needed.",
-  entity: "Bob Smith",
-  source: "calendar",
-  tags: ["contact", "crm", "action-item"]
-})
-```
-
-Then before a call:
-
-```
-semantic_memory.recall({ query: "Bob Smith TechCorp relationship history" })
 ```
 
 ## Storage Location

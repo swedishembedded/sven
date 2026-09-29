@@ -12,9 +12,8 @@ surface.
 
 Give sven a task in plain English. It reads your code, runs commands, writes
 files, searches the web, and delegates subtasks to sub-agents - all
-autonomously, all in your terminal. Beyond interactive sessions, sven runs 24/7
-as a proactive agent: checking email and calendar, sending briefings via
-Telegram, making voice calls, and running scheduled workflows.
+autonomously, all in your terminal - or headless in CI, driven by markdown
+workflow files.
 
 ## Key Features
 
@@ -24,7 +23,7 @@ Telegram, making voice calls, and running scheduled workflows.
 - **Markdown workflow files** - `##`-headed steps, YAML frontmatter, per-step directives, and variable templating make `.md` files first-class agent programs (unique to sven).
 - **Teams of agents** - Spawn a team of teammates from one session, break work into tasks on a shared board, and let each teammate claim, execute, and report back, each in its own git worktree.
 - **GDB hardware debugging** - First AI agent with native GDB integration: connects to a target, loads firmware, sets breakpoints, and inspects registers, all autonomously.
-- **Proactive automation** - Scheduler, email (IMAP/Gmail), calendar (CalDAV/Google), voice (TTS/STT/calls), semantic memory, and 6 messaging channels run 24/7.
+- **Semantic memory** - SQLite + FTS5 store the agent can remember into and recall from across sessions.
 - **Skills system** - Markdown instruction files the agent loads on demand for coding standards, project conventions, or multi-step procedures.
 - **32 model providers** - OpenAI, Anthropic, Gemini, Ollama, and 28 more - no external gateway, pure Rust.
 - **MCP - server and client** - Expose sven's tools to Cursor, Claude Desktop, and other MCP hosts; or connect sven to external MCP servers (including OAuth-protected ones) and use their tools directly inside any session.
@@ -110,22 +109,6 @@ sven team status myteam                           # show live task board
 
 See [docs/11-teams-and-tasks.md](docs/11-teams-and-tasks.md) for the full
 task board, worktree isolation, and tool reference.
-
-## Proactive agent capabilities
-
-sven ships a full automation stack:
-
-| Integration | What it does | Docs |
-|-------------|--------------|------|
-| **Messaging** (Telegram, Discord, WhatsApp, Signal, Matrix, IRC) | Reach your agent or let it reach you via any channel | [docs/12-channels.md](docs/12-channels.md) |
-| **Scheduler** (cron, intervals, one-shot) | Run prompts on a schedule; the agent can also schedule jobs at runtime | [docs/13-scheduler.md](docs/13-scheduler.md) |
-| **Email** (IMAP/SMTP, Gmail API) | List, read, send, reply to, and search email | [docs/14-email.md](docs/14-email.md) |
-| **Calendar** (CalDAV, Google Calendar) | Query schedule, create and update events | [docs/15-calendar.md](docs/15-calendar.md) |
-| **Voice** (ElevenLabs TTS, Whisper STT, Twilio calls) | Synthesize speech, transcribe audio, make outbound phone calls | [docs/16-voice.md](docs/16-voice.md) |
-| **Semantic memory** (SQLite + FTS5 + embeddings) | Remember anything; recall with natural-language queries | [docs/17-memory.md](docs/17-memory.md) |
-| **Webhooks** | Trigger the agent from any external system via a generic HTTP hook | [docs/18-webhooks.md](docs/18-webhooks.md) |
-
-See [docs/19-use-cases.md](docs/19-use-cases.md) for seven complete real-world automation patterns.
 
 ## Workflow files - unique to sven
 
@@ -331,14 +314,7 @@ mcp_servers:
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
 | [Large-Content Analysis](docs/10-large-content.md) | RLM context tools for files larger than the context window |
 | [Teams and Tasks](docs/11-teams-and-tasks.md) | Declarative agent teams, task board, git worktree isolation |
-| [Messaging Channels](docs/12-channels.md) | Telegram, Discord, WhatsApp, Signal, Matrix, IRC |
-| [Scheduler](docs/13-scheduler.md) | Cron jobs, intervals, heartbeat |
-| [Email](docs/14-email.md) | IMAP/SMTP and Gmail integration |
-| [Calendar](docs/15-calendar.md) | CalDAV and Google Calendar integration |
-| [Voice](docs/16-voice.md) | TTS, STT, and outbound voice calls |
 | [Semantic Memory](docs/17-memory.md) | SQLite + FTS5 "second brain" knowledge store |
-| [Webhooks](docs/18-webhooks.md) | Generic HTTP hooks for external integrations |
-| [Automation Use Cases](docs/19-use-cases.md) | Seven complete real-world automation patterns |
 | [Providers](docs/providers.md) | Model provider configuration |
 | **Technical** | |
 | [HSM Architecture](docs/technical/hsm-architecture.md) | Hierarchical state machine kernel: events, effects, permissions, audit/replay, runtime, dispatch, ModeRegistry |
