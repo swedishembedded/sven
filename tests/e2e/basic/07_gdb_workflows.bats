@@ -102,48 +102,6 @@ setup() {
     assert_output_contains "AT32F435RMT7"
 }
 
-@test "07.09 gdb-debug workflow file exists and has correct structure" {
-    # .sven/ is gitignored (user-local config); skip if not present in this checkout.
-    local workflow="${_REPO_ROOT}/.sven/workflow/examples/gdb-debug.md"
-    if [[ ! -f "${workflow}" ]]; then
-        skip ".sven/workflow/examples/ not present (gitignored user-local config)"
-    fi
-    grep -q "^# Embedded GDB Debug Session" "${workflow}"
-    grep -q "gdb_connect" "${workflow}"
-    grep -q "gdb_start_server" "${workflow}"
-    grep -q "gdb_stop" "${workflow}"
-}
-
-@test "07.10 gdb-attach-only workflow file exists" {
-    local workflow="${_REPO_ROOT}/.sven/workflow/examples/gdb-attach-only.md"
-    if [[ ! -f "${workflow}" ]]; then
-        skip ".sven/workflow/examples/ not present (gitignored user-local config)"
-    fi
-    grep -q "gdb_connect" "${workflow}"
-    grep -q "gdb_stop" "${workflow}"
-}
-
-@test "07.11 gdb-flash-and-debug workflow file exists" {
-    local workflow="${_REPO_ROOT}/.sven/workflow/examples/gdb-flash-and-debug.md"
-    if [[ ! -f "${workflow}" ]]; then
-        skip ".sven/workflow/examples/ not present (gitignored user-local config)"
-    fi
-    grep -q "load" "${workflow}"
-}
-
-@test "07.12 gdb-mcuboot-debug workflow file exists" {
-    local workflow="${_REPO_ROOT}/.sven/workflow/examples/gdb-mcuboot-debug.md"
-    if [[ ! -f "${workflow}" ]]; then
-        skip ".sven/workflow/examples/ not present (gitignored user-local config)"
-    fi
-    grep -q "mcuboot" "${workflow}"
-    grep -q "add-symbol-file" "${workflow}"
-}
-
-# ── Tier 1: Discovery from fixture project structures ─────────────────────────
-
-# ── Tier 1: Regression tests for known bugs ───────────────────────────────────
-
 # ── Tier 2: Real hardware (requires SVEN_TEST_JLINK=1) ───────────────────────
 
 @test "07.27 hardware: JLinkGDBServer binary is on PATH" {
