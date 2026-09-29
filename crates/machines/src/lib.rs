@@ -10,7 +10,7 @@ pub mod mode;
 pub use completion::development_complete;
 pub use events::{AgentEvent, CompactionStrategyUsed, PeerInfo};
 pub use machines::{
-    reactive_agent::{ReactiveAgentMachine, MAX_TOOL_ROUNDS_FACT},
+    reactive_agent::{ReactiveAgentMachine, ASK_QUESTION_AVAILABLE_FACT, MAX_TOOL_ROUNDS_FACT},
     sdlc::task::TaskMachine,
     sdlc::SdlcMachine,
     ui_test::UiTestMachine,

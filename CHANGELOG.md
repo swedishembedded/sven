@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (sven-sdk)**: an `Engine` gives its agents no built-in tools unless asked. `EngineBuilder::toolset(Toolset)` selects them: `Toolset::none()` (the default: no built-in tools and no MCP servers, only tools registered with `EngineBuilder::tool`), `Toolset::coding()` and `Toolset::research()`. **Migration**: an application that relied on the built-in tools adds `.toolset(Toolset::coding())`. Underneath, `RuntimeBuilder::with_builtin_tools(BuiltinTools)` selects the same sets for any surface (`BuiltinTools::Detect` keeps the application's detected profile), and the reactive agent's clarification post-check only routes a closing question to `ask_question` when the session registers that tool.
+
 ### Removed
 - **BREAKING (workspace)**: `sven-machines` depends only on `sven-hsm` and `sven-vocab`. Removed the `sven-llm` crate: `ThreadStore` is `sven_executors::ThreadStore`, `TurnRequest` and `TURN_KIND` are in `sven_vocab` (`sven_executors::turn::TURN_KIND` is gone), and its unused `LlmError` is deleted. `AgentRuntimeContext` moved to `sven_turn`. `sven_machines` no longer re-exports `sven-turn` items (`prompts`, `stream_turn`, `ThinkingBudget`, compaction, ...); import them from `sven_turn`. The unused `sven_machines::{Session, TurnRecord}` are deleted.
 - **BREAKING (sven-hsm, sven-executors)**: removed `Effect::CreateCheckpoint`, `Effect::RollbackToCheckpoint` (and their `EffectKind`s), `ToolCapability::Rollback`, `CheckpointExecutor` and `CompositeExecutorBuilder::{with_checkpoints, with_checkpoint_slot}`. No machine emitted either effect, and creating a checkpoint ran `git stash push --include-untracked`, which takes the user's uncommitted work out of the worktree. A match on `Effect`, `EffectKind` or `ToolCapability` drops those arms; a policy that listed `Rollback` drops it.

@@ -129,6 +129,7 @@ async fn a_registered_tool_does_not_displace_the_built_in_ones() {
     ]]));
     let engine = Engine::builder()
         .model_provider(Arc::clone(&provider) as Arc<_>)
+        .toolset(sven_sdk::Toolset::coding())
         .tool(Arc::new(StockPrice))
         .build()
         .expect("an engine builds");

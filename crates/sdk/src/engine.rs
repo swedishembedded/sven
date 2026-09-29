@@ -29,7 +29,48 @@ pub struct Engine {
     provider: Option<Arc<dyn ModelProvider>>,
     approvals: ApprovalPolicy,
     tools: Vec<Arc<dyn sven_tool_api::Tool>>,
+    toolset: Toolset,
     machines: Option<Arc<sven_machines::ModeRegistry>>,
+}
+
+/// The built-in tools an engine's agents get, on top of those registered with
+/// [`EngineBuilder::tool`].
+///
+/// The default is none: an embedded agent can do exactly what its application
+/// gave it and nothing else. A preset is an explicit opt-in to sven's own
+/// tools.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Toolset(sven_bootstrap::BuiltinTools);
+
+impl Default for Toolset {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
+impl Toolset {
+    /// No built-in tools and no MCP servers. The default.
+    #[must_use]
+    pub fn none() -> Self {
+        Self(sven_bootstrap::BuiltinTools::None)
+    }
+
+    /// Read, write and edit files, search, run shell commands, keep a todo
+    /// list and ask the user a question.
+    #[must_use]
+    pub fn coding() -> Self {
+        Self(sven_bootstrap::BuiltinTools::Coding)
+    }
+
+    /// Read-only: read and search files, keep a todo list, ask a question.
+    #[must_use]
+    pub fn research() -> Self {
+        Self(sven_bootstrap::BuiltinTools::Research)
+    }
+
+    pub(crate) fn builtin(self) -> sven_bootstrap::BuiltinTools {
+        self.0
+    }
 }
 
 /// What an agent does when the kernel asks a human to approve something.
@@ -139,6 +180,10 @@ impl Engine {
         self.tools.clone()
     }
 
+    pub(crate) fn toolset(&self) -> Toolset {
+        self.toolset
+    }
+
     pub(crate) fn machines(&self) -> Option<Arc<sven_machines::ModeRegistry>> {
         self.machines.clone()
     }
@@ -173,6 +218,7 @@ pub struct EngineBuilder {
     provider: Option<Arc<dyn ModelProvider>>,
     approvals: Option<ApprovalPolicy>,
     tools: Vec<Arc<dyn sven_tool_api::Tool>>,
+    toolset: Toolset,
     machines: Option<sven_machines::ModeRegistry>,
 }
 
@@ -196,10 +242,18 @@ impl EngineBuilder {
         self
     }
 
+    /// Selects the built-in tools every agent on this engine gets. Defaults to
+    /// [`Toolset::none`].
+    #[must_use]
+    pub fn toolset(mut self, toolset: Toolset) -> Self {
+        self.toolset = toolset;
+        self
+    }
+
     /// Gives every agent on this engine a tool of your own.
     ///
-    /// Registered on top of the built-in set, so the agent keeps everything it
-    /// already had. The tool is permission-gated and audited exactly like a
+    /// Registered on top of the [`Toolset`], and wins a name collision with
+    /// a built-in tool. The tool is permission-gated and audited exactly like a
     /// built-in one: its `kernel_capability` decides which bucket it falls
     /// under, and its `default_policy` whether it needs approval.
     ///
@@ -261,6 +315,7 @@ impl EngineBuilder {
             provider: self.provider,
             approvals: self.approvals.unwrap_or(ApprovalPolicy::Deny),
             tools: self.tools,
+            toolset: self.toolset,
             machines: self.machines.map(Arc::new),
         })
     }

@@ -171,6 +171,25 @@ impl RuntimeContext {
     }
 }
 
+// ─── BuiltinTools ─────────────────────────────────────────────────────────────
+
+/// Which built-in tools a session registers. Tools a caller registers itself
+/// (`RuntimeBuilder::with_extra_tools`) are added on top in every case.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BuiltinTools {
+    /// Chosen from the mode, the project and the process
+    /// ([`ToolSetProfile::for_session`]), with the configured MCP servers:
+    /// what the sven application runs with.
+    #[default]
+    Detect,
+    /// The coding preset: files, search, shell, todo and `ask_question`.
+    Coding,
+    /// The read-only research preset.
+    Research,
+    /// No built-in tools and no MCP servers.
+    None,
+}
+
 // ─── ToolSetProfile ───────────────────────────────────────────────────────────
 
 /// Session-locked profile that selects the tool set for an entire session.
@@ -185,14 +204,14 @@ pub enum ToolSetProfile {
     /// Full tool set (TUI and headless/CI, with GDB and context tools).
     ///
     /// Use when the project has GDB configuration or large-content analysis
-    /// is expected. Includes all 15 tools.
+    /// is expected.
     Full {
         question_tx: Option<mpsc::Sender<QuestionRequest>>,
         todos: Arc<Mutex<Vec<TodoItem>>>,
         buffer_store: Arc<Mutex<OutputBufferStore>>,
     },
 
-    /// Coding profile (default - no GDB, no context). 12 tools.
+    /// Coding profile (default - no GDB, no context).
     ///
     /// For typical software engineering sessions without embedded debugging
     /// or large-file analysis. Leaner tools array caches more efficiently.
@@ -202,7 +221,7 @@ pub enum ToolSetProfile {
         buffer_store: Arc<Mutex<OutputBufferStore>>,
     },
 
-    /// Research profile (read-only, no write tools). 8 tools.
+    /// Research profile (read-only, no write tools).
     ///
     /// For exploration sessions where the agent should not modify files.
     /// No edit_file, write, shell (modifying commands), or task.
@@ -290,6 +309,34 @@ impl ToolSetProfile {
             "resolved tool set for this session"
         );
         profile
+    }
+
+    /// The profile `selection` names, or `None` when it names no built-in
+    /// tools at all.
+    pub fn for_selection(
+        selection: BuiltinTools,
+        agent_mode: sven_config::AgentMode,
+        project_root: Option<&std::path::Path>,
+        question_tx: Option<mpsc::Sender<QuestionRequest>>,
+        todos: Arc<Mutex<Vec<TodoItem>>>,
+        buffer_store: Arc<Mutex<OutputBufferStore>>,
+    ) -> Option<Self> {
+        match selection {
+            BuiltinTools::Detect => Some(Self::for_session(
+                agent_mode,
+                project_root,
+                question_tx,
+                todos,
+                buffer_store,
+            )),
+            BuiltinTools::Coding => Some(ToolSetProfile::Coding {
+                question_tx,
+                todos,
+                buffer_store,
+            }),
+            BuiltinTools::Research => Some(ToolSetProfile::Research { question_tx, todos }),
+            BuiltinTools::None => None,
+        }
     }
 
     /// Returns a short name for the profile (for logging/display).

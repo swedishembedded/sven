@@ -25,7 +25,8 @@ pub enum Strategy {
     /// A full tool-using turn that ends by producing the result.
     ///
     /// For work that has to find things out first - reading files, running
-    /// commands, searching - before it can answer.
+    /// commands, searching - before it can answer. Uses the tools the engine
+    /// was given ([`crate::Toolset`] and [`crate::EngineBuilder::tool`]).
     Investigate,
 }
 

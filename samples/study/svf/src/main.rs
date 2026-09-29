@@ -286,6 +286,9 @@ async fn main() -> Result<()> {
         // variable this experiment cannot hold constant. The workspace is a
         // scratch directory this binary created.
         .approvals(ApprovalPolicy::AutoApprove)
+        // The agents fix a failing test in a real workspace: they read, edit
+        // and run it, which is exactly the coding preset.
+        .toolset(sven_sdk::Toolset::coding())
         .build()
         .map_err(|e| anyhow::anyhow!("building the engine: {e}"))?;
 

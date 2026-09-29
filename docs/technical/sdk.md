@@ -36,6 +36,23 @@ resumed.send("now propose a fix").await?;
 `Engine` is cheap to clone - it is a bundle of handles - so a service builds one
 at startup and clones it into each request.
 
+## Tools
+
+An engine's agents get exactly the tools the application names. The default
+`Toolset` is none: no built-in tools and no MCP servers, only what is
+registered with `EngineBuilder::tool`. A preset opts into sven's own tools:
+
+```rust
+let engine = Engine::builder()
+    .toolset(Toolset::coding())   // read/write/edit files, search, shell, todo, ask_question
+    .tool(Arc::new(MyTool))       // registered on top; wins a name collision
+    .build()?;
+```
+
+`Toolset::research()` is the read-only preset. A registered tool is gated and
+audited like a built-in one: its `kernel_capability` picks the permission
+bucket and its `default_policy` whether it needs approval.
+
 ## Typed model-driven methods
 
 A `Method<T>` is a contract: instructions, a return type, and the limits on

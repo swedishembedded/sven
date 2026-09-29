@@ -43,7 +43,7 @@ use sven_tools_agent::QuestionRequest;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use crate::context::{RuntimeContext, ToolSetProfile};
+use crate::context::{BuiltinTools, RuntimeContext, ToolSetProfile};
 use crate::registry::{build_tool_registry_with_integrations, IntegrationProviders};
 
 /// Builds the executor installed in the composite's **tool slot** (`CallTool`),
@@ -112,6 +112,8 @@ pub struct RuntimeBuilder {
     /// Domain facts seeded into the session's context before it starts.
     /// See [`RuntimeBuilder::with_context_facts`].
     context_facts: serde_json::Map<String, serde_json::Value>,
+    /// See [`RuntimeBuilder::with_builtin_tools`].
+    builtin_tools: BuiltinTools,
     /// Tools registered on top of the built-in set. See
     /// [`RuntimeBuilder::with_extra_tools`].
     extra_tools: Vec<Arc<dyn sven_tool_api::Tool>>,
@@ -162,6 +164,7 @@ impl RuntimeBuilder {
             model_provider_override: None,
             kernel_snapshot: None,
             context_facts: serde_json::Map::new(),
+            builtin_tools: BuiltinTools::default(),
             extra_tools: Vec::new(),
             mode_registry: None,
             agent_mode: None,
@@ -361,6 +364,16 @@ impl RuntimeBuilder {
     /// Facts seeded this way are applied on top of a resumed snapshot's own
     /// facts, so a caller can re-seed per step without losing what the machine
     /// accumulated.
+    /// Selects the built-in tools this session registers. Defaults to
+    /// [`BuiltinTools::Detect`]; [`BuiltinTools::None`] also connects no MCP
+    /// servers, so the session has exactly the tools passed to
+    /// [`Self::with_extra_tools`].
+    #[must_use]
+    pub fn with_builtin_tools(mut self, selection: BuiltinTools) -> Self {
+        self.builtin_tools = selection;
+        self
+    }
+
     pub fn with_context_facts(mut self, facts: serde_json::Map<String, serde_json::Value>) -> Self {
         self.context_facts = facts;
         self
@@ -444,6 +457,13 @@ impl RuntimeBuilder {
             Some(existing) => {
                 let (_tx, rx) = tokio::sync::mpsc::channel(1);
                 (existing, rx)
+            }
+            // No built-in tools means no configured MCP servers either: the
+            // caller asked for exactly the tools it registers.
+            None if self.builtin_tools == BuiltinTools::None => {
+                let (mcp_event_tx, mcp_event_rx) = tokio::sync::mpsc::channel(1);
+                let manager = McpManager::new(Default::default(), mcp_event_tx, false);
+                (manager, mcp_event_rx)
             }
             None => {
                 let (mcp_event_tx, mcp_event_rx) = tokio::sync::mpsc::channel(64);
@@ -557,16 +577,23 @@ impl RuntimeBuilder {
         let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
         let root = self.runtime_ctx.project_root.as_deref();
         let q = self.tool_question_tx.clone();
-        let tool_profile = ToolSetProfile::for_session(mode, root, q, todos, buffer_store);
-        let mut tool_registry = build_tool_registry_with_integrations(
-            &self.config,
-            model.clone(),
-            tool_profile,
-            mode_lock.clone(),
-            tool_event_tx,
-            runtime.clone(),
-            integration_providers,
-        );
+        let tool_profile =
+            ToolSetProfile::for_selection(self.builtin_tools, mode, root, q, todos, buffer_store);
+        let mut tool_registry = match tool_profile {
+            Some(profile) => build_tool_registry_with_integrations(
+                &self.config,
+                model.clone(),
+                profile,
+                mode_lock.clone(),
+                tool_event_tx,
+                runtime.clone(),
+                integration_providers,
+            ),
+            None => {
+                drop((tool_event_tx, integration_providers));
+                sven_tool_registry::ToolRegistry::new()
+            }
+        };
 
         let mcp_tools: Vec<McpTool> = mcp_manager.tools().await;
         for tool in mcp_tools {
@@ -584,6 +611,7 @@ impl RuntimeBuilder {
             tool_registry.set_permission_requester(requester);
         }
 
+        let ask_question_available = tool_registry.get("ask_question").is_some();
         let tool_registry = Arc::new(tool_registry);
         // Clone for the RuntimeHandle before the registry is moved into the
         // ToolExecutor below (frontends reach it for MCP tool hot-swap).
@@ -817,6 +845,12 @@ impl RuntimeBuilder {
         for (key, value) in std::mem::take(&mut self.context_facts) {
             init_ctx.facts.insert(key, value);
         }
+        // What the registry holds is a fact about this session, not a caller
+        // preference, so it is set after the caller's facts.
+        init_ctx.set_fact(
+            sven_machines::ASK_QUESTION_AVAILABLE_FACT,
+            serde_json::json!(ask_question_available),
+        );
         init_ctx.principal = self.principal.clone();
         if child_spawner.is_some() {
             init_ctx.set_fact("parallel_execution", serde_json::json!(true));

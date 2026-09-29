@@ -223,7 +223,14 @@ async fn the_same_contract_is_served_by_either_strategy() {
 
 #[tokio::test]
 async fn an_investigating_method_may_use_tools() {
-    let (engine, provider) = engine_with(vec![says(r#"{"risk":5,"summary":"checked"}"#)]);
+    let provider = Arc::new(ScriptedMockProvider::new(vec![says(
+        r#"{"risk":5,"summary":"checked"}"#,
+    )]));
+    let engine = Engine::builder()
+        .model_provider(Arc::clone(&provider) as Arc<_>)
+        .toolset(sven_sdk::Toolset::research())
+        .build()
+        .expect("an engine builds");
     let method = assess().strategy(sven_sdk::Strategy::Investigate);
     let mut agent = engine.agent_for(&method);
 

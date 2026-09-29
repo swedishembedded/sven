@@ -217,6 +217,7 @@ impl Agent {
             .with_allow_interactive_oauth(false)
             .with_runtime_context(runtime_ctx)
             .with_context_facts(facts)
+            .with_builtin_tools(self.engine.toolset().builtin())
             .with_extra_tools(self.engine.tools())
             .with_initial_history(self.state.history.clone());
         if let Some(registry) = self.engine.machines() {

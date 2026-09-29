@@ -77,6 +77,13 @@ const DEFAULT_MAX_TOOL_ROUNDS: u32 = 16;
 /// stands.
 pub const MAX_TOOL_ROUNDS_FACT: &str = "agent.max_tool_rounds";
 
+/// Whether the session registers `ask_question`. The clarification
+/// post-check turns a closing question into an `ask_question` call only when
+/// it does; a session that never registered the tool gets the answer as
+/// written. Absent means available, which is what every session had before
+/// tool selection existed.
+pub const ASK_QUESTION_AVAILABLE_FACT: &str = "agent.ask_question_available";
+
 /// The configured tool-round budget, from the session's context facts.
 /// A fact that is absent, not a number, or zero (a zero budget would stall
 /// the loop before its first turn) falls back to the built-in default.
@@ -239,6 +246,13 @@ impl ReactiveAgentMachine {
         // past the budget is what the budget exists to prevent, so the check is
         // simply skipped there and the answer stands.
         if ls.round > ls.max_rounds {
+            return None;
+        }
+        if ctx
+            .fact(ASK_QUESTION_AVAILABLE_FACT)
+            .and_then(serde_json::Value::as_bool)
+            == Some(false)
+        {
             return None;
         }
 
@@ -885,6 +899,18 @@ mod tests {
             out.effects.is_empty(),
             "the post-check must not spend a round past the budget"
         );
+        assert_eq!(hsm.state(), ReactiveState::Idle);
+    }
+
+    /// A session without `ask_question` gets the answer as written: the
+    /// post-check never calls a tool the session does not have.
+    #[test]
+    fn the_clarification_post_check_needs_the_tool() {
+        let (mut hsm, mut ctx) = make_hsm();
+        ctx.set_fact(ASK_QUESTION_AVAILABLE_FACT, json!(false));
+        hsm.dispatch(&Event::user_message("port the parser"), &mut ctx);
+        let out = hsm.dispatch(&final_answer(UNRESOLVED_ANSWER), &mut ctx);
+        assert!(out.effects.is_empty(), "{:?}", out.effects);
         assert_eq!(hsm.state(), ReactiveState::Idle);
     }
 

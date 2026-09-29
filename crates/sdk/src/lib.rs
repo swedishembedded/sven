@@ -52,7 +52,7 @@ mod state;
 mod transcript;
 
 pub use agent::Agent;
-pub use engine::{ApprovalPolicy, Engine, EngineBuilder};
+pub use engine::{ApprovalPolicy, Engine, EngineBuilder, Toolset};
 pub use error::CallError;
 pub use method::{Method, Strategy};
 pub use state::AgentState;
