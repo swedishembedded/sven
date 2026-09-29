@@ -62,6 +62,20 @@ pub struct TurnRequest {
     /// Maximum tool-call rounds before a forced wrap-up turn.
     #[serde(default)]
     pub max_tool_rounds: Option<u32>,
+    /// Tool calls refused before they ran, with the reason, keyed by the
+    /// kernel's call id. The executor answers each in the thread before the
+    /// model is called: a history with a tool call and no result is invalid.
+    #[serde(default)]
+    pub refused_calls: Vec<RefusedCall>,
+}
+
+/// A tool call the machine knows was not run, and why.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RefusedCall {
+    /// The kernel's id for the call (a `ToolCallId`'s UUID).
+    pub call_id: String,
+    /// Why it was not run, as the model should read it.
+    pub reason: String,
 }
 
 impl TurnRequest {

@@ -27,7 +27,7 @@ pub mod rule;
 pub mod turn;
 pub mod verify;
 
-pub use turn::{TurnRequest, TURN_KIND};
+pub use turn::{RefusedCall, TurnRequest, TURN_KIND};
 
 use provenance::FactSource;
 

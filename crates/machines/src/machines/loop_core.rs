@@ -103,6 +103,11 @@ pub struct LoopState {
     /// with each new batch, like [`LoopState::call_registry`].
     #[serde(default)]
     pub proposed: HashMap<ToolCallId, ProposedToolCall>,
+    /// Why calls of this batch failed or were refused, keyed by the call id's
+    /// UUID. Handed to the next turn, which answers any call the executor
+    /// never ran; ordered so a replayed transition emits the same effect.
+    #[serde(default)]
+    pub refusals: std::collections::BTreeMap<String, String>,
 }
 
 impl LoopState {
@@ -140,17 +145,7 @@ impl LoopState {
             .stall_nudge
             .take()
             .or_else(|| self.progress_instruction());
-        build_turn_effect(
-            &self.thread,
-            &self.tools,
-            &self.all_tools_mode,
-            None,
-            instruction.as_deref(),
-            None,
-            self.max_rounds,
-            None,
-            None,
-        )
+        self.turn(instruction, None)
     }
 
     /// Build a continuation turn that also enforces a JSON response schema.
@@ -162,17 +157,31 @@ impl LoopState {
             .stall_nudge
             .take()
             .or_else(|| self.progress_instruction());
-        build_turn_effect(
-            &self.thread,
-            &self.tools,
-            &self.all_tools_mode,
-            None,
-            instruction.as_deref(),
-            None,
-            self.max_rounds,
-            Some(schema),
-            Some(schema_name),
-        )
+        self.turn(instruction, Some((schema, schema_name)))
+    }
+
+    /// The continuation request, carrying (and consuming) the reasons calls
+    /// of the last batch were not run.
+    fn turn(&mut self, instruction: Option<String>, schema: Option<(Value, &str)>) -> Effect {
+        let (schema, schema_name) = schema.unwrap_or((Value::Null, ""));
+        let req = TurnRequest {
+            thread: self.thread.clone(),
+            instruction: instruction.unwrap_or_default(),
+            tools: self.tools.clone(),
+            all_tools_mode: self.all_tools_mode.clone(),
+            schema,
+            schema_name: schema_name.to_string(),
+            model: None,
+            dynamic_suffix: None,
+            max_tool_rounds: Some(self.max_rounds),
+            refused_calls: std::mem::take(&mut self.refusals)
+                .into_iter()
+                .map(|(call_id, reason)| sven_vocab::RefusedCall { call_id, reason })
+                .collect(),
+        };
+        Effect::CallLlm {
+            request: req.to_value(),
+        }
     }
 }
 
@@ -330,6 +339,7 @@ pub fn build_turn_effect(
         model: model.map(str::to_string),
         dynamic_suffix,
         max_tool_rounds: Some(max_tool_rounds),
+        refused_calls: Vec::new(),
     };
     Effect::CallLlm {
         request: req.to_value(),
@@ -365,6 +375,7 @@ pub fn init_loop(
         awaiting_answer: None,
         call_registry: HashMap::new(),
         proposed: HashMap::new(),
+        refusals: std::collections::BTreeMap::new(),
         failure_streaks: HashMap::new(),
         stall_nudge: None,
         empty_turns: 0,
@@ -566,6 +577,8 @@ pub fn handle_tool_event<S>(
             let mut ls = LoopState::load(ctx);
             ls.pending.remove(call_id);
             record_outcome(&mut ls, call_id, Some(error.as_str()));
+            ls.refusals
+                .insert(call_id.as_uuid().to_string(), error.clone());
             if ls.is_idle() {
                 let cont = make_turn(&mut ls);
                 ls.store(ctx);
@@ -645,7 +658,12 @@ pub fn handle_tool_event<S>(
             let mut ls = LoopState::load(ctx);
             if ls.awaiting_tool_approval == Some(*approval_id) {
                 ls.awaiting_tool_approval = None;
-                // Rejected tool: resume loop (LLM sees the failure result).
+                // Rejected tool: resume loop; the next turn answers the call
+                // with the refusal so the model sees why it did not run.
+                ls.refusals.insert(
+                    approval_id.as_uuid().to_string(),
+                    "a human did not approve it".to_string(),
+                );
                 if ls.is_idle() {
                     let cont = make_turn(&mut ls);
                     ls.store(ctx);

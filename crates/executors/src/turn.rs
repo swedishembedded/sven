@@ -121,7 +121,7 @@ use sven_turn::{stream_turn, to_model_schemas, AbortedError, ModelResolver};
 use sven_vocab::TurnRequest;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{refusal_reasons, ThreadStore};
 
 /// Executes single-turn `CallLlm { kind: "turn" }` effects.
 ///
@@ -466,10 +466,11 @@ impl EffectExecutor for TurnExecutor {
         let thread_id = req.thread.clone();
         let model = self.resolve_model(&req.model);
 
-        // If the request carries a user instruction, append it to the thread
-        // before snapshotting so the model sees it on the very first call.
-        if !req.instruction.is_empty() {
-            if let Ok(mut s) = self.store.lock() {
+        // Answer calls refused before they ran, then the instruction: a valid history.
+        let reasons = refusal_reasons(&self.call_id_to_thread, &req.refused_calls);
+        if let Ok(mut s) = self.store.lock() {
+            s.answer_open_calls(&thread_id, &reasons);
+            if !req.instruction.is_empty() {
                 s.append(&thread_id, Message::user(&req.instruction));
             }
         }
