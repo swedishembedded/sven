@@ -104,15 +104,13 @@ The complete effect vocabulary (11 variants):
 | `RequestHumanApproval { approval_id, capability, description }` | Request explicit approval before a dangerous capability is used |
 | `ScheduleTimeout { timer_id, duration }` | Schedule a one-shot timer that posts `Timeout` |
 | `CancelTimeout { timer_id }` | Cancel a scheduled timer |
-| `CreateCheckpoint { label }` | Create a rollback checkpoint (e.g. a git snapshot) |
-| `RollbackToCheckpoint { label }` | Roll back to a checkpoint (reports the `Rollback` capability) |
 | `PersistAudit` | Persist the audit log to durable storage |
 | `EmitInternal { name, payload }` | Re-enter a domain-internal event into the queue |
 | `InstantiateSubmachine { machine, descriptor }` | Spawn a child submachine and route its lifecycle through the runtime (see [Parallel Submachine Fan-out](parallel-submachines.md)) |
 
 Each effect exposes `kind()` (a payload-free `EffectKind` for audit/coverage)
-and `required_capability()` - only `CallTool` and `RollbackToCheckpoint` report
-a capability, so only they are gated by the permission check.
+and `required_capability()` - only `CallTool` reports a capability, so only
+tool calls are gated by the permission check today.
 
 ---
 
@@ -133,12 +131,13 @@ independently receives one of three verdicts:
   description }` is emitted; on `HumanApproved` the call proceeds, on
   `HumanRejected` a `ToolFailed` is emitted.
 
-Non-tool effects (`AskUser`, `PersistAudit`, timers, checkpoints, etc.) remain
+Non-tool effects (`AskUser`, `PersistAudit`, timers, etc.) remain
 all-or-nothing: a forbidden batch is recorded in the audit trail but not executed.
 
 Capabilities are coarse buckets (`ToolCapability`): `ReadFile`, `WriteFile`,
-`DeleteFile`, `ExecuteShell`, `NetworkAccess`, `GitOperation`, `Rollback`.
-`ExecuteShell`, `DeleteFile`, and `Rollback` are *inherently dangerous* - they
+`DeleteFile`, `ExecuteShell`, `NetworkAccess`, `GitOperation`,
+`AssimilateKnowledge`, `IngestDocument`, `RunVerifier`, `ControlDevice`.
+`ExecuteShell`, `DeleteFile`, and `IngestDocument` are *inherently dangerous* - they
 always require a granted approval regardless of the per-state allow-set. A
 `PermissionPolicy` is assembled with a builder (`allow_in`, `allow_globally`,
 `require_approval`).
@@ -388,7 +387,6 @@ effects, streaming `UiEvent`s outward and posting result `Event`s inward. The
 | `ToolExecutor` | `CallTool` - kernel-gated, spawn-and-forget; the **only** executor that calls `registry.execute` |
 | `UserExecutor` | `AskUser`, `RequestHumanApproval` |
 | `TimerExecutor` | `ScheduleTimeout`, `CancelTimeout` |
-| `CheckpointExecutor` | `CreateCheckpoint`, `RollbackToCheckpoint` |
 | `AuditExecutor` | `PersistAudit` |
 | `InternalExecutor` | `EmitInternal` |
 

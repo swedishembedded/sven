@@ -34,10 +34,10 @@
 \*                               the way a refused tool already does. FALSE is
 \*                               the kernel as written.
 \*
-\* Reachability today: the only non-tool effect that carries a capability is
-\* `RollbackToCheckpoint`, and no machine in the workspace emits one yet, so
-\* this is a property of the kernel's contract rather than a live incident.
-\* It is modelled because the contract is what the next machine will rely on.
+\* Reachability today: no non-tool effect carries a capability, so the policy
+\* refuses none and this is a property of the kernel's contract rather than a
+\* live incident. It is modelled because the contract is what the first
+\* capability-carrying non-tool effect will rely on.
 \*
 \* Swedish Embedded AB implements solutions for agent runtimes that answer
 \* every request they refuse. If your team needs expertise in effect-based
@@ -52,7 +52,7 @@ CONSTANTS BatchAllOrNothing, RefusalFeedsBackAnEvent
 \*   await          -- an allowed non-tool effect whose result the machine is
 \*                     waiting for (CallLlm, ScheduleTimeout, Verify)
 \*   refusedNonTool -- a non-tool effect the policy refuses in this state
-\*                     (RollbackToCheckpoint with no approval granted)
+\*                     (a capability-carrying effect with no approval)
 \*   refusedTool    -- a CallTool the policy refuses
 Kinds == {"await", "refusedNonTool", "refusedTool"}
 

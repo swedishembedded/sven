@@ -15,7 +15,6 @@
 //! | [`tool`] | `CallTool` | `ToolSucceeded`, `ToolFailed` |
 //! | [`user`] | `AskUser`, `RequestHumanApproval` | `UserMessage`, `HumanApproved`, `HumanRejected` |
 //! | [`timer`] | `ScheduleTimeout`, `CancelTimeout` | `Timeout` |
-//! | [`checkpoint`] | `CreateCheckpoint`, `RollbackToCheckpoint` | `Internal::Custom` |
 //! | [`audit`] | `PersistAudit` | *(none — appends to log file)* |
 //! | [`internal`] | `EmitInternal` | `Internal::Custom` |
 //! | [`verify`] | `Verify` | `VerificationComplete` |
@@ -34,7 +33,6 @@
 //!     .with_tools(registry, Default::default())
 //!     .with_user(question_tx, approval_tx)
 //!     .with_timers(Arc::new(sven_kernel::SystemClock::new()))
-//!     .with_checkpoints("/path/to/repo")
 //!     .with_audit("/var/log/sven/audit.jsonl")
 //!     .build();
 //!
@@ -42,7 +40,6 @@
 //! ```
 
 pub mod audit;
-pub mod checkpoint;
 pub mod composite;
 pub mod internal;
 pub mod timer;
@@ -55,7 +52,6 @@ pub mod verify;
 pub use audit::{
     append_chain, read_chain, verify_chain, AuditExecutor, ChainError, ChainedLine, GENESIS_HASH,
 };
-pub use checkpoint::CheckpointExecutor;
 pub use composite::{CompositeExecutor, CompositeExecutorBuilder};
 pub use internal::InternalExecutor;
 pub use timer::TimerExecutor;

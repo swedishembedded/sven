@@ -77,16 +77,6 @@ pub enum Effect {
         /// Timer to cancel.
         timer_id: TimerId,
     },
-    /// Create a rollback checkpoint (e.g. a git/worktree snapshot).
-    CreateCheckpoint {
-        /// Caller-chosen checkpoint label.
-        label: String,
-    },
-    /// Roll back to a previously created checkpoint.
-    RollbackToCheckpoint {
-        /// Checkpoint label to restore.
-        label: String,
-    },
     /// Persist an audit record to the durable event-sourced log.
     PersistAudit,
     /// Re-enter a domain-internal event into the queue.
@@ -128,8 +118,6 @@ impl Effect {
             Effect::RequestHumanAnswer { .. } => EffectKind::RequestHumanAnswer,
             Effect::ScheduleTimeout { .. } => EffectKind::ScheduleTimeout,
             Effect::CancelTimeout { .. } => EffectKind::CancelTimeout,
-            Effect::CreateCheckpoint { .. } => EffectKind::CreateCheckpoint,
-            Effect::RollbackToCheckpoint { .. } => EffectKind::RollbackToCheckpoint,
             Effect::PersistAudit => EffectKind::PersistAudit,
             Effect::EmitInternal { .. } => EffectKind::EmitInternal,
             Effect::InstantiateSubmachine { .. } => EffectKind::InstantiateSubmachine,
@@ -137,14 +125,13 @@ impl Effect {
         }
     }
 
-    /// The capability this effect exercises, if any. Effects that touch
-    /// dangerous machinery (tools, rollback) report a capability so the
+    /// The capability this effect exercises, if any. An effect that touches
+    /// the outside world through a tool reports its capability so the
     /// permission gate can decide whether it is allowed in the current state.
     #[must_use]
     pub fn required_capability(&self) -> Option<ToolCapability> {
         match self {
             Effect::CallTool { capability, .. } => Some(*capability),
-            Effect::RollbackToCheckpoint { .. } => Some(ToolCapability::Rollback),
             _ => None,
         }
     }
@@ -167,10 +154,6 @@ pub enum EffectKind {
     ScheduleTimeout,
     /// See [`Effect::CancelTimeout`].
     CancelTimeout,
-    /// See [`Effect::CreateCheckpoint`].
-    CreateCheckpoint,
-    /// See [`Effect::RollbackToCheckpoint`].
-    RollbackToCheckpoint,
     /// See [`Effect::PersistAudit`].
     PersistAudit,
     /// See [`Effect::EmitInternal`].

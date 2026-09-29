@@ -16,9 +16,8 @@
 //! # Policy
 //!
 //! Children receive a **tightened** policy: read/write/shell/git are allowed
-//! globally, but `Rollback` is not included so any approval-gated call the
-//! child emits is rejected immediately by the kernel (child kernels have no
-//! human approver). The `TaskMachine` itself auto-denies `ToolApprovalRequired`
+//! globally and nothing else, so a call outside that set is rejected
+//! immediately by the kernel (child kernels have no human approver). The `TaskMachine` itself auto-denies `ToolApprovalRequired`
 //! events that reach it via the `RunningTools` state.
 
 use std::collections::HashMap;
@@ -59,8 +58,8 @@ impl SdlcChildSpawner {
         }
     }
 
-    /// Tightened policy for a child kernel: basic read/write/shell/git allowed,
-    /// `Rollback` excluded so no approval-gated call can stall the child.
+    /// Tightened policy for a child kernel: basic read/write/shell/git allowed
+    /// and nothing else.
     /// The kernel gates every `CallTool` effect; if a capability falls outside
     /// this policy the kernel emits `ToolFailed{..}` immediately.
     fn child_policy() -> PermissionPolicy {

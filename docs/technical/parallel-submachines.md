@@ -145,7 +145,7 @@ kernel**:
 - a one-shot `TaskMachine` (using `loop_core` state handlers) running under its
   own `Runtime`,
 - a **tightened child policy** that allows all core capabilities (`ReadFile`,
-  `WriteFile`, `ExecuteShell`, `GitOperation`, `NetworkAccess`, `Rollback`)
+  `WriteFile`, `ExecuteShell`, `GitOperation`, `NetworkAccess`)
   globally, but installs **no `UserExecutor`** - so any approval-gated call
   results in `ToolFailed` rather than blocking on a human. The kernel still gates
   every tool call through the permission policy; children are simply headless

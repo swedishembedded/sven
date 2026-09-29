@@ -52,7 +52,7 @@ use crate::registry::{build_tool_registry_with_integrations, IntegrationProvider
 ///
 /// Installing a custom tool executor this way — instead of
 /// [`RuntimeBuilder::with_effect_executor`] — keeps every other default
-/// executor (turn/user/timer/checkpoint/audit) wired; only tool dispatch is
+/// executor (turn/user/timer/audit) wired; only tool dispatch is
 /// replaced. A deployment can pass a factory that shares the store with its
 /// own executor so tool results append to the right thread. See
 /// [`RuntimeBuilder::with_tool_executor_override`].
@@ -265,7 +265,7 @@ impl RuntimeBuilder {
     /// [`CompositeExecutor`](sven_executors::CompositeExecutor) entirely.
     ///
     /// The kernel hands **every** validated effect to `exec`; none of the
-    /// default sub-executors (turn/tool/user/timer/checkpoint/audit) are
+    /// default sub-executors (turn/tool/user/timer/audit) are
     /// wired. In particular the [`KernelChannels`] question/approval
     /// receivers will observe closed channels, since the default
     /// `UserExecutor` that feeds them is not installed.
@@ -278,7 +278,7 @@ impl RuntimeBuilder {
     }
 
     /// Override only the composite's **tool slot** (`CallTool`), leaving every
-    /// other default executor (turn/user/timer/checkpoint/audit) wired.
+    /// other default executor (turn/user/timer/audit) wired.
     ///
     /// Unlike [`Self::with_effect_executor`] — which drops the entire default
     /// composite — this substitutes just the tool executor. The `factory` is
@@ -309,7 +309,7 @@ impl RuntimeBuilder {
     /// builds the config provider itself (`sven_model_drivers::from_config`),
     /// wraps it, and injects the wrapped provider here — no kernel path can
     /// then reach the model unwrapped. Unlike [`Self::with_effect_executor`], all default
-    /// executors (turn/tool/user/timer/checkpoint/audit) stay wired.
+    /// executors (turn/tool/user/timer/audit) stay wired.
     pub fn with_model_provider(mut self, provider: Box<dyn sven_model::ModelProvider>) -> Self {
         self.model_provider_override = Some(Arc::from(provider));
         self
@@ -689,8 +689,8 @@ impl RuntimeBuilder {
         // per-tenant views can be filtered out of the log.
         let audit_trail = sven_hsm::AuditTrailHandle::new();
 
-        // ── Checkpoint dir ────────────────────────────────────────────────────
-        let checkpoint_dir: PathBuf = self
+        // ── Verifier root ─────────────────────────────────────────────────────
+        let verify_root: PathBuf = self
             .runtime_ctx
             .project_root
             .clone()
@@ -751,7 +751,6 @@ impl RuntimeBuilder {
                 let base = CompositeExecutorBuilder::default()
                     .with_user_slot(Box::new(user_executor))
                     .with_timers(Arc::new(sven_kernel::SystemClock::new()))
-                    .with_checkpoints(checkpoint_dir.clone())
                     .with_audit_trail(audit_log_path, audit_trail.clone())
                     .with_turn(turn_executor)
                     // Same root every other effect that touches the
@@ -759,7 +758,7 @@ impl RuntimeBuilder {
                     // `Verifying` state ever emits `Effect::Verify` (see its
                     // `permission_policy`), so wiring it here unconditionally
                     // is harmless for every other mode.
-                    .with_verify(checkpoint_dir);
+                    .with_verify(verify_root);
                 let composed = match self.tool_executor_override.take() {
                     Some(factory) => base.with_tool_slot(factory(
                         Arc::clone(&conv_store),
@@ -1075,7 +1074,7 @@ mod tests {
 
     /// `with_tool_executor_override` installs a custom executor as just the
     /// composite's **tool slot** — `CallTool` reaches it, but the rest of the
-    /// default composite (turn/user/timer/checkpoint/audit) stays wired, so a
+    /// default composite (turn/user/timer/audit) stays wired, so a
     /// scripted tool-then-text turn still completes its second round.
     #[tokio::test]
     async fn tool_executor_override_owns_call_tool_rest_stays_on_default_composite() {

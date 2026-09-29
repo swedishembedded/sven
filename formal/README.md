@@ -181,15 +181,16 @@ missing `if`: the machine has to be told, which means a refusal event in
 a machine that ignores it should then do.
 
 **`EffectDeliveryBatchDrop.cfg` is a priced TRADE-OFF, not a gap.** The
-all-or-nothing batch is deliberate: a dispatch that wanted to roll back AND
-ask the model what to do next does neither rather than half of it. The
+all-or-nothing batch is deliberate: a dispatch that wanted a gated side
+effect AND to ask the model what to do next does neither rather than half of
+it. The
 configuration is checked in failing so the price stays visible and so that
 changing the batch rule cannot happen silently.
 
-Reachability today: the only non-tool effect carrying a capability is
-`RollbackToCheckpoint`, and no machine in the workspace emits one, so the
-stall is a property of the kernel's contract rather than a live incident. It
-is modelled because the contract is what the next machine will rely on.
+Reachability today: no non-tool effect carries a capability, so the policy
+refuses none and the stall is a property of the kernel's contract rather than
+a live incident. It is modelled because the contract is what the first
+capability-carrying non-tool effect will rely on.
 
 ## The tools
 

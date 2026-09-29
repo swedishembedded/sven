@@ -221,10 +221,10 @@ fn jail(root: &Path, path: &str) -> Option<PathBuf> {
 /// Executes `Effect::Verify` by calling [`evaluate`] against a fixed `root`
 /// and posting the verdict back as `Event::VerificationComplete`.
 ///
-/// `root` is owned by the executor (constructed once, at assembly time) for
-/// the same reason `CheckpointExecutor` owns `repo_dir`: a transition cannot
-/// supply a filesystem path itself without ceasing to be pure, so the
-/// environment it resolves against is injected at the boundary instead.
+/// `root` is owned by the executor (constructed once, at assembly time): a
+/// transition cannot supply a filesystem path itself without ceasing to be
+/// pure, so the environment it resolves against is injected at the boundary
+/// instead.
 pub struct VerifyExecutor {
     root: PathBuf,
 }

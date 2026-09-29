@@ -90,8 +90,6 @@ directly; it asks the kernel to do it by returning an effect.
 | `RequestHumanApproval` | `approval_id, capability, description` | Gate a dangerous capability on human consent; answer arrives as `HumanApproved` or `HumanRejected` |
 | `ScheduleTimeout` | `timer_id, duration` | Post `Timeout { timer_id }` after `duration` |
 | `CancelTimeout` | `timer_id` | Cancel a previously scheduled timer |
-| `CreateCheckpoint` | `label` | Take a git/worktree snapshot before risky work |
-| `RollbackToCheckpoint` | `label` | Restore a previously created checkpoint |
 | `PersistAudit` | - | Flush the in-memory audit log to durable storage |
 | `EmitInternal` | `name, payload` | Re-enter a domain signal into the event queue |
 | `InstantiateSubmachine` | `machine: MachineId, descriptor: Value` | Create a child submachine and route events to it |
@@ -117,11 +115,10 @@ checks against what the machine's current state is allowed to do.
 |------------|-------------------|------------|
 | `ReadFile` | `read_file`, `find_file`, `grep`, `context_*`, `buf_*`, `list_*`, `search_*` | No |
 | `WriteFile` | `write_file`, `edit_file` | No |
-| `DeleteFile` | `delete_file` | Yes (requires approval) |
-| `ExecuteShell` | `shell`, `run_terminal_command`, `gdb_*` | Yes (requires approval) |
+| `DeleteFile` | none (no built-in tool uses it) | Yes (requires approval) |
+| `ExecuteShell` | `shell`, `gdb_*` | Yes (requires approval) |
 | `NetworkAccess` | `web_fetch`, `web_search`, MCP tools | No |
 | `GitOperation` | `git_*` | No |
-| `Rollback` | `RollbackToCheckpoint` effect | Yes (requires approval) |
 
 Capabilities marked **Dangerous** always require an explicit `HumanApproved`
 event before the kernel dispatches them, regardless of the per-state allow-set.
@@ -152,8 +149,9 @@ separate `RunningTools` or `AwaitingApproval` states.
 | `WriteFile` | ✓ | - |
 | `NetworkAccess` | ✓ | - |
 | `GitOperation` | ✓ | - |
-| `ExecuteShell` | ✓ | - |
-| `Rollback` | - | ✓ |
+| `ExecuteShell` | ✓ | ✓ (inherently dangerous) |
+| `AssimilateKnowledge` | ✓ | - |
+| `IngestDocument` | ✓ | ✓ (inherently dangerous) |
 
 ### State Transitions
 
@@ -241,7 +239,6 @@ states. This means `CallTool` effects are always permission-gated against the
 | `ExecuteShell` | - | - | - | - | ✓ | ✓ | - | - |
 | `NetworkAccess` | - | - | - | - | - | - | - | - |
 | `DeleteFile` | - | - | - | - | - | - | - | - |
-| `Rollback` | - | - | - | - | ✓ (approval) | - | - | - |
 
 ### Conversation Threads and Tool Subsets (per phase)
 

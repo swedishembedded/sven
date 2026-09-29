@@ -36,8 +36,6 @@ pub enum ToolCapability {
     NetworkAccess,
     /// Perform a version-control operation (commit, branch, ...).
     GitOperation,
-    /// Roll back to a checkpoint (destructive: discards work).
-    Rollback,
     /// Write a fact into the agent's own durable knowledge: semantic memory
     /// now, and - when the fact's provenance is admissible - the pending-facts
     /// ledger that later feeds training.
@@ -110,7 +108,6 @@ impl ToolCapability {
             self,
             ToolCapability::ExecuteShell
                 | ToolCapability::DeleteFile
-                | ToolCapability::Rollback
                 | ToolCapability::IngestDocument
         )
     }

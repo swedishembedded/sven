@@ -12,7 +12,6 @@
 //!     .with_tools(registry, HashSet::new())
 //!     .with_user(q_tx, a_tx)
 //!     .with_timers(Arc::new(SystemClock::new()))
-//!     .with_checkpoints("/path/to/repo")
 //!     .with_audit("/var/log/sven/audit.jsonl")
 //!     .build();
 //!
@@ -30,7 +29,6 @@ use sven_tool_registry::ToolRegistry;
 use tokio::sync::mpsc;
 
 use crate::audit::AuditExecutor;
-use crate::checkpoint::CheckpointExecutor;
 use crate::internal::InternalExecutor;
 use crate::timer::TimerExecutor;
 use crate::tool::ToolExecutor;
@@ -50,7 +48,6 @@ pub struct CompositeExecutor {
     tool: Option<Box<dyn EffectExecutor>>,
     user: Option<Box<dyn EffectExecutor>>,
     timer: Option<Box<dyn EffectExecutor>>,
-    checkpoint: Option<Box<dyn EffectExecutor>>,
     audit: Option<Box<dyn EffectExecutor>>,
     internal: Box<dyn EffectExecutor>,
     verify: Option<Box<dyn EffectExecutor>>,
@@ -127,14 +124,6 @@ impl EffectExecutor for CompositeExecutor {
                 }
             }
 
-            EffectKind::CreateCheckpoint | EffectKind::RollbackToCheckpoint => {
-                if let Some(exec) = &mut self.checkpoint {
-                    exec.execute(effect, sink, obs).await;
-                } else {
-                    tracing::warn!(?kind, "CompositeExecutor: no Checkpoint executor configured; dropping checkpoint effect");
-                }
-            }
-
             EffectKind::PersistAudit => {
                 if let Some(exec) = &mut self.audit {
                     exec.execute(effect, sink, obs).await;
@@ -176,7 +165,6 @@ pub struct CompositeExecutorBuilder {
     tool: Option<Box<dyn EffectExecutor>>,
     user: Option<Box<dyn EffectExecutor>>,
     timer: Option<Box<dyn EffectExecutor>>,
-    checkpoint: Option<Box<dyn EffectExecutor>>,
     audit: Option<Box<dyn EffectExecutor>>,
     internal: Option<Box<dyn EffectExecutor>>,
     verify: Option<Box<dyn EffectExecutor>>,
@@ -231,12 +219,6 @@ impl CompositeExecutorBuilder {
     /// Attach the timer executor backed by `clock`.
     pub fn with_timers(mut self, clock: Arc<dyn Clock>) -> Self {
         self.timer = Some(Box::new(TimerExecutor::new(clock)));
-        self
-    }
-
-    /// Attach the checkpoint executor operating in `repo_dir`.
-    pub fn with_checkpoints(mut self, repo_dir: impl Into<PathBuf>) -> Self {
-        self.checkpoint = Some(Box::new(CheckpointExecutor::new(repo_dir)));
         self
     }
 
@@ -299,13 +281,6 @@ impl CompositeExecutorBuilder {
         self
     }
 
-    /// Substitute a custom executor into the checkpoint slot
-    /// (`CreateCheckpoint`, `RollbackToCheckpoint`).
-    pub fn with_checkpoint_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
-        self.checkpoint = Some(exec);
-        self
-    }
-
     /// Substitute a custom executor into the audit slot (`PersistAudit`).
     pub fn with_audit_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
         self.audit = Some(exec);
@@ -332,7 +307,6 @@ impl CompositeExecutorBuilder {
             tool: self.tool,
             user: self.user,
             timer: self.timer,
-            checkpoint: self.checkpoint,
             audit: self.audit,
             internal: self
                 .internal
