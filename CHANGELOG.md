@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `agent.stream_idle_timeout_secs` no longer draws an unrecognised-key warning.
+
 ## [2.0.0] - 2026-09-30
 
 ### Migrating an SDK application from 1.x

@@ -409,6 +409,7 @@ const AGENT_CONFIG_KEYS: &[&str] = &[
     "max_run_timeout_secs",
     "max_thinking_tokens",
     "thinking_timeout_secs",
+    "stream_idle_timeout_secs",
 ];
 
 /// Known keys in [`crate::ToolsConfig`].
@@ -896,6 +897,12 @@ model:
     fn known_keys_earn_no_warning() {
         let yaml =
             val("model:\n  provider: openai\n  name: gpt-4o\nagent:\n  max_tool_rounds: 100\n");
+        assert_eq!(config_field_warnings(&yaml), Vec::<String>::new());
+    }
+
+    #[test]
+    fn agent_and_tool_keys_earn_no_warning() {
+        let yaml = val("agent:\n  stream_idle_timeout_secs: 60\n");
         assert_eq!(config_field_warnings(&yaml), Vec::<String>::new());
     }
 

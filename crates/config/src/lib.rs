@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 mod loader;
+mod mcp;
 mod schema;
 
 pub use loader::load;
+pub use mcp::{McpOAuthConfig, McpServerConfig, McpTransport};
 pub use schema::*;
