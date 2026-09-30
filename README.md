@@ -1,3 +1,5 @@
+![Sven banner](docs/banner.png)
+
 # Agent Sven
 
 **A keyboard-driven AI agent for the terminal.** Built in Rust, sven works as
