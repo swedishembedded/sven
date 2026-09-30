@@ -57,6 +57,7 @@ impl KernelChannels {
                     Some(a) => responder(HumanGate::Approval {
                         capability: a.capability,
                         prompt: a.description,
+                        call: a.call,
                         reply_tx: a.reply_tx,
                     }),
                     None => break,
@@ -142,6 +143,8 @@ pub enum HumanGate {
         capability: ToolCapability,
         /// What will happen if this is approved.
         prompt: String,
+        /// The tool call it gates, with its arguments, when it gates one.
+        call: Option<sven_hsm::GatedCall>,
         /// `true` to approve.
         reply_tx: oneshot::Sender<bool>,
     },
@@ -293,6 +296,7 @@ mod tests {
                 approval_id: ApprovalId::new(),
                 capability: ToolCapability::ReadFile,
                 description: "delete the account".into(),
+                call: None,
                 reply_tx: a_reply_tx,
             })
             .await

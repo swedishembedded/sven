@@ -252,6 +252,7 @@ fn request_approval(ctx: &mut Context, decision: &Value) -> Effect {
         approval_id,
         capability: ToolCapability::GitOperation,
         description,
+        call: None,
     }
 }
 

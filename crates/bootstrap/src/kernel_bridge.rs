@@ -415,6 +415,7 @@ mod tests {
                 approval_id: ApprovalId::new(),
                 capability: ToolCapability::WriteFile,
                 description: "write to src/main.rs".into(),
+                call: None,
                 reply_tx,
             })
             .await

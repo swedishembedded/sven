@@ -75,9 +75,10 @@ which hands each gate to the application:
 ```rust
 let engine = Engine::builder()
     .approvals(ApprovalPolicy::ask(|gate| match gate {
-        HumanGate::Approval { capability, prompt, reply_tx } => {
-            // ask someone; reply now or later
-            let _ = reply_tx.send(policy_allows(capability, &prompt));
+        HumanGate::Approval { capability, prompt, call, reply_tx } => {
+            // `call` is the tool call it gates (name and arguments), if any;
+            // ask someone, reply now or later
+            let _ = reply_tx.send(policy_allows(capability, call.as_ref(), &prompt));
         }
         HumanGate::Question { prompt, reply_tx } => {
             let _ = reply_tx.send(answer_for(&prompt));

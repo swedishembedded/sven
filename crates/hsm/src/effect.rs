@@ -18,6 +18,15 @@ use sven_vocab::verify::VerifierSpec;
 use crate::ids::{ApprovalId, MachineId, QuestionId, TimerId, ToolCallId};
 use crate::permissions::ToolCapability;
 
+/// A tool call held for a human's approval: what will run if it is given.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GatedCall {
+    /// Tool name.
+    pub name: String,
+    /// Tool arguments, exactly as proposed.
+    pub args: Value,
+}
+
 /// A requested side effect. Pure data; carries no behaviour.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Effect {
@@ -51,6 +60,10 @@ pub enum Effect {
         capability: ToolCapability,
         /// Human-readable description of what is being approved.
         description: String,
+        /// The tool call the approval gates, when it gates one, so whoever
+        /// answers sees exactly what will run.
+        #[serde(default)]
+        call: Option<GatedCall>,
     },
     /// Park a question for a human to answer whenever they get to it - unlike
     /// [`Effect::AskUser`], the caller must not assume an imminent reply.

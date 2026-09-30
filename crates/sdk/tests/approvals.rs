@@ -58,7 +58,7 @@ async fn deploy_with(answer: bool) -> (bool, Vec<String>) {
                 index: 0,
                 id: "d1".into(),
                 name: "deploy".into(),
-                arguments: "{}".into(),
+                arguments: r#"{"env":"prod"}"#.into(),
             },
             ResponseEvent::Done,
         ],
@@ -73,10 +73,14 @@ async fn deploy_with(answer: bool) -> (bool, Vec<String>) {
         .approvals(ApprovalPolicy::ask(move |gate| match gate {
             HumanGate::Approval {
                 capability,
+                call,
                 reply_tx,
                 ..
             } => {
-                log.lock().unwrap().push(format!("{capability:?}"));
+                let call = call.expect("a tool approval names the call it gates");
+                log.lock()
+                    .unwrap()
+                    .push(format!("{capability:?} {} {}", call.name, call.args));
                 let _ = reply_tx.send(answer);
             }
             HumanGate::Question { reply_tx, .. } => {
@@ -97,13 +101,19 @@ async fn deploy_with(answer: bool) -> (bool, Vec<String>) {
 #[tokio::test]
 async fn an_approved_gate_lets_the_tool_run() {
     let (ran, gates) = deploy_with(true).await;
-    assert_eq!(gates, vec!["ExecuteShell".to_string()]);
+    assert_eq!(
+        gates,
+        vec![r#"ExecuteShell deploy {"env":"prod"}"#.to_string()]
+    );
     assert!(ran, "approved, so it ran");
 }
 
 #[tokio::test]
 async fn a_refused_gate_keeps_the_tool_from_running() {
     let (ran, gates) = deploy_with(false).await;
-    assert_eq!(gates, vec!["ExecuteShell".to_string()]);
+    assert_eq!(
+        gates,
+        vec![r#"ExecuteShell deploy {"env":"prod"}"#.to_string()]
+    );
     assert!(!ran, "refused, so it never ran");
 }

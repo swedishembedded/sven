@@ -79,6 +79,8 @@ pub struct ApprovalRequest {
     pub capability: ToolCapability,
     /// Human-readable description of what will happen.
     pub description: String,
+    /// The tool call the approval gates, when it gates one.
+    pub call: Option<sven_hsm::GatedCall>,
     /// Send `true` (approved) or `false` (rejected) back here.
     pub reply_tx: oneshot::Sender<bool>,
 }
@@ -195,12 +197,14 @@ impl EffectExecutor for UserExecutor {
                 approval_id,
                 capability,
                 description,
+                call,
             } => {
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let req = ApprovalRequest {
                     approval_id,
                     capability,
                     description,
+                    call,
                     reply_tx,
                 };
                 if self.approval_tx.send(req).await.is_err() {
@@ -416,6 +420,7 @@ mod tests {
             approval_id,
             capability: ToolCapability::ExecuteShell,
             description: "Run build script".into(),
+            call: None,
         };
 
         tokio::spawn(async move {
@@ -438,6 +443,7 @@ mod tests {
             approval_id,
             capability: ToolCapability::DeleteFile,
             description: "Delete temp files".into(),
+            call: None,
         };
 
         tokio::spawn(async move {

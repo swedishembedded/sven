@@ -608,11 +608,16 @@ pub fn handle_tool_event<S>(
                 capability: *capability,
                 description: description.clone(),
             });
+            let call = ls.proposed.get(call_id).map(|p| sven_hsm::GatedCall {
+                name: p.name.clone(),
+                args: p.args.clone(),
+            });
             ls.store(ctx);
             Some(Reaction::effects(vec![Effect::RequestHumanApproval {
                 approval_id,
                 capability: *capability,
                 description: description.clone(),
+                call,
             }]))
         }
 
@@ -733,41 +738,15 @@ pub fn handle_tool_event<S>(
     }
 }
 
-// ─── Backward-compat helpers (thin wrappers) ──────────────────────────────────
-// Kept so callers that have not yet been migrated compile without changes.
-
-/// Read `all_tools_mode` from context.
-pub fn all_tools_mode(ctx: &Context) -> String {
-    LoopState::load(ctx).all_tools_mode
-}
-
-/// `true` when the pending call set is empty and no approval is in flight.
-pub fn all_tools_done(ctx: &Context) -> bool {
-    LoopState::load(ctx).is_idle()
-}
-
-/// Read the current round counter.
-pub fn current_round(ctx: &Context) -> u64 {
-    LoopState::load(ctx).round as u64
-}
+// ─── Helpers for machines that drive the loop by hand ──────────────────────
 
 /// Read the configured maximum round limit.
 pub fn max_rounds(ctx: &Context) -> u64 {
     LoopState::load(ctx).max_rounds as u64
 }
 
-/// Read the current thread id.
-pub fn current_thread(ctx: &Context) -> String {
-    LoopState::load(ctx).thread
-}
-
-/// Read the configured tool names.
-pub fn current_tools(ctx: &Context) -> Vec<String> {
-    LoopState::load(ctx).tools
-}
-
-/// Register a batch of pending call IDs (compat; `on_llm_turn_complete` now
-/// does this automatically).
+/// Register a batch of pending call IDs, for a machine that proposes calls
+/// without going through [`on_llm_turn_complete`].
 pub fn mark_calls_pending(ctx: &mut Context, calls: &[ProposedToolCall]) {
     let mut ls = LoopState::load(ctx);
     ls.pending = calls.iter().map(|c| c.call_id).collect();
@@ -782,15 +761,6 @@ pub fn on_tool_result(ctx: &mut Context, call_id: &ToolCallId) -> bool {
     let done = ls.is_idle();
     ls.store(ctx);
     done
-}
-
-/// Increment the round counter and return the new value.
-pub fn increment_round(ctx: &mut Context) -> u64 {
-    let mut ls = LoopState::load(ctx);
-    ls.round += 1;
-    let r = ls.round;
-    ls.store(ctx);
-    r as u64
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

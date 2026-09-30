@@ -72,7 +72,7 @@ pub use context::{
     Context, PendingApproval, PendingQuestion, PermissionState, Principal, SafetyState,
 };
 pub use dispatch::{DispatchOutcome, Hsm};
-pub use effect::{Effect, EffectKind};
+pub use effect::{Effect, EffectKind, GatedCall};
 pub use error::{MachineError, Result};
 pub use event::{Event, EventKind, InternalEvent, ProposedToolCall};
 pub use ids::{ApprovalId, CorrelationId, MachineId, QuestionId, TaskId, TimerId, ToolCallId};
