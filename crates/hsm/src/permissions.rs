@@ -61,9 +61,31 @@ pub enum ToolCapability {
     /// for approval by default; a headless caller (e.g. CI) auto-approves it
     /// explicitly rather than this bucket being globally trusted.
     ControlDevice,
+    /// Start a child agent run (`Effect::InstantiateSubmachine`).
+    ///
+    /// Gated like a tool so a state starts children only where its policy
+    /// says so, and so a child - whose policy is its parent's narrowed - may
+    /// start children of its own only if every run above it could. Not
+    /// inherently dangerous: what a child may do is bounded by the
+    /// [`ChildRunContract`](crate::contract::ChildRunContract) it inherits,
+    /// not by this bucket.
+    SpawnChild,
 }
 
 impl ToolCapability {
+    /// Every capability, for code that reasons over the whole set.
+    pub const ALL: [ToolCapability; 9] = [
+        ToolCapability::ReadFile,
+        ToolCapability::WriteFile,
+        ToolCapability::DeleteFile,
+        ToolCapability::ExecuteShell,
+        ToolCapability::NetworkAccess,
+        ToolCapability::GitOperation,
+        ToolCapability::RunVerifier,
+        ToolCapability::ControlDevice,
+        ToolCapability::SpawnChild,
+    ];
+
     /// Capabilities considered inherently dangerous; using them always requires
     /// a granted approval regardless of the per-state allow-set.
     #[must_use]
@@ -102,7 +124,8 @@ impl PermissionPolicy {
     }
 
     /// `true` if `capability` is allowed in `state` (ignoring approval rules).
-    fn is_allowed_in<S: Debug>(&self, state: &S, capability: ToolCapability) -> bool {
+    #[must_use]
+    pub fn allows<S: Debug>(&self, state: &S, capability: ToolCapability) -> bool {
         if self.global_allowed.contains(&capability) {
             return true;
         }
@@ -111,9 +134,87 @@ impl PermissionPolicy {
             .is_some_and(|caps| caps.contains(&capability))
     }
 
+    /// `true` if `capability` is allowed whatever state the machine is in.
+    #[must_use]
+    pub fn allows_in_every_state(&self, capability: ToolCapability) -> bool {
+        self.global_allowed.contains(&capability)
+    }
+
     /// `true` if `capability` requires a granted approval before it may be used.
-    fn requires_approval(&self, capability: ToolCapability) -> bool {
+    #[must_use]
+    pub fn requires_approval(&self, capability: ToolCapability) -> bool {
         capability.is_inherently_dangerous() || self.approval_required.contains(&capability)
+    }
+
+    /// What `state` may do, as a policy that allows exactly that in every
+    /// state, with the same approval requirements.
+    ///
+    /// This is how a run's authority is handed to another machine: the
+    /// receiving machine's states have their own labels, so a per-state
+    /// policy keyed by the giver's labels would mean nothing to it.
+    #[must_use]
+    pub fn ceiling_in<S: Debug>(&self, state: &S) -> Self {
+        Self {
+            per_state: HashMap::new(),
+            global_allowed: ToolCapability::ALL
+                .into_iter()
+                .filter(|&cap| self.allows(state, cap))
+                .collect(),
+            approval_required: self.approval_required.clone(),
+        }
+    }
+
+    /// What every state may do, as a policy: the authority that holds
+    /// whichever state the machine is in when nobody can say which one.
+    #[must_use]
+    pub fn ceiling_in_every_state(&self) -> Self {
+        Self {
+            per_state: HashMap::new(),
+            global_allowed: self.global_allowed.clone(),
+            approval_required: self.approval_required.clone(),
+        }
+    }
+
+    /// The policy that allows a capability in a state only where both
+    /// `self` and `other` allow it there, and requires approval for anything
+    /// either requires approval for. Never allows more than either side.
+    #[must_use]
+    pub fn intersect(&self, other: &Self) -> Self {
+        let global_allowed: HashSet<ToolCapability> = self
+            .global_allowed
+            .intersection(&other.global_allowed)
+            .copied()
+            .collect();
+        let per_state = self
+            .per_state
+            .keys()
+            .chain(other.per_state.keys())
+            .map(|label| {
+                let allowed = |policy: &Self, cap: ToolCapability| {
+                    policy.global_allowed.contains(&cap)
+                        || policy
+                            .per_state
+                            .get(label)
+                            .is_some_and(|c| c.contains(&cap))
+                };
+                let caps: HashSet<ToolCapability> = ToolCapability::ALL
+                    .into_iter()
+                    .filter(|&cap| !global_allowed.contains(&cap))
+                    .filter(|&cap| allowed(self, cap) && allowed(other, cap))
+                    .collect();
+                (label.clone(), caps)
+            })
+            .filter(|(_, caps)| !caps.is_empty())
+            .collect();
+        Self {
+            per_state,
+            global_allowed,
+            approval_required: self
+                .approval_required
+                .union(&other.approval_required)
+                .copied()
+                .collect(),
+        }
     }
 }
 
@@ -192,7 +293,7 @@ pub fn classify<S: Debug>(
     let Some(cap) = effect.required_capability() else {
         return EffectDisposition::Allowed;
     };
-    if !policy.is_allowed_in(state, cap) {
+    if !policy.allows(state, cap) {
         return EffectDisposition::Forbidden(format!(
             "capability {cap:?} is not permitted in state {:?}",
             PermissionPolicy::state_label(state)
@@ -261,7 +362,7 @@ pub fn validate_effects_are_allowed<S: Debug>(
             continue;
         };
 
-        if !policy.is_allowed_in(state, cap) {
+        if !policy.allows(state, cap) {
             return Err(MachineError::ForbiddenToolCall {
                 state: PermissionPolicy::state_label(state),
                 capability: cap,
@@ -306,6 +407,72 @@ mod tests {
             capability: ToolCapability::ExecuteShell,
             args: Value::Null,
         }
+    }
+
+    /// Two policies that disagree in every way the builder can express:
+    /// per-state against global allowances, and different approval sets.
+    fn disagreeing_policies() -> (PermissionPolicy, PermissionPolicy) {
+        let a = PermissionPolicy::builder()
+            .allow_globally([ToolCapability::ReadFile, ToolCapability::NetworkAccess])
+            .allow_in(
+                S::Executing,
+                [ToolCapability::ExecuteShell, ToolCapability::WriteFile],
+            )
+            .require_approval([ToolCapability::WriteFile])
+            .build();
+        let b = PermissionPolicy::builder()
+            .allow_globally([ToolCapability::ReadFile, ToolCapability::WriteFile])
+            .allow_in(S::Executing, [ToolCapability::NetworkAccess])
+            .allow_in(S::Reading, [ToolCapability::GitOperation])
+            .require_approval([ToolCapability::NetworkAccess])
+            .build();
+        (a, b)
+    }
+
+    #[test]
+    fn an_intersection_allows_only_what_both_sides_allow() {
+        let (a, b) = disagreeing_policies();
+        for merged in [a.intersect(&b), b.intersect(&a)] {
+            for cap in ToolCapability::ALL {
+                for state in [S::Reading, S::Executing] {
+                    assert_eq!(
+                        merged.allows(&state, cap),
+                        a.allows(&state, cap) && b.allows(&state, cap),
+                        "{cap:?} in {state:?}"
+                    );
+                }
+                assert_eq!(
+                    merged.requires_approval(cap),
+                    a.requires_approval(cap) || b.requires_approval(cap),
+                    "approval for {cap:?}"
+                );
+            }
+        }
+        let merged = a.intersect(&b);
+        assert!(merged.allows(&S::Executing, ToolCapability::WriteFile));
+        assert!(merged.allows(&S::Executing, ToolCapability::NetworkAccess));
+        assert!(!merged.allows(&S::Reading, ToolCapability::NetworkAccess));
+        assert!(!merged.allows(&S::Executing, ToolCapability::ExecuteShell));
+    }
+
+    #[test]
+    fn a_ceiling_carries_one_state_authority_to_any_state() {
+        let (a, _) = disagreeing_policies();
+        let ceiling = a.ceiling_in(&S::Executing);
+        for cap in ToolCapability::ALL {
+            assert_eq!(
+                ceiling.allows(&S::Reading, cap),
+                a.allows(&S::Executing, cap)
+            );
+            assert_eq!(
+                ceiling.allows_in_every_state(cap),
+                a.allows(&S::Executing, cap)
+            );
+            assert_eq!(ceiling.requires_approval(cap), a.requires_approval(cap));
+        }
+        let everywhere = a.ceiling_in_every_state();
+        assert!(everywhere.allows_in_every_state(ToolCapability::ReadFile));
+        assert!(!everywhere.allows(&S::Executing, ToolCapability::ExecuteShell));
     }
 
     #[test]

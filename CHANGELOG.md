@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Migrating from 2.0.0
+- `ToolCapability` gains `SpawnChild`, and `Effect::InstantiateSubmachine` now requires it: a machine that spawns children must allow `SpawnChild` in the spawning state, and an exhaustive `match` on `ToolCapability` needs the new arm.
+- `ChildSpawner::spawn_child` takes a `run: ChildRun` parameter (the contract and the child's cancel scope).
+- New public fields on structs that are not `#[non_exhaustive]`: `AgentConfig.child_run_timeout_secs`, `TurnLimits.max_output_tokens`. A struct literal needs the field or `..Default::default()`.
+- `TaskState::RunningTools` is gone.
+
+### Added
+- `ChildRunContract` (`sven-hsm`): the capabilities, budgets and deadline a child run holds; `narrow` only ever tightens them. `PermissionPolicy::{allows, allows_in_every_state, requires_approval, ceiling_in, ceiling_in_every_state, intersect}`, `ToolCapability::ALL`.
+- `sven-kernel`: `CancelScope`, `DeadlineTimer`, `ChildRun`, `ErasedRuntime::spawn_child_run`, `Runtime`/`ErasedRuntime::{cancel, cancel_scope}`, `RUN_CANCELLED`, `EventSink::closed`.
+- `agent.child_run_timeout_secs` (default 3600).
+
+### Changed
+- **Every child run is held to a contract.** A child holds only what its parent holds in the spawning state, narrowed by the spawner's terms; cancelling, aborting or dropping the parent cancels its children; `ErasedRuntime::spawn_child_run` applies the contract's policy and cancels the run at its deadline.
+- **Headless SDLC children now follow the session's approval behaviour.** A task child's questions and approval requests go to the parent session's question and approval channels - answered by a person in the TUI, auto-approved by the headless runner, as the parent's own - instead of ending the task. They hold only what the parent holds in `Execution` (no network), take at most `agent.max_tool_rounds` rounds, write at most the session's configured output cap per response, and stop after `agent.child_run_timeout_secs`; their tool calls in flight are aborted with them.
+- A question or approval still pending when its run stops is withdrawn from the frontend.
+
 ### Fixed
+- A turn's output-token limit applies even when the model's context window is unknown.
 - `agent.stream_idle_timeout_secs` no longer draws an unrecognised-key warning.
 
 ## [2.0.0] - 2026-09-30

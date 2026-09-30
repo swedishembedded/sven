@@ -9,12 +9,10 @@ use sven_frontend::MachineProjection;
 use sven_machines::AgentEvent;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tool_api::events::SubagentUpdate;
-use sven_tools_agent::QuestionRequest;
 
 use crate::{
     app::{chat_state::ChatState, App, FocusPane},
     chat::segment::{messages_for_resubmit, ChatSegment},
-    overlay::question::QuestionModal,
 };
 
 impl App {
@@ -635,14 +633,6 @@ impl App {
             _ => {}
         }
         false
-    }
-
-    // ── Question request handler ──────────────────────────────────────────────
-
-    pub(crate) fn handle_question_request(&mut self, req: QuestionRequest) {
-        tracing::debug!(id = %req.id, count = req.questions.len(), "question request received");
-        self.ui.question_modal = Some(QuestionModal::new(req.questions, req.answer_tx));
-        self.ui.focus = FocusPane::Input;
     }
 
     // ── Kernel projection update ──────────────────────────────────────────────

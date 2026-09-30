@@ -713,11 +713,14 @@ impl RuntimeBuilder {
         // decomposed task as an isolated concurrent child kernel.
         let is_sdlc = self.mode.as_str() == "sdlc";
         let child_spawner: Option<Arc<dyn sven_kernel::ChildSpawner>> = if is_sdlc {
-            Some(Arc::new(crate::child_spawner::SdlcChildSpawner::new(
-                model.clone(),
-                Arc::clone(&self.config),
-                Arc::clone(&tool_registry),
-            )))
+            Some(Arc::new(
+                crate::child_spawner::SdlcChildSpawner::new(
+                    model.clone(),
+                    Arc::clone(&self.config),
+                    Arc::clone(&tool_registry),
+                )
+                .with_gates(question_tx.clone(), approval_tx.clone()),
+            ))
         } else {
             None
         };

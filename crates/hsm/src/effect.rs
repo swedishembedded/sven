@@ -140,11 +140,14 @@ impl Effect {
 
     /// The capability this effect exercises, if any. An effect that touches
     /// the outside world through a tool reports its capability so the
-    /// permission gate can decide whether it is allowed in the current state.
+    /// permission gate can decide whether it is allowed in the current state,
+    /// and starting a child run reports [`ToolCapability::SpawnChild`] so a
+    /// state spawns only where its policy says it may.
     #[must_use]
     pub fn required_capability(&self) -> Option<ToolCapability> {
         match self {
             Effect::CallTool { capability, .. } => Some(*capability),
+            Effect::InstantiateSubmachine { .. } => Some(ToolCapability::SpawnChild),
             _ => None,
         }
     }
@@ -196,5 +199,14 @@ mod tests {
     #[test]
     fn benign_effect_has_no_capability() {
         assert_eq!(Effect::PersistAudit.required_capability(), None);
+    }
+
+    #[test]
+    fn starting_a_child_run_is_gated() {
+        let e = Effect::InstantiateSubmachine {
+            machine: MachineId::new(),
+            descriptor: Value::Null,
+        };
+        assert_eq!(e.required_capability(), Some(ToolCapability::SpawnChild));
     }
 }

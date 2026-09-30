@@ -114,8 +114,9 @@ The complete effect vocabulary (11 variants):
 | `Verify { spec }` | Evaluate a declarative predicate against the real world; the verdict arrives as `VerificationComplete` |
 
 Each effect exposes `kind()` (a payload-free `EffectKind` for audit/coverage)
-and `required_capability()` - only `CallTool` reports a capability, so only
-tool calls are gated by the permission check today.
+and `required_capability()`: `CallTool` reports the capability of its tool,
+and `InstantiateSubmachine` reports `SpawnChild`, so a state starts child runs
+only where its policy allows it. Every other effect carries no capability.
 
 ---
 
@@ -143,7 +144,7 @@ failure event (see [Effect executors](#effect-executors)).
 
 Capabilities are coarse buckets (`ToolCapability`): `ReadFile`, `WriteFile`,
 `DeleteFile`, `ExecuteShell`, `NetworkAccess`, `GitOperation`, `RunVerifier`,
-`ControlDevice`. `ExecuteShell` and `DeleteFile` are *inherently dangerous* - they
+`ControlDevice`, `SpawnChild`. `ExecuteShell` and `DeleteFile` are *inherently dangerous* - they
 always require a granted approval regardless of the per-state allow-set. A
 `PermissionPolicy` is assembled with a builder (`allow_in`, `allow_globally`,
 `require_approval`).
@@ -197,8 +198,9 @@ next is pulled.
   │    4. emit UiEvent::Transition on the observation plane        │
   │    5. run_effects(): classify each CallTool against policy;    │
   │       validate the other effects all-or-nothing                │
-  │    6. InstantiateSubmachine → child spawner; every other       │
-  │       allowed effect → executor.execute(effect, sink, obs)     │
+  │    6. InstantiateSubmachine → child spawner, with the contract │
+  │       and a linked cancel scope; every other allowed effect    │
+  │       → executor.execute(effect, sink, obs)                    │
   │    7. publish RuntimeStatus + audit snapshot                   │
   └──────────────────────────────────────────────────────────────┘
 ```
@@ -217,7 +219,15 @@ There are two runtime flavours:
 
 Both expose `spawn` and `spawn_with_children` (the latter installs an optional
 `ChildSpawner`), plus `post`, `status`/`status_watch`, `subscribe_observations`,
-`wait_for_state`, `wait_done`, `audit_snapshot`, `abort`, and `join`.
+`wait_for_state`, `wait_done`, `audit_snapshot`, `abort`, `cancel`/`cancel_scope`
+and `join`. `ErasedRuntime::spawn_child_run` starts a machine as the child run
+of another (see [Child runs](#child-runs)).
+
+Every runtime owns a `CancelScope`. Cancelling it stops the consumer loop
+between events or in the middle of a dispatch's effects - the effects in
+flight are dropped, including a model turn being streamed - and publishes a
+`done` status whose `last_error` is `sven_kernel::RUN_CANCELLED`. The machine's
+state label is left where the run stopped.
 
 Timers are deterministic in tests via the `Clock` abstraction: a `SystemClock`
 for production and a `VirtualClock` whose time only advances when a test calls
@@ -409,9 +419,11 @@ else a machine may be waiting on (fire-and-forget effects - `PersistAudit`,
 waiting state on `EffectFailed` the way it does on `LlmFailed`.
 
 `InstantiateSubmachine` is validated with the rest of its dispatch's
-non-tool batch and then handed to the runtime's `ChildSpawner` (see below).
-Without a spawner it reaches the `CompositeExecutor`, which answers it with
-`EffectFailed`.
+non-tool batch - it needs `SpawnChild` in the current state - and then handed
+to the runtime's `ChildSpawner` (see below). A refusal is audited and
+answered with `EffectFailed`, like any refused non-tool effect. Without a
+spawner it reaches the `CompositeExecutor`, which answers it with
+`EffectFailed` too.
 
 ---
 
@@ -436,11 +448,37 @@ The kernel supports two forms of composition:
   carrying the child's structured result for append-only aggregation. The runtime
   drops the child from its registry on completion.
 
-`Effect::InstantiateSubmachine` is implemented at the runtime layer, and
-`InternalEvent::SubmachineCompleted` carries a `result` payload. The full design, the `TaskMachine`, the
-`SdlcChildSpawner`, the Execution fan-out/aggregation flow, and the documented
-child user-gate limitation are in **[Parallel Submachine
-Fan-out](parallel-submachines.md)**.
+### Child runs
+
+Every child run is started under a `ChildRunContract` (`hsm/src/contract.rs`):
+the permission policy it runs with, optional `max_tool_rounds` and
+`max_output_tokens` budgets, and an optional deadline. A child never holds
+more than its parent:
+
+- The kernel builds the contract from what the parent's policy allows in the
+  state that emitted `InstantiateSubmachine` (`PermissionPolicy::ceiling_in`),
+  narrowed by the parent's own contract when the parent is itself a child.
+- `ChildRunContract::narrow` is the only way terms combine: a capability is
+  allowed only where both sides allow it, an approval requirement from either
+  side is kept, and each budget and the deadline take the tighter value. A
+  spawner narrows the inherited contract with its own terms; it cannot widen
+  it.
+- A child starts with a fresh `Context`, so it holds none of the parent's
+  granted approvals.
+
+The spawner receives the contract with a `CancelScope` derived from the
+parent's (`ChildRun`). Cancelling the parent cancels every child, however
+deep; the parent's loop ending for any reason - a terminal state, `cancel`,
+`abort`, dropping the handle - cancels the children still live, because the
+registry holding their scopes cancels them when dropped.
+`ErasedRuntime::spawn_child_run` enforces what the kernel can see: the child
+runs with the contract's policy, and its scope is cancelled at the contract's
+deadline. The turn budgets belong to the child's own context and executor, and
+the spawner applies them.
+
+The full design, the `TaskMachine`, the `SdlcChildSpawner`, how a child
+reaches the parent's human gates, and the Execution fan-out/aggregation flow
+are in **[Parallel Submachine Fan-out](parallel-submachines.md)**.
 
 ---
 

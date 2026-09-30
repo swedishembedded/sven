@@ -352,6 +352,7 @@ Controls the agent's autonomy and defaults.
 | `max_thinking_tokens` | 10% of context window | Estimated reasoning-token cap per turn; see [Thinking-loop watchdog](#thinking-loop-watchdog) |
 | `thinking_timeout_secs` | `600` | Seconds a model may reason with no forward progress before the turn aborts |
 | `stream_idle_timeout_secs` | `300` | Seconds a streamed response may stay silent before the connection is declared stale and the turn fails; raise it for slow local prefill |
+| `child_run_timeout_secs` | `3600` | Wall-clock budget of each child agent run (a parallel SDLC task, a `task` sub-agent); the child is stopped when it runs out. `0` = no limit |
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.
 Decreasing it gives you more control by forcing sven to pause and ask.

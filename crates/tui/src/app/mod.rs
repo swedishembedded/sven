@@ -149,6 +149,9 @@ pub struct App {
     /// requests from all sessions are routed through the single `question_rx`
     /// in `run()`.  `None` before `run()` is called (e.g. in tests).
     pub(crate) question_tx: Option<mpsc::Sender<QuestionRequest>>,
+    /// Receives the id of a question its asker withdrew (see
+    /// `overlay::question::watch_withdrawal`).
+    pub(crate) question_withdrawn_tx: Option<mpsc::Sender<String>>,
     /// Sender for toast notifications from background tasks (e.g. OAuth auth).
     /// `None` before `run()` is called.
     pub(crate) toast_tx: Option<mpsc::Sender<ui_state::Toast>>,

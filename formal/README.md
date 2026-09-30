@@ -184,10 +184,18 @@ it. The
 configuration is checked in failing so the price stays visible and so that
 changing the batch rule cannot happen silently.
 
-Reachability today: no non-tool effect carries a capability, so the policy
-refuses none; the same answer is what an executor gives an effect it has no
-slot for, which is reachable. The model pins the contract the first
-capability-carrying non-tool effect will rely on.
+Reachability: `Effect::InstantiateSubmachine` carries
+`ToolCapability::SpawnChild`, so a state whose policy lacks it has its spawn
+refused and answered with `EffectFailed` - the `refusedNonTool` case. The same
+answer is what an executor gives an effect it has no slot for. The SDLC
+machine spawns only from `Execution`, which holds `SpawnChild`, so its own
+fan-out is never refused; an SDLC task child's terms never grant it, so a
+child that tried to spawn would be.
+
+Cancelling a run is outside this model on purpose: it stops the consumer loop
+and drops the effects in flight, but nothing is left waiting on them - the
+machine that emitted them is not dispatched again, and the child runs it
+started are cancelled with it (`kernel/src/children.rs`).
 
 ## The tools
 

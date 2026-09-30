@@ -14,6 +14,9 @@
 //!   a `reply_tx` oneshot) to the `approval_tx` channel. A background task
 //!   awaits the reply (`true` = approved) and posts `Event::HumanApproved`
 //!   or `Event::HumanRejected`.
+//! * A question or approval still waiting when its run stops is withdrawn:
+//!   the waiting task drops its receiver, so the frontend holding the
+//!   request sees `reply_tx` close and can take the prompt down.
 //! * [`Effect::RequestHumanAnswer`] → sends a [`ParkedQuestion`] to the
 //!   `parked_tx` channel and returns immediately - **no reply is awaited
 //!   here**. Unlike the two effects above, the run may sit parked for a long
@@ -159,7 +162,13 @@ impl EffectExecutor for UserExecutor {
                 }
                 let sink = sink.clone();
                 tokio::spawn(async move {
-                    match reply_rx.await {
+                    // A run that stops first withdraws the question: dropping
+                    // the receiver closes the frontend's reply channel.
+                    let reply = tokio::select! {
+                        reply = reply_rx => reply,
+                        () = sink.closed() => return,
+                    };
+                    match reply {
                         Ok(text) => {
                             let _ = sink.emit(Event::UserMessage { text }).await;
                         }
@@ -191,7 +200,11 @@ impl EffectExecutor for UserExecutor {
                 }
                 let sink = sink.clone();
                 tokio::spawn(async move {
-                    match reply_rx.await {
+                    let reply = tokio::select! {
+                        reply = reply_rx => reply,
+                        () = sink.closed() => return,
+                    };
+                    match reply {
                         Ok(true) => {
                             let _ = sink.emit(Event::HumanApproved { approval_id }).await;
                         }
@@ -486,5 +499,58 @@ mod tests {
         };
         let kind = run_user_effect(&mut exec, effect).await;
         assert_eq!(kind, "UserMessage");
+    }
+    /// A question still waiting when its run stops is withdrawn: the
+    /// frontend holding it sees its reply channel close.
+    #[tokio::test]
+    async fn a_question_is_withdrawn_when_its_run_stops() {
+        for approval in [false, true] {
+            let (qtx, mut qrx) = mpsc::channel(4);
+            let (atx, mut arx) = mpsc::channel(4);
+            let mut exec = UserExecutor::new(qtx, atx);
+            let rt = Runtime::spawn(
+                Hsm::new(OneShotMachine::new()),
+                Context::new(),
+                PermissionPolicy::builder().build(),
+                NoOpExec,
+                16,
+            );
+            let effect = if approval {
+                Effect::RequestHumanApproval {
+                    approval_id: ApprovalId::new(),
+                    capability: ToolCapability::ExecuteShell,
+                    description: "run it".into(),
+                    call: None,
+                }
+            } else {
+                Effect::AskUser {
+                    prompt: "which?".into(),
+                }
+            };
+            exec.execute(effect, &rt.sink(), &ObservationSink::default())
+                .await;
+            let reply: Box<dyn Fn() -> bool + Send> = if approval {
+                let req = arx.recv().await.expect("approval forwarded");
+                Box::new(move || req.reply_tx.is_closed())
+            } else {
+                let q = qrx.recv().await.expect("question forwarded");
+                Box::new(move || q.reply_tx.is_closed())
+            };
+            assert!(!reply(), "still waiting while the run is live");
+
+            rt.cancel();
+            let mut withdrawn = false;
+            for _ in 0..200 {
+                if reply() {
+                    withdrawn = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            assert!(
+                withdrawn,
+                "approval={approval}: the question was not withdrawn"
+            );
+        }
     }
 }

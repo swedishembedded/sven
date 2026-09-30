@@ -673,8 +673,17 @@ pub struct AgentConfig {
     /// prompt. `None` (the default) is 300s.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_idle_timeout_secs: Option<u64>,
+
+    /// Wall-clock budget, in seconds, of every child agent run this session
+    /// starts: a parallel SDLC task, a `task` sub-agent. The child is stopped
+    /// when it runs out, and never outlives its parent. 0 = no limit.
+    #[serde(default = "default_child_run_timeout_secs")]
+    pub child_run_timeout_secs: u64,
 }
 
+fn default_child_run_timeout_secs() -> u64 {
+    3600
+}
 fn default_compaction_keep_recent() -> usize {
     6
 }
@@ -683,6 +692,15 @@ fn default_tool_result_token_cap() -> usize {
 }
 fn default_compaction_overhead_reserve() -> f32 {
     0.10
+}
+
+impl AgentConfig {
+    /// The wall-clock budget of a child run, if bounded.
+    #[must_use]
+    pub fn child_run_timeout(&self) -> Option<std::time::Duration> {
+        (self.child_run_timeout_secs > 0)
+            .then(|| std::time::Duration::from_secs(self.child_run_timeout_secs))
+    }
 }
 
 impl Default for AgentConfig {
@@ -698,6 +716,7 @@ impl Default for AgentConfig {
             system_prompt: None,
             max_step_timeout_secs: 0,
             max_run_timeout_secs: 0,
+            child_run_timeout_secs: default_child_run_timeout_secs(),
             max_thinking_tokens: None,
             thinking_timeout_secs: None,
             stream_idle_timeout_secs: None,

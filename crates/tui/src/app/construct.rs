@@ -178,6 +178,7 @@ impl App {
             session_path: initial_session_path,
             chat_title,
             question_tx: None,
+            question_withdrawn_tx: None,
             toast_tx: None,
         };
 

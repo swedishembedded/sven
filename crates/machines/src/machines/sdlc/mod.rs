@@ -199,12 +199,15 @@ impl SdlcMachine {
     #[must_use]
     pub fn permission_policy() -> PermissionPolicy {
         use SdlcState::{Delivery, Discovery, Execution, Planning, Verification};
-        use ToolCapability::{ExecuteShell, GitOperation, ReadFile, WriteFile};
+        use ToolCapability::{ExecuteShell, GitOperation, ReadFile, SpawnChild, WriteFile};
         PermissionPolicy::builder()
             .allow_globally([ReadFile])
             .allow_in(Discovery, [GitOperation])
             .allow_in(Planning, [GitOperation])
-            .allow_in(Execution, [WriteFile, GitOperation, ExecuteShell])
+            .allow_in(
+                Execution,
+                [WriteFile, GitOperation, ExecuteShell, SpawnChild],
+            )
             .allow_in(Verification, [ExecuteShell])
             .allow_in(Delivery, [GitOperation])
             .build()

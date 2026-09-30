@@ -37,6 +37,7 @@
 //! | [`dispatch`] | the generic HSM engine ([`Hsm`]) - Super walk + LCA + entry/exit + Init |
 //! | [`submachine`] | hierarchical composition ([`Submachine`], [`ErasedMachine`]) |
 //! | [`permissions`] | [`PermissionPolicy`] + [`validate_effects_are_allowed`] choke point |
+//! | [`contract`] | [`ChildRunContract`] - what a child run inherits and may never widen |
 //! | [`audit`] | [`AuditRecord`] + event-sourcing [`replay`] |
 //! | [`observation`] | the outward broadcast plane ([`ObservationSink`], [`UiEvent`]) |
 //! | [`error`] | [`MachineError`] |
@@ -52,6 +53,7 @@
 
 pub mod audit;
 pub mod context;
+pub mod contract;
 pub mod dispatch;
 pub mod effect;
 pub mod error;
@@ -71,6 +73,7 @@ pub use audit::{replay, AuditOutcome, AuditRecord, ToolAuditOutcome, ToolAuditRe
 pub use context::{
     Context, PendingApproval, PendingQuestion, PermissionState, Principal, SafetyState,
 };
+pub use contract::ChildRunContract;
 pub use dispatch::{DispatchOutcome, Hsm};
 pub use effect::{Effect, EffectKind, GatedCall};
 pub use error::{MachineError, Result};

@@ -89,6 +89,11 @@ pub fn spawn_observation_bridge(
 /// * `RequestHumanApproval` → a yes/no question; `"yes"` (case-insensitive,
 ///   trimmed) approves, anything else denies. When the modal channel is closed
 ///   the request is denied — interactive sessions never blanket auto-approve.
+///
+/// A question or approval the kernel withdraws while it is pending (its run
+/// stopped, see `UserExecutor`) is withdrawn from the frontend the same way:
+/// the bridge drops its receiver, closing the `QuestionRequest::answer_tx`
+/// the frontend holds.
 pub fn spawn_question_bridge(
     channels: KernelChannels,
     question_tx: mpsc::Sender<QuestionRequest>,
@@ -101,7 +106,7 @@ pub fn spawn_question_bridge(
         loop {
             tokio::select! {
                 q = question_rx.recv() => match q {
-                    Some(kernel_q) => {
+                    Some(mut kernel_q) => {
                         let (answer_tx, answer_rx) = oneshot::channel::<String>();
                         let req = QuestionRequest {
                             id: uuid::Uuid::new_v4().to_string(),
@@ -113,10 +118,13 @@ pub fn spawn_question_bridge(
                             answer_tx,
                         };
                         if question_tx.send(req).await.is_ok() {
-                            if let Ok(answer) = answer_rx.await {
-                                let _ = kernel_q.reply_tx.send(answer);
-                            } else {
-                                let _ = kernel_q.reply_tx.send(String::new());
+                            // Dropping `answer_rx` when the kernel withdraws
+                            // the question withdraws it from the frontend.
+                            tokio::select! {
+                                answer = answer_rx => {
+                                    let _ = kernel_q.reply_tx.send(answer.unwrap_or_default());
+                                }
+                                () = kernel_q.reply_tx.closed() => {}
                             }
                         } else {
                             let _ = kernel_q.reply_tx.send(String::new());
@@ -125,7 +133,7 @@ pub fn spawn_question_bridge(
                     None => break,
                 },
                 a = approval_rx.recv() => match a {
-                    Some(approval) => {
+                    Some(mut approval) => {
                         let prompt = format!(
                             "Allow {:?} capability?\n\nAction: {}",
                             approval.capability, approval.description
@@ -141,10 +149,13 @@ pub fn spawn_question_bridge(
                             answer_tx,
                         };
                         let approved = if question_tx.send(req).await.is_ok() {
-                            answer_rx
-                                .await
-                                .map(|r| r.trim().eq_ignore_ascii_case("yes"))
-                                .unwrap_or(false)
+                            tokio::select! {
+                                answer = answer_rx => answer
+                                    .map(|r| r.trim().eq_ignore_ascii_case("yes"))
+                                    .unwrap_or(false),
+                                // Withdrawn by the kernel: nobody to tell.
+                                () = approval.reply_tx.closed() => continue,
+                            }
                         } else {
                             false
                         };
@@ -394,6 +405,55 @@ mod tests {
             .expect("kernel should get an answer")
             .expect("reply channel open");
         assert_eq!(answer, "config.toml");
+    }
+
+    /// A question the kernel withdraws (its run stopped, dropping the
+    /// reply receiver) is withdrawn from the frontend too, and the bridge
+    /// carries on with the next one.
+    #[tokio::test]
+    async fn question_bridge_withdraws_what_the_kernel_withdraws() {
+        let (kq_tx, question_rx) = mpsc::channel::<UserQuestion>(4);
+        let (ka_tx, approval_rx) = mpsc::channel::<ApprovalRequest>(4);
+        let channels = KernelChannels {
+            question_rx,
+            approval_rx,
+        };
+        let (ui_tx, mut ui_rx) = mpsc::channel::<QuestionRequest>(4);
+        let _task = spawn_question_bridge(channels, ui_tx);
+
+        let (reply_tx, reply_rx) = oneshot::channel::<String>();
+        kq_tx
+            .send(UserQuestion {
+                prompt: "Which file?".into(),
+                reply_tx,
+            })
+            .await
+            .unwrap();
+        let mut req = ui_rx.recv().await.expect("forwarded");
+        drop(reply_rx);
+        tokio::time::timeout(Duration::from_secs(2), req.answer_tx.closed())
+            .await
+            .expect("the frontend's question is withdrawn");
+
+        let (reply_tx, reply_rx) = oneshot::channel::<bool>();
+        ka_tx
+            .send(ApprovalRequest {
+                approval_id: ApprovalId::new(),
+                capability: ToolCapability::ExecuteShell,
+                description: "ls".into(),
+                call: None,
+                reply_tx,
+            })
+            .await
+            .unwrap();
+        let mut req = tokio::time::timeout(Duration::from_secs(2), ui_rx.recv())
+            .await
+            .expect("the next gate is still forwarded")
+            .expect("forwarded");
+        drop(reply_rx);
+        tokio::time::timeout(Duration::from_secs(2), req.answer_tx.closed())
+            .await
+            .expect("the frontend's approval is withdrawn");
     }
 
     /// A kernel approval request becomes a yes/no `QuestionRequest`; "yes"

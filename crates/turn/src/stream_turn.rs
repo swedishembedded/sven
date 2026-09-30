@@ -89,6 +89,9 @@ pub struct TurnLimits {
     /// prefill of a long prompt) can legitimately stay silent for minutes
     /// before its first token.
     pub stream_idle: Duration,
+    /// Most output tokens one response may ask for, below whatever the model
+    /// itself allows. `None` leaves the model's own cap in place.
+    pub max_output_tokens: Option<u32>,
 }
 
 impl Default for TurnLimits {
@@ -102,6 +105,7 @@ impl From<ThinkingBudget> for TurnLimits {
         Self {
             thinking,
             stream_idle: DEFAULT_STREAM_IDLE_TIMEOUT,
+            max_output_tokens: None,
         }
     }
 }
@@ -116,6 +120,43 @@ impl TurnLimits {
                 .stream_idle_timeout_secs
                 .filter(|&secs| secs > 0)
                 .map_or(DEFAULT_STREAM_IDLE_TIMEOUT, Duration::from_secs),
+            max_output_tokens: None,
+        }
+    }
+
+    /// Caps each response at `tokens` output tokens.
+    #[must_use]
+    pub fn with_max_output_tokens(mut self, tokens: Option<u32>) -> Self {
+        self.max_output_tokens = tokens;
+        self
+    }
+
+    /// The output tokens one request may ask for: what the prompt leaves of
+    /// the context window under `model_cap`
+    /// (`sven_model::budget::dynamic_output_budget`), held to this limit.
+    #[must_use]
+    pub fn output_budget(
+        &self,
+        context_window: Option<u32>,
+        model_cap: Option<u32>,
+        prompt_tokens: usize,
+    ) -> Option<u32> {
+        self.cap_output(sven_model::budget::dynamic_output_budget(
+            context_window,
+            model_cap,
+            prompt_tokens,
+        ))
+    }
+
+    /// The output-token cap for a model whose own cap - or the budget worked
+    /// out for one request - is `model_cap`: the smaller of the two, or
+    /// whichever one is set. The limit applies even when nothing is known
+    /// about the model.
+    #[must_use]
+    pub fn cap_output(&self, model_cap: Option<u32>) -> Option<u32> {
+        match (model_cap, self.max_output_tokens) {
+            (Some(model), Some(limit)) => Some(model.min(limit)),
+            (model, limit) => model.or(limit),
         }
     }
 }
@@ -1188,5 +1229,19 @@ mod max_tokens_tests {
         let (text, tool_calls) = result.expect("MaxTokens must not fail the turn");
         assert_eq!(text, "partial ans");
         assert!(tool_calls.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod output_cap_tests {
+    use super::TurnLimits;
+
+    #[test]
+    fn a_turn_limit_lowers_the_model_output_cap_but_never_raises_it() {
+        let capped = TurnLimits::default().with_max_output_tokens(Some(1_000));
+        assert_eq!(capped.cap_output(Some(8_192)), Some(1_000));
+        assert_eq!(capped.cap_output(Some(500)), Some(500));
+        assert_eq!(capped.cap_output(None), Some(1_000));
+        assert_eq!(TurnLimits::default().cap_output(Some(8_192)), Some(8_192));
     }
 }

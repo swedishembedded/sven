@@ -401,11 +401,9 @@ impl TurnExecutor {
     ) -> Option<String> {
         let request_estimate =
             sven_model::budget::estimate_request_tokens(&plan.summarize_request, &[], None);
-        let max_output_tokens_override = sven_model::budget::dynamic_output_budget(
-            context_window,
-            configured_max_output,
-            request_estimate,
-        );
+        let max_output_tokens_override =
+            self.limits
+                .output_budget(context_window, configured_max_output, request_estimate);
 
         let (tx, mut rx) = mpsc::channel::<UiEvent>(256);
         let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
@@ -521,7 +519,7 @@ impl EffectExecutor for TurnExecutor {
         // No gate at all (not even a wrong one) when the window isn't known -
         // see `sven_model::budget::effective_input_budget`'s doc comment.
         let context_window = model.catalog_context_window();
-        let configured_max_output = model.catalog_max_output_tokens();
+        let configured_max_output = self.limits.cap_output(model.catalog_max_output_tokens());
         let mut estimate = sven_model::budget::estimate_request_tokens(
             &messages,
             &tool_schemas,
@@ -582,11 +580,9 @@ impl EffectExecutor for TurnExecutor {
         // fixed reservation of the full configured cap on every request is
         // what made a 2-token "hi" against a small-context model with a
         // capacity-sized output cap impossible to send at all.
-        let max_output_tokens_override = sven_model::budget::dynamic_output_budget(
-            context_window,
-            configured_max_output,
-            estimate,
-        );
+        let max_output_tokens_override =
+            self.limits
+                .output_budget(context_window, configured_max_output, estimate);
 
         // Build optional structured-output constraint.
         let response_format = if req.schema.is_null() {

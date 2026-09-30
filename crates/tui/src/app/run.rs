@@ -14,16 +14,18 @@ use ratatui::{layout::Rect, DefaultTerminal};
 use sven_machines::AgentEvent;
 use sven_mcp_client::{McpEvent, McpManager};
 use sven_model::Message;
+use sven_tools_agent::QuestionRequest;
 use sven_tui_nvim::NvimBridge;
 use tokio::sync::mpsc;
 
 use crate::{
     agent::{kernel_session_task, AgentRequest},
-    app::{ui_state, App},
+    app::{ui_state, App, FocusPane},
     chat::segment::ChatSegment,
     keys::Action,
     layout::AppLayout,
     node_agent::node_agent_task,
+    overlay::question::{watch_withdrawal, QuestionModal},
 };
 
 impl App {
@@ -33,6 +35,8 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(512);
         let (question_tx, mut question_rx) = mpsc::channel::<sven_tools_agent::QuestionRequest>(4);
         let (toast_tx, mut toast_rx) = mpsc::channel::<ui_state::Toast>(32);
+        let (withdrawn_tx, mut withdrawn_rx) = mpsc::channel::<String>(8);
+        self.question_withdrawn_tx = Some(withdrawn_tx);
         self.toast_tx = Some(toast_tx);
 
         // Store the sender so that agents spawned for new/switched-to sessions
@@ -333,6 +337,9 @@ impl App {
                 Some(req) = question_rx.recv() => {
                     self.handle_question_request(req);
                 }
+                Some(id) = withdrawn_rx.recv() => {
+                    self.withdraw_question(&id);
+                }
                 Some(toast) = toast_rx.recv() => {
                     self.ui.push_toast(toast);
                 }
@@ -375,6 +382,30 @@ impl App {
         self.save_history_sync();
 
         Ok(())
+    }
+
+    /// Shows a question from the agent, watching for its withdrawal.
+    pub(crate) fn handle_question_request(&mut self, req: QuestionRequest) {
+        tracing::debug!(id = %req.id, count = req.questions.len(), "question request received");
+        let answer_tx = match &self.question_withdrawn_tx {
+            Some(withdrawn) => watch_withdrawal(req.id.clone(), req.answer_tx, withdrawn.clone()),
+            None => req.answer_tx,
+        };
+        self.ui.question_modal = Some(QuestionModal::new(req.id, req.questions, answer_tx));
+        self.ui.focus = FocusPane::Input;
+    }
+
+    /// Takes down the question `id` if it is the one on screen: whoever
+    /// asked it no longer wants the answer.
+    pub(crate) fn withdraw_question(&mut self, id: &str) {
+        if self
+            .ui
+            .question_modal
+            .as_ref()
+            .is_some_and(|m| m.id() == id)
+        {
+            self.ui.question_modal = None;
+        }
     }
 
     pub(crate) async fn recv_agent_event(

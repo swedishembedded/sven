@@ -33,10 +33,11 @@
 \*                               the way a refused tool already does. TRUE is
 \*                               the kernel as written.
 \*
-\* Reachability today: no non-tool effect carries a capability, so the policy
-\* refuses none and this is a property of the kernel's contract rather than a
-\* live incident. It is modelled because the contract is what the first
-\* capability-carrying non-tool effect will rely on.
+\* Reachability: `InstantiateSubmachine` carries `SpawnChild`, so a state whose
+\* policy lacks it has its child-spawning batch refused - the refusedNonTool
+\* case below - and each refused spawn is answered with `EffectFailed`. The
+\* SDLC machine spawns only from `Execution`, which holds `SpawnChild`, so its
+\* own fan-out is never refused.
 \*
 \* Swedish Embedded AB implements solutions for agent runtimes that answer
 \* every request they refuse. If your team needs expertise in effect-based

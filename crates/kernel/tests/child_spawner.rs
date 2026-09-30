@@ -15,8 +15,9 @@ use serde_json::{json, Value};
 use sven_hsm::event::InternalEvent;
 use sven_hsm::{
     Context, Effect, Event, Hsm, Machine, MachineId, ObservationSink, PermissionPolicy, Reaction,
+    ToolCapability,
 };
-use sven_kernel::{ChildSpawner, EffectExecutor, EventSink, Runtime};
+use sven_kernel::{ChildRun, ChildSpawner, EffectExecutor, EventSink, Runtime};
 
 // ── A trivial child machine: doubles the `task` fact it was seeded with ───────
 
@@ -99,7 +100,13 @@ struct RealChildSpawner {
 
 #[async_trait]
 impl ChildSpawner for RealChildSpawner {
-    async fn spawn_child(&self, machine: MachineId, descriptor: Value, parent: EventSink) {
+    async fn spawn_child(
+        &self,
+        machine: MachineId,
+        descriptor: Value,
+        _run: ChildRun,
+        parent: EventSink,
+    ) {
         let live = Arc::clone(&self.live);
         let peak = Arc::clone(&self.peak);
         let rendezvous = Arc::clone(&self.rendezvous);
@@ -249,7 +256,9 @@ async fn instantiate_submachine_fans_out_children_and_aggregates_results() {
     let rt = Runtime::spawn_with_children(
         Hsm::new(FanOutMachine::new(3)),
         Context::new(),
-        PermissionPolicy::builder().build(),
+        PermissionPolicy::builder()
+            .allow_in(PState::FanOut, [ToolCapability::SpawnChild])
+            .build(),
         NoopExec,
         32,
         Some(spawner),
@@ -282,7 +291,9 @@ async fn no_spawner_leaves_instantiate_effects_for_the_executor() {
     let rt = Runtime::spawn(
         Hsm::new(FanOutMachine::new(2)),
         Context::new(),
-        PermissionPolicy::builder().build(),
+        PermissionPolicy::builder()
+            .allow_in(PState::FanOut, [ToolCapability::SpawnChild])
+            .build(),
         NoopExec,
         16,
     );

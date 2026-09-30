@@ -119,6 +119,7 @@ checks against what the machine's current state is allowed to do.
 | `ExecuteShell` | `shell`, `gdb_*` | Yes (requires approval) |
 | `NetworkAccess` | `web_fetch`, `web_search`, MCP tools | No |
 | `GitOperation` | `git_*` | No |
+| `SpawnChild` | none - `Effect::InstantiateSubmachine` starts a child run | No |
 
 Capabilities marked **Dangerous** always require an explicit `HumanApproved`
 event before the kernel dispatches them, regardless of the per-state allow-set.
@@ -237,6 +238,7 @@ states. This means `CallTool` effects are always permission-gated against the
 | `ExecuteShell` | - | - | - | - | ✓ | ✓ | - | - |
 | `NetworkAccess` | - | - | - | - | - | - | - | - |
 | `DeleteFile` | - | - | - | - | - | - | - | - |
+| `SpawnChild` | - | - | - | - | ✓ | - | - | - |
 
 ### Conversation Threads and Tool Subsets (per phase)
 

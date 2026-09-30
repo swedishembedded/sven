@@ -8,6 +8,7 @@ license     = "Apache-2.0"
 [dependencies]
 sven-hsm    = { path = "../hsm" }
 tokio       = { workspace = true }
+tokio-util  = "0.7"
 async-trait = { workspace = true }
 serde_json  = { workspace = true }
 uuid        = { workspace = true }

@@ -410,6 +410,7 @@ const AGENT_CONFIG_KEYS: &[&str] = &[
     "max_thinking_tokens",
     "thinking_timeout_secs",
     "stream_idle_timeout_secs",
+    "child_run_timeout_secs",
 ];
 
 /// Known keys in [`crate::ToolsConfig`].
@@ -902,7 +903,7 @@ model:
 
     #[test]
     fn agent_and_tool_keys_earn_no_warning() {
-        let yaml = val("agent:\n  stream_idle_timeout_secs: 60\n");
+        let yaml = val("agent:\n  child_run_timeout_secs: 60\n  stream_idle_timeout_secs: 60\n");
         assert_eq!(config_field_warnings(&yaml), Vec::<String>::new());
     }
 

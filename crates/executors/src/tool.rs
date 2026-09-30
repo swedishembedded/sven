@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use sven_hsm::{Effect, Event, ObservationSink, ToolCallId, ToolCapability, UiEvent};
-use sven_kernel::{EffectExecutor, EventSink};
+use sven_kernel::{CancelScope, EffectExecutor, EventSink};
 
 /// Default for [`ToolExecutor::tool_timeout`].
 const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(600);
@@ -69,6 +69,9 @@ pub struct ToolExecutor {
     /// ceiling. This is deliberately far longer than any legitimate tool so it
     /// only ever catches a hang.
     tool_timeout: Duration,
+    /// Stops every tool call still running when the run is cancelled, so a
+    /// cancelled run leaves no tool working on its behalf.
+    cancel: CancelScope,
 }
 
 impl ToolExecutor {
@@ -85,7 +88,15 @@ impl ToolExecutor {
             no_tools: false,
             tool_result_token_cap: 0,
             tool_timeout: DEFAULT_TOOL_TIMEOUT,
+            cancel: CancelScope::new(),
         }
+    }
+
+    /// Aborts the tool calls in flight when `cancel` is cancelled.
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: CancelScope) -> Self {
+        self.cancel = cancel;
+        self
     }
 
     /// Reject every `CallTool` effect instead of executing it (`--no-tools`).
@@ -135,6 +146,7 @@ impl ToolExecutor {
             no_tools: false,
             tool_result_token_cap: 0,
             tool_timeout: DEFAULT_TOOL_TIMEOUT,
+            cancel: CancelScope::new(),
         }
     }
 }
@@ -188,6 +200,7 @@ impl EffectExecutor for ToolExecutor {
         let obs = obs.clone();
         let tool_result_token_cap = self.tool_result_token_cap;
         let tool_timeout = self.tool_timeout;
+        let cancel = self.cancel.clone();
 
         // Spawn-and-forget: the task runs concurrently with other effects.
         tokio::spawn(async move {
@@ -228,7 +241,15 @@ impl EffectExecutor for ToolExecutor {
                 let call = tool_call.clone();
                 let task = tokio::spawn(async move { registry.execute(&call).await });
                 let abort = task.abort_handle();
-                match tokio::time::timeout(tool_timeout, task).await {
+                let finished = tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => {
+                        abort.abort();
+                        return;
+                    }
+                    finished = tokio::time::timeout(tool_timeout, task) => finished,
+                };
+                match finished {
                     Ok(Ok(output)) => output,
                     Ok(Err(join_err)) => {
                         tracing::error!(
@@ -354,15 +375,15 @@ mod tests {
     use super::ToolExecutor;
 
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-    enum TS {
+    pub(super) enum TS {
         Top,
         Idle,
         Done,
     }
 
-    struct OneShotMachine(MachineId);
+    pub(super) struct OneShotMachine(MachineId);
     impl OneShotMachine {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             Self(MachineId::new())
         }
     }
@@ -407,7 +428,7 @@ mod tests {
         }
     }
 
-    struct NoOpExec;
+    pub(super) struct NoOpExec;
     #[async_trait::async_trait]
     impl EffectExecutor for NoOpExec {
         async fn execute(&mut self, _effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {}
@@ -903,6 +924,72 @@ mod watchdog_tests {
             "ToolFailed",
             "a hung tool must fail the call, not stall the machine"
         );
+    }
+
+    /// Holds a guard for as long as its call runs, so a test can see when
+    /// the call is dropped.
+    struct HeldTool(Arc<std::sync::atomic::AtomicBool>);
+    struct SetOnDrop(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for SetOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    #[async_trait::async_trait]
+    impl Tool for HeldTool {
+        fn name(&self) -> &str {
+            "held"
+        }
+        fn description(&self) -> &str {
+            "runs until dropped"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        async fn execute(&self, _call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
+            let _guard = SetOnDrop(Arc::clone(&self.0));
+            std::future::pending::<()>().await;
+            unreachable!()
+        }
+    }
+
+    /// A cancelled run leaves no tool working on its behalf.
+    #[tokio::test]
+    async fn cancelling_the_run_stops_its_tool_calls() {
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut registry = ToolRegistry::new();
+        registry.register(HeldTool(Arc::clone(&stopped)));
+        let cancel = sven_kernel::CancelScope::new();
+        let mut exec =
+            ToolExecutor::new(Arc::new(registry), HashSet::new()).with_cancel(cancel.clone());
+        let rt = sven_kernel::Runtime::spawn(
+            sven_hsm::Hsm::new(super::tests::OneShotMachine::new()),
+            sven_hsm::Context::new(),
+            sven_hsm::PermissionPolicy::builder().build(),
+            super::tests::NoOpExec,
+            16,
+        );
+        sven_kernel::EffectExecutor::execute(
+            &mut exec,
+            effect("held"),
+            &rt.sink(),
+            &sven_hsm::ObservationSink::default(),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
+
+        cancel.cancel();
+        for _ in 0..200 {
+            if stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the tool call kept running after its run was cancelled");
     }
 
     /// Same for a panic: it happens inside the spawned task, so nothing

@@ -5,7 +5,33 @@
 //! `AskQuestion` tool.
 
 use sven_tools_agent::Question;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
+
+/// Stands between a question's asker and the modal that answers it: the
+/// modal answers through the returned sender, and if the asker withdraws the
+/// question first - it drops its receiver, as the kernel does when the run
+/// that asked stops - `withdrawn` receives `id` so the modal can be taken
+/// down.
+pub fn watch_withdrawal(
+    id: String,
+    mut asker: oneshot::Sender<String>,
+    withdrawn: mpsc::Sender<String>,
+) -> oneshot::Sender<String> {
+    let (modal_tx, modal_rx) = oneshot::channel();
+    tokio::spawn(async move {
+        tokio::select! {
+            answer = modal_rx => {
+                if let Ok(answer) = answer {
+                    let _ = asker.send(answer);
+                }
+            }
+            () = asker.closed() => {
+                let _ = withdrawn.send(id).await;
+            }
+        }
+    });
+    modal_tx
+}
 
 /// Snapshot of a question's answer state, used to navigate back.
 #[derive(Clone)]
@@ -40,11 +66,14 @@ pub struct QuestionModal {
     /// Per-question snapshots so the user can navigate back.
     snapshots: Vec<AnswerState>,
     answer_tx: oneshot::Sender<String>,
+    /// The request's id, which a withdrawal names.
+    id: String,
 }
 
 impl QuestionModal {
-    pub fn new(questions: Vec<Question>, answer_tx: oneshot::Sender<String>) -> Self {
+    pub fn new(id: String, questions: Vec<Question>, answer_tx: oneshot::Sender<String>) -> Self {
         Self {
+            id,
             questions,
             answers: Vec::new(),
             current_q: 0,
@@ -57,6 +86,11 @@ impl QuestionModal {
             snapshots: Vec::new(),
             answer_tx,
         }
+    }
+
+    /// The id of the request this modal answers.
+    pub fn id(&self) -> &str {
+        &self.id
     }
 
     /// Total number of rows in the current question (options + "Other").
@@ -236,5 +270,28 @@ impl QuestionModal {
         let _ = self
             .answer_tx
             .send("The user cancelled the question. Proceed with your best judgement.".into());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_withdrawn_question_is_reported_and_an_answer_still_arrives() {
+        let (withdrawn_tx, mut withdrawn) = mpsc::channel(4);
+
+        let (asker, asker_rx) = oneshot::channel::<String>();
+        let _modal = watch_withdrawal("q1".into(), asker, withdrawn_tx.clone());
+        drop(asker_rx);
+        let id = tokio::time::timeout(std::time::Duration::from_secs(2), withdrawn.recv())
+            .await
+            .expect("the withdrawal is reported");
+        assert_eq!(id.as_deref(), Some("q1"));
+
+        let (asker, asker_rx) = oneshot::channel::<String>();
+        let modal = watch_withdrawal("q2".into(), asker, withdrawn_tx);
+        modal.send("Postgres".into()).unwrap();
+        assert_eq!(asker_rx.await.unwrap(), "Postgres");
     }
 }

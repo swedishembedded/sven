@@ -286,9 +286,6 @@ lines = 1066
 path = "crates/tui/src/app/chat_ops.rs"
 lines = 1164
 [[allow.large_file]]
-path = "crates/kernel/src/lib.rs"
-lines = 1048
-[[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
 lines = 1025
 [[allow.large_file]]
