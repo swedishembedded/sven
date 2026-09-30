@@ -10,8 +10,22 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
+use sven_tool_api::PathScope;
 
-pub struct FindFileTool;
+/// The `find_file` tool. Its paths resolve through the [`PathScope`] it is built
+/// with; [`Default`] is unconfined.
+#[derive(Clone, Debug, Default)]
+pub struct FindFileTool {
+    scope: PathScope,
+}
+
+impl FindFileTool {
+    /// Resolves its paths through `scope`.
+    #[must_use]
+    pub fn new(scope: PathScope) -> Self {
+        Self { scope }
+    }
+}
 
 // Directories that are always excluded from search results.
 const EXCLUDED_DIRS: &[&str] = &[".git", "target", "node_modules", ".cargo"];
@@ -118,7 +132,7 @@ pub(crate) const MAX_OUTPUT_CHARS: usize = 4000;
 /// - Patterns with `/` (e.g. `**/*.rs`, `src/**/*.rs`, `**/sven-team/**`)
 ///   match against the full relative path from `root`.
 fn find_files_walkdir(
-    root: &str,
+    root: &std::path::Path,
     pattern: &str,
     case_insensitive: bool,
     max: usize,
@@ -277,7 +291,10 @@ impl Tool for FindFileTool {
         debug!(pattern = %raw_pattern, root = %root, "find_file tool");
 
         let pattern = raw_pattern.clone();
-        let root_path = root.clone();
+        let root_path = match self.scope.resolve_for(call, &root) {
+            Ok(p) => p,
+            Err(refused) => return refused,
+        };
 
         // Run the walkdir traversal on a blocking thread to avoid blocking
         // the async executor.
@@ -403,7 +420,7 @@ mod tests {
     #[tokio::test]
     async fn finds_toml_files() {
         let crate_root = env!("CARGO_MANIFEST_DIR");
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "*.toml",
                 "root": crate_root,
@@ -416,7 +433,7 @@ mod tests {
     #[tokio::test]
     async fn finds_with_double_star_pattern() {
         let crate_root = env!("CARGO_MANIFEST_DIR");
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "**/*.toml",
                 "root": crate_root,
@@ -433,7 +450,7 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(sub.join("main.rs"), b"fn main() {}").unwrap();
 
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "src/**/*.rs",
                 "root": dir.path().to_str().unwrap()
@@ -450,7 +467,7 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(sub.join("zephyr.elf"), b"\x7fELF").unwrap();
 
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "*.elf",
                 "root": dir.path().to_str().unwrap()
@@ -465,7 +482,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("README.MD"), b"docs").unwrap();
 
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "*.md",
                 "root": dir.path().to_str().unwrap(),
@@ -482,7 +499,7 @@ mod tests {
         // `read_file.rs` and no `*read_lint*` file (`read_lints` lives in
         // sven-tools-web).
         let src = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "*read_lint*",
                 "root": src,
@@ -491,7 +508,7 @@ mod tests {
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("no matches"), "{}", out.content);
 
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "*read_file*",
                 "root": src,
@@ -504,7 +521,7 @@ mod tests {
     #[tokio::test]
     async fn max_results_is_respected() {
         let crate_root = env!("CARGO_MANIFEST_DIR");
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "*.rs",
                 "root": crate_root,
@@ -536,7 +553,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("only.txt"), "x").unwrap();
 
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(
                 json!({"pattern": "", "root": dir.path().to_str().unwrap()}),
             ))
@@ -556,7 +573,7 @@ mod tests {
     /// directory is process-wide state, and these tests run in parallel.
     #[tokio::test]
     async fn an_empty_root_is_the_working_directory() {
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({"pattern": "Cargo.toml", "root": ""})))
             .await;
         assert!(!out.is_error, "{}", out.content);
@@ -576,7 +593,7 @@ mod tests {
             std::fs::write(dir.path().join(format!("file_{i:04}.txt")), "x").unwrap();
         }
 
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(
                 json!({"pattern": "*", "root": dir.path().to_str().unwrap()}),
             ))
@@ -618,7 +635,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("a/b")).unwrap();
         std::fs::write(dir.path().join("a/b/deep.rs"), "x").unwrap();
 
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(
                 json!({"pattern": "*.rs", "root": dir.path().to_str().unwrap()}),
             ))
@@ -635,7 +652,7 @@ mod tests {
     #[tokio::test]
     async fn no_match_returns_no_matches_message() {
         let dir = tempfile::tempdir().unwrap();
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "*.xyz_nonexistent_ext",
                 "root": dir.path().to_str().unwrap()
@@ -649,14 +666,14 @@ mod tests {
     async fn a_call_with_no_arguments_lists_the_working_directory() {
         // Refusing a bare call would be the tool getting in the way: "what is
         // in here" is a complete question, and the answer is a bounded page.
-        let out = FindFileTool.execute(&call(json!({}))).await;
+        let out = FindFileTool::default().execute(&call(json!({}))).await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("Cargo.toml"), "{}", out.content);
     }
 
     #[test]
     fn schema_requires_nothing() {
-        let schema = FindFileTool.parameters_schema();
+        let schema = FindFileTool::default().parameters_schema();
         let required = schema["required"].as_array().unwrap();
         assert!(
             required.is_empty(),
@@ -674,7 +691,7 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(sub.join("lib.rs"), b"pub fn foo() {}").unwrap();
 
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "**/sven-team/**",
                 "root": dir.path().to_str().unwrap()
@@ -692,7 +709,7 @@ mod tests {
         std::fs::write(sub.join("lib.rs"), b"pub fn foo() {}").unwrap();
         std::fs::write(sub.join("README.md"), b"# readme").unwrap();
 
-        let out = FindFileTool
+        let out = FindFileTool::default()
             .execute(&call(json!({
                 "pattern": "**/sven-team/**/*.rs",
                 "root": dir.path().to_str().unwrap()

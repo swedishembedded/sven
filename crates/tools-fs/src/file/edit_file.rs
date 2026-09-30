@@ -13,6 +13,7 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
+use sven_tool_api::PathScope;
 
 /// Minimum similarity ratio (0-1) for a fuzzy window to be accepted.
 const FUZZY_THRESHOLD: f64 = 0.85;
@@ -424,7 +425,20 @@ fn apply_hunk(file_lines: &[String], hunk: &Hunk, pos: usize, indent_delta: i64)
 
 // ── Tool ──────────────────────────────────────────────────────────────────────
 
-pub struct EditFileTool;
+/// The `edit_file` tool. Its paths resolve through the [`PathScope`] it is built
+/// with; [`Default`] is unconfined.
+#[derive(Clone, Debug, Default)]
+pub struct EditFileTool {
+    scope: PathScope,
+}
+
+impl EditFileTool {
+    /// Resolves its paths through `scope`.
+    #[must_use]
+    pub fn new(scope: PathScope) -> Self {
+        Self { scope }
+    }
+}
 
 #[async_trait]
 impl Tool for EditFileTool {
@@ -506,12 +520,17 @@ impl Tool for EditFileTool {
 
         debug!(path = %path, "edit_file tool");
 
+        let target = match self.scope.resolve_for(call, &path) {
+            Ok(p) => p,
+            Err(refused) => return refused,
+        };
+
         let hunks = match parse_hunks(&diff_str) {
             Ok(h) => h,
             Err(e) => return ToolOutput::err(&call.id, e),
         };
 
-        let content = match tokio::fs::read_to_string(&path).await {
+        let content = match tokio::fs::read_to_string(&target).await {
             Ok(c) => c,
             Err(e) => return ToolOutput::err(&call.id, format!("read error: {e}")),
         };
@@ -541,13 +560,13 @@ impl Tool for EditFileTool {
             new_content.push('\n');
         }
 
-        if let Some(parent) = std::path::Path::new(&path).parent() {
+        if let Some(parent) = target.parent() {
             if !parent.as_os_str().is_empty() {
                 let _ = tokio::fs::create_dir_all(parent).await;
             }
         }
 
-        match tokio::fs::write(&path, &new_content).await {
+        match tokio::fs::write(&target, &new_content).await {
             Ok(_) => ToolOutput::ok(&call.id, "Edit successfully applied"),
             Err(e) => ToolOutput::err(&call.id, format!("Write failed: {e}")),
         }
@@ -613,7 +632,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_path_is_error() {
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t.execute(&call(json!({"diff": "@@ @@\n-a\n+b\n"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("path"), "{}", out.content);
@@ -621,7 +640,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_diff_is_error() {
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t.execute(&call(json!({"path": "x.txt"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("diff"), "{}", out.content);
@@ -630,7 +649,7 @@ mod tests {
     #[tokio::test]
     async fn no_hunks_in_diff_is_error() {
         let path = tmp_file("hello\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(
                 json!({"path": path, "diff": "just some text without @@ markers"}),
@@ -647,7 +666,7 @@ mod tests {
 
     #[tokio::test]
     async fn nonexistent_file_is_read_error() {
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": "sven_no_such_file_xyz.txt",
@@ -660,7 +679,7 @@ mod tests {
 
     #[test]
     fn only_available_in_agent_mode() {
-        assert_eq!(EditFileTool.modes(), &[AgentMode::Agent]);
+        assert_eq!(EditFileTool::default().modes(), &[AgentMode::Agent]);
     }
 
     // ── Basic exact-match hunk ────────────────────────────────────────────────
@@ -668,7 +687,7 @@ mod tests {
     #[tokio::test]
     async fn basic_replacement() {
         let path = tmp_file("fn foo() {\n    old();\n}\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -685,7 +704,7 @@ mod tests {
     #[tokio::test]
     async fn context_not_found_is_error() {
         let path = tmp_file("fn foo() {\n    bar();\n}\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -700,7 +719,7 @@ mod tests {
     #[tokio::test]
     async fn surrounding_content_is_preserved() {
         let path = tmp_file("// header\nfn target() { old(); }\n// footer\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -724,7 +743,7 @@ mod tests {
     #[tokio::test]
     async fn trailing_newline_preserved() {
         let path = tmp_file("line one\nline two\nline three\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -741,7 +760,7 @@ mod tests {
     #[tokio::test]
     async fn no_trailing_newline_preserved() {
         let path = tmp_file("alpha\nbeta\ngamma");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -761,7 +780,7 @@ mod tests {
     async fn multi_hunk_applies_both_changes() {
         let path =
             tmp_file("use std::io;\n\nfn alpha() {\n    a();\n}\n\nfn beta() {\n    b();\n}\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = concat!(
             "@@ @@\n",
             " fn alpha() {\n",
@@ -792,7 +811,7 @@ mod tests {
     #[tokio::test]
     async fn pure_insertion_with_context() {
         let path = tmp_file("fn foo() {\n    existing();\n}\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         // Insert a new line after fn foo() {
         let diff = "@@ @@\n fn foo() {\n+    new_line();\n     existing();\n }\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
@@ -808,7 +827,7 @@ mod tests {
     #[tokio::test]
     async fn pure_deletion() {
         let path = tmp_file("line1\nremove_me\nline3\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "@@ @@\n line1\n-remove_me\n line3\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -824,7 +843,7 @@ mod tests {
     async fn indent_normalised_match() {
         // File uses 4-space indent; hunk uses 0-indent (LLM stripped leading spaces)
         let path = tmp_file("    fn foo() {\n        old();\n    }\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "@@ @@\n fn foo() {\n-    old();\n+    new();\n }\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -839,7 +858,7 @@ mod tests {
         // File is 4-space indented; hunk has 0 indent on context and Add lines.
         // The added line must be emitted with 4 extra spaces.
         let path = tmp_file("    fn foo() {\n        bar();\n    }\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "@@ @@\n fn foo() {\n-    bar();\n+    baz();\n+    qux();\n }\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -862,7 +881,7 @@ mod tests {
     async fn fuzzy_match_corrects_minor_typo_in_context() {
         // Context has "u32" but file has "u64" - close enough for fuzzy.
         let path = tmp_file("fn process(id: u64) {\n    validate(id);\n    update(id);\n}\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff =
             "@@ @@\n fn process(id: u32) {\n     validate(id);\n-    update(id);\n+    update(id);\n+    log(id);\n }\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
@@ -883,7 +902,7 @@ mod tests {
             "fn block() {\n    value = 1;\n}\n\n",
             "fn block() {\n    value = 1;\n}\n",
         ));
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         // Second block starts at line 5; hint points there.
         let diff = "@@ -5,3 +5,3 @@\n fn block() {\n-    value = 1;\n+    value = 2;\n }\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
@@ -904,7 +923,7 @@ mod tests {
     #[tokio::test]
     async fn fudiff_header_without_line_numbers() {
         let path = tmp_file("hello world\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -921,7 +940,7 @@ mod tests {
     #[tokio::test]
     async fn markdown_fenced_diff_is_accepted() {
         let path = tmp_file("fn foo() { bar(); }\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "```diff\n@@ @@\n-fn foo() { bar(); }\n+fn foo() { baz(); }\n```\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -939,7 +958,7 @@ mod tests {
         let path = tmp_file(
             "fn calculate_total(items: &[Item]) -> f64 {\n    items.iter().map(|i| i.price).sum()\n}\n",
         );
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         // Context has right function name but completely wrong body
         let diff = concat!(
             "@@ @@\n",
@@ -963,7 +982,7 @@ mod tests {
     #[tokio::test]
     async fn stale_context_after_edit_fails_with_suggestions() {
         let path = tmp_file("fn alpha() { one(); }\nfn beta() { two(); }\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
 
         // First edit - succeeds
         let out1 = t
@@ -1094,7 +1113,7 @@ mod tests {
     #[tokio::test]
     async fn success_message_is_edit_successfully_applied() {
         let path = tmp_file("a\nb\nc\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -1111,7 +1130,7 @@ mod tests {
     #[tokio::test]
     async fn diff_with_file_headers_is_accepted() {
         let path = tmp_file("fn foo() { old(); }\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1 +1 @@\n-fn foo() { old(); }\n+fn foo() { new(); }\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -1127,7 +1146,7 @@ mod tests {
     #[tokio::test]
     async fn git_extended_header_with_section_name() {
         let path = tmp_file("fn greet() {\n    old();\n}\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         // @@ -1,3 +1,3 @@ fn greet() - section name after second @@
         let diff = "@@ -1,3 +1,3 @@ fn greet()\n fn greet() {\n-    old();\n+    new();\n }\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
@@ -1141,7 +1160,7 @@ mod tests {
     #[tokio::test]
     async fn no_newline_marker_is_ignored() {
         let path = tmp_file("old\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "@@ @@\n-old\n+new\n\\ No newline at end of file\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -1154,7 +1173,7 @@ mod tests {
     #[tokio::test]
     async fn change_at_start_of_file() {
         let path = tmp_file("first\nsecond\nthird\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "@@ -1,2 +1,2 @@\n-first\n+FIRST\n second\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -1170,7 +1189,7 @@ mod tests {
     #[tokio::test]
     async fn change_at_end_of_file() {
         let path = tmp_file("first\nsecond\nlast\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "@@ @@\n second\n-last\n+LAST\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -1186,7 +1205,7 @@ mod tests {
     #[tokio::test]
     async fn single_line_file() {
         let path = tmp_file("only line\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "@@ @@\n-only line\n+changed line\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -1199,7 +1218,7 @@ mod tests {
     #[tokio::test]
     async fn multi_line_deletion() {
         let path = tmp_file("keep1\ndelete_a\ndelete_b\ndelete_c\nkeep2\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "@@ @@\n keep1\n-delete_a\n-delete_b\n-delete_c\n keep2\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -1212,7 +1231,7 @@ mod tests {
     #[tokio::test]
     async fn multi_line_insertion() {
         let path = tmp_file("before\nafter\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "@@ @@\n before\n+added_1\n+added_2\n+added_3\n after\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -1228,7 +1247,7 @@ mod tests {
     #[tokio::test]
     async fn complex_mixed_hunk_del_and_add_interleaved() {
         let path = tmp_file("a\nb\nc\nd\ne\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         // Replace b with B, keep c, replace d with D
         let diff = "@@ @@\n a\n-b\n+B\n c\n-d\n+D\n e\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
@@ -1242,7 +1261,7 @@ mod tests {
     #[tokio::test]
     async fn three_hunk_diff() {
         let path = tmp_file("aa\nbb\ncc\ndd\nee\nff\ngg\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = concat!(
             "@@ @@\n-aa\n+AA\n bb\n",
             "@@ @@\n cc\n-dd\n+DD\n ee\n",
@@ -1262,7 +1281,7 @@ mod tests {
     #[tokio::test]
     async fn second_hunk_failure_names_hunk_and_file_is_unchanged() {
         let path = tmp_file("line1\nline2\nline3\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = concat!(
             "@@ @@\n-line1\n+LINE1\n line2\n", // hunk 1: valid
             "@@ @@\n-does_not_exist\n+X\n",    // hunk 2: bad context
@@ -1288,7 +1307,7 @@ mod tests {
     #[tokio::test]
     async fn single_hunk_failure_has_no_hunk_prefix() {
         let path = tmp_file("hello\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -1310,7 +1329,7 @@ mod tests {
     async fn file_unchanged_when_context_not_found() {
         let original = "line1\nline2\nline3\n";
         let path = tmp_file(original);
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -1331,7 +1350,7 @@ mod tests {
     #[tokio::test]
     async fn fuzzy_below_threshold_fails() {
         let path = tmp_file("fn foo() { completely_different_content_here(); }\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         // Context shares almost nothing with the file - well below 85%
         let out = t
             .execute(&call(json!({
@@ -1349,7 +1368,7 @@ mod tests {
     async fn blank_context_line_in_hunk() {
         // The blank line between the two functions must be treated as context.
         let path = tmp_file("fn a() {}\n\nfn b() {}\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = "@@ @@\n fn a() {}\n \n-fn b() {}\n+fn b() { /* new */ }\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -1370,7 +1389,7 @@ mod tests {
         // Hunk 2 targets "target" which now sits 2 lines lower - context matching
         // must find it correctly in the updated in-memory content.
         let path = tmp_file("insert_after\ntarget\nend\n");
-        let t = EditFileTool;
+        let t = EditFileTool::default();
         let diff = concat!(
             "@@ @@\n insert_after\n+new1\n+new2\n target\n",
             "@@ @@\n-target\n+TARGET\n end\n",
@@ -1549,7 +1568,7 @@ mod adversarial_tests {
         let _ = std::panic::catch_unwind(|| {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                EditFileTool
+                EditFileTool::default()
                     .execute(&call(json!({"path": path, "diff": diff})))
                     .await
             })
@@ -1576,7 +1595,7 @@ mod adversarial_tests {
 
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            EditFileTool.execute(&call(json!({"path": path, "diff": diff}))),
+            EditFileTool::default().execute(&call(json!({"path": path, "diff": diff}))),
         )
         .await;
         let _ = std::fs::remove_file(&path);
@@ -1619,7 +1638,7 @@ mod adversarial_tests {
         let path = tmp(file_content);
         // Hunk uses 4-space indent instead of tabs
         let diff = "@@ @@\n-    fn alpha() {\n+    fn ALPHA() {\n";
-        let out = EditFileTool
+        let out = EditFileTool::default()
             .execute(&call(json!({"path": path, "diff": diff})))
             .await;
         let _ = std::fs::remove_file(&path);
@@ -1636,7 +1655,7 @@ mod adversarial_tests {
         let path = tmp(file_content);
         // A hunk where all context lines are blank - matches at position 1 (the blank line)
         let diff = "@@ @@\n \n-fn b() {}\n+fn B() {}\n";
-        let out = EditFileTool
+        let out = EditFileTool::default()
             .execute(&call(json!({"path": path, "diff": diff})))
             .await;
         if !out.is_error {
@@ -1655,7 +1674,7 @@ mod adversarial_tests {
         let path = tmp("line1\nline2\n");
         // @@ -0,0 +1 @@ style - pure insertion at top, no context
         let diff = "@@ -0,0 +1 @@\n+inserted_first\n";
-        let out = EditFileTool
+        let out = EditFileTool::default()
             .execute(&call(json!({"path": path, "diff": diff})))
             .await;
         let _ = std::fs::remove_file(&path);
@@ -1672,7 +1691,7 @@ mod adversarial_tests {
         // environment's temp dir so the escape attempt starts somewhere real on
         // every platform rather than at a hardcoded /tmp.
         let traversal = std::env::temp_dir().join("../../etc/passwd");
-        let out = EditFileTool
+        let out = EditFileTool::default()
             .execute(&call(json!({"path": traversal, "diff": diff})))
             .await;
         // May succeed (the path resolves to /etc/passwd, which cannot be
@@ -1685,7 +1704,7 @@ mod adversarial_tests {
     #[tokio::test]
     async fn empty_diff_string_is_error() {
         let path = tmp("content\n");
-        let out = EditFileTool
+        let out = EditFileTool::default()
             .execute(&call(json!({"path": path, "diff": ""})))
             .await;
         let _ = std::fs::remove_file(&path);
@@ -1697,7 +1716,7 @@ mod adversarial_tests {
     #[tokio::test]
     async fn whitespace_only_diff_is_error() {
         let path = tmp("content\n");
-        let out = EditFileTool
+        let out = EditFileTool::default()
             .execute(&call(json!({"path": path, "diff": "   \n\n  "})))
             .await;
         let _ = std::fs::remove_file(&path);

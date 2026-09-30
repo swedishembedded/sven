@@ -12,6 +12,7 @@ use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{
     OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput, ToolOutputPart,
 };
+use sven_tool_api::PathScope;
 
 /// Default number of lines returned when the caller does not specify a limit.
 /// Kept small to avoid flooding the model context on the first read; the agent
@@ -23,7 +24,20 @@ const DEFAULT_LINE_LIMIT: usize = 200;
 /// 20 KB ≈ 5,000 tokens - safe for a 40 K-token context window.
 const MAX_BYTES: usize = 20_000;
 
-pub struct ReadFileTool;
+/// The `read_file` tool. Its paths resolve through the [`PathScope`] it is built
+/// with; [`Default`] is unconfined.
+#[derive(Clone, Debug, Default)]
+pub struct ReadFileTool {
+    scope: PathScope,
+}
+
+impl ReadFileTool {
+    /// Resolves its paths through `scope`.
+    #[must_use]
+    pub fn new(scope: PathScope) -> Self {
+        Self { scope }
+    }
+}
 
 #[async_trait]
 impl Tool for ReadFileTool {
@@ -84,6 +98,11 @@ impl Tool for ReadFileTool {
 
         debug!(path = %path, offset, limit, "read_file tool");
 
+        let scoped = match self.scope.resolve_for(call, &path) {
+            Ok(p) => p,
+            Err(refused) => return refused,
+        };
+
         // ── Image files ───────────────────────────────────────────────────────
         // Returned as multimodal base64 data URLs; bypass all text/binary logic.
         let ext = std::path::Path::new(&path)
@@ -91,7 +110,7 @@ impl Tool for ReadFileTool {
             .and_then(|e| e.to_str())
             .unwrap_or("");
         if sven_image::is_image_extension(ext) {
-            return match sven_image::load_image(std::path::Path::new(&path)) {
+            return match sven_image::load_image(&scoped) {
                 Ok(img) => {
                     let data_url = img.into_data_url();
                     ToolOutput::with_parts(
@@ -113,12 +132,19 @@ impl Tool for ReadFileTool {
         //
         // Example: <workspace>/<project>/.cursor/knowledge/foo.md fails →
         //          <workspace>/.cursor/knowledge/foo.md is tried automatically.
-        let (resolved_path, resolved_note) = match ascend_to_find(&path) {
+        //
+        // Never under a confined scope: the sibling it finds was not the path
+        // that was checked, and may lie outside the root.
+        let ascended = match self.scope.root() {
+            Some(_) => None,
+            None => ascend_to_find(&path),
+        };
+        let (resolved_path, resolved_note) = match ascended {
             Some(found) => {
                 let note = format!("note: resolved to {}\n", found.display());
-                (found.to_string_lossy().into_owned(), Some(note))
+                (found, Some(note))
             }
-            None => (path.clone(), None),
+            None => (scoped, None),
         };
 
         // ── Read raw bytes ────────────────────────────────────────────────────
@@ -445,7 +471,7 @@ mod tests {
     #[tokio::test]
     async fn reads_file_with_line_numbers() {
         let path = tmp_file("alpha\nbeta\ngamma\n");
-        let t = ReadFileTool;
+        let t = ReadFileTool::default();
         let out = t.execute(&call(json!({"path": path}))).await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("L1:alpha"));
@@ -457,7 +483,7 @@ mod tests {
     #[tokio::test]
     async fn offset_and_limit_work() {
         let path = tmp_file("line1\nline2\nline3\nline4\nline5\n");
-        let t = ReadFileTool;
+        let t = ReadFileTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -475,7 +501,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_file_is_error() {
-        let t = ReadFileTool;
+        let t = ReadFileTool::default();
         let out = t
             .execute(&call(json!({"path": "sven_no_such_file_xyz.txt"})))
             .await;
@@ -485,7 +511,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_file_path_is_error() {
-        let t = ReadFileTool;
+        let t = ReadFileTool::default();
         let out = t.execute(&call(json!({}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("missing required parameter 'path'"));
@@ -497,7 +523,7 @@ mod tests {
     async fn pagination_notice_when_more_lines_exist() {
         // 5 lines, read only 2 → expect a "more lines" notice
         let path = tmp_file("a\nb\nc\nd\ne\n");
-        let t = ReadFileTool;
+        let t = ReadFileTool::default();
         let out = t.execute(&call(json!({"path": path, "limit": 2}))).await;
         assert!(!out.is_error);
         assert!(
@@ -511,7 +537,7 @@ mod tests {
     #[tokio::test]
     async fn no_pagination_notice_when_all_lines_shown() {
         let path = tmp_file("x\ny\n");
-        let t = ReadFileTool;
+        let t = ReadFileTool::default();
         let out = t.execute(&call(json!({"path": path, "limit": 200}))).await;
         assert!(!out.is_error);
         assert!(
@@ -530,7 +556,7 @@ mod tests {
         let line = "x".repeat(49); // 49 chars + newline = 50 bytes
         let content: String = (0..500).map(|_| format!("{}\n", line)).collect();
         let path = tmp_file(&content);
-        let t = ReadFileTool;
+        let t = ReadFileTool::default();
         // Request 500 lines but byte cap should kick in first
         let out = t.execute(&call(json!({"path": path, "limit": 500}))).await;
         assert!(!out.is_error);
@@ -655,7 +681,7 @@ mod tests {
         let path = scratch_path(&format!("sven_binary_test_{}_{n}.bin", std::process::id()));
         std::fs::write(&path, b"\x7fELF\x00\x01\x02\x03").unwrap();
 
-        let t = ReadFileTool;
+        let t = ReadFileTool::default();
         let out = t.execute(&call(json!({"path": path}))).await;
         assert!(!out.is_error, "binary should succeed: {}", out.content);
         assert!(
@@ -680,7 +706,7 @@ mod tests {
         // 64 bytes = 4 full 16-byte records + ELA + EOF = 6 lines
         std::fs::write(&path, vec![0xBBu8; 64]).unwrap();
 
-        let t = ReadFileTool;
+        let t = ReadFileTool::default();
         // Limit to 2 lines (excluding the header note line)
         let out = t.execute(&call(json!({"path": path, "limit": 2}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -753,7 +779,7 @@ mod tests {
         // Path the agent would try (includes "proj" which is wrong)
         let wrong_path = project.join("knowledge").join("spec.md");
 
-        let t = ReadFileTool;
+        let t = ReadFileTool::default();
         let out = t
             .execute(&call(json!({"path": wrong_path.to_str().unwrap()})))
             .await;

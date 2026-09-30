@@ -59,6 +59,7 @@ use sven_tool_api::{
     events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
+    PathScope,
 };
 use sven_tools_fs::{BufGrepTool, BufReadTool, BufStatusTool, BufferSource, OutputBufferStore};
 use sven_workspace::{AgentInfo, SharedAgents};
@@ -88,6 +89,9 @@ pub struct TaskTool {
     /// Read on every spawn: a child never gets more authority than its parent
     /// has at that moment - see [`child_mode_allowed`].
     parent_mode: Arc<Mutex<AgentMode>>,
+    /// The session's path scope: a confined one is the tree a child's
+    /// `workdir` must stay inside, and where the child starts by default.
+    scope: PathScope,
 }
 
 impl TaskTool {
@@ -104,7 +108,16 @@ impl TaskTool {
             default_model,
             agents,
             parent_mode,
+            scope: PathScope::default(),
         }
+    }
+
+    /// Holds children inside `scope`'s root rather than the process working
+    /// directory.
+    #[must_use]
+    pub fn with_scope(mut self, scope: PathScope) -> Self {
+        self.scope = scope;
+        self
     }
 }
 
@@ -126,26 +139,18 @@ pub(crate) fn child_mode_allowed(parent: AgentMode, child: &str) -> Result<(), S
     ))
 }
 
-/// The directory the child runs in: `requested` resolved against `root`,
-/// which it must stay inside. A child confined to the parent's tree cannot be
-/// pointed at another repository by the model.
-fn child_workdir(requested: Option<&str>, root: &std::path::Path) -> Result<PathBuf, String> {
-    let root = root
-        .canonicalize()
-        .map_err(|e| format!("cannot resolve the session root {}: {e}", root.display()))?;
-    let Some(requested) = requested else {
-        return Ok(root);
-    };
-    let dir = root
-        .join(requested)
-        .canonicalize()
-        .map_err(|e| format!("workdir '{requested}' does not exist: {e}"))?;
-    if dir.starts_with(&root) {
+/// The directory the child runs in: `requested` resolved through `session`,
+/// the scope it must stay inside, or the scope's root when none is named. A
+/// child confined to the parent's tree cannot be pointed at another
+/// repository by the model.
+fn child_workdir(requested: Option<&str>, session: &PathScope) -> Result<PathBuf, String> {
+    let requested = requested.unwrap_or(".");
+    let dir = session.resolve(requested).map_err(|e| e.to_string())?;
+    if dir.is_dir() {
         Ok(dir)
     } else {
         Err(format!(
-            "workdir '{requested}' is outside the session root {}",
-            root.display()
+            "workdir '{requested}' is not an existing directory"
         ))
     }
 }
@@ -451,19 +456,25 @@ impl Tool for TaskTool {
             .unwrap_or("agent")
             .to_string();
 
-        let session_root = match std::env::current_dir() {
-            Ok(dir) => dir,
-            Err(e) => {
-                return ToolOutput::err(&call.id, format!("cannot read the working directory: {e}"))
-            }
+        // The session's own root when it has one; otherwise the working
+        // directory, which a child is held inside all the same.
+        let session = match self.scope.root() {
+            Some(_) => self.scope.clone(),
+            None => match std::env::current_dir().and_then(PathScope::confined) {
+                Ok(scope) => scope,
+                Err(e) => {
+                    return ToolOutput::err(
+                        &call.id,
+                        format!("cannot resolve the working directory: {e}"),
+                    )
+                }
+            },
         };
-        let workdir = match child_workdir(
-            call.args.get("workdir").and_then(|v| v.as_str()),
-            &session_root,
-        ) {
-            Ok(dir) => dir,
-            Err(e) => return ToolOutput::err(&call.id, e),
-        };
+        let workdir =
+            match child_workdir(call.args.get("workdir").and_then(|v| v.as_str()), &session) {
+                Ok(dir) => dir,
+                Err(e) => return ToolOutput::err(&call.id, e),
+            };
 
         let requested_model = call
             .args

@@ -14,6 +14,7 @@ pub mod display;
 pub mod events;
 pub mod grep_match;
 pub mod params;
+pub mod path_scope;
 pub mod policy;
 pub mod tool;
 pub mod tool_summary;
@@ -21,6 +22,7 @@ pub mod tool_summary;
 pub use display::format_tools_list;
 pub use events::{TodoItem, TodoStatus, ToolEvent};
 pub use grep_match::GrepMatch;
+pub use path_scope::{PathScope, PathScopeError};
 pub use policy::{ApprovalPolicy, PermissionRequester};
 pub use sven_hsm::ToolCapability;
 pub use tool::{

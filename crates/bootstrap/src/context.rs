@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 use sven_tool_api::events::TodoItem;
+use sven_tool_api::PathScope;
 use sven_tools_agent::QuestionRequest;
 use sven_tools_fs::OutputBufferStore;
 use sven_turn::AgentRuntimeContext;
@@ -61,6 +62,11 @@ pub struct RuntimeContext {
     /// Pre-formatted knowledge drift warning (computed once at startup).
     /// `None` when all documents are current or none have `updated:` fields.
     pub knowledge_drift_note: Option<String>,
+    /// The directory the built-in file tools resolve paths against and are
+    /// confined to, and the shell's default working directory. Unconfined by
+    /// default; detection never confines, so the CLI and TUI work on the
+    /// process working directory as they always have.
+    pub path_scope: PathScope,
 }
 
 impl RuntimeContext {
@@ -133,6 +139,7 @@ impl RuntimeContext {
             agents,
             knowledge,
             knowledge_drift_note,
+            path_scope: PathScope::unconfined(),
         }
     }
 
@@ -166,6 +173,7 @@ impl RuntimeContext {
             agents: self.agents.clone(),
             knowledge: self.knowledge.clone(),
             knowledge_drift_note: self.knowledge_drift_note.clone(),
+            path_scope: self.path_scope.clone(),
             ..AgentRuntimeContext::default()
         }
     }

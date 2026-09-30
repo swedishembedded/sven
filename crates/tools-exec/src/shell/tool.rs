@@ -13,6 +13,7 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
+use sven_tool_api::PathScope;
 
 /// Hard byte ceiling for combined stdout + stderr returned to the model.
 /// 20 KB ≈ 5,000 tokens - keeps output well within a 40 K-token context window.
@@ -37,11 +38,19 @@ pub(crate) const MAX_TIMEOUT_SECS: u64 = 3600;
 
 pub struct ShellTool {
     pub timeout_secs: u64,
+    /// Where a command starts when it names no `workdir` (the root, when
+    /// confined), and the root a named `workdir` must stay inside. It does not
+    /// confine what the command itself does: a shell can reach any path the
+    /// process can.
+    pub scope: PathScope,
 }
 
 impl Default for ShellTool {
     fn default() -> Self {
-        Self { timeout_secs: 30 }
+        Self {
+            timeout_secs: 30,
+            scope: PathScope::default(),
+        }
     }
 }
 
@@ -109,11 +118,13 @@ impl Tool for ShellTool {
                 );
             }
         };
-        let workdir = call
-            .args
-            .get("workdir")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        let workdir = match call.args.get("workdir").and_then(|v| v.as_str()) {
+            Some(requested) => match self.scope.resolve_for(call, requested) {
+                Ok(dir) => Some(dir),
+                Err(refused) => return refused,
+            },
+            None => self.scope.root().map(std::path::Path::to_path_buf),
+        };
         let timeout = call
             .args
             .get("timeout_secs")
@@ -411,7 +422,10 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn timeout_returns_error() {
-        let t = ShellTool { timeout_secs: 1 };
+        let t = ShellTool {
+            timeout_secs: 1,
+            ..Default::default()
+        };
         let out = t
             .execute(&call(
                 "1",
@@ -524,7 +538,10 @@ mod adversarial_tests {
 
     #[tokio::test]
     async fn very_long_command_string_does_not_crash() {
-        let t = ShellTool { timeout_secs: 5 };
+        let t = ShellTool {
+            timeout_secs: 5,
+            ..Default::default()
+        };
         let long_cmd = format!("echo {}", "A".repeat(1_000_000));
         let out = t.execute(&call(json!({"shell_command": long_cmd}))).await;
         // Must complete without panic; output may be truncated
@@ -533,7 +550,10 @@ mod adversarial_tests {
 
     #[tokio::test]
     async fn command_with_shell_metacharacters_does_not_crash() {
-        let t = ShellTool { timeout_secs: 5 };
+        let t = ShellTool {
+            timeout_secs: 5,
+            ..Default::default()
+        };
         // The shell_command runs under sh -c; these special chars must not cause
         // a panic in the Rust layer even if sh reports an error.
         let out = t
@@ -546,7 +566,10 @@ mod adversarial_tests {
 
     #[tokio::test]
     async fn command_producing_large_output_is_truncated_not_oom() {
-        let t = ShellTool { timeout_secs: 10 };
+        let t = ShellTool {
+            timeout_secs: 10,
+            ..Default::default()
+        };
         // Generate ~500 KB of output; the truncation logic must keep memory bounded.
         let out = t
             .execute(&call(json!({"shell_command": "yes | head -c 512000"})))

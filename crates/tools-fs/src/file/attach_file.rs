@@ -22,7 +22,7 @@ use sven_model::ModelProvider;
 use tracing::debug;
 
 use super::attachment::{self, AttachOptions, SUPPORTED_AUDIO_EXTS, SUPPORTED_IMAGE_EXTS};
-use sven_tool_api::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
+use sven_tool_api::{ApprovalPolicy, PathScope, Tool, ToolCall, ToolOutput};
 
 pub struct AttachFileTool {
     /// The live model, when one is available.
@@ -36,6 +36,8 @@ pub struct AttachFileTool {
     /// A pre-built transcription client, for tests. `None` in production, where
     /// one is dialled from `asr`.
     asr_client: Option<sven_model::ActionClient>,
+    /// Where `path` resolves, and whether it may leave there.
+    scope: PathScope,
 }
 
 impl AttachFileTool {
@@ -44,7 +46,16 @@ impl AttachFileTool {
             model,
             asr,
             asr_client: None,
+            scope: PathScope::default(),
         }
+    }
+
+    /// Resolves `path` through `scope` instead of the process working
+    /// directory.
+    #[must_use]
+    pub fn with_scope(mut self, scope: PathScope) -> Self {
+        self.scope = scope;
+        self
     }
 
     /// Use `client` for transcription instead of dialling one from `asr`.
@@ -148,7 +159,11 @@ impl Tool for AttachFileTool {
             .map(|s| s.trim())
             .filter(|s| !s.is_empty());
 
-        let path = std::path::Path::new(&path_str);
+        let scoped = match self.scope.resolve_for(call, &path_str) {
+            Ok(p) => p,
+            Err(refused) => return refused,
+        };
+        let path = scoped.as_path();
         if attachment::classify(path).is_none() {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             return ToolOutput::err(

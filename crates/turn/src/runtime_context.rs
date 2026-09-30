@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use sven_config::AgentMode;
 use sven_model::Message;
+use sven_tool_api::PathScope;
 use sven_workspace::{SharedAgents, SharedKnowledge, SharedSkills};
 
 use crate::prompts::{system_prompt, PromptContext};
@@ -72,6 +73,12 @@ pub struct AgentRuntimeContext {
     /// conversation store is loaded and injected here so the agent has
     /// context from previous turns.
     pub prior_messages: Vec<Message>,
+    /// The directory the session's built-in file tools resolve paths against
+    /// and are confined to, and the shell's default working directory.
+    /// Unconfined by default: paths resolve against the process working
+    /// directory. Independent of `project_root`, which drives discovery and
+    /// the prompt but confines nothing.
+    pub path_scope: PathScope,
 }
 
 impl AgentRuntimeContext {

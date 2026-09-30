@@ -238,13 +238,16 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     register_ask_question(&mut reg, p.questions);
     reg.register(TodoTool::new(p.todos, p.tool_event_tx.clone()));
 
-    reg.register(TaskTool::new(
-        Arc::clone(&p.buffer_store),
-        p.tool_event_tx,
-        Some(model_id),
-        p.runtime.agents.clone(),
-        parent_mode,
-    ));
+    reg.register(
+        TaskTool::new(
+            Arc::clone(&p.buffer_store),
+            p.tool_event_tx,
+            Some(model_id),
+            p.runtime.agents.clone(),
+            parent_mode,
+        )
+        .with_scope(p.runtime.path_scope.clone()),
+    );
 
     reg
 }
@@ -262,9 +265,10 @@ fn build_profile_research(
     let mut reg = ToolRegistry::new();
 
     // Read-only file tools only.
-    reg.register(ReadFileTool);
-    reg.register(FindFileTool);
-    reg.register(GrepTool);
+    let paths = &runtime.path_scope;
+    reg.register(ReadFileTool::new(paths.clone()));
+    reg.register(FindFileTool::new(paths.clone()));
+    reg.register(GrepTool::new(paths.clone()));
     reg.register(WebFetchTool::new(cfg.tools.web.fetch_max_chars));
     reg.register(WebSearchTool {
         api_key: cfg.tools.web.search.api_key.clone(),
@@ -286,13 +290,16 @@ fn build_profile_research(
     // Task is included for delegation; its children are held to read-only
     // modes for as long as this session is.
     let buffer_store = Arc::new(Mutex::new(OutputBufferStore::new()));
-    reg.register(TaskTool::new(
-        buffer_store,
-        tool_event_tx,
-        Some(cfg.model_reference()),
-        runtime.agents.clone(),
-        mode_lock,
-    ));
+    reg.register(
+        TaskTool::new(
+            buffer_store,
+            tool_event_tx,
+            Some(cfg.model_reference()),
+            runtime.agents.clone(),
+            mode_lock,
+        )
+        .with_scope(paths.clone()),
+    );
 
     reg
 }
@@ -344,29 +351,33 @@ fn register_base_tools(
     include_full: bool,
 ) {
     // ── File I/O ─────────────────────────────────────────────────────────────
-    // read_file already handles images (auto-detected by extension).
-    reg.register(ReadFileTool);
-    reg.register(FindFileTool);
-    reg.register(WriteTool);
-    reg.register_with_display(EditFileTool);
+    // read_file already handles images (auto-detected by extension). Every
+    // path-taking tool resolves through the session's scope.
+    let paths = &runtime.path_scope;
+    reg.register(ReadFileTool::new(paths.clone()));
+    reg.register(FindFileTool::new(paths.clone()));
+    reg.register(WriteTool::new(paths.clone()));
+    reg.register_with_display(EditFileTool::new(paths.clone()));
 
     // ── Multimodal attachments ───────────────────────────────────────────────
     // attach_file needs the live model to decide whether audio can be sent
     // natively or must be transcribed, so clone the Arc before `model` is
     // moved into the context tool below.
-    reg.register(AttachFileTool::new(
-        Some(Arc::clone(&model)),
-        cfg.tools.asr.clone(),
-    ));
+    reg.register(
+        AttachFileTool::new(Some(Arc::clone(&model)), cfg.tools.asr.clone())
+            .with_scope(paths.clone()),
+    );
 
     // ── Search ────────────────────────────────────────────────────────────────
     // grep now supports whole_project=true (replaces search_codebase).
-    reg.register(GrepTool);
+    reg.register(GrepTool::new(paths.clone()));
 
     // ── Shell ─────────────────────────────────────────────────────────────────
-    // shell covers: run commands, delete files, list dirs, run linters.
+    // shell covers: run commands, delete files, list dirs, run linters. The
+    // scope sets where a command starts, not what it may touch.
     reg.register(ShellTool {
         timeout_secs: cfg.tools.timeout_secs,
+        scope: paths.clone(),
     });
 
     // ── Web ───────────────────────────────────────────────────────────────────
@@ -426,10 +437,10 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
 
     // ── File I/O ─────────────────────────────────────────────────────────────
-    reg.register(ReadFileTool);
-    reg.register(FindFileTool);
-    reg.register(WriteTool);
-    reg.register_with_display(EditFileTool);
+    reg.register(ReadFileTool::default());
+    reg.register(FindFileTool::default());
+    reg.register(WriteTool::default());
+    reg.register_with_display(EditFileTool::default());
 
     // ── Multimodal attachments ───────────────────────────────────────────────
     // No live model in the CLI registry, so audio is always transcribed —
@@ -437,7 +448,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     reg.register(AttachFileTool::new(None, cfg.tools.asr.clone()));
 
     // ── Search ────────────────────────────────────────────────────────────────
-    reg.register(GrepTool);
+    reg.register(GrepTool::default());
 
     // ── Web ───────────────────────────────────────────────────────────────────
     reg.register(WebFetchTool::new(cfg.tools.web.fetch_max_chars));
@@ -448,6 +459,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     // ── System ────────────────────────────────────────────────────────────────
     reg.register(ShellTool {
         timeout_secs: cfg.tools.timeout_secs,
+        ..ShellTool::default()
     });
 
     let (event_tx, _event_rx) = mpsc::channel::<ToolEvent>(16);

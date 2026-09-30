@@ -12,6 +12,7 @@ use sven_hsm::ToolCapability;
 use sven_tool_api::params::{opt_bool, opt_str, opt_u64, require_str};
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
+use sven_tool_api::PathScope;
 
 /// Cached availability of `rg` (ripgrep).  Probed once on first use; the
 /// result never changes during a sven session.
@@ -37,7 +38,20 @@ async fn has_rg() -> bool {
     available
 }
 
-pub struct GrepTool;
+/// The `grep` tool. Its paths resolve through the [`PathScope`] it is built
+/// with; [`Default`] is unconfined.
+#[derive(Clone, Debug, Default)]
+pub struct GrepTool {
+    scope: PathScope,
+}
+
+impl GrepTool {
+    /// Resolves its paths through `scope`.
+    #[must_use]
+    pub fn new(scope: PathScope) -> Self {
+        Self { scope }
+    }
+}
 
 #[async_trait]
 impl Tool for GrepTool {
@@ -124,9 +138,29 @@ impl Tool for GrepTool {
 
         debug!(pattern = %pattern, path = %path, output_mode = %output_mode, whole_project, "grep tool");
 
+        // Confined, the search runs from the root on the path relative to it,
+        // so matches are reported the way the agent names files.
+        let (search_path, workdir) = match self.scope.root() {
+            None => (path.clone(), None),
+            Some(root) => {
+                let resolved = match self.scope.resolve_for(call, &path) {
+                    Ok(p) => p,
+                    Err(refused) => return refused,
+                };
+                let relative = resolved.strip_prefix(root).unwrap_or(&resolved);
+                let relative = if relative.as_os_str().is_empty() {
+                    ".".to_string()
+                } else {
+                    relative.to_string_lossy().into_owned()
+                };
+                (relative, Some(root))
+            }
+        };
+
         let result = run_rg(
+            workdir,
             &pattern,
-            &path,
+            &search_path,
             include.as_deref(),
             whole_project,
             case_sensitive,
@@ -146,6 +180,7 @@ impl Tool for GrepTool {
 
 #[allow(clippy::too_many_arguments)]
 async fn run_rg(
+    workdir: Option<&std::path::Path>,
     pattern: &str,
     path: &str,
     include: Option<&str>,
@@ -195,11 +230,17 @@ async fn run_rg(
             args.push("-g".to_string());
             args.push(glob.to_string());
         }
+        // Everything after `--` is an operand: the model supplies both, and an
+        // option smuggled in as either (`--pre=<cmd>`) would run a command.
+        args.push("--".to_string());
         args.push(pattern.to_string());
         args.push(path.to_string());
 
-        tokio::process::Command::new("rg")
-            .args(&args)
+        let mut rg = tokio::process::Command::new("rg");
+        if let Some(dir) = workdir {
+            rg.current_dir(dir);
+        }
+        rg.args(&args)
             .stdin(std::process::Stdio::null())
             .output()
             .await?
@@ -234,11 +275,15 @@ async fn run_rg(
                 args.push("--include".to_string());
                 args.push(glob.to_string());
             }
+            args.push("--".to_string());
             args.push(pattern.to_string());
             args.push(path.to_string());
 
-            tokio::process::Command::new("grep")
-                .args(&args)
+            let mut grep = tokio::process::Command::new("grep");
+            if let Some(dir) = workdir {
+                grep.current_dir(dir);
+            }
+            grep.args(&args)
                 .stdin(std::process::Stdio::null())
                 .output()
                 .await?
@@ -249,6 +294,7 @@ async fn run_rg(
             // caller surfaces a "no matches / rg not found" message.
             // Users should install ripgrep: winget install BurntSushi.ripgrep
             let _ = (
+                workdir,
                 output_mode,
                 context_lines,
                 whole_project,
@@ -307,6 +353,26 @@ mod tests {
         }
     }
 
+    /// A pattern or path that looks like an option is searched for, never
+    /// obeyed: `rg --pre=<cmd>` runs a command, and the model supplies both.
+    #[tokio::test]
+    async fn a_pattern_or_path_shaped_like_an_option_is_not_an_option() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("flags.txt"), "use --version here\n").unwrap();
+        let scope = PathScope::confined(dir.path()).unwrap();
+
+        let out = GrepTool::new(scope.clone())
+            .execute(&call(json!({"pattern": "--version", "path": "."})))
+            .await;
+        assert!(out.content.contains("flags.txt"), "{}", out.content);
+
+        std::fs::create_dir(dir.path().join("--files")).unwrap();
+        let out = GrepTool::new(scope)
+            .execute(&call(json!({"pattern": "zzz", "path": "--files"})))
+            .await;
+        assert!(!out.content.contains("flags.txt"), "{}", out.content);
+    }
+
     #[tokio::test]
     async fn finds_pattern_in_file() {
         // An isolated fixture, not a live crate source file: grepping
@@ -320,7 +386,7 @@ mod tests {
             "pub struct Alpha;\npub struct Beta;\nfn not_matched() {}\n",
         )
         .unwrap();
-        let out = GrepTool
+        let out = GrepTool::default()
             .execute(&call(json!({
                 "pattern": "pub struct",
                 "path": path.to_str().unwrap(),
@@ -333,7 +399,7 @@ mod tests {
     #[tokio::test]
     async fn no_match_returns_no_matches() {
         let dir = tempfile::tempdir().unwrap();
-        let out = GrepTool
+        let out = GrepTool::default()
             .execute(&call(json!({
                 "pattern": "xyzzy_nonexistent_pattern_12345",
                 "path": dir.path().to_str().unwrap()
@@ -345,7 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_pattern_is_error() {
-        let out = GrepTool.execute(&call(json!({}))).await;
+        let out = GrepTool::default().execute(&call(json!({}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("missing required parameter 'pattern'"));
     }
@@ -356,7 +422,7 @@ mod tests {
         let path = dir.path().join("grep_test.txt");
         std::fs::write(&path, "Hello World\n").unwrap();
 
-        let out = GrepTool
+        let out = GrepTool::default()
             .execute(&call(json!({
                 "pattern": "hello",
                 "path": path,
@@ -371,7 +437,7 @@ mod tests {
     async fn limit_truncates_results() {
         // Search in a directory with many matches, limit to 2
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/builtin");
-        let out = GrepTool
+        let out = GrepTool::default()
             .execute(&call(json!({
                 "pattern": "pub",
                 "path": dir,
@@ -389,7 +455,7 @@ mod tests {
 
     #[tokio::test]
     async fn nonexistent_path_returns_no_matches_or_error() {
-        let out = GrepTool
+        let out = GrepTool::default()
             .execute(&call(json!({
                 "pattern": "anything",
                 "path": "sven_no_such_dir_xyzzy_12345"

@@ -65,6 +65,59 @@ audited like a built-in one: its `kernel_capability` picks the permission
 bucket, and that bucket decides whether a call waits for a human (see
 "A tool of your own").
 
+## Project root
+
+`EngineBuilder::project_root` names the directory an engine's agents work in:
+
+```rust
+let engine = Engine::builder()
+    .toolset(Toolset::coding())
+    .project_root("/srv/workspaces/job-42")   // must exist and be a directory
+    .build()?;
+```
+
+With a root set:
+
+- **The built-in file tools** (`read_file`, `write_file`, `edit_file`,
+  `find_file`, `grep`, `attach_file`) resolve a relative path against the root
+  and refuse any path that resolves outside it. An absolute path inside the
+  root is fine. The refusal is the tool's result, naming the root, so the
+  model reads why.
+- **`shell`** starts in the root when the call names no `workdir`, and refuses
+  a `workdir` outside it. **`task`** starts its sub-agent in the root and
+  holds its `workdir` inside it the same way.
+- **The audit log** is `<root>/.sven/audit.jsonl`, and the verifier checks
+  paths relative to the root.
+- **Discovery** runs from the root as the CLI runs it from its project:
+  skills, sub-agent personas, `.sven/knowledge/`, the project context file
+  (`AGENTS.md` and friends) and the git summary in the system prompt.
+
+Nothing is written to the process working directory, so one process can run
+agents in many roots at once.
+
+**How a path is judged.** `..` is resolved lexically (`a/../../x` is
+`../x`), then symlinks are followed through the longest part of the path that
+exists: a link inside the root that points outside it leads outside, and is
+refused. A path that does not exist yet is judged by its nearest existing
+ancestor, and a dangling symlink on the way is refused, because writing
+through it would create its target wherever that is. The tool then operates on
+the resolved path, not the string it was given. The rule is implemented once,
+by `sven_tool_api::PathScope`, which the verifier also uses.
+
+**A shell is not a sandbox.** The root confines the file tools and where a
+command starts; it does not confine what a command does. `cat ../secret`
+works, and so does anything else the process may do. An application that
+needs containment runs the agent in a sandbox (a container, a VM, a
+restricted user) and points the root at the directory inside it. The check is
+also a point-in-time one: a process that swaps a directory for a symlink
+between the check and the write is not defended against. Tools the
+application registers with `EngineBuilder::tool` are its own and are not
+confined.
+
+Without a root, paths resolve against the process working directory as they
+always have, the audit log is written beneath it, and nothing is discovered.
+The CLI and TUI never confine their tools.
+
 ## Human gates
 
 When the kernel needs a human - an inherently dangerous capability such as

@@ -110,7 +110,7 @@ async fn fs_tool_write_read_roundtrip() {
         name: "write_file".into(),
         args: serde_json::json!({ "path": path, "text": "roundtrip", "append": false }),
     };
-    let wo = WriteTool.execute(&write_call).await;
+    let wo = WriteTool::default().execute(&write_call).await;
     assert!(!wo.is_error, "write failed: {}", wo.content);
 
     let read_call = ToolCall {
@@ -118,7 +118,7 @@ async fn fs_tool_write_read_roundtrip() {
         name: "read_file".into(),
         args: serde_json::json!({ "path": path }),
     };
-    let ro = ReadFileTool.execute(&read_call).await;
+    let ro = ReadFileTool::default().execute(&read_call).await;
     assert!(!ro.is_error);
     assert!(ro.content.contains("roundtrip"));
 

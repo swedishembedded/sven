@@ -32,25 +32,25 @@ mod output_category_tests {
 
     #[test]
     fn read_file_is_filecontent() {
-        let t = super::file::read_file::ReadFileTool;
+        let t = super::file::read_file::ReadFileTool::default();
         assert_eq!(t.output_category(), OutputCategory::FileContent);
     }
 
     #[test]
     fn write_tool_is_generic() {
-        let t = super::file::write_file::WriteTool;
+        let t = super::file::write_file::WriteTool::default();
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
     #[test]
     fn edit_file_is_generic() {
-        let t = super::file::edit_file::EditFileTool;
+        let t = super::file::edit_file::EditFileTool::default();
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
     #[test]
     fn find_file_tool_is_generic() {
-        let t = super::file::find_file::FindFileTool;
+        let t = super::file::find_file::FindFileTool::default();
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 

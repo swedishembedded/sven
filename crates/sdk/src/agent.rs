@@ -368,10 +368,19 @@ impl Agent {
             )));
         }
 
+        // A project root is discovered from the way the CLI discovers its
+        // project, and confines the built-in tools; without one the session
+        // knows no project at all.
+        let paths = self.engine.paths();
+        let discovered = match paths.root() {
+            Some(root) => RuntimeContext::auto_detect_at(Some(root.to_path_buf())),
+            None => RuntimeContext::default(),
+        };
         let runtime_ctx = RuntimeContext {
             system_prompt_override: options.role.clone(),
             no_tools: options.no_tools,
-            ..RuntimeContext::default()
+            path_scope: paths,
+            ..discovered
         };
 
         // The configured tool-round budget reaches the machine as a context

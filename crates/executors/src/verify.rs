@@ -11,15 +11,17 @@
 //!
 //! # Path jailing
 //!
-//! Every filesystem path in a spec resolves relative to a caller-supplied
-//! `root` and is rejected if it would escape it (`..` components, or an
-//! absolute path). A verifier's job is to check facts about a task's
-//! sandbox, not to read arbitrary files the spec's author (possibly the
-//! agent under evaluation) points it at.
+//! Every filesystem path in a spec is relative to a caller-supplied `root`.
+//! An absolute path is rejected outright; a relative one is resolved through
+//! a [`PathScope`] confined to `root`, which refuses anything that leaves it -
+//! through `..` or through a symlink. A verifier's job is to check facts about
+//! a task's sandbox, not to read arbitrary files the spec's author (possibly
+//! the agent under evaluation) points it at.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
+use sven_tool_api::PathScope;
 use sven_vocab::verify::{JsonCmpOp, VerifierSpec, VerifierVerdict};
 
 /// Evaluate `spec` against `root`.
@@ -32,10 +34,9 @@ pub fn evaluate<'a>(
     Box::pin(async move {
         match spec {
             VerifierSpec::FileExists { path, min_bytes } => {
-                let Some(resolved) = jail(root, path) else {
-                    return VerifierVerdict::Unknown {
-                        reason: format!("path escapes root: {path}"),
-                    };
+                let resolved = match jail(root, path) {
+                    Ok(resolved) => resolved,
+                    Err(reason) => return VerifierVerdict::Unknown { reason },
                 };
                 match tokio::fs::metadata(&resolved).await {
                     Ok(meta) => match min_bytes {
@@ -54,10 +55,9 @@ pub fn evaluate<'a>(
             }
 
             VerifierSpec::FileHash { path, sha256 } => {
-                let Some(resolved) = jail(root, path) else {
-                    return VerifierVerdict::Unknown {
-                        reason: format!("path escapes root: {path}"),
-                    };
+                let resolved = match jail(root, path) {
+                    Ok(resolved) => resolved,
+                    Err(reason) => return VerifierVerdict::Unknown { reason },
                 };
                 match tokio::fs::read(&resolved).await {
                     Ok(bytes) => {
@@ -82,10 +82,9 @@ pub fn evaluate<'a>(
                 op,
                 value,
             } => {
-                let Some(resolved) = jail(root, path) else {
-                    return VerifierVerdict::Unknown {
-                        reason: format!("path escapes root: {path}"),
-                    };
+                let resolved = match jail(root, path) {
+                    Ok(resolved) => resolved,
+                    Err(reason) => return VerifierVerdict::Unknown { reason },
                 };
                 let bytes = match tokio::fs::read(&resolved).await {
                     Ok(b) => b,
@@ -202,20 +201,14 @@ pub fn evaluate<'a>(
     })
 }
 
-/// Resolve `path` (from a spec) against `root`, rejecting anything that
-/// would escape it. `None` on an absolute path or a `..` component.
-fn jail(root: &Path, path: &str) -> Option<PathBuf> {
-    let candidate = Path::new(path);
-    if candidate.is_absolute() {
-        return None;
+/// Resolve `path` (from a spec) against `root`, rejecting an absolute path
+/// and anything that resolves outside `root`.
+fn jail(root: &Path, path: &str) -> Result<PathBuf, String> {
+    if Path::new(path).is_absolute() {
+        return Err(format!("path escapes root: {path}"));
     }
-    if candidate
-        .components()
-        .any(|c| matches!(c, Component::ParentDir))
-    {
-        return None;
-    }
-    Some(root.join(candidate))
+    let scope = PathScope::confined(root).map_err(|e| e.to_string())?;
+    scope.resolve(path).map_err(|e| e.to_string())
 }
 
 /// Executes `Effect::Verify` by calling [`evaluate`] against a fixed `root`
@@ -321,6 +314,25 @@ mod tests {
         let dir = tempdir();
         let spec = VerifierSpec::FileExists {
             path: "/etc/passwd".into(),
+            min_bytes: None,
+        };
+        assert!(matches!(
+            evaluate(&spec, dir.path()).await,
+            VerifierVerdict::Unknown { .. }
+        ));
+    }
+
+    /// A symlink inside the root is judged by where it leads, so a spec
+    /// cannot read a file outside the root through one.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_symlink_out_of_the_root_is_unknown_not_evaluated() {
+        let outside = tempdir();
+        std::fs::write(outside.path().join("secret"), "s").unwrap();
+        let dir = tempdir();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("out")).unwrap();
+        let spec = VerifierSpec::FileExists {
+            path: "out/secret".into(),
             min_bytes: None,
         };
         assert!(matches!(

@@ -31,7 +31,7 @@ mod output_category_tests {
 
     #[test]
     fn grep_tool_is_matchlist() {
-        let t = super::GrepTool;
+        let t = super::GrepTool::default();
         assert_eq!(t.output_category(), OutputCategory::MatchList);
     }
 

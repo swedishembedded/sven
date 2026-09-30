@@ -11,8 +11,22 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
+use sven_tool_api::PathScope;
 
-pub struct WriteTool;
+/// The `write_file` tool. Its paths resolve through the [`PathScope`] it is built
+/// with; [`Default`] is unconfined.
+#[derive(Clone, Debug, Default)]
+pub struct WriteTool {
+    scope: PathScope,
+}
+
+impl WriteTool {
+    /// Resolves its paths through `scope`.
+    #[must_use]
+    pub fn new(scope: PathScope) -> Self {
+        Self { scope }
+    }
+}
 
 #[async_trait]
 impl Tool for WriteTool {
@@ -99,7 +113,11 @@ impl Tool for WriteTool {
 
         debug!(path = %path, append = should_append, "write tool");
 
-        if let Some(parent) = std::path::Path::new(&path).parent() {
+        let target = match self.scope.resolve_for(call, &path) {
+            Ok(p) => p,
+            Err(refused) => return refused,
+        };
+        if let Some(parent) = target.parent() {
             if !parent.as_os_str().is_empty() {
                 let _ = tokio::fs::create_dir_all(parent).await;
             }
@@ -110,7 +128,7 @@ impl Tool for WriteTool {
             match tokio::fs::OpenOptions::new()
                 .append(true)
                 .create(true)
-                .open(&path)
+                .open(&target)
                 .await
             {
                 Ok(mut f) => {
@@ -130,7 +148,7 @@ impl Tool for WriteTool {
                 Err(e) => ToolOutput::err(&call.id, format!("open error: {e}")),
             }
         } else {
-            match tokio::fs::write(&path, &content).await {
+            match tokio::fs::write(&target, &content).await {
                 Ok(_) => {
                     ToolOutput::ok(&call.id, format!("wrote {} bytes to {path}", content.len()))
                 }
@@ -187,7 +205,7 @@ mod tests {
     #[tokio::test]
     async fn write_creates_file() {
         let path = tmp_path();
-        let t = WriteTool;
+        let t = WriteTool::default();
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -205,7 +223,7 @@ mod tests {
     #[tokio::test]
     async fn append_adds_to_file() {
         let path = tmp_path();
-        let t = WriteTool;
+        let t = WriteTool::default();
         let w1 = t
             .execute(&call(json!({"path": path, "text": "first\n"})))
             .await;
@@ -232,7 +250,7 @@ mod tests {
     async fn write_creates_parent_dirs() {
         let dir = tempfile::tempdir().expect("create temp dir");
         let path = dir.path().join("nested/sub/file.txt");
-        let t = WriteTool;
+        let t = WriteTool::default();
         let out = t
             .execute(&call(json!({"path": path, "text": "nested"})))
             .await;
@@ -242,7 +260,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_file_path_is_error() {
-        let t = WriteTool;
+        let t = WriteTool::default();
         let out = t.execute(&call(json!({"text": "x"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("Missing required parameters: path"));
@@ -250,7 +268,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_content_is_error() {
-        let t = WriteTool;
+        let t = WriteTool::default();
         let out = t.execute(&call(json!({"path": "x.txt"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("Missing required parameters: text"));
@@ -258,27 +276,27 @@ mod tests {
 
     #[test]
     fn only_available_in_agent_mode() {
-        let t = WriteTool;
+        let t = WriteTool::default();
         assert_eq!(t.modes(), &[AgentMode::Agent]);
     }
 
     #[tokio::test]
     async fn null_path_is_error() {
-        let t = WriteTool;
+        let t = WriteTool::default();
         let out = t.execute(&call(json!({"path": null, "text": "x"}))).await;
         assert!(out.is_error, "null path should be an error");
     }
 
     #[tokio::test]
     async fn integer_path_is_error() {
-        let t = WriteTool;
+        let t = WriteTool::default();
         let out = t.execute(&call(json!({"path": 42, "text": "x"}))).await;
         assert!(out.is_error, "integer path should be an error");
     }
 
     #[tokio::test]
     async fn path_traversal_does_not_crash() {
-        let t = WriteTool;
+        let t = WriteTool::default();
         // The tool should either write to the traversed path or error cleanly,
         // but must not panic. The `..` segments are the point of the test, so
         // they stay; the whole path is rooted in a temp dir that is removed
@@ -294,7 +312,7 @@ mod tests {
     #[tokio::test]
     async fn extremely_large_content_does_not_panic() {
         let path = tmp_path();
-        let t = WriteTool;
+        let t = WriteTool::default();
         let large_text = "x".repeat(10_000_000);
         let out = t
             .execute(&call(json!({"path": path, "text": large_text})))
@@ -306,7 +324,7 @@ mod tests {
     #[tokio::test]
     async fn write_preserves_unicode_content() {
         let path = tmp_path();
-        let t = WriteTool;
+        let t = WriteTool::default();
         let content = "Unicode: café 中文 日本語 한국어 🎉";
         let out = t
             .execute(&call(json!({"path": path, "text": content})))

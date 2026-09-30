@@ -31,6 +31,7 @@ pub struct Engine {
     tools: Vec<Arc<dyn sven_tool_api::Tool>>,
     toolset: Toolset,
     machines: Option<Arc<sven_machines::ModeRegistry>>,
+    paths: sven_tool_api::PathScope,
 }
 
 /// The built-in tools an engine's agents get, on top of those registered with
@@ -237,6 +238,17 @@ impl Engine {
         self.machines.clone()
     }
 
+    /// The directory the agents work in, canonical; `None` without
+    /// [`EngineBuilder::project_root`].
+    #[must_use]
+    pub fn project_root(&self) -> Option<&std::path::Path> {
+        self.paths.root()
+    }
+
+    pub(crate) fn paths(&self) -> sven_tool_api::PathScope {
+        self.paths.clone()
+    }
+
     /// Whether this engine can run `mode`.
     fn knows_mode(&self, mode: &str) -> bool {
         match &self.machines {
@@ -269,6 +281,7 @@ pub struct EngineBuilder {
     tools: Vec<Arc<dyn sven_tool_api::Tool>>,
     toolset: Toolset,
     machines: Option<sven_machines::ModeRegistry>,
+    project_root: Option<std::path::PathBuf>,
 }
 
 impl EngineBuilder {
@@ -337,6 +350,29 @@ impl EngineBuilder {
         self
     }
 
+    /// Makes `root` the directory every agent on this engine works in.
+    ///
+    /// The built-in file tools resolve relative paths against it and refuse
+    /// any path that resolves outside it, symlinks included; the `shell`
+    /// tool starts there and refuses a `workdir` outside it; the audit log
+    /// is written to `<root>/.sven/audit.jsonl`; and skills, sub-agent
+    /// personas, project knowledge and the project context file are
+    /// discovered from it as the CLI discovers them from its project.
+    ///
+    /// A shell command can still reach outside the root - a shell is not a
+    /// sandbox. The root confines the file tools and where commands start,
+    /// not what a command does; an application that needs containment runs
+    /// the agent in a sandbox. Tools registered with [`Self::tool`] are the
+    /// application's own and are not confined.
+    ///
+    /// Without a root, paths resolve against the process working directory
+    /// and the audit log is written beneath it.
+    #[must_use]
+    pub fn project_root(mut self, root: impl Into<std::path::PathBuf>) -> Self {
+        self.project_root = Some(root.into());
+        self
+    }
+
     /// Sets what agents do at a human-approval gate. Defaults to
     /// [`ApprovalPolicy::Deny`].
     #[must_use]
@@ -354,12 +390,17 @@ impl EngineBuilder {
     ///
     /// # Errors
     ///
-    /// Cannot currently fail. The result type is part of the signature so that
-    /// validating an engine's configuration later is not a breaking change.
+    /// [`CallError::Precondition`] when a [`Self::project_root`] does not
+    /// exist or is not a directory.
     pub fn build(self) -> Result<Engine, CallError> {
         let config = match self.config {
             Some(c) => c,
             None => Arc::new(Config::default()),
+        };
+        let paths = match &self.project_root {
+            Some(root) => sven_tool_api::PathScope::confined(root)
+                .map_err(|e| CallError::Precondition(e.to_string()))?,
+            None => sven_tool_api::PathScope::unconfined(),
         };
         Ok(Engine {
             config,
@@ -368,6 +409,7 @@ impl EngineBuilder {
             tools: self.tools,
             toolset: self.toolset,
             machines: self.machines.map(Arc::new),
+            paths,
         })
     }
 }

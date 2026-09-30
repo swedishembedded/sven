@@ -69,16 +69,16 @@ pub fn build_mcp_registry(
     let mut reg = ToolRegistry::new();
 
     if allow("edit_file") {
-        reg.register(EditFileTool);
+        reg.register(EditFileTool::default());
     }
     if allow("find_file") {
-        reg.register(FindFileTool);
+        reg.register(FindFileTool::default());
     }
     if allow("grep") {
-        reg.register(GrepTool);
+        reg.register(GrepTool::default());
     }
     if allow("read_file") {
-        reg.register(ReadFileTool);
+        reg.register(ReadFileTool::default());
     }
     if allow("read_lints") {
         reg.register(ReadLintsTool);
@@ -95,7 +95,7 @@ pub fn build_mcp_registry(
         });
     }
     if allow("write_file") {
-        reg.register(WriteTool);
+        reg.register(WriteTool::default());
     }
 
     reg
