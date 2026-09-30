@@ -43,7 +43,8 @@ use sven_vocab::SessionEvent;
 /// This is the surface's verdict (typically derived from its exit code), not
 /// the fold's — [`OutcomeFold::conclude`] may still veto a [`Self::Success`]
 /// when the event stream disagrees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RunConclusion {
     /// The run finished its work and reported success.
     Success,
@@ -270,6 +271,14 @@ mod tests {
             f.observe(&tool_result(&format!("c{i}"), i < errors));
         }
         f
+    }
+
+    #[test]
+    fn a_conclusion_is_stored_as_its_snake_case_name() {
+        let json = serde_json::to_string(&RunConclusion::BudgetExhausted).unwrap();
+        assert_eq!(json, "\"budget_exhausted\"");
+        let back: RunConclusion = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, RunConclusion::BudgetExhausted);
     }
 
     #[test]

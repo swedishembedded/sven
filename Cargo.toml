@@ -66,7 +66,7 @@ members = [
 # so every ATIF trajectory sven writes carries the real release version with
 # no runtime plumbing required.
 [workspace.package]
-version = "1.10.2"
+version = "2.0.0"
 
 [workspace.dependencies]
 libc         = "0.2"
@@ -136,9 +136,9 @@ sven-session-store = { path = "crates/session-store" }
 sven-tool-api    = { path = "crates/tool-api" }
 sven-tool-registry = { path = "crates/tool-registry" }
 sven-bootstrap   = { path = "crates/bootstrap", default-features = false }
-# `sven learn flush`: the drain and the submitter it hands facts to. Optional
-# and gated on the same `memory` feature as the tool itself, so the `minimal`
-# profile keeps excluding rusqlite.
+# `sven questions`: the parked-question ledger. Optional and gated on the same
+# `memory` feature as the semantic memory tool, so the `minimal` profile keeps
+# excluding rusqlite.
 sven-memory      = { path = "crates/memory", optional = true }
 # `sven questions`: QuestionId, for parsing/printing the ids QuestionLedger
 # uses. Gated the same as sven-memory - `sven questions` has nothing to read
