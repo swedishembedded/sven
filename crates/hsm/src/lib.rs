@@ -82,8 +82,9 @@ pub use ids::{ApprovalId, CorrelationId, MachineId, QuestionId, TaskId, TimerId,
 pub use machine::Machine;
 pub use observation::{CompactionStrategyUsed, ObservationSink, UiEvent};
 pub use permissions::{
-    capability_for_tool_name, classify, validate_effects_are_allowed, EffectDisposition,
-    PermissionPolicy, PermissionPolicyBuilder, ToolCapability,
+    capability_for_tool_name, classify, known_capability_for_tool_name,
+    validate_effects_are_allowed, EffectDisposition, PermissionPolicy, PermissionPolicyBuilder,
+    ToolCapability,
 };
 pub use report::{AuditTrailHandle, ErasedReport, RuntimeReport, RuntimeStatus, StateLabel};
 pub use snapshot::{RestoreError, Snapshot};

@@ -765,7 +765,7 @@ fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdate) {
             chat.segments.push(ChatSegment::Error(reason.clone()));
             chat.streaming_is_thinking = false;
         }
-        SubagentUpdate::TokenUsage { .. } => {
+        SubagentUpdate::TokenUsage { .. } | SubagentUpdate::TokensUsed { .. } => {
             // Cost is tracked in SessionEntry.total_cost_usd, not in chat.
         }
     }

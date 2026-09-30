@@ -44,9 +44,9 @@ use tracing::{debug, warn};
 /// streaming - the IDE will have to cope with the dropped notification.
 const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long to wait for the IDE to respond to a `session/request_permission`
-/// request before defaulting to denial.
-const PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long to wait, by default, for the IDE to respond to a
+/// `session/request_permission` request before defaulting to denial.
+pub const DEFAULT_PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 
 use sven_bootstrap::{KernelAgentSession, RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config};
@@ -87,6 +87,8 @@ pub enum ConnMessage {
 struct AcpPermissionRequester {
     session_id: String,
     conn_tx: mpsc::UnboundedSender<ConnMessage>,
+    /// How long to wait for the answer; `None` waits for it however long.
+    timeout: Option<Duration>,
 }
 
 #[async_trait::async_trait]
@@ -142,7 +144,11 @@ impl sven_tool_api::PermissionRequester for AcpPermissionRequester {
             return false;
         }
 
-        match tokio::time::timeout(PERMISSION_TIMEOUT, response_rx).await {
+        let answered = match self.timeout {
+            Some(timeout) => tokio::time::timeout(timeout, response_rx).await,
+            None => Ok(response_rx.await),
+        };
+        match answered {
             Ok(Ok(response)) => match &response.outcome {
                 RequestPermissionOutcome::Selected(SelectedPermissionOutcome {
                     option_id, ..
@@ -157,11 +163,33 @@ impl sven_tool_api::PermissionRequester for AcpPermissionRequester {
                 warn!(
                     tool = %call_name,
                     "ACP permission request timed out after {}s - denying",
-                    PERMISSION_TIMEOUT.as_secs()
+                    self.timeout.map_or(0, |t| t.as_secs())
                 );
                 false
             }
         }
+    }
+}
+
+// ─── Turn usage ───────────────────────────────────────────────────────────────
+
+/// The tokens a prompt turn used, summed from its `TokenUsage` events.
+#[derive(Default, Debug, PartialEq, Eq)]
+struct TurnUsage {
+    input: u64,
+    output: u64,
+}
+
+impl TurnUsage {
+    fn add(&mut self, event: &AgentEvent) {
+        if let AgentEvent::TokenUsage { input, output, .. } = event {
+            self.input += u64::from(*input);
+            self.output += u64::from(*output);
+        }
+    }
+
+    fn into_acp(self) -> agent_client_protocol::Usage {
+        agent_client_protocol::Usage::new(self.input + self.output, self.input, self.output)
     }
 }
 
@@ -190,6 +218,7 @@ pub struct SvenAcpAgent {
     config: Arc<Config>,
     sessions: RefCell<HashMap<String, Arc<SessionEntry>>>,
     conn_tx: mpsc::UnboundedSender<ConnMessage>,
+    permission_timeout: Option<Duration>,
 }
 
 impl SvenAcpAgent {
@@ -198,7 +227,17 @@ impl SvenAcpAgent {
             config,
             sessions: RefCell::new(HashMap::new()),
             conn_tx,
+            permission_timeout: Some(DEFAULT_PERMISSION_TIMEOUT),
         }
+    }
+
+    /// How long a tool call waits for the client's permission answer before
+    /// it is denied; `None` waits for the answer however long it takes (the
+    /// client bounds the wait itself, as a `task` parent does).
+    #[must_use]
+    pub fn with_permission_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.permission_timeout = timeout;
+        self
     }
 
     /// Clone the session `Arc` out of the `RefCell` without holding a borrow
@@ -268,6 +307,7 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         let permission_requester = Arc::new(AcpPermissionRequester {
             session_id: session_id.clone(),
             conn_tx: self.conn_tx.clone(),
+            timeout: self.permission_timeout,
         });
 
         let mut runtime_ctx = RuntimeContext::auto_detect();
@@ -375,6 +415,9 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         // completes (TurnComplete), is aborted (Aborted), or errors.
         let mut stop_reason = None::<StopReason>;
         let mut agent_error = None::<String>;
+        // What the turn used, reported with its response so a client that
+        // pays for this agent (a `task` parent) can charge it.
+        let mut used = TurnUsage::default();
 
         // Pin the oneshot receiver so it can be polled repeatedly in select!
         // without being moved on the first iteration.
@@ -414,6 +457,7 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
                             break;
                         }
                         other => {
+                            used.add(&other);
                             // Non-terminal events are forwarded when they
                             // have an ACP equivalent; the loop keeps draining
                             // until a terminal `TurnComplete`/`Aborted`/
@@ -434,9 +478,7 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             return Err(Error::new(i32::from(ErrorCode::InternalError), msg));
         }
 
-        Ok(PromptResponse::new(
-            stop_reason.unwrap_or(StopReason::EndTurn),
-        ))
+        Ok(PromptResponse::new(stop_reason.unwrap_or(StopReason::EndTurn)).usage(used.into_acp()))
     }
 
     async fn cancel(&self, args: CancelNotification) -> AcpResult<()> {
@@ -470,5 +512,68 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         *entry.mode_lock.lock().await = new_mode;
 
         Ok(SetSessionModeResponse::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn usage(input: u32, output: u32) -> AgentEvent {
+        AgentEvent::TokenUsage {
+            input,
+            output,
+            cache_read: 0,
+            cache_write: 0,
+            cache_read_total: 0,
+            cache_write_total: 0,
+            max_tokens: 0,
+            max_output_tokens: 0,
+            cost_usd: None,
+        }
+    }
+
+    #[test]
+    fn a_turn_reports_the_tokens_it_used() {
+        let mut used = TurnUsage::default();
+        used.add(&usage(100, 20));
+        used.add(&AgentEvent::TurnComplete);
+        used.add(&usage(50, 5));
+        let acp = used.into_acp();
+        assert_eq!(
+            (acp.input_tokens, acp.output_tokens, acp.total_tokens),
+            (150, 25, 175)
+        );
+    }
+
+    async fn ask(timeout: Option<Duration>) -> Option<bool> {
+        use sven_tool_api::PermissionRequester as _;
+        let (conn_tx, mut conn_rx) = mpsc::unbounded_channel();
+        let requester = AcpPermissionRequester {
+            session_id: "s".into(),
+            conn_tx,
+            timeout,
+        };
+        let call = sven_tool_api::ToolCall {
+            id: "c".into(),
+            name: "shell".into(),
+            args: serde_json::json!({"command": "ls"}),
+        };
+        let asking = requester.request_permission(&call);
+        tokio::pin!(asking);
+        // Nobody answers; the pending request is held open meanwhile.
+        let _held = tokio::select! {
+            msg = conn_rx.recv() => msg,
+            _ = &mut asking => panic!("answered before the request was sent"),
+        };
+        tokio::time::timeout(Duration::from_millis(300), asking)
+            .await
+            .ok()
+    }
+
+    #[tokio::test]
+    async fn the_permission_wait_is_bounded_only_when_asked_to_be() {
+        assert_eq!(ask(Some(Duration::from_millis(20))).await, Some(false));
+        assert_eq!(ask(None).await, None, "an unbounded wait is still waiting");
     }
 }

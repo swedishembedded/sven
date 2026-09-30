@@ -26,11 +26,38 @@
 //!   └── ToolOutput(final_text)
 //! ```
 //!
-//! ## Inactivity timeout
+//! ## The child's contract
+//!
+//! A sub-agent never holds more than the session that started it. Its
+//! [`ChildRunContract`] is what the parent's mode allows in every state (see
+//! `mode_policy::session_ceiling`), with a deadline of
+//! `agent.child_run_timeout_secs`:
+//!
+//! - The child runs only in an ACP mode whose own policy stays within that
+//!   ceiling (`child_mode_allowed`); if the child refuses to switch to it,
+//!   the run is abandoned and the child killed rather than left in its
+//!   default, wider mode.
+//! - A permission request the child sends is allowed outright only when the
+//!   parent would run the call itself without asking anyone: a known tool
+//!   whose capability the contract allows without approval, under a parent
+//!   whose host does not ask about every call. Everything else goes to the
+//!   parent's [`ChildApprover`], and is refused only when there is none.
+//! - The child's server is started with the parent's disabled tools, turn
+//!   budgets and the time left before the deadline, rounded up so the parent
+//!   sees its deadline first (`sven acp serve --disable-tool
+//!   --max-tool-rounds --max-output-tokens --wall-clock-secs
+//!   --permission-timeout-secs`).
+//! - The tokens the child's turn used are passed on as
+//!   `SubagentUpdate::TokensUsed`, to be charged with the parent's.
+//!
+//! ## Timeouts
 //!
 //! A pinned `tokio::time::Sleep` future is reset on every ACP notification.
-//! If no notification arrives within `INACTIVITY_TIMEOUT`, ACP `session/cancel`
-//! is forwarded to the child and the tool returns an error.
+//! If no notification arrives within `INACTIVITY_TIMEOUT` while no
+//! permission request of the child is pending, or the contract's deadline
+//! passes however busy the child is, ACP `session/cancel` is forwarded to
+//! the child, the child is killed, and the tool returns an error. So does a
+//! child that exits before its turn finished.
 //!
 //! ## Thread model
 //!
@@ -47,6 +74,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -55,16 +83,19 @@ use tokio::sync::Mutex;
 use tracing::debug;
 
 use sven_config::AgentMode;
+use sven_hsm::ChildRunContract;
 use sven_tool_api::{
     events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
-    PathScope,
+    PathScope, PermissionRequester,
 };
 use sven_tools_fs::{BufGrepTool, BufReadTool, BufStatusTool, BufferSource, OutputBufferStore};
 use sven_workspace::{AgentInfo, SharedAgents};
 
+mod report;
 mod session;
+mod updates;
 use session::{run_acp_session, CancelGuard, SpawnArgs};
 
 /// Environment variable set when running as a subagent (depth 0).
@@ -73,6 +104,34 @@ use session::{run_acp_session, CancelGuard, SpawnArgs};
 /// `ToolSetProfile::for_session` reads it to pick the sub-agent tool set, and
 /// a second literal there would let the spawner and the spawned disagree.
 pub(crate) const SUBAGENT_DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
+
+// ── Who answers a sub-agent's requests ───────────────────────────────────────
+
+/// Who answers a sub-agent's permission request that is not allowed outright.
+#[derive(Clone)]
+pub enum ChildApprover {
+    /// The host's requester (an IDE over ACP). The host is asked about every
+    /// call a tool's policy marks `Ask`, in the parent as in the child, so no
+    /// child request is allowed without it.
+    Host(Arc<dyn PermissionRequester>),
+    /// The session's own approval gate (`GateApprover`), asked about what the
+    /// session's policy does not allow without asking.
+    Gate(Arc<dyn PermissionRequester>),
+}
+
+impl ChildApprover {
+    /// The requester that is asked.
+    pub(crate) fn requester(&self) -> &dyn PermissionRequester {
+        match self {
+            Self::Host(r) | Self::Gate(r) => r.as_ref(),
+        }
+    }
+
+    /// `true` when the parent itself asks about every `Ask` call.
+    pub(crate) fn asks_every_call(&self) -> bool {
+        matches!(self, Self::Host(_))
+    }
+}
 
 // ── TaskTool ─────────────────────────────────────────────────────────────────
 
@@ -92,6 +151,17 @@ pub struct TaskTool {
     /// The session's path scope: a confined one is the tree a child's
     /// `workdir` must stay inside, and where the child starts by default.
     scope: PathScope,
+    /// Longest a child may run, if bounded.
+    wall_clock: Option<Duration>,
+    /// Most tool rounds a child's turn may take, if limited.
+    max_tool_rounds: Option<u32>,
+    /// Most output tokens a child's response may produce, if limited.
+    max_output_tokens: Option<u32>,
+    /// Answers a child's permission request the contract does not settle on
+    /// its own, when the host can ask someone.
+    approver: Option<ChildApprover>,
+    /// Tools the session never runs, so its children never run them either.
+    disabled_tools: Vec<String>,
 }
 
 impl TaskTool {
@@ -109,7 +179,47 @@ impl TaskTool {
             agents,
             parent_mode,
             scope: PathScope::default(),
+            wall_clock: None,
+            max_tool_rounds: None,
+            max_output_tokens: None,
+            approver: None,
+            disabled_tools: Vec::new(),
         }
+    }
+
+    /// Holds each child to these turn budgets - the session's own.
+    #[must_use]
+    pub fn with_turn_budgets(
+        mut self,
+        max_tool_rounds: Option<u32>,
+        max_output_tokens: Option<u32>,
+    ) -> Self {
+        self.max_tool_rounds = max_tool_rounds;
+        self.max_output_tokens = max_output_tokens;
+        self
+    }
+
+    /// Stops each child after `budget` of wall-clock time, if bounded.
+    #[must_use]
+    pub fn with_wall_clock(mut self, budget: Option<Duration>) -> Self {
+        self.wall_clock = budget;
+        self
+    }
+
+    /// Puts the child permission requests the contract does not allow
+    /// outright to `approver` instead of refusing them.
+    #[must_use]
+    pub fn with_approver(mut self, approver: Option<ChildApprover>) -> Self {
+        self.approver = approver;
+        self
+    }
+
+    /// Keeps each child from running `tools`, as the session does not run
+    /// them (`tools.disabled`).
+    #[must_use]
+    pub fn with_disabled_tools(mut self, tools: Vec<String>) -> Self {
+        self.disabled_tools = tools;
+        self
     }
 
     /// Holds children inside `scope`'s root rather than the process working
@@ -123,20 +233,42 @@ impl TaskTool {
 
 /// Whether a parent in `parent` mode may start a child in ACP mode `child`.
 ///
-/// Only a parent that may itself write (`agent`, `sdlc`) may start a writing
-/// child. Every other mode is read-only, and its children are held to
-/// `research`/`plan`. This check is what makes the tool's `ReadFile` kernel
-/// capability honest: the kernel admits a `task` call wherever reads are
-/// allowed, so the tool itself must not turn a read into a write.
+/// The child mode's own policy - including what its tools do without asking
+/// anyone - must stay within what the parent holds in every state (the
+/// contract's ceiling, `mode_policy::session_ceiling`). An `agent` child
+/// writes, so only an `agent` parent may start one; an SDLC parent holds only
+/// reads in every state, so it may start no child at all. This check is what
+/// makes the tool's `ReadFile` kernel capability honest: the kernel admits a
+/// `task` call wherever reads are allowed, so the tool itself must not turn a
+/// read into more.
 pub(crate) fn child_mode_allowed(parent: AgentMode, child: &str) -> Result<(), String> {
-    let parent_writes = matches!(parent, AgentMode::Agent | AgentMode::Sdlc);
-    if parent_writes || matches!(child, "research" | "plan") {
-        return Ok(());
+    use crate::mode_policy::{exceeds, session_ceiling};
+    let child_mode = match child {
+        "research" => AgentMode::Research,
+        "plan" => AgentMode::Plan,
+        _ => AgentMode::Agent,
+    };
+    match exceeds(&session_ceiling(child_mode), &session_ceiling(parent)) {
+        None => Ok(()),
+        Some(capability) => Err(format!(
+            "a {parent:?} session cannot delegate to a '{child}' sub-agent: the sub-agent \
+             would hold {capability:?}, which this session does not"
+        )),
     }
-    Err(format!(
-        "a {parent:?} session is read-only and cannot delegate to a writing \
-         '{child}' sub-agent; use mode 'research' or 'plan'"
-    ))
+}
+
+/// The contract a child of a session in `parent` mode runs under, started
+/// at `now`.
+fn child_contract(
+    parent: AgentMode,
+    wall_clock: Option<Duration>,
+    now: Instant,
+) -> ChildRunContract {
+    let contract = ChildRunContract::new(crate::mode_policy::session_ceiling(parent));
+    match wall_clock {
+        Some(budget) => contract.with_deadline_after(now, budget),
+        None => contract,
+    }
 }
 
 /// The directory the child runs in: `requested` resolved through `session`,
@@ -550,6 +682,13 @@ impl Tool for TaskTool {
             prompt,
             description: description.clone(),
             mode: acp_mode,
+            contract: ChildRunContract {
+                max_tool_rounds: self.max_tool_rounds,
+                max_output_tokens: self.max_output_tokens,
+                ..child_contract(parent_mode, self.wall_clock, Instant::now())
+            },
+            approver: self.approver.clone(),
+            disabled_tools: self.disabled_tools.clone(),
             workdir,
             model_override,
             handle_id: handle_id.clone(),
@@ -644,15 +783,37 @@ mod tests {
     }
 
     #[test]
+    fn a_child_contract_is_the_parent_authority_with_a_deadline() {
+        use std::time::{Duration, Instant};
+        use sven_hsm::ToolCapability;
+        let now = Instant::now();
+        let budget = Some(Duration::from_secs(30));
+        let child = super::child_contract(AgentMode::Research, budget, now);
+        assert!(child.allows_without_asking(ToolCapability::ReadFile));
+        assert!(!child
+            .policy
+            .allows_in_every_state(ToolCapability::WriteFile));
+        assert_eq!(child.remaining(now), budget);
+        let child = super::child_contract(AgentMode::Agent, None, now);
+        assert!(child.allows_without_asking(ToolCapability::WriteFile));
+        assert_eq!(child.deadline, None);
+    }
+
+    #[test]
     fn the_child_mode_ceiling_follows_the_parent_mode() {
         use super::child_mode_allowed;
-        for parent in [AgentMode::Agent, AgentMode::Sdlc] {
-            for child in ["research", "plan", "agent"] {
-                assert!(
-                    child_mode_allowed(parent, child).is_ok(),
-                    "{parent:?} -> {child}"
-                );
-            }
+        for child in ["research", "plan", "agent"] {
+            assert!(
+                child_mode_allowed(AgentMode::Agent, child).is_ok(),
+                "agent -> {child}"
+            );
+            // An SDLC session holds only ReadFile in every state; every child
+            // mode can do more (a research child fetches the web), so none
+            // may be started from it.
+            assert!(
+                child_mode_allowed(AgentMode::Sdlc, child).is_err(),
+                "sdlc -> {child}"
+            );
         }
         for parent in [AgentMode::Research, AgentMode::Plan, AgentMode::Chat] {
             assert!(child_mode_allowed(parent, "research").is_ok());

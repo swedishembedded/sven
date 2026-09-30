@@ -41,20 +41,25 @@ use sven_turn::AgentRuntimeContext;
 
 use crate::context::{Questions, ToolSetProfile};
 use crate::context_tool::ContextTool;
-use crate::task_tool::TaskTool;
+use crate::task_tool::{ChildApprover, TaskTool};
 #[cfg(all(unix, feature = "gdb"))]
 use crate::GdbTool;
 
 // ── Integration tool providers ────────────────────────────────────────────────
 
-/// Optional providers for the integration tools.
+/// Optional services the host provides to tools.
 ///
-/// All fields are optional; a tool is registered only when its provider is set.
+/// All fields are optional; a tool that needs one is registered only when it
+/// is set, and a tool that can use one works without it.
 #[derive(Default)]
 pub struct IntegrationProviders {
     /// Semantic memory store for the `semantic_memory` tool.
     #[cfg(feature = "memory")]
     pub memory_store: Option<Arc<dyn sven_memory::VectorStore>>,
+    /// Who answers a `task` sub-agent's permission requests that the
+    /// session's policy does not allow outright: the host's requester, or the
+    /// session's own approval gate. Without one they are refused.
+    pub approver: Option<ChildApprover>,
 }
 
 /// Converts the model catalog into the slice-of-fields `SystemTool`'s
@@ -135,6 +140,7 @@ pub fn build_tool_registry_with_integrations(
             runtime: &sub_agent_runtime,
             buffer_store,
             include_gdb_context: true,
+            approver: integrations.approver.clone(),
         }),
         ToolSetProfile::Coding {
             questions,
@@ -150,6 +156,7 @@ pub fn build_tool_registry_with_integrations(
             runtime: &sub_agent_runtime,
             buffer_store,
             include_gdb_context: false,
+            approver: integrations.approver.clone(),
         }),
         ToolSetProfile::Research { questions, todos } => build_profile_research(
             cfg,
@@ -158,6 +165,7 @@ pub fn build_tool_registry_with_integrations(
             todos,
             tool_event_tx,
             &sub_agent_runtime,
+            integrations.approver.clone(),
         ),
         ToolSetProfile::SubAgent {
             todos,
@@ -212,6 +220,7 @@ struct FullProfileParams<'a> {
     runtime: &'a AgentRuntimeContext,
     buffer_store: Arc<Mutex<OutputBufferStore>>,
     include_gdb_context: bool,
+    approver: Option<ChildApprover>,
 }
 
 /// Full and Coding profiles share the same builder; `include_gdb_context`
@@ -246,7 +255,14 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
             p.runtime.agents.clone(),
             parent_mode,
         )
-        .with_scope(p.runtime.path_scope.clone()),
+        .with_scope(p.runtime.path_scope.clone())
+        .with_wall_clock(p.cfg.agent.child_run_timeout())
+        .with_turn_budgets(
+            Some(p.cfg.agent.max_tool_rounds),
+            p.cfg.model.max_output_tokens,
+        )
+        .with_approver(p.approver)
+        .with_disabled_tools(p.cfg.tools.disabled.clone()),
     );
 
     reg
@@ -261,6 +277,7 @@ fn build_profile_research(
     todos: Arc<Mutex<Vec<TodoItem>>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     runtime: &AgentRuntimeContext,
+    approver: Option<ChildApprover>,
 ) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
 
@@ -298,7 +315,11 @@ fn build_profile_research(
             runtime.agents.clone(),
             mode_lock,
         )
-        .with_scope(paths.clone()),
+        .with_scope(paths.clone())
+        .with_wall_clock(cfg.agent.child_run_timeout())
+        .with_turn_budgets(Some(cfg.agent.max_tool_rounds), cfg.model.max_output_tokens)
+        .with_approver(approver)
+        .with_disabled_tools(cfg.tools.disabled.clone()),
     );
 
     reg

@@ -36,6 +36,46 @@ pub struct KernelChannels {
     pub approval_rx: mpsc::Receiver<ApprovalRequest>,
 }
 
+/// Puts a tool call to a session's own approval gate: the channel its
+/// `UserExecutor` sends `Effect::RequestHumanApproval` down, so the person
+/// sees the request exactly as they see the session's own approvals.
+///
+/// Used where something outside the kernel needs that person's consent - a
+/// `task` sub-agent's permission request the session's policy does not allow
+/// outright. A gate nobody holds any more (the channel closed) refuses.
+pub struct GateApprover {
+    approvals: mpsc::Sender<ApprovalRequest>,
+}
+
+impl GateApprover {
+    /// An approver that asks through `approvals`.
+    #[must_use]
+    pub fn new(approvals: mpsc::Sender<ApprovalRequest>) -> Self {
+        Self { approvals }
+    }
+}
+
+#[async_trait::async_trait]
+impl sven_tool_api::PermissionRequester for GateApprover {
+    async fn request_permission(&self, call: &sven_tool_api::ToolCall) -> bool {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let request = ApprovalRequest {
+            approval_id: sven_hsm::ApprovalId::new(),
+            capability: sven_hsm::capability_for_tool_name(&call.name),
+            description: format!("a sub-agent wants to run the tool `{}`", call.name),
+            call: Some(sven_hsm::GatedCall {
+                name: call.name.clone(),
+                args: call.args.clone(),
+            }),
+            reply_tx,
+        };
+        if self.approvals.send(request).await.is_err() {
+            return false;
+        }
+        reply_rx.await.unwrap_or(false)
+    }
+}
+
 impl KernelChannels {
     /// Hands every kernel-level question and approval gate to `responder`,
     /// which owns replying to each.
@@ -262,6 +302,34 @@ impl RuntimeHandle {
 mod tests {
     use super::*;
     use sven_hsm::ApprovalId;
+
+    /// When the sub-agent's request is given up (the session that sent it
+    /// ended), the gate sees its reply channel close and can withdraw the
+    /// prompt; and the prompt shows the call it gates.
+    #[tokio::test]
+    async fn a_given_up_sub_agent_request_is_withdrawn_from_the_gate() {
+        use sven_tool_api::PermissionRequester as _;
+        let (approvals, mut gate) = mpsc::channel(4);
+        let approver = GateApprover::new(approvals);
+        let call = sven_tool_api::ToolCall {
+            id: "c".into(),
+            name: "shell".into(),
+            args: serde_json::json!({"command": "make"}),
+        };
+        let mut asking = Box::pin(approver.request_permission(&call));
+        let mut request = tokio::select! {
+            request = gate.recv() => request.expect("the gate is asked"),
+            _ = &mut asking => panic!("answered before anyone was asked"),
+        };
+        assert_eq!(
+            request.call.as_ref().map(|c| c.args["command"].clone()),
+            Some("make".into())
+        );
+        drop(asking);
+        tokio::time::timeout(std::time::Duration::from_secs(2), request.reply_tx.closed())
+            .await
+            .expect("the prompt is withdrawn");
+    }
 
     /// The seam's whole reason for existing: the host decides, and it may
     /// take as long as a person does. The responder here holds both reply

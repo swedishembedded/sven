@@ -134,10 +134,13 @@ pub fn spawn_question_bridge(
                 },
                 a = approval_rx.recv() => match a {
                     Some(mut approval) => {
-                        let prompt = format!(
+                        let mut prompt = format!(
                             "Allow {:?} capability?\n\nAction: {}",
                             approval.capability, approval.description
                         );
+                        if let Some(call) = &approval.call {
+                            prompt.push_str(&describe_call(call));
+                        }
                         let (answer_tx, answer_rx) = oneshot::channel::<String>();
                         let req = QuestionRequest {
                             id: uuid::Uuid::new_v4().to_string(),
@@ -166,6 +169,18 @@ pub fn spawn_question_bridge(
             }
         }
     })
+}
+
+/// What an approval would let run, for the person deciding: the tool and
+/// its command, its path, or (for any other tool) its arguments.
+fn describe_call(call: &sven_hsm::GatedCall) -> String {
+    let field = |key: &str| call.args.get(key).and_then(serde_json::Value::as_str);
+    let detail = match (field("command"), field("path")) {
+        (Some(command), _) => format!("Command: {command}"),
+        (None, Some(path)) => format!("Path: {path}"),
+        (None, None) => format!("Arguments: {}", call.args),
+    };
+    format!("\nTool: {}\n{detail}", call.name)
 }
 
 /// A fully-wired kernel session presented as an [`AgentEvent`] stream.
@@ -454,6 +469,56 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(2), req.answer_tx.closed())
             .await
             .expect("the frontend's approval is withdrawn");
+    }
+
+    /// An approval shows what it would let run: the tool, and its command or
+    /// path, or its arguments.
+    #[tokio::test]
+    async fn an_approval_prompt_shows_the_gated_call() {
+        let (_kq_tx, question_rx) = mpsc::channel::<UserQuestion>(4);
+        let (ka_tx, approval_rx) = mpsc::channel::<ApprovalRequest>(4);
+        let channels = KernelChannels {
+            question_rx,
+            approval_rx,
+        };
+        let (ui_tx, mut ui_rx) = mpsc::channel::<QuestionRequest>(4);
+        let _task = spawn_question_bridge(channels, ui_tx);
+        for (name, args, shown) in [
+            (
+                "shell",
+                serde_json::json!({"command": "rm -rf build"}),
+                "rm -rf build",
+            ),
+            (
+                "write_file",
+                serde_json::json!({"path": "src/lib.rs", "content": "x"}),
+                "src/lib.rs",
+            ),
+            (
+                "github-create_issue",
+                serde_json::json!({"title": "Bug"}),
+                "\"title\":\"Bug\"",
+            ),
+        ] {
+            let (reply_tx, _reply_rx) = oneshot::channel::<bool>();
+            ka_tx
+                .send(ApprovalRequest {
+                    approval_id: ApprovalId::new(),
+                    capability: ToolCapability::ExecuteShell,
+                    description: "a sub-agent wants to run it".into(),
+                    call: Some(sven_hsm::GatedCall {
+                        name: name.into(),
+                        args,
+                    }),
+                    reply_tx,
+                })
+                .await
+                .unwrap();
+            let req = ui_rx.recv().await.expect("forwarded");
+            let prompt = &req.questions[0].prompt;
+            assert!(prompt.contains(name) && prompt.contains(shown), "{prompt}");
+            req.answer_tx.send("no".into()).unwrap();
+        }
     }
 
     /// A kernel approval request becomes a yes/no `QuestionRequest`; "yes"

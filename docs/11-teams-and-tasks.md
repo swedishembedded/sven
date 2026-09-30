@@ -290,9 +290,13 @@ members:
 
   - role: reviewer
     name: pr-reviewer
+    deny_tools: [write_file, edit_file]
     instructions: |
       Read the diff since the last tag. Write a review covering correctness,
       edge cases, and any potential regressions.
+
+token_budget: 500000   # tokens across the whole team; 0 = unlimited
+max_iterations: 40     # tool rounds per task run; 0 = the configured default
 ```
 
 Start it:
@@ -301,8 +305,31 @@ Start it:
 sven team start --file .sven/teams/release.yaml
 ```
 
-This creates the team and spawns all members automatically.  No prompting
-needed.
+This creates the team (or updates it, if it exists) and spawns all members
+automatically.  No prompting needed.
+
+The limits are written to the team config before any member starts, and each
+member reads its own before every task:
+
+- `deny_tools` - tools the member's task runs never see nor run.
+- `max_iterations` - the tool-round limit of each task run (it replaces
+  `agent.max_tool_rounds` for the member).
+- `token_budget` - input and output tokens across every member's task runs
+  and their sub-agents. Before each task a member reserves its share of what
+  is left - split evenly between the members working, under the team-config
+  lock, so members running at once never overshoot together. The run's
+  output is held to that share, everything it used (input and output, its
+  sub-agents' included) replaces the reservation afterwards, whether or not
+  it succeeded, and once the budget is spent a member claims no further task
+  and exits.
+
+A member answers its runs' approval prompts itself, its sub-agents'
+included: it approves any call except one to a tool it is denied.
+
+A member's `model` and `instructions` apply to every task it runs. The
+limits live in the team config, so they hold for every member however it was
+started, including one started with `spawn_teammate`; `sven team create
+--token-budget` sets the budget of a team built that way.
 
 List available team definitions in the current project:
 
@@ -419,11 +446,39 @@ The lead can observe this in real time by calling `list_tasks` and `list_team`.
 
 sven enforces hard limits to prevent runaway agent chains:
 
-- **Subprocess depth** - a teammate spawned by `TaskTool` (the local subprocess
-  spawner) cannot itself spawn further sub-agents.  The maximum depth is 3
-  levels.
+- **Subprocess depth** - a sub-agent started by the `task` tool cannot itself
+  start further sub-agents.
 - **SpawnTeammateTool** - only the team lead can spawn teammates.  A teammate
   cannot spawn sub-teams.
+
+A `task` sub-agent never holds more than the session that started it:
+
+- It runs in an ACP mode whose own policy - what its tools do without asking
+  included - stays within what the parent may do in every state: an `agent`
+  session may start any child, a `research`, `plan` or `chat` session only
+  `research`/`plan` children, and an SDLC session none. If the child will not
+  switch to that mode, it is stopped rather than left in its default mode.
+- A permission request it sends is allowed outright only when the parent
+  would run that call itself without asking anyone: the tool's name says
+  what it does, the parent's policy allows that without approval (writing
+  files in `agent` mode, say), and the parent's host does not ask about
+  every call. Anything else - a shell command, an MCP tool, any request under
+  an IDE over ACP - is put to the parent's approver: the session's own
+  approval gate, as the same prompt (tool and command or path) its own shell
+  commands get, or the IDE. A request is refused only when there is neither.
+- It never runs a tool the parent session has disabled (`tools.disabled`,
+  passed on as `--disable-tool`), takes at most the parent's
+  `agent.max_tool_rounds` tool rounds a turn, and writes at most the parent's
+  configured output cap per response, never more than its own model allows.
+- It is stopped after `agent.child_run_timeout_secs` (default one hour) of
+  wall-clock time, however busy, and after 10 minutes without any output -
+  a pending permission request pauses that count, and the child waits for
+  the answer until its deadline. Exiting before its turn finished, or at its
+  deadline, is reported as a failure.
+- A request of its still waiting when it stops is taken off the parent's
+  screen.
+- The tokens it used are reported with its turn and charged where the
+  parent's are (a team member's budget, for one).
 
 These limits are enforced at the system level, not by the model.  No prompt
 can override them.

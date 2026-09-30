@@ -733,6 +733,9 @@ pub struct ToolsConfig {
     pub auto_approve_patterns: Vec<String>,
     /// Block shell commands matching these glob patterns
     pub deny_patterns: Vec<String>,
+    /// Tools, by name, a session never offers the model and never runs -
+    /// built-in, MCP or supplied by an embedding application alike.
+    pub disabled: Vec<String>,
     /// Timeout in seconds for a single tool call
     pub timeout_secs: u64,
     /// Web fetch and search configuration
@@ -808,6 +811,7 @@ impl Default for ToolsConfig {
                 "grep *".into(),
             ],
             deny_patterns: vec!["rm -rf /*".into(), "dd if=*".into()],
+            disabled: Vec::new(),
             timeout_secs: 30,
             web: WebConfig::default(),
             memory: MemoryConfig::default(),

@@ -100,7 +100,8 @@ pub mod tool {
 /// built-in ones, including permissions, audit and suspend/resume.
 pub mod machine {
     pub use sven_hsm::{
-        Context, Effect, ErasedMachine, Event, Hsm, Machine, MachineId, Reaction, ToolCapability,
+        Context, Effect, ErasedMachine, Event, GatedCall, Hsm, Machine, MachineId, Reaction,
+        ToolCapability,
     };
     pub use sven_machines::mode::MachineFactory;
     pub use sven_machines::ModeRegistry;

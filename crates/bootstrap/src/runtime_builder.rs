@@ -34,7 +34,7 @@ use sven_executors::{
 };
 use sven_hsm::{Context, ObservationSink, Principal, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, ErasedRuntime};
-use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine, UiTestMachine};
+use sven_machines::{ModeRegistry, SdlcMachine, UiTestMachine};
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
 use sven_tool_api::events::ToolEvent;
@@ -45,6 +45,7 @@ use tracing::{info, warn};
 
 use crate::context::{BuiltinTools, RuntimeContext, ToolSetProfile};
 use crate::registry::{build_tool_registry_with_integrations, IntegrationProviders};
+use crate::task_tool::ChildApprover;
 
 /// Builds the executor installed in the composite's **tool slot** (`CallTool`),
 /// given the `TurnExecutor`'s shared conversation store and `call_id → thread`
@@ -523,6 +524,18 @@ impl RuntimeBuilder {
             sven_tools_fs::OutputBufferStore::new(),
         ));
 
+        // ── User/approval channels ────────────────────────────────────────────
+        // Created before the tools, so a `task` sub-agent's permission
+        // requests reach this session's own approval gate (or the host's
+        // requester, when it brought one).
+        let (question_tx, question_rx) = mpsc::channel::<UserQuestion>(16);
+        let (approval_tx, approval_rx) = mpsc::channel::<ApprovalRequest>(16);
+        let approver = match self.permission_requester.clone() {
+            Some(host) => ChildApprover::Host(host),
+            None => ChildApprover::Gate(Arc::new(crate::session_handles::GateApprover::new(
+                approval_tx.clone(),
+            ))),
+        };
         // Semantic memory (SQLite + FTS5 `semantic_memory` tool) is
         // constructed here, the one real assembly point every surface
         // (headless CI, interactive TUI, ACP, MCP) goes through, so it is on
@@ -532,7 +545,10 @@ impl RuntimeBuilder {
         // unregistered and the reason logged, exactly like a missing MCP
         // tool.
         #[allow(unused_mut)]
-        let mut integration_providers = IntegrationProviders::default();
+        let mut integration_providers = IntegrationProviders {
+            approver: Some(approver),
+            ..IntegrationProviders::default()
+        };
         #[cfg(feature = "memory")]
         {
             integration_providers.memory_store = match sven_memory::SqliteMemoryStore::open(None)
@@ -583,6 +599,11 @@ impl RuntimeBuilder {
         // something, and silently ignoring it would be the surprising choice.
         for tool in std::mem::take(&mut self.extra_tools) {
             tool_registry.register_arc(tool);
+        }
+
+        // Last, so a disabled name is gone whoever registered it.
+        for name in &self.config.tools.disabled {
+            tool_registry.remove(name);
         }
 
         if let Some(requester) = self.permission_requester {
@@ -640,9 +661,6 @@ impl RuntimeBuilder {
             (String, String),
         >::new()));
 
-        // ── User/approval channels ────────────────────────────────────────────
-        let (question_tx, question_rx) = mpsc::channel::<UserQuestion>(16);
-        let (approval_tx, approval_rx) = mpsc::channel::<ApprovalRequest>(16);
         // A parked question's durable record is the same regardless of which
         // surface is driving this session (TUI, headless, ACP), unlike
         // question_tx/approval_tx above (which need a UI to actually collect
@@ -792,15 +810,7 @@ impl RuntimeBuilder {
             "sdlc" => SdlcMachine::permission_policy(),
             "verified-task" => sven_machines::VerifiedTaskMachine::permission_policy(),
             "ui-test" => UiTestMachine::permission_policy(),
-            // Read-only planning modes get a policy that withholds `WriteFile`
-            // so the kernel forbids file mutations even if the model proposes
-            // one; all other modes keep the full reactive-agent policy.
-            _ => match self.agent_mode {
-                Some(AgentMode::Plan | AgentMode::Research) => {
-                    ReactiveAgentMachine::plan_permission_policy()
-                }
-                _ => ReactiveAgentMachine::permission_policy(),
-            },
+            _ => crate::mode_policy::reactive_policy(self.agent_mode.unwrap_or(AgentMode::Agent)),
         };
 
         // ── Spawn runtime ─────────────────────────────────────────────────────
@@ -819,6 +829,11 @@ impl RuntimeBuilder {
             }
             None => Context::new(),
         };
+        // The configured round budget, unless the caller set its own.
+        init_ctx.set_fact(
+            sven_machines::MAX_TOOL_ROUNDS_FACT,
+            serde_json::json!(self.config.agent.max_tool_rounds),
+        );
         for (key, value) in std::mem::take(&mut self.context_facts) {
             init_ctx.facts.insert(key, value);
         }
@@ -1045,6 +1060,44 @@ mod tests {
         assert!(
             saw_call_llm,
             "injected custom executor never received the CallLlm effect"
+        );
+    }
+
+    fn mock_config() -> Config {
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+        config
+    }
+
+    #[tokio::test]
+    async fn a_disabled_tool_is_never_registered() {
+        let mut config = mock_config();
+        config.tools.disabled = vec!["shell".into()];
+        let (runtime, handle, ..) = RuntimeBuilder::new(Arc::new(config), "agent")
+            .with_builtin_tools(BuiltinTools::Coding)
+            .build()
+            .await
+            .expect("runtime builds");
+        let names = handle.tool_registry().names();
+        runtime.abort();
+        assert!(names.iter().any(|n| n == "read_file"), "{names:?}");
+        assert!(!names.iter().any(|n| n == "shell"), "{names:?}");
+    }
+
+    #[tokio::test]
+    async fn the_configured_round_budget_reaches_the_machine() {
+        let mut config = mock_config();
+        config.agent.max_tool_rounds = 7;
+        let (runtime, ..) = RuntimeBuilder::new(Arc::new(config), "agent")
+            .build()
+            .await
+            .expect("runtime builds");
+        let snapshot = runtime.capture().await.expect("runtime is live");
+        runtime.abort();
+        assert_eq!(
+            snapshot.context.fact(sven_machines::MAX_TOOL_ROUNDS_FACT),
+            Some(&serde_json::json!(7))
         );
     }
 

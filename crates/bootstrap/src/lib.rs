@@ -20,6 +20,7 @@ pub mod context;
 pub mod context_query;
 pub mod context_tool;
 pub mod kernel_bridge;
+mod mode_policy;
 pub mod registry;
 pub mod runtime_builder;
 pub mod session_handles;
@@ -42,7 +43,7 @@ pub use runtime_builder::{
 };
 pub use supervisor::{SessionId, SessionSupervisor};
 pub use sven_mcp_client::McpManager;
-pub use task_tool::TaskTool;
+pub use task_tool::{ChildApprover, TaskTool};
 pub use ui_test_dispatch::{
     dispatch_ui_test_step, StateReporter, UiTestDevice, UiTestDispatchOverrides,
 };

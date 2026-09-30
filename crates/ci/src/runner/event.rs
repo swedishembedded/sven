@@ -553,7 +553,7 @@ fn handle_subagent_update(
         // trace, silently ignored like the parent run's own per-event cost
         // deltas (which only ever surface via the aggregate `[sven:tokens]`
         // line, not per-turn).
-        SubagentUpdate::TokenUsage { .. } => {}
+        SubagentUpdate::TokenUsage { .. } | SubagentUpdate::TokensUsed { .. } => {}
     }
 }
 

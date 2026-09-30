@@ -16,6 +16,7 @@
 pub mod cli;
 pub mod config;
 pub mod definition;
+pub mod limits;
 pub mod prompts;
 pub mod spawn;
 pub mod task;
@@ -28,6 +29,7 @@ pub use config::{
     TeamConfigStore, TeamMember, TeamRole,
 };
 pub use definition::{TeamDefinition, TeamMemberDef};
+pub use limits::{MemberLimits, TokenAllowance};
 pub use spawn::{
     CleanupTeamTool, CreateTeamTool, ListTeamTool, LoadTeamTool, MergeTeammateBranchTool,
     ReadTeammateLogTool, RegisterTeammateTool, ShutdownTeammateTool, SpawnTeammateTool,

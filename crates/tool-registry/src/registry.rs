@@ -154,6 +154,14 @@ impl ToolRegistry {
         Arc::clone(&self.display_registry)
     }
 
+    /// Removes the tool registered as `name`, so it is neither offered nor
+    /// run. Returns whether one was registered.
+    pub fn remove(&mut self, name: &str) -> bool {
+        self.tools
+            .write()
+            .is_ok_and(|mut tools| tools.remove(name).is_some())
+    }
+
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.read().ok()?.get(name).cloned()
     }

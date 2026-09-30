@@ -220,6 +220,23 @@ pub fn cmd_start(file: &Path, sven_bin: Option<&str>, dry_run: bool) -> anyhow::
         println!("Goal: {goal}");
     }
 
+    // The members read their terms (budget, rounds, denied tools) from the
+    // team config, so it is written before any of them starts.
+    if !dry_run {
+        let store = TeamConfigStore::open(&def.name)
+            .map_err(|e| anyhow::anyhow!("Cannot open team {:?}: {e}", def.name))?;
+        store.upsert(
+            || {
+                let mut team = TeamConfig::new(&def.name, "cli", "sven-cli");
+                if let Some(lead) = team.members.first_mut() {
+                    lead.peer_id = "cli".to_string();
+                }
+                team
+            },
+            |team| def.apply_to(team),
+        )?;
+    }
+
     let sven = sven_bin
         .map(|s| s.to_string())
         .or_else(|| {

@@ -467,6 +467,7 @@ Controls what the agent is allowed to do and how.
 |-----|---------|-------------|
 | `auto_approve_patterns` | `["cat *", "ls *", ...]` | Commands matching these run without confirmation |
 | `deny_patterns` | `["rm -rf /*", ...]` | Commands matching these are always blocked |
+| `disabled` | `[]` | Tools, by name, a session never offers the model and never runs - built-in, MCP or application-supplied alike |
 | `timeout_secs` | `30` | Per-tool-call timeout in seconds |
 
 **Adding auto-approve patterns:**

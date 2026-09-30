@@ -417,6 +417,7 @@ const AGENT_CONFIG_KEYS: &[&str] = &[
 const TOOLS_CONFIG_KEYS: &[&str] = &[
     "auto_approve_patterns",
     "deny_patterns",
+    "disabled",
     "timeout_secs",
     "web",
     "memory",
@@ -903,7 +904,10 @@ model:
 
     #[test]
     fn agent_and_tool_keys_earn_no_warning() {
-        let yaml = val("agent:\n  child_run_timeout_secs: 60\n  stream_idle_timeout_secs: 60\n");
+        let yaml = val(
+            "agent:\n  child_run_timeout_secs: 60\n  stream_idle_timeout_secs: 60\n\
+             tools:\n  disabled: [shell]\n",
+        );
         assert_eq!(config_field_warnings(&yaml), Vec::<String>::new());
     }
 

@@ -71,10 +71,10 @@ pub const CHAT_THREAD: &str = "chat";
 /// Default maximum tool-call rounds before a forced wrap-up turn.
 const DEFAULT_MAX_TOOL_ROUNDS: u32 = 16;
 
-/// The context fact the configured round limit arrives under. Seed it with
-/// `RuntimeBuilder::with_context_facts` (the sdk agent does, from
-/// `AgentConfig.max_tool_rounds`); without it [`DEFAULT_MAX_TOOL_ROUNDS`]
-/// stands.
+/// The context fact the configured round limit arrives under.
+/// `RuntimeBuilder` seeds it from `AgentConfig.max_tool_rounds` for every
+/// session; a caller may override it with `RuntimeBuilder::with_context_facts`.
+/// Without it [`DEFAULT_MAX_TOOL_ROUNDS`] stands.
 pub const MAX_TOOL_ROUNDS_FACT: &str = "agent.max_tool_rounds";
 
 /// Whether the session registers `ask_question`. The clarification

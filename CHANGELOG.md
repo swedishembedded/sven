@@ -10,20 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Migrating from 2.0.0
 - `ToolCapability` gains `SpawnChild`, and `Effect::InstantiateSubmachine` now requires it: a machine that spawns children must allow `SpawnChild` in the spawning state, and an exhaustive `match` on `ToolCapability` needs the new arm.
 - `ChildSpawner::spawn_child` takes a `run: ChildRun` parameter (the contract and the child's cancel scope).
-- New public fields on structs that are not `#[non_exhaustive]`: `AgentConfig.child_run_timeout_secs`, `TurnLimits.max_output_tokens`. A struct literal needs the field or `..Default::default()`.
+- New public fields on structs that are not `#[non_exhaustive]`: `ToolsConfig.disabled`, `AgentConfig.child_run_timeout_secs`, `TurnLimits.max_output_tokens`, `IntegrationProviders.approver` (a `ChildApprover`), `TeamMember.deny_tools`. A struct literal needs the field or `..Default::default()`.
+- `SubagentUpdate` gains `TokensUsed`; an exhaustive `match` needs the arm.
 - `TaskState::RunningTools` is gone.
 
 ### Added
-- `ChildRunContract` (`sven-hsm`): the capabilities, budgets and deadline a child run holds; `narrow` only ever tightens them. `PermissionPolicy::{allows, allows_in_every_state, requires_approval, ceiling_in, ceiling_in_every_state, intersect}`, `ToolCapability::ALL`.
+- `ChildRunContract` (`sven-hsm`): the capabilities, budgets and deadline a child run holds; `narrow` only ever tightens them. `PermissionPolicy::{allows, allows_in_every_state, requires_approval, ceiling_in, ceiling_in_every_state, intersect}`, `ToolCapability::ALL`, `known_capability_for_tool_name`.
 - `sven-kernel`: `CancelScope`, `DeadlineTimer`, `ChildRun`, `ErasedRuntime::spawn_child_run`, `Runtime`/`ErasedRuntime::{cancel, cancel_scope}`, `RUN_CANCELLED`, `EventSink::closed`.
-- `agent.child_run_timeout_secs` (default 3600).
+- `ToolRegistry::remove`, the `tools.disabled` configuration, `agent.child_run_timeout_secs` (default 3600).
+- `sven acp serve --max-tool-rounds / --max-output-tokens / --wall-clock-secs / --disable-tool / --permission-timeout-secs`; its prompt responses report the turn's token usage.
+- `sven_team::limits` (`MemberLimits`, `TokenAllowance`, `TeamConfig::{reserve_tokens, settle_tokens}`), `TeamConfigStore::{upsert, reserve_tokens, settle_tokens}`, `TeamDefinition::apply_to`; `GateApprover` and `ChildApprover` in `sven-bootstrap`; `sven_sdk::machine::GatedCall`.
 
 ### Changed
 - **Every child run is held to a contract.** A child holds only what its parent holds in the spawning state, narrowed by the spawner's terms; cancelling, aborting or dropping the parent cancels its children; `ErasedRuntime::spawn_child_run` applies the contract's policy and cancels the run at its deadline.
 - **Headless SDLC children now follow the session's approval behaviour.** A task child's questions and approval requests go to the parent session's question and approval channels - answered by a person in the TUI, auto-approved by the headless runner, as the parent's own - instead of ending the task. They hold only what the parent holds in `Execution` (no network), take at most `agent.max_tool_rounds` rounds, write at most the session's configured output cap per response, and stop after `agent.child_run_timeout_secs`; their tool calls in flight are aborted with them.
+- **TUI users now get sub-agent approval prompts.** A `task` sub-agent's permission request is allowed outright only when the parent would run the call itself without asking anyone (a known tool its policy allows without approval, and no host that asks about every call); everything else - shell, MCP tools - is shown on the parent's own approval gate with the tool and its command or path, or goes to the IDE over ACP. It is refused only when there is neither. Sub-agents only start in a mode within the parent's ceiling (an SDLC session starts none), run under the parent's disabled tools and budgets, wait for approvals until their deadline, and are reported as failed when they exit or time out before finishing.
+- **The round default for `RuntimeBuilder` sessions now honours `agent.max_tool_rounds`** (default 200); CLI, TUI and ACP sessions previously stopped at the reactive machine's built-in 16.
 - A question or approval still pending when its run stops is withdrawn from the frontend.
+- Team members are held to their team's limits: `deny_tools`, `max_iterations` and `token_budget`. The budget is reserved per run under the team-config lock and charged with everything the run and its sub-agents used; a member answers its approvals itself, refusing its denied tools. `sven team start` writes the team config (under the lock) before spawning. Teammates honour `--model` and their definition's instructions, back off and then fail on an unreadable team config, and do not repeat their initial task on a restart. Team-config writes are locked across processes.
 
 ### Fixed
+- `spawn_teammate` no longer passes an undefined `--team-lead-peer` flag that made every spawned teammate fail to start.
+- A teammate started with a `task_prompt` puts it on the task board as its first task; it was dropped.
 - A turn's output-token limit applies even when the model's context window is unknown.
 - `agent.stream_idle_timeout_secs` no longer draws an unrecognised-key warning.
 

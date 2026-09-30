@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::TeamRole;
+use crate::config::{teammate_stable_peer_id, MemberStatus, TeamConfig, TeamMember, TeamRole};
 
 // ── TeamMemberDef ─────────────────────────────────────────────────────────────
 
@@ -94,6 +94,39 @@ impl TeamDefinition {
         let def: TeamDefinition = serde_yaml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("Invalid team definition {:?}: {e}", path))?;
         Ok(def)
+    }
+
+    /// Records this definition in `team`: its goal and team-wide limits,
+    /// and each member with its model and denied tools. A member already in
+    /// `team` keeps its runtime state (status, pid, current task) and takes
+    /// the definition's terms; re-applying the same definition changes
+    /// nothing.
+    pub fn apply_to(&self, team: &mut TeamConfig) {
+        team.goal = self.goal.clone().or(team.goal.take());
+        team.max_active = self.max_active;
+        team.token_budget = self.token_budget;
+        team.max_iterations = self.max_iterations;
+        for member in &self.members {
+            let peer_id = teammate_stable_peer_id(&self.name, &member.name);
+            match team.members.iter_mut().find(|m| m.peer_id == peer_id) {
+                Some(existing) => {
+                    existing.role = member.role.clone();
+                    existing.model = member.model.clone();
+                    existing.deny_tools = member.deny_tools.clone();
+                }
+                None => team.members.push(TeamMember {
+                    peer_id,
+                    name: member.name.clone(),
+                    role: member.role.clone(),
+                    model: member.model.clone(),
+                    status: MemberStatus::Unknown,
+                    current_task_id: None,
+                    joined_at: chrono::Utc::now(),
+                    pid: None,
+                    deny_tools: member.deny_tools.clone(),
+                }),
+            }
+        }
     }
 
     /// Save the definition to a YAML file (pretty-printed).
@@ -201,6 +234,35 @@ mod tests {
         assert_eq!(loaded.name, "code-review");
         assert_eq!(loaded.goal.unwrap(), "Review PR changes");
         assert_eq!(loaded.token_budget, 200_000);
+    }
+
+    #[test]
+    fn applying_a_definition_records_every_member_term() {
+        let mut def = example_def();
+        def.max_iterations = 25;
+        let mut team = TeamConfig::new("code-review", "cli", "sven-cli");
+        def.apply_to(&mut team);
+        def.apply_to(&mut team);
+
+        assert_eq!(team.token_budget, 200_000);
+        assert_eq!(team.max_iterations, 25);
+        assert_eq!(team.max_active, 4);
+        assert_eq!(
+            team.members.len(),
+            3,
+            "the lead plus two members, once each"
+        );
+        let reviewer = team
+            .find_member(&teammate_stable_peer_id("code-review", "security-reviewer"))
+            .expect("the reviewer is registered under its stable id");
+        assert_eq!(reviewer.deny_tools, vec!["write_file", "edit_file"]);
+
+        def.members[0].deny_tools.clear();
+        def.apply_to(&mut team);
+        let reviewer = team
+            .find_member(&teammate_stable_peer_id("code-review", "security-reviewer"))
+            .unwrap();
+        assert!(reviewer.deny_tools.is_empty(), "the definition's terms win");
     }
 
     #[test]

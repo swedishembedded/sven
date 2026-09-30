@@ -447,6 +447,14 @@ pub enum SubagentUpdate {
     Failed { reason: String },
     /// Token usage / cost from the subagent (when API reports it, e.g. OpenRouter).
     TokenUsage { cost_usd: f64 },
+    /// The tokens the subagent's turn used, reported once it finishes, so
+    /// whoever pays for the parent pays for the subagent too.
+    TokensUsed {
+        /// Input tokens across the subagent's turn.
+        input_tokens: u64,
+        /// Output tokens across the subagent's turn.
+        output_tokens: u64,
+    },
 }
 
 /// A collaboration event that can be recorded as a `ChatSegment::CollabEvent`.

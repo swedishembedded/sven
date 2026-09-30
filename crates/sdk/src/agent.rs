@@ -383,16 +383,10 @@ impl Agent {
             ..discovered
         };
 
-        // The configured tool-round budget reaches the machine as a context
-        // fact: `AgentConfig.max_tool_rounds` is the one place it is set, and
-        // the reactive machine reads the fact on its first turn (falling back
-        // to its own default when absent). Method facts keep their own keys
-        // and win - they are seeded after this map is extended.
-        let mut facts = options.facts.clone();
-        facts.insert(
-            sven_machines::MAX_TOOL_ROUNDS_FACT.to_string(),
-            serde_json::json!(self.engine.config().agent.max_tool_rounds),
-        );
+        // The configured tool-round budget reaches the machine through
+        // `RuntimeBuilder`, from the engine's config; method facts keep their
+        // own keys.
+        let facts = options.facts.clone();
 
         // An answer is the result of the call that asked. It goes into the
         // history the session is seeded with, so it is in the thread before

@@ -311,10 +311,19 @@ pub fn classify<S: Debug>(
 /// legacy machines that receive `LlmProposedToolCall { name }` and must emit
 /// `Effect::CallTool` with a capability).  The mapping is best-effort;
 /// `ToolRegistry::capability_of` (which calls `Tool::kernel_capability`) is
-/// authoritative when a registry is available.
+/// authoritative when a registry is available. A name no convention covers
+/// maps to [`ToolCapability::NetworkAccess`].
 #[must_use]
 pub fn capability_for_tool_name(name: &str) -> ToolCapability {
-    match name {
+    known_capability_for_tool_name(name).unwrap_or(ToolCapability::NetworkAccess)
+}
+
+/// The capability a tool name's naming convention names, or `None` for a
+/// name no convention covers (an MCP tool, say). A caller deciding whether
+/// to allow a call treats `None` as "cannot tell", never as harmless.
+#[must_use]
+pub fn known_capability_for_tool_name(name: &str) -> Option<ToolCapability> {
+    let capability = match name {
         n if n.starts_with("delete_") => ToolCapability::DeleteFile,
         n if n.starts_with("write_") || n.starts_with("edit_") => ToolCapability::WriteFile,
         n if n.starts_with("read_")
@@ -332,8 +341,9 @@ pub fn capability_for_tool_name(name: &str) -> ToolCapability {
         }
         n if n.starts_with("web_") || n.starts_with("fetch") => ToolCapability::NetworkAccess,
         n if n.starts_with("git_") => ToolCapability::GitOperation,
-        _ => ToolCapability::NetworkAccess,
-    }
+        _ => return None,
+    };
+    Some(capability)
 }
 
 /// Validates that every effect produced by a dispatch is permitted in the
@@ -473,6 +483,19 @@ mod tests {
         let everywhere = a.ceiling_in_every_state();
         assert!(everywhere.allows_in_every_state(ToolCapability::ReadFile));
         assert!(!everywhere.allows(&S::Executing, ToolCapability::ExecuteShell));
+    }
+
+    #[test]
+    fn an_unknown_tool_name_has_no_known_capability() {
+        assert_eq!(known_capability_for_tool_name("github-create_issue"), None);
+        assert_eq!(
+            known_capability_for_tool_name("shell"),
+            Some(ToolCapability::ExecuteShell)
+        );
+        assert_eq!(
+            capability_for_tool_name("github-create_issue"),
+            ToolCapability::NetworkAccess
+        );
     }
 
     #[test]

@@ -605,6 +605,7 @@ impl Tool for RegisterTeammateTool {
                 current_task_id: None,
                 joined_at: Utc::now(),
                 pid: None,
+                deny_tools: Vec::new(),
             });
         });
 
@@ -724,7 +725,6 @@ impl Tool for SpawnTeammateTool {
             return ToolOutput::err(&call.id, "Only the team lead can spawn teammates.");
         }
         let team_name = config.name.clone();
-        let lead_peer_id = self.agent_peer_id.clone();
         drop(guard);
 
         // Determine binary path.
@@ -763,7 +763,6 @@ impl Tool for SpawnTeammateTool {
         let mut args = vec![
             format!("--team-name={team_name}"),
             format!("--team-role={role_str}"),
-            format!("--team-lead-peer={lead_peer_id}"),
             format!("--agent-name={name}"),
             "--headless".to_string(),
         ];
@@ -841,6 +840,7 @@ impl Tool for SpawnTeammateTool {
                                 current_task_id: None,
                                 joined_at: chrono::Utc::now(),
                                 pid: Some(member_pid),
+                                deny_tools: Vec::new(),
                             });
                         }
                     });
@@ -1413,6 +1413,7 @@ mod tests {
             current_task_id: None,
             joined_at: chrono::Utc::now(),
             pid: None,
+            deny_tools: Vec::new(),
         });
         let cfg: TeamConfigHandle = Arc::new(Mutex::new(Some(inner)));
         let tool = CleanupTeamTool {

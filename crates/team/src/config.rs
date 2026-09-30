@@ -100,6 +100,9 @@ pub struct TeamMember {
     /// member is reported as `Closed` even if the config still says `Active`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
+    /// Tools this member's runs may not use, by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny_tools: Vec<String>,
 }
 
 fn is_default_status(s: &MemberStatus) -> bool {
@@ -222,6 +225,7 @@ impl TeamConfig {
                 current_task_id: None,
                 joined_at: Utc::now(),
                 pid: None,
+                deny_tools: Vec::new(),
             }],
             created_at: Utc::now(),
             goal: None,
@@ -288,22 +292,84 @@ impl TeamConfigStore {
         Ok(())
     }
 
-    /// Modify the config with a closure.  Writes back on success.
-    pub fn modify<F>(&self, f: F) -> Result<(), anyhow::Error>
+    /// Runs `f` holding an exclusive advisory lock on a sidecar
+    /// `<config>.lock` file, so read-modify-write cycles of processes sharing
+    /// the team never interleave.
+    fn locked<R>(&self, f: impl FnOnce() -> Result<R, anyhow::Error>) -> Result<R, anyhow::Error> {
+        use fs4::fs_std::FileExt;
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.path.with_extension("lock"))?;
+        lock.lock_exclusive()?;
+        let result = f();
+        let _ = FileExt::unlock(&lock);
+        result
+    }
+
+    /// Modify the config with a closure.  Writes back on success, and
+    /// returns what the closure returned.
+    ///
+    /// The read-modify-write holds the team-config lock, so teammate
+    /// processes updating the same team never lose each other's changes.
+    pub fn modify<F, R>(&self, f: F) -> Result<R, anyhow::Error>
     where
-        F: FnOnce(&mut TeamConfig),
+        F: FnOnce(&mut TeamConfig) -> R,
     {
-        let mut config = self
-            .load()?
-            .ok_or_else(|| anyhow::anyhow!("team config not found at {:?}", self.path))?;
-        f(&mut config);
-        self.save(&config)
+        self.locked(|| {
+            let mut config = self
+                .load()?
+                .ok_or_else(|| anyhow::anyhow!("team config not found at {:?}", self.path))?;
+            let result = f(&mut config);
+            self.save(&config)?;
+            Ok(result)
+        })
+    }
+
+    /// Like [`Self::modify`], starting from `create()` when the team has no
+    /// config yet - under the same lock, so two starters cannot both create
+    /// it.
+    pub fn upsert<F, R>(
+        &self,
+        create: impl FnOnce() -> TeamConfig,
+        f: F,
+    ) -> Result<R, anyhow::Error>
+    where
+        F: FnOnce(&mut TeamConfig) -> R,
+    {
+        self.locked(|| {
+            let mut config = self.load()?.unwrap_or_else(create);
+            let result = f(&mut config);
+            self.save(&config)?;
+            Ok(result)
+        })
+    }
+
+    /// Sets aside a share of what is left of the team's token budget for one
+    /// run, under the lock, so members running at once never together spend
+    /// more than the budget. See [`TeamConfig::reserve_tokens`].
+    pub fn reserve_tokens(&self) -> Result<crate::TokenAllowance, anyhow::Error> {
+        self.modify(TeamConfig::reserve_tokens)
+    }
+
+    /// Replaces a run's reservation with what it actually used. See
+    /// [`TeamConfig::settle_tokens`].
+    pub fn settle_tokens(
+        &self,
+        reserved: crate::TokenAllowance,
+        used: u64,
+    ) -> Result<(), anyhow::Error> {
+        self.modify(|config| config.settle_tokens(reserved, used))
     }
 
     /// Atomically add `tokens` to the team's running token total.
     ///
-    /// Safe to call concurrently from multiple teammates because it uses the
-    /// same file-locked RMW pattern as `modify`.
+    /// Safe to call concurrently from multiple teammates because it goes
+    /// through the locked read-modify-write of [`Self::modify`].
     pub fn record_token_usage(&self, tokens: u64) -> Result<(), anyhow::Error> {
         self.modify(|config| {
             config.tokens_used = config.tokens_used.saturating_add(tokens);
@@ -465,6 +531,28 @@ mod tests {
         s.modify(|c| c.goal = Some("new goal".into())).unwrap();
         let cfg = s.load().unwrap().unwrap();
         assert_eq!(cfg.goal.as_deref(), Some("new goal"));
+    }
+
+    #[test]
+    fn upsert_creates_once_then_updates_under_the_lock() {
+        let dir = TempDir::new().unwrap();
+        let s = store(&dir);
+        s.upsert(lead_config, |c| c.max_iterations = 3).unwrap();
+        s.upsert(
+            || panic!("the config exists, so nothing is created"),
+            |c| c.token_budget = 10,
+        )
+        .unwrap();
+        let loaded = s.load().unwrap().unwrap();
+        assert_eq!((loaded.max_iterations, loaded.token_budget), (3, 10));
+
+        assert_eq!(
+            s.reserve_tokens().unwrap(),
+            crate::TokenAllowance::Remaining(10)
+        );
+        s.settle_tokens(crate::TokenAllowance::Remaining(10), 4)
+            .unwrap();
+        assert_eq!(s.load().unwrap().unwrap().tokens_used, 4);
     }
 
     #[test]

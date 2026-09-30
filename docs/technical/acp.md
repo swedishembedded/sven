@@ -28,6 +28,21 @@ The process reads the sven configuration (`~/.config/sven/config.yaml`), builds 
 sven acp serve
 ```
 
+`--model` and `--provider` override the configured model. Three flags bound
+the server, each only lowering what the configuration allows; the `task`
+tool passes its sub-agent's budgets through them:
+
+| Flag | Effect |
+|------|--------|
+| `--max-tool-rounds N` | `agent.max_tool_rounds` becomes at most `N` |
+| `--max-output-tokens TOKENS` | the model's output-token cap becomes at most `TOKENS` |
+| `--wall-clock-secs SECS` | the server, and every session in it, stops after `SECS` seconds |
+| `--disable-tool NAME` | the sessions never offer nor run `NAME` (repeatable; adds to `tools.disabled`) |
+| `--permission-timeout-secs SECS` | a tool call waits `SECS` for the client's permission answer before it is denied (default 60; `0` waits however long the client takes) |
+
+Each prompt response reports the tokens the turn used (`usage`: input,
+output, total), so a client that pays for the agent can charge them.
+
 ## IDE configuration
 
 ### VS Code (ACP extension)

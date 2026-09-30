@@ -186,7 +186,15 @@ async fn main() -> anyhow::Result<()> {
             .team_role
             .clone()
             .unwrap_or_else(|| "teammate".to_string());
-        return run_as_teammate(agent_name, team_name, role, config).await;
+        let teammate = run::team::Teammate {
+            name: agent_name,
+            team: team_name,
+            role,
+            model: cli.model.clone(),
+            instructions: cli.append_system_prompt.clone(),
+            initial_task: cli.prompt.clone(),
+        };
+        return run_as_teammate(teammate, config).await;
     }
 
     if cli.is_headless() {
