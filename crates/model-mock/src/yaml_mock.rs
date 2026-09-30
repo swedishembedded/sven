@@ -151,8 +151,15 @@ impl sven_model::ModelProvider for YamlMockProvider {
             *c
         };
 
-        // Determine whether we are responding after tool results were added.
-        let has_tool_results = req.messages.iter().any(|m| m.role == Role::Tool);
+        // Whether the current instruction's tool round has come back: a tool
+        // result after the last user message. Results answering an earlier
+        // instruction do not count, so every instruction gets its own round.
+        let has_tool_results = req
+            .messages
+            .iter()
+            .rev()
+            .take_while(|m| m.role != Role::User)
+            .any(|m| m.role == Role::Tool);
 
         // Find the last user message - this is the key we match against.
         let last_user_text = req
@@ -260,9 +267,10 @@ fn text_events(text: &str, thinking: Option<&str>) -> Vec<anyhow::Result<Respons
 fn tool_call_events(tool_calls: &[ToolCallDef]) -> Vec<anyhow::Result<ResponseEvent>> {
     let mut events: Vec<anyhow::Result<ResponseEvent>> = tool_calls
         .iter()
-        .map(|tc| {
+        .zip(0u32..)
+        .map(|(tc, index)| {
             Ok(ResponseEvent::ToolCall {
-                index: 0,
+                index,
                 id: tc.id.clone(),
                 name: tc.tool.clone(),
                 arguments: tc.args.to_string(),
@@ -418,6 +426,55 @@ responses:
         assert!(events
             .iter()
             .any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "File written.")));
+    }
+
+    /// Several scripted calls stream as several calls: each on its own index,
+    /// as a streaming provider numbers parallel calls.
+    #[tokio::test]
+    async fn parallel_calls_stream_on_their_own_indices() {
+        let p = YamlMockProvider::load(
+            r#"
+responses:
+  - match_type: default
+    tool_calls:
+      - { id: a, tool: one, args: {} }
+      - { id: b, tool: two, args: {} }
+"#,
+        )
+        .unwrap();
+        let indices: Vec<u32> = collect(&p, req("go"))
+            .await
+            .into_iter()
+            .filter_map(|e| match e {
+                ResponseEvent::ToolCall { index, .. } => Some(index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(indices, vec![0, 1]);
+    }
+
+    /// A new instruction later in the conversation starts its own tool round:
+    /// only results that answer the current instruction end it.
+    #[tokio::test]
+    async fn a_later_instruction_calls_its_tools_again() {
+        let p = provider();
+        let later = CompletionRequest {
+            messages: vec![
+                Message::user("write it"),
+                Message::tool_result("tc-1", "ok"),
+                Message::assistant("File written."),
+                Message::user("write another"),
+            ],
+            stream: true,
+            ..Default::default()
+        };
+        let events = collect(&p, later).await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ResponseEvent::ToolCall { .. })),
+            "{events:?}"
+        );
     }
 
     #[tokio::test]
