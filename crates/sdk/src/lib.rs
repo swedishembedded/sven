@@ -127,7 +127,8 @@ pub use sven_vocab::SessionEvent;
 pub mod model {
     pub use sven_model::{
         CompletionRequest, ContentPart, FunctionCall, Message, MessageContent, ModelProvider,
-        ResponseEvent, ResponseFormat, ResponseStream, Role, ToolResultContent, ToolSchema,
+        ResponseEvent, ResponseFormat, ResponseStream, Role, ToolContentPart, ToolResultContent,
+        ToolSchema,
     };
 }
 

@@ -113,6 +113,7 @@ xtask = "foundation"
 # workspace is below this one. `make check/samples` is what enforces that, by
 # reading the manifest. Both gates run in `make check`.
 sample-study-svf = "sample"
+sample-agent-task = "sample"
 
 # ── Forbidden reachability. Checked transitively over normal dependencies. ─
 [[forbidden]]

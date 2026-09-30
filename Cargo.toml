@@ -55,6 +55,7 @@ members = [
     # testing it with everything else costs almost nothing, and excluding it is
     # how a sample rots into something that no longer compiles.
     "samples/study/svf",
+    "samples/agent/task",
 ]
 
 # Single source of truth for the sven release version. The top-level `sven`

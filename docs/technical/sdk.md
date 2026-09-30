@@ -36,6 +36,17 @@ resumed.send("now propose a fix").await?;
 `Engine` is cheap to clone - it is a bundle of handles - so a service builds one
 at startup and clones it into each request.
 
+Each `send` (and `answer`) assembles a kernel session from the `AgentState` and
+tears it down when the run ends. What lives only for that run: the tool
+registry and its buffers, MCP connections, and the kernel's channels. That is
+what makes every run resumable in another process; it also means a run pays
+for connecting its MCP servers again. The shared model provider is not rebuilt.
+
+`samples/agent/task` is a complete application on the facade alone: its own
+tools, bounded runs, a parked question answered after a suspend and resume, an
+approval decided by the application, an independent check, and an ATIF
+trajectory.
+
 ## Tools
 
 An engine's agents get exactly the tools the application names. The default
@@ -51,7 +62,8 @@ let engine = Engine::builder()
 
 `Toolset::research()` is the read-only preset. A registered tool is gated and
 audited like a built-in one: its `kernel_capability` picks the permission
-bucket and its `default_policy` whether it needs approval.
+bucket, and that bucket decides whether a call waits for a human (see
+"A tool of your own").
 
 ## Human gates
 
@@ -262,8 +274,12 @@ let engine = Engine::builder()
 
 Registered on top of the built-in set, so the agent keeps everything it already
 had. From then on it is permission-gated and audited exactly like a built-in:
-`kernel_capability()` decides which bucket the kernel gates it under, and
-`default_policy()` whether it needs approval. Declaring those honestly is what
+`kernel_capability()` decides which bucket the kernel gates it under. In an
+agent session the capability alone decides whether a call waits for a human:
+`ExecuteShell`, `DeleteFile` and `IngestDocument` always do, and an approval
+grants that capability for the rest of the session. `default_policy()` applies
+where a permission requester fronts the registry directly (the ACP server's IDE
+prompt, the MCP server). Declaring the capability honestly is what
 keeps the permission model meaningful - a tool that reaches the network and
 claims otherwise has disabled a guarantee for everyone.
 

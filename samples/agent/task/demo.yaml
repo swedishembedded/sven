@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# The scripted model `--demo` runs on (sven's `mock` provider), so the sample
+# is deterministic without an API key. Rules match the last user message.
+# A real model decides these calls itself; run with `--config` to use one.
+
+responses:
+  - match_type: contains
+    pattern: "draft the release notes"
+    tool_calls:
+      - id: call-read
+        tool: read_changes
+        args: {}
+      - id: call-write
+        tool: write_notes
+        args:
+          content: |
+            # Release notes
+
+            - Faster start-up: the index loads lazily.
+            - Exports keep their column order.
+            - The settings page remembers the last tab.
+      - id: call-ask
+        tool: ask_question
+        args:
+          questions:
+            - prompt: "Who reads these notes, users or developers?"
+              options: ["users", "developers"]
+    after_tool_reply: "I drafted RELEASE_NOTES.md for the audience you chose."
+
+  - match_type: contains
+    pattern: "publish"
+    tool_calls:
+      - id: call-publish
+        tool: publish
+        args: {}
+    after_tool_reply: "The release notes are published."

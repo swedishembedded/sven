@@ -1,0 +1,23 @@
+[package]
+# Package names under samples/ are derived from the path:
+# `samples/agent/task` -> `sample-agent-task`. The Makefile's
+# `samples/%/{build,run}` rules depend on that mapping; `make check/samples`
+# enforces it.
+name = "sample-agent-task"
+version.workspace = true
+edition = "2021"
+license = "Apache-2.0"
+description = "Sample: an agent does a bounded task with its own tools, asks a question, waits for approval, and is checked independently"
+publish = false
+
+[dependencies]
+# The ONLY sven dependency a sample may have is the SDK facade - see
+# samples/README.md rule 1, enforced by `make check/samples`.
+sven-sdk    = { path = "../../../crates/sdk" }
+anyhow      = { workspace = true }
+async-trait = { workspace = true }
+serde_json  = { workspace = true }
+tokio       = { workspace = true }
+
+[dev-dependencies]
+tempfile    = { workspace = true }
