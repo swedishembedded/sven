@@ -28,7 +28,7 @@ DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
 .PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
-        check check/fmt check/features check/clippy check/gates check/paths check/deps check/samples check/scope check/arch hooks/install docs docs-pdf \
+        check check/fmt check/features check/clippy check/doc check/gates check/paths check/deps check/samples check/scope check/arch hooks/install docs docs-pdf \
         formal \
         samples/list \
         release/build release/publish release/tag \
@@ -211,13 +211,13 @@ fmt:
 formal:
 	bash formal/run-tla.sh
 
-## check     - formatting, text gates, architecture ratchet, then clippy
+## check     - formatting, text gates, architecture ratchet, then clippy and rustdoc links
 # In that order on purpose: a rustfmt drift, a baked-in machine path or an
 # illegal crate edge should fail in seconds, not after a full workspace lint.
 # Every gate below is reachable from HERE, not only from an installed git
 # hook -- a check that lives only in `make hooks/install` enforces nothing on a
 # fresh clone that never ran it.
-check: check/fmt check/gates check/arch check/features check/clippy
+check: check/fmt check/gates check/arch check/features check/clippy check/doc
 
 ## check/fmt - rustfmt shape, checked not applied (`make fmt` fixes it)
 # First, because it is the cheapest thing that can fail and the least
@@ -236,6 +236,12 @@ check/features:
 ## check/clippy - lint the workspace, warnings are errors
 check/clippy:
 	$(CARGO) clippy --workspace --all-targets $(CARGO_FLAGS) -- -D warnings
+
+## check/doc - rustdoc builds for the workspace with every intra-doc link
+##             resolving (rustdoc stops documenting a crate at its first broken
+##             link, so an unchecked one hides every later one)
+check/doc:
+	RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" $(CARGO) doc --no-deps --workspace $(CARGO_FLAGS)
 
 ## check/gates - every text gate: no absolute machine paths, no brain dependency,
 ##              samples that stay behind the SDK facade.

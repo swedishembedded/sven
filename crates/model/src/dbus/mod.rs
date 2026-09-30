@@ -35,11 +35,13 @@
 //! considerably larger than this whole module.  The payoff would be
 //! incremental token display, but the model this transport exists for
 //! (`brain/omni`) emits only coarse progress rather than per-token deltas, so
-//! there is nothing to stream.  [`DbusProvider::complete`] therefore performs
-//! one `Run` call and emits the full response as a single `TextDelta`.
+//! there is nothing to stream.  [`DbusProvider`]'s
+//! [`crate::ModelProvider::complete`] therefore performs one `Run` call and
+//! emits the full response as a single `TextDelta`.
 //!
-//! Adding streaming later means: a `subscribe()` method on [`proxy::Manager`]
-//! returning the socket fd, a reader task that parses frames off that socket
+//! Adding streaming later means: a `subscribe()` method on the `Manager`
+//! interface behind [`proxy::ManagerProxy`] returning the socket fd, a
+//! reader task that parses frames off that socket
 //! and forwards each as a `ResponseEvent`, and swapping the
 //! `stream::iter(...)` below for that task's receiver — the rest of this
 //! module (params flattening, blob encoding, reply decoding) is unchanged.

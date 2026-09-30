@@ -14,7 +14,7 @@ use std::sync::Arc;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool as McpTool};
 use sven_tool_registry::{ToolOutput, ToolOutputPart, ToolSchema};
 
-/// Convert a [`ToolSchema`] (sven) into an rmcp [`Tool`] descriptor.
+/// Convert a [`ToolSchema`] (sven) into an rmcp [`McpTool`] descriptor.
 ///
 /// The JSON Schema stored in [`ToolSchema::parameters`] is already valid
 /// JSON Schema produced by each tool's [`sven_tool_registry::Tool::parameters_schema`]

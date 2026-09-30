@@ -37,7 +37,7 @@ pub struct FinalMetrics {
 /// Field declaration order matters beyond readability: `steps` is
 /// deliberately declared **last**. `serde_json`'s struct serialization
 /// preserves Rust declaration order, so a header-only reader
-/// ([`crate::persist::header`]) can find the byte offset of the `"steps"`
+/// (`persist`'s header reader) can find the byte offset of the `"steps"`
 /// key and parse everything before it as a small header type without
 /// touching the (possibly huge) steps array.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

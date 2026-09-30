@@ -7,7 +7,7 @@
 //! is a kernel-mediated LLM turn**: the HSM issues one comprehensive instruction
 //! ([`prompts`]) on that phase's append-only conversation thread with a
 //! state-scoped tool subset and a structured decision schema.  The
-//! [`TurnExecutor`](sven_executors) streams a single response; if the model
+//! `TurnExecutor` (`sven-executors`) streams a single response; if the model
 //! proposes tool calls they are dispatched as `Effect::CallTool` effects
 //! (kernel-gated, concurrent) and the machine **stays in the current phase state**
 //! (`Reaction::Handled`) while tools execute.  Once the model produces a

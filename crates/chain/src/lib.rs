@@ -12,7 +12,7 @@
 //! where `hash = sha256(prev_hash || canonical_json(entry))` (both as UTF-8
 //! bytes, hash hex-encoded). The first line of a file chains from
 //! [`GENESIS_HASH`]. `entry` is caller-defined JSON — this crate has no
-//! opinion on its shape; [`sven_executors::audit::AuditExecutor`] wraps
+//! opinion on its shape; `sven_executors::audit::AuditExecutor` wraps
 //! `{"kind": ..., "timestamp": ..., "record": {...}}`, and
 //! A ledger built on top of it wraps its own entry shape.
 //!

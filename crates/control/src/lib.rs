@@ -53,7 +53,7 @@ pub enum ControlCommand {
     /// (e.g. `"openrouter/free"`, `"anthropic/claude-opus-4-6"`, or a bare
     /// provider id). The agent-side service resolves it against ITS OWN
     /// configuration (provider configs + API keys) with
-    /// [`sven_model::resolve_model_from_config`] and rebuilds the session's
+    /// `resolve_model_from_config` (`sven-model`) and rebuilds the session's
     /// kernel around the new provider while PRESERVING conversation history —
     /// so a remote operator's `/model` actually re-points the server-side
     /// session, not just the local UI. Handled by a service layer (it rebuilds

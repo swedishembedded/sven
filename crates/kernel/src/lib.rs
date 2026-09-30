@@ -824,7 +824,7 @@ impl ErasedRuntime {
     ///
     /// Sessions are normally owned — dropping the handle aborts the task and
     /// releases the machine, context, executor and conversation store with it.
-    /// Some callers instead hand a cheap [`RuntimeHandle`] to a long-lived
+    /// Some callers instead hand a cheap `RuntimeHandle` (`sven-bootstrap`) to a long-lived
     /// service (`ControlService`, the headless CI runner) and let the owning
     /// handle go out of scope, expecting the kernel to keep serving. Those
     /// callers must say so, because the two cases are indistinguishable at the

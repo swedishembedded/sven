@@ -54,7 +54,7 @@
 //!    JSON decision from the model at all - contrast `TaskMachine`.
 //! 4. **Escalation, not assumption.** A verifier that cannot decide
 //!    (`NeedsHuman`/`Unknown`) never becomes a pass; it parks, taking the
-//!    outcome to [`sven_session_model`]'s `Unknown`, never a default success.
+//!    outcome to `sven-session-model`'s `Unknown`, never a default success.
 //!
 //! # Deferred (see the Stage 4 plan entry for the full reasoning)
 //!

@@ -155,7 +155,7 @@ pub enum HumanGate {
 /// from one queue to another.
 pub type HumanGateResponder = Arc<dyn Fn(HumanGate) + Send + Sync>;
 
-/// A cheap-to-clone handle to a spawned [`ErasedRuntime`].
+/// A cheap-to-clone handle to a spawned [`sven_kernel::ErasedRuntime`].
 ///
 /// Provides the event sink and status watch; the caller typically also holds
 /// the [`KernelChannels`] returned alongside this handle.

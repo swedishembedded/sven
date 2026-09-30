@@ -10,7 +10,7 @@
 //!
 //! The store is created once per agent session and shared across the context
 //! tools via `Arc<Mutex<ContextStore>>` - the same pattern used by
-//! [`GdbSessionState`].
+//! `GdbSessionState` (`sven-tools-gdb`).
 
 use std::collections::HashMap;
 use std::fs;

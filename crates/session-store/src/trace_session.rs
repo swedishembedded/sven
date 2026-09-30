@@ -312,7 +312,7 @@ impl StepAssembler {
     /// `steps` on disk (e.g. `--trace`/`--load-trace` continuing a prior
     /// run) — pass `existing_step_count + 1` so the combined step sequence
     /// stays contiguous starting at 1, as
-    /// [`crate::validate::validate_trajectory`] requires.
+    /// `validate_trajectory` (`sven-atif`) requires.
     pub fn resuming(next_step_id: u64) -> Self {
         Self {
             steps: Vec::new(),

@@ -4,7 +4,7 @@
 //! Reusable HSM-kernel → [`AgentEvent`] adapter.
 //!
 //! Every consumer-facing surface (headless CI, interactive TUI, local ACP)
-//! consumes an [`AgentEvent`] stream. The kernel ([`RuntimeBuilder`] /
+//! consumes an [`AgentEvent`] stream. The kernel ([`crate::RuntimeBuilder`] /
 //! [`SessionBundle`]) exposes an outward observation plane of [`UiEvent`]s
 //! plus inward [`KernelChannels`] for user-question / approval round-trips.
 //!
@@ -238,7 +238,7 @@ impl KernelAgentSession {
         Arc::clone(&self.mcp_manager)
     }
 
-    /// The session's live [`ToolRegistry`] (for MCP tool hot-swap).
+    /// The session's live [`sven_tool_registry::ToolRegistry`] (for MCP tool hot-swap).
     #[must_use]
     pub fn tool_registry(&self) -> Arc<sven_tool_registry::ToolRegistry> {
         self.handle.tool_registry()

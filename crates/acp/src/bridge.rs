@@ -147,12 +147,10 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
 
 /// Map one kernel [`UiEvent`] to zero or one ACP [`SessionUpdate`] notifications.
 ///
-/// `UiEvent` and `AgentEvent` are now both re-exports of the same
-/// [`sven_vocab::SessionEvent`] type (previously this duplicated
-/// [`agent_event_to_session_update`] field-for-field against a
-/// stringly-typed `UiEvent` shape — including a `ModeChanged` string match
-/// that only recognised lowercase `"research"`/`"plan"`, so a kernel-driven
-/// Research or Plan session reported itself to the IDE as Agent mode).
+/// `UiEvent` and `AgentEvent` are both re-exports of the same `SessionEvent`
+/// type (`sven-vocab`), so this delegates to
+/// [`agent_event_to_session_update`] and a kernel-driven session reports
+/// every event, including its mode, to the IDE exactly as the agent path does.
 pub fn ui_event_to_session_update(ev: &UiEvent) -> Option<SessionUpdate> {
     agent_event_to_session_update(ev)
 }

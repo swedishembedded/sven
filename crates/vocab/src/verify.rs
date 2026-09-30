@@ -4,7 +4,7 @@
 //! Declarative, programmatic task-success predicates.
 //!
 //! [`VerifierSpec`] is pure data describing how to check whether a task was
-//! actually accomplished - the missing input [`sven_session_model::Verdict`]
+//! actually accomplished - the missing input `sven_session_model::Verdict`
 //! needs before a claimed success can be scored (see that crate's
 //! `outcome` module). Evaluating a spec is impure (it reads files, makes
 //! HTTP requests), so it does not happen here; this crate only names what to

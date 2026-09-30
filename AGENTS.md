@@ -144,11 +144,12 @@ one.
 | `make build` | Debug build (all binaries) |
 | `make release` | Optimised release build |
 | `make test` | Unit + integration tests (whole workspace) |
-| `make check` | rustfmt + text gates + `xtask arch` + clippy, `-D warnings` |
+| `make check` | rustfmt + text gates + `xtask arch` + clippy, `-D warnings` + rustdoc links |
 | `make check/fmt` | `cargo fmt --all -- --check`, checked not applied |
 | `make check/gates` | text gates: no machine paths, no brain dependency |
 | `make check/arch` | architecture ratchet only |
 | `make check/clippy` | clippy only |
+| `make check/doc` | `cargo doc`, broken intra-doc links are errors |
 | `make fmt` | Format |
 | `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |
 | `make tests/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour) |

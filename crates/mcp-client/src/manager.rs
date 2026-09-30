@@ -721,7 +721,7 @@ impl McpManager {
         self.authenticate_with_www_auth(server, None, true).await
     }
 
-    /// Like [`authenticate`] but accepts `www_authenticate` from a 401 response.
+    /// Like [`Self::authenticate`] but accepts `www_authenticate` from a 401 response.
     /// Use this when re-auth is triggered by an HTTP 401 so discovery can use
     /// the server's `resource_metadata` URL if present.
     ///

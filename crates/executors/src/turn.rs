@@ -4,20 +4,20 @@
 //! Single-turn effect executor — the kernel-native turn engine.
 //!
 //! Handles `Effect::CallLlm { request: {"kind": "turn", ...} }` emitted by
-//! any machine that uses [`crate::loop_core`].  For each turn:
+//! any machine that uses `loop_core` (`sven-machines`).  For each turn:
 //!
 //! 1. Deserialises the [`TurnRequest`] from the effect payload.
 //! 2. Loads a snapshot of the named thread from the shared [`ThreadStore`].
 //! 3. Resolves the model provider (per-state override or default).
 //! 4. Resolves tool schemas from the registry for the requested tool names.
-//! 5. Calls [`sven_turn::stream_turn`] which streams a single model response,
+//! 5. Calls [`sven_turn::stream_turn()`] which streams a single model response,
 //!    collecting proposed tool calls (accumulation-only, no dispatch).
 //! 6. Appends the assistant turn (text + tool-call messages) to the thread
 //!    **append-only** (cache-safety invariant).
-//! 7. Annotates each proposed tool call with its [`ToolCapability`] via
+//! 7. Annotates each proposed tool call with its [`sven_hsm::ToolCapability`] via
 //!    `registry.capability_of`.
 //! 8. Registers `call_id → thread` in the shared registry so
-//!    [`ToolExecutor`] can append results to the right thread.
+//!    [`crate::ToolExecutor`] can append results to the right thread.
 //! 9. Posts `Event::LlmTurnComplete { thread, text, tool_calls }` inward
 //!    (or `Event::LlmFailed` on error), followed by `UiEvent::TurnComplete`
 //!    on the outward plane.
@@ -126,7 +126,7 @@ use crate::thread_store::{refusal_reasons, ThreadStore};
 /// Executes single-turn `CallLlm { kind: "turn" }` effects.
 ///
 /// Owns a reference to the shared [`ThreadStore`] and the
-/// `call_id → thread` registry populated for [`ToolExecutor`].
+/// `call_id → thread` registry populated for [`crate::ToolExecutor`].
 pub struct TurnExecutor {
     /// Default model used when the request does not name a per-state override.
     default_model: Arc<dyn sven_model::ModelProvider>,

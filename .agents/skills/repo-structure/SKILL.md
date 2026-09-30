@@ -103,7 +103,7 @@ Run `make help` for the full list.
 | `test` | `cargo test --workspace` |
 | `tests/e2e/basic` | Build + run all bats tests in `tests/e2e/basic/` |
 | `tests/e2e` | Alias → `tests/e2e/basic` |
-| `check` | `check/fmt`, `check/gates`, `check/arch`, `check/features`, `check/clippy` |
+| `check` | `check/fmt`, `check/gates`, `check/arch`, `check/features`, `check/clippy`, `check/doc` |
 | `fmt` | `cargo fmt --all` |
 | `deb` | Build Debian package |
 | `docs` / `docs-pdf` | Build user-guide markdown / PDF |

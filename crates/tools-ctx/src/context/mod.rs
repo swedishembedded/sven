@@ -12,7 +12,7 @@
 //! - [`ContextGrepTool`] - regex pre-filter search over a handle
 //!
 //! The `context_query` and `context_reduce` tools live in `sven-bootstrap`
-//! because they need access to [`sven_model::ModelProvider`] for sub-queries.
+//! because they need access to `ModelProvider` (`sven-model`) for sub-queries.
 //! The [`SubQueryRunner`] trait defined here lets this crate hold a
 //! reference to the runner without a direct dependency on `sven-model`.
 

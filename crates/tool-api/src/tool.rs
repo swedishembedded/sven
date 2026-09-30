@@ -17,7 +17,9 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     /// JSON Schema for parameters
     fn parameters_schema(&self) -> Value;
-    /// Default approval level for this tool
+    /// Approval level a permission requester in front of the registry
+    /// applies (the ACP server's IDE prompt, the MCP server). In an agent
+    /// session the kernel decides from [`Self::kernel_capability`] instead.
     fn default_policy(&self) -> ApprovalPolicy;
     /// The agent modes in which this tool is available.
     /// Default: all modes (Research, Plan, Agent).
@@ -38,7 +40,7 @@ pub trait Tool: Send + Sync {
     /// cache breakpoint so that toggling MCP servers only invalidates the MCP
     /// section of the prompt cache (not the stable core tools section).
     ///
-    /// Built-in tools always return `false`.  [`McpTool`] returns `true`.
+    /// Built-in tools always return `false`.  `sven-mcp-client`'s `McpTool` returns `true`.
     fn is_mcp(&self) -> bool {
         false
     }

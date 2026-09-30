@@ -5,7 +5,7 @@
 //! support it.
 //!
 //! Call [`strip_images_if_unsupported`] and [`strip_audio_if_unsupported`]
-//! before building a [`CompletionRequest`] to ensure that image / audio parts
+//! before building a [`crate::CompletionRequest`] to ensure that image / audio parts
 //! are replaced with a text placeholder whenever the target model cannot
 //! accept them.
 

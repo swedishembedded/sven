@@ -29,7 +29,7 @@
 //! ## Inactivity timeout
 //!
 //! A pinned `tokio::time::Sleep` future is reset on every ACP notification.
-//! If no notification arrives within [`INACTIVITY_TIMEOUT`], ACP `session/cancel`
+//! If no notification arrives within `INACTIVITY_TIMEOUT`, ACP `session/cancel`
 //! is forwarded to the child and the tool returns an error.
 //!
 //! ## Thread model

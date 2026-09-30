@@ -5,7 +5,7 @@
 //!
 //! This module acts as the single source of truth for which provider IDs exist
 //! and what their defaults are.  It does **not** contain construction logic -
-//! that lives in [`crate::from_config`].
+//! that lives in `from_config` (`sven-model-drivers`).
 
 /// Metadata describing a registered model driver.
 #[derive(Debug, Clone)]

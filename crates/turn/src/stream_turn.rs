@@ -5,7 +5,7 @@
 //! proposed tool calls **without executing them**.
 //!
 //! [`stream_turn`] is the reusable kernel-friendly building block that
-//! [`TurnExecutor`] calls.  It is accumulation-only: JSON arguments are
+//! `TurnExecutor` (`sven-executors`) calls.  It is accumulation-only: JSON arguments are
 //! assembled slot-by-slot as they arrive in the stream, and the finalised
 //! [`ToolCall`] list is returned to the caller.  No tool is ever dispatched
 //! here; that responsibility belongs to the kernel (via `Effect::CallTool`).

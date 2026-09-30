@@ -20,16 +20,18 @@ pub enum TaskCommands {
     ///
     /// Example, a task file:
     ///
-    ///   id = "write-readme"
-    ///   prompt = "Write a one-paragraph README.md describing this crate."
-    ///   max_attempts = 2
+    ///     id = "write-readme"
+    ///     prompt = "Write a one-paragraph README.md describing this crate."
+    ///     max_attempts = 2
     ///
-    ///   [verifier]
-    ///   kind = "file_exists"
-    ///   path = "README.md"
-    ///   min_bytes = 20
+    ///     [verifier]
+    ///     kind = "file_exists"
+    ///     path = "README.md"
+    ///     min_bytes = 20
     ///
-    ///   sven task run write-readme.task.toml
+    ///     sven task run write-readme.task.toml
+    // Verbatim, so `--help` keeps the example file's lines apart.
+    #[command(verbatim_doc_comment)]
     Run {
         /// Path to the `.task.toml` file.
         file: std::path::PathBuf,

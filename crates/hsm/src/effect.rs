@@ -4,7 +4,7 @@
 //! returned as a value of type [`Effect`]; the runtime validates the effects
 //! against the [`PermissionPolicy`](crate::permissions::PermissionPolicy) and
 //! only then hands them to an
-//! [`EffectExecutor`](crate::runtime::EffectExecutor). The executor performs the
+//! `EffectExecutor` (`sven-kernel`). The executor performs the
 //! actual I/O on a separate task and feeds results back into the queue as
 //! [`Event`](crate::event::Event)s.
 

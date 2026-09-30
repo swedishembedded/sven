@@ -42,8 +42,8 @@ macro_rules! uuid_newtype {
             ///
             /// The resulting `ToolCallId` is stored by the TurnExecutor into
             /// the `call_id → thread` registry and forwarded inside
-            /// [`ProposedToolCall`] so machines can reference the same ID when
-            /// emitting `Effect::CallTool`.
+            /// [`crate::event::ProposedToolCall`] so machines can reference
+            /// the same ID when emitting `Effect::CallTool`.
             #[must_use]
             pub fn from_str_lossy(s: &str) -> Self {
                 s.parse::<Uuid>().map(Self).unwrap_or_else(|_| Self::new())

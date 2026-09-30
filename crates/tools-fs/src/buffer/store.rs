@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Session-scoped store for streaming output buffers.
 //!
-//! Unlike the memory-mapped [`ContextStore`], an `OutputBuffer` grows
-//! incrementally as a subprocess streams bytes into it.  The store is
-//! designed for two concurrent access patterns:
+//! Unlike the memory-mapped `ContextStore` (`sven-tools-ctx`), an
+//! `OutputBuffer` grows incrementally as a subprocess streams bytes into it.
+//! The store is designed for two concurrent access patterns:
 //!
 //! - **Writer** - the `task` or `shell` tool appends bytes and updates status
 //!   from a background tokio task.

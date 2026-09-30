@@ -5,10 +5,11 @@
 //!
 //! An append-only, hash-chained JSONL log (see [`sven_chain`]), mirroring
 //! [`crate::ledger::PendingFactsLedger`]'s two-kind shape: a question is
-//! [`QuestionAskedRecord::Asked`] the moment `UserExecutor` parks it (see
-//! `sven_executors::user::ParkedQuestion`), and later [`Answered`] by
-//! whatever surface a human used to reply - possibly a different process
-//! entirely, possibly long after the agent that asked it has exited.
+//! [`QuestionLedgerEntry::Asked`] the moment `UserExecutor` parks it (see
+//! `sven_executors::user::ParkedQuestion`), and later
+//! [`QuestionLedgerEntry::Answered`] by whatever surface a human used to
+//! reply - possibly a different process entirely, possibly long after the
+//! agent that asked it has exited.
 //!
 //! This ledger only *records* questions and answers; it does not resume a
 //! parked kernel. Posting the matching `Event::HumanAnswered` back into the

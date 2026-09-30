@@ -145,7 +145,7 @@ impl RuntimeContext {
     }
 
     /// Convert this [`RuntimeContext`] into an [`AgentRuntimeContext`] suitable
-    /// for seeding the kernel runtime built by [`RuntimeBuilder`].
+    /// for seeding the kernel runtime built by [`crate::RuntimeBuilder`].
     ///
     /// The resulting context carries project/git/CI notes, skills, agents, and
     /// knowledge but leaves `append_system_prompt`, `system_prompt_override`,

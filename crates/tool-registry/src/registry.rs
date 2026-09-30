@@ -173,7 +173,7 @@ impl ToolRegistry {
     /// Used by the SDLC deliberation engine to give each state a *state-scoped*
     /// tool subset (e.g. discovery may read/grep but not write).  Unknown names
     /// are silently skipped so a state can request a superset without erroring.
-    /// Ordering follows [`schemas_filtered`]: core tools first (sorted), then
+    /// Ordering follows `schemas_filtered`: core tools first (sorted), then
     /// MCP tools (sorted), preserving stable cache breakpoints.
     pub fn schemas_for_names(&self, names: &[String]) -> Vec<ToolSchema> {
         let allow: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();

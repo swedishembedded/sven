@@ -10,10 +10,10 @@
 //!
 //! Deliberately **not** here: the concrete driver implementations and the
 //! `from_config`/`from_config_probed` factory that constructs them
-//! ([`sven_model_drivers`], which owns `reqwest` and every provider's own
+//! (`sven-model-drivers`, which owns `reqwest` and every provider's own
 //! dependency closure), the static catalog data ([`sven_model_catalog`],
 //! re-exported here at [`catalog`]), and the `--model mock` test/dev
-//! providers ([`sven_model_mock`]). `ModelResolver`/`resolve_model_cfg`
+//! providers (`sven-model-mock`). `ModelResolver`/`resolve_model_cfg`
 //! belong here rather than in the drivers crate because they never
 //! construct a driver, only a [`sven_config::ModelConfig`] (see
 //! [`ModelResolver::resolve`]), so they have no reqwest dependency.

@@ -209,7 +209,7 @@ pub fn is_cache_stale(provider: &str) -> bool {
 /// Update the in-memory live cache for `provider` and persist to disk.
 ///
 /// Called by:
-/// - [`OpenAICompatProvider::list_models`] after a successful live fetch.
+/// - the OpenAI-compatible driver's `list_models` (`sven-model-drivers`) after a successful live fetch.
 /// - The background refresh task spawned from `from_config`.
 pub fn cache_update(provider: &str, entries: Vec<ModelCatalogEntry>) {
     if let Ok(mut guard) = live_cache().write() {

@@ -57,7 +57,7 @@ pub trait ModelProvider: Send + Sync {
     /// the total context window (input + output) for this model.  Used for
     /// compaction budget decisions.  Returns `None` when the user did not
     /// explicitly configure a context window; callers should then fall back to
-    /// [`catalog_context_window`] or a conservative default.
+    /// [`Self::catalog_context_window`] or a conservative default.
     fn config_context_window(&self) -> Option<u32> {
         None
     }
@@ -69,7 +69,7 @@ pub trait ModelProvider: Send + Sync {
     /// - `max_tokens` (total) used as backward-compatible output cap.
     ///
     /// Returns `None` when neither is configured; callers should then fall back
-    /// to [`catalog_max_output_tokens`] or a conservative default.
+    /// to [`Self::catalog_max_output_tokens`] or a conservative default.
     fn config_max_output_tokens(&self) -> Option<u32> {
         None
     }

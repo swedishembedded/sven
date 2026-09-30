@@ -31,8 +31,8 @@ pub struct PromptContext<'a> {
     pub append: Option<&'a str>,
     /// Discovered skills.  Metadata (name + description) is injected into the
     /// stable system prompt so the model always knows what skills are available.
-    /// Held as an `Arc` so a fresh snapshot can be taken from [`SharedSkills`]
-    /// on each turn without cloning the skill data.
+    /// Held as an `Arc` so a fresh snapshot can be taken from
+    /// [`sven_workspace::SharedSkills`] on each turn without cloning the skill data.
     pub skills: Arc<[SkillInfo]>,
     /// Discovered subagents.  Names and descriptions are injected into the
     /// stable system prompt so the model can suggest delegation and the user
