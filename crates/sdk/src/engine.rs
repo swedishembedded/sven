@@ -175,6 +175,27 @@ impl Engine {
         self.agent_for(method).call(method, input).await
     }
 
+    /// [`Engine::call`] within `bounds`, which cover the whole call,
+    /// correction attempts included.
+    ///
+    /// # Errors
+    ///
+    /// The same failures as [`Agent::call_with`].
+    pub async fn call_with<I, T>(
+        &self,
+        method: &crate::Method<T>,
+        input: &I,
+        bounds: crate::RunOptions,
+    ) -> Result<T, CallError>
+    where
+        I: serde::Serialize + ?Sized,
+        T: serde::de::DeserializeOwned + schemars::JsonSchema,
+    {
+        self.agent_for(method)
+            .call_with(method, input, bounds)
+            .await
+    }
+
     /// Resumes a suspended agent against this engine.
     ///
     /// # Errors

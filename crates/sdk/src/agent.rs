@@ -207,6 +207,27 @@ impl Agent {
         I: Serialize + ?Sized,
         T: DeserializeOwned + JsonSchema,
     {
+        self.call_with(method, input, RunOptions::default()).await
+    }
+
+    /// [`Self::call`] within `bounds`. The bounds cover the whole call: the
+    /// deadline and the output-token budget are shared by every correction
+    /// attempt, and cancelling stops whichever attempt is running.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::call`], and [`CallError::Stopped`] when a bound stopped the
+    /// call before it produced a value.
+    pub async fn call_with<I, T>(
+        &mut self,
+        method: &Method<T>,
+        input: &I,
+        bounds: RunOptions,
+    ) -> Result<T, CallError>
+    where
+        I: Serialize + ?Sized,
+        T: DeserializeOwned + JsonSchema,
+    {
         let rendered = serde_json::to_string_pretty(input).map_err(|e| {
             CallError::Precondition(format!(
                 "the input to {:?} is not serializable: {e}",
@@ -226,15 +247,26 @@ impl Agent {
         // Bounded correction. Each rejected answer stays in the thread and the
         // diagnostic is appended after it, so the model sees what it got wrong
         // rather than being asked again from a clean slate.
+        let started = std::time::Instant::now();
+        let mut spent: u64 = 0;
         loop {
-            let last = self
-                .run(
-                    Entry::Message(message.clone()),
-                    &options,
-                    &RunOptions::default(),
-                )
-                .await?
-                .reply;
+            let attempt_bounds = RunOptions {
+                cancel: bounds.cancel.clone(),
+                deadline: bounds.deadline.map(|d| d.saturating_sub(started.elapsed())),
+                max_output_tokens: bounds
+                    .max_output_tokens
+                    .map(|max| max.saturating_sub(spent)),
+            };
+            let outcome = self
+                .run(Entry::Message(message.clone()), &options, &attempt_bounds)
+                .await?;
+            spent += outcome.usage.output_tokens.unwrap_or(0);
+            if !matches!(outcome.conclusion, RunConclusion::Success) {
+                return Err(CallError::Stopped {
+                    conclusion: outcome.conclusion,
+                });
+            }
+            let last = outcome.reply;
             attempts += 1;
 
             // `structural` separates "could not be read as the type at all"

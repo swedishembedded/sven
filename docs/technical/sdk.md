@@ -192,6 +192,12 @@ Three outcomes, deliberately not collapsed into one:
 | `CallError::Invalid` | No answer could be read as `T` at all - a structural failure |
 | `CallError::Postcondition` | Well-formed, but broke an invariant the type cannot express |
 | `CallError::Infrastructure` | The kernel or provider failed. **Not** a model mistake |
+| `CallError::Stopped` | A bound given with `call_with` stopped the call: cancelled, out of time or out of tokens |
+
+`call_with(method, input, RunOptions)` bounds the whole call: the deadline and
+the output-token budget are shared by every correction attempt, and cancelling
+stops whichever attempt is running. `sven_sdk::schemars` is the schema crate a
+return type derives `JsonSchema` from, at the version the SDK uses.
 
 The first two are different evidence. A postcondition failure proves the model
 understood the shape it was asked for and got the *content* wrong; an `Invalid`

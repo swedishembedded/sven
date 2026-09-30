@@ -270,3 +270,71 @@ async fn a_repair_attempt_sees_the_answer_it_is_correcting() {
         "and the diagnostic must follow it: {rendered}"
     );
 }
+
+#[tokio::test]
+async fn a_cancelled_call_stops_instead_of_answering() {
+    let (engine, _p) = engine_with(vec![says(r#"{"risk":3,"summary":"looks fine"}"#)]);
+    let mut agent = engine.agent_for(&assess());
+    let cancel = sven_sdk::CancelToken::new();
+    cancel.cancel();
+
+    let got = agent
+        .call_with(
+            &assess(),
+            &a_change(),
+            sven_sdk::RunOptions::new().cancel(cancel),
+        )
+        .await;
+
+    assert!(
+        matches!(
+            got,
+            Err(CallError::Stopped {
+                conclusion: sven_sdk::RunConclusion::Cancelled
+            })
+        ),
+        "{got:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_token_budget_spans_every_repair_attempt() {
+    let spend = |text: &str| {
+        vec![
+            ResponseEvent::TextDelta(text.to_string()),
+            ResponseEvent::Usage {
+                input_tokens: 10,
+                output_tokens: 30,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                cost_usd: None,
+            },
+            ResponseEvent::Done,
+        ]
+    };
+    // The first answer is not an Assessment; a repair would cost another
+    // 30 tokens, which a 40-token budget for the whole call cannot pay.
+    let (engine, _p) = engine_with(vec![
+        spend("not json"),
+        spend(r#"{"risk":3,"summary":"fine"}"#),
+    ]);
+    let mut agent = engine.agent_for(&assess());
+
+    let got = agent
+        .call_with(
+            &assess(),
+            &a_change(),
+            sven_sdk::RunOptions::new().max_output_tokens(40),
+        )
+        .await;
+
+    assert!(
+        matches!(
+            got,
+            Err(CallError::Stopped {
+                conclusion: sven_sdk::RunConclusion::BudgetExhausted
+            })
+        ),
+        "{got:?}"
+    );
+}

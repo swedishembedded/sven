@@ -11,6 +11,7 @@
 /// paging someone, are not interchangeable. Collapsing them into one opaque
 /// error is what makes an agent service undiagnosable in production.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum CallError {
     /// The request was invalid before any generation was attempted.
     ///
@@ -53,6 +54,14 @@ pub enum CallError {
         detail: String,
         /// The last answer, verbatim, for diagnosis.
         last: String,
+    },
+
+    /// A bound given to the call stopped it before a value was produced:
+    /// cancelled, out of time, or out of tokens. Not a model mistake.
+    #[error("the call was stopped before it produced a value: {conclusion:?}")]
+    Stopped {
+        /// Which bound stopped it.
+        conclusion: crate::RunConclusion,
     },
 
     /// The kernel, transport or provider failed.
