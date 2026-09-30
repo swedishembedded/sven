@@ -15,15 +15,14 @@
 //! ([`AgentMode`], [`TodoItem`], [`SubagentUpdate`], [`CollabEvent`],
 //! [`PeerInfo`], [`CompactionStrategyUsed`]) live here for the same reason.
 //!
-//! [`provenance`] holds the origin vocabulary of the continuous-learning loop
-//! ([`FactSource`](provenance::FactSource) and friends) - here, and not beside
-//! the tool that consumes it, because the crates on both ends of that loop are
-//! siblings that cannot depend on one another. See the module's own docs.
+//! [`provenance`] holds the origin vocabulary a resolving tool attaches to its
+//! result ([`FactSource`] and friends) - here, because
+//! the tools that attach it are siblings that cannot depend on one another.
+//! See the module's own docs.
 
 use serde_json::Value;
 
 pub mod provenance;
-pub mod rule;
 pub mod turn;
 pub mod verify;
 
@@ -81,12 +80,11 @@ pub struct ToolOutput {
     /// Where this result came from, when the tool itself resolved information
     /// rather than just acting on model-supplied arguments.
     ///
-    /// Set only by resolving tools (`web_fetch`, `web_search`, `ask_question`,
-    /// `ingest_document`) - never by the model, and never a place `assimilate_
-    /// fact` reads directly. It exists so the impure I/O layer that runs the
-    /// tool (never the tool itself, and never a `Machine`) can record it into
-    /// the shared provenance index the model later cites by this call's own
-    /// id. See [`provenance::ProvenanceSink`].
+    /// Set only by resolving tools (`web_fetch`, `web_search`,
+    /// `ask_question`, or an embedding application's own) - never by the
+    /// model. The tool that resolved the information is the only party that
+    /// knows where it came from, so this is where that knowledge travels with
+    /// the result, for whoever consumes it.
     ///
     /// Boxed: `FactSource` carries several `String`s and a `Range`, and every
     /// `ToolOutput` (most of which never attach provenance at all) would

@@ -179,8 +179,6 @@ impl ReactiveAgentMachine {
                 ToolCapability::NetworkAccess,
                 ToolCapability::GitOperation,
                 ToolCapability::ExecuteShell,
-                ToolCapability::AssimilateKnowledge,
-                ToolCapability::IngestDocument,
             ])
             .build()
     }
@@ -193,14 +191,6 @@ impl ReactiveAgentMachine {
     /// turned into a `ToolFailed` without ever reaching the executor. This is
     /// what makes plan mode structurally read-only: the guarantee holds even if
     /// the model ignores the (write-free) tool schemas and emits a write anyway.
-    ///
-    /// [`ToolCapability::AssimilateKnowledge`] *is* granted here: research and
-    /// planning are precisely when the agent learns, and assimilation writes
-    /// nothing into the user's workspace. What reaches durable storage is
-    /// gated by the fact's provenance, not by the mode. So is
-    /// [`ToolCapability::IngestDocument`], for the same reason - and being
-    /// inherently dangerous it still costs a human approval here, exactly as it
-    /// does in agent mode.
     #[must_use]
     pub fn plan_permission_policy() -> PermissionPolicy {
         PermissionPolicy::builder()
@@ -209,8 +199,6 @@ impl ReactiveAgentMachine {
                 ToolCapability::NetworkAccess,
                 ToolCapability::GitOperation,
                 ToolCapability::ExecuteShell,
-                ToolCapability::AssimilateKnowledge,
-                ToolCapability::IngestDocument,
             ])
             .build()
     }
@@ -542,18 +530,6 @@ mod tests {
         (hsm, ctx)
     }
 
-    /// A document only counts as "handed over" if a human actually handed it
-    /// over. `ingest_document` is a model-called tool on a model-chosen path,
-    /// and the digest it records is what makes every fact later extracted from
-    /// that file admissible to the pending-facts ledger with no per-fact
-    /// approval - so if the call itself is free, the agent mints its own
-    /// evidence: fetch a page, write it to a file, ingest the file. Every
-    /// capability that chain needs is granted globally in this mode.
-    ///
-    /// The kernel's approval gate is the only channel in this architecture that
-    /// produces a real human act, so the call must go through it, in every mode
-    /// that can reach the tool. Granting it lets the call through - the gate
-    /// asks, it does not forbid.
     /// The machine's round budget is configured, not hardcoded: the session
     /// context carries the configured limit as a fact, and `init_loop` uses
     /// it. Without this, a caller that raises `max_tool_rounds` (the headless
@@ -590,42 +566,6 @@ mod tests {
             DEFAULT_MAX_TOOL_ROUNDS,
             "a zero budget is refused in favour of the default"
         );
-    }
-
-    #[test]
-    fn ingesting_a_document_needs_a_human_approval_in_every_mode() {
-        use sven_hsm::permissions::{capability_for_tool_name, classify, EffectDisposition};
-
-        let cap = capability_for_tool_name("ingest_document");
-        let effect = Effect::CallTool {
-            call_id: ToolCallId::new(),
-            name: "ingest_document".to_string(),
-            capability: cap,
-            args: json!({ "path": "docs/fetched-by-the-agent.md" }),
-        };
-
-        for (mode, policy) in [
-            ("agent", ReactiveAgentMachine::permission_policy()),
-            ("plan", ReactiveAgentMachine::plan_permission_policy()),
-        ] {
-            let ungranted = Context::new();
-            let disposition = classify(&policy, &ReactiveState::Generating, &ungranted, &effect);
-            assert!(
-                matches!(disposition, EffectDisposition::NeedsApproval(_)),
-                "{mode} mode must ask a human before recording a document as \
-                 handed-over, got {disposition:?}"
-            );
-
-            let mut granted = Context::new();
-            granted.grant(cap);
-            assert!(
-                matches!(
-                    classify(&policy, &ReactiveState::Generating, &granted, &effect),
-                    EffectDisposition::Allowed
-                ),
-                "{mode} mode must let the ingest through once a human granted it"
-            );
-        }
     }
 
     /// The post-check sits on every turn of the default mode, so it fires only

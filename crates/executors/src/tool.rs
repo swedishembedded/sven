@@ -29,7 +29,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use sven_hsm::{Effect, Event, ObservationSink, ToolCallId, ToolCapability, UiEvent};
 use sven_kernel::{EffectExecutor, EventSink};
-use sven_vocab::provenance::ProvenanceSink;
 
 /// Default for [`ToolExecutor::tool_timeout`].
 const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(600);
@@ -70,12 +69,6 @@ pub struct ToolExecutor {
     /// ceiling. This is deliberately far longer than any legitimate tool so it
     /// only ever catches a hang.
     tool_timeout: Duration,
-    /// Where a resolving tool's attached provenance is recorded, keyed by
-    /// that tool call's own id - the handle the model can later cite as
-    /// `assimilate_fact`'s `evidence` argument. `None` when no provenance
-    /// index is wired in (e.g. the `memory` feature is off, or this executor
-    /// serves a sub-agent kernel with no such tools registered).
-    provenance_sink: Option<Arc<dyn ProvenanceSink>>,
 }
 
 impl ToolExecutor {
@@ -92,7 +85,6 @@ impl ToolExecutor {
             no_tools: false,
             tool_result_token_cap: 0,
             tool_timeout: DEFAULT_TOOL_TIMEOUT,
-            provenance_sink: None,
         }
     }
 
@@ -100,18 +92,6 @@ impl ToolExecutor {
     #[must_use]
     pub fn with_no_tools(mut self, no_tools: bool) -> Self {
         self.no_tools = no_tools;
-        self
-    }
-
-    /// Wires a sink that a resolving tool's attached provenance is recorded
-    /// into, keyed by that tool call's own id. Without this, `web_fetch`/
-    /// `web_search`/`ask_question`'s attached [`sven_vocab::ToolOutput::
-    /// provenance`] is simply never recorded anywhere - a later
-    /// `assimilate_fact` call citing that call's id as `evidence` resolves to
-    /// nothing, which is the fail-closed default (`AgentInferred`).
-    #[must_use]
-    pub fn with_provenance_sink(mut self, sink: Option<Arc<dyn ProvenanceSink>>) -> Self {
-        self.provenance_sink = sink;
         self
     }
 
@@ -155,7 +135,6 @@ impl ToolExecutor {
             no_tools: false,
             tool_result_token_cap: 0,
             tool_timeout: DEFAULT_TOOL_TIMEOUT,
-            provenance_sink: None,
         }
     }
 }
@@ -209,7 +188,6 @@ impl EffectExecutor for ToolExecutor {
         let obs = obs.clone();
         let tool_result_token_cap = self.tool_result_token_cap;
         let tool_timeout = self.tool_timeout;
-        let provenance_sink = self.provenance_sink.clone();
 
         // Spawn-and-forget: the task runs concurrently with other effects.
         tokio::spawn(async move {
@@ -282,7 +260,7 @@ impl EffectExecutor for ToolExecutor {
             };
 
             // A parked output has not concluded - it must not be treated as a
-            // result at all. No UiEvent, no provenance, no thread-append: the
+            // result at all. No UiEvent, no thread-append: the
             // call is still pending, exactly as if it had never returned.
             // `Event::QuestionAsked` is where `loop_core` removes it from the
             // pending set and parks the loop; only `Event::HumanAnswered`,
@@ -320,18 +298,6 @@ impl EffectExecutor for ToolExecutor {
                 output: output.content.clone(),
                 is_error: output.is_error,
             });
-
-            // A resolving tool (`web_fetch`/`web_search`/`ask_question`)
-            // attaches its own provenance to a successful result; record it
-            // here, keyed by this call's own id, so a later `assimilate_fact`
-            // call citing that id as `evidence` resolves to a real
-            // `FactSource` instead of `AgentInferred`. Never done for a
-            // failed call - there is nothing to stand behind.
-            if !output.is_error {
-                if let (Some(sink), Some(source)) = (&provenance_sink, &output.provenance) {
-                    sink.record_provenance(&tool_call.id, (**source).clone());
-                }
-            }
 
             // Append to conversation thread if a mapping exists. Truncated
             // deterministically and content-aware (`sven_turn::smart_truncate`,
@@ -384,7 +350,6 @@ mod tests {
     };
     use sven_kernel::{EffectExecutor, EventSink, Runtime};
     use sven_tool_registry::ToolRegistry;
-    use sven_vocab::provenance::ProvenanceSink;
 
     use super::ToolExecutor;
 
@@ -631,94 +596,6 @@ mod tests {
             content, "",
             "a parked call has not concluded and must not appear as a tool result yet: {content:?}"
         );
-    }
-
-    // ── provenance_sink wiring ────────────────────────────────────────────────
-
-    /// A registered tool that attaches provenance to a successful result, the
-    /// same shape `web_fetch`/`web_search`/`ask_question` do.
-    struct ResolvingTool;
-
-    #[async_trait::async_trait]
-    impl sven_tool_api::Tool for ResolvingTool {
-        fn name(&self) -> &str {
-            "resolving"
-        }
-        fn description(&self) -> &str {
-            "test-only tool that attaches provenance"
-        }
-        fn parameters_schema(&self) -> serde_json::Value {
-            serde_json::json!({"type": "object", "properties": {}})
-        }
-        fn default_policy(&self) -> sven_tool_api::ApprovalPolicy {
-            sven_tool_api::ApprovalPolicy::Auto
-        }
-        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
-            sven_tool_api::ToolOutput::ok(call.id.clone(), "resolved")
-                .with_provenance(sven_vocab::provenance::FactSource::UserStated)
-        }
-    }
-
-    /// A [`ProvenanceSink`] that just records every call it received, so a
-    /// test can assert on exactly what the executor forwarded.
-    #[derive(Default)]
-    struct RecordingSink {
-        calls: Mutex<Vec<(String, sven_vocab::provenance::FactSource)>>,
-    }
-
-    impl ProvenanceSink for RecordingSink {
-        fn record_provenance(&self, handle: &str, source: sven_vocab::provenance::FactSource) {
-            self.calls
-                .lock()
-                .unwrap()
-                .push((handle.to_string(), source));
-        }
-    }
-
-    #[tokio::test]
-    async fn a_resolving_tools_provenance_is_recorded_keyed_by_the_calls_own_id() {
-        let mut registry = ToolRegistry::new();
-        registry.register(ResolvingTool);
-        let sink = Arc::new(RecordingSink::default());
-        let mut exec = ToolExecutor::unrestricted(Arc::new(registry))
-            .with_provenance_sink(Some(Arc::clone(&sink) as Arc<dyn ProvenanceSink>));
-
-        let call_id = ToolCallId::new();
-        let effect = Effect::CallTool {
-            call_id,
-            name: "resolving".into(),
-            capability: ToolCapability::ReadFile,
-            args: serde_json::Value::Null,
-        };
-        let kind = run_tool_effect(&mut exec, effect).await;
-        assert_eq!(kind, "ToolSucceeded");
-
-        let calls = sink.calls.lock().unwrap();
-        assert_eq!(calls.len(), 1, "exactly one provenance record");
-        // No thread mapping was registered, so the tool call's id falls back
-        // to the internal call_id's own uuid string - the same value the
-        // model would see echoed back for this call.
-        assert_eq!(calls[0].0, call_id.as_uuid().to_string());
-        assert_eq!(calls[0].1, sven_vocab::provenance::FactSource::UserStated);
-    }
-
-    #[tokio::test]
-    async fn a_tool_output_with_no_provenance_records_nothing() {
-        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let mut registry = ToolRegistry::new();
-        registry.register(MarkerTool(Arc::clone(&ran)));
-        let sink = Arc::new(RecordingSink::default());
-        let mut exec = ToolExecutor::unrestricted(Arc::new(registry))
-            .with_provenance_sink(Some(Arc::clone(&sink) as Arc<dyn ProvenanceSink>));
-
-        let effect = Effect::CallTool {
-            call_id: ToolCallId::new(),
-            name: "marker".into(),
-            capability: ToolCapability::ReadFile,
-            args: serde_json::Value::Null,
-        };
-        run_tool_effect(&mut exec, effect).await;
-        assert!(sink.calls.lock().unwrap().is_empty());
     }
 
     // ── tool_result_token_cap / smart_truncate wiring ─────────────────────────

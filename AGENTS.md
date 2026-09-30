@@ -217,8 +217,8 @@ agent self-management) · `sven-tools-web` (`web_fetch`/`web_search`, `grep`,
 `read_lints`) · `sven-tools-gdb` (GDB/MI debugging, unix
 only) · `sven-turn` (impure turn primitives: `stream_turn`,
 `compact`/`smart_truncate`, prompt assembly, `AgentRuntimeContext`) · `sven-team` (agent-team
-coordination) · `sven-memory` (semantic memory store and tools, the `memory`
-feature of `sven-bootstrap`)
+coordination) · `sven-memory` (semantic memory store and `semantic_memory`
+tool, parked-question ledger; the `memory` feature of `sven-bootstrap`)
 
 ### machines
 `sven-machines` (pure `Machine` impls: `ReactiveAgentMachine`, `SdlcMachine`,

@@ -215,9 +215,8 @@ impl Tool for AskQuestionTool {
                 return ToolOutput::err(&call.id, "TUI question channel closed unexpectedly");
             }
             return match answer_rx.await {
-                // The user answered. `assimilate_fact` is the only writer
-                // into memory or the ledger - this tool only attaches the
-                // claim, as either `UserChoice` (a genuine pick between named
+                // The user answered. This tool writes nothing itself - it
+                // only attaches the provenance of the answer, as either `UserChoice` (a genuine pick between named
                 // alternatives) or `UserStated` (the user's own words).
                 Ok(answer) => {
                     let source = choice_or_stated(&call.id, &questions_for_provenance, &answer);
@@ -301,8 +300,8 @@ impl Tool for AskQuestionTool {
 /// multi-question exchange, or a free-form "Other" answer, cannot be honestly
 /// split into a chosen/not_chosen pair and is recorded as the user's own
 /// statement instead. Capturing what was picked *and* what was rejected is
-/// the entire point of this variant - a ledger holding only the chosen answer
-/// is worthless for preference-pair training later.
+/// the entire point of this variant - a record holding only the chosen answer
+/// loses what the user turned down.
 fn choice_or_stated(question_id: &str, questions: &[Question], answer: &str) -> FactSource {
     match questions {
         [only] if only.options.iter().any(|opt| opt == answer) => FactSource::UserChoice {
@@ -527,9 +526,8 @@ mod tests {
     /// A free-form answer - one that does not name any of the offered
     /// options, e.g. "Other" text the user typed themselves - is
     /// `FactSource::UserStated`: the user's own words, this session, but not
-    /// a choice between named alternatives. This tool never writes memory or
-    /// the ledger itself; it only attaches the claim `assimilate_fact` may
-    /// later resolve.
+    /// a choice between named alternatives. This tool never writes memory
+    /// itself; it only attaches the provenance of the answer.
     #[tokio::test]
     async fn a_free_form_tui_answer_attaches_user_stated_provenance() {
         use serde_json::json;

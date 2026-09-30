@@ -5,10 +5,9 @@
 //!
 //! Both tools retrieve content from a URL and must attach honest
 //! `FactSource::WebSourced` metadata to their [`ToolOutput`] - the digest is
-//! computed from the bytes actually returned, never asserted, so a later
-//! `assimilate_fact` call citing this tool call's own id resolves to a claim
-//! this tool can stand behind. Neither tool writes memory or the ledger
-//! itself; see `sven_vocab::provenance` for why that split exists.
+//! computed from the bytes actually returned, never asserted, so whoever
+//! consumes the result gets a claim this tool can stand behind. Neither tool
+//! writes memory itself; see `sven_vocab::provenance` for the trust model.
 //!
 //! Swedish Embedded AB implements solutions for provenance-tracked web
 //! retrieval in autonomous agents for its clients. If your team needs

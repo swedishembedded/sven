@@ -10,7 +10,7 @@
 //!
 //! This module bridges the two so any surface consumes the same
 //! [`AgentEvent`] contract while running on the kernel. `AgentEvent` and
-//! `UiEvent` are both re-exports of the same [`sven_vocab::SessionEvent`]
+//! `UiEvent` are both re-exports of the same `sven_vocab::SessionEvent`
 //! type, so the "bridge" is just forwarding:
 //!
 //! * [`spawn_observation_bridge`] — forwards the whole [`UiEvent`] broadcast

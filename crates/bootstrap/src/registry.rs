@@ -47,7 +47,7 @@ use crate::GdbTool;
 
 // ── Integration tool providers ────────────────────────────────────────────────
 
-/// Optional providers for the memory tools.
+/// Optional providers for the integration tools.
 ///
 /// All fields are optional; a tool is registered only when its provider is set.
 #[derive(Default)]
@@ -55,20 +55,6 @@ pub struct IntegrationProviders {
     /// Semantic memory store for the `semantic_memory` tool.
     #[cfg(feature = "memory")]
     pub memory_store: Option<Arc<dyn sven_memory::VectorStore>>,
-
-    /// Durable pending-facts ledger for the `assimilate_fact` tool.
-    #[cfg(feature = "memory")]
-    pub fact_ledger: Option<sven_memory::PendingFactsLedger>,
-
-    /// Session-scoped provenance the `assimilate_fact` tool resolves evidence
-    /// handles against.
-    #[cfg(feature = "memory")]
-    pub provenance_index: Option<Arc<sven_memory::ProvenanceIndex>>,
-
-    /// Human approvals observed by the kernel's user executor, read by the
-    /// `assimilate_fact` tool before admitting web-sourced content.
-    #[cfg(feature = "memory")]
-    pub knowledge_approvals: Option<Arc<sven_vocab::provenance::KnowledgeApprovals>>,
 }
 
 /// Converts the model catalog into the slice-of-fields `SystemTool`'s
@@ -201,38 +187,7 @@ fn register_integration_tools(_reg: &mut ToolRegistry, _providers: IntegrationPr
     #[cfg(feature = "memory")]
     {
         if let Some(store) = _providers.memory_store {
-            // One scope per assembled registry - that is, per session. Both
-            // memory tools share it: `assimilate_fact` stamps it onto records
-            // that must not outlive this session (an unapproved web fetch),
-            // and `semantic_memory` is the only tool that can then recall them.
-            let scope = sven_memory::SessionScope::new();
-            _reg.register(
-                sven_memory::SemanticMemoryTool::new(Arc::clone(&store))
-                    .with_session_scope(scope.clone()),
-            );
-            // `assimilate_fact` is the single writer into durable knowledge:
-            // it needs the same memory store plus the ledger it gates writes
-            // into. Without a ledger there is nothing to gate, so it is not
-            // registered at all rather than silently degrading to a second
-            // ungated memory writer.
-            if let Some(ledger) = _providers.fact_ledger {
-                // `ingest_document` is the entry point for learning from a
-                // document the user hands over: it records the digest that
-                // makes `assimilate_fact`'s `UserProvidedDocument` check
-                // admit facts extracted from it. Registered alongside
-                // `assimilate_fact`, on the same ledger, since one is
-                // pointless without the other.
-                _reg.register(sven_memory::IngestDocumentTool::new(ledger.clone()));
-                _reg.register(
-                    sven_memory::AssimilateFactTool::new(
-                        store,
-                        ledger,
-                        _providers.provenance_index.unwrap_or_default(),
-                        _providers.knowledge_approvals.unwrap_or_default(),
-                    )
-                    .with_session_scope(scope),
-                );
-            }
+            _reg.register(sven_memory::SemanticMemoryTool::new(store));
         }
     }
 }

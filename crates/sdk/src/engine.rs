@@ -304,8 +304,8 @@ impl EngineBuilder {
     /// Registered on top of the [`Toolset`], and wins a name collision with
     /// a built-in tool. The tool is permission-gated and audited exactly like a
     /// built-in one: its `kernel_capability` decides which bucket it falls
-    /// under, and that bucket whether a call waits for a human (`ExecuteShell`,
-    /// `DeleteFile` and `IngestDocument` do). `default_policy` applies only
+    /// under, and that bucket whether a call waits for a human (`ExecuteShell`
+    /// and `DeleteFile` do). `default_policy` applies only
     /// where a permission requester fronts the registry (ACP, MCP).
     ///
     /// Repeatable.

@@ -10,32 +10,17 @@
 //! # Design
 //!
 //! ```text
-//! ┌──────────────────────────┐   ┌──────────────────────────┐
-//! │    SemanticMemoryTool    │   │    AssimilateFactTool    │
-//! │ remember|recall|forget…  │   │ the one knowledge writer │
-//! └────────────┬─────────────┘   └───────┬──────────┬───────┘
-//!              │                         │          │
-//!              ▼                         ▼          ▼
-//! ┌──────────────────────────────────────────┐ ┌──────────────────────┐
-//! │             SqliteMemoryStore            │ │  PendingFactsLedger  │
-//! │  SQLite + FTS5 (BM25) + cosine vectors   │ │ hash-chained, gated  │
-//! └──────────────────────────────────────────┘ └──────────────────────┘
-//!            session recall, always                durable, provenance-gated
-//!                                                             │
-//!                                                             ▼
-//!                                                ┌──────────────────────────┐
-//!                                                │    PendingFactsDrain     │
-//!                                                │ batch → FactSubmitter →  │
-//!                                                │ per-fact outcomes        │
-//!                                                └────────────┬─────────────┘
-//!                                                             ▼
-//!                                                ┌──────────────────────────┐
-//!                                                │   LocalFactSubmitter     │
-//!                                                │ brain's document study,  │
-//!                                                │ on this machine, and     │
-//!                                                │ nowhere else             │
-//!                                                └──────────────────────────┘
-//!                                                  what actually gets trained
+//! ┌──────────────────────────────────────────┐   ┌──────────────────────┐
+//! │            SemanticMemoryTool            │   │    QuestionLedger    │
+//! │  remember | recall | forget | list | get │   │ parked questions and │
+//! │      provenance-aware recall framing     │   │  their answers       │
+//! └────────────────────┬─────────────────────┘   └──────────────────────┘
+//!                      │                             hash-chained JSONL
+//!                      ▼
+//! ┌──────────────────────────────────────────┐
+//! │             SqliteMemoryStore            │
+//! │  SQLite + FTS5 (BM25) + cosine vectors   │
+//! └──────────────────────────────────────────┘
 //! ```
 //!
 //! # Quick start
@@ -66,39 +51,17 @@
 //! # }
 //! ```
 
-pub mod assimilate;
-pub mod doctor;
-pub mod drain;
-pub mod ingest;
-pub mod ledger;
-pub mod local_study;
 pub mod question_ledger;
 pub mod recall;
-pub mod rule_expander;
 pub mod sqlite;
 pub mod store;
 pub mod tool;
 
-pub use assimilate::{AssimilateFactTool, ProvenanceIndex};
-pub use doctor::{diagnose, format_report, CheckStatus, DoctorCheck, DoctorReport};
-pub use drain::{
-    claim_sole_drain, DrainError, FactOutcome, FactReport, FactSubmitter, GateNumbers,
-    PendingFactsDrain,
-};
-pub use ingest::IngestDocumentTool;
-pub use ledger::{
-    DocumentRecord, FrozenProbe, LedgerEntry, LedgerError, PendingFactRecord, PendingFactsLedger,
-};
-pub use local_study::{
-    submitter_from_config, LocalFactSubmitter, LocalStudy, ADAPTER_DIR_PLACEHOLDER,
-    DATASET_PLACEHOLDER, REPORT_PLACEHOLDER, WEIGHTS_PLACEHOLDER,
-};
 pub use question_ledger::{
     QuestionAnsweredRecord, QuestionAskedRecord, QuestionLedger, QuestionLedgerEntry,
     QuestionLedgerError,
 };
 pub use recall::SessionScope;
-pub use rule_expander::{expand, Instance, Split};
 pub use sqlite::SqliteMemoryStore;
 pub use store::{DocId, DocSummary, Document, SearchResult, VectorStore};
 pub use tool::SemanticMemoryTool;

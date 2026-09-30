@@ -48,7 +48,6 @@ impl CommandRegistry {
         reg.register(Arc::new(builtin::inspect::ToolsCommand));
         reg.register(Arc::new(builtin::inspect::McpCommand));
         reg.register(Arc::new(builtin::think_limit::ThinkLimitCommand));
-        reg.register(Arc::new(builtin::learn::LearnCommand));
         reg
     }
 

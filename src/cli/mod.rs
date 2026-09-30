@@ -10,8 +10,6 @@
 mod agent;
 mod index;
 #[cfg(feature = "memory")]
-mod learn;
-#[cfg(feature = "memory")]
 mod questions;
 mod task;
 #[cfg(feature = "network")]
@@ -23,8 +21,6 @@ mod tool;
 // than duplicated here.
 pub use agent::AgentCommands;
 pub use index::IndexCommands;
-#[cfg(feature = "memory")]
-pub use learn::LearnCommands;
 #[cfg(feature = "memory")]
 pub use questions::QuestionsCommands;
 #[cfg(feature = "network")]
@@ -401,20 +397,6 @@ pub enum Commands {
     Index {
         #[command(subcommand)]
         command: IndexCommands,
-    },
-
-    /// Drive the continuous-learning drain by hand.
-    ///
-    /// Facts sven recorded as durable knowledge normally reach training on a
-    /// timer, in the background of an open session. `sven learn flush` is the
-    /// version for a script that has no next tick: it submits everything
-    /// pending and blocks until every fact has a real outcome.
-    ///
-    ///   sven learn flush          - drain now, block, report per fact
-    #[cfg(feature = "memory")]
-    Learn {
-        #[command(subcommand)]
-        command: LearnCommands,
     },
 
     /// See and answer questions a headless run parked instead of guessing.

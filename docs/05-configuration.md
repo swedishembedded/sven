@@ -247,47 +247,6 @@ tools:
     # Defaults to ~/.config/sven/memory.json
     # memory_file: /path/to/memory.json
 
-    learning:
-      # Hand facts sven recorded as durable knowledge to a training pipeline.
-      # OFF unless you turn it on: this is the one setting that lets knowledge
-      # you stated in private leave this machine.
-      # submit_facts: true
-
-      # Facts handed over per pass, and seconds between passes.
-      # batch_size: 16
-      # interval_secs: 300
-
-      # Who receives them. "local" runs brain's gated document study on this
-      # machine and publishes a promoted adapter where `brain serve
-      # --watch-adapters` is pointed; "none" disables submission entirely.
-      # submitter: local
-      # brain_bin: brain
-
-      # How brain's document study is invoked. `{dataset}`, `{adapter_dir}`
-      # and `{report}` are substituted with the paths sven writes and reads.
-      # Config rather than built in, because the subcommand's final spelling
-      # is brain's to decide - what sven depends on is the shape.
-      # study_args: [document-study, --arch, qwen3,
-      #              --weights, "{weights}",
-      #              --dataset, "{dataset}",
-      #              --adapter-dir, "{adapter_dir}",
-      #              --report, "{report}"]
-
-      # Required by the "local" submitter, and none of the three is guessable.
-      # adapter_dir must be the SAME directory this machine's `brain serve
-      # --watch-adapters DIR` polls; base_weights must be the base checkpoint
-      # the served model was built from; anchors_file is a JSONL file of
-      # {fact, probe_question, expected_answer} triples naming the behaviours
-      # every study has to preserve while it learns a document.
-      # adapter_dir: ~/.local/state/brain/adapters
-      # base_weights: qwen3-0.6b
-      # anchors_file: ~/.config/sven/memory/anchors.jsonl
-
-      # Where datasets, reports and the outcome journal are kept, and how long
-      # one study may run before it is killed.
-      # work_dir: ~/.config/sven/memory/learning
-      # study_timeout_secs: 3600
-
 
 # ── Lints ──────────────────────────────────────────────────────────────────
 
@@ -538,7 +497,7 @@ tools:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `fetch_max_chars` | `50000` | Maximum characters fetched from a URL |
+| `fetch_max_chars` | `20000` | Maximum characters fetched from a URL |
 | `search.api_key` | - | Brave Search API key (also `BRAVE_API_KEY` env var) |
 
 ---
@@ -548,48 +507,9 @@ tools:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `memory_file` | `~/.config/sven/memory.json` | Where persistent memory is stored |
-| `learning.submit_facts` | `false` | Hand admitted pending facts to a training pipeline |
-| `learning.batch_size` | `16` | Facts handed over per drain pass |
-| `learning.interval_secs` | `300` | Seconds between drain passes (minimum 1) |
-| `learning.submitter` | `local` | Who receives the facts: `local` (brain on this machine) or `none` |
-| `learning.brain_bin` | `brain` | The `brain` executable (resolved on `PATH` when a bare name) |
-| `learning.study_args` | `document-study --arch qwen3 …` | How the study is invoked; `{weights}`/`{dataset}`/`{adapter_dir}`/`{report}` are substituted |
-| `learning.base_weights` | - | The base checkpoint the study trains a LoRA adapter over |
-| `learning.anchors_file` | - | JSONL of triples naming the behaviours every study must preserve |
-| `learning.adapter_dir` | - | Where a promoted adapter is published; must match `brain serve --watch-adapters DIR` |
-| `learning.work_dir` | `~/.config/sven/memory/learning` | Datasets, study reports and the outcome journal |
-| `learning.study_timeout_secs` | `3600` | How long one document study may run |
 
-`learning.submit_facts` is the only setting that lets knowledge off this
-machine, so it is off until you set it and an absent `learning:` section means
-off. When it is on, sven periodically hands the facts it recorded as durable
-knowledge - only those; a fact the agent merely inferred, or fetched from the
-web without your approval, never qualifies - to the
-configured submitter, and reports back per fact whether each one was promoted,
-turned down, or failed. Exactly one process drains a given ledger: if you have
-a second sven open, it sees the first one holds the drain and leaves it alone.
-
-The `local` submitter is the whole loop on one machine: sven writes the facts
-and the probes it froze for them as a dataset, runs brain's gated document
-study, and reads back the report brain writes - promoted, or turned down with
-the gate's own reason. The exact command is `study_args`, so a renamed
-subcommand on brain's side is a config edit rather than a sven upgrade.
-
-The gate decides per study cycle, not per fact, so facts handed over in one
-drain pass share a verdict - and when it is a rejection, the reason names which
-of the gate's checks stopped it and what the probe pass rates were.
-
-Facts normally drain on the interval above. `sven learn flush` drains every
-pending fact now and blocks until each one has a real outcome - for a script
-that has to finish learning before the process exits. It prints one line per
-fact and exits non-zero only when a fact `failed`: a rejection means the study
-ran and the model did not learn the fact, which is an answer, not a build
-failure. A promoted adapter is published into
-`adapter_dir`, and a `brain serve --watch-adapters` pointed at that same
-directory hot-swaps it into the running model with no restart. A fact recorded
-without a frozen probe is reported as turned down: nothing can score whether
-the model learned it, and inventing a question from the fact itself would test
-the invention rather than the knowledge.
+sven does not train models. A `learning:` section under `tools.memory` is
+accepted and ignored, with one warning naming it at startup.
 
 ---
 

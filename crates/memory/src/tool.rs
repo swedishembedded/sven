@@ -52,8 +52,9 @@ impl SemanticMemoryTool {
 
     /// Shares the session's [`SessionScope`] with this tool.
     ///
-    /// Pass the same scope the session's `assimilate_fact` tool was built with,
-    /// or this tool will not recall the session-scoped records that tool wrote.
+    /// Pass the same scope any other writer of this session's records stamps
+    /// them with, or this tool will not recall that writer's session-scoped
+    /// records.
     #[must_use]
     pub fn with_session_scope(mut self, scope: SessionScope) -> Self {
         self.scope = scope;

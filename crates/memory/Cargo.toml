@@ -6,11 +6,6 @@ description = "Semantic (vector + BM25) memory store for sven agents"
 
 [dependencies]
 sven-tool-api = { path = "../tool-api" }
-# The learning submitter is selected by config value (`local`, `none`, and a
-# remote one later), so the config->submitter factory lives beside the
-# submitters rather than being re-derived at every call site. domain ->
-# foundation, the same edge the other tool crates take for their own settings.
-sven-config  = { path = "../config" }
 sven-vocab   = { path = "../vocab" }
 sven-chain   = { path = "../chain" }
 # QuestionId/ToolCallId for the parked-question ledger - domain -> foundation,
@@ -27,14 +22,6 @@ tracing      = { workspace = true }
 dirs         = { workspace = true }
 chrono       = { workspace = true }
 uuid         = { workspace = true }
-reqwest      = { workspace = true }
-sha2         = { workspace = true }
-shellexpand  = { workspace = true }
-hex          = { workspace = true }
-# `ingest_document`'s URL path renders fetched HTML into the readable text it
-# hands back to the model - same conversion `sven-tools-web::web_fetch` uses,
-# duplicated rather than depended on to avoid a same-tier domain->domain edge.
-html2text    = { workspace = true }
 
 # SQLite for persistent memory storage with FTS5
 rusqlite     = { version = "0.31", features = ["bundled", "load_extension"] }

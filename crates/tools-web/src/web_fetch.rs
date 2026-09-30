@@ -89,8 +89,8 @@ impl Tool for WebFetchTool {
 
         match fetch_url(&url, max_chars).await {
             // Provenance names exactly what was fetched: this tool never
-            // writes memory or the ledger itself (see `assimilate_fact`) - it
-            // only attaches the claim a later evidence lookup can resolve.
+            // writes memory itself - it only attaches the provenance of what
+            // it returned.
             Ok(content) => {
                 attach_web_provenance(ToolOutput::ok(&call.id, content), &url, now_unix())
             }

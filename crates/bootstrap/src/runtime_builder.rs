@@ -533,11 +533,6 @@ impl RuntimeBuilder {
         // tool.
         #[allow(unused_mut)]
         let mut integration_providers = IntegrationProviders::default();
-        // Observations of real `HumanApproved` events for
-        // `ToolCapability::AssimilateKnowledge`. The kernel's `UserExecutor`
-        // writes it, `assimilate_fact` reads it; sharing the one handle here is
-        // what keeps human confirmation out of the model's reach.
-        let knowledge_approvals = Arc::new(sven_vocab::provenance::KnowledgeApprovals::new());
         #[cfg(feature = "memory")]
         {
             integration_providers.memory_store = match sven_memory::SqliteMemoryStore::open(None)
@@ -552,27 +547,7 @@ impl RuntimeBuilder {
                     None
                 }
             };
-            integration_providers.fact_ledger =
-                Some(sven_memory::PendingFactsLedger::at_default_path());
-            integration_providers.provenance_index =
-                Some(Arc::new(sven_memory::ProvenanceIndex::new()));
-            integration_providers.knowledge_approvals = Some(Arc::clone(&knowledge_approvals));
         }
-        // Where `web_fetch`/`web_search`/`ask_question`'s attached provenance
-        // is recorded, keyed by their own call id, so a later `assimilate_
-        // fact` call citing that id as `evidence` resolves to a real
-        // `FactSource`. Read from `integration_providers` before it moves
-        // into `build_tool_registry_with_integrations` below, and typed as
-        // the foundation-tier `ProvenanceSink` trait object so `ToolExecutor`
-        // (machines tier) never has to name the SQLite-linking memory crate.
-        #[cfg(feature = "memory")]
-        let provenance_sink: Option<Arc<dyn sven_vocab::provenance::ProvenanceSink>> =
-            integration_providers
-                .provenance_index
-                .as_ref()
-                .map(|idx| Arc::clone(idx) as Arc<dyn sven_vocab::provenance::ProvenanceSink>);
-        #[cfg(not(feature = "memory"))]
-        let provenance_sink: Option<Arc<dyn sven_vocab::provenance::ProvenanceSink>> = None;
 
         let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
         let root = self.runtime_ctx.project_root.as_deref();
@@ -773,8 +748,7 @@ impl RuntimeBuilder {
         let executor: Box<dyn EffectExecutor> = match self.effect_executor {
             Some(custom) => custom,
             None => {
-                let user_executor = sven_executors::UserExecutor::new(question_tx, approval_tx)
-                    .with_knowledge_approvals(knowledge_approvals);
+                let user_executor = sven_executors::UserExecutor::new(question_tx, approval_tx);
                 #[cfg(feature = "memory")]
                 let user_executor = user_executor.with_parked_questions(parked_tx);
                 let base = CompositeExecutorBuilder::default()
@@ -801,8 +775,7 @@ impl RuntimeBuilder {
                             Arc::clone(&conv_store),
                         )
                         .with_no_tools(runtime.no_tools)
-                        .with_tool_result_token_cap(self.config.agent.tool_result_token_cap)
-                        .with_provenance_sink(provenance_sink),
+                        .with_tool_result_token_cap(self.config.agent.tool_result_token_cap),
                     ),
                 };
                 Box::new(composed.build())

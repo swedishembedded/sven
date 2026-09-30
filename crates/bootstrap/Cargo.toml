@@ -22,7 +22,6 @@ sven-mcp-client    = { path = "../mcp-client" }
 sven-hsm           = { path = "../hsm" }
 sven-kernel        = { path = "../kernel" }
 sven-executors     = { path = "../executors" }
-sven-vocab         = { path = "../vocab" }
 # New integration crates - optional at bootstrap level
 sven-memory        = { path = "../memory", optional = true }
 anyhow       = { workspace = true }

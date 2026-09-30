@@ -973,9 +973,8 @@ caller, both in what it said and in what it left out.
 sven is an agent SDK. It has no Cargo dependency on any orchestrator (and
 never did - checked, not assumed), but 51 mentions of one particular caller
 had accumulated across 11 Rust files, including in the PUBLIC doc comments
-of `UiTestDevice`, `DispatchRequest`, `AndroidTool`'s device selection, the
-`agent-dispatch` CLI help text, and - furthest from anything device-related
-- `sven-memory`'s `FactSubmitter` trait. One `sven agent-dispatch --help`
+of `UiTestDevice`, `DispatchRequest`, `AndroidTool`'s device selection and
+the `agent-dispatch` CLI help text. One `sven agent-dispatch --help`
 example was literally a foreign tool's command line with a foreign env var.
 
 That is a real defect, not a cosmetic one: a doc comment is the contract. A
@@ -984,9 +983,8 @@ as coupling to anyone evaluating sven as an SDK, and it quietly discourages
 a second embedder from using the same seam.
 
 Every one is now stated in role terms - "the dispatching host", "an
-orchestrating host", "a caller's own catalog/leasing key", "a remote
-`FactSubmitter`". Nothing about the architecture changed, because there was
-nothing coupled to change; only the vocabulary, which was the whole problem.
+orchestrating host", "a caller's own catalog/leasing key". Nothing about the
+architecture changed, because there was nothing coupled to change; only the vocabulary, which was the whole problem.
 `git grep -i` over `crates/` and `src/` is the standing check.
 
 Fixed on the way past (stale since Phase 7, found while rewording):

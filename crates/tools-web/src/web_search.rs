@@ -89,8 +89,8 @@ impl Tool for WebSearchTool {
         let url = search_url(&query, count);
         match brave_search(&url, count, &api_key).await {
             // Provenance names the actual API URL queried - this tool never
-            // writes memory or the ledger itself (see `assimilate_fact`), it
-            // only attaches the claim a later evidence lookup can resolve.
+            // writes memory itself, it only attaches the provenance of what
+            // it returned.
             Ok(results) => {
                 attach_web_provenance(ToolOutput::ok(&call.id, results), &url, now_unix())
             }

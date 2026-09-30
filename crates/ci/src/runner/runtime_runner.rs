@@ -490,9 +490,8 @@ fn verdict_from_context(ctx: &KernelContext) -> Option<Verdict> {
 ///
 /// `Parked` reuses [`EXIT_NEEDS_HUMAN`] exactly as an `Event::QuestionAsked`
 /// park would - both mean "a human must decide, do not score this run yet".
-/// A recorded verdict (pass or fail) is [`EXIT_SUCCESS`] either way, matching
-/// `sven learn flush`'s philosophy: the *run* completed and produced a real,
-/// stamped answer, and the stamped reward - not the process exit code - is
+/// A recorded verdict (pass or fail) is [`EXIT_SUCCESS`] either way: the
+/// *run* completed and produced a real, stamped answer, and the stamped reward - not the process exit code - is
 /// what carries whether that answer was a pass.
 fn exit_code_for_verified_task(ctx: &KernelContext) -> i32 {
     if ctx.fact(NEEDS_HUMAN_FACT).is_some() {

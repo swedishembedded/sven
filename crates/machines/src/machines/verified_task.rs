@@ -144,16 +144,13 @@ impl VerifiedTaskMachine {
     }
 
     /// Permission policy: `RunVerifier` only where verification actually
-    /// happens, plus the ordinary read/write/shell/knowledge set an attempt
+    /// happens, plus the ordinary read/write/shell set an attempt
     /// needs to do real work - identical in spirit to `SdlcMachine::Execution`.
     #[must_use]
     pub fn permission_policy() -> PermissionPolicy {
-        use ToolCapability::{
-            AssimilateKnowledge, ExecuteShell, GitOperation, IngestDocument, ReadFile, RunVerifier,
-            WriteFile,
-        };
+        use ToolCapability::{ExecuteShell, GitOperation, ReadFile, RunVerifier, WriteFile};
         PermissionPolicy::builder()
-            .allow_globally([ReadFile, AssimilateKnowledge, IngestDocument])
+            .allow_globally([ReadFile])
             .allow_in(
                 VerifiedTaskState::Attempting,
                 [WriteFile, ExecuteShell, GitOperation],

@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The durable parked-question ledger.
 //!
-//! An append-only, hash-chained JSONL log (see [`sven_chain`]), mirroring
-//! [`crate::ledger::PendingFactsLedger`]'s two-kind shape: a question is
-//! [`QuestionLedgerEntry::Asked`] the moment `UserExecutor` parks it (see
-//! `sven_executors::user::ParkedQuestion`), and later
+//! An append-only, hash-chained JSONL log (see [`sven_chain`]) of two kinds of
+//! entry: a question is [`QuestionLedgerEntry::Asked`] the moment
+//! `UserExecutor` parks it (see `sven_executors::user::ParkedQuestion`), and
+//! later
 //! [`QuestionLedgerEntry::Answered`] by whatever surface a human used to
 //! reply - possibly a different process entirely, possibly long after the
 //! agent that asked it has exited.
@@ -17,8 +17,11 @@
 //!
 //! # Honest limitation
 //!
-//! Same as [`crate::ledger`]: `sven-chain` buys ordering, provenance and
-//! crash-safety, not tamper-evidence against local write access.
+//! `sven-chain` is **not** tamper-evident against an attacker with local write
+//! access: there is no keyed MAC and no external anchor, so anyone who can edit
+//! the file can rewrite any entry and re-derive every subsequent hash. What the
+//! chain buys here is ordering, provenance and crash-safety - not integrity
+//! against local compromise. Do not build a security claim on the chain alone.
 
 use std::path::{Path, PathBuf};
 
@@ -79,7 +82,7 @@ pub enum QuestionLedgerError {
 ///
 /// Cheap to clone; all state lives on disk. Every method performs
 /// **blocking** filesystem I/O - call from a blocking context inside async
-/// code, exactly like [`crate::ledger::PendingFactsLedger`].
+/// code.
 #[derive(Clone, Debug)]
 pub struct QuestionLedger {
     path: PathBuf,
@@ -99,7 +102,7 @@ impl QuestionLedger {
         Self::new(Self::default_path())
     }
 
-    /// The conventional on-disk location, beside the pending-facts ledger.
+    /// The conventional on-disk location, beside the semantic memory store.
     #[must_use]
     pub fn default_path() -> PathBuf {
         dirs::home_dir()

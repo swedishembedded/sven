@@ -283,7 +283,7 @@ Registered on top of the built-in set, so the agent keeps everything it already
 had. From then on it is permission-gated and audited exactly like a built-in:
 `kernel_capability()` decides which bucket the kernel gates it under. In an
 agent session the capability alone decides whether a call waits for a human:
-`ExecuteShell`, `DeleteFile` and `IngestDocument` always do, and an approval
+`ExecuteShell` and `DeleteFile` always do, and an approval
 grants that capability for the rest of the session. `default_policy()` applies
 where a permission requester fronts the registry directly (the ACP server's IDE
 prompt, the MCP server). Declaring the capability honestly is what

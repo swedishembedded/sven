@@ -4,12 +4,11 @@
 //! Provenance-aware recall - what semantic memory may put back into the
 //! model's prompt, and how it must be framed.
 //!
-//! `assimilate_fact` gates the durable pending-facts ledger, which is what
-//! reaches training. It deliberately does *not* gate semantic memory: the agent
-//! must be able to reason this session about a page it just fetched. But
-//! semantic memory is recalled straight into the prompt and is shared by every
-//! session on the machine, so without this module the ledger gate would sit
-//! next to an ungated one:
+//! Semantic memory is recalled straight into the prompt and is shared by every
+//! session on the machine. A record in the store may carry the provenance that
+//! whoever wrote it *resolved* for it ([`PROVENANCE_KEY`]) and a session stamp
+//! confining it to one session ([`SESSION_SCOPE_KEY`]). Without honouring
+//! both on the way out:
 //!
 //! * content the agent fetched on its own initiative would come back as a flat
 //!   assertion, indistinguishable from something a human said - a
@@ -25,7 +24,7 @@
 //!    rendered by [`quote_untrusted`] as explicitly-marked quoted material,
 //!    never as an assertion;
 //! 2. [`is_visible`] - a record stamped with a [`SessionScope`] is recalled
-//!    only by the session that learned it.
+//!    only by the session that stamped it.
 //!
 //! Swedish Embedded AB implements solutions for prompt-injection-resistant
 //! agent memory for its clients. If your team needs expertise in keeping
@@ -36,24 +35,23 @@ use std::collections::HashMap;
 
 use sven_vocab::provenance::label_recalls_as_untrusted;
 
-/// Metadata key carrying the provenance `assimilate_fact` *resolved* for a
-/// record.
+/// Metadata key carrying the provenance the record's writer *resolved* for
+/// it - a [`sven_vocab::provenance::FactSource::label`].
 ///
 /// Deliberately not `source`: that key is free text the model itself can set
 /// through `semantic_memory`'s `remember` action, and a trust decision must
 /// never read a field the model can write.
 pub const PROVENANCE_KEY: &str = "provenance";
 
-/// Metadata key confining a record to the session that learned it.
+/// Metadata key confining a record to the session that stamped it.
 pub const SESSION_SCOPE_KEY: &str = "session_scope";
 
 /// Identity of one assembled tool registry - that is, one session.
 ///
-/// Minted once where the memory tools are wired together, so the pair shares
-/// it: `assimilate_fact` stamps it onto records that must not outlive the
-/// session, and `semantic_memory` recalls a stamped record only when the stamp
-/// is its own. Two tools built with different scopes simply cannot see each
-/// other's session-scoped records, which is the safe direction.
+/// A writer stamps it onto records that must not outlive the session, and
+/// `semantic_memory` recalls a stamped record only when the stamp is its own.
+/// Two tools built with different scopes simply cannot see each other's
+/// session-scoped records, which is the safe direction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionScope(String);
 
@@ -92,9 +90,9 @@ pub fn is_visible(metadata: &HashMap<String, String>, scope: &SessionScope) -> b
 /// The provenance label of a record that must be recalled as untrusted, if it
 /// is one.
 ///
-/// A record with no resolved provenance is not *trusted* - it simply predates
-/// or bypasses `assimilate_fact` (a plain `remember`, a legacy import) and is
-/// framed as it always was.
+/// A record with no resolved provenance is not *trusted* - it simply carries
+/// no resolved origin (a plain `remember`, an import) and is framed as a
+/// plain record.
 #[must_use]
 pub fn untrusted_label(metadata: &HashMap<String, String>) -> Option<&str> {
     metadata

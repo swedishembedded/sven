@@ -439,22 +439,16 @@ const WEB_CONFIG_KEYS: &[&str] = &["search", "fetch_max_chars"];
 const WEB_SEARCH_CONFIG_KEYS: &[&str] = &["api_key"];
 
 /// Known keys in [`crate::MemoryConfig`].
-const MEMORY_CONFIG_KEYS: &[&str] = &["memory_file", "learning"];
+const MEMORY_CONFIG_KEYS: &[&str] = &["memory_file"];
 
-/// Known keys in [`crate::LearningConfig`].
-const LEARNING_CONFIG_KEYS: &[&str] = &[
-    "submit_facts",
-    "batch_size",
-    "interval_secs",
-    "submitter",
-    "brain_bin",
-    "study_args",
-    "base_weights",
-    "anchors_file",
-    "adapter_dir",
-    "work_dir",
-    "study_timeout_secs",
-];
+/// Sections sven accepts in a config file but does not act on, each with the
+/// reason given to the user. A section here loads without error and earns one
+/// warning naming it, however many keys it holds.
+const IGNORED_CONFIG_SECTIONS: &[(&str, &str)] = &[(
+    "tools.memory.learning",
+    "sven does not train models; an application that learns from sven's work \
+     configures that itself",
+)];
 
 /// Known keys in [`crate::LintsConfig`].
 const LINTS_CONFIG_KEYS: &[&str] = &["rust_command", "typescript_command", "python_command"];
@@ -482,12 +476,30 @@ const MCP_OAUTH_CONFIG_KEYS: &[&str] = &[
     "callback_port",
 ];
 
-/// Recursively walk `value` and emit a `warn!` for any mapping key that is
+/// Emit a `warn!` for every config key [`config_field_warnings`] reports.
+fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
+    let mut warnings = Vec::new();
+    collect_field_warnings(value, path, &mut warnings);
+    for warning in warnings {
+        warn!("{warning}");
+    }
+}
+
+/// The warnings a merged config document earns: one per key the schema does
+/// not recognise.
+#[cfg(test)]
+fn config_field_warnings(value: &serde_yaml::Value) -> Vec<String> {
+    let mut warnings = Vec::new();
+    collect_field_warnings(value, "", &mut warnings);
+    warnings
+}
+
+/// Recursively walk `value` and record a warning for any mapping key that is
 /// not listed in the expected set for that schema level.
 ///
 /// `path` is the dot-separated JSON path used in the warning message
 /// (e.g. `"model"`, `"providers.my_ollama"`).
-fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
+fn collect_field_warnings(value: &serde_yaml::Value, path: &str, warnings: &mut Vec<String>) {
     let serde_yaml::Value::Mapping(map) = value else {
         return;
     };
@@ -506,8 +518,6 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
         (WEB_SEARCH_CONFIG_KEYS, "tools.web.search")
     } else if path == "tools.memory" {
         (MEMORY_CONFIG_KEYS, "tools.memory")
-    } else if path == "tools.memory.learning" {
-        (LEARNING_CONFIG_KEYS, "tools.memory.learning")
     } else if path == "tools.lints" {
         (LINTS_CONFIG_KEYS, "tools.lints")
     } else if path == "tools.gdb" {
@@ -525,7 +535,7 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
                 _ => continue,
             };
             let child_path = format!("providers.{key_str}");
-            validate_unknown_fields(val, &child_path);
+            collect_field_warnings(val, &child_path, warnings);
         }
         return;
     } else if path == "mcp_servers" {
@@ -536,7 +546,7 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
                 _ => continue,
             };
             let child_path = format!("mcp_servers.{key_str}");
-            validate_unknown_fields(val, &child_path);
+            collect_field_warnings(val, &child_path, warnings);
         }
         return;
     } else if let Some(rest) = path.strip_prefix("providers.") {
@@ -566,33 +576,36 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
             serde_yaml::Value::String(s) => s.as_str(),
             _ => continue,
         };
-        if !known.contains(&key_str) {
-            warn!(
-                "Unrecognised config field `{}.{}` - check spelling or update sven",
-                path, key_str
-            );
+        let full_path = if path.is_empty() {
+            key_str.to_string()
+        } else {
+            format!("{path}.{key_str}")
+        };
+        if let Some((_, reason)) = IGNORED_CONFIG_SECTIONS
+            .iter()
+            .find(|(section, _)| *section == full_path)
+        {
+            warnings.push(format!("Config section `{full_path}` is ignored: {reason}"));
+        } else if !known.contains(&key_str) {
+            warnings.push(format!(
+                "Unrecognised config field `{path}.{key_str}` - check spelling or update sven"
+            ));
         } else {
             // Recurse into known nested sections.
-            let child_path = if path.is_empty() {
-                key_str.to_string()
-            } else {
-                format!("{path}.{key_str}")
-            };
+            let child_path = full_path;
             match (label, key_str) {
                 ("config", "model")
                 | ("config", "agent")
                 | ("config", "tools")
                 | ("config", "tui")
                 | ("config", "providers")
-                | ("config", "mcp_servers") => validate_unknown_fields(val, &child_path),
+                | ("config", "mcp_servers") => collect_field_warnings(val, &child_path, warnings),
                 ("tools", "web")
                 | ("tools", "memory")
                 | ("tools", "lints")
                 | ("tools", "gdb")
-                | ("tools", "asr") => validate_unknown_fields(val, &child_path),
-                ("tools.web", "search") | ("tools.memory", "learning") => {
-                    validate_unknown_fields(val, &child_path)
-                }
+                | ("tools", "asr") => collect_field_warnings(val, &child_path, warnings),
+                ("tools.web", "search") => collect_field_warnings(val, &child_path, warnings),
                 ("provider entry", "models") => {
                     // Each key is a model name; validate its params.
                     if let serde_yaml::Value::Mapping(models_map) = val {
@@ -602,12 +615,12 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
                                 _ => continue,
                             };
                             let model_path = format!("{child_path}.{model_name}");
-                            validate_unknown_fields(model_val, &model_path);
+                            collect_field_warnings(model_val, &model_path, warnings);
                         }
                     }
                 }
                 ("mcp server", "transport") | ("mcp server", "oauth") => {
-                    validate_unknown_fields(val, &child_path)
+                    collect_field_warnings(val, &child_path, warnings)
                 }
                 _ => {}
             }
@@ -661,20 +674,49 @@ mod tests {
     #[test]
     fn a_partially_specified_section_does_not_discard_the_whole_file() {
         let cfg: Config = serde_yaml::from_value(val(
-            "tui:\n  theme: light\ntools:\n  memory:\n    learning:\n      submitter: none\n",
+            "tui:\n  theme: light\ntools:\n  gdb:\n    gdb_path: gdb\n",
         ))
         .expect("a config naming two settings must load, not fail whole");
 
         assert_eq!(cfg.tui.theme, "light", "the setting the file named");
-        assert_eq!(cfg.tools.memory.learning.submitter, "none");
+        assert_eq!(cfg.tools.gdb.gdb_path, "gdb");
         assert_eq!(
-            cfg.tools.memory.learning.batch_size,
-            crate::LearningConfig::default().batch_size,
+            cfg.tools.gdb.command_timeout_secs,
+            crate::GdbConfig::default().command_timeout_secs,
             "and everything it did not name keeps its default"
         );
         assert!(
             !cfg.tools.auto_approve_patterns.is_empty(),
             "a sibling field in a section the file touched is defaulted, not dropped"
+        );
+    }
+
+    /// sven has no learning pipeline, so a `tools.memory.learning` section
+    /// configures nothing. A config file that still carries one must keep
+    /// loading - every other setting in it intact - and say once, by name,
+    /// that the section is ignored: one warning for the section, not one per
+    /// key inside it, and not the misleading "check spelling".
+    #[test]
+    fn a_learning_section_is_ignored_with_one_warning() {
+        let text = "tui:\n  theme: light\ntools:\n  memory:\n    memory_file: notes/memory.json\n    learning:\n      submit_facts: true\n      batch_size: 16\n      submitter: local\n      study_args: [document-study, --dataset, \"{dataset}\"]\n";
+
+        let warnings = config_field_warnings(&val(text));
+        assert_eq!(warnings.len(), 1, "exactly one warning: {warnings:?}");
+        assert!(
+            warnings[0].contains("tools.memory.learning") && warnings[0].contains("ignored"),
+            "the warning names the section and says it is ignored: {}",
+            warnings[0]
+        );
+
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "{text}").unwrap();
+        let cfg = load(Some(f.path())).expect("a config with a learning section still loads");
+        assert_eq!(cfg.tui.theme, "light");
+        assert_eq!(
+            cfg.tools.memory.memory_file.as_deref(),
+            Some("notes/memory.json"),
+            "the rest of the memory section is kept"
         );
     }
 
@@ -831,26 +873,30 @@ model:
     }
 
     #[test]
-    fn validate_unknown_fields_warns_for_unknown_top_level_key() {
-        // This test just verifies the function does not panic for an unknown key.
+    fn an_unknown_top_level_key_is_warned_about() {
         let yaml = val("model:\n  provider: openai\n  name: gpt-4o\nunknown_key: value\n");
-        // validate_unknown_fields should not panic; tracing output is suppressed
-        // in tests so we just check it doesn't crash.
-        validate_unknown_fields(&yaml, "");
+        let warnings = config_field_warnings(&yaml);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("`.unknown_key`"), "{}", warnings[0]);
     }
 
     #[test]
-    fn validate_unknown_fields_warns_for_unknown_model_key() {
+    fn an_unknown_model_key_is_warned_about() {
         let yaml = val("model:\n  provider: openai\n  name: gpt-4o\n  nonexistent_field: value\n");
-        validate_unknown_fields(&yaml, "");
+        let warnings = config_field_warnings(&yaml);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("model.nonexistent_field"),
+            "{}",
+            warnings[0]
+        );
     }
 
     #[test]
-    fn validate_unknown_fields_accepts_all_known_top_level_keys() {
+    fn known_keys_earn_no_warning() {
         let yaml =
             val("model:\n  provider: openai\n  name: gpt-4o\nagent:\n  max_tool_rounds: 100\n");
-        // Should not produce any warnings - just verifying no panic.
-        validate_unknown_fields(&yaml, "");
+        assert_eq!(config_field_warnings(&yaml), Vec::<String>::new());
     }
 
     #[test]

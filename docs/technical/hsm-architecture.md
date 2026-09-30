@@ -142,9 +142,8 @@ and each effect in it that a machine may be waiting on is answered with its
 failure event (see [Effect executors](#effect-executors)).
 
 Capabilities are coarse buckets (`ToolCapability`): `ReadFile`, `WriteFile`,
-`DeleteFile`, `ExecuteShell`, `NetworkAccess`, `GitOperation`,
-`AssimilateKnowledge`, `IngestDocument`, `RunVerifier`, `ControlDevice`.
-`ExecuteShell`, `DeleteFile`, and `IngestDocument` are *inherently dangerous* - they
+`DeleteFile`, `ExecuteShell`, `NetworkAccess`, `GitOperation`, `RunVerifier`,
+`ControlDevice`. `ExecuteShell` and `DeleteFile` are *inherently dangerous* - they
 always require a granted approval regardless of the per-state allow-set. A
 `PermissionPolicy` is assembled with a builder (`allow_in`, `allow_globally`,
 `require_approval`).

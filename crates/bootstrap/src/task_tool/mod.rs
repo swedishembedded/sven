@@ -473,7 +473,7 @@ impl Tool for TaskTool {
 
         // `acp_mode` is the built-in ACP session mode a persona maps onto;
         // `requested_mode` (kept for the TUI buffer label) may be a persona
-        // name such as "knowledge-extract".
+        // name such as "code-reviewer".
         let resolved = match resolve_mode_and_prompt(&requested_mode, &prompt, &self.agents.get()) {
             Ok(v) => v,
             Err(e) => return ToolOutput::err(&call.id, e),
@@ -832,11 +832,11 @@ mod tests {
 
     #[test]
     fn resolve_persona_readonly_maps_to_research_and_prepends_content() {
-        let agents = [persona("knowledge-extract", "You extract knowledge.", true)];
-        let r = resolve_mode_and_prompt("knowledge-extract", "learn from doc.md", &agents).unwrap();
+        let agents = [persona("code-reviewer", "You review code.", true)];
+        let r = resolve_mode_and_prompt("code-reviewer", "review src/lib.rs", &agents).unwrap();
         assert_eq!(r.acp_mode, "research");
-        assert!(r.prompt.starts_with("You extract knowledge."));
-        assert!(r.prompt.contains("learn from doc.md"));
+        assert!(r.prompt.starts_with("You review code."));
+        assert!(r.prompt.contains("review src/lib.rs"));
     }
 
     #[test]
@@ -848,14 +848,14 @@ mod tests {
 
     #[test]
     fn resolve_unknown_mode_lists_persona_names_as_suggestions() {
-        let agents = [persona("knowledge-extract", "You extract knowledge.", true)];
+        let agents = [persona("code-reviewer", "You review code.", true)];
         let err = resolve_mode_and_prompt("typo-mode", "x", &agents).unwrap_err();
-        assert!(err.contains("knowledge-extract"));
+        assert!(err.contains("code-reviewer"));
     }
 
     #[test]
     fn parameters_schema_mode_enum_includes_discovered_personas() {
-        let agents = SharedAgents::new(vec![persona("knowledge-extract", "body", true)]);
+        let agents = SharedAgents::new(vec![persona("code-reviewer", "body", true)]);
         let t = make_task_with_agents(agents);
         let schema = t.parameters_schema();
         let mode_enum = schema["properties"]["mode"]["enum"]
@@ -863,7 +863,7 @@ mod tests {
             .expect("mode enum present");
         let names: Vec<&str> = mode_enum.iter().filter_map(|v| v.as_str()).collect();
         assert!(names.contains(&"agent"));
-        assert!(names.contains(&"knowledge-extract"));
+        assert!(names.contains(&"code-reviewer"));
     }
 
     /// The schema must state every parameter `execute` refuses a call for:

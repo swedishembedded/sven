@@ -150,8 +150,6 @@ separate `RunningTools` or `AwaitingApproval` states.
 | `NetworkAccess` | ✓ | - |
 | `GitOperation` | ✓ | - |
 | `ExecuteShell` | ✓ | ✓ (inherently dangerous) |
-| `AssimilateKnowledge` | ✓ | - |
-| `IngestDocument` | ✓ | ✓ (inherently dangerous) |
 
 ### State Transitions
 
