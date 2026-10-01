@@ -179,10 +179,12 @@ pub fn spawn_question_bridge(
 }
 
 /// What an approval would let run, for the person deciding: the tool and
-/// its command, its path, or (for any other tool) its arguments.
+/// its command (`shell_command` for the shell tool), its path, or (for any
+/// other tool) its arguments.
 fn describe_call(call: &sven_hsm::GatedCall) -> String {
     let field = |key: &str| call.args.get(key).and_then(serde_json::Value::as_str);
-    let detail = match (field("command"), field("path")) {
+    let command = field("shell_command").or_else(|| field("command"));
+    let detail = match (command, field("path")) {
         (Some(command), _) => format!("Command: {command}"),
         (None, Some(path)) => format!("Path: {path}"),
         (None, None) => format!("Arguments: {}", call.args),

@@ -34,6 +34,22 @@ pub(crate) fn session_policy(
     Ok(with_approval(policy, approval))
 }
 
+/// The calls manual approval approves without asking: a `shell` command
+/// matching `tools.auto_approve_patterns` (and no deny pattern).
+pub(crate) fn preapproval(tools: &sven_config::ToolsConfig) -> sven_executors::Preapproval {
+    let policy = sven_tool_registry::ToolPolicy::from_config(tools);
+    std::sync::Arc::new(move |call: &sven_hsm::GatedCall| {
+        call.name == "shell"
+            && call
+                .args
+                .get("shell_command")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|command| {
+                    policy.decide(command) == sven_tool_api::ApprovalPolicy::Auto
+                })
+    })
+}
+
 /// `policy` under `approval`: manual approval asks about every call that is
 /// not read-only; auto asks about none.
 pub(crate) fn with_approval(policy: PermissionPolicy, approval: ApprovalMode) -> PermissionPolicy {

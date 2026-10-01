@@ -236,6 +236,8 @@ pub(super) struct ServeTerms {
     /// The parent's approval mode: under manual, every call of the child
     /// that is not read-only comes to the parent.
     pub(super) approval: ApprovalMode,
+    /// The parent's `tools.deny_patterns` and `tools.auto_approve_patterns`.
+    pub(super) command_patterns: Option<(Vec<String>, Vec<String>)>,
 }
 
 // ── The protocol exchange ─────────────────────────────────────────────────────
@@ -480,6 +482,10 @@ fn serve_args(
     }
     if terms.approval == ApprovalMode::Manual {
         flag("approval", "manual".to_string());
+    }
+    if let Some((deny, auto_approve)) = &terms.command_patterns {
+        let patterns = serde_json::json!({"deny": deny, "auto_approve": auto_approve});
+        flag("command-patterns", patterns.to_string());
     }
     let seconds = contract
         .remaining(now)
@@ -896,6 +902,7 @@ mod tests {
         let terms = ServeTerms {
             disabled_tools: vec!["shell".to_string()],
             approval: ApprovalMode::Manual,
+            command_patterns: Some((vec!["rm -rf /*".into()], vec!["ls *".into()])),
         };
         let args = serve_args(Some("fast"), &contract, &terms, now);
         assert_eq!(
@@ -913,6 +920,8 @@ mod tests {
                 "shell",
                 "--approval",
                 "manual",
+                "--command-patterns",
+                r#"{"auto_approve":["ls *"],"deny":["rm -rf /*"]}"#,
                 "--wall-clock-secs",
                 "90",
                 "--permission-timeout-secs",

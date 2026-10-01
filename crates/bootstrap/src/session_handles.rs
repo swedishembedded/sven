@@ -45,13 +45,25 @@ pub struct KernelChannels {
 /// outright. A gate nobody holds any more (the channel closed) refuses.
 pub struct GateApprover {
     approvals: mpsc::Sender<ApprovalRequest>,
+    preapproved: Option<sven_executors::Preapproval>,
 }
 
 impl GateApprover {
     /// An approver that asks through `approvals`.
     #[must_use]
     pub fn new(approvals: mpsc::Sender<ApprovalRequest>) -> Self {
-        Self { approvals }
+        Self {
+            approvals,
+            preapproved: None,
+        }
+    }
+
+    /// Approves a call `preapproved` accepts without asking, as the
+    /// session's own `UserExecutor` does.
+    #[must_use]
+    pub fn with_preapproval(mut self, preapproved: sven_executors::Preapproval) -> Self {
+        self.preapproved = Some(preapproved);
+        self
     }
 }
 
@@ -62,15 +74,19 @@ impl sven_tool_api::PermissionRequester for GateApprover {
         call: &sven_tool_api::ToolCall,
         capability: sven_hsm::ToolCapability,
     ) -> bool {
+        let gated = sven_hsm::GatedCall {
+            name: call.name.clone(),
+            args: call.args.clone(),
+        };
+        if self.preapproved.as_ref().is_some_and(|p| p(&gated)) {
+            return true;
+        }
         let (reply_tx, reply_rx) = oneshot::channel();
         let request = ApprovalRequest {
             approval_id: sven_hsm::ApprovalId::new(),
             capability,
             description: format!("a sub-agent wants to run the tool `{}`", call.name),
-            call: Some(sven_hsm::GatedCall {
-                name: call.name.clone(),
-                args: call.args.clone(),
-            }),
+            call: Some(gated),
             reply_tx,
         };
         if self.approvals.send(request).await.is_err() {

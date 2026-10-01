@@ -77,7 +77,27 @@ pub enum AcpCommands {
         /// call's capability in its `_meta` (`sven.capability`).
         #[arg(long, value_enum, default_value = "auto")]
         approval: sven_config::ApprovalMode,
+
+        /// Replaces `tools.deny_patterns` and `tools.auto_approve_patterns`
+        /// with `{"deny": [...], "auto_approve": [...]}`. The `task` tool
+        /// passes its session's patterns, so a sub-agent is held to them.
+        #[arg(long, value_name = "JSON", value_parser = parse_command_patterns)]
+        command_patterns: Option<CommandPatterns>,
     },
+}
+
+/// Shell-command patterns a parent hands its sub-agent (`--command-patterns`).
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandPatterns {
+    /// `tools.deny_patterns`.
+    pub deny: Vec<String>,
+    /// `tools.auto_approve_patterns`.
+    pub auto_approve: Vec<String>,
+}
+
+fn parse_command_patterns(json: &str) -> Result<CommandPatterns, String> {
+    serde_json::from_str(json).map_err(|e| format!("not a command-pattern object: {e}"))
 }
 
 /// Holds `config` to the budgets a parent handed down: each only ever
@@ -119,6 +139,7 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             disable_tools,
             permission_timeout_secs,
             approval,
+            command_patterns,
         } => {
             let mut config = sven_config::load(None)?;
             if let Some(ref name) = model {
@@ -133,6 +154,10 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
                 *max_output_tokens,
                 disable_tools,
             );
+            if let Some(patterns) = command_patterns {
+                config.tools.deny_patterns = patterns.deny.clone();
+                config.tools.auto_approve_patterns = patterns.auto_approve.clone();
+            }
             let permission_timeout = permission_timeout_secs.map_or(
                 crate::agent::DEFAULT_PERMISSION_TIMEOUT,
                 std::time::Duration::from_secs,

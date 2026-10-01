@@ -106,8 +106,10 @@ focus with `Ctrl+W K`, then type `:q`.
 
 ### A command runs without asking me first
 
-Check the `auto_approve_patterns` list in your config. If the command matches a
-pattern there, it is approved automatically. Adjust the list to remove patterns
+That is the default: `--approval auto` runs every call the mode allows. Start
+sven with `--approval manual` to be asked about each call that is not
+read-only. Under manual approval a shell command matching
+`tools.auto_approve_patterns` still runs without asking; remove the patterns
 you want to be prompted for:
 
 ```yaml
@@ -120,8 +122,9 @@ tools:
 
 ### A command I want to run is being blocked
 
-Check the `deny_patterns` list. If the command matches a deny rule it will
-always be blocked. Remove the relevant pattern:
+Check the `deny_patterns` list. A shell command matching a deny pattern is
+refused in every approval mode ("refused: the command matches
+tools.deny_patterns"). Remove the relevant pattern:
 
 ```yaml
 tools:

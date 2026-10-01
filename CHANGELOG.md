@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sven acp serve --permission-timeout-secs 0` is rejected: the wait is always bounded. Pass a positive number of seconds.
 - `ToolCapability` gains `SpawnChild`, and `Effect::InstantiateSubmachine` now requires it: a machine that spawns children must allow `SpawnChild` in the spawning state, and an exhaustive `match` on `ToolCapability` needs the new arm.
 - `ChildSpawner::spawn_child` takes a `run: ChildRun` parameter (the contract and the child's cancel scope).
-- New public fields on structs that are not `#[non_exhaustive]`: `ToolsConfig.disabled`, `AgentConfig.child_run_timeout_secs`, `TurnLimits.max_output_tokens`, `IntegrationProviders.approver` (a `ChildApprover`), `TeamMember.deny_tools`. A struct literal needs the field or `..Default::default()`.
+- New public fields on structs that are not `#[non_exhaustive]`: `ToolsConfig.disabled`, `AgentConfig.child_run_timeout_secs`, `TurnLimits.max_output_tokens`, `IntegrationProviders.approver` (a `ChildApprover`) and `IntegrationProviders.approval_mode`, `TeamMember.deny_tools`, `ShellTool.policy`. A struct literal needs the field or `..Default::default()`.
 - `SubagentUpdate` gains `TokensUsed`; an exhaustive `match` needs the arm.
 - `TaskState::RunningTools` is gone.
 - An approval is for one call: `Context::grant`, `Context::has_granted` and `ToolCapability::is_inherently_dangerous` are gone, `PermissionState::granted_capabilities` is `approved_calls` (`Context::is_call_approved`), and `PendingApproval` gains `call_id` (the call it gates; `None` for a decision). A policy that should ask a person uses `PermissionPolicy::with_manual_approval` or `require_approval`.
@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PermissionPolicy::with_manual_approval`, `ToolCapability::is_read_only`, `Context::is_call_approved`.
 - `Tool::call_capability`, `sven_tool_api::capability_by_action`, `ToolRegistry::capability_of_call`.
 - `PermissionPolicy::ceiling_in_any_state`; `SystemTool::{with_allowed_modes, without_mcp_management}`.
+- `sven acp serve --command-patterns JSON`; `ToolPolicy` is `Default`; `sven_tool_registry::policy::has_shell_operators`; `GdbTool::with_command_policy`; `UserExecutor::with_preapproval`, `GateApprover::with_preapproval`, `sven_executors::Preapproval`.
 - `ChildRunContract` (`sven-hsm`): the capabilities, budgets and deadline a child run holds; `narrow` only ever tightens them. `PermissionPolicy::{allows, allows_in_every_state, requires_approval, ceiling_in, ceiling_in_every_state, intersect}`, `ToolCapability::ALL`, `known_capability_for_tool_name`.
 - `sven-kernel`: `CancelScope`, `DeadlineTimer`, `ChildRun`, `ErasedRuntime::spawn_child_run`, `Runtime`/`ErasedRuntime::{cancel, cancel_scope}`, `RUN_CANCELLED`, `EventSink::closed`.
 - `ToolRegistry::remove`, the `tools.disabled` configuration, `agent.child_run_timeout_secs` (default 3600).
@@ -53,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Team members are held to their team's limits: `deny_tools`, `max_iterations` and `token_budget`. The budget is reserved per run under the team-config lock and charged with everything the run and its sub-agents used; a member never waits for a person. `sven team start` writes the team config (under the lock) before spawning. Teammates honour `--model` and their definition's instructions, back off and then fail on an unreadable team config, and do not repeat their initial task on a restart. Team-config writes are locked across processes.
 
 ### Fixed
+- `tools.deny_patterns` and `tools.auto_approve_patterns` did nothing: nothing read them. They match the command text as written, and are a convenience, not a security boundary. A shell command whose text matches a deny pattern is refused in every approval mode - by the `shell` tool, sub-agents, `sven mcp serve` and the GDB tool's host commands (the shell side of `shell`, `!`, `pipe`, `pipe -d` and `|`, and the debug server, whether given as `server_command` or `command`). Under `--approval manual` a command matching an auto-approve pattern runs without asking, a sub-agent's or SDLC task's included, unless it contains `;`, `|`, `&`, `<`, `>`, a backtick, `$(` or a line break.
+- An approval prompt for the shell tool shows its command (`shell_command`), not its raw arguments.
+- `gdb` start_server refuses a `target` that is not a device name (letters, digits, `_ - . +`): it was spliced unquoted into the shell command that starts the debug server.
 - `spawn_teammate` no longer passes an undefined `--team-lead-peer` flag that made every spawned teammate fail to start.
 - A teammate started with a `task_prompt` puts it on the task board as its first task; it was dropped.
 - A turn's output-token limit applies even when the model's context window is unknown.

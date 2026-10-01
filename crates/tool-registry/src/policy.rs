@@ -5,8 +5,18 @@ use regex::Regex;
 use sven_config::ToolsConfig;
 use sven_tool_api::ApprovalPolicy;
 
-/// Policy engine that maps a tool call to an approval decision.
-#[derive(Debug)]
+/// The shell-command patterns of `tools.auto_approve_patterns` and
+/// `tools.deny_patterns`, matched against the command text as written: a
+/// command whose text matches a deny pattern is refused, and under manual
+/// approval one whose text matches an auto-approve pattern runs without
+/// asking. [`Default`] matches nothing.
+///
+/// Text matching is a convenience, not a security boundary: a shell can
+/// express the same effect in endlessly many spellings. A command containing
+/// a shell control operator or substitution (see [`has_shell_operators`])
+/// never matches an auto-approve pattern - `ls *` must not approve
+/// `ls; rm -rf ~`.
+#[derive(Debug, Default)]
 pub struct ToolPolicy {
     auto_patterns: Vec<Regex>,
     deny_patterns: Vec<Regex>,
@@ -31,6 +41,9 @@ impl ToolPolicy {
                 return ApprovalPolicy::Deny;
             }
         }
+        if has_shell_operators(command) {
+            return ApprovalPolicy::Ask;
+        }
         for re in &self.auto_patterns {
             if re.is_match(command) {
                 return ApprovalPolicy::Auto;
@@ -38,6 +51,17 @@ impl ToolPolicy {
         }
         ApprovalPolicy::Ask
     }
+}
+
+/// `true` if `command` chains, pipes, redirects or substitutes: it contains
+/// `;`, `|`, `&`, `<`, `>`, a backtick, `$(` or a line break (`&&` and `||`
+/// included). Such a command does more than its first word says.
+#[must_use]
+pub fn has_shell_operators(command: &str) -> bool {
+    command.contains("$(")
+        || command
+            .chars()
+            .any(|c| matches!(c, ';' | '|' | '&' | '<' | '>' | '`' | '\n' | '\r'))
 }
 
 /// Convert a simple shell glob pattern to a [`Regex`].
@@ -115,6 +139,28 @@ mod tests {
         assert_eq!(p.decide("ls -"), ApprovalPolicy::Auto);
         // Two chars after space → no match
         assert_ne!(p.decide("ls --"), ApprovalPolicy::Auto);
+    }
+
+    /// A command that chains, pipes, redirects or substitutes never matches
+    /// an auto-approve pattern, whatever it starts with.
+    #[test]
+    fn a_command_with_shell_operators_is_never_auto_approved() {
+        let p = policy_with(&["ls *", "cat *"], &[]);
+        for command in [
+            "ls; rm -rf ~",
+            "ls && rm -rf ~",
+            "ls || rm -rf ~",
+            "ls | sh",
+            "ls & rm -rf ~",
+            "cat a > b",
+            "cat < /etc/shadow",
+            "ls `rm -rf ~`",
+            "ls $(rm -rf ~)",
+            "ls\nrm -rf ~",
+        ] {
+            assert_eq!(p.decide(command), ApprovalPolicy::Ask, "{command:?}");
+        }
+        assert_eq!(p.decide("ls -la src"), ApprovalPolicy::Auto);
     }
 
     // ── Ask fallback ──────────────────────────────────────────────────────────

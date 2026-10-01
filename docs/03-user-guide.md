@@ -384,12 +384,14 @@ Agent calls:
 
 ### Approval policy
 
-Before running a shell command, sven checks it against approval rules:
+By default (`--approval auto`) every call the mode allows runs without a
+prompt. A shell command is also checked against two lists of patterns:
 
-- **Auto-approved** patterns run without prompting (e.g. `cat *`, `ls *`,
-  `grep *`).
-- **Denied** patterns are blocked outright (e.g. `rm -rf /*`).
-- Everything else is presented for confirmation if the agent requests it.
+- **Denied** patterns (`tools.deny_patterns`, e.g. `rm -rf /*`) are refused
+  outright, in every approval mode.
+- **Auto-approved** patterns (`tools.auto_approve_patterns`, e.g. `cat *`,
+  `ls *`, `grep *`) run without a prompt under `--approval manual`; every
+  other call that is not read-only is put to you first.
 
 You can customise these patterns in the configuration file - see
 [Configuration](05-configuration.md).

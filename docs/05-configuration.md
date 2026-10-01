@@ -210,8 +210,9 @@ agent:
 # ── Tools ──────────────────────────────────────────────────────────────────
 
 tools:
-  # Shell commands matching these glob patterns are approved automatically,
-  # without asking for confirmation.
+  # Under --approval manual, shell commands matching these glob patterns run
+  # without asking for confirmation. (Under the default auto approval nothing
+  # asks anyway.)
   auto_approve_patterns:
     - "cat *"
     - "ls *"
@@ -219,7 +220,8 @@ tools:
     - "rg *"
     - "grep *"
 
-  # Shell commands matching these patterns are always blocked.
+  # Shell commands matching these patterns are always refused, whatever the
+  # approval mode.
   deny_patterns:
     - "rm -rf /*"
     - "dd if=*"
@@ -479,12 +481,18 @@ Controls what the agent is allowed to do and how.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `auto_approve_patterns` | `["cat *", "ls *", ...]` | Commands matching these run without confirmation |
-| `deny_patterns` | `["rm -rf /*", ...]` | Commands matching these are always blocked |
+| `auto_approve_patterns` | `["cat *", "ls *", ...]` | Under `--approval manual`, a shell command whose text matches one of these runs without asking (sub-agents' and SDLC tasks' included). A command containing `;`, `\|`, `&`, `<`, `>`, a backtick, `$(` or a line break never matches. |
+| `deny_patterns` | `["rm -rf /*", ...]` | A shell command whose text matches one of these is refused, in every approval mode - by the `shell` tool, `sven mcp serve`, sub-agents and the GDB tool's host commands (the shell side of `shell`, `!`, `pipe` and `\|`, and the server it starts) |
 | `disabled` | `[]` | Tools, by name, a session never offers the model and never runs - built-in, MCP or application-supplied alike |
 | `timeout_secs` | `30` | Per-tool-call timeout in seconds |
 
-**Adding auto-approve patterns:**
+Patterns are globs matched against the whole command text as written: `*`
+matches anything, `?` one character. They are a convenience, not a security
+boundary - a shell can say the same thing in many spellings (`rm -r -f /`,
+a script, an alias) that no pattern foresees. Confine what the agent may do
+with `--mode`, `tools.disabled` and a sandbox.
+
+**Adding auto-approve patterns** (for `--approval manual`):
 
 ```yaml
 tools:
@@ -735,7 +743,7 @@ model:
   base_url: http://localhost:11434/v1
 ```
 
-**Auto-approve all read and test commands:**
+**Under manual approval, auto-approve all read and test commands:**
 
 ```yaml
 tools:

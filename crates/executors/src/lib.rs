@@ -59,5 +59,5 @@ pub use thread_store::{ThreadId, ThreadStore};
 pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
 pub use turn::{CompactionConfig, TurnExecutor};
-pub use user::{ApprovalRequest, UserExecutor, UserQuestion};
+pub use user::{ApprovalRequest, Preapproval, UserExecutor, UserQuestion};
 pub use verify::VerifyExecutor;

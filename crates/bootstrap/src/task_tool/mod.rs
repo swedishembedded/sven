@@ -139,11 +139,13 @@ impl ChildApprover {
         host: Option<Arc<dyn PermissionRequester>>,
         approval: ApprovalMode,
         approvals: &mpsc::Sender<sven_executors::ApprovalRequest>,
+        tools: &sven_config::ToolsConfig,
     ) -> Option<Self> {
         match (host, approval) {
             (Some(host), _) => Some(Self::Host(host)),
             (None, ApprovalMode::Manual) => Some(Self::Gate(Arc::new(
-                crate::session_handles::GateApprover::new(approvals.clone()),
+                crate::session_handles::GateApprover::new(approvals.clone())
+                    .with_preapproval(crate::mode_policy::preapproval(tools)),
             ))),
             (None, ApprovalMode::Auto) => None,
         }
@@ -193,6 +195,8 @@ pub struct TaskTool {
     approval_mode: ApprovalMode,
     /// Tools the session never runs, so its children never run them either.
     disabled_tools: Vec<String>,
+    /// The session's `tools.deny_patterns` and `tools.auto_approve_patterns`.
+    command_patterns: Option<(Vec<String>, Vec<String>)>,
 }
 
 impl TaskTool {
@@ -216,6 +220,7 @@ impl TaskTool {
             approver: None,
             approval_mode: ApprovalMode::Auto,
             disabled_tools: Vec::new(),
+            command_patterns: None,
         }
     }
 
@@ -257,6 +262,17 @@ impl TaskTool {
     #[must_use]
     pub fn with_disabled_tools(mut self, tools: Vec<String>) -> Self {
         self.disabled_tools = tools;
+        self
+    }
+
+    /// Holds each child to the session's shell-command patterns.
+    #[must_use]
+    pub fn with_command_patterns(mut self, tools: &sven_config::ToolsConfig) -> Self {
+        let patterns = (
+            tools.deny_patterns.clone(),
+            tools.auto_approve_patterns.clone(),
+        );
+        self.command_patterns = Some(patterns);
         self
     }
 
@@ -742,6 +758,7 @@ impl Tool for TaskTool {
             terms: session::ServeTerms {
                 disabled_tools: self.disabled_tools.clone(),
                 approval: self.approval_mode,
+                command_patterns: self.command_patterns.clone(),
             },
             workdir,
             model_override,

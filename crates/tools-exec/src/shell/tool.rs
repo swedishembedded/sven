@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use libc;
 use serde_json::{json, Value};
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::process::Command;
 use tracing::debug;
 
@@ -14,6 +15,7 @@ use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 use sven_tool_api::PathScope;
+use sven_tool_registry::ToolPolicy;
 
 /// Hard byte ceiling for combined stdout + stderr returned to the model.
 /// 20 KB ≈ 5,000 tokens - keeps output well within a 40 K-token context window.
@@ -43,6 +45,9 @@ pub struct ShellTool {
     /// confine what the command itself does: a shell can reach any path the
     /// process can.
     pub scope: PathScope,
+    /// `tools.deny_patterns`: a command matching one is refused and never
+    /// runs, whoever approved it.
+    pub policy: Arc<ToolPolicy>,
 }
 
 impl Default for ShellTool {
@@ -50,6 +55,7 @@ impl Default for ShellTool {
         Self {
             timeout_secs: 30,
             scope: PathScope::default(),
+            policy: Arc::default(),
         }
     }
 }
@@ -118,6 +124,14 @@ impl Tool for ShellTool {
                 );
             }
         };
+        if self.policy.decide(&command) == ApprovalPolicy::Deny {
+            return ToolOutput::err(
+                &call.id,
+                format!(
+                    "refused: the command matches tools.deny_patterns and is never run: {command}"
+                ),
+            );
+        }
         let workdir = match call.args.get("workdir").and_then(|v| v.as_str()) {
             Some(requested) => match self.scope.resolve_for(call, requested) {
                 Ok(dir) => Some(dir),
@@ -416,6 +430,33 @@ mod tests {
         let out = t.execute(&call("1", json!({}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("shell_command"));
+    }
+
+    /// A command matching `tools.deny_patterns` is refused and never runs,
+    /// whatever the session's approval mode.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_command_matching_a_deny_pattern_never_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("marker");
+        let t = ShellTool {
+            policy: std::sync::Arc::new(sven_tool_registry::ToolPolicy::from_config(
+                &sven_config::ToolsConfig {
+                    deny_patterns: vec!["touch *".into()],
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
+        let out = t
+            .execute(&call(
+                "1",
+                json!({ "shell_command": format!("touch {}", marker.display()) }),
+            ))
+            .await;
+        assert!(out.is_error, "{}", out.content);
+        assert!(out.content.contains("deny_patterns"), "{}", out.content);
+        assert!(!marker.exists(), "the command did not run");
     }
 
     // `sleep` is Unix-specific; on Windows use `timeout /t N`.

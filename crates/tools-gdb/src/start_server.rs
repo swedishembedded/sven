@@ -172,6 +172,15 @@ impl Tool for GdbStartServerTool {
         let command = if let Some(cmd) = call.args.get("command").and_then(|v| v.as_str()) {
             cmd.to_string()
         } else if let Some(target) = call.args.get("target").and_then(|v| v.as_str()) {
+            if !is_device_name(target) {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "`target` {target:?} is not a device name: use letters, digits and \
+                         `_ - . +` only (e.g. 'STM32F407VG'), or pass the full `command`."
+                    ),
+                );
+            }
             format!("JLinkGDBServer -device {target} -if SWD -speed 4000 -port 2331")
         } else {
             match discover_gdb_server_command().await {
@@ -315,6 +324,15 @@ impl Tool for GdbStartServerTool {
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────
 
+/// `true` if `target` reads as a J-Link device name, which the tool splices
+/// into a shell command line unquoted.
+fn is_device_name(target: &str) -> bool {
+    !target.is_empty()
+        && target
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '+'))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -363,6 +381,22 @@ mod tests {
             "target was ignored; got: {}",
             out.content
         );
+    }
+
+    /// `target` names a device and is spliced into a shell command, so a
+    /// value that is not a device name is refused, never run.
+    #[tokio::test]
+    async fn a_target_that_is_not_a_device_name_is_refused() {
+        let t = make_tool();
+        for target in ["x; touch pwned", "x $(id)", "x`id`", "a b"] {
+            let out = t.execute(&call(json!({"target": target}))).await;
+            assert!(out.is_error, "{target}: {}", out.content);
+            assert!(
+                out.content.contains("not a device name"),
+                "{target}: {}",
+                out.content
+            );
+        }
     }
 
     #[tokio::test]

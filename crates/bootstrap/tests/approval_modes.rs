@@ -114,7 +114,7 @@ async fn session_running(
             call(
                 &format!("c{i}"),
                 tool.0,
-                serde_json::json!({"command": command, "path": "src/lib.rs"}),
+                serde_json::json!({"shell_command": command, "path": "src/lib.rs"}),
             )
         })
         .collect();
@@ -210,6 +210,23 @@ async fn manual_approval_puts_each_shell_call_to_the_person() {
     .await;
     assert_eq!(outcome.ran, 0, "denied, so it never ran");
     assert_eq!(outcome.prompts.len(), 1);
+}
+
+/// `tools.auto_approve_patterns` (by default `ls *`, `cat *`, `grep *`, ...)
+/// are the shell commands manual approval does not ask about.
+#[tokio::test]
+async fn manual_approval_does_not_ask_about_an_auto_approved_command() {
+    let outcome = session_running(
+        ApprovalMode::Manual,
+        AgentMode::Agent,
+        ("shell", ToolCapability::ExecuteShell),
+        &["ls -la".to_string(), "rm -rf build".to_string()],
+        "yes",
+    )
+    .await;
+    assert_eq!(outcome.ran, 2);
+    assert_eq!(outcome.prompts.len(), 1, "{:?}", outcome.prompts);
+    assert!(outcome.prompts[0].contains("rm -rf build"));
 }
 
 #[tokio::test]

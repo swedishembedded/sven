@@ -40,6 +40,7 @@ tool passes its sub-agent's budgets through them:
 | `--disable-tool NAME` | the sessions never offer nor run `NAME` (repeatable; adds to `tools.disabled`) |
 | `--permission-timeout-secs SECS` | a tool call waits `SECS` for the client's permission answer before it is denied (default 60, at least 1) |
 | `--approval auto\|manual` | whose policy decides which calls go to the client (see below; default `auto`) |
+| `--command-patterns JSON` | replaces `tools.deny_patterns` and `tools.auto_approve_patterns` with `{"deny": [...], "auto_approve": [...]}` |
 
 Under `--approval auto` (the default) the agent's own gate asks nobody, and
 a tool whose policy is `Ask` (`shell`, `write_file`, `edit_file`, MCP tools,

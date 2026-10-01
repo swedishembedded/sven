@@ -38,6 +38,8 @@ pub struct GdbTool {
     wait_stopped: GdbWaitStoppedTool,
     status: GdbStatusTool,
     stop: GdbStopTool,
+    /// `tools.deny_patterns`, applied to every host command the tool runs.
+    policy: Arc<sven_tool_registry::ToolPolicy>,
 }
 
 impl GdbTool {
@@ -50,7 +52,70 @@ impl GdbTool {
             wait_stopped: GdbWaitStoppedTool::new(state.clone()),
             status: GdbStatusTool::new(state.clone()),
             stop: GdbStopTool::new(state),
+            policy: Arc::default(),
         }
+    }
+
+    /// Refuses a host command - a debug server to start, or a GDB command's
+    /// `shell`, `!` or `pipe` passthrough - whose text matches
+    /// `tools.deny_patterns`, as the `shell` tool refuses one.
+    #[must_use]
+    pub fn with_command_policy(mut self, policy: Arc<sven_tool_registry::ToolPolicy>) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// The host command `call` would run, if it runs one: the server command
+    /// `start_server` spawns (spelled `server_command` or `command`), or the
+    /// shell side of a GDB `shell`, `!`, `pipe` or `|` command.
+    fn host_command(action: &str, args: &Value) -> Option<String> {
+        let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::trim);
+        match action {
+            "start_server" => text("server_command")
+                .or_else(|| text("command"))
+                .map(str::to_string),
+            "command" => gdb_shell_command(text("command")?).map(str::to_string),
+            _ => None,
+        }
+    }
+}
+
+/// The shell command a GDB command line hands to the host shell, if any.
+///
+/// `shell CMD` and `!CMD` run `CMD`. `pipe GDBCMD | CMD` and its alias
+/// `| GDBCMD | CMD` run `CMD`; `pipe -d DELIM GDBCMD DELIM CMD` splits on
+/// `DELIM` instead. A pipe without a delimiter repeats the last GDB command
+/// into its whole remainder.
+fn gdb_shell_command(command: &str) -> Option<&str> {
+    let command = command.trim_start();
+    if let Some(rest) = command.strip_prefix('!') {
+        return Some(rest.trim());
+    }
+    let (word, rest) = match command.strip_prefix('|') {
+        Some(rest) => ("pipe", rest),
+        None => command
+            .split_once(char::is_whitespace)
+            .unwrap_or((command, "")),
+    };
+    match word {
+        "shell" => Some(rest.trim()),
+        "pipe" => {
+            let rest = rest.trim_start();
+            let (delimiter, piped) = match rest.strip_prefix("-d") {
+                Some(after) if after.starts_with(char::is_whitespace) => {
+                    let after = after.trim_start();
+                    after.split_once(char::is_whitespace).unwrap_or((after, ""))
+                }
+                _ => ("|", rest),
+            };
+            Some(
+                piped
+                    .split_once(delimiter)
+                    .map_or(piped, |(_, shell)| shell)
+                    .trim(),
+            )
+        }
+        _ => None,
     }
 }
 
@@ -140,6 +205,18 @@ impl Tool for GdbTool {
             Some(a) => a.to_string(),
             None => return ToolOutput::err(&call.id, "missing required parameter 'action'"),
         };
+
+        if let Some(host_command) = Self::host_command(&action, &call.args) {
+            if self.policy.decide(&host_command) == ApprovalPolicy::Deny {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "refused: the command matches tools.deny_patterns and is never run: \
+                         {host_command}"
+                    ),
+                );
+            }
+        }
 
         match action.as_str() {
             "start_server" => {
@@ -255,6 +332,41 @@ mod tests {
             name: "gdb".into(),
             args,
         }
+    }
+
+    /// A host command the GDB tool would run is refused when its text
+    /// matches a deny pattern: a server to start, whichever field spells
+    /// it, or the shell side of a `shell`/`!`/`pipe`/`|` passthrough.
+    #[tokio::test]
+    async fn a_denied_host_command_is_refused() {
+        let policy = sven_tool_registry::ToolPolicy::from_config(&sven_config::ToolsConfig {
+            deny_patterns: vec!["rm *".into()],
+            ..Default::default()
+        });
+        let t = make_tool().with_command_policy(Arc::new(policy));
+        for args in [
+            json!({"action": "command", "command": "shell rm -rf build"}),
+            json!({"action": "command", "command": "!rm -rf build"}),
+            json!({"action": "command", "command": "pipe rm -rf build"}),
+            json!({"action": "command", "command": "|rm -rf build"}),
+            json!({"action": "command", "command": "| info registers | rm -rf build"}),
+            json!({"action": "command", "command": "pipe -d XX bt XX rm -rf build"}),
+            json!({"action": "start_server", "server_command": "rm -rf build"}),
+            json!({"action": "start_server", "command": "rm -rf build"}),
+        ] {
+            let out = t.execute(&call(args.clone())).await;
+            assert!(
+                out.content.contains("deny_patterns"),
+                "{args}: {}",
+                out.content
+            );
+        }
+        let out = t
+            .execute(&call(
+                json!({"action": "command", "command": "info registers"}),
+            ))
+            .await;
+        assert!(!out.content.contains("deny_patterns"));
     }
 
     #[test]

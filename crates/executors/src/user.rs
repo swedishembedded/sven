@@ -38,10 +38,12 @@
 //!   simply stays parked forever rather than being answered on its behalf.
 
 use async_trait::async_trait;
+use std::sync::Arc;
 use sven_hsm::{
     ApprovalId, Effect, Event, ObservationSink, QuestionId, ToolCallId, ToolCapability,
 };
 use sven_kernel::{EffectExecutor, EventSink};
+
 use sven_vocab::ApprovalMode;
 use tokio::sync::{mpsc, oneshot};
 
@@ -91,7 +93,12 @@ pub struct UserExecutor {
     approval_tx: mpsc::Sender<ApprovalRequest>,
     parked_tx: Option<mpsc::Sender<ParkedQuestion>>,
     approval_mode: ApprovalMode,
+    preapproved: Option<Preapproval>,
 }
+
+/// Which tool calls manual approval approves without asking (a shell command
+/// matching `tools.auto_approve_patterns`).
+pub type Preapproval = Arc<dyn Fn(&sven_hsm::GatedCall) -> bool + Send + Sync>;
 
 impl UserExecutor {
     /// Creates an executor.
@@ -112,7 +119,16 @@ impl UserExecutor {
             approval_tx,
             parked_tx: None,
             approval_mode: ApprovalMode::Auto,
+            preapproved: None,
         }
+    }
+
+    /// Under manual approval, approves a tool call `preapproved` accepts
+    /// without asking anyone.
+    #[must_use]
+    pub fn with_preapproval(mut self, preapproved: Preapproval) -> Self {
+        self.preapproved = Some(preapproved);
+        self
     }
 
     /// Puts approval requests to a person only under
@@ -206,7 +222,11 @@ impl EffectExecutor for UserExecutor {
                 description,
                 call,
             } => {
-                if self.approval_mode == ApprovalMode::Auto {
+                let preapproved = call
+                    .as_ref()
+                    .zip(self.preapproved.as_ref())
+                    .is_some_and(|(call, preapproved)| preapproved(call));
+                if self.approval_mode == ApprovalMode::Auto || preapproved {
                     let _ = sink.emit(Event::HumanApproved { approval_id }).await;
                     return;
                 }

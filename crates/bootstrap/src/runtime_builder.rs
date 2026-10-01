@@ -564,6 +564,7 @@ impl RuntimeBuilder {
             self.permission_requester.clone(),
             self.approval_mode,
             &approval_tx,
+            &self.config.tools,
         );
         // Semantic memory (SQLite + FTS5 `semantic_memory` tool) is
         // constructed here, the one real assembly point every surface
@@ -786,7 +787,8 @@ impl RuntimeBuilder {
             Some(custom) => custom,
             None => {
                 let user_executor = sven_executors::UserExecutor::new(question_tx, approval_tx)
-                    .with_approval_mode(self.approval_mode);
+                    .with_approval_mode(self.approval_mode)
+                    .with_preapproval(crate::mode_policy::preapproval(&self.config.tools));
                 #[cfg(feature = "memory")]
                 let user_executor = user_executor.with_parked_questions(parked_tx);
                 let base = CompositeExecutorBuilder::default()

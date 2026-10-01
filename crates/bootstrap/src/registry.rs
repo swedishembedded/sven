@@ -297,7 +297,8 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
             p.cfg.model.max_output_tokens,
         )
         .with_approver(p.approver, p.approval_mode)
-        .with_disabled_tools(p.cfg.tools.disabled.clone()),
+        .with_disabled_tools(p.cfg.tools.disabled.clone())
+        .with_command_patterns(&p.cfg.tools),
     );
 
     reg
@@ -354,7 +355,8 @@ fn build_profile_research(
         .with_wall_clock(cfg.agent.child_run_timeout())
         .with_turn_budgets(Some(cfg.agent.max_tool_rounds), cfg.model.max_output_tokens)
         .with_approver(integrations.approver.clone(), integrations.approval_mode)
-        .with_disabled_tools(cfg.tools.disabled.clone()),
+        .with_disabled_tools(cfg.tools.disabled.clone())
+        .with_command_patterns(&cfg.tools),
     );
 
     reg
@@ -437,6 +439,7 @@ fn register_base_tools(
     reg.register(ShellTool {
         timeout_secs: cfg.tools.timeout_secs,
         scope: paths.clone(),
+        policy: Arc::new(sven_tool_registry::ToolPolicy::from_config(&cfg.tools)),
     });
 
     // ── Web ───────────────────────────────────────────────────────────────────
@@ -471,7 +474,11 @@ fn register_base_tools(
         #[cfg(all(unix, feature = "gdb"))]
         {
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-            reg.register(GdbTool::new(gdb_state, cfg.tools.gdb.clone()));
+            reg.register(
+                GdbTool::new(gdb_state, cfg.tools.gdb.clone()).with_command_policy(Arc::new(
+                    sven_tool_registry::ToolPolicy::from_config(&cfg.tools),
+                )),
+            );
         }
     } else {
         // Suppress unused warnings for the buffer_store in SubAgent path.
@@ -511,6 +518,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     // ── System ────────────────────────────────────────────────────────────────
     reg.register(ShellTool {
         timeout_secs: cfg.tools.timeout_secs,
+        policy: Arc::new(sven_tool_registry::ToolPolicy::from_config(&cfg.tools)),
         ..ShellTool::default()
     });
 
@@ -537,7 +545,11 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     #[cfg(all(unix, feature = "gdb"))]
     {
         let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-        reg.register(GdbTool::new(gdb_state, cfg.tools.gdb.clone()));
+        reg.register(
+            GdbTool::new(gdb_state, cfg.tools.gdb.clone()).with_command_policy(Arc::new(
+                sven_tool_registry::ToolPolicy::from_config(&cfg.tools),
+            )),
+        );
     }
 
     reg
