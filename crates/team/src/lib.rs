@@ -13,6 +13,7 @@
 //! - [`definition`]: Declarative team definition files (`.sven/teams/*.yaml`).
 //! - [`cli`]: Implementations for the `sven team` CLI subcommands.
 
+mod branch_tools;
 pub mod cli;
 pub mod config;
 pub mod definition;
