@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A teammate started with a `task_prompt` puts it on the task board as its first task; it was dropped.
 - A turn's output-token limit applies even when the model's context window is unknown.
 - `agent.stream_idle_timeout_secs` no longer draws an unrecognised-key warning.
+- The README gave `chat` as the default mode and documented a `SVEN_MODE` variable that nothing reads; the default is `agent`.
 
 ## [2.0.0] - 2026-09-30
 

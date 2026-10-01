@@ -61,14 +61,13 @@ sven completions bash >> ~/.bashrc      # also: zsh, fish, powershell
 
 | Mode | Behaviour |
 |------|-----------|
-| `chat` | Conversational AI assistant. Handles Q&A, analysis, and exploration. Seamlessly hands off to `sdlc` for engineering tasks. Default. |
+| `chat` | Conversational AI assistant. Handles Q&A, analysis, and exploration. Seamlessly hands off to `sdlc` for engineering tasks. |
 | `sdlc` | Full software-development lifecycle machine. 57 formally-defined states covering Intake → Discovery → Planning → Execution → Verification → Delivery with approval gates and automatic recovery. |
 | `research` | Read-only tools. Good for exploration and analysis. |
 | `plan` | No file writes. Produces structured plans without side effects. |
-| `agent` | Full read/write access. |
+| `agent` | Full read/write access. Default. |
 
-Set with `--mode <name>` or `SVEN_MODE=<name>`. Cycle the legacy trio live in
-the TUI with `F4`.
+Set with `--mode <name>`. Cycle the legacy trio live in the TUI with `F4`.
 
 ## Conversation history
 
