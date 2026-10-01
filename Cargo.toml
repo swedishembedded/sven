@@ -146,7 +146,9 @@ sven-memory      = { path = "crates/memory", optional = true }
 sven-hsm         = { path = "crates/hsm", optional = true }
 uuid             = { workspace = true, optional = true }
 sven-ci          = { path = "crates/ci" }
-sven-sdk         = { path = "crates/sdk" }
+# Without default features for the same reason as sven-bootstrap: the
+# `minimal` build must not get the SDK's presets back through unification.
+sven-sdk         = { path = "crates/sdk", default-features = false }
 # `sven task run`: Task/VerifiedTaskSeed/ContentDigest to build the seed a
 # freshly-loaded `.task.toml` is posted as. Zero-dependency foundation crate,
 # so this is unconditional (not gated behind `memory`).
@@ -179,7 +181,7 @@ ratatui     = { workspace = true, optional = true }
 chrono      = { workspace = true }
 
 [features]
-default = ["tui", "network", "gdb", "memory"]
+default = ["tui", "network", "gdb", "memory", "coding", "research", "dbus"]
 # Interactive terminal UI (the default when `sven` is run with no subcommand
 # and a TTY is attached). Pulls in ratatui + sven-tui-nvim (nvim-rs).
 tui = ["dep:sven-tui", "dep:ratatui"]
@@ -193,6 +195,12 @@ gdb = ["sven-bootstrap/gdb"]
 # explicitly for the same reason `gdb` is above: sven-bootstrap is depended
 # on with `default-features = false` here.
 memory = ["sven-bootstrap/memory", "dep:sven-memory", "dep:sven-hsm", "dep:uuid"]
+# Tool presets (sven-bootstrap's and sven-sdk's own): `coding` attaches images
+# and audio and transcribes speech, `research` reads images.
+coding = ["sven-bootstrap/coding", "sven-sdk/coding"]
+research = ["sven-bootstrap/research", "sven-sdk/research"]
+# `provider: dbus`, brain's D-Bus model transport (Unix only).
+dbus = ["sven-bootstrap/dbus", "sven-sdk/dbus"]
 # Networked surfaces: the ACP and MCP servers (`sven acp`, `sven mcp`) and
 # the team task surface (`sven team`).
 network = [
@@ -202,9 +210,9 @@ network = [
 ]
 # Portable headless-only build: `sven`/`sven -f workflow.md` (CI mode),
 # `sven tool`, `sven map`/`tee`/`reduce`, `sven index`. No TUI, no HTTP
-# server. The `xtask arch --profile minimal` check asserts this excludes
-# ratatui/libp2p/git2/webauthn-rs/rusqlite/axum/gdbmi from the resolved
-# dependency closure.
+# server, no D-Bus. The `xtask arch --profile minimal` check asserts this
+# excludes ratatui/libp2p/git2/webauthn-rs/rusqlite/axum/gdbmi/zbus from the
+# resolved dependency closure.
 minimal = []
 
 [dev-dependencies]

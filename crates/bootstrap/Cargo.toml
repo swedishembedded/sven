@@ -9,7 +9,7 @@ sven-model         = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-tool-api      = { path = "../tool-api" }
 sven-tool-registry = { path = "../tool-registry" }
-sven-tools-fs      = { path = "../tools-fs" }
+sven-tools-fs      = { path = "../tools-fs", default-features = false }
 sven-tools-exec    = { path = "../tools-exec" }
 sven-tools-ctx     = { path = "../tools-ctx" }
 sven-tools-agent   = { path = "../tools-agent" }
@@ -36,7 +36,26 @@ agent-client-protocol = { version = "0.10", features = ["unstable_session_usage"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [features]
-default = ["gdb", "memory"]
+# What `default-features = false` leaves is the minimal assembly: the kernel,
+# the machines, every model provider that speaks HTTP, and the plain-text tool
+# set (files, search, shell, web, memory file, skills, todo, sub-agents). No
+# D-Bus, no attachments.
+default = ["coding", "research", "dbus", "gdb", "memory"]
+
+# ── Presets: what the matching `BuiltinTools` profile uses ──────────────────
+# `coding`: attach images and audio (`attach_file`), read images, transcribe
+# audio for a model that cannot hear.
+coding = ["media", "asr"]
+# `research`: read images and diagrams.
+research = ["media"]
+
+# ── Capabilities ────────────────────────────────────────────────────────────
+# Image and audio decoding: `attach_file` and images in `read_file`.
+media = ["sven-tools-fs/media"]
+# Speech-to-text over brain's D-Bus action surface (Unix only).
+asr = ["media", "dbus", "sven-tools-fs/asr"]
+# `provider: dbus`, brain's D-Bus model transport (Unix only).
+dbus = ["sven-model-drivers/dbus"]
 # Semantic memory (SQLite + FTS5 `semantic_memory` tool). Its own feature
 # because `rusqlite` is in xtask's
 # FORBIDDEN_IN_MINIMAL list (`xtask/src/main.rs`) - the `minimal` build must

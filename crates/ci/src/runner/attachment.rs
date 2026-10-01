@@ -24,9 +24,8 @@ pub(super) async fn build_attachment_parts(
     let opts = sven_tools_fs::AttachOptions {
         supports_images: model.supports_images(),
         supports_audio: model.supports_audio(),
-        force_transcribe: false,
         asr: asr.clone(),
-        asr_client: None,
+        ..sven_tools_fs::AttachOptions::default()
     };
     let label = format!("{}/{}", model.name(), model.model_name());
 

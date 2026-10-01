@@ -761,9 +761,9 @@ pub struct ToolsConfig {
 
 /// Speech-to-text (ASR) fallback configuration.
 ///
-/// `attach_file` shells out to this command when it must turn an audio file
-/// into text — either because the active model has no audio modality, or
-/// because the caller asked for `force_transcribe`.
+/// `attach_file` sends audio to this brain model over D-Bus when it must turn
+/// it into text — either because the active model has no audio modality, or
+/// because the caller asked for `force_transcribe` (builds with `asr` only).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AsrConfig {
     /// Manifest id of the served ASR model, as `ListModels` reports it
@@ -777,7 +777,7 @@ pub struct AsrConfig {
     /// server inherits no session bus, so it is reached by address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bus_address: Option<String>,
-    /// Hard timeout for a single transcription subprocess, in seconds.
+    /// Hard timeout for a single transcription call, in seconds.
     #[serde(default = "default_asr_timeout_secs")]
     pub timeout_secs: u64,
 }

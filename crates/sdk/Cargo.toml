@@ -25,6 +25,15 @@ serde_json     = { workspace = true }
 thiserror      = { workspace = true }
 tokio          = { workspace = true }
 
+[features]
+# The presets mirror `Toolset::coding()` / `Toolset::research()`: each compiles
+# in what that toolset's tools need. `dbus` is brain's D-Bus model transport.
+# `default-features = false` is the minimal SDK: no D-Bus, no attachments.
+default = ["coding", "research", "dbus"]
+coding = ["sven-bootstrap/coding"]
+research = ["sven-bootstrap/research"]
+dbus = ["sven-bootstrap/dbus"]
+
 [dev-dependencies]
 async-trait     = { workspace = true }
 futures         = { workspace = true }

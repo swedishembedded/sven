@@ -9,11 +9,12 @@ license     = "Apache-2.0"
 sven-tool-api = { path = "../tool-api" }
 sven-config   = { path = "../config" }
 sven-hsm      = { path = "../hsm" }
-sven-image    = { path = "../image" }
-sven-audio    = { path = "../sven-audio" }
 sven-model    = { path = "../model" }
-# Speech-to-text dials brain's generic action surface over D-Bus.
-sven-model-drivers = { path = "../model-drivers", features = ["dbus"] }
+# `media`: image and audio decoding.
+sven-image    = { path = "../image", optional = true }
+sven-audio    = { path = "../sven-audio", optional = true }
+# `asr`: speech-to-text dials brain's generic action surface over D-Bus.
+sven-model-drivers = { path = "../model-drivers", optional = true }
 anyhow        = { workspace = true }
 async-trait   = { workspace = true }
 regex         = { workspace = true }
@@ -24,6 +25,15 @@ thiserror     = { workspace = true }
 tokio         = { workspace = true }
 tracing       = { workspace = true }
 walkdir       = { workspace = true }
+
+[features]
+default = ["media"]
+# Images and audio: `read_file` returns an image as a data URL, and the
+# `attach_file` tool / `load_attachment` attach images and audio.
+media = ["dep:sven-image", "dep:sven-audio"]
+# Transcribing audio for a model that cannot take it, over brain's D-Bus action
+# surface (Unix only). Without it such audio is refused with the reason.
+asr = ["media", "dep:sven-model-drivers", "sven-model-drivers/dbus"]
 
 [dev-dependencies]
 sven-model-mock = { path = "../model-mock" }

@@ -61,7 +61,8 @@ impl Toolset {
     /// Read, write, edit and attach files, search, run shell commands, fetch
     /// and search the web, keep a todo list and a memory file, load skills,
     /// switch mode or model, delegate to sub-agents (`task`) and ask the user
-    /// a question.
+    /// a question. Attaching images and audio, and transcribing speech, need
+    /// the `coding` cargo feature (on by default).
     #[must_use]
     pub fn coding() -> Self {
         Self(sven_bootstrap::BuiltinTools::Coding)

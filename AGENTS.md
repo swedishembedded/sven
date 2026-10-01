@@ -166,14 +166,22 @@ one.
 
 The `sven` binary itself has cargo features controlling what's linked in:
 `tui` (ratatui + the interactive UI), `network` (ACP, MCP, team - bundled
-together, not independently toggleable), `gdb` (the GDB/MI tool suite), and
-`minimal`
-(none of the above - headless CI + `tool`/`index`/`map`/`tee`/`reduce` only,
-the portability target). `default = ["tui", "network", "gdb"]`, so a plain
-`cargo build` is unchanged from before these existed. `cargo run -p xtask --
-arch --profile minimal` asserts the `minimal` build's resolved dependency
-closure excludes `ratatui`/`libp2p`/`git2`/`webauthn-rs`/`portable-pty`/
-`gdbmi`/`axum`/`rusqlite`/`nvim-rs`/`slint`.
+together, not independently toggleable), `gdb` (the GDB/MI tool suite),
+`memory` (semantic memory, SQLite), the tool presets `coding` (attach images
+and audio, transcribe speech) and `research` (read images), `dbus` (brain's
+D-Bus model transport), and `minimal` (none of the above - headless CI +
+`tool`/`index`/`map`/`tee`/`reduce` only, the portability target).
+`default` is everything but `minimal`. `cargo run -p xtask -- arch --profile
+minimal` asserts the `minimal` build's resolved dependency closure excludes
+`ratatui`/`libp2p`/`git2`/`webauthn-rs`/`portable-pty`/`gdbmi`/`axum`/
+`rusqlite`/`nvim-rs`/`slint`/`zbus`.
+
+The same presets are features of `sven-bootstrap` and `sven-sdk`; each crate
+built with `default-features = false` is its minimal assembly. Every crate in
+that chain depends on the next without default features and forwards the
+feature explicitly, so a preset can never come back through unification.
+`make check/features` lints, and `make test/features` tests, each
+feature-gated crate with its features off, which no workspace build ever does.
 
 ## Crate table
 
@@ -214,7 +222,8 @@ feature, off by default) · `sven-model-mock` (`--model mock`
 test/dev providers)
 
 ### domain (concrete tool implementations + integrations)
-`sven-tools-fs` (file I/O + output-buffer tools) · `sven-tools-exec` (`shell`) · `sven-tools-ctx` (RLM context store, knowledge,
+`sven-tools-fs` (file I/O + output-buffer tools; images and audio behind
+`media`, speech-to-text behind `asr`) · `sven-tools-exec` (`shell`) · `sven-tools-ctx` (RLM context store, knowledge,
 `memory`) · `sven-tools-agent` (`system`, `todo`, `ask_question`, `skill` -
 agent self-management) · `sven-tools-web` (`web_fetch`/`web_search`, `grep`,
 `read_lints`) · `sven-tools-gdb` (GDB/MI debugging, unix

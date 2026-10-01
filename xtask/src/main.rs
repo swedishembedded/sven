@@ -603,7 +603,7 @@ fn count_production_lines(text: &str) -> usize {
 }
 
 /// Third-party crates a portable/minimal build must never resolve: no GUI
-/// toolkit, no libp2p, no HTTP server. Checked against `cargo tree`'s *normal*-edge closure only --
+/// toolkit, no libp2p, no HTTP server, no D-Bus. Checked against `cargo tree`'s *normal*-edge closure only --
 /// dev-dependencies (test-only) are exempt by the same rule as the rest of
 /// this file's checks.
 const FORBIDDEN_IN_MINIMAL: &[&str] = &[
@@ -619,6 +619,8 @@ const FORBIDDEN_IN_MINIMAL: &[&str] = &[
     "teloxide",
     "rusqlite",
     "nvim-rs",
+    // brain's D-Bus transport: the `dbus` provider and speech-to-text.
+    "zbus",
 ];
 
 /// `--profile <name>` support: asserts the resolved dependency closure for a

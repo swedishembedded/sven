@@ -566,35 +566,14 @@ impl RuntimeBuilder {
             &approval_tx,
             &self.config.tools,
         );
-        // Semantic memory (SQLite + FTS5 `semantic_memory` tool) is
-        // constructed here, the one real assembly point every surface
-        // (headless CI, interactive TUI, ACP, MCP) goes through, so it is on
-        // by default without any surface having to opt in. `open` fails only
-        // on a broken `$HOME`/on-disk state (permissions, corruption); that
-        // is not fatal to the session, so the tool is simply left
-        // unregistered and the reason logged, exactly like a missing MCP
-        // tool.
-        #[allow(unused_mut)]
-        let mut integration_providers = IntegrationProviders {
+        // Semantic memory is opened here, the one real assembly point every
+        // surface goes through, so it is on without any surface opting in.
+        let integration_providers = IntegrationProviders {
+            #[cfg(feature = "memory")]
+            memory_store: crate::registry::open_memory_store().await,
             approver,
             approval_mode: self.approval_mode,
-            ..IntegrationProviders::default()
         };
-        #[cfg(feature = "memory")]
-        {
-            integration_providers.memory_store = match sven_memory::SqliteMemoryStore::open(None)
-                .await
-            {
-                Ok(store) => Some(Arc::new(store) as Arc<dyn sven_memory::VectorStore>),
-                Err(err) => {
-                    warn!(
-                        error = %err,
-                        "failed to open semantic memory store; semantic_memory tool will not be registered"
-                    );
-                    None
-                }
-            };
-        }
 
         let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
         let root = self.runtime_ctx.project_root.as_deref();
@@ -1251,12 +1230,10 @@ mod tests {
         }
     }
 
-    /// `semantic_memory` must be registered by default (no opt-in wiring
-    /// required) once the `memory` feature is compiled in — today it is
-    /// dead code: `IntegrationProviders::default()` never populates
-    /// `memory_store`, so no caller of `RuntimeBuilder::build` ever sees it.
+    /// `semantic_memory` is registered by default (no opt-in wiring required)
+    /// exactly when the `memory` feature is compiled in.
     #[tokio::test]
-    async fn semantic_memory_is_present_in_the_default_registry() {
+    async fn semantic_memory_is_present_in_the_default_registry_with_memory() {
         let mut config = Config::default();
         config.model.provider = "mock".into();
         config.model.name = "mock-model".into();
@@ -1269,9 +1246,10 @@ mod tests {
 
         let present = handle.tool_registry().get("semantic_memory").is_some();
         runtime.abort();
-        assert!(
+        assert_eq!(
             present,
-            "semantic_memory must be registered in the default tool registry"
+            cfg!(feature = "memory"),
+            "semantic_memory is registered exactly when it is compiled in"
         );
     }
 

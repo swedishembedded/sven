@@ -6,7 +6,9 @@
 //! Images become an image content part.  Audio takes one of two routes:
 //! attached natively when the active model accepts audio, or transcribed to
 //! plain text otherwise — so the result is always something the target model
-//! can actually consume.
+//! can actually consume. A build without the `asr` feature cannot transcribe,
+//! and refuses audio the model cannot take; its schema then offers no
+//! `force_transcribe`.
 //!
 //! Note that a model with no tool-calling support will never invoke this tool.
 //! The `--attach <PATH>` CLI flag covers that case by pre-loading attachments
@@ -24,6 +26,24 @@ use tracing::debug;
 use super::attachment::{self, AttachOptions, SUPPORTED_AUDIO_EXTS, SUPPORTED_IMAGE_EXTS};
 use sven_tool_api::{ApprovalPolicy, PathScope, Tool, ToolCall, ToolOutput};
 
+/// What the model is told the tool does with audio it cannot take natively.
+macro_rules! description {
+    ($fallback:literal) => {
+        concat!(
+            "Attach an image or audio file to the conversation so the model can perceive it.\n",
+            "Images are sent as image content; audio is sent as audio when the model supports it, ",
+            $fallback,
+            "\nSupports images (png/jpg/gif/webp/bmp/tiff) and audio (wav; mp3/flac/ogg/m4a are ",
+            "recognised but need an external decoder)."
+        )
+    };
+}
+
+#[cfg(all(unix, feature = "asr"))]
+const DESCRIPTION: &str = description!("otherwise transcribed to text automatically.");
+#[cfg(not(all(unix, feature = "asr")))]
+const DESCRIPTION: &str = description!("and refused otherwise.");
+
 pub struct AttachFileTool {
     /// The live model, when one is available.
     ///
@@ -35,6 +55,7 @@ pub struct AttachFileTool {
     asr: AsrConfig,
     /// A pre-built transcription client, for tests. `None` in production, where
     /// one is dialled from `asr`.
+    #[cfg(all(unix, feature = "asr"))]
     asr_client: Option<sven_model_drivers::dbus::ActionClient>,
     /// Where `path` resolves, and whether it may leave there.
     scope: PathScope,
@@ -45,6 +66,7 @@ impl AttachFileTool {
         Self {
             model,
             asr,
+            #[cfg(all(unix, feature = "asr"))]
             asr_client: None,
             scope: PathScope::default(),
         }
@@ -62,7 +84,7 @@ impl AttachFileTool {
     ///
     /// Exists for tests: a client wired to a fake `Brain1.Manager` exercises
     /// the audio path with no bus, no server and no checkpoint.
-    #[cfg(test)]
+    #[cfg(all(test, unix, feature = "asr"))]
     pub(crate) fn with_asr_client(
         mut self,
         client: sven_model_drivers::dbus::ActionClient,
@@ -78,6 +100,7 @@ impl AttachFileTool {
             supports_audio: self.model.as_ref().is_some_and(|m| m.supports_audio()),
             force_transcribe,
             asr: self.asr.clone(),
+            #[cfg(all(unix, feature = "asr"))]
             asr_client: self.asr_client.clone(),
         }
     }
@@ -97,34 +120,33 @@ impl Tool for AttachFileTool {
     }
 
     fn description(&self) -> &str {
-        "Attach an image or audio file to the conversation so the model can perceive it.\n\
-         Images are sent as image content; audio is sent as audio when the model supports it, \
-         otherwise transcribed to text automatically.\n\
-         Supports images (png/jpg/gif/webp/bmp/tiff) and audio (wav; mp3/flac/ogg/m4a are \
-         recognised but need an external decoder)."
+        DESCRIPTION
     }
 
     fn parameters_schema(&self) -> Value {
+        let mut properties = json!({
+            "path": {
+                "type": "string",
+                "description":
+                    "Path to an image (png/jpg/gif/webp/bmp/tiff) or audio \
+                     (wav/mp3/flac/ogg/m4a) file"
+            },
+            "note": {
+                "type": "string",
+                "description": "Optional note recorded alongside the attachment"
+            }
+        });
+        if cfg!(all(unix, feature = "asr")) {
+            properties["force_transcribe"] = json!({
+                "type": "boolean",
+                "description":
+                    "Audio only: transcribe to text even when the model accepts audio natively",
+                "default": false
+            });
+        }
         json!({
             "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description":
-                        "Path to an image (png/jpg/gif/webp/bmp/tiff) or audio \
-                         (wav/mp3/flac/ogg/m4a) file"
-                },
-                "note": {
-                    "type": "string",
-                    "description": "Optional note recorded alongside the attachment"
-                },
-                "force_transcribe": {
-                    "type": "boolean",
-                    "description":
-                        "Audio only: transcribe to text even when the model accepts audio natively",
-                    "default": false
-                }
-            },
+            "properties": properties,
             "required": ["path"],
             "additionalProperties": false
         })
@@ -236,6 +258,7 @@ mod tests {
         Arc::new(ScriptedMockProvider::new(vec![]))
     }
 
+    #[cfg(all(unix, feature = "asr"))]
     fn asr_cfg() -> AsrConfig {
         AsrConfig {
             model: "brain/nemotronasr".into(),
@@ -338,6 +361,7 @@ mod tests {
 
     // ── Audio: transcription fallback ─────────────────────────────────────────
 
+    #[cfg(all(unix, feature = "asr"))]
     #[tokio::test]
     async fn audio_is_transcribed_when_model_lacks_audio_support() {
         let dir = tempfile::tempdir().unwrap();
@@ -360,6 +384,7 @@ mod tests {
         );
     }
 
+    #[cfg(all(unix, feature = "asr"))]
     #[tokio::test]
     async fn force_transcribe_bypasses_native_audio() {
         let dir = tempfile::tempdir().unwrap();
@@ -379,6 +404,7 @@ mod tests {
         assert!(out.content.contains("forced transcript"), "{}", out.content);
     }
 
+    #[cfg(all(unix, feature = "asr"))]
     #[tokio::test]
     async fn no_model_context_always_transcribes() {
         let dir = tempfile::tempdir().unwrap();
@@ -440,6 +466,7 @@ mod tests {
     /// An unreachable server must name the model it could not transcribe with,
     /// not fail anonymously: the two ASR ids are easy to confuse and the bus
     /// may simply have no brain on it.
+    #[cfg(all(unix, feature = "asr"))]
     #[tokio::test]
     async fn asr_failure_names_the_model() {
         let dir = tempfile::tempdir().unwrap();
@@ -491,6 +518,10 @@ mod tests {
         let schema = t.parameters_schema();
         assert_eq!(schema["required"], json!(["path"]));
         assert!(schema["properties"]["note"].is_object());
-        assert!(schema["properties"]["force_transcribe"].is_object());
+        // Offered only where it can be honoured.
+        assert_eq!(
+            schema["properties"]["force_transcribe"].is_object(),
+            cfg!(all(unix, feature = "asr"))
+        );
     }
 }

@@ -27,7 +27,7 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
+.PHONY: all build build/debug build/release release test test/features tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
         check check/fmt check/features check/clippy check/doc check/gates check/paths check/deps check/samples check/scope check/arch hooks/install docs docs-pdf \
         formal \
         samples/list \
@@ -62,6 +62,14 @@ build/release:
 # silently skipped 2800+ tests across 26 crates while still exiting 0.
 test:
 	$(CARGO) test --workspace $(CARGO_FLAGS)
+	$(MAKE) test/features
+
+## test/features - the feature-off configurations' own tests (see check/features)
+test/features:
+	@for p in $(FEATURE_OFF_PACKAGES); do \
+		echo "test -p $$p --no-default-features"; \
+		$(CARGO) test -q -p $$p --no-default-features $(CARGO_FLAGS) || exit 1; \
+	done
 
 ## tests/e2e/basic - run all basic end-to-end tests (requires bats-core)
 ## All tests use the mock model; hardware-gated tests in 07 self-skip without SVEN_TEST_JLINK=1.
@@ -227,11 +235,18 @@ check: check/fmt check/gates check/arch check/features check/clippy check/doc
 check/fmt:
 	$(CARGO) fmt --all -- --check
 
-## check/features - crates with feature-gated transports still build with the
-##                  features off (the workspace build always unifies them on,
-##                  so nothing else would ever compile that configuration)
+## check/features - the feature-off configurations build and lint clean: the
+##                  minimal assemblies (sven-bootstrap and sven-sdk without
+##                  default features) and the crates with feature-gated
+##                  transports and media. The workspace build unifies every
+##                  feature on, so nothing else would ever compile them. One
+##                  package per run: features unify across the packages of a run.
+FEATURE_OFF_PACKAGES = sven-model-drivers sven-tools-fs sven-bootstrap sven-sdk
 check/features:
-	$(CARGO) check -q -p sven-model -p sven-model-drivers --no-default-features
+	@for p in $(FEATURE_OFF_PACKAGES); do \
+		echo "clippy -p $$p --no-default-features"; \
+		$(CARGO) clippy -q -p $$p --no-default-features --all-targets -- -D warnings || exit 1; \
+	done
 
 ## check/clippy - lint the workspace, warnings are errors
 check/clippy:

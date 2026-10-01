@@ -549,9 +549,11 @@ providers:
         max_tokens: 32768
 ```
 
-The transport is compiled only on Unix, and only into a build that includes
-D-Bus support. A build without it still recognises `provider: dbus` and
-refuses it with that reason rather than sending the request over HTTP.
+The transport is compiled only on Unix, and only into a build with the `dbus`
+feature: the default `sven` build has it, `--no-default-features --features
+minimal` does not, and an SDK application gets it from `sven-sdk`'s default
+features. A build without it still recognises `provider: dbus` and refuses it
+with that reason rather than sending the request over HTTP.
 
 ---
 

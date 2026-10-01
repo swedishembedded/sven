@@ -9,9 +9,7 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::params::{opt_u64, require_str};
 use sven_tool_api::policy::ApprovalPolicy;
-use sven_tool_api::tool::{
-    OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput, ToolOutputPart,
-};
+use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 use sven_tool_api::PathScope;
 
 /// Default number of lines returned when the caller does not specify a limit.
@@ -23,6 +21,29 @@ const DEFAULT_LINE_LIMIT: usize = 200;
 /// Whichever constraint is hit first determines where the output is cut.
 /// 20 KB ≈ 5,000 tokens - safe for a 40 K-token context window.
 const MAX_BYTES: usize = 20_000;
+
+/// What the model is told; images are mentioned only where they are decoded.
+macro_rules! description {
+    ($images:literal) => {
+        concat!(
+            "Read a file, 200 lines from the start unless 'offset' says otherwise.\n",
+            "Lines come back as L{n}:content, 1-indexed; strip the L{n}: prefix before\n",
+            "reusing a line as text.\n",
+            "Binary files are returned as Intel HEX, where limit/offset count HEX lines of\n",
+            "16 bytes each.",
+            $images,
+            "\nWhen more lines remain, the reply names the next offset to pass.\n",
+            "Read the region you need rather than a whole large file - 'offset' and 'limit'\n",
+            "cost one call each, a full file costs the context it fills."
+        )
+    };
+}
+
+#[cfg(feature = "media")]
+const DESCRIPTION: &str =
+    description!(" Images (png/jpg/gif/webp/bmp/tiff) come back as a base64 data URL.");
+#[cfg(not(feature = "media"))]
+const DESCRIPTION: &str = description!("");
 
 /// The `read_file` tool. Its paths resolve through the [`PathScope`] it is built
 /// with; [`Default`] is unconfined.
@@ -46,14 +67,7 @@ impl Tool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "Read a file, 200 lines from the start unless 'offset' says otherwise.\n\
-         Lines come back as L{n}:content, 1-indexed; strip the L{n}: prefix before\n\
-         reusing a line as text.\n\
-         Binary files are returned as Intel HEX, where limit/offset count HEX lines of\n\
-         16 bytes each. Images (png/jpg/gif/webp/bmp/tiff) come back as a base64 data URL.\n\
-         When more lines remain, the reply names the next offset to pass.\n\
-         Read the region you need rather than a whole large file - 'offset' and 'limit'\n\
-         cost one call each, a full file costs the context it fills."
+        DESCRIPTION
     }
 
     fn parameters_schema(&self) -> Value {
@@ -105,24 +119,28 @@ impl Tool for ReadFileTool {
 
         // ── Image files ───────────────────────────────────────────────────────
         // Returned as multimodal base64 data URLs; bypass all text/binary logic.
+        // Without `media` an image is a binary file like any other.
         let ext = std::path::Path::new(&path)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("");
-        if sven_image::is_image_extension(ext) {
-            return match sven_image::load_image(&scoped) {
-                Ok(img) => {
-                    let data_url = img.into_data_url();
-                    ToolOutput::with_parts(
-                        &call.id,
-                        vec![
-                            ToolOutputPart::Text(format!("Image file: {path}")),
-                            ToolOutputPart::Image(data_url),
-                        ],
-                    )
-                }
-                Err(e) => ToolOutput::err(&call.id, format!("failed to read image: {e}")),
-            };
+        #[cfg(feature = "media")]
+        {
+            if sven_image::is_image_extension(ext) {
+                return match sven_image::load_image(&scoped) {
+                    Ok(img) => {
+                        let data_url = img.into_data_url();
+                        ToolOutput::with_parts(
+                            &call.id,
+                            vec![
+                                sven_tool_api::ToolOutputPart::Text(format!("Image file: {path}")),
+                                sven_tool_api::ToolOutputPart::Image(data_url),
+                            ],
+                        )
+                    }
+                    Err(e) => ToolOutput::err(&call.id, format!("failed to read image: {e}")),
+                };
+            }
         }
 
         // ── Path resolution ───────────────────────────────────────────────────
@@ -431,7 +449,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use sven_tool_api::tool::{Tool, ToolCall};
+    use sven_tool_api::tool::{Tool, ToolCall, ToolOutputPart};
 
     fn call(args: serde_json::Value) -> ToolCall {
         ToolCall {
@@ -464,6 +482,39 @@ mod tests {
             .join(name)
             .to_string_lossy()
             .into_owned()
+    }
+
+    /// A 1×1 red PNG.
+    const MINIMAL_PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8,
+        0xcf, 0xc0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92, 0xef, 0x00, 0x00, 0x00,
+        0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    /// An image comes back as an image only from a build that decodes one
+    /// (`media`), and the description promises exactly that; without it the
+    /// file is binary like any other.
+    #[tokio::test]
+    async fn an_image_is_an_image_exactly_when_media_is_built_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("a.png");
+        std::fs::write(&png, MINIMAL_PNG).unwrap();
+        let tool = ReadFileTool::default();
+        let out = tool
+            .execute(&call(json!({"path": png.display().to_string()})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        let is_image = out
+            .parts
+            .iter()
+            .any(|p| matches!(p, ToolOutputPart::Image(_)));
+        assert_eq!(is_image, cfg!(feature = "media"), "{}", out.content);
+        assert_eq!(
+            tool.description().contains("Images"),
+            cfg!(feature = "media")
+        );
     }
 
     // ── Basic text reading ────────────────────────────────────────────────────

@@ -12,7 +12,9 @@
 //!
 //! Audio takes one of two routes depending on what the target model accepts:
 //! attached natively as a data URL, or transcribed to plain text so it flows
-//! through every provider unchanged.
+//! through every provider unchanged. Transcription is compiled in with the
+//! `asr` feature (Unix only); without it, audio for a model that cannot hear is
+//! refused with that reason.
 
 use std::path::Path;
 
@@ -20,6 +22,7 @@ use sven_config::AsrConfig;
 use sven_model::ContentPart;
 use thiserror::Error;
 
+#[cfg(all(unix, feature = "asr"))]
 use super::asr::{self, AsrError};
 use sven_tool_api::ToolOutputPart;
 
@@ -69,6 +72,7 @@ pub struct AttachOptions {
     /// `None` in every production path. A test supplies a client wired to a
     /// fake `Brain1.Manager` so the audio-to-transcript behaviour can be
     /// exercised without a bus, a server, or a 2.4 GiB checkpoint.
+    #[cfg(all(unix, feature = "asr"))]
     pub asr_client: Option<sven_model_drivers::dbus::ActionClient>,
 }
 
@@ -154,18 +158,28 @@ pub enum AttachError {
         source: sven_audio::AudioError,
     },
 
+    #[cfg(all(unix, feature = "asr"))]
     #[error("audio transcription failed for '{path}': {source}")]
     Asr {
         path: String,
         #[source]
         source: AsrError,
     },
+
+    #[cfg(not(all(unix, feature = "asr")))]
+    #[error(
+        "the active model ({model}) does not accept audio, so '{path}' would have to \
+         be transcribed, and this build has no speech-to-text (it needs a Unix target \
+         and the `asr` feature). Describe the audio in text, or switch to a model \
+         that accepts audio."
+    )]
+    TranscriptionUnavailable { model: String, path: String },
 }
 
 /// Classify `path`, load it, and describe it.
 ///
-/// `model_label` is used only in the "model does not accept images" error, so
-/// the agent can see which model refused.
+/// `model_label` is used only in the refusals (no image input, or audio that
+/// cannot be transcribed), so the agent can see which model refused.
 pub async fn load_attachment(
     path: &Path,
     opts: &AttachOptions,
@@ -220,24 +234,49 @@ pub async fn load_attachment(
                     url,
                 })
             } else {
-                let client = opts.asr_client.clone().unwrap_or_else(|| {
-                    sven_model_drivers::dbus::ActionClient::new(opts.asr.bus_address.as_deref())
-                });
-                let t = asr::transcribe_with(path, &opts.asr, client)
-                    .await
-                    .map_err(|e| AttachError::Asr {
-                        path: display.clone(),
-                        source: e,
-                    })?;
-                Ok(LoadedAttachment::Transcript {
-                    text: format!(
-                        "Transcript of {display} ({:.1}s):\n\n{}",
-                        t.duration_secs, t.text
-                    ),
-                })
+                transcribe(path, display, opts, model_label).await
             }
         }
     }
+}
+
+/// `path` as text, for a model that cannot take the audio itself.
+#[cfg(all(unix, feature = "asr"))]
+async fn transcribe(
+    path: &Path,
+    display: String,
+    opts: &AttachOptions,
+    _model_label: &str,
+) -> Result<LoadedAttachment, AttachError> {
+    let client = opts.asr_client.clone().unwrap_or_else(|| {
+        sven_model_drivers::dbus::ActionClient::new(opts.asr.bus_address.as_deref())
+    });
+    let t = asr::transcribe_with(path, &opts.asr, client)
+        .await
+        .map_err(|e| AttachError::Asr {
+            path: display.clone(),
+            source: e,
+        })?;
+    Ok(LoadedAttachment::Transcript {
+        text: format!(
+            "Transcript of {display} ({:.1}s):\n\n{}",
+            t.duration_secs, t.text
+        ),
+    })
+}
+
+/// Without speech-to-text the audio cannot reach the model at all.
+#[cfg(not(all(unix, feature = "asr")))]
+async fn transcribe(
+    _path: &Path,
+    display: String,
+    _opts: &AttachOptions,
+    model_label: &str,
+) -> Result<LoadedAttachment, AttachError> {
+    Err(AttachError::TranscriptionUnavailable {
+        model: model_label.to_string(),
+        path: display,
+    })
 }
 
 // ─── Shared test fixtures ─────────────────────────────────────────────────────
@@ -291,7 +330,7 @@ pub(crate) mod tests_support {
     /// must outlive the call.
     ///
     /// The caller must keep both alive for the duration of the transcription.
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "asr"))]
     pub async fn fake_asr(
         text: &str,
     ) -> (sven_model_drivers::dbus::ActionClient, zbus::Connection) {
@@ -454,6 +493,7 @@ mod tests {
         }
     }
 
+    #[cfg(all(unix, feature = "asr"))]
     #[tokio::test]
     async fn audio_falls_back_to_transcript_without_native_support() {
         let dir = tempfile::tempdir().unwrap();
@@ -478,6 +518,7 @@ mod tests {
         assert!(matches!(parts[0], ContentPart::Text { .. }));
     }
 
+    #[cfg(all(unix, feature = "asr"))]
     #[tokio::test]
     async fn force_transcribe_overrides_native_audio_support() {
         let dir = tempfile::tempdir().unwrap();
@@ -494,6 +535,7 @@ mod tests {
         assert!(matches!(loaded, LoadedAttachment::Transcript { .. }));
     }
 
+    #[cfg(all(unix, feature = "asr"))]
     #[tokio::test]
     /// An unreachable brain must say which model it was trying to use and
     /// carry the transport reason underneath. "Transcription failed" alone
@@ -520,6 +562,26 @@ mod tests {
             .unwrap_err();
         let chain = format!("{err:#}");
         assert!(chain.contains("brain/nemotronasr"), "{chain}");
+    }
+
+    /// Without speech-to-text, audio for a model that cannot hear is refused
+    /// with the model and the missing capability named, rather than dropped.
+    #[cfg(not(all(unix, feature = "asr")))]
+    #[tokio::test]
+    async fn audio_is_refused_where_it_would_need_transcription_and_none_is_built_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("a.wav");
+        std::fs::write(&wav, tiny_wav()).unwrap();
+        let err = load_attachment(&wav, &AttachOptions::default(), "text-model")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AttachError::TranscriptionUnavailable { .. }),
+            "got {err:?}"
+        );
+        let message = err.to_string();
+        assert!(message.contains("text-model"), "{message}");
+        assert!(message.contains("`asr` feature"), "{message}");
     }
 
     #[tokio::test]

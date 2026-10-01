@@ -14,10 +14,12 @@ pub mod file;
 pub use buffer::{
     BufGrepTool, BufReadTool, BufStatusTool, BufferSource, BufferStatus, OutputBufferStore,
 };
+#[cfg(feature = "media")]
 pub use file::{
     classify_attachment, load_attachment, AttachError, AttachFileTool, AttachOptions,
-    AttachmentKind, EditFileTool, FindFileTool, LoadedAttachment, ReadFileTool, WriteTool,
+    AttachmentKind, LoadedAttachment,
 };
+pub use file::{EditFileTool, FindFileTool, ReadFileTool, WriteTool};
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
 //

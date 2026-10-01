@@ -537,6 +537,26 @@ accepted and ignored, with one warning naming it at startup.
 
 ---
 
+### `tools.asr`
+
+Speech-to-text for audio the active model cannot take: `attach_file` and
+`--attach` send it to a brain model over D-Bus and attach the transcript
+instead.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `model` | `brain/nemotronasr` | Manifest id of the served ASR model, as brain's `ListModels` reports it |
+| `bus_address` | session bus | D-Bus address of the brain server (`unix:path=/run/brain/bus`); a detached server has no session bus |
+| `timeout_secs` | `120` | Hard timeout for one transcription |
+
+Transcription exists only in a Unix build with the `coding` preset (the
+default `sven` build). A build without it - `--no-default-features --features
+minimal`, or an SDK application without the preset - refuses audio for a
+model that cannot take it, naming the model, and its `attach_file` offers no
+`force_transcribe`.
+
+---
+
 ### `tools.lints`
 
 These let you override the command sven runs when you ask it to check for lint

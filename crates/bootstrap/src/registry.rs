@@ -29,9 +29,9 @@ use sven_tool_registry::ToolRegistry;
 use sven_tools_agent::{AskQuestionTool, ModelCatalogEntry, SkillTool, SystemTool, TodoTool};
 use sven_tools_ctx::{ContextStore, MemoryTool};
 use sven_tools_exec::ShellTool;
-use sven_tools_fs::{
-    AttachFileTool, EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool, WriteTool,
-};
+#[cfg(feature = "media")]
+use sven_tools_fs::AttachFileTool;
+use sven_tools_fs::{EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool, WriteTool};
 #[cfg(all(unix, feature = "gdb"))]
 use sven_tools_gdb::GdbSessionState;
 use sven_tools_web::{GrepTool, WebFetchTool, WebSearchTool};
@@ -62,6 +62,25 @@ pub struct IntegrationProviders {
     pub approver: Option<ChildApprover>,
     /// The session's approval mode, which its `task` sub-agents are held to.
     pub approval_mode: sven_config::ApprovalMode,
+}
+
+/// The semantic memory store (SQLite + FTS5) for the `semantic_memory` tool.
+///
+/// `open` fails only on a broken `$HOME`/on-disk state (permissions,
+/// corruption). That is not fatal to the session: the tool is left
+/// unregistered and the reason logged, exactly like a missing MCP tool.
+#[cfg(feature = "memory")]
+pub(crate) async fn open_memory_store() -> Option<Arc<dyn sven_memory::VectorStore>> {
+    match sven_memory::SqliteMemoryStore::open(None).await {
+        Ok(store) => Some(Arc::new(store)),
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "failed to open semantic memory store; semantic_memory tool will not be registered"
+            );
+            None
+        }
+    }
 }
 
 /// Converts the model catalog into the slice-of-fields `SystemTool`'s
@@ -423,7 +442,8 @@ fn register_base_tools(
     // ── Multimodal attachments ───────────────────────────────────────────────
     // attach_file needs the live model to decide whether audio can be sent
     // natively or must be transcribed, so clone the Arc before `model` is
-    // moved into the context tool below.
+    // moved into the context tool below. Only in a build that decodes media.
+    #[cfg(feature = "media")]
     reg.register(
         AttachFileTool::new(Some(Arc::clone(&model)), cfg.tools.asr.clone())
             .with_scope(paths.clone()),
@@ -504,6 +524,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     // ── Multimodal attachments ───────────────────────────────────────────────
     // No live model in the CLI registry, so audio is always transcribed —
     // the only answer that is correct for every possible target model.
+    #[cfg(feature = "media")]
     reg.register(AttachFileTool::new(None, cfg.tools.asr.clone()));
 
     // ── Search ────────────────────────────────────────────────────────────────
@@ -641,12 +662,10 @@ mod tests {
     fn the_agent_tool_set_is_what_we_think_it_is() {
         let mut got: Vec<String> = agent_tools().into_iter().map(|(n, ..)| n).collect();
         got.sort();
-        let expected = [
-            "attach_file",
+        let mut expected = vec![
             "context",
             "edit_file",
             "find_file",
-            "gdb",
             "grep",
             "memory",
             "read_file",
@@ -659,6 +678,14 @@ mod tests {
             "web_search",
             "write_file",
         ];
+        // Compiled-in tools are offered; compiled-out ones are not.
+        if cfg!(feature = "media") {
+            expected.push("attach_file");
+        }
+        if cfg!(all(unix, feature = "gdb")) {
+            expected.push("gdb");
+        }
+        expected.sort_unstable();
         assert_eq!(got, expected, "the agent's tool set changed");
     }
 
