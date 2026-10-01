@@ -4,7 +4,7 @@
 //! Wire-contract test for the D-Bus model transport.
 //!
 //! There is no real brain server available in CI, so this test *is* the proof
-//! that [`sven_model::DbusProvider`] speaks brain's protocol correctly.  It
+//! that [`sven_model_drivers::dbus::DbusProvider`] speaks brain's protocol correctly.  It
 //! stands up a fake `com.swedishembedded.Brain1.Manager` over a plain
 //! `UnixStream` pair (peer-to-peer, so no `dbus-daemon` and no well-known name
 //! resolution are involved), and the fake reads every received fd the same way
@@ -23,9 +23,8 @@ use std::sync::{Arc, Mutex};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use futures::StreamExt;
 use serde_json::Value;
-use sven_model::{
-    dbus::blob, ContentPart, DbusOptions, DbusProvider, Message, ModelProvider, ResponseEvent,
-};
+use sven_model::{ContentPart, Message, ModelProvider, ResponseEvent};
+use sven_model_drivers::dbus::{blob, DbusOptions, DbusProvider};
 use zbus::zvariant::OwnedFd;
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────

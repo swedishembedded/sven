@@ -69,7 +69,7 @@ pub struct AttachOptions {
     /// `None` in every production path. A test supplies a client wired to a
     /// fake `Brain1.Manager` so the audio-to-transcript behaviour can be
     /// exercised without a bus, a server, or a 2.4 GiB checkpoint.
-    pub asr_client: Option<sven_model::ActionClient>,
+    pub asr_client: Option<sven_model_drivers::dbus::ActionClient>,
 }
 
 /// A file that has been loaded and is ready to be turned into content parts.
@@ -221,7 +221,7 @@ pub async fn load_attachment(
                 })
             } else {
                 let client = opts.asr_client.clone().unwrap_or_else(|| {
-                    sven_model::ActionClient::new(opts.asr.bus_address.as_deref())
+                    sven_model_drivers::dbus::ActionClient::new(opts.asr.bus_address.as_deref())
                 });
                 let t = asr::transcribe_with(path, &opts.asr, client)
                     .await
@@ -292,7 +292,9 @@ pub(crate) mod tests_support {
     ///
     /// The caller must keep both alive for the duration of the transcription.
     #[cfg(unix)]
-    pub async fn fake_asr(text: &str) -> (sven_model::ActionClient, zbus::Connection) {
+    pub async fn fake_asr(
+        text: &str,
+    ) -> (sven_model_drivers::dbus::ActionClient, zbus::Connection) {
         struct FakeManager {
             text: String,
         }
@@ -347,7 +349,7 @@ pub(crate) mod tests_support {
             .expect("client connection");
         let server_conn = server_task.await.expect("server task");
         (
-            sven_model::ActionClient::with_connection(client_conn),
+            sven_model_drivers::dbus::ActionClient::with_connection(client_conn),
             server_conn,
         )
     }

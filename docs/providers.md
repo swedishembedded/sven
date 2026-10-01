@@ -526,6 +526,33 @@ api-keys file (`$XDG_RUNTIME_DIR/brain/api-keys.json`) is present — see
 model name is resolved by asking brain's `/v1/models` for the resident model.
 Set `SVEN_DISABLE_BRAIN_AUTODETECT=1` to opt out.
 
+### Brain over D-Bus (multimodal, Unix)
+
+`provider: dbus` talks to a brain server on the D-Bus session (or system) bus
+instead of HTTP. Images and audio travel as raw tensors on sealed file
+descriptors rather than as base64 in a JSON body. Only the one-shot `Run` call
+is used: the whole reply arrives at once.
+
+```yaml
+providers:
+  brain_dbus:
+    name: dbus
+    input_modalities: [text, image, audio]
+    driver_options:
+      bus: session            # session | system | a raw D-Bus address
+      service: com.swedishembedded.Brain1
+      object_path: /com/swedishembedded/Brain1
+      action: generate
+      max_image_dim: 1024     # longest image side sent as raw pixels
+    models:
+      brain/omni:
+        max_tokens: 32768
+```
+
+The transport is compiled only on Unix, and only into a build that includes
+D-Bus support. A build without it still recognises `provider: dbus` and
+refuses it with that reason rather than sending the request over HTTP.
+
 ---
 
 ### Ollama

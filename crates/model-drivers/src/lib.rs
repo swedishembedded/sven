@@ -17,7 +17,7 @@ mod anthropic;
 mod api_key;
 mod aws;
 mod cohere;
-mod dbus;
+pub mod dbus;
 mod google;
 mod openai;
 pub(crate) mod openai_compat;
@@ -485,7 +485,7 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
         }
 
         // brain over D-Bus: not HTTP, so never the catch-all below.
-        "dbus" => dbus::provider(cfg, resolved_max_tokens, cfg.temperature)?,
+        "dbus" => dbus::build(cfg, resolved_max_tokens, cfg.temperature)?,
 
         // ── Testing / Mock ────────────────────────────────────────────────────
         "mock" => {
@@ -808,6 +808,22 @@ mod tests {
         let provider = from_config(&cfg).expect("the dbus provider is built without a base URL");
         assert_eq!(provider.name(), "dbus");
         assert_eq!(provider.model_name(), "brain/qwen3");
+    }
+
+    /// A build without the transport still knows the provider by name and
+    /// says why it cannot have it.
+    #[cfg(not(all(unix, feature = "dbus")))]
+    #[test]
+    fn from_config_dbus_without_the_transport_is_refused_by_name() {
+        let cfg = minimal_config("dbus", "brain/qwen3");
+        let Err(err) = from_config(&cfg) else {
+            panic!("a build without the `dbus` feature must not build a dbus provider");
+        };
+        assert!(
+            err.to_string()
+                .contains("'dbus' model provider is not available in this build"),
+            "{err}"
+        );
     }
 
     #[test]

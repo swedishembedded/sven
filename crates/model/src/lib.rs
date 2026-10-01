@@ -23,18 +23,12 @@ pub mod budget;
 /// dependencies (no reqwest, no cloud SDKs) — like `sven-model` itself — so
 /// re-exporting it here adds no heavy dependency.
 pub use sven_model_catalog as catalog;
-#[cfg(all(unix, feature = "dbus"))]
-pub mod dbus;
 mod provider;
 pub mod registry;
 pub mod sanitize;
 mod types;
 
 pub use catalog::{InputModality, ModelCatalogEntry};
-#[cfg(all(unix, feature = "dbus"))]
-pub use dbus::action::{ActionClient, ActionInput, ActionOutcome};
-#[cfg(all(unix, feature = "dbus"))]
-pub use dbus::{BusKind, DbusOptions, DbusProvider};
 pub use provider::{ModelProvider, ResponseStream};
 pub use registry::{get_driver, list_drivers, DriverMeta};
 pub use types::*;

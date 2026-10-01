@@ -35,8 +35,8 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 use super::blob;
+use super::proxy::BusKind;
 use super::proxy::ManagerProxy;
-use super::BusKind;
 
 /// One named binary input: the raw payload plus the metadata describing it.
 ///

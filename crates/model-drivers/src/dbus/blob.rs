@@ -46,7 +46,7 @@ pub struct EncodedBlob {
 
 /// Decode a `data:` URL into its raw bytes.
 fn decode_data_url(url: &str, what: &str) -> anyhow::Result<Vec<u8>> {
-    let (_mime, b64) = crate::types::parse_data_url_parts(url).map_err(|e| {
+    let (_mime, b64) = sven_model::parse_data_url_parts(url).map_err(|e| {
         anyhow::anyhow!(
             "the D-Bus transport requires an inline data URL for {what}, \
              but got something else ({e}). Remote URLs are not fetched."

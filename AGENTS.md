@@ -196,7 +196,7 @@ format) · `sven-tui-nvim` (embedded Neovim client, ratatui-rendered)
 
 ### kernel
 `sven-model` (`ModelProvider` trait, request/response vocab, driver metadata
-registry) · `sven-model-catalog` (static model catalog data) · `sven-control`
+registry; no transport, no media decoding, no configuration) · `sven-model-catalog` (static model catalog data) · `sven-control`
 (transport-agnostic control protocol + kernel mappings) · `sven-session-model`
 (`SessionFold`, `ChatSegment`, tool-view formatting - the one `## User`/`##
 Sven` codec) · `sven-tool-api` (`Tool` trait + `ToolDisplay`)
@@ -208,7 +208,9 @@ import, `sven migrate-sessions`) · `sven-tool-registry`
 client: stdio + Streamable HTTP, OAuth) · `sven-kernel` (`ErasedRuntime`,
 `EffectExecutor`, `EventSink`, `ChildSpawner`) · `sven-model-drivers` (34
 provider driver impls, `openai_compat`, model-string resolution:
-`ModelResolver`/`resolve_model_from_config`) · `sven-model-mock` (`--model mock`
+`ModelResolver`/`resolve_model_from_config`; the D-Bus transport - the `dbus`
+provider and the `ActionClient` speech-to-text uses - behind its `dbus`
+feature, off by default) · `sven-model-mock` (`--model mock`
 test/dev providers)
 
 ### domain (concrete tool implementations + integrations)

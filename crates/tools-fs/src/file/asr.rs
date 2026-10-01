@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use sven_config::AsrConfig;
-use sven_model::{ActionClient, ActionInput};
+use sven_model_drivers::dbus::{ActionClient, ActionInput};
 use thiserror::Error;
 use tracing::debug;
 
@@ -175,7 +175,7 @@ mod tests {
     /// failures and a caller cannot act on them the same way.
     #[test]
     fn a_reply_without_text_is_a_named_error() {
-        let outcome = sven_model::ActionOutcome {
+        let outcome = sven_model_drivers::dbus::ActionOutcome {
             outputs: serde_json::json!({ "num_tokens": 0 }),
             blobs: HashMap::new(),
         };
@@ -187,7 +187,7 @@ mod tests {
     /// the blob winning when present.
     #[test]
     fn text_is_read_from_either_the_blob_or_the_scalar() {
-        let inline = sven_model::ActionOutcome {
+        let inline = sven_model_drivers::dbus::ActionOutcome {
             outputs: serde_json::json!({ "text": "from the scalar" }),
             blobs: HashMap::new(),
         };
@@ -195,7 +195,7 @@ mod tests {
 
         let mut blobs = HashMap::new();
         blobs.insert("text".to_string(), b"from the blob".to_vec());
-        let blobbed = sven_model::ActionOutcome {
+        let blobbed = sven_model_drivers::dbus::ActionOutcome {
             outputs: serde_json::json!({ "text": "from the scalar" }),
             blobs,
         };

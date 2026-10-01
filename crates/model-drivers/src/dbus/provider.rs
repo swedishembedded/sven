@@ -1,50 +1,8 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-#![cfg(unix)]
-//! D-Bus model transport for brain's `com.swedishembedded.Brain1` service.
-//!
-//! This driver talks to a locally running brain server over D-Bus instead of
-//! HTTP.  Its reason to exist is multimodality with zero encode/decode
-//! round-trips through a JSON body: images and audio travel as raw tensors on
-//! sealed `memfd` file descriptors rather than as base64 inside the request.
-//!
-//! ```yaml
-//! providers:
-//!   brain_dbus:
-//!     name: dbus
-//!     input_modalities: [text, image, audio]
-//!     driver_options:
-//!       bus: session
-//!       service: com.swedishembedded.Brain1
-//!       object_path: /com/swedishembedded/Brain1
-//!       action: generate
-//!       max_image_dim: 1024
-//!     models:
-//!       brain/omni:
-//!         max_tokens: 32768
-//! ```
-//!
-//! # Scope: one-shot `Run` only (deliberate)
-//!
-//! brain's interface also exposes a streaming `Subscribe` method, which is
-//! **not** implemented here and is not an oversight.  `Subscribe` hands back a
-//! `SOCK_SEQPACKET` socket over which the server pushes framed events with
-//! `SCM_RIGHTS` ancillary data; consuming it means writing a framing protocol
-//! reader, an ancillary-fd receiver, and an event demultiplexer — a subsystem
-//! considerably larger than this whole module.  The payoff would be
-//! incremental token display, but the model this transport exists for
-//! (`brain/omni`) emits only coarse progress rather than per-token deltas, so
-//! there is nothing to stream.  [`DbusProvider`]'s
-//! [`crate::ModelProvider::complete`] therefore performs one `Run` call and
-//! emits the full response as a single `TextDelta`.
-//!
-//! Adding streaming later means: a `subscribe()` method on the `Manager`
-//! interface behind [`proxy::ManagerProxy`] returning the socket fd, a
-//! reader task that parses frames off that socket
-//! and forwards each as a `ResponseEvent`, and swapping the
-//! `stream::iter(...)` below for that task's receiver — the rest of this
-//! module (params flattening, blob encoding, reply decoding) is unchanged.
+//! [`DbusProvider`]: brain's `generate` action presented as a chat
+//! completion. See the [parent module](super) for configuration and scope.
 
 use std::collections::HashMap;
 
@@ -54,55 +12,14 @@ use futures::stream;
 use serde_json::{json, Value};
 use tracing::{debug, warn};
 
-use crate::{
+use sven_model::{
     catalog::{InputModality, ModelCatalogEntry},
-    provider::ResponseStream,
-    CompletionRequest, ContentPart, Message, MessageContent, ResponseEvent, Role,
-    ToolResultContent,
+    CompletionRequest, ContentPart, Message, MessageContent, ResponseEvent, ResponseStream, Role,
+    ToolContentPart, ToolResultContent,
 };
 
-pub mod action;
-pub mod blob;
-pub mod proxy;
-
-use proxy::ManagerProxy;
-
-/// Which bus to reach the service on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BusKind {
-    Session,
-    System,
-    /// A raw D-Bus address (e.g. `unix:path=/run/brain/bus`).
-    Address(String),
-}
-
-impl BusKind {
-    /// Parse the `bus` driver option.  Anything that is not `session` or
-    /// `system` is treated as a raw address.
-    pub fn parse(s: &str) -> Self {
-        match s.trim() {
-            "" | "session" => Self::Session,
-            "system" => Self::System,
-            other => Self::Address(other.to_string()),
-        }
-    }
-
-    async fn connect(&self) -> Result<zbus::Connection> {
-        match self {
-            Self::Session => zbus::Connection::session()
-                .await
-                .context("connecting to the D-Bus session bus"),
-            Self::System => zbus::Connection::system()
-                .await
-                .context("connecting to the D-Bus system bus"),
-            Self::Address(addr) => zbus::connection::Builder::address(addr.as_str())
-                .with_context(|| format!("parsing D-Bus address {addr:?}"))?
-                .build()
-                .await
-                .with_context(|| format!("connecting to D-Bus address {addr:?}")),
-        }
-    }
-}
+use super::blob;
+use super::proxy::{self, BusKind, ManagerProxy};
 
 /// Configuration for [`DbusProvider`], read from `driver_options`.
 #[derive(Debug, Clone)]
@@ -162,7 +79,7 @@ impl DbusOptions {
     }
 }
 
-/// A [`ModelProvider`](crate::ModelProvider) that speaks brain's D-Bus
+/// A [`ModelProvider`](sven_model::ModelProvider) that speaks brain's D-Bus
 /// interface.
 pub struct DbusProvider {
     model: String,
@@ -326,9 +243,9 @@ fn flatten_tool_result(content: &ToolResultContent) -> String {
         ToolResultContent::Parts(parts) => parts
             .iter()
             .map(|p| match p {
-                crate::ToolContentPart::Text { text } => text.as_str(),
-                crate::ToolContentPart::Image { .. } => "[image]",
-                crate::ToolContentPart::Audio { .. } => "[audio]",
+                ToolContentPart::Text { text } => text.as_str(),
+                ToolContentPart::Image { .. } => "[image]",
+                ToolContentPart::Audio { .. } => "[audio]",
             })
             .collect::<Vec<_>>()
             .join("\n"),
@@ -377,9 +294,9 @@ pub fn extract_blob_urls(messages: &[Message]) -> (Option<String>, Option<String
             } => {
                 for p in parts {
                     match p {
-                        crate::ToolContentPart::Image { image_url } => visit(image_url, true),
-                        crate::ToolContentPart::Audio { audio_url } => visit(audio_url, false),
-                        crate::ToolContentPart::Text { .. } => {}
+                        ToolContentPart::Image { image_url } => visit(image_url, true),
+                        ToolContentPart::Audio { audio_url } => visit(audio_url, false),
+                        ToolContentPart::Text { .. } => {}
                     }
                 }
             }
@@ -461,7 +378,7 @@ fn reply_usage(result_json: &str) -> (u32, u32) {
 // ─── ModelProvider ────────────────────────────────────────────────────────────
 
 #[async_trait]
-impl crate::ModelProvider for DbusProvider {
+impl sven_model::ModelProvider for DbusProvider {
     fn name(&self) -> &str {
         "dbus"
     }
@@ -585,7 +502,7 @@ impl crate::ModelProvider for DbusProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FunctionCall, ToolContentPart};
+    use sven_model::FunctionCall;
 
     #[test]
     fn bus_kind_parses_known_names() {
@@ -832,7 +749,7 @@ mod tests {
 
     #[test]
     fn advertises_all_three_modalities() {
-        use crate::ModelProvider as _;
+        use sven_model::ModelProvider as _;
         let p = DbusProvider::new("brain/omni", DbusOptions::default(), None, None);
         let m = p.input_modalities();
         assert!(m.contains(&InputModality::Text));
@@ -844,7 +761,7 @@ mod tests {
 
     #[test]
     fn reports_its_name_and_model() {
-        use crate::ModelProvider as _;
+        use sven_model::ModelProvider as _;
         let p = DbusProvider::new("brain/omni", DbusOptions::default(), None, None);
         assert_eq!(p.name(), "dbus");
         assert_eq!(p.model_name(), "brain/omni");

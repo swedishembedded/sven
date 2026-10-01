@@ -1,10 +1,12 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! zbus proxy for brain's `com.swedishembedded.Brain1.Manager` interface.
+//! zbus proxy for brain's `com.swedishembedded.Brain1.Manager` interface, and
+//! the bus it is reached on.
 
 use std::collections::HashMap;
 
+use anyhow::{Context, Result};
 use zbus::zvariant::OwnedFd;
 
 /// Well-known bus name brain registers.
@@ -30,8 +32,9 @@ pub const INTERFACE: &str = "com.swedishembedded.Brain1.Manager";
 /// | out       | `out_fds`   | blob name → fd (`text` carries generated output) |
 /// | out       | `out_meta`  | JSON object string of output blob metadata       |
 ///
-/// Only the one-shot `Run` is modelled here — see the module docs of
-/// [`crate::dbus`] for why streaming `Subscribe` is deliberately out of scope.
+/// Only the one-shot `Run` is modelled here — see the [transport's
+/// documentation](super) for why streaming `Subscribe` is deliberately out of
+/// scope.
 #[zbus::proxy(
     interface = "com.swedishembedded.Brain1.Manager",
     default_service = "com.swedishembedded.Brain1",
@@ -62,4 +65,41 @@ pub trait Manager {
     /// Server version string.
     #[zbus(property)]
     fn version(&self) -> zbus::Result<String>;
+}
+
+/// Which bus to reach the service on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BusKind {
+    Session,
+    System,
+    /// A raw D-Bus address (e.g. `unix:path=/run/brain/bus`).
+    Address(String),
+}
+
+impl BusKind {
+    /// Parse the `bus` driver option.  Anything that is not `session` or
+    /// `system` is treated as a raw address.
+    pub fn parse(s: &str) -> Self {
+        match s.trim() {
+            "" | "session" => Self::Session,
+            "system" => Self::System,
+            other => Self::Address(other.to_string()),
+        }
+    }
+
+    pub(crate) async fn connect(&self) -> Result<zbus::Connection> {
+        match self {
+            Self::Session => zbus::Connection::session()
+                .await
+                .context("connecting to the D-Bus session bus"),
+            Self::System => zbus::Connection::system()
+                .await
+                .context("connecting to the D-Bus system bus"),
+            Self::Address(addr) => zbus::connection::Builder::address(addr.as_str())
+                .with_context(|| format!("parsing D-Bus address {addr:?}"))?
+                .build()
+                .await
+                .with_context(|| format!("connecting to D-Bus address {addr:?}")),
+        }
+    }
 }

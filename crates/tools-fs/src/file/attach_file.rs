@@ -35,7 +35,7 @@ pub struct AttachFileTool {
     asr: AsrConfig,
     /// A pre-built transcription client, for tests. `None` in production, where
     /// one is dialled from `asr`.
-    asr_client: Option<sven_model::ActionClient>,
+    asr_client: Option<sven_model_drivers::dbus::ActionClient>,
     /// Where `path` resolves, and whether it may leave there.
     scope: PathScope,
 }
@@ -63,7 +63,10 @@ impl AttachFileTool {
     /// Exists for tests: a client wired to a fake `Brain1.Manager` exercises
     /// the audio path with no bus, no server and no checkpoint.
     #[cfg(test)]
-    pub(crate) fn with_asr_client(mut self, client: sven_model::ActionClient) -> Self {
+    pub(crate) fn with_asr_client(
+        mut self,
+        client: sven_model_drivers::dbus::ActionClient,
+    ) -> Self {
         self.asr_client = Some(client);
         self
     }
