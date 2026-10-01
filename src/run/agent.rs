@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use sven_sdk::{AgentState, ApprovalPolicy, Engine, RunConclusion, Toolset};
+use sven_sdk::{AgentState, Engine, RunConclusion, Toolset};
 
 use crate::cli::AgentCommands;
 
@@ -29,19 +29,15 @@ pub(crate) async fn run_agent_command(
             state,
             mode,
             role,
-            yes,
             message,
         } => {
+            // The coding application: the agent reads, edits and runs things
+            // in the working directory. A step runs unattended: every call the
+            // mode allows runs, and a question is answered at once, saying no
+            // user is available.
             let engine = Engine::builder()
                 .config(config)
-                // The coding application: the agent reads, edits and runs
-                // things in the working directory.
                 .toolset(Toolset::coding())
-                .approvals(if *yes {
-                    ApprovalPolicy::AutoApprove
-                } else {
-                    ApprovalPolicy::Deny
-                })
                 .build()?;
 
             // A state file that exists but will not parse is an error. Starting

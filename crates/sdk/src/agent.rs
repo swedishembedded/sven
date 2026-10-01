@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use sven_machines::machines::loop_core::MAX_ROUNDS_REACHED_FACT;
 
-use crate::engine::{ApprovalPolicy, Engine};
+use crate::engine::Engine;
 use crate::error::CallError;
 use crate::method::{Method, Strategy};
 use crate::run::{Question, RunConclusion, RunOptions, RunOutcome, Usage};
@@ -425,7 +425,16 @@ impl Agent {
             .with_builtin_tools(self.engine.toolset().builtin())
             .with_extra_tools(self.engine.tools())
             .with_initial_history(self.state.history.clone())
-            .with_parked_questions();
+            .with_approval_mode(self.engine.approvals().into());
+        if self.engine.parks_questions() {
+            builder = builder.with_parked_questions();
+        }
+        let human = self.engine.human();
+        // The model's `ask_question` goes to the host's handler, unless the
+        // host chose to park it.
+        if let (Some(responder), false) = (&human, self.engine.parks_questions()) {
+            builder = builder.with_tool_question_tx(ask_through(Arc::clone(responder)));
+        }
         if let Some(registry) = self.engine.machines() {
             builder = builder.with_mode_registry(registry);
         }
@@ -449,17 +458,10 @@ impl Agent {
             .map(|s| atif::function_tool(&s.name, &s.description, &s.parameters))
             .collect();
 
-        match self.engine.approvals() {
-            ApprovalPolicy::AutoApprove => {
-                tokio::spawn(bundle.channels.answer_unattended());
-            }
-            ApprovalPolicy::Deny => {
-                tokio::spawn(bundle.channels.answer_unattended());
-            }
-            ApprovalPolicy::Ask(responder) => {
-                tokio::spawn(bundle.channels.forward_to(responder));
-            }
-        }
+        match human {
+            Some(responder) => tokio::spawn(bundle.channels.forward_to(responder)),
+            None => tokio::spawn(bundle.channels.answer_unattended()),
+        };
 
         let mut observations = bundle.handle.subscribe_observations();
         // The history as seeded, so the store can be checked for this turn's
@@ -672,4 +674,33 @@ fn strip_fence(text: &str) -> &str {
         .strip_suffix("```")
         .unwrap_or(rest)
         .trim()
+}
+
+/// A question channel for the `ask_question` tool whose questions go to the
+/// host's `responder` as [`HumanGate::Question`](crate::HumanGate::Question)s:
+/// the questions' prompts, each with its options, and the host's reply
+/// returned as the answer. The channel closes when the session drops the
+/// tool.
+fn ask_through(
+    responder: sven_bootstrap::session_handles::HumanGateResponder,
+) -> tokio::sync::mpsc::Sender<sven_bootstrap::QuestionRequest> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<sven_bootstrap::QuestionRequest>(4);
+    tokio::spawn(async move {
+        while let Some(request) = rx.recv().await {
+            let prompt = request
+                .questions
+                .iter()
+                .map(|q| match q.options.as_slice() {
+                    [] => q.prompt.clone(),
+                    options => format!("{} ({})", q.prompt, options.join(" / ")),
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            responder(crate::HumanGate::Question {
+                prompt,
+                reply_tx: request.answer_tx,
+            });
+        }
+    });
+    tx
 }

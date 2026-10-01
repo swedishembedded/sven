@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use sven_config::Config;
 use sven_sdk::{
-    ApprovalPolicy, Engine, HumanGate, RunConclusion, RunOptions, RunOutcome, SessionEvent, Toolset,
+    Engine, EngineBuilder, RunConclusion, RunOptions, RunOutcome, SessionEvent, Toolset,
 };
 use sven_team::{MemberLimits, TokenAllowance};
 use sven_tool_api::events::SubagentUpdate;
@@ -105,21 +105,24 @@ fn task_prompt(me: &Teammate, title: &str, description: &str) -> String {
     )
 }
 
-/// How a member answers its runs' approval gates, its sub-agents' included:
-/// it runs unattended, so it approves any call except one to a tool it is
-/// denied, and answers a question with nothing.
-fn member_gate(deny_tools: Vec<String>) -> ApprovalPolicy {
-    ApprovalPolicy::ask(move |gate| match gate {
-        HumanGate::Approval { call, reply_tx, .. } => {
-            let denied = call
-                .as_ref()
-                .is_some_and(|call| deny_tools.contains(&call.name));
-            let _ = reply_tx.send(!denied);
-        }
-        HumanGate::Question { reply_tx, .. } => {
-            let _ = reply_tx.send(String::new());
-        }
-    })
+/// The engine a member runs a task on: the coding tools, held to the
+/// member's terms. A member runs unattended, so it keeps the default auto
+/// approval and has no human-gate handler: a call its terms allow runs
+/// without a prompt (a denied tool is never registered), and a question is
+/// answered at once, saying no user is available.
+fn member_engine(
+    config: &Config,
+    limits: &MemberLimits,
+    model: Option<&str>,
+    project_root: Option<&std::path::Path>,
+) -> EngineBuilder {
+    let builder = Engine::builder()
+        .config(task_config(config, limits, model))
+        .toolset(Toolset::coding());
+    match project_root {
+        Some(root) => builder.project_root(root),
+        None => builder,
+    }
 }
 
 /// Runs one task with its output held to `allowance`, and returns how it
@@ -350,13 +353,12 @@ pub(crate) async fn run_as_teammate(me: Teammate, config: Arc<Config>) -> anyhow
                 );
 
                 let prompt = task_prompt(&me, &task.title, &task.description);
-                let mut builder = Engine::builder()
-                    .config(task_config(&config, &limits, me.model.as_deref()))
-                    .toolset(Toolset::coding())
-                    .approvals(member_gate(limits.deny_tools.clone()));
-                if let Some(root) = &project_root {
-                    builder = builder.project_root(root);
-                }
+                let builder = member_engine(
+                    &config,
+                    &limits,
+                    me.model.as_deref(),
+                    project_root.as_deref(),
+                );
                 let (run, used) = match builder.build() {
                     Ok(engine) => run_task(&engine, &prompt, allowance, &agent_name).await,
                     Err(e) => (Err(e), 0),
@@ -448,24 +450,81 @@ mod tests {
         assert!(prompt.contains("## Task: Review"), "{prompt}");
     }
 
-    #[tokio::test]
-    async fn a_member_approves_what_it_may_use_and_refuses_what_it_is_denied() {
-        let ApprovalPolicy::Ask(answer) = member_gate(vec!["shell".into()]) else {
-            panic!("a member answers its own gates");
-        };
-        for (tool, expected) in [("shell", false), ("write_file", true)] {
-            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-            answer(HumanGate::Approval {
-                capability: sven_sdk::machine::ToolCapability::ExecuteShell,
-                prompt: "run it".into(),
-                call: Some(sven_sdk::machine::GatedCall {
-                    name: tool.into(),
-                    args: serde_json::Value::Null,
-                }),
-                reply_tx,
-            });
-            assert_eq!(reply_rx.await.unwrap(), expected, "{tool}");
+    /// A tool that records how often it ran.
+    struct Shell(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl sven_sdk::tool::Tool for Shell {
+        fn name(&self) -> &str {
+            "shell"
         }
+        fn description(&self) -> &str {
+            "runs a command"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn default_policy(&self) -> sven_sdk::tool::ApprovalPolicy {
+            sven_sdk::tool::ApprovalPolicy::Ask
+        }
+        fn kernel_capability(&self) -> sven_sdk::tool::ToolCapability {
+            sven_sdk::tool::ToolCapability::ExecuteShell
+        }
+        async fn execute(&self, call: &sven_sdk::tool::ToolCall) -> sven_sdk::tool::ToolOutput {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            sven_sdk::tool::ToolOutput::ok(&call.id, "built")
+        }
+    }
+
+    /// A member never waits for a person: its shell call runs without a
+    /// prompt, and its question is answered at once saying no user is
+    /// available.
+    #[tokio::test]
+    async fn a_member_runs_its_calls_and_answers_its_questions_without_a_person() {
+        use sven_model::ResponseEvent;
+        let call = |id: &str, tool: &str, args: serde_json::Value| {
+            vec![
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: id.into(),
+                    name: tool.into(),
+                    arguments: args.to_string(),
+                },
+                ResponseEvent::Done,
+            ]
+        };
+        let provider = sven_model_mock::ScriptedMockProvider::new(vec![
+            call("s1", "shell", serde_json::json!({"command": "make"})),
+            call(
+                "q1",
+                "ask_question",
+                serde_json::json!({"questions": [{"prompt": "Which target?", "options": ["a", "b"]}]}),
+            ),
+            vec![ResponseEvent::TextDelta("done".into()), ResponseEvent::Done],
+        ]);
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let limits = MemberLimits {
+            deny_tools: Vec::new(),
+            max_tool_rounds: None,
+        };
+        let engine = member_engine(&Config::default(), &limits, None, None)
+            .model_provider(std::sync::Arc::new(provider))
+            .tool(std::sync::Arc::new(Shell(std::sync::Arc::clone(&ran))))
+            .build()
+            .expect("a member engine builds");
+        let mut agent = engine.agent("agent");
+        let outcome =
+            tokio::time::timeout(std::time::Duration::from_secs(30), agent.send("build it"))
+                .await
+                .expect("the run never waits for a person")
+                .expect("an outcome");
+        assert_eq!(outcome.conclusion, RunConclusion::Success);
+        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let answered = agent.state().history().iter().any(|m| {
+            matches!(&m.content, sven_model::MessageContent::ToolResult { tool_call_id, content }
+                if tool_call_id == "q1" && format!("{content:?}").contains("No user is available"))
+        });
+        assert!(answered, "the question got the no-user answer");
     }
 
     #[test]

@@ -43,6 +43,8 @@ pub use runtime_builder::{
 };
 pub use supervisor::{SessionId, SessionSupervisor};
 pub use sven_mcp_client::McpManager;
+/// What a session's `ask_question` tool sends a surface that answers it.
+pub use sven_tools_agent::{Question, QuestionRequest};
 pub use task_tool::{ChildApprover, TaskTool};
 pub use ui_test_dispatch::{
     dispatch_ui_test_step, StateReporter, UiTestDevice, UiTestDispatchOverrides,

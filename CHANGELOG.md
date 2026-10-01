@@ -8,7 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Migrating from 2.0.0
+- **An SDK host that never called `.approvals()` now runs shell and delete calls.** 2.0.0's default `ApprovalPolicy::Deny` refused every call the kernel asked about - `ExecuteShell` and `DeleteFile` - and answered questions with nothing. The default is now `ApprovalPolicy::Auto`: every call the agent's mode allows runs. A host that relied on the refusal picks a read-only mode or `Toolset`, or asks a person: `.approvals(ApprovalPolicy::Manual).human_gates(handler)`.
+- **sven-sdk**: `ApprovalPolicy` is `Auto` (the default) or `Manual`. `ApprovalPolicy::AutoApprove` → drop the `.approvals(..)` call. `ApprovalPolicy::ask(f)` → `.approvals(ApprovalPolicy::Manual).human_gates(f)` to be asked about each call that is not read-only, or `.human_gates(f)` alone to answer only questions. `ApprovalPolicy::Deny` → a read-only mode or `Toolset`; under `Manual`, a handler that replies `false` refuses every call.
+- **sven-sdk**: a question the model asks no longer parks by default: without a handler it is answered at once with `NO_USER_ANSWER`. A host that parks questions and resumes with `Agent::answer` adds `.park_questions()`.
 - **sven-tool-api, sven-sdk**: `Tool::kernel_capability` has no default - it used to be `ReadFile`. A tool of your own declares the widest effect any call has (`ToolCapability::ReadFile` for one that only reads); a tool whose actions differ also implements `call_capability`.
+- `sven agent step --yes` is gone: a step runs every call its mode allows. Drop the flag; pick a read-only `--mode` where nothing may change.
 - `sven acp serve --permission-timeout-secs 0` is rejected: the wait is always bounded. Pass a positive number of seconds.
 - `ToolCapability` gains `SpawnChild`, and `Effect::InstantiateSubmachine` now requires it: a machine that spawns children must allow `SpawnChild` in the spawning state, and an exhaustive `match` on `ToolCapability` needs the new arm.
 - `ChildSpawner::spawn_child` takes a `run: ChildRun` parameter (the contract and the child's cancel scope).
@@ -20,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **sven-tool-api**: `PermissionRequester::request_permission` takes the call's `ToolCapability` as a second parameter (`Tool::call_capability`); an implementation decides on it rather than on the tool's name.
 
 ### Added
+- `sven-sdk`: `ApprovalPolicy::{Auto, Manual}`, `EngineBuilder::human_gates` (the handler that answers questions and, under `Manual`, approvals) and `EngineBuilder::park_questions`; `sven_sdk::tool::NO_USER_ANSWER`.
 - `RuntimeBuilder::with_approval_mode`, `UserExecutor::with_approval_mode`, `KernelAgentSession::spawn_answering`; `sven acp serve --approval auto|manual`, whose manual permission requests name the call's capability under `_meta` `sven.capability` (`CAPABILITY_META_KEY`).
 - `NO_USER_ANSWER` (`sven-vocab`, re-exported by `sven-tool-api`), `KernelChannels::{answer_unattended, closed}`, `RuntimeBuilder::with_parked_questions`, `AskQuestionTool::{parking, no_user}`.
 - `PermissionPolicy::with_manual_approval`, `ToolCapability::is_read_only`, `Context::is_call_approved`.
@@ -44,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Headless SDLC children now follow the session's gates.** A task child's questions go to the parent session's question channel - answered by a person in the TUI, with the no-user answer when nobody is there - and its approvals follow the parent's approval mode (given at once under auto, the parent's approval channel under manual), instead of ending the task. They hold only what the parent holds in `Execution` (no network), take at most `agent.max_tool_rounds` rounds, write at most the session's configured output cap per response, and stop after `agent.child_run_timeout_secs`; their tool calls in flight are aborted with them.
 - **The round default for `RuntimeBuilder` sessions now honours `agent.max_tool_rounds`** (default 200); CLI, TUI and ACP sessions previously stopped at the reactive machine's built-in 16.
 - A question or approval still pending when its run stops is withdrawn from the frontend.
-- Team members are held to their team's limits: `deny_tools`, `max_iterations` and `token_budget`. The budget is reserved per run under the team-config lock and charged with everything the run and its sub-agents used; a member answers its approvals itself, refusing its denied tools. `sven team start` writes the team config (under the lock) before spawning. Teammates honour `--model` and their definition's instructions, back off and then fail on an unreadable team config, and do not repeat their initial task on a restart. Team-config writes are locked across processes.
+- Team members are held to their team's limits: `deny_tools`, `max_iterations` and `token_budget`. The budget is reserved per run under the team-config lock and charged with everything the run and its sub-agents used; a member never waits for a person. `sven team start` writes the team config (under the lock) before spawning. Teammates honour `--model` and their definition's instructions, back off and then fail on an unreadable team config, and do not repeat their initial task on a restart. Team-config writes are locked across processes.
 
 ### Fixed
 - `spawn_teammate` no longer passes an undefined `--team-lead-peer` flag that made every spawned teammate fail to start.

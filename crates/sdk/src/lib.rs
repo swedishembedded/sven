@@ -89,7 +89,7 @@ pub mod config {
 pub mod tool {
     pub use sven_tool_api::{
         ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolCapability, ToolDisplay, ToolOutput,
-        ToolOutputPart,
+        ToolOutputPart, NO_USER_ANSWER,
     };
 }
 

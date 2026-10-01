@@ -12,7 +12,7 @@ puts around an agent.
 | Least privilege | the read-only preset plus three tools of the application's own: `read_changes`, `write_notes` (the only file it can write) and `publish` |
 | Bounded runs | every run has a deadline, an output-token budget and the configured tool-round budget; Ctrl-C cancels the run in progress |
 | A question that waits | the agent asks who the notes are for; the run ends `Waiting`, the agent is suspended to `agent-state.json`, and a fresh engine resumes it and answers |
-| Human approval | `publish` runs a command, so the kernel asks before it runs; the application approves only a draft that passes the check below |
+| Human approval | the engine runs under manual approval, so every call that changes something is put to the application before it runs; it approves `publish` only for a draft that passes the check below |
 | Independent check | the notes must mention every change in `CHANGES`; the agent's own report is never taken as evidence |
 | Trajectory | the whole run is written as ATIF to `trajectory.json` |
 

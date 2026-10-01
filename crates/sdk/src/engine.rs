@@ -28,6 +28,8 @@ pub struct Engine {
     config: Arc<Config>,
     provider: Option<Arc<dyn ModelProvider>>,
     approvals: ApprovalPolicy,
+    human: Option<sven_bootstrap::session_handles::HumanGateResponder>,
+    park_questions: bool,
     tools: Vec<Arc<dyn sven_tool_api::Tool>>,
     toolset: Toolset,
     machines: Option<Arc<sven_machines::ModeRegistry>>,
@@ -78,43 +80,32 @@ impl Toolset {
     }
 }
 
-/// What an agent does when the kernel asks a human to approve something or
-/// to answer a question.
+/// Whether an agent's tool calls wait for a person's approval.
 ///
-/// The gate must be answered, or the turn blocks until it is cancelled or
-/// its deadline passes.
-#[derive(Clone)]
+/// Approval never widens what an agent may do - its mode decides that - it
+/// only decides whether an allowed call is put to a person first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ApprovalPolicy {
-    /// Refuse every request and answer every question with nothing. The
-    /// default: a service with nobody watching should not silently grant a
-    /// dangerous capability.
-    Deny,
-    /// Grant every request, as the headless CI runner does.
-    ///
-    /// Appropriate only where the workspace is already disposable - a
-    /// container, a sandbox, a scratch clone.
-    AutoApprove,
-    /// Hand every gate to the application, which answers each through the
-    /// reply channel it carries - now, or later, after asking someone. A gate
-    /// dropped without a reply leaves the turn waiting, exactly as an
-    /// unanswered person would. Build one with [`ApprovalPolicy::ask`].
-    Ask(sven_bootstrap::session_handles::HumanGateResponder),
+    /// Every call the agent's mode allows runs without asking anyone, and a
+    /// decision a machine puts to a person (an SDLC `need_approval`) is
+    /// approved. The default.
+    #[default]
+    Auto,
+    /// Every call that is not read-only - the agent's and its children's - is
+    /// put to the engine's human-gate handler ([`EngineBuilder::human_gates`])
+    /// as a [`HumanGate::Approval`](crate::HumanGate::Approval) carrying the
+    /// tool and its arguments, and runs only once approved; each call is
+    /// asked about on its own. An engine under manual approval without a
+    /// handler does not build.
+    Manual,
 }
 
-impl ApprovalPolicy {
-    /// Answers each gate with `answer`.
-    pub fn ask(answer: impl Fn(crate::HumanGate) + Send + Sync + 'static) -> Self {
-        Self::Ask(Arc::new(answer))
-    }
-}
-
-impl std::fmt::Debug for ApprovalPolicy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Deny => "Deny",
-            Self::AutoApprove => "AutoApprove",
-            Self::Ask(_) => "Ask",
-        })
+impl From<ApprovalPolicy> for sven_config::ApprovalMode {
+    fn from(policy: ApprovalPolicy) -> Self {
+        match policy {
+            ApprovalPolicy::Auto => Self::Auto,
+            ApprovalPolicy::Manual => Self::Manual,
+        }
     }
 }
 
@@ -223,7 +214,15 @@ impl Engine {
     }
 
     pub(crate) fn approvals(&self) -> ApprovalPolicy {
-        self.approvals.clone()
+        self.approvals
+    }
+
+    pub(crate) fn human(&self) -> Option<sven_bootstrap::session_handles::HumanGateResponder> {
+        self.human.clone()
+    }
+
+    pub(crate) fn parks_questions(&self) -> bool {
+        self.park_questions
     }
 
     pub(crate) fn tools(&self) -> Vec<Arc<dyn sven_tool_api::Tool>> {
@@ -277,7 +276,9 @@ impl Engine {
 pub struct EngineBuilder {
     config: Option<Arc<Config>>,
     provider: Option<Arc<dyn ModelProvider>>,
-    approvals: Option<ApprovalPolicy>,
+    approvals: ApprovalPolicy,
+    human: Option<sven_bootstrap::session_handles::HumanGateResponder>,
+    park_questions: bool,
     tools: Vec<Arc<dyn sven_tool_api::Tool>>,
     toolset: Toolset,
     machines: Option<sven_machines::ModeRegistry>,
@@ -317,9 +318,10 @@ impl EngineBuilder {
     /// Registered on top of the [`Toolset`], and wins a name collision with
     /// a built-in tool. The tool is permission-gated and audited exactly like a
     /// built-in one: its `kernel_capability` decides which bucket it falls
-    /// under, and that bucket whether a call waits for a human (`ExecuteShell`
-    /// and `DeleteFile` do). `default_policy` applies only
-    /// where a permission requester fronts the registry (ACP, MCP).
+    /// under: the agent's mode decides whether that bucket may run, and
+    /// [`ApprovalPolicy::Manual`] whether a call of it waits for a person
+    /// (every bucket but reads does). `default_policy` applies only where a
+    /// permission requester fronts the registry (ACP, MCP).
     ///
     /// Repeatable.
     #[must_use]
@@ -373,11 +375,45 @@ impl EngineBuilder {
         self
     }
 
-    /// Sets what agents do at a human-approval gate. Defaults to
-    /// [`ApprovalPolicy::Deny`].
+    /// Sets whether agents' tool calls wait for a person's approval.
+    /// Defaults to [`ApprovalPolicy::Auto`]; [`ApprovalPolicy::Manual`] needs
+    /// a [`Self::human_gates`] handler.
     #[must_use]
     pub fn approvals(mut self, policy: ApprovalPolicy) -> Self {
-        self.approvals = Some(policy);
+        self.approvals = policy;
+        self
+    }
+
+    /// Hands every question an agent asks - the model's `ask_question`, a
+    /// machine's own question - and, under [`ApprovalPolicy::Manual`], every
+    /// approval request to `answer`, as a [`HumanGate`](crate::HumanGate).
+    ///
+    /// The handler owns replying through the channel each gate carries: now,
+    /// or later, after asking someone. A gate dropped without a reply leaves
+    /// the turn waiting, exactly as an unanswered person would.
+    ///
+    /// Without a handler nobody is there to ask: a question is answered at
+    /// once with [`NO_USER_ANSWER`](crate::tool::NO_USER_ANSWER) (unless
+    /// [`Self::park_questions`]), and the model carries on stating its
+    /// assumption.
+    #[must_use]
+    pub fn human_gates(
+        mut self,
+        answer: impl Fn(crate::HumanGate) + Send + Sync + 'static,
+    ) -> Self {
+        self.human = Some(Arc::new(answer));
+        self
+    }
+
+    /// Parks the run on a question the model asks with `ask_question`
+    /// instead of answering it: the run ends [`RunConclusion::Waiting`](crate::RunConclusion::Waiting)
+    /// with the question in [`RunOutcome::question`](crate::RunOutcome::question),
+    /// and [`Agent::answer`](crate::Agent::answer) continues it, also after a
+    /// suspend and resume in another process. The run returns at once; it
+    /// never waits for the answer.
+    #[must_use]
+    pub fn park_questions(mut self) -> Self {
+        self.park_questions = true;
         self
     }
 
@@ -391,8 +427,17 @@ impl EngineBuilder {
     /// # Errors
     ///
     /// [`CallError::Precondition`] when a [`Self::project_root`] does not
-    /// exist or is not a directory.
+    /// exist or is not a directory, or under [`ApprovalPolicy::Manual`]
+    /// without a [`Self::human_gates`] handler - nobody could approve a call,
+    /// and approving it on their behalf is what manual approval rules out.
     pub fn build(self) -> Result<Engine, CallError> {
+        if self.approvals == ApprovalPolicy::Manual && self.human.is_none() {
+            return Err(CallError::Precondition(
+                "manual approval needs a person to approve each call: give the engine a \
+                 human_gates handler, or use ApprovalPolicy::Auto"
+                    .into(),
+            ));
+        }
         let config = match self.config {
             Some(c) => c,
             None => Arc::new(Config::default()),
@@ -405,7 +450,9 @@ impl EngineBuilder {
         Ok(Engine {
             config,
             provider: self.provider,
-            approvals: self.approvals.unwrap_or(ApprovalPolicy::Deny),
+            approvals: self.approvals,
+            human: self.human,
+            park_questions: self.park_questions,
             tools: self.tools,
             toolset: self.toolset,
             machines: self.machines.map(Arc::new),

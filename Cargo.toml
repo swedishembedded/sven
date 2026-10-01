@@ -217,6 +217,7 @@ sven-tools-ctx   = { path = "crates/tools-ctx" }
 sven-config      = { path = "crates/config" }
 sven-model       = { path = "crates/model" }
 sven-vocab       = { path = "crates/vocab" }
+sven-model-mock  = { path = "crates/model-mock" }
 async-trait      = { workspace = true }
 tokio            = { workspace = true }
 tempfile         = { workspace = true }

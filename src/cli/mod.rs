@@ -399,11 +399,14 @@ pub enum Commands {
         command: IndexCommands,
     },
 
-    /// See and answer questions a headless run parked instead of guessing.
+    /// See and answer parked questions.
     ///
-    /// A run that cannot answer a question itself exits with code 5 rather
-    /// than block or fabricate an answer. `sven questions list` shows what is
-    /// waiting; `sven questions answer` durably records a human's reply.
+    /// A headless run's own questions are answered at once ("no user is
+    /// available"). What parks is a question from an embedding host that
+    /// chose to park (`EngineBuilder::park_questions`); a verified task whose
+    /// verifier needs a person exits with code 5. `sven questions list`
+    /// shows what is waiting; `sven questions answer` durably records a
+    /// human's reply.
     ///
     ///   sven questions list
     ///   sven questions answer <id> "Axum"

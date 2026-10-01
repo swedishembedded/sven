@@ -5,8 +5,8 @@
 //! never ran.
 //!
 //! Providers reject a history in which an assistant tool call is not
-//! followed by its result. A call refused before it runs - a human said no,
-//! the policy forbids it - must still be answered in the thread, with the
+//! followed by its result. A call refused before it runs - a person said no,
+//! the mode forbids it - must still be answered in the thread, with the
 //! reason, so the next turn is a valid request and the model learns why.
 //!
 //! Swedish Embedded AB implements robust agent runtimes for its clients. If
@@ -21,11 +21,12 @@ use common::Strict;
 use sven_model::{MessageContent, ResponseEvent};
 use sven_model_mock::ScriptedMockProvider;
 use sven_sdk::{
+    tool::ToolCapability,
     tool::{ApprovalPolicy as ToolApprovalPolicy, Tool, ToolCall, ToolOutput},
-    Engine,
+    ApprovalPolicy, Engine, HumanGate,
 };
 
-struct Deploy;
+struct Deploy(sven_sdk::tool::ToolCapability);
 
 #[async_trait::async_trait]
 impl Tool for Deploy {
@@ -42,16 +43,16 @@ impl Tool for Deploy {
         ToolApprovalPolicy::Auto
     }
     fn kernel_capability(&self) -> sven_sdk::tool::ToolCapability {
-        // The agent mode does not allow driving a device.
-        sven_sdk::tool::ToolCapability::ControlDevice
+        self.0
     }
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         ToolOutput::ok(&call.id, "deployed")
     }
 }
 
-#[tokio::test]
-async fn a_call_the_policy_refused_is_answered_in_the_thread() {
+/// Runs a turn whose one `deploy` call the engine refuses, and returns the
+/// result the call got in the thread.
+async fn refused_result(engine: sven_sdk::EngineBuilder) -> String {
     let scripts = vec![
         vec![
             ResponseEvent::ToolCall {
@@ -67,9 +68,8 @@ async fn a_call_the_policy_refused_is_answered_in_the_thread() {
             ResponseEvent::Done,
         ],
     ];
-    let engine = Engine::builder()
+    let engine = engine
         .model_provider(Arc::new(Strict(ScriptedMockProvider::new(scripts))))
-        .tool(Arc::new(Deploy))
         .build()
         .expect("an engine builds");
     let mut agent = engine.agent("agent");
@@ -78,7 +78,7 @@ async fn a_call_the_policy_refused_is_answered_in_the_thread() {
         .await
         .expect("the turn after the refusal is a valid request");
     assert_eq!(outcome.reply, "not deployed");
-    let result = agent
+    agent
         .state()
         .history()
         .iter()
@@ -89,6 +89,30 @@ async fn a_call_the_policy_refused_is_answered_in_the_thread() {
             } if tool_call_id == "d1" => Some(format!("{content:?}")),
             _ => None,
         })
-        .expect("the refused call has a result");
+        .expect("the refused call has a result")
+}
+
+#[tokio::test]
+async fn a_call_the_mode_forbids_is_answered_in_the_thread() {
+    // The agent mode does not allow driving a device.
+    let result =
+        refused_result(Engine::builder().tool(Arc::new(Deploy(ToolCapability::ControlDevice))))
+            .await;
+    assert!(result.contains("not run"), "the result says why: {result}");
+}
+
+#[tokio::test]
+async fn a_call_a_person_refused_is_answered_in_the_thread() {
+    let result = refused_result(
+        Engine::builder()
+            .tool(Arc::new(Deploy(ToolCapability::ExecuteShell)))
+            .approvals(ApprovalPolicy::Manual)
+            .human_gates(|gate| {
+                if let HumanGate::Approval { reply_tx, .. } = gate {
+                    let _ = reply_tx.send(false);
+                }
+            }),
+    )
+    .await;
     assert!(result.contains("not run"), "the result says why: {result}");
 }

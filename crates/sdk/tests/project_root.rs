@@ -22,7 +22,7 @@ use std::sync::{Arc, OnceLock};
 
 use sven_model::{MessageContent, ResponseEvent};
 use sven_model_mock::ScriptedMockProvider;
-use sven_sdk::{ApprovalPolicy, Engine, Toolset};
+use sven_sdk::{Engine, Toolset};
 
 /// The process working directory every test in this file runs from: a fresh
 /// directory the agent has no business writing to.
@@ -93,7 +93,6 @@ async fn run_calls(root: &Path, calls: &[(&str, serde_json::Value)]) -> Vec<Stri
     let engine = Engine::builder()
         .model_provider(Arc::new(ScriptedMockProvider::new(scripts)))
         .toolset(Toolset::coding())
-        .approvals(ApprovalPolicy::AutoApprove)
         .project_root(root)
         .build()
         .expect("an engine with an existing root builds");

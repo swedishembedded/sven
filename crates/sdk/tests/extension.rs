@@ -56,7 +56,6 @@ fn engine_with_tool(scripts: Vec<Vec<ResponseEvent>>) -> Engine {
     Engine::builder()
         .model_provider(Arc::new(ScriptedMockProvider::new(scripts)) as Arc<_>)
         .tool(Arc::new(StockPrice))
-        .approvals(sven_sdk::ApprovalPolicy::AutoApprove)
         .build()
         .expect("an engine builds")
 }

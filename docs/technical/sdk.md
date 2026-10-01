@@ -43,8 +43,8 @@ what makes every run resumable in another process; it also means a run pays
 for connecting its MCP servers again. The shared model provider is not rebuilt.
 
 `samples/agent/task` is a complete application on the facade alone: its own
-tools, bounded runs, a parked question answered after a suspend and resume, an
-approval decided by the application, an independent check, and an ATIF
+tools, bounded runs, a parked question answered after a suspend and resume,
+manual approval decided by the application, an independent check, and an ATIF
 trajectory.
 
 ## Tools
@@ -120,14 +120,25 @@ The CLI and TUI never confine their tools.
 
 ## Human gates
 
-When the kernel needs a human - an inherently dangerous capability such as
-`ExecuteShell`, or a question - the engine's `ApprovalPolicy` answers:
-`Deny` (the default), `AutoApprove` (disposable workspaces only), or `Ask`,
-which hands each gate to the application:
+An agent's mode decides what it may do. Its engine's `ApprovalPolicy` decides
+only whether an allowed call waits for a person:
+
+- `ApprovalPolicy::Auto` (the default): every call the mode allows runs
+  without asking anyone - shell and deletes included - and a decision a
+  machine puts to a person (an SDLC `need_approval`) is approved.
+- `ApprovalPolicy::Manual`: every call that is not read-only - the agent's and
+  its children's - is put to the engine's `human_gates` handler as a
+  `HumanGate::Approval` carrying the tool and its arguments, one call at a
+  time. An engine under manual approval without a handler does not build
+  (`CallError::Precondition`): nobody could approve, and approving on their
+  behalf is what manual approval rules out.
+
+The same handler gets every question the agent asks as a `HumanGate::Question`:
 
 ```rust
 let engine = Engine::builder()
-    .approvals(ApprovalPolicy::ask(|gate| match gate {
+    .approvals(ApprovalPolicy::Manual)
+    .human_gates(|gate| match gate {
         HumanGate::Approval { capability, prompt, call, reply_tx } => {
             // `call` is the tool call it gates (name and arguments), if any;
             // ask someone, reply now or later
@@ -136,7 +147,7 @@ let engine = Engine::builder()
         HumanGate::Question { prompt, reply_tx } => {
             let _ = reply_tx.send(answer_for(&prompt));
         }
-    }))
+    })
     .build()?;
 ```
 
@@ -146,12 +157,19 @@ exactly as the model proposed it.
 A refused call is answered in the conversation with the reason, so the next
 request is valid for every provider and the model learns why.
 
+Without a handler nobody is there to ask, and nothing waits for anybody: a
+question is answered at once with `sven_sdk::tool::NO_USER_ANSWER` ("No user
+is available to answer this question. Proceed on your best judgement and
+state the assumption you made."), and the model carries on, naming its
+assumption.
+
 ## Questions that wait
 
-The `ask_question` tool in the coding and research presets does not block:
-the run parks on the question and ends with `RunConclusion::Waiting`, carrying
-it in `outcome.question`. The answer may come from someone else, much later,
-in another process:
+An engine built with `EngineBuilder::park_questions` parks a question the
+model asks with `ask_question` (the coding and research presets offer it)
+instead: the run returns at once, ending with `RunConclusion::Waiting` and
+carrying the question in `outcome.question`. The answer may come from someone
+else, much later, in another process:
 
 ```rust
 let outcome = agent.send("start a web service").await?;
@@ -385,11 +403,10 @@ on `TurnComplete` with its text collected.
 
 ## Approval policy
 
-A turn that reaches a human-approval gate blocks until the gate is answered, so
-an agent running unattended must answer it. `ApprovalPolicy::Deny` is the
-default: refusing is safe, and answering "yes" on nobody's behalf is not.
-`ApprovalPolicy::AutoApprove` matches what the headless CI runner does and is
-appropriate only where the workspace is already disposable.
+No run ever waits for a person the application does not provide: under the
+default `ApprovalPolicy::Auto` nothing is asked, and a question without a
+handler is answered at once. `ApprovalPolicy::Manual` is the one way to put
+calls to a person, and it requires a handler to put them to.
 
 ## Errors keep their identity
 

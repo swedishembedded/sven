@@ -33,7 +33,7 @@ mod svf;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use sven_sdk::{config, ApprovalPolicy, Engine};
+use sven_sdk::{config, Engine};
 
 /// Which supporting document the arm's workspace contains beside the spec.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -282,10 +282,9 @@ async fn main() -> Result<()> {
     // for, so the sample uses it rather than building an engine per task.
     let engine = Engine::builder()
         .config(config::load(None).context("loading sven configuration")?)
-        // Unattended by construction: a human at an approval gate would be a
-        // variable this experiment cannot hold constant. The workspace is a
-        // scratch directory this binary created.
-        .approvals(ApprovalPolicy::AutoApprove)
+        // Unattended by construction (the default auto approval): a human
+        // at an approval gate would be a variable this experiment cannot hold
+        // constant. The workspace is a scratch directory this binary created.
         // The agents fix a failing test in a real workspace: they read, edit
         // and run it, which is exactly the coding preset.
         .toolset(sven_sdk::Toolset::coding())

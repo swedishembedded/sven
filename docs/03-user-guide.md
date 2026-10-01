@@ -459,11 +459,12 @@ open between turns.
 | `--state <file>` | Load from and write back to this file. Omit it for a one-off step that keeps nothing. |
 | `--mode <mode>` | Which machine to run. Only used when starting fresh; a resumed agent keeps its own. |
 | `--role <text>` | A stable system prompt for the agent. |
-| `--yes` | Approve permission gates instead of refusing them. Off by default. |
 
-Without `--yes` every approval gate is **refused**, so a step running
-unattended cannot be talked into a dangerous capability. Pass it only where the
-workspace is already disposable.
+A step runs unattended, like every non-interactive run: every tool call its
+mode allows runs without a prompt, and a question the agent asks is answered
+at once ("No user is available to answer this question. Proceed on your best
+judgement and state the assumption you made."). Pick a read-only `--mode`
+where the agent must not change anything.
 
 A state file that exists but cannot be read is an error rather than a fresh
 start: silently discarding a conversation would only show up later, as an agent

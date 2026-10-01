@@ -47,13 +47,6 @@ pub enum AgentCommands {
         #[arg(long)]
         role: Option<String>,
 
-        /// Approve every permission gate instead of refusing it.
-        ///
-        /// Off by default: a step running unattended should not grant a
-        /// dangerous capability on nobody's behalf.
-        #[arg(long)]
-        yes: bool,
-
         /// The message to send.
         message: String,
     },

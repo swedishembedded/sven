@@ -323,8 +323,11 @@ member reads its own before every task:
   it succeeded, and once the budget is spent a member claims no further task
   and exits.
 
-A member answers its runs' approval prompts itself, its sub-agents'
-included: it approves any call except one to a tool it is denied.
+A member never waits for a person: it runs under auto approval, so every
+call its terms allow runs without a prompt (a denied tool is never offered),
+its sub-agents' included, and a question it asks is answered at once with
+"No user is available to answer this question. Proceed on your best
+judgement and state the assumption you made."
 
 A member's `model` and `instructions` apply to every task it runs. The
 limits live in the team config, so they hold for every member however it was

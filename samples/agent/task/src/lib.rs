@@ -11,8 +11,9 @@
 //!   configured tool-round budget, and Ctrl-C cancels it;
 //! - a question the agent asks parks the run; the agent is suspended to a
 //!   file and resumed by a fresh engine, which answers it;
-//! - publishing runs a command, so the kernel asks a human first, and the
-//!   application answers by checking the draft itself;
+//! - the engine runs under manual approval, so every call that changes
+//!   something is put to the application first; it approves publishing only
+//!   a draft that passes its own check;
 //! - an independent check decides whether the work is right, never the
 //!   agent's own report;
 //! - the whole run is written as an ATIF trajectory.
@@ -144,8 +145,8 @@ pub async fn run(opts: &Options) -> anyhow::Result<Report> {
 }
 
 /// The engine every run uses: the configured model, the read-only preset
-/// and this application's three tools, with approvals answered by checking
-/// the draft.
+/// and this application's three tools, under manual approval answered by
+/// checking the draft before it is published, and with questions parked.
 fn engine(opts: &Options) -> anyhow::Result<Engine> {
     let provider = sven_sdk::drivers::from_config(&opts.config.model)?;
     let workspace = opts.workspace.clone();
@@ -156,16 +157,20 @@ fn engine(opts: &Options) -> anyhow::Result<Engine> {
         .tool(Arc::new(ReadChanges(opts.workspace.clone())))
         .tool(Arc::new(WriteNotes(opts.workspace.clone())))
         .tool(Arc::new(Publish(opts.workspace.clone())))
-        .approvals(ApprovalPolicy::ask(move |gate| match gate {
+        .approvals(ApprovalPolicy::Manual)
+        .park_questions()
+        .human_gates(move |gate| match gate {
             // Publishing is approved only for a draft that passes the same
-            // check the application applies at the end.
-            HumanGate::Approval { reply_tx, .. } => {
-                let _ = reply_tx.send(verify(&workspace).is_ok());
+            // check the application applies at the end; every other change
+            // is the agent's to make.
+            HumanGate::Approval { call, reply_tx, .. } => {
+                let publishing = call.as_ref().is_some_and(|c| c.name == "publish");
+                let _ = reply_tx.send(!publishing || verify(&workspace).is_ok());
             }
             HumanGate::Question { reply_tx, .. } => {
-                let _ = reply_tx.send(String::new());
+                let _ = reply_tx.send(sven_sdk::tool::NO_USER_ANSWER.to_string());
             }
-        }))
+        })
         .build()?)
 }
 

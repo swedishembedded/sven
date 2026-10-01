@@ -8,9 +8,10 @@ use clap::Subcommand;
 /// `sven questions` subcommands - the operator side of the async
 /// question-parking primitive.
 ///
-/// A headless run that cannot answer a question itself parks it (exit code 5,
-/// `EXIT_NEEDS_HUMAN`) rather than blocking or guessing. These commands are
-/// how a human sees and answers what is parked.
+/// A question is parked, never guessed at, when an embedding host chose to
+/// park questions (`EngineBuilder::park_questions`); a headless run's own
+/// questions are answered at once ("no user is available"). These commands
+/// are how a human sees and answers what is parked.
 #[derive(Subcommand, Debug)]
 pub enum QuestionsCommands {
     /// List every parked question with no recorded answer yet.
