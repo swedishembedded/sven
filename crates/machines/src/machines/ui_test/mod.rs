@@ -161,9 +161,8 @@ impl UiTestMachine {
     }
 
     /// Permission policy: read a screenshot, drive the device, ask a human -
-    /// nothing else. Neither capability is inherently dangerous (see
-    /// `ToolCapability::is_inherently_dangerous`), so a fixed, reviewed test
-    /// script can run unattended, e.g. under an automated CI dispatch.
+    /// nothing else. The policy asks no approval, so a fixed, reviewed test
+    /// script runs unattended, e.g. under an automated CI dispatch.
     #[must_use]
     pub fn permission_policy() -> PermissionPolicy {
         PermissionPolicy::builder()

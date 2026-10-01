@@ -28,9 +28,10 @@ use crate::permissions::{PermissionPolicy, ToolCapability};
 
 /// The capability set and budgets a child agent run inherits from its parent.
 ///
-/// A child starts with a fresh context, so it holds none of its parent's
-/// granted approvals: a capability the policy marks approval-required needs a
-/// fresh approval in the child, from whatever approver the spawner provides.
+/// An approval is for one call, so a child holds none of its parent's: under
+/// a policy that asks approval for a capability (a parent under manual
+/// approval), each such call of the child is put to whatever approver the
+/// spawner provides.
 #[derive(Clone, Debug, Default)]
 pub struct ChildRunContract {
     /// What the child may do. Applied to the child's own machine, whose
@@ -227,8 +228,8 @@ mod tests {
         assert!(contract.allows_without_asking(ToolCapability::ReadFile));
         assert!(!contract.allows_without_asking(ToolCapability::WriteFile));
         assert!(
-            !contract.allows_without_asking(ToolCapability::ExecuteShell),
-            "shell is inherently dangerous"
+            contract.allows_without_asking(ToolCapability::ExecuteShell),
+            "only the policy decides what needs asking"
         );
         assert!(!contract.allows_without_asking(ToolCapability::NetworkAccess));
     }

@@ -469,7 +469,7 @@ fn user_cancel_goes_to_cancelled() {
 // the policy below must return `Allowed` for `WriteFile` and `ExecuteShell`.
 
 #[test]
-fn execution_policy_allows_write_file_and_needs_approval_for_execute_shell() {
+fn execution_policy_allows_write_file_and_execute_shell() {
     use sven_hsm::permissions::{classify, EffectDisposition, ToolCapability};
 
     let policy = SdlcMachine::permission_policy();
@@ -493,9 +493,9 @@ fn execution_policy_allows_write_file_and_needs_approval_for_execute_shell() {
         "WriteFile must be Allowed in Execution state (regression guard for RunningTools bug)"
     );
 
-    // ExecuteShell is inherently dangerous so it returns NeedsApproval (not
-    // Forbidden). This verifies that Execution has the capability in its allow-set
-    // (a Forbidden result would mean the capability is not granted at all).
+    // Execution holds ExecuteShell; the machine's own policy asks no approval
+    // (that is the session's approval mode), so the call is Allowed. Manual
+    // approval turns it into NeedsApproval - still not Forbidden.
     let shell_effect = Effect::CallTool {
         call_id: sven_hsm::ids::ToolCallId::new(),
         name: "run_command".into(),
@@ -505,10 +505,21 @@ fn execution_policy_allows_write_file_and_needs_approval_for_execute_shell() {
     assert!(
         matches!(
             classify(&policy, &SdlcState::Execution, &ctx, &shell_effect),
+            EffectDisposition::Allowed
+        ),
+        "ExecuteShell must be Allowed in Execution"
+    );
+    assert!(
+        matches!(
+            classify(
+                &policy.with_manual_approval(),
+                &SdlcState::Execution,
+                &ctx,
+                &shell_effect
+            ),
             EffectDisposition::NeedsApproval(_)
         ),
-        "ExecuteShell must be NeedsApproval (not Forbidden) in Execution — policy grants it but \
-         requires human consent because it is inherently dangerous"
+        "under manual approval ExecuteShell is asked about, not forbidden"
     );
 }
 

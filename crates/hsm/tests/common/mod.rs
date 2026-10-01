@@ -446,7 +446,7 @@ pub enum GState {
     Acting,
 }
 
-/// Machine whose entry action requests a dangerous capability.
+/// Machine whose entry action requests a capability its policy forbids.
 pub struct GuardMachine {
     id: MachineId,
 }

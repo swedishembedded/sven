@@ -76,8 +76,8 @@ parent's own contract when the parent is itself a child. A spawner narrows it
 further with its own terms through `ChildRunContract::narrow`, which keeps a
 capability only where both sides allow it, keeps every approval requirement,
 and takes the tighter of each budget (`max_tool_rounds`, `max_output_tokens`)
-and the earlier deadline. A child starts with a fresh `Context`, so it holds
-none of the parent's granted approvals.
+and the earlier deadline. An approval is for one call, so a child holds none
+of the parent's.
 
 `ErasedRuntime::spawn_child_run` starts an in-process child under those terms:
 the runtime's policy is the contract's, the child's cancel scope is cancelled
@@ -191,7 +191,7 @@ kernel**:
   the parent holds it in `Execution` (the SDLC policy grants no network there,
   so children have none), at most `agent.max_tool_rounds` rounds, and a
   wall-clock budget of `agent.child_run_timeout_secs` (default 3600, 0 = none).
-  `ExecuteShell` stays approval-gated in the child.
+  An approval requirement of the parent's policy is kept in the child.
 
 Cancelling the child - the parent is cancelled or shut down, or the deadline
 passes - stops its turn in flight and aborts its tool calls in flight.
@@ -249,8 +249,9 @@ through and that `KernelChannels` hands to the host. Each child gets a
 - a decision of `need_approval` becomes `Effect::RequestHumanApproval`;
   `HumanApproved` continues the task and `HumanRejected` ends it with
   `ok: false`;
-- a tool call that needs approval (`ExecuteShell` always does) is put to the
-  same approver through `loop_core`, exactly as in the parent.
+- a tool call the child's policy asks approval for (one the parent's policy
+  asks approval for) is put to the same approver through `loop_core`, exactly
+  as in the parent.
 
 The host sees a child's question or approval exactly as it sees the parent's.
 The wait is bounded by the child's contract: its deadline or its parent's

@@ -133,9 +133,11 @@ independently receives one of three verdicts:
 - `Allowed` → `ToolExecutor` executes the call (spawned concurrently).
 - `Forbidden` → `Event::ToolFailed { call_id, error: "denied" }` is emitted
   immediately; the call never reaches the registry.
-- `NeedsApproval` → `Effect::RequestHumanApproval { call_id, capability,
-  description }` is emitted; on `HumanApproved` the call proceeds, on
-  `HumanRejected` a `ToolFailed` is emitted.
+- `NeedsApproval` → the policy asks a person to approve this call and nobody
+  has yet: `Event::ToolApprovalRequired` is emitted, the machine emits
+  `Effect::RequestHumanApproval { approval_id, capability, description, call }`,
+  on `HumanApproved` the call proceeds, on `HumanRejected` it is answered with
+  the refusal.
 
 Non-tool effects (`AskUser`, `PersistAudit`, timers, etc.) remain
 all-or-nothing: a forbidden batch is recorded in the audit trail, not executed,
@@ -144,10 +146,16 @@ failure event (see [Effect executors](#effect-executors)).
 
 Capabilities are coarse buckets (`ToolCapability`): `ReadFile`, `WriteFile`,
 `DeleteFile`, `ExecuteShell`, `NetworkAccess`, `GitOperation`, `RunVerifier`,
-`ControlDevice`, `SpawnChild`. `ExecuteShell` and `DeleteFile` are *inherently dangerous* - they
-always require a granted approval regardless of the per-state allow-set. A
-`PermissionPolicy` is assembled with a builder (`allow_in`, `allow_globally`,
-`require_approval`).
+`ControlDevice`, `SpawnChild`. What a state allows runs without anyone being
+asked unless the policy requires approval for that capability
+(`PermissionPolicy::with_manual_approval` requires it for every capability that
+is not `ToolCapability::is_read_only` - everything but `ReadFile`,
+`RunVerifier` and `SpawnChild`). An approval is for one call: `HumanApproved`
+approves the call it was asked for (`PendingApproval::call_id`,
+`Context::is_call_approved`), and the next call of the same capability is
+asked about again. A `PermissionPolicy` is assembled with a builder
+(`allow_in`, `allow_globally`, `require_approval`).
+
 
 In production, `RuntimeBuilder` uses each machine's own `permission_policy()`
 (`SdlcMachine::permission_policy()` / `ReactiveAgentMachine::permission_policy()`)
@@ -463,8 +471,9 @@ more than its parent:
   side is kept, and each budget and the deadline take the tighter value. A
   spawner narrows the inherited contract with its own terms; it cannot widen
   it.
-- A child starts with a fresh `Context`, so it holds none of the parent's
-  granted approvals.
+- An approval is for one call, so a child holds none of the parent's: under a
+  policy that asks approval, each such call of the child is asked about
+  itself.
 
 The spawner receives the contract with a `CancelScope` derived from the
 parent's (`ChildRun`). Cancelling the parent cancels every child, however

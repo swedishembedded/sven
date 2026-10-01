@@ -168,8 +168,8 @@ impl ReactiveAgentMachine {
     }
 
     /// The permission policy for the general coding agent: global allow for
-    /// the common capabilities; the inherently dangerous ones still need an
-    /// approval.
+    /// the common capabilities. Whether a call needs a person's approval is
+    /// the session's approval mode, not the machine's.
     #[must_use]
     pub fn permission_policy() -> PermissionPolicy {
         PermissionPolicy::builder()

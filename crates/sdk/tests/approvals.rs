@@ -22,8 +22,7 @@ use sven_sdk::{
     ApprovalPolicy, Engine, HumanGate,
 };
 
-/// A tool whose capability is inherently dangerous, so the kernel asks a
-/// human before it runs. Records whether it ran.
+/// A tool that runs commands (`ExecuteShell`). Records whether it ran.
 struct Deploy(Arc<AtomicBool>);
 
 #[async_trait::async_trait]
@@ -99,21 +98,8 @@ async fn deploy_with(answer: bool) -> (bool, Vec<String>) {
 }
 
 #[tokio::test]
-async fn an_approved_gate_lets_the_tool_run() {
-    let (ran, gates) = deploy_with(true).await;
-    assert_eq!(
-        gates,
-        vec![r#"ExecuteShell deploy {"env":"prod"}"#.to_string()]
-    );
-    assert!(ran, "approved, so it ran");
-}
-
-#[tokio::test]
-async fn a_refused_gate_keeps_the_tool_from_running() {
+async fn a_call_the_mode_allows_runs_without_asking_anyone() {
     let (ran, gates) = deploy_with(false).await;
-    assert_eq!(
-        gates,
-        vec![r#"ExecuteShell deploy {"env":"prod"}"#.to_string()]
-    );
-    assert!(!ran, "refused, so it never ran");
+    assert!(gates.is_empty(), "nobody was asked: {gates:?}");
+    assert!(ran, "the mode allows shell, so it ran");
 }

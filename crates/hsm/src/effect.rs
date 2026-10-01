@@ -52,7 +52,8 @@ pub enum Effect {
         /// Prompt text.
         prompt: String,
     },
-    /// Request explicit human approval before a dangerous capability is used.
+    /// Put a call - or a machine's decision - to a person for approval (under
+    /// manual approval; auto approval gives it at once).
     RequestHumanApproval {
         /// Identifies this approval so the reply can be matched.
         approval_id: ApprovalId,

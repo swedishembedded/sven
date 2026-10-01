@@ -18,7 +18,7 @@ pub enum MachineError {
         capability: ToolCapability,
     },
 
-    /// A dangerous capability was requested without a prior human approval.
+    /// The policy asks a person to approve the capability and nobody has.
     #[error(
         "human approval required: capability {capability:?} in state `{state}` needs approval"
     )]

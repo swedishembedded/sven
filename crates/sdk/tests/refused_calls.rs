@@ -22,7 +22,7 @@ use sven_model::{MessageContent, ResponseEvent};
 use sven_model_mock::ScriptedMockProvider;
 use sven_sdk::{
     tool::{ApprovalPolicy as ToolApprovalPolicy, Tool, ToolCall, ToolOutput},
-    ApprovalPolicy, Engine,
+    Engine,
 };
 
 struct Deploy;
@@ -42,7 +42,8 @@ impl Tool for Deploy {
         ToolApprovalPolicy::Auto
     }
     fn kernel_capability(&self) -> sven_sdk::tool::ToolCapability {
-        sven_sdk::tool::ToolCapability::ExecuteShell
+        // The agent mode does not allow driving a device.
+        sven_sdk::tool::ToolCapability::ControlDevice
     }
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         ToolOutput::ok(&call.id, "deployed")
@@ -50,7 +51,7 @@ impl Tool for Deploy {
 }
 
 #[tokio::test]
-async fn a_call_a_human_refused_is_answered_in_the_thread() {
+async fn a_call_the_policy_refused_is_answered_in_the_thread() {
     let scripts = vec![
         vec![
             ResponseEvent::ToolCall {
@@ -69,7 +70,6 @@ async fn a_call_a_human_refused_is_answered_in_the_thread() {
     let engine = Engine::builder()
         .model_provider(Arc::new(Strict(ScriptedMockProvider::new(scripts))))
         .tool(Arc::new(Deploy))
-        .approvals(ApprovalPolicy::Deny)
         .build()
         .expect("an engine builds");
     let mut agent = engine.agent("agent");

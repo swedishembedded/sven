@@ -286,10 +286,23 @@ async fn a_parent_without_shell_spawns_a_child_that_cannot_shell() {
         .policy
         .allows_in_every_state(ToolCapability::ExecuteShell));
 
-    // The control: a parent that holds shell hands it down, still subject to
-    // approval because shell is inherently dangerous.
+    // The control: a parent that holds shell hands it down, and the child
+    // runs it without anyone being asked...
     let parent = start_parent(
         parent_policy([ToolCapability::ReadFile, ToolCapability::ExecuteShell]),
+        Spawner {
+            try_shell: true,
+            deadline_after: None,
+            observed: Arc::new(Mutex::new(Observed::default())),
+        },
+    );
+    assert_eq!(child_result(parent).await, json!("ran"));
+
+    // ...unless the parent runs under manual approval: then the child's call
+    // is asked about too.
+    let parent = start_parent(
+        parent_policy([ToolCapability::ReadFile, ToolCapability::ExecuteShell])
+            .with_manual_approval(),
         Spawner {
             try_shell: true,
             deadline_after: None,

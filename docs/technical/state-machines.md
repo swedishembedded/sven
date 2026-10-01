@@ -144,13 +144,13 @@ separate `RunningTools` or `AwaitingApproval` states.
 
 ### Permission Policy
 
-| Capability | Allowed in all states | Requires approval |
-|------------|-----------------------|-------------------|
-| `ReadFile` | ✓ | - |
-| `WriteFile` | ✓ | - |
-| `NetworkAccess` | ✓ | - |
-| `GitOperation` | ✓ | - |
-| `ExecuteShell` | ✓ | ✓ (inherently dangerous) |
+| Capability | Allowed in all states |
+|------------|-----------------------|
+| `ReadFile` | ✓ |
+| `WriteFile` | ✓ |
+| `NetworkAccess` | ✓ |
+| `GitOperation` | ✓ |
+| `ExecuteShell` | ✓ |
 
 ### State Transitions
 

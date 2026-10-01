@@ -56,10 +56,14 @@ impl Principal {
 pub struct PendingApproval {
     /// The approval being awaited.
     pub approval_id: ApprovalId,
-    /// The capability it would grant.
+    /// The capability the approved action exercises.
     pub capability: ToolCapability,
     /// Human-readable description.
     pub description: String,
+    /// The tool call it gates, when it gates one: approving it lets exactly
+    /// that call run. `None` for a decision a machine puts to a person.
+    #[serde(default)]
+    pub call_id: Option<ToolCallId>,
 }
 
 /// A question parked awaiting a human answer, recorded while the machine
@@ -93,11 +97,15 @@ pub struct SafetyState {
     pub consecutive_failures: u32,
 }
 
-/// Tracks which dangerous capabilities the human has granted.
+/// The tool calls a person has approved.
+///
+/// An approval is for one call, never for a capability: the next call of the
+/// same kind is asked about again.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PermissionState {
-    /// Capabilities the human has explicitly approved this session.
-    pub granted_capabilities: HashSet<ToolCapability>,
+    /// Calls a person approved in this session.
+    #[serde(default)]
+    pub approved_calls: HashSet<ToolCallId>,
 }
 
 /// The machine's accumulated knowledge.
@@ -126,7 +134,8 @@ pub struct Context {
     pub pending_question: Option<PendingQuestion>,
     /// Safety flags.
     pub safety: SafetyState,
-    /// Granted-capability tracking consulted by the permission gate.
+    /// Approved calls, consulted by the permission gate.
+    #[serde(default)]
     pub permissions: PermissionState,
     /// Append-only audit trail of every dispatch (the event-sourcing spine).
     pub audit: Vec<AuditRecord>,
@@ -177,30 +186,20 @@ impl Context {
         self.facts.get(key)
     }
 
-    /// Records a pending approval and remembers the capability it concerns.
+    /// Records a pending approval.
     pub fn set_pending_approval(&mut self, pending: PendingApproval) {
         self.pending_approval = Some(pending);
     }
 
-    /// Grants a capability (typically in response to `HumanApproved`). Clears a
-    /// matching pending approval if present.
-    pub fn grant(&mut self, capability: ToolCapability) {
-        self.permissions.granted_capabilities.insert(capability);
-        if self
-            .pending_approval
-            .as_ref()
-            .is_some_and(|p| p.capability == capability)
-        {
-            self.pending_approval = None;
-        }
-    }
-
-    /// Resolves a pending approval by id, granting its capability. Returns the
-    /// granted capability, or `None` if the id did not match.
+    /// Resolves a pending approval by id; when it gates a tool call, that
+    /// call may now run. Returns the approved action's capability, or `None`
+    /// if the id did not match.
     pub fn approve(&mut self, approval_id: ApprovalId) -> Option<ToolCapability> {
         match self.pending_approval.take() {
             Some(p) if p.approval_id == approval_id => {
-                self.permissions.granted_capabilities.insert(p.capability);
+                if let Some(call_id) = p.call_id {
+                    self.permissions.approved_calls.insert(call_id);
+                }
                 Some(p.capability)
             }
             other => {
@@ -228,10 +227,10 @@ impl Context {
         }
     }
 
-    /// `true` if `capability` has been granted by the human.
+    /// `true` if a person approved the tool call `call_id`.
     #[must_use]
-    pub fn has_granted(&self, capability: ToolCapability) -> bool {
-        self.permissions.granted_capabilities.contains(&capability)
+    pub fn is_call_approved(&self, call_id: ToolCallId) -> bool {
+        self.permissions.approved_calls.contains(&call_id)
     }
 
     /// Increments and returns the retry counter under `key`.
@@ -247,17 +246,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn approve_matching_id_grants_capability() {
+    fn approve_matching_id_approves_the_call_it_gates() {
         let mut ctx = Context::new();
         let id = ApprovalId::new();
+        let call_id = ToolCallId::new();
         ctx.set_pending_approval(PendingApproval {
             approval_id: id,
             capability: ToolCapability::ExecuteShell,
             description: "run build".into(),
+            call_id: Some(call_id),
         });
-        assert!(!ctx.has_granted(ToolCapability::ExecuteShell));
+        assert!(!ctx.is_call_approved(call_id));
         assert_eq!(ctx.approve(id), Some(ToolCapability::ExecuteShell));
-        assert!(ctx.has_granted(ToolCapability::ExecuteShell));
+        assert!(ctx.is_call_approved(call_id));
+        assert!(!ctx.is_call_approved(ToolCallId::new()));
         assert!(ctx.pending_approval.is_none());
     }
 
@@ -268,6 +270,7 @@ mod tests {
             approval_id: ApprovalId::new(),
             capability: ToolCapability::ExecuteShell,
             description: "x".into(),
+            call_id: None,
         });
         assert_eq!(ctx.approve(ApprovalId::new()), None);
         assert!(ctx.pending_approval.is_some());

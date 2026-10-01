@@ -53,27 +53,37 @@ fn forbidden_capability_is_rejected() {
 }
 
 #[test]
-fn allowed_but_unapproved_dangerous_capability_requires_approval() {
-    let (hsm, ctx, effects) = shell_effect_batch();
-    // ExecuteShell is allowed in Running but it is inherently dangerous, so it
-    // still needs a granted approval.
-    let policy = PermissionPolicy::builder()
-        .allow_in(St::Running, [ToolCapability::ExecuteShell])
-        .build();
-    let err = validate_effects_are_allowed(&policy, &hsm.state(), &effects, &ctx).unwrap_err();
-    assert!(
-        matches!(err, MachineError::HumanApprovalRequired { .. }),
-        "got {err:?}"
-    );
-}
-
-#[test]
-fn allowed_and_approved_capability_passes() {
+fn a_call_the_policy_asks_about_needs_its_own_approval() {
     let (hsm, mut ctx, effects) = shell_effect_batch();
     let policy = PermissionPolicy::builder()
         .allow_in(St::Running, [ToolCapability::ExecuteShell])
         .build();
-    // The human has approved shell execution this session.
-    ctx.grant(ToolCapability::ExecuteShell);
-    assert!(validate_effects_are_allowed(&policy, &hsm.state(), &effects, &ctx).is_ok());
+    assert!(
+        validate_effects_are_allowed(&policy, &hsm.state(), &effects, &ctx).is_ok(),
+        "what the state allows runs unless the policy asks for approval"
+    );
+
+    let manual = policy.with_manual_approval();
+    let err = validate_effects_are_allowed(&manual, &hsm.state(), &effects, &ctx).unwrap_err();
+    assert!(
+        matches!(err, MachineError::HumanApprovalRequired { .. }),
+        "got {err:?}"
+    );
+
+    let call_id = effects
+        .iter()
+        .find_map(|effect| match effect {
+            sven_hsm::Effect::CallTool { call_id, .. } => Some(call_id),
+            _ => None,
+        })
+        .expect("the batch calls a tool");
+    let approval_id = sven_hsm::ApprovalId::from_uuid(call_id.as_uuid());
+    ctx.set_pending_approval(sven_hsm::PendingApproval {
+        approval_id,
+        capability: ToolCapability::ExecuteShell,
+        description: "sh".into(),
+        call_id: Some(*call_id),
+    });
+    ctx.approve(approval_id);
+    assert!(validate_effects_are_allowed(&manual, &hsm.state(), &effects, &ctx).is_ok());
 }

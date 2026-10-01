@@ -681,6 +681,12 @@ mod tests {
         ChildRunContract::new(crate::mode_policy::session_ceiling(mode))
     }
 
+    /// The contract of a child whose parent asks a person about every call
+    /// that is not read-only.
+    fn manual_contract_for(mode: AgentMode) -> ChildRunContract {
+        ChildRunContract::new(crate::mode_policy::session_ceiling(mode).with_manual_approval())
+    }
+
     fn request(tool: &str) -> RequestPermissionRequest {
         RequestPermissionRequest::new(
             "s",
@@ -724,7 +730,14 @@ mod tests {
         let outcome = answer_permission(&agent, None, &request("write_file")).await;
         assert_eq!(chosen(&outcome), "allow");
         let outcome = answer_permission(&agent, None, &request("shell")).await;
-        assert_eq!(chosen(&outcome), "reject", "shell always needs approval");
+        assert_eq!(
+            chosen(&outcome),
+            "allow",
+            "nothing asks unless the policy does"
+        );
+        let manual = manual_contract_for(AgentMode::Agent);
+        let outcome = answer_permission(&manual, None, &request("shell")).await;
+        assert_eq!(chosen(&outcome), "reject", "nobody to ask");
 
         let research = contract_for(AgentMode::Research);
         let outcome = answer_permission(&research, None, &request("write_file")).await;
@@ -748,7 +761,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_the_contract_does_not_settle_goes_to_the_parent_approver() {
-        let agent = contract_for(AgentMode::Agent);
+        let agent = manual_contract_for(AgentMode::Agent);
         for answer in [true, false] {
             let gate = approver(answer);
             let child = ChildApprover::Gate(gate.clone());
@@ -758,7 +771,7 @@ mod tests {
         }
         let gate = approver(true);
         let child = ChildApprover::Gate(gate.clone());
-        answer_permission(&agent, Some(&child), &request("write_file")).await;
+        answer_permission(&agent, Some(&child), &request("read_file")).await;
         assert!(
             asked(&gate).is_empty(),
             "what the parent runs without asking is not put to anyone"
@@ -830,7 +843,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_child_shell_request_is_answered_by_the_parent_gate() {
-        let agent = contract_for(AgentMode::Agent);
+        let agent = manual_contract_for(AgentMode::Agent);
         for approve in [true, false] {
             let (approvals, mut gate) = mpsc::channel(4);
             let approver = ChildApprover::Gate(Arc::new(

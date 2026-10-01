@@ -607,6 +607,7 @@ pub fn handle_tool_event<S>(
                 approval_id,
                 capability: *capability,
                 description: description.clone(),
+                call_id: Some(*call_id),
             });
             let call = ls.proposed.get(call_id).map(|p| sven_hsm::GatedCall {
                 name: p.name.clone(),
@@ -625,8 +626,8 @@ pub fn handle_tool_event<S>(
         Event::HumanApproved { approval_id } => {
             let mut ls = LoopState::load(ctx);
             if ls.awaiting_tool_approval == Some(*approval_id) {
-                // Grant the capability, then issue the held call exactly as it
-                // was proposed: the approval was for that call, and the model
+                // Approve the held call, then issue it exactly as it was
+                // proposed: the approval was for that call, and the model
                 // already has it in its history awaiting a result. The
                 // approval id is derived from the call id it gates.
                 ctx.approve(*approval_id);
@@ -866,16 +867,15 @@ mod tests {
     }
 
     /// Replaying a recorded event stream must reproduce the same state *and*
-    /// the same permission set.
+    /// the same approvals.
     ///
-    /// The approval id used to be minted with `ApprovalId::new()` inside the
-    /// transition. Replay therefore generated a different id than the one in
-    /// the recorded `HumanApproved`, the guard failed, and the capability was
-    /// never granted — silently, because `Context::approve` no-ops on a
-    /// mismatch. Asserting on `granted_capabilities` is what catches it;
-    /// asserting on state alone does not.
+    /// The approval id is derived from the call it gates, never minted fresh:
+    /// a fresh id differs from the one in the recorded `HumanApproved`, the
+    /// guard fails, and the call is never approved on replay - silently,
+    /// because `Context::approve` no-ops on a mismatch. Asserting on the
+    /// approved call is what catches it; asserting on state alone does not.
     #[test]
-    fn replaying_an_approval_grants_the_same_capability() {
+    fn replaying_an_approval_approves_the_same_call() {
         let call_id = ToolCallId::new();
         let required = Event::ToolApprovalRequired {
             call_id,
@@ -915,13 +915,12 @@ mod tests {
             "replayed approval must resolve"
         );
         assert!(
-            replayed.has_granted(ToolCapability::ExecuteShell),
-            "replay must grant the same capability the live run did"
+            replayed.is_call_approved(call_id),
+            "replay must approve the same call the live run did"
         );
         assert_eq!(
-            live.has_granted(ToolCapability::ExecuteShell),
-            replayed.has_granted(ToolCapability::ExecuteShell),
-            "live and replayed permission sets must agree"
+            live.permissions, replayed.permissions,
+            "live and replayed approvals must agree"
         );
     }
 

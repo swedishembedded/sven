@@ -14,8 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New public fields on structs that are not `#[non_exhaustive]`: `ToolsConfig.disabled`, `AgentConfig.child_run_timeout_secs`, `TurnLimits.max_output_tokens`, `IntegrationProviders.approver` (a `ChildApprover`), `TeamMember.deny_tools`. A struct literal needs the field or `..Default::default()`.
 - `SubagentUpdate` gains `TokensUsed`; an exhaustive `match` needs the arm.
 - `TaskState::RunningTools` is gone.
+- An approval is for one call: `Context::grant`, `Context::has_granted` and `ToolCapability::is_inherently_dangerous` are gone, `PermissionState::granted_capabilities` is `approved_calls` (`Context::is_call_approved`), and `PendingApproval` gains `call_id` (the call it gates; `None` for a decision). A policy that should ask a person uses `PermissionPolicy::with_manual_approval` or `require_approval`.
 
 ### Added
+- `PermissionPolicy::with_manual_approval`, `ToolCapability::is_read_only`, `Context::is_call_approved`.
 - `ChildRunContract` (`sven-hsm`): the capabilities, budgets and deadline a child run holds; `narrow` only ever tightens them. `PermissionPolicy::{allows, allows_in_every_state, requires_approval, ceiling_in, ceiling_in_every_state, intersect}`, `ToolCapability::ALL`, `known_capability_for_tool_name`.
 - `sven-kernel`: `CancelScope`, `DeadlineTimer`, `ChildRun`, `ErasedRuntime::spawn_child_run`, `Runtime`/`ErasedRuntime::{cancel, cancel_scope}`, `RUN_CANCELLED`, `EventSink::closed`.
 - `ToolRegistry::remove`, the `tools.disabled` configuration, `agent.child_run_timeout_secs` (default 3600).
@@ -23,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sven_team::limits` (`MemberLimits`, `TokenAllowance`, `TeamConfig::{reserve_tokens, settle_tokens}`), `TeamConfigStore::{upsert, reserve_tokens, settle_tokens}`, `TeamDefinition::apply_to`; `GateApprover` and `ChildApprover` in `sven-bootstrap`; `sven_sdk::machine::GatedCall`.
 
 ### Changed
+- **No capability asks a person by itself** (**BREAKING**, sven-hsm, sven-sdk). `ExecuteShell` and `DeleteFile` no longer need an approval wherever they are allowed; a call waits for a person only where the policy requires approval (`PermissionPolicy::with_manual_approval`: every capability that is not `ToolCapability::is_read_only`). An approval lets exactly the call it was given for run - the next call of the same capability is asked about again - instead of granting the capability for the rest of the session. What a state allows is unchanged.
 - **A permission request to an ACP client is always bounded** (**BREAKING**, sven-acp). `SvenAcpAgent::with_permission_timeout` and `serve_stdio_with` take a `Duration`; a `task` parent passes its sub-agent the time left before the contract's deadline, or nothing (the 60-second default) when the contract has none.
 - **Every child run is held to a contract.** A child holds only what its parent holds in the spawning state, narrowed by the spawner's terms; cancelling, aborting or dropping the parent cancels its children; `ErasedRuntime::spawn_child_run` applies the contract's policy and cancels the run at its deadline.
 - **Headless SDLC children now follow the session's approval behaviour.** A task child's questions and approval requests go to the parent session's question and approval channels - answered by a person in the TUI, auto-approved by the headless runner, as the parent's own - instead of ending the task. They hold only what the parent holds in `Execution` (no network), take at most `agent.max_tool_rounds` rounds, write at most the session's configured output cap per response, and stop after `agent.child_run_timeout_secs`; their tool calls in flight are aborted with them.

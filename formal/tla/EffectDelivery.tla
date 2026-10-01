@@ -52,7 +52,8 @@ CONSTANTS BatchAllOrNothing, RefusalFeedsBackAnEvent
 \*   await          -- an allowed non-tool effect whose result the machine is
 \*                     waiting for (CallLlm, ScheduleTimeout, Verify)
 \*   refusedNonTool -- a non-tool effect the policy refuses in this state
-\*                     (a capability-carrying effect with no approval)
+\*                     (a capability the state does not allow, or one the
+\*                     policy asks approval for: only a call is approved)
 \*   refusedTool    -- a CallTool the policy refuses
 Kinds == {"await", "refusedNonTool", "refusedTool"}
 

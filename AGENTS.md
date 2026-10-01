@@ -326,8 +326,8 @@ and `sven-tool-registry` the registry; neither holds a concrete tool.
 5. Tests: unit test + a bats case in `tests/e2e/basic/` if it has headless output.
 
 ### Add a `ToolCapability` (permission bucket)
-1. `hsm/src/permissions.rs` - the `ToolCapability` enum,
-   `is_inherently_dangerous`, and the classify path.
+1. `hsm/src/permissions.rs` - the `ToolCapability` enum, `ALL`,
+   `is_read_only` (what manual approval asks about), and the classify path.
 2. Every machine's `permission_policy()` in `sven-machines` (`reactive_agent.rs`,
    `sdlc/mod.rs`) - decide allow/approval per state.
 3. The tool's own `kernel_capability()` in its `sven-tools-*` crate.

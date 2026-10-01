@@ -3,9 +3,11 @@
 //! Every dispatch runs [`validate_effects_are_allowed`] **before any effect is
 //! considered executed**. This is the one place that makes "tool chaos"
 //! impossible: a state can only exercise capabilities that its
-//! [`PermissionPolicy`] grants, and *dangerous* capabilities additionally
-//! require an approval that the human has already granted (recorded in the
-//! [`Context`](crate::context::Context)).
+//! [`PermissionPolicy`] grants. A policy may additionally require a person's
+//! approval for some capabilities ([`PermissionPolicy::with_manual_approval`]);
+//! such a call runs only once that person has approved that very call
+//! (recorded in the [`Context`]). Without it, what
+//! the state allows runs without anyone being asked.
 //!
 //! The policy is keyed by the `Debug` label of the state (`format!("{state:?}")`)
 //! so it works for any machine's opaque `StateId` without the kernel needing to
@@ -39,7 +41,7 @@ pub enum ToolCapability {
     /// Evaluate a declarative `VerifierSpec` (`Effect::Verify`) against the
     /// real world.
     ///
-    /// Not inherently dangerous: v1's declarative shapes are read-only
+    /// Read-only: v1's declarative shapes are read-only
     /// (`FileExists`, `FileHash`, `JsonPredicate`, path-jailed; `HttpPredicate`
     /// is a `GET`). There is no `Command`/`UnitTests` shape, so no process
     /// spawning and no write surface - see the verifier vocabulary's module
@@ -56,17 +58,14 @@ pub enum ToolCapability {
     /// filesystem/process access on the controlling host - only the specific
     /// verbs a device-control tool exposes reach the device), and a machine
     /// that drives a device should be able to allow this without also
-    /// granting arbitrary shell execution. Not inherently dangerous by
-    /// itself - the device-control tool's own `default_policy()` still asks
-    /// for approval by default; a headless caller (e.g. CI) auto-approves it
-    /// explicitly rather than this bucket being globally trusted.
+    /// granting arbitrary shell execution.
     ControlDevice,
     /// Start a child agent run (`Effect::InstantiateSubmachine`).
     ///
     /// Gated like a tool so a state starts children only where its policy
     /// says so, and so a child - whose policy is its parent's narrowed - may
-    /// start children of its own only if every run above it could. Not
-    /// inherently dangerous: what a child may do is bounded by the
+    /// start children of its own only if every run above it could. Read-only
+    /// in itself: what a child may do is bounded by the
     /// [`ChildRunContract`](crate::contract::ChildRunContract) it inherits,
     /// not by this bucket.
     SpawnChild,
@@ -86,18 +85,24 @@ impl ToolCapability {
         ToolCapability::SpawnChild,
     ];
 
-    /// Capabilities considered inherently dangerous; using them always requires
-    /// a granted approval regardless of the per-state allow-set.
+    /// `true` for a capability that changes nothing outside the run:
+    /// reading files, evaluating a read-only verifier, starting a child
+    /// (which is held to its own contract). Manual approval asks about every
+    /// other one.
+    ///
+    /// `NetworkAccess` is not read-only: the bucket also holds MCP tools,
+    /// whose effect the kernel cannot tell from their name.
     #[must_use]
-    pub fn is_inherently_dangerous(self) -> bool {
+    pub fn is_read_only(self) -> bool {
         matches!(
             self,
-            ToolCapability::ExecuteShell | ToolCapability::DeleteFile
+            ToolCapability::ReadFile | ToolCapability::RunVerifier | ToolCapability::SpawnChild
         )
     }
 }
 
-/// Per-state capability policy plus the global dangerous/approval-required sets.
+/// Per-state capability policy plus the set of capabilities that need a
+/// person's approval per call.
 ///
 /// Build one with [`PermissionPolicy::builder`].
 #[derive(Clone, Debug, Default)]
@@ -106,7 +111,7 @@ pub struct PermissionPolicy {
     per_state: HashMap<String, HashSet<ToolCapability>>,
     /// Capabilities allowed in every state.
     global_allowed: HashSet<ToolCapability>,
-    /// Capabilities that require a granted approval before use.
+    /// Capabilities each call of which needs a person's approval first.
     approval_required: HashSet<ToolCapability>,
 }
 
@@ -140,10 +145,25 @@ impl PermissionPolicy {
         self.global_allowed.contains(&capability)
     }
 
-    /// `true` if `capability` requires a granted approval before it may be used.
+    /// `true` if each call exercising `capability` needs a person's approval
+    /// before it runs.
     #[must_use]
     pub fn requires_approval(&self, capability: ToolCapability) -> bool {
-        capability.is_inherently_dangerous() || self.approval_required.contains(&capability)
+        self.approval_required.contains(&capability)
+    }
+
+    /// This policy under manual approval: every capability that is not
+    /// [read-only](ToolCapability::is_read_only) needs a person's approval
+    /// for each call. What the policy allows is unchanged - approval only
+    /// ever narrows it.
+    #[must_use]
+    pub fn with_manual_approval(mut self) -> Self {
+        self.approval_required.extend(
+            ToolCapability::ALL
+                .into_iter()
+                .filter(|cap| !cap.is_read_only()),
+        );
+        self
     }
 
     /// What `state` may do, as a policy that allows exactly that in every
@@ -247,7 +267,7 @@ impl PermissionPolicyBuilder {
         self
     }
 
-    /// Marks `caps` as requiring a granted approval before use.
+    /// Marks `caps` as needing a person's approval for each call.
     #[must_use]
     pub fn require_approval(mut self, caps: impl IntoIterator<Item = ToolCapability>) -> Self {
         self.policy.approval_required.extend(caps);
@@ -268,9 +288,10 @@ pub enum EffectDisposition {
     Allowed,
     /// The capability is not in the state's allow-set; synthesize a failure.
     Forbidden(String),
-    /// The capability is allowed but requires a human approval grant before
-    /// execution.  The kernel emits [`crate::event::Event::ToolApprovalRequired`]
-    /// and the machine handles the approval flow.
+    /// The capability is allowed but the policy asks a person to approve
+    /// this call first, and nobody has yet. The kernel emits
+    /// [`crate::event::Event::ToolApprovalRequired`] and the machine handles
+    /// the approval flow.
     NeedsApproval(ToolCapability),
 }
 
@@ -299,10 +320,19 @@ pub fn classify<S: Debug>(
             PermissionPolicy::state_label(state)
         ));
     }
-    if policy.requires_approval(cap) && !ctx.has_granted(cap) {
+    if policy.requires_approval(cap) && !approved(ctx, effect) {
         return EffectDisposition::NeedsApproval(cap);
     }
     EffectDisposition::Allowed
+}
+
+/// `true` if a person has approved `effect` itself. Only a tool call can be
+/// approved: any other effect a policy asks approval for is refused.
+fn approved(ctx: &Context, effect: &Effect) -> bool {
+    match effect {
+        Effect::CallTool { call_id, .. } => ctx.is_call_approved(*call_id),
+        _ => false,
+    }
 }
 
 /// Infers a [`ToolCapability`] from a tool name using naming conventions.
@@ -354,9 +384,9 @@ pub fn known_capability_for_tool_name(name: &str) -> Option<ToolCapability> {
 ///
 /// * [`MachineError::ForbiddenToolCall`] - the capability is not in the
 ///   state's allow-set.
-/// * [`MachineError::HumanApprovalRequired`] - the capability is dangerous /
-///   approval-gated and the human has not granted it (see
-///   [`Context::has_granted`](crate::context::Context::has_granted)).
+/// * [`MachineError::HumanApprovalRequired`] - the policy asks a person to
+///   approve the call and nobody has (see
+///   [`Context::is_call_approved`](crate::context::Context::is_call_approved)).
 ///
 /// # Errors
 ///
@@ -379,7 +409,7 @@ pub fn validate_effects_are_allowed<S: Debug>(
             });
         }
 
-        if policy.requires_approval(cap) && !ctx.has_granted(cap) {
+        if policy.requires_approval(cap) && !approved(ctx, effect) {
             return Err(MachineError::HumanApprovalRequired {
                 state: PermissionPolicy::state_label(state),
                 capability: cap,
@@ -519,22 +549,105 @@ mod tests {
         assert!(matches!(err, MachineError::ForbiddenToolCall { .. }));
     }
 
+    /// Auto approval: what the state allows runs, shell and delete included,
+    /// without anyone being asked.
     #[test]
-    fn dangerous_capability_needs_approval() {
+    fn nothing_needs_approval_unless_the_policy_asks_for_it() {
         let policy = PermissionPolicy::builder()
-            .allow_in(S::Executing, [ToolCapability::ExecuteShell])
+            .allow_in(S::Executing, ToolCapability::ALL)
             .build();
-
-        let mut ctx = Context::new();
-        // Allowed in-state but not yet approved -> HumanApprovalRequired.
-        let err = validate_effects_are_allowed(&policy, &S::Executing, &[shell_tool()], &ctx)
-            .unwrap_err();
-        assert!(matches!(err, MachineError::HumanApprovalRequired { .. }));
-
-        // Once granted, it passes.
-        ctx.grant(ToolCapability::ExecuteShell);
+        for cap in ToolCapability::ALL {
+            assert!(!policy.requires_approval(cap), "{cap:?}");
+        }
+        let ctx = Context::new();
+        assert!(matches!(
+            classify(&policy, &S::Executing, &ctx, &shell_tool()),
+            EffectDisposition::Allowed
+        ));
         assert!(
             validate_effects_are_allowed(&policy, &S::Executing, &[shell_tool()], &ctx).is_ok()
         );
+    }
+
+    /// Manual approval: every capability that is not read-only is asked
+    /// about; the ceiling is untouched.
+    #[test]
+    fn manual_approval_asks_about_everything_that_is_not_read_only() {
+        let policy = PermissionPolicy::builder()
+            .allow_in(S::Executing, [ToolCapability::ReadFile])
+            .build()
+            .with_manual_approval();
+        for cap in ToolCapability::ALL {
+            assert_eq!(
+                policy.requires_approval(cap),
+                !cap.is_read_only(),
+                "{cap:?}"
+            );
+        }
+        let read_only: Vec<_> = ToolCapability::ALL
+            .into_iter()
+            .filter(|cap| cap.is_read_only())
+            .collect();
+        assert_eq!(
+            read_only,
+            [
+                ToolCapability::ReadFile,
+                ToolCapability::RunVerifier,
+                ToolCapability::SpawnChild
+            ]
+        );
+        assert!(!policy.allows(&S::Executing, ToolCapability::WriteFile));
+        let ctx = Context::new();
+        assert!(matches!(
+            classify(&policy, &S::Executing, &ctx, &shell_tool()),
+            EffectDisposition::Forbidden(_)
+        ));
+    }
+
+    /// An approval is for the one call it was given for: the next call of
+    /// the same capability is asked about again.
+    #[test]
+    fn an_approval_lets_only_the_call_it_was_given_for_run() {
+        let policy = PermissionPolicy::builder()
+            .allow_in(S::Executing, [ToolCapability::ExecuteShell])
+            .build()
+            .with_manual_approval();
+        let mut ctx = Context::new();
+        let approved = shell_tool();
+        let next = shell_tool();
+        let Effect::CallTool { call_id, .. } = &approved else {
+            unreachable!()
+        };
+        assert!(matches!(
+            classify(&policy, &S::Executing, &ctx, &approved),
+            EffectDisposition::NeedsApproval(ToolCapability::ExecuteShell)
+        ));
+        let err = validate_effects_are_allowed(
+            &policy,
+            &S::Executing,
+            std::slice::from_ref(&approved),
+            &ctx,
+        )
+        .unwrap_err();
+        assert!(matches!(err, MachineError::HumanApprovalRequired { .. }));
+
+        let approval_id = crate::ids::ApprovalId::from_uuid(call_id.as_uuid());
+        ctx.set_pending_approval(crate::context::PendingApproval {
+            approval_id,
+            capability: ToolCapability::ExecuteShell,
+            description: "run it".into(),
+            call_id: Some(*call_id),
+        });
+        assert_eq!(ctx.approve(approval_id), Some(ToolCapability::ExecuteShell));
+
+        assert!(matches!(
+            classify(&policy, &S::Executing, &ctx, &approved),
+            EffectDisposition::Allowed
+        ));
+        assert!(validate_effects_are_allowed(&policy, &S::Executing, &[approved], &ctx).is_ok());
+        assert!(matches!(
+            classify(&policy, &S::Executing, &ctx, &next),
+            EffectDisposition::NeedsApproval(ToolCapability::ExecuteShell)
+        ));
     }
 }
