@@ -79,7 +79,8 @@ pub struct ToolRegistry {
     display_registry: Arc<RwLock<ToolDisplayRegistry>>,
     /// Optional permission requester wired up by the ACP server layer.
     /// When set, tools with `ApprovalPolicy::Ask` are gated behind a
-    /// `session/request_permission` round-trip to the IDE before executing.
+    /// `session/request_permission` round-trip to the IDE before executing,
+    /// bounded by the requester's own timeout.
     permission_requester: Option<Arc<dyn PermissionRequester>>,
 }
 
@@ -95,8 +96,8 @@ impl ToolRegistry {
     /// Wire up an IDE-backed permission requester.
     ///
     /// After this call, every `execute` invocation on a tool whose
-    /// `default_policy` is [`ApprovalPolicy::Ask`] will block until the IDE
-    /// responds to the `session/request_permission` request.
+    /// `default_policy` is [`ApprovalPolicy::Ask`] waits for the requester's
+    /// answer; the requester bounds that wait (ACP: the permission timeout).
     pub fn set_permission_requester(&mut self, requester: Arc<dyn PermissionRequester>) {
         self.permission_requester = Some(requester);
     }
@@ -227,52 +228,13 @@ impl ToolRegistry {
             .unwrap_or(ToolCapability::NetworkAccess)
     }
 
+    /// Runs `call`. A tool whose policy is [`ApprovalPolicy::Deny`] never
+    /// runs; one whose policy is [`ApprovalPolicy::Ask`] is put to the
+    /// registry's permission requester when a host set one (an IDE over ACP)
+    /// and runs only if it allows it; otherwise the call runs. Whether a
+    /// person approves a call in an agent session is the kernel's decision
+    /// (the session's approval mode), not this one.
     pub async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let tool = match self
-            .tools
-            .read()
-            .ok()
-            .and_then(|g| g.get(&call.name).cloned())
-        {
-            Some(t) => t,
-            None => return ToolOutput::err(&call.id, format!("unknown tool: {}", call.name)),
-        };
-        if let Some(ref requester) = self.permission_requester {
-            if matches!(tool.default_policy(), ApprovalPolicy::Ask)
-                && !requester
-                    .request_permission(call, tool.call_capability(&call.args))
-                    .await
-            {
-                return ToolOutput::err(
-                    &call.id,
-                    format!("tool '{}' was denied by the IDE", call.name),
-                );
-            }
-        }
-        tool.execute(call).await
-    }
-
-    /// Execute a tool call with **deny-by-default** approval gating.
-    ///
-    /// Unlike [`execute`](Self::execute) - which is only safe to call from
-    /// paths where the kernel's `PermissionPolicy` already gates every call -
-    /// this entry point enforces the tool's own [`ApprovalPolicy`]:
-    ///
-    /// * [`ApprovalPolicy::Auto`] - executes immediately.
-    /// * [`ApprovalPolicy::Deny`] - always denied.
-    /// * [`ApprovalPolicy::Ask`] - forwarded to `requester` (or, when `None`,
-    ///   the registry's own requester set via
-    ///   [`set_permission_requester`](Self::set_permission_requester)).
-    ///   **When no requester is available the call is DENIED**, never executed
-    ///   unattended.
-    ///
-    /// Use this from unattended entry points (MCP server, node `CallTool`,
-    /// headless runners) where no kernel policy sits in front of the registry.
-    pub async fn execute_with_requester(
-        &self,
-        call: &ToolCall,
-        requester: Option<&dyn PermissionRequester>,
-    ) -> ToolOutput {
         let tool = match self
             .tools
             .read()
@@ -291,44 +253,18 @@ impl ToolRegistry {
                 );
             }
             ApprovalPolicy::Ask => {
-                let effective: Option<&dyn PermissionRequester> =
-                    requester.or(self.permission_requester.as_deref());
-                match effective {
-                    None => {
+                if let Some(requester) = &self.permission_requester {
+                    let capability = tool.call_capability(&call.args);
+                    if !requester.request_permission(call, capability).await {
                         return ToolOutput::err(
                             &call.id,
-                            format!(
-                                "tool '{}' requires human approval and no permission \
-                                 requester is available; denied (unattended execution)",
-                                call.name
-                            ),
+                            format!("tool '{}' was denied by the client", call.name),
                         );
-                    }
-                    Some(r) => {
-                        if !r
-                            .request_permission(call, tool.call_capability(&call.args))
-                            .await
-                        {
-                            return ToolOutput::err(
-                                &call.id,
-                                format!("tool '{}' was denied by the operator", call.name),
-                            );
-                        }
                     }
                 }
             }
         }
         tool.execute(call).await
-    }
-
-    /// Execute a tool call in an **unattended** context.
-    ///
-    /// Equivalent to [`execute_with_requester`](Self::execute_with_requester)
-    /// with no per-call requester: `Ask`-policy tools are denied unless a
-    /// registry-level requester was wired via
-    /// [`set_permission_requester`](Self::set_permission_requester).
-    pub async fn execute_unattended(&self, call: &ToolCall) -> ToolOutput {
-        self.execute_with_requester(call, None).await
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -655,9 +591,9 @@ mod tests {
         assert_eq!(reg.names().len(), 1);
     }
 
-    // ── Unattended execution gating (deny-by-default) ─────────────────────────
+    // ── Tool policy: `Deny` never runs, a host decides `Ask` ──────────────────
 
-    /// Tool whose policy is `Ask` - must never run unattended.
+    /// Tool whose policy is `Ask`: the host's requester decides it, if set.
     struct AskTool;
 
     #[async_trait]
@@ -707,7 +643,8 @@ mod tests {
         }
     }
 
-    /// Requester that always answers with a fixed decision.
+    /// Requester that always answers with a fixed decision, and checks it
+    /// is told what the call does.
     struct FixedRequester(bool);
 
     #[async_trait]
@@ -715,8 +652,9 @@ mod tests {
         async fn request_permission(
             &self,
             _call: &ToolCall,
-            _capability: sven_tool_api::ToolCapability,
+            capability: sven_tool_api::ToolCapability,
         ) -> bool {
+            assert_eq!(capability, sven_tool_api::ToolCapability::ReadFile);
             self.0
         }
     }
@@ -729,89 +667,41 @@ mod tests {
         }
     }
 
+    /// With no host asking, an `Ask` tool runs: approval in an agent
+    /// session is the kernel's decision.
     #[tokio::test]
-    async fn execute_unattended_denies_ask_tool_without_requester() {
+    async fn an_ask_tool_runs_when_no_host_asks() {
         let mut reg = ToolRegistry::new();
         reg.register(AskTool);
-        let out = reg.execute_unattended(&call("ask_tool")).await;
-        assert!(out.is_error, "Ask tool must be denied unattended");
-        assert!(
-            out.content.contains("denied"),
-            "denial must be explicit; got: {}",
-            out.content
-        );
+        let out = reg.execute(&call("ask_tool")).await;
+        assert!(!out.is_error, "{}", out.content);
     }
 
     #[tokio::test]
-    async fn execute_unattended_allows_auto_tool() {
-        let mut reg = ToolRegistry::new();
-        reg.register(EchoTool { name: "echo" });
-        let out = reg.execute_unattended(&call("echo")).await;
-        assert!(!out.is_error, "Auto tool must run unattended");
+    async fn a_host_requester_decides_an_ask_tool() {
+        for allow in [true, false] {
+            let mut reg = ToolRegistry::new();
+            reg.register(AskTool);
+            reg.set_permission_requester(Arc::new(FixedRequester(allow)));
+            let out = reg.execute(&call("ask_tool")).await;
+            assert_eq!(out.is_error, !allow, "{}", out.content);
+        }
     }
 
     #[tokio::test]
-    async fn execute_unattended_denies_deny_policy_tool() {
+    async fn a_deny_tool_never_runs() {
         let mut reg = ToolRegistry::new();
         reg.register(DenyTool);
-        let out = reg.execute_unattended(&call("deny_tool")).await;
-        assert!(out.is_error, "Deny tool must never run");
-        assert!(out.content.contains("denied by policy"));
-    }
-
-    #[tokio::test]
-    async fn execute_unattended_unknown_tool_returns_error() {
-        let reg = ToolRegistry::new();
-        let out = reg.execute_unattended(&call("missing")).await;
-        assert!(out.is_error);
-        assert!(out.content.contains("unknown tool"));
-    }
-
-    #[tokio::test]
-    async fn execute_with_requester_approval_runs_ask_tool() {
-        let mut reg = ToolRegistry::new();
-        reg.register(AskTool);
-        let requester = FixedRequester(true);
-        let out = reg
-            .execute_with_requester(&call("ask_tool"), Some(&requester))
-            .await;
-        assert!(!out.is_error, "approved Ask tool must run");
-        assert_eq!(out.content, "executed");
-    }
-
-    #[tokio::test]
-    async fn execute_with_requester_denial_blocks_ask_tool() {
-        let mut reg = ToolRegistry::new();
-        reg.register(AskTool);
-        let requester = FixedRequester(false);
-        let out = reg
-            .execute_with_requester(&call("ask_tool"), Some(&requester))
-            .await;
-        assert!(out.is_error, "denied Ask tool must not run");
-        assert!(out.content.contains("denied by the operator"));
-    }
-
-    #[tokio::test]
-    async fn execute_unattended_uses_registry_level_requester() {
-        let mut reg = ToolRegistry::new();
-        reg.register(AskTool);
         reg.set_permission_requester(Arc::new(FixedRequester(true)));
-        let out = reg.execute_unattended(&call("ask_tool")).await;
-        assert!(
-            !out.is_error,
-            "registry-level requester approval must allow the call"
-        );
+        let out = reg.execute(&call("deny_tool")).await;
+        assert!(out.is_error && out.content.contains("denied by policy"));
     }
 
     #[tokio::test]
-    async fn execute_with_requester_denies_deny_policy_even_when_approved() {
-        let mut reg = ToolRegistry::new();
-        reg.register(DenyTool);
-        let requester = FixedRequester(true);
-        let out = reg
-            .execute_with_requester(&call("deny_tool"), Some(&requester))
-            .await;
-        assert!(out.is_error, "Deny policy must override any requester");
+    async fn an_unknown_tool_returns_an_error() {
+        let reg = ToolRegistry::new();
+        let out = reg.execute(&call("missing")).await;
+        assert!(out.is_error && out.content.contains("unknown tool"));
     }
 
     // ── output_category ───────────────────────────────────────────────────────

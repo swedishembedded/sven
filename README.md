@@ -306,6 +306,12 @@ The same `sven acp serve` command works for VS Code (ACP extension) and JetBrain
 }
 ```
 
+The host calls a tool because it decided to and applies its own permission
+UI, so every served tool runs when called. The file tools and the shell's
+working directory are confined to the directory `sven mcp serve` starts in,
+`--tools` limits what is served, and the shell refuses a command matching
+`tools.deny_patterns`.
+
 **As a client** - connect sven to any external MCP server and use its tools transparently in every session. OAuth 2.0 PKCE, Dynamic Client Registration, and token refresh are handled automatically. Configure servers in `~/.config/sven/config.yaml`:
 
 ```yaml

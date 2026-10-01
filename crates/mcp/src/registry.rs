@@ -16,7 +16,9 @@
 //! MCP client or the agent sees. A second tool for a job the first already
 //! does is a choice pushed onto the caller with nothing to decide it on.
 
-use sven_tool_registry::ToolRegistry;
+use sven_config::ToolsConfig;
+use sven_tool_api::PathScope;
+use sven_tool_registry::{ToolPolicy, ToolRegistry};
 use sven_tools_exec::ShellTool;
 use sven_tools_fs::{EditFileTool, FindFileTool, ReadFileTool, WriteTool};
 use sven_tools_web::{GrepTool, ReadLintsTool, WebFetchTool, WebSearchTool};
@@ -50,9 +52,14 @@ pub const DEFAULT_TOOL_NAMES: &[&str] = &[
 /// Any name not in [`DEFAULT_TOOL_NAMES`] is silently ignored - this guards
 /// against clients accidentally requesting internal tools that were never
 /// registered.
+///
+/// The file tools and the shell's working directory are confined to `scope`,
+/// and the shell refuses a command matching `tools.deny_patterns`.
 pub fn build_mcp_registry(
     web_search_api_key: Option<String>,
     allowed_names: Option<&str>,
+    tools: &ToolsConfig,
+    scope: PathScope,
 ) -> ToolRegistry {
     let filter: Option<std::collections::HashSet<&str>> = match allowed_names {
         None | Some("all") => None,
@@ -69,22 +76,26 @@ pub fn build_mcp_registry(
     let mut reg = ToolRegistry::new();
 
     if allow("edit_file") {
-        reg.register(EditFileTool::default());
+        reg.register(EditFileTool::new(scope.clone()));
     }
     if allow("find_file") {
-        reg.register(FindFileTool::default());
+        reg.register(FindFileTool::new(scope.clone()));
     }
     if allow("grep") {
-        reg.register(GrepTool::default());
+        reg.register(GrepTool::new(scope.clone()));
     }
     if allow("read_file") {
-        reg.register(ReadFileTool::default());
+        reg.register(ReadFileTool::new(scope.clone()));
     }
     if allow("read_lints") {
         reg.register(ReadLintsTool);
     }
     if allow("shell") {
-        reg.register(ShellTool::default());
+        reg.register(ShellTool {
+            timeout_secs: tools.timeout_secs,
+            scope: scope.clone(),
+            policy: std::sync::Arc::new(ToolPolicy::from_config(tools)),
+        });
     }
     if allow("web_fetch") {
         reg.register(WebFetchTool::default());
@@ -95,7 +106,7 @@ pub fn build_mcp_registry(
         });
     }
     if allow("write_file") {
-        reg.register(WriteTool::default());
+        reg.register(WriteTool::new(scope));
     }
 
     reg
@@ -128,7 +139,8 @@ mod tests {
             ("read_image", "read_file"),
             ("delete_file", "shell"),
         ];
-        let names = build_mcp_registry(None, None).names();
+        let names =
+            build_mcp_registry(None, None, &ToolsConfig::default(), PathScope::default()).names();
         for (gone, canonical) in superseded {
             assert!(
                 !names.iter().any(|n| n == gone),
@@ -143,7 +155,7 @@ mod tests {
 
     #[test]
     fn default_registry_contains_all_default_tools() {
-        let reg = build_mcp_registry(None, None);
+        let reg = build_mcp_registry(None, None, &ToolsConfig::default(), PathScope::default());
         let names = reg.names();
         for expected in DEFAULT_TOOL_NAMES {
             assert!(
@@ -155,14 +167,24 @@ mod tests {
 
     #[test]
     fn all_keyword_includes_all_default_tools() {
-        let reg = build_mcp_registry(None, Some("all"));
+        let reg = build_mcp_registry(
+            None,
+            Some("all"),
+            &ToolsConfig::default(),
+            PathScope::default(),
+        );
         let names = reg.names();
         assert_eq!(names.len(), DEFAULT_TOOL_NAMES.len());
     }
 
     #[test]
     fn allowed_names_filter_restricts_tools() {
-        let reg = build_mcp_registry(None, Some("read_file,write_file"));
+        let reg = build_mcp_registry(
+            None,
+            Some("read_file,write_file"),
+            &ToolsConfig::default(),
+            PathScope::default(),
+        );
         let mut names = reg.names();
         names.sort();
         assert_eq!(names, vec!["read_file", "write_file"]);
@@ -170,14 +192,24 @@ mod tests {
 
     #[test]
     fn single_tool_allowed() {
-        let reg = build_mcp_registry(None, Some("grep"));
+        let reg = build_mcp_registry(
+            None,
+            Some("grep"),
+            &ToolsConfig::default(),
+            PathScope::default(),
+        );
         assert_eq!(reg.names().len(), 1);
         assert!(reg.get("grep").is_some());
     }
 
     #[test]
     fn unknown_tool_name_in_filter_is_ignored() {
-        let reg = build_mcp_registry(None, Some("read_file,nonexistent_tool"));
+        let reg = build_mcp_registry(
+            None,
+            Some("read_file,nonexistent_tool"),
+            &ToolsConfig::default(),
+            PathScope::default(),
+        );
         let names = reg.names();
         assert_eq!(names.len(), 1);
         assert!(reg.get("read_file").is_some());
@@ -185,7 +217,12 @@ mod tests {
 
     #[test]
     fn whitespace_around_tool_names_is_trimmed() {
-        let reg = build_mcp_registry(None, Some(" read_file , write_file "));
+        let reg = build_mcp_registry(
+            None,
+            Some(" read_file , write_file "),
+            &ToolsConfig::default(),
+            PathScope::default(),
+        );
         let mut names = reg.names();
         names.sort();
         assert_eq!(names, vec!["read_file", "write_file"]);
@@ -193,7 +230,12 @@ mod tests {
 
     #[test]
     fn web_search_registered_with_api_key() {
-        let reg = build_mcp_registry(Some("test_key".to_string()), Some("web_search"));
+        let reg = build_mcp_registry(
+            Some("test_key".to_string()),
+            Some("web_search"),
+            &ToolsConfig::default(),
+            PathScope::default(),
+        );
         assert!(reg.get("web_search").is_some());
     }
 

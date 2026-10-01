@@ -25,7 +25,7 @@ use rmcp::{
     service::{RequestContext, RoleServer},
     ErrorData as McpError,
 };
-use sven_tool_registry::{PermissionRequester, ToolCall, ToolRegistry};
+use sven_tool_registry::{ToolCall, ToolRegistry};
 use uuid::Uuid;
 
 use crate::bridge::{output_to_call_result, schema_to_mcp_tool};
@@ -35,40 +35,21 @@ use crate::bridge::{output_to_call_result, schema_to_mcp_tool};
 /// Create with [`SvenMcpServer::new`] and then call [`rmcp::ServiceExt::serve`]
 /// to start serving on a transport.
 ///
-/// # Approval gating
+/// # Approvals
 ///
-/// MCP clients call tools without a human in the loop, so `call_tool` uses
-/// [`ToolRegistry::execute_with_requester`]: tools whose
-/// [`ApprovalPolicy`](sven_tool_registry::ApprovalPolicy) is `Ask` (shell,
-/// `write_file`, `delete_file`, ...) are **denied by default**. Wire a
-/// [`PermissionRequester`] via
-/// [`with_permission_requester`](Self::with_permission_requester) to route
-/// approvals to a human operator instead.
+/// An MCP client calls a tool because it decided to, and applies its own
+/// permission UI. Every served tool runs when called - bounded by the tools
+/// the registry serves (`--tools`), their path scope and, for the shell,
+/// `tools.deny_patterns`.
 #[derive(Clone)]
 pub struct SvenMcpServer {
     registry: Arc<ToolRegistry>,
-    /// Approval gate for `Ask`-policy tools. `None` means deny-by-default.
-    permission_requester: Option<Arc<dyn PermissionRequester>>,
 }
 
 impl SvenMcpServer {
     /// Create a new server backed by the given [`ToolRegistry`].
-    ///
-    /// Without a [`PermissionRequester`], tools that require approval are
-    /// denied - never executed unattended.
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self {
-            registry,
-            permission_requester: None,
-        }
-    }
-
-    /// Wire a [`PermissionRequester`] so `Ask`-policy tools can be approved
-    /// by a human operator instead of being denied by default.
-    #[must_use]
-    pub fn with_permission_requester(mut self, requester: Arc<dyn PermissionRequester>) -> Self {
-        self.permission_requester = Some(requester);
-        self
+        Self { registry }
     }
 }
 
@@ -116,12 +97,7 @@ impl ServerHandler for SvenMcpServer {
             args,
         };
 
-        // Deny-by-default gating: `Ask`-policy tools only run when a
-        // permission requester approves them; unattended calls are denied.
-        let output = self
-            .registry
-            .execute_with_requester(&call, self.permission_requester.as_deref())
-            .await;
+        let output = self.registry.execute(&call).await;
         Ok(output_to_call_result(output))
     }
 }

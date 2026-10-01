@@ -10,6 +10,8 @@ name = "sven-mcp"
 path = "src/bin/sven-mcp.rs"
 
 [dependencies]
+sven-config          = { path = "../config" }
+sven-tool-api        = { path = "../tool-api" }
 sven-tool-registry   = { path = "../tool-registry" }
 sven-tools-exec      = { path = "../tools-exec" }
 sven-tools-fs        = { path = "../tools-fs" }
@@ -31,6 +33,7 @@ rmcp = { version = "0.15", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+tempfile     = { workspace = true }
 tokio        = { workspace = true }
 serde_json   = { workspace = true }
 async-trait  = { workspace = true }

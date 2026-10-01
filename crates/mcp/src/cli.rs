@@ -23,6 +23,11 @@ pub enum McpCommands {
     /// The server blocks until stdin reaches EOF (i.e. until the host
     /// disconnects).  It does not fork, does not bind a port, and requires
     /// no authentication - security is inherited from the host process.
+    ///
+    /// Every served tool runs when the host calls it: the host applies its
+    /// own permission UI. The file tools and the shell's working directory
+    /// are confined to the directory the server starts in, and the shell
+    /// refuses a command matching `tools.deny_patterns`.
     Serve {
         /// Comma-separated list of tool names to expose.
         ///
@@ -48,9 +53,15 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             tools,
             brave_api_key,
         } => {
+            let config = sven_config::load(None)?;
+            let root = std::env::current_dir()?;
+            let scope = sven_tool_api::PathScope::confined(&root)
+                .map_err(|e| anyhow::anyhow!("serving {}: {e}", root.display()))?;
             let registry = std::sync::Arc::new(crate::build_mcp_registry(
                 brave_api_key.clone(),
                 tools.as_deref(),
+                &config.tools,
+                scope,
             ));
             crate::serve_stdio(registry).await
         }
