@@ -421,8 +421,8 @@ where
 /// The time is rounded up, so the child's own stop never comes before the
 /// parent's deadline: the parent sees the deadline first and reports it. The
 /// child waits for permission answers as long as that too - its parent
-/// answers them, bounded by the same deadline - or without limit when the
-/// contract has none.
+/// answers them, bounded by the same deadline - or, when the contract has no
+/// deadline, for its own default permission timeout: never unbounded.
 fn serve_args(
     model_override: Option<&str>,
     contract: &ChildRunContract,
@@ -451,8 +451,8 @@ fn serve_args(
         .map(|left| (left.as_secs() + u64::from(left.subsec_nanos() > 0)).max(1));
     if let Some(seconds) = seconds {
         flag("wall-clock-secs", seconds.to_string());
+        flag("permission-timeout-secs", seconds.to_string());
     }
-    flag("permission-timeout-secs", seconds.unwrap_or(0).to_string());
     args
 }
 
@@ -817,7 +817,8 @@ mod tests {
         );
         assert_eq!(
             serve_args(None, &contract_for(AgentMode::Agent), &[], now),
-            ["acp", "serve", "--permission-timeout-secs", "0"]
+            ["acp", "serve"],
+            "without a deadline the child's own bounded permission timeout applies"
         );
         // A part second rounds up: the child never stops before the parent's
         // own deadline.

@@ -40,14 +40,14 @@ use agent::{ConnMessage, SvenAcpAgent};
 /// subprocess).  All ACP framing happens over stdin/stdout; tracing is written
 /// to stderr.
 pub async fn serve_stdio(config: Arc<Config>) -> Result<()> {
-    serve_stdio_with(config, Some(agent::DEFAULT_PERMISSION_TIMEOUT)).await
+    serve_stdio_with(config, agent::DEFAULT_PERMISSION_TIMEOUT).await
 }
 
-/// [`serve_stdio`] with a chosen wait for the client's permission answers:
-/// `None` waits for each answer however long the client takes.
+/// [`serve_stdio`] with a chosen wait for the client's permission answers,
+/// after which a call is denied.
 pub async fn serve_stdio_with(
     config: Arc<Config>,
-    permission_timeout: Option<std::time::Duration>,
+    permission_timeout: std::time::Duration,
 ) -> Result<()> {
     debug!("Starting ACP local server");
 

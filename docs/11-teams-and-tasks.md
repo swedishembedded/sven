@@ -473,7 +473,8 @@ A `task` sub-agent never holds more than the session that started it:
 - It is stopped after `agent.child_run_timeout_secs` (default one hour) of
   wall-clock time, however busy, and after 10 minutes without any output -
   a pending permission request pauses that count, and the child waits for
-  the answer until its deadline. Exiting before its turn finished, or at its
+  the answer until its deadline (or, with no deadline, for its 60-second
+  permission timeout), after which the call is denied. Exiting before its turn finished, or at its
   deadline, is reported as a failure.
 - A request of its still waiting when it stops is taken off the parent's
   screen.

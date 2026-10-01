@@ -64,9 +64,9 @@ pub enum AcpCommands {
         disable_tools: Vec<String>,
 
         /// How long a tool call waits for the client's permission answer
-        /// before it is denied (default 60). 0 waits however long the client
-        /// takes - for a client that bounds the wait itself.
-        #[arg(long, value_name = "SECS")]
+        /// before it is denied (default 60, at least 1: a client that never
+        /// answers must not stall the session).
+        #[arg(long, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..))]
         permission_timeout_secs: Option<u64>,
     },
 }
@@ -123,11 +123,10 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
                 *max_output_tokens,
                 disable_tools,
             );
-            let permission_timeout = match permission_timeout_secs {
-                Some(0) => None,
-                Some(secs) => Some(std::time::Duration::from_secs(*secs)),
-                None => Some(crate::agent::DEFAULT_PERMISSION_TIMEOUT),
-            };
+            let permission_timeout = permission_timeout_secs.map_or(
+                crate::agent::DEFAULT_PERMISSION_TIMEOUT,
+                std::time::Duration::from_secs,
+            );
             let serving = crate::serve_stdio_with(std::sync::Arc::new(config), permission_timeout);
             match wall_clock_secs {
                 Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(*secs), serving)

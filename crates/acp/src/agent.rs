@@ -87,8 +87,9 @@ pub enum ConnMessage {
 struct AcpPermissionRequester {
     session_id: String,
     conn_tx: mpsc::UnboundedSender<ConnMessage>,
-    /// How long to wait for the answer; `None` waits for it however long.
-    timeout: Option<Duration>,
+    /// How long to wait for the answer before denying the call. Always
+    /// bounded: a client that never answers must not stall the session.
+    timeout: Duration,
 }
 
 #[async_trait::async_trait]
@@ -144,10 +145,7 @@ impl sven_tool_api::PermissionRequester for AcpPermissionRequester {
             return false;
         }
 
-        let answered = match self.timeout {
-            Some(timeout) => tokio::time::timeout(timeout, response_rx).await,
-            None => Ok(response_rx.await),
-        };
+        let answered = tokio::time::timeout(self.timeout, response_rx).await;
         match answered {
             Ok(Ok(response)) => match &response.outcome {
                 RequestPermissionOutcome::Selected(SelectedPermissionOutcome {
@@ -163,7 +161,7 @@ impl sven_tool_api::PermissionRequester for AcpPermissionRequester {
                 warn!(
                     tool = %call_name,
                     "ACP permission request timed out after {}s - denying",
-                    self.timeout.map_or(0, |t| t.as_secs())
+                    self.timeout.as_secs()
                 );
                 false
             }
@@ -218,7 +216,7 @@ pub struct SvenAcpAgent {
     config: Arc<Config>,
     sessions: RefCell<HashMap<String, Arc<SessionEntry>>>,
     conn_tx: mpsc::UnboundedSender<ConnMessage>,
-    permission_timeout: Option<Duration>,
+    permission_timeout: Duration,
 }
 
 impl SvenAcpAgent {
@@ -227,15 +225,14 @@ impl SvenAcpAgent {
             config,
             sessions: RefCell::new(HashMap::new()),
             conn_tx,
-            permission_timeout: Some(DEFAULT_PERMISSION_TIMEOUT),
+            permission_timeout: DEFAULT_PERMISSION_TIMEOUT,
         }
     }
 
     /// How long a tool call waits for the client's permission answer before
-    /// it is denied; `None` waits for the answer however long it takes (the
-    /// client bounds the wait itself, as a `task` parent does).
+    /// it is denied.
     #[must_use]
-    pub fn with_permission_timeout(mut self, timeout: Option<Duration>) -> Self {
+    pub fn with_permission_timeout(mut self, timeout: Duration) -> Self {
         self.permission_timeout = timeout;
         self
     }
@@ -546,7 +543,7 @@ mod tests {
         );
     }
 
-    async fn ask(timeout: Option<Duration>) -> Option<bool> {
+    async fn ask(timeout: Duration) -> Option<bool> {
         use sven_tool_api::PermissionRequester as _;
         let (conn_tx, mut conn_rx) = mpsc::unbounded_channel();
         let requester = AcpPermissionRequester {
@@ -566,14 +563,15 @@ mod tests {
             msg = conn_rx.recv() => msg,
             _ = &mut asking => panic!("answered before the request was sent"),
         };
-        tokio::time::timeout(Duration::from_millis(300), asking)
+        tokio::time::timeout(Duration::from_secs(5), asking)
             .await
             .ok()
     }
 
+    /// A client that never answers a permission request cannot stall the
+    /// session: the call is denied once the wait runs out.
     #[tokio::test]
-    async fn the_permission_wait_is_bounded_only_when_asked_to_be() {
-        assert_eq!(ask(Some(Duration::from_millis(20))).await, Some(false));
-        assert_eq!(ask(None).await, None, "an unbounded wait is still waiting");
+    async fn an_unanswered_permission_request_is_denied_when_its_wait_runs_out() {
+        assert_eq!(ask(Duration::from_millis(20)).await, Some(false));
     }
 }
