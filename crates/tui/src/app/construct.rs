@@ -27,7 +27,12 @@ use crate::{
 };
 
 impl App {
-    pub fn new(config: Arc<sven_config::Config>, opts: AppOptions) -> Self {
+    pub fn new(settings: sven_frontend::Settings, opts: AppOptions) -> Self {
+        let sven_frontend::Settings {
+            runtime: config,
+            tui: tui_config,
+        } = settings;
+        let config = Arc::new(config);
         // ── Load an ATIF trajectory (if --trace / --load-trace was given) ──────
         // `--trace PATH` is both the load source and the sync-after-every-turn
         // save target; `--load-trace PATH` alone only seeds history (matching
@@ -65,7 +70,7 @@ impl App {
         };
 
         let initial_model_cfg = if let Some(ref mo) = opts.model_override {
-            sven_model_drivers::resolve_model_from_config(&config, mo)
+            config.resolve_model(mo)
         } else {
             config.model.clone()
         };
@@ -148,6 +153,7 @@ impl App {
 
         let mut app = Self {
             config,
+            tui_config,
             approval: opts.approval,
             node_backend: opts.node_backend,
             is_node_proxy,

@@ -1,0 +1,7 @@
+# ${VAR} and ${VAR:-default} are expanded from the environment at load time;
+# an unset variable without a default becomes empty, with a warning.
+model:
+  provider: openrouter
+  name: ${SVEN_GOLDEN_MODEL}
+  api_key: ${SVEN_GOLDEN_UNSET}
+  base_url: ${SVEN_GOLDEN_ALSO_UNSET:-https://openrouter.ai/api/v1}

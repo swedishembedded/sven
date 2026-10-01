@@ -52,7 +52,9 @@ trait Reviewer {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let engine = Engine::builder().config(sven_config::load(None)?).build()?;
+    let engine = Engine::builder()
+        .config(sven_sdk::config::load(None)?)
+        .build()?;
 
     let mut reviewer = Reviewer::new(&engine);
 

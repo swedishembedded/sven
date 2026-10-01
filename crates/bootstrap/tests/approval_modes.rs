@@ -20,12 +20,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use sven_bootstrap::Config;
 use sven_bootstrap::{BuiltinTools, KernelAgentSession, RuntimeBuilder};
-use sven_config::{AgentMode, ApprovalMode, Config};
 use sven_model::ResponseEvent;
 use sven_model_mock::ScriptedMockProvider;
 use sven_tool_api::{ApprovalPolicy, Tool, ToolCall, ToolCapability, ToolOutput};
 use sven_tools_agent::QuestionRequest;
+use sven_vocab::{AgentMode, ApprovalMode};
 use tokio::sync::mpsc;
 
 /// A tool that records how often it ran.

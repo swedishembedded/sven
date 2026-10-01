@@ -7,7 +7,6 @@ license      = "Apache-2.0"
 
 [dependencies]
 sven-chain    = { path = "../chain" }
-sven-config   = { path = "../config" }
 sven-hsm      = { path = "../hsm" }
 sven-kernel   = { path = "../kernel" }
 sven-tool-api = { path = "../tool-api" }
@@ -29,7 +28,6 @@ reqwest       = { workspace = true }
 [dev-dependencies]
 tokio      = { workspace = true }
 tempfile   = { workspace = true }
-sven-config = { path = "../config" }
 sven-machines   = { path = "../machines" }
 sven-model  = { path = "../model" }
 sven-model-mock = { path = "../model-mock" }

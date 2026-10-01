@@ -199,7 +199,9 @@ tier with a one-line purpose each.
 
 ### foundation (zero sven-\* dependencies)
 `sven-vocab` (shared nouns + `SessionEvent`) · `sven-chain` (hash-chained
-append-only JSONL) · `sven-config` (config schema + loader) · `sven-hsm`
+append-only JSONL) · `sven-config` (finds, layers, `${VAR}`-expands and
+merges the configuration file and reports the keys no section recognises;
+knows no section itself) · `sven-hsm`
 (HSM kernel types) · `sven-image` (image reading) · `sven-audio` (WAV
 decoding, resampling, audio data-URL helpers) · `sven-workspace`
 (project/skill/agent/knowledge discovery) · `atif` (ATIF v1.7 trajectory
@@ -216,22 +218,27 @@ Sven` codec) · `sven-tool-api` (`Tool` trait + `ToolDisplay`)
 `sven-session-store` (ATIF trajectory-backed session store, legacy YAML chat
 import, `sven migrate-sessions`) · `sven-tool-registry`
 (`ToolRegistry`, `ApprovalPolicy`, fs_root jail) · `sven-mcp-client` (MCP
-client: stdio + Streamable HTTP, OAuth) · `sven-kernel` (`ErasedRuntime`,
+client: stdio + Streamable HTTP, OAuth; the `mcp_servers:` section,
+`McpServerConfig`) · `sven-kernel` (`ErasedRuntime`,
 `EffectExecutor`, `EventSink`, `ChildSpawner`) · `sven-model-drivers` (34
 provider driver impls, `openai_compat`, model-string resolution:
-`ModelResolver`/`resolve_model_from_config`; the D-Bus transport - the `dbus`
+`ModelResolver`/`resolve_model_from_config`; the `model:` and `providers:`
+sections - `ModelConfig`, `ProviderEntry` - and how an unconfigured model is
+detected; the D-Bus transport - the `dbus`
 provider and the `ActionClient` speech-to-text uses - behind its `dbus`
 feature, off by default) · `sven-model-mock` (`--model mock`
 test/dev providers)
 
 ### domain (concrete tool implementations + integrations)
 `sven-tools-fs` (file I/O + output-buffer tools; images and audio behind
-`media`, speech-to-text behind `asr`) · `sven-tools-exec` (`shell`) · `sven-tools-ctx` (RLM context store, knowledge,
-`memory`) · `sven-tools-agent` (`system`, `todo`, `ask_question`, `skill` -
+`media`, speech-to-text behind `asr`; the `tools.asr` section) · `sven-tools-exec` (`shell`) · `sven-tools-ctx` (RLM context store, knowledge,
+`memory`; the `tools.memory` section) · `sven-tools-agent` (`system`, `todo`, `ask_question`, `skill` -
 agent self-management) · `sven-tools-web` (`web_fetch`/`web_search`, `grep`,
-`read_lints`) · `sven-tools-gdb` (GDB/MI debugging, unix
-only) · `sven-turn` (impure turn primitives: `stream_turn`,
-`compact`/`smart_truncate`, prompt assembly, `AgentRuntimeContext`) · `sven-team` (agent-team
+`read_lints`; the `tools.web` and `tools.lints` sections) · `sven-tools-gdb`
+(GDB/MI debugging, unix only, behind its `mi` feature; the `tools.gdb` section
+is always compiled) · `sven-turn` (impure turn primitives: `stream_turn`,
+`compact`/`smart_truncate`, `CompactionStrategy`, prompt assembly,
+`AgentRuntimeContext`) · `sven-team` (agent-team
 coordination) · `sven-memory` (semantic memory store and `semantic_memory`
 tool, parked-question ledger; the `memory` feature of `sven-bootstrap`)
 
@@ -243,12 +250,17 @@ its executor slots, `ThreadStore`)
 
 ### assembly
 `sven-bootstrap` (`RuntimeBuilder` - the one kernel-assembly point;
-`mode_registry` - the modes this build can run; the feature presets) ·
+`Config` - the sections a session is built from, with `AgentConfig` and
+`ToolsConfig`; `mode_registry` - the modes this build can run; the feature
+presets) ·
 `sven-commands` (`SlashCommand` trait + builtins)
 
 ### wiring
-`sven-frontend` (shared frontend layer: the `agent` session task and
-`SessionEvent` consumption)
+`sven-frontend` (shared frontend layer: `SessionController` - the one
+controller of a session's lifecycle, which the TUI, the headless runner and
+the ACP server all open their sessions through; `Settings` - the whole
+configuration file, with the `tui:` section's `TuiConfig`; the `agent`
+session task and `SessionEvent` consumption)
 
 ### sdk
 `sven-sdk` (the public framework surface: `Engine`, `Agent`, `AgentState`,
@@ -275,6 +287,7 @@ modules, one per subcommand group)
  sven-tui                RuntimeRunner              per-session kernel
       │  SessionEvent          │                          │
       └──── sven-frontend ─────┴──────────────────────────┘
+          (SessionController: open / send / rebuild)
                   │
               sven-bootstrap (RuntimeBuilder)  ◄─── one assembly point
                   │
@@ -366,7 +379,7 @@ and `sven-tool-registry` the registry; neither holds a concrete tool.
    gives its sessions that tool there (`register_mode_tools`).
 4. Its `permission_policy()`.
 5. `bootstrap/src/runtime_builder.rs` - any child-spawner wiring.
-6. Config: `sven-config` `AgentMode` if it's user-selectable.
+6. Config: `sven_vocab::AgentMode` if it's user-selectable.
 
 ### Add a new model provider / driver
 1. `model/src/registry.rs` - the `DRIVERS` table (env var, base URL,
@@ -377,15 +390,21 @@ and `sven-tool-registry` the registry; neither holds a concrete tool.
 3. `model-catalog/models.yaml` - model metadata.
 
 ### Change what a session/agent run looks like on a SURFACE
-The kernel is one; the surfaces that drive it are the ones you must keep in sync.
-A change to session lifecycle, event streaming, approval flow, or cancellation
-must be applied to **each surface that constructs a kernel via
-`RuntimeBuilder`**:
-1. **Headless** - `sven-ci` (`RuntimeRunner` + workflow orchestration).
-2. **Interactive TUI** - `frontend/src/agent.rs` (`kernel_session_task`/
-   `run_kernel_session_task`; the TUI consumes `SessionEvent` as `AgentEvent`).
-3. **Local ACP** - `acp/src/agent.rs`.
-   Grep guard: `grep -rn "RuntimeBuilder" crates` finds every construction site.
+The kernel is one, and so is the controller of a session's lifecycle:
+`frontend/src/controller.rs` (`SessionController`) is where a TUI, headless
+or ACP session is assembled from the configuration, where its gates are wired
+to whoever answers them (`Gates`), and where a mode or model change rebuilds it
+with the conversation and the MCP servers carried over. A change to session
+assembly, rebuilds or gates belongs there, once. What stays with each surface
+is what it does with the events:
+1. **Headless** - `sven-ci` (`KernelAgent`, `RuntimeRunner` + workflow
+   orchestration): output formatting, exit codes, the trajectory.
+2. **Interactive TUI** - `frontend/src/agent.rs` (`kernel_session_task`: the
+   `AgentRequest` protocol; the TUI consumes `SessionEvent` as `AgentEvent`).
+3. **Local ACP** - `acp/src/agent.rs`: the `session/update` mapping, ACP's
+   permission requests.
+   Grep guard: `grep -rn "RuntimeBuilder::new" crates` finds the one
+   construction site outside `sven-bootstrap` and the SDK's per-turn `Agent`.
 
 ### Add a new `SessionEvent` variant (aliased `AgentEvent`/`UiEvent`)
 `SessionEvent` lives in `sven-vocab` (foundation tier); `sven_hsm::UiEvent`
@@ -413,14 +432,27 @@ types requiring a translator.
 2. `sven-bootstrap` `SessionSupervisor` (principal→session ownership).
 
 ### Add a config field
-1. `config/src/schema.rs` (+ `#[serde(default)]` for back-compat).
-2. `loader.rs` if it needs env expansion or layering rules.
-3. The consumer crate; document in `docs/` and the config example.
+`sven-config` knows no section; a field belongs to the crate that reads it:
+provider and model settings to `sven-model-drivers` (`config.rs`), the MCP
+servers to `sven-mcp-client`, a tool's settings to the crate of that tool
+(`sven-tools-fs`, `-gdb`, `-web`, `-ctx`), the agent loop and the tools'
+assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
+(`settings.rs`).
+1. The section's struct in that crate (+ `#[serde(default)]` for back-compat)
+   and its key in the section's `schema()`: a key the schema lacks is reported
+   as unrecognised when the file loads.
+2. Layering and `${VAR}` expansion are `sven-config`'s (`document.rs`); touch
+   it only to change how files are found or merged.
+3. A fixture and its golden record in `crates/frontend/tests/fixtures/config/`
+   if the file format changes (`SVEN_BLESS_GOLDEN=1 cargo test -p sven-frontend
+   --test config_golden`, then review the diff); document the key in
+   `docs/05-configuration.md`.
 
 ### Golden rules
-- **One assembly point**: kernels are built by `RuntimeBuilder`. `grep -rn
-  "RuntimeBuilder"` enumerates every surface - use it as the completeness check
-  for any surface-spanning change.
+- **One assembly point**: kernels are built by `RuntimeBuilder`, and the
+  surfaces reach it only through `SessionController`. `grep -rn
+  "RuntimeBuilder::new"` finds every construction site - use it as the
+  completeness check for any change to how a session is assembled.
 - **The `EffectExecutor` trait is the I/O seam.** New I/O = new/extended
   executor, never I/O in a transition.
 - **Never duplicate frontend logic inside `sven-tui`** - shared code to `sven-frontend`.

@@ -15,7 +15,9 @@ use sven_sdk::{AgentState, Engine};
 async fn main() -> anyhow::Result<()> {
     // Built once. In a service this lives for the process and is cloned into
     // each request; the model client and its connection pool are shared.
-    let engine = Engine::builder().config(sven_config::load(None)?).build()?;
+    let engine = Engine::builder()
+        .config(sven_sdk::config::load(None)?)
+        .build()?;
 
     let store = std::env::temp_dir().join("sven-sdk-example-agent.json");
 

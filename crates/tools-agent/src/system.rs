@@ -18,7 +18,8 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
-use sven_config::{AgentMode, McpOAuthConfig, McpServerConfig, McpTransport};
+use sven_mcp_client::{McpOAuthConfig, McpServerConfig, McpTransport};
+use sven_vocab::AgentMode;
 
 use sven_hsm::ToolCapability;
 
@@ -167,10 +168,7 @@ impl SystemTool {
                 debug!(server = %name, path = %path.display(), "MCP server added to config");
                 let _ = self
                     .event_tx
-                    .send(ToolEvent::McpServerAdded {
-                        name: name.clone(),
-                        config: cfg,
-                    })
+                    .send(ToolEvent::McpServerAdded(name.clone()))
                     .await;
                 ToolOutput::ok(
                     &call.id,

@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use sven_config::AsrConfig;
+use crate::AsrConfig;
 use sven_model_drivers::dbus::{ActionClient, ActionInput};
 use thiserror::Error;
 use tracing::debug;

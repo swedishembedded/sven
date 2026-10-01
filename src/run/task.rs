@@ -16,9 +16,10 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use sven_config::{AgentMode, Config};
+use sven_bootstrap::Config;
 use sven_vocab::provenance::ContentDigest;
 use sven_vocab::verify::{Task, VerifiedTaskSeed, VerifierSpec};
+use sven_vocab::AgentMode;
 
 use crate::cli::TaskCommands;
 
@@ -89,7 +90,7 @@ async fn run(
 
     let kernel_config = if let Some(m) = model {
         let mut cfg = config.clone();
-        cfg.model = sven_model_drivers::resolve_model_from_config(&cfg, m);
+        cfg.model = cfg.resolve_model(m);
         std::sync::Arc::new(cfg)
     } else {
         std::sync::Arc::new(config.clone())

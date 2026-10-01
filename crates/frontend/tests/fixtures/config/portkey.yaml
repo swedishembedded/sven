@@ -1,0 +1,7 @@
+# docs/providers.md: driver options forwarded as-is.
+model:
+  provider: portkey
+  name: gpt-4o
+  api_key_env: PORTKEY_API_KEY
+  driver_options:
+    portkey_virtual_key: pk-live-xxx  # optional virtual key for routing

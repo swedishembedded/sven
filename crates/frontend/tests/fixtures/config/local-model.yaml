@@ -1,0 +1,5 @@
+# docs/05-configuration.md: a local OpenAI-compatible server.
+model:
+  provider: openai
+  name: llama3
+  base_url: http://localhost:11434/v1

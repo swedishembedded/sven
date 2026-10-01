@@ -558,7 +558,7 @@ async fn tools_call_ask_policy_tool_runs_for_the_client() {
 #[tokio::test]
 async fn tools_call_shell_refuses_a_denied_command() {
     let dir = tempfile::tempdir().unwrap();
-    let tools = sven_config::ToolsConfig {
+    let tools = sven_bootstrap::ToolsConfig {
         deny_patterns: vec!["touch *".into()],
         ..Default::default()
     };

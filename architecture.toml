@@ -23,7 +23,7 @@
 # (or same-tier, if explicitly listed in [[same_layer]]).
 order = [
     "foundation", # zero internal sven deps
-    "kernel",     # trait/type vocabulary: config schema, HSM types, provider trait
+    "kernel",     # trait/type vocabulary: HSM types, provider trait
     "services",   # concrete registries/stores built on the kernel vocabulary
     "domain",     # tool implementations and other domain services
     "machines",   # pure Machine impls + the I/O executor layer that drives them
@@ -178,18 +178,6 @@ why  = "The kernel owns dispatch, effects and permissions; it names tools and mo
 
 # ── Legitimate same-tier edges. Each needs a `why`. ─────────────────────────
 [[same_layer]]
-from = "sven-config"
-to   = "sven-vocab"
-why  = """
-Both are leaf, no-further-layering "foundation" crates. sven-config needs
-AgentMode (defined in sven-vocab alongside the other event/session payload
-types it groups with) for its CLI schema. Not a same-tier violation in spirit -- config has zero dependents at
-the foundation tier itself, so this can never become a cycle -- but the
-checker only reasons about tiers, not sub-tier leaf status, so it is
-recorded explicitly rather than silently allowed.
-"""
-
-[[same_layer]]
 from = "sven-model"
 to   = "sven-model-catalog"
 why  = """
@@ -268,9 +256,6 @@ lines = 1430
 path = "crates/tools-ctx/tests/context_integration.rs"
 lines = 1418
 [[allow.large_file]]
-path = "crates/config/src/schema.rs"
-lines = 1396
-[[allow.large_file]]
 path = "crates/session-store/src/trace_session.rs"
 lines = 1289
 [[allow.large_file]]
@@ -306,6 +291,3 @@ lines = 850
 [[allow.large_file]]
 path = "crates/workspace/src/skills.rs"
 lines = 825
-[[allow.large_file]]
-path = "crates/executors/src/turn.rs"
-lines = 812

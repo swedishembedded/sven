@@ -209,8 +209,8 @@ mod tests {
     use super::*;
     use crate::CommandContext;
     use std::path::PathBuf;
-    use std::sync::Arc;
-    use sven_config::Config;
+    use sven_mcp_client::McpServers;
+    use sven_model_drivers::Providers;
     use sven_workspace::AgentInfo;
 
     fn make_cmd(name: &str, description: &str, content: &str) -> (SkillCommand, tempfile::TempDir) {
@@ -226,9 +226,14 @@ mod tests {
         (cmd, dir)
     }
 
-    fn ctx() -> CommandContext {
+    fn ctx() -> CommandContext<'static> {
+        // Statics: a constant-initialised map has no heap to leak.
+        static PROVIDERS: std::sync::LazyLock<Providers> = std::sync::LazyLock::new(Providers::new);
+        static MCP_SERVERS: std::sync::LazyLock<McpServers> =
+            std::sync::LazyLock::new(McpServers::new);
         CommandContext {
-            config: Arc::new(Config::default()),
+            providers: &PROVIDERS,
+            mcp_servers: &MCP_SERVERS,
             current_model_provider: String::new(),
             current_model_name: String::new(),
         }

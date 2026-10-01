@@ -4,7 +4,8 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
-sven-config    = { path = "../config" }
+sven-vocab     = { path = "../vocab" }
+sven-frontend  = { path = "../frontend" }
 sven-model     = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-tool-api  = { path = "../tool-api" }
@@ -16,7 +17,6 @@ sven-session-store     = { path = "../session-store" }
 sven-bootstrap = { path = "../bootstrap", default-features = false }
 sven-workspace   = { path = "../workspace" }
 sven-hsm       = { path = "../hsm" }
-sven-kernel    = { path = "../kernel" }
 atif           = { path = "../atif" }
 anyhow         = { workspace = true }
 serde          = { workspace = true }

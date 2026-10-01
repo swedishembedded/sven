@@ -1,0 +1,129 @@
+{
+  "config": {
+    "agent": {
+      "child_run_timeout_secs": 3600,
+      "compaction_keep_recent": 6,
+      "compaction_overhead_reserve": 0.10000000149011612,
+      "compaction_strategy": "structured",
+      "compaction_threshold": 0.8500000238418579,
+      "default_mode": "agent",
+      "max_run_timeout_secs": 0,
+      "max_step_timeout_secs": 0,
+      "max_tool_rounds": 200,
+      "system_prompt": null,
+      "tool_result_token_cap": 4000
+    },
+    "mcp_servers": {
+      "s": {
+        "enabled": true,
+        "env": {},
+        "oauth": {},
+        "timeout_secs": 30,
+        "transport": {
+          "args": [],
+          "command": "x",
+          "type": "stdio"
+        }
+      }
+    },
+    "model": {
+      "api_key": null,
+      "api_key_env": null,
+      "aws_region": null,
+      "azure_api_version": null,
+      "azure_deployment": null,
+      "azure_resource": null,
+      "base_url": null,
+      "cache_conversation": true,
+      "cache_images": true,
+      "cache_system_prompt": true,
+      "cache_tool_results": true,
+      "cache_tools": true,
+      "driver_options": null,
+      "extended_cache_time": false,
+      "max_input_tokens": null,
+      "max_output_tokens": null,
+      "max_tokens": null,
+      "mock_responses_file": null,
+      "name": "gpt-4o",
+      "provider": "openai",
+      "temperature": 0.20000000298023224
+    },
+    "providers": {
+      "local": {
+        "models": {
+          "m": {}
+        },
+        "name": "openai"
+      }
+    },
+    "tools": {
+      "asr": {
+        "model": "brain/nemotronasr",
+        "timeout_secs": 120
+      },
+      "auto_approve_patterns": [
+        "cat *",
+        "ls *",
+        "find *",
+        "rg *",
+        "grep *"
+      ],
+      "context": {
+        "default_chunk_lines": 500,
+        "max_parallel": 4,
+        "sub_query_max_chars": 120000,
+        "sub_query_timeout_secs": 120
+      },
+      "deny_patterns": [
+        "rm -rf /*",
+        "dd if=*"
+      ],
+      "disabled": [],
+      "gdb": {
+        "command_timeout_secs": 10,
+        "connect_timeout_secs": 30,
+        "gdb_path": "gdb-multiarch",
+        "server_startup_wait_ms": 500
+      },
+      "lints": {
+        "python_command": null,
+        "rust_command": null,
+        "typescript_command": null
+      },
+      "memory": {
+        "memory_file": "notes/memory.json"
+      },
+      "timeout_secs": 30,
+      "web": {
+        "fetch_max_chars": 20000,
+        "search": {
+          "api_key": null
+        }
+      }
+    },
+    "tui": {
+      "ascii_borders": false,
+      "code_line_numbers": false,
+      "theme": "dark",
+      "wrap_width": 0
+    }
+  },
+  "warnings": [
+    "WARN Config section `tools.memory.learning` is ignored: sven does not train models; an application that learns from sven's work configures that itself",
+    "WARN Unrecognised config field `.modle` - check spelling or update sven",
+    "WARN Unrecognised config field `agent.max_tool_round` - check spelling or update sven",
+    "WARN Unrecognised config field `mcp_servers.s.enable` - check spelling or update sven",
+    "WARN Unrecognised config field `mcp_servers.s.oauth.scope` - check spelling or update sven",
+    "WARN Unrecognised config field `mcp_servers.s.transport.argz` - check spelling or update sven",
+    "WARN Unrecognised config field `model.temprature` - check spelling or update sven",
+    "WARN Unrecognised config field `providers.local.base_uri` - check spelling or update sven",
+    "WARN Unrecognised config field `providers.local.models.m.max_token` - check spelling or update sven",
+    "WARN Unrecognised config field `tools.asr.modle` - check spelling or update sven",
+    "WARN Unrecognised config field `tools.gdb.gdb_pth` - check spelling or update sven",
+    "WARN Unrecognised config field `tools.lints.go_command` - check spelling or update sven",
+    "WARN Unrecognised config field `tools.web.fetch_max_char` - check spelling or update sven",
+    "WARN Unrecognised config field `tools.web.search.apikey` - check spelling or update sven",
+    "WARN Unrecognised config field `tui.colour` - check spelling or update sven"
+  ]
+}

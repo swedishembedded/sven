@@ -1,0 +1,8 @@
+# A section naming one setting keeps every other at its default.
+tui:
+  theme: light
+tools:
+  gdb:
+    gdb_path: gdb
+agent:
+  max_tool_rounds: 30

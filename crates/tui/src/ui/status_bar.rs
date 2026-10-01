@@ -11,7 +11,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
-use sven_config::AgentMode;
+use sven_vocab::AgentMode;
 
 use super::theme::{
     ctx_bar, ctx_style, mode_style, sep, spinner_char, BAR_AGENT, BAR_THINKING, BAR_TOOL,

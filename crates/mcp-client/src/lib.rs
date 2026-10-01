@@ -17,12 +17,13 @@
 //!
 //! # Config
 //!
-//! MCP servers are configured in `sven-config::McpServerConfig`.  The manager
-//! accepts a `HashMap<String, McpServerConfig>` where the key is the server
-//! name used as the tool prefix.
+//! MCP servers are configured by a [`McpServerConfig`] each, under the
+//! `mcp_servers:` section of the configuration file. The manager accepts a
+//! [`McpServers`] map where the key is the server name used as the tool prefix.
 
 pub mod bridge;
 pub mod client;
+pub mod config;
 pub mod health;
 pub mod manager;
 pub mod oauth;
@@ -32,6 +33,7 @@ pub mod transport;
 // ── Public re-exports ─────────────────────────────────────────────────────────
 
 pub use bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
+pub use config::{mcp_servers_schema, McpOAuthConfig, McpServerConfig, McpServers, McpTransport};
 pub use health::{ServerStatus, ServerStatusSummary};
 pub use manager::{McpEvent, McpManager};
 pub use oauth::{CredentialsStore, OAuthDiscovery, RunOAuthFlowParams, StoredTokens};

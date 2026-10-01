@@ -35,7 +35,7 @@ pub use tool::ToolCommands;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
 use std::path::PathBuf;
-use sven_config::{AgentMode, ApprovalMode};
+use sven_vocab::{AgentMode, ApprovalMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 pub enum OutputFormatArg {

@@ -26,8 +26,8 @@ mod gdb_integration {
     use serde_json::json;
     use tokio::sync::Mutex;
 
-    use sven_config::GdbConfig;
     use sven_tool_api::tool::{Tool, ToolCall};
+    use sven_tools_gdb::GdbConfig;
     use sven_tools_gdb::{
         GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool,
         GdbStopTool,

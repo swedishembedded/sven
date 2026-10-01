@@ -29,7 +29,7 @@ use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use sven_config::Config;
+use sven_bootstrap::Config;
 
 /// One agent-dispatch request - exactly what a dispatching host writes to
 /// this process's stdin:

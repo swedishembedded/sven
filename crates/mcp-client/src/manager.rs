@@ -16,7 +16,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, info, warn};
 
-use sven_config::{McpServerConfig, McpTransport};
+use crate::config::{McpServerConfig, McpTransport};
 
 use sven_tool_api::Tool as _;
 

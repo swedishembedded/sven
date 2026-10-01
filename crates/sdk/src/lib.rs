@@ -78,7 +78,16 @@ pub use transcript::{ToolCallRecord, Turn};
 /// binary reads, including its detection of a locally served model, so an
 /// application configured once works for both.
 pub mod config {
-    pub use sven_config::{load, Config};
+    pub use sven_bootstrap::Config;
+
+    /// Loads the configuration the `sven` binary reads: [`Config::load`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Config::load`].
+    pub fn load(extra: Option<&std::path::Path>) -> anyhow::Result<Config> {
+        Config::load(extra)
+    }
 }
 
 /// Everything needed to give an agent a tool of your own.

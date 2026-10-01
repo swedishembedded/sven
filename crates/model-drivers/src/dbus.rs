@@ -54,7 +54,7 @@
 //! is still recognised, and refused with the reason instead of falling through
 //! to the HTTP catch-all.
 
-use sven_config::ModelConfig;
+use crate::config::ModelConfig;
 use sven_model::ModelProvider;
 
 #[cfg(all(unix, feature = "dbus"))]

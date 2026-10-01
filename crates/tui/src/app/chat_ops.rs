@@ -42,10 +42,10 @@ impl App {
         let mut line_start = 0usize;
         let ascii = self.ascii();
         let effective_width = self.layout.chat_inner_width.max(20);
-        let render_width = if self.config.tui.wrap_width == 0 {
+        let render_width = if self.tui_config.wrap_width == 0 {
             effective_width
         } else {
-            self.config.tui.wrap_width.min(effective_width)
+            self.tui_config.wrap_width.min(effective_width)
         };
 
         let tool_durations = self.chat.tool_durations.clone();
@@ -273,7 +273,7 @@ impl App {
         if std::env::var("SVEN_ASCII_BORDERS").as_deref() == Ok("1") {
             return true;
         }
-        self.config.tui.ascii_borders
+        self.tui_config.ascii_borders
     }
 
     // ── Scroll helpers ────────────────────────────────────────────────────────

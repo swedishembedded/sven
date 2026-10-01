@@ -2,7 +2,7 @@
 //!
 //! Adding a new machine is a one-liner: call [`ModeRegistry::register`] with a
 //! factory closure. The registry replaces the hard-coded `AgentMode` enum in
-//! `sven-config`; all downstream code that picks a machine does so by looking
+//! `sven-vocab`; all downstream code that picks a machine does so by looking
 //! up a plain `&str`.
 
 use std::collections::HashMap;

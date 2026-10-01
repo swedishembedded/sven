@@ -29,9 +29,11 @@ pub(crate) mod ui_state;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use sven_config::{AgentMode, ApprovalMode, Config};
+use sven_bootstrap::Config;
+use sven_frontend::TuiConfig;
 use sven_mcp_client::McpManager;
 use sven_tools_agent::QuestionRequest;
+use sven_vocab::{AgentMode, ApprovalMode};
 use tokio::sync::mpsc;
 
 use sven_bootstrap::OutputBufferStore;
@@ -88,6 +90,8 @@ pub struct AppOptions {
 pub struct App {
     // ── Persistent configuration ──────────────────────────────────────────────
     pub(crate) config: Arc<Config>,
+    /// The interactive UI's own section of the configuration file.
+    pub(crate) tui_config: TuiConfig,
     /// Whether tool calls wait for the user's approval (`--approval`).
     pub(crate) approval: ApprovalMode,
     /// Node-proxy backend, consumed once in `run()`.

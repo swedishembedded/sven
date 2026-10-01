@@ -6,10 +6,11 @@ description = "The SlashCommand vocabulary and builtin `/…` commands shared by
 license = "Apache-2.0"
 
 [dependencies]
-sven-config     = { path = "../config" }
 sven-workspace  = { path = "../workspace" }
 sven-mcp-client = { path = "../mcp-client" }
 sven-model      = { path = "../model" }
+sven-model-drivers = { path = "../model-drivers" }
+sven-vocab      = { path = "../vocab" }
 sven-turn       = { path = "../turn" }
 tokio           = { workspace = true }
 unicode-width   = { workspace = true }

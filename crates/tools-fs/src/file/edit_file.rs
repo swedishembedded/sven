@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use similar::{ChangeTag, TextDiff};
 use tracing::debug;
 
-use sven_config::AgentMode;
+use sven_vocab::AgentMode;
 
 use sven_hsm::ToolCapability;
 

@@ -39,13 +39,13 @@ use tokio::time::Instant;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, warn};
 
-use sven_config::ApprovalMode;
 use sven_hsm::{capability_for_tool_name, ChildRunContract, ToolCapability};
 use sven_tool_api::{
     events::{SubagentUpdate, ToolEvent},
     tool::{ToolCall, ToolOutput},
 };
 use sven_tools_fs::OutputBufferStore;
+use sven_vocab::ApprovalMode;
 
 use super::report::{report, ReportContext, SessionEnd, TurnTokens};
 use super::updates::session_update_to_subagent_updates;
@@ -713,8 +713,8 @@ mod tests {
         NewSessionResponse, PromptResponse, SetSessionModeResponse, ToolCallUpdate,
         ToolCallUpdateFields,
     };
-    use sven_config::AgentMode;
     use sven_tool_api::PermissionRequester;
+    use sven_vocab::AgentMode;
 
     use super::*;
 

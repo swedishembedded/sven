@@ -1,0 +1,46 @@
+# Keys the schema does not know earn one warning each; a section sven
+# accepts but does not act on earns one warning for the whole section.
+modle:
+  provider: openai
+model:
+  provider: openai
+  name: gpt-4o
+  temprature: 0.3
+agent:
+  max_tool_round: 10
+tools:
+  web:
+    fetch_max_char: 10
+    search:
+      apikey: x
+  memory:
+    memory_file: notes/memory.json
+    learning:
+      submit_facts: true
+      batch_size: 16
+  gdb:
+    gdb_pth: gdb
+  asr:
+    modle: x
+  lints:
+    go_command: x
+  context:
+    max_paralel: 2
+tui:
+  colour: red
+providers:
+  local:
+    name: openai
+    base_uri: http://localhost:1/v1
+    models:
+      m:
+        max_token: 1
+mcp_servers:
+  s:
+    transport:
+      type: stdio
+      command: x
+      argz: []
+    oauth:
+      scope: [a]
+    enable: true

@@ -76,7 +76,7 @@ pub enum AcpCommands {
         /// sees its sub-agent's calls. Either way the request names the
         /// call's capability in its `_meta` (`sven.capability`).
         #[arg(long, value_enum, default_value = "auto")]
-        approval: sven_config::ApprovalMode,
+        approval: sven_vocab::ApprovalMode,
 
         /// Replaces `tools.deny_patterns` and `tools.auto_approve_patterns`
         /// with `{"deny": [...], "auto_approve": [...]}`. The `task` tool
@@ -105,7 +105,7 @@ fn parse_command_patterns(json: &str) -> Result<CommandPatterns, String> {
 /// served model's own cap - configured, or its catalog entry's - never a
 /// replacement for it.
 fn apply_budgets(
-    config: &mut sven_config::Config,
+    config: &mut sven_bootstrap::Config,
     max_tool_rounds: Option<u32>,
     max_output_tokens: Option<u32>,
     disable_tools: &[String],
@@ -141,9 +141,9 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             approval,
             command_patterns,
         } => {
-            let mut config = sven_config::load(None)?;
+            let mut config = sven_bootstrap::Config::load(None)?;
             if let Some(ref name) = model {
-                config.model = sven_model_drivers::resolve_model_from_config(&config, name);
+                config.model = config.resolve_model(name);
             }
             if let Some(ref prov) = provider {
                 config.model.provider = prov.clone();
@@ -209,7 +209,7 @@ mod tests {
         } = cli.acp;
         assert_eq!(wall_clock_secs, Some(60));
 
-        let mut config = sven_config::Config::default();
+        let mut config = sven_bootstrap::Config::default();
         config.model.max_output_tokens = Some(8192);
         config.tools.disabled = vec!["web_fetch".into()];
         apply_budgets(
@@ -226,7 +226,7 @@ mod tests {
             "disabling only adds"
         );
 
-        let mut config = sven_config::Config::default();
+        let mut config = sven_bootstrap::Config::default();
         config.agent.max_tool_rounds = 3;
         config.model.max_output_tokens = Some(1000);
         apply_budgets(&mut config, Some(50), Some(8000), &[]);
@@ -240,7 +240,7 @@ mod tests {
             .into_iter()
             .next()
             .expect("the catalog lists a model");
-        let mut config = sven_config::Config::default();
+        let mut config = sven_bootstrap::Config::default();
         config.model.provider = entry.provider.clone();
         config.model.name = entry.id.clone();
         config.model.max_output_tokens = None;

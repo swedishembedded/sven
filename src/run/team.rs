@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use sven_config::Config;
+use sven_bootstrap::Config;
 use sven_sdk::{
     Engine, EngineBuilder, RunConclusion, RunOptions, RunOutcome, SessionEvent, Toolset,
 };
@@ -78,7 +78,7 @@ pub(crate) struct Teammate {
 fn task_config(base: &Config, limits: &MemberLimits, model: Option<&str>) -> Config {
     let mut config = base.clone();
     if let Some(model) = model {
-        config.model = sven_model_drivers::resolve_model_from_config(base, model);
+        config.model = base.resolve_model(model);
     }
     config
         .tools

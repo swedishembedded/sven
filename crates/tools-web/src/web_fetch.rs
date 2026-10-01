@@ -14,7 +14,7 @@ use crate::provenance::{attach_web_provenance, now_unix};
 
 /// Default character ceiling for fetched page content.
 /// 20 K chars ≈ 5,000 tokens - fits comfortably within a 40 K-token context window.
-const DEFAULT_MAX_CHARS: usize = 20_000;
+pub(crate) const DEFAULT_MAX_CHARS: usize = 20_000;
 
 pub struct WebFetchTool {
     /// Cap applied when the caller does not pass `max_chars`, from

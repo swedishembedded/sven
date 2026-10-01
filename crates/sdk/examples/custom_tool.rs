@@ -66,7 +66,7 @@ impl Tool for StockPrice {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let engine = Engine::builder()
-        .config(sven_config::load(None)?)
+        .config(sven_sdk::config::load(None)?)
         .tool(Arc::new(StockPrice))
         .build()?;
 

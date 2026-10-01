@@ -38,11 +38,10 @@ impl SlashCommand for ModelCommand {
         let mut candidates: Vec<CompletionItem> = Vec::new();
 
         // Named custom providers from config.providers.
-        let mut provider_names: Vec<&str> =
-            ctx.config.providers.keys().map(|s| s.as_str()).collect();
+        let mut provider_names: Vec<&str> = ctx.providers.keys().map(|s| s.as_str()).collect();
         provider_names.sort_unstable();
         for name in provider_names {
-            let cfg = &ctx.config.providers[name];
+            let cfg = &ctx.providers[name];
             let mut model_keys: Vec<&str> = cfg.models.keys().map(|s| s.as_str()).collect();
             model_keys.sort_unstable();
             if model_keys.is_empty() {

@@ -22,7 +22,7 @@ pub mod stream_turn;
 
 pub use compact::{
     compact_session, compact_session_with_strategy, emergency_compact, finish_compaction,
-    prepare_compaction, smart_truncate, CompactionPlan,
+    prepare_compaction, smart_truncate, CompactionPlan, CompactionStrategy,
 };
 pub use prompts::{system_prompt, CollabEvent};
 pub use runtime_context::AgentRuntimeContext;

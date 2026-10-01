@@ -2,11 +2,10 @@
 name        = "sven-tool-api"
 version.workspace = true
 edition     = "2021"
-description = "The Tool trait and its interface: ToolDisplay, ApprovalPolicy, PermissionRequester, the tool -> agent-loop ToolEvent vocabulary, and pure display/param-extraction helpers shared by every tool implementation. Kernel tier: depends only on the foundation-tier type crates (sven-config, sven-hsm, sven-vocab), never on ToolRegistry or a concrete tool implementation."
+description = "The Tool trait and its interface: ToolDisplay, ApprovalPolicy, PermissionRequester, the tool -> agent-loop ToolEvent vocabulary, and pure display/param-extraction helpers shared by every tool implementation. Kernel tier: depends only on the foundation-tier type crates (sven-hsm, sven-vocab), never on ToolRegistry or a concrete tool implementation."
 license     = "Apache-2.0"
 
 [dependencies]
-sven-config = { path = "../config" }
 sven-hsm    = { path = "../hsm" }
 sven-vocab  = { path = "../vocab" }
 async-trait = { workspace = true }

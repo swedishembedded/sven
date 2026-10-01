@@ -203,9 +203,10 @@ fn describe_call(call: &sven_hsm::GatedCall) -> String {
 pub struct KernelAgentSession {
     handle: RuntimeHandle,
     mcp_manager: Arc<McpManager>,
-    _runtime: ErasedRuntime,
-    obs_task: JoinHandle<()>,
-    question_task: JoinHandle<()>,
+    /// `None` once [`Self::detach`] or [`Self::join`] has taken it.
+    runtime: Option<ErasedRuntime>,
+    obs_task: Option<JoinHandle<()>>,
+    question_task: Option<JoinHandle<()>>,
 }
 
 impl KernelAgentSession {
@@ -245,6 +246,20 @@ impl KernelAgentSession {
         })
     }
 
+    /// [`Self::spawn`] for a session nobody is at - a headless run, a
+    /// supervised session: every question is answered at once with
+    /// [`NO_USER_ANSWER`](sven_tool_api::NO_USER_ANSWER), and an approval
+    /// (manual only) is given at once.
+    #[must_use]
+    pub fn spawn_unattended(
+        bundle: SessionBundle,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> (Self, mpsc::Receiver<sven_mcp_client::McpEvent>) {
+        Self::spawn_with(bundle, event_tx, |channels| {
+            tokio::spawn(channels.answer_unattended())
+        })
+    }
+
     fn spawn_with(
         bundle: SessionBundle,
         event_tx: mpsc::Sender<AgentEvent>,
@@ -265,9 +280,9 @@ impl KernelAgentSession {
         let session = Self {
             handle,
             mcp_manager,
-            _runtime: runtime,
-            obs_task,
-            question_task,
+            runtime: Some(runtime),
+            obs_task: Some(obs_task),
+            question_task: Some(question_task),
         };
         (session, mcp_event_rx)
     }
@@ -348,13 +363,47 @@ impl KernelAgentSession {
     }
 }
 
+impl KernelAgentSession {
+    /// Lets the kernel run on after this handle is gone, until its queue
+    /// drains - what flushes the audit log at the end of a one-shot run. The
+    /// bridges end on their own once the kernel and the event receiver do.
+    pub fn detach(mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.detach();
+        }
+        self.obs_task.take();
+        self.question_task.take();
+    }
+
+    /// Waits for the kernel to finish and returns its report: the final
+    /// [`Context`](sven_hsm::context::Context) holds what a terminal machine
+    /// (verified-task) recorded. Only a machine that ends can be joined; any
+    /// other never returns.
+    ///
+    /// # Errors
+    ///
+    /// The kernel task panicked or was cancelled.
+    pub async fn join(mut self) -> Result<sven_hsm::ErasedReport, tokio::task::JoinError> {
+        let runtime = self.runtime.take().expect("a session is joined once");
+        let report = runtime.join().await;
+        // The kernel is over; its bridges end with it.
+        self.obs_task.take();
+        self.question_task.take();
+        report
+    }
+}
+
 impl Drop for KernelAgentSession {
     fn drop(&mut self) {
-        // Dropping `_runtime` aborts the kernel consumer (sven-kernel's
+        // Dropping the runtime aborts the kernel consumer (sven-kernel's
         // `AbortOnDrop`); abort the bridge tasks so they don't linger on a
         // closed observation channel.
-        self.obs_task.abort();
-        self.question_task.abort();
+        for task in [self.obs_task.take(), self.question_task.take()]
+            .into_iter()
+            .flatten()
+        {
+            task.abort();
+        }
     }
 }
 
@@ -631,7 +680,7 @@ mod tests {
     /// mappable `AgentEvent` stream through [`KernelAgentSession`].
     #[tokio::test]
     async fn kernel_session_streams_agent_events_with_mock_provider() {
-        let mut config = sven_config::Config::default();
+        let mut config = crate::Config::default();
         config.model.provider = "mock".into();
         config.model.name = "mock-model".into();
 

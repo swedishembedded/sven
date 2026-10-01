@@ -2,19 +2,16 @@
 name    = "sven-config"
 version.workspace = true
 edition = "2021"
+description = "Loading sven's configuration file: file and environment layering, merging, and the report of keys no section recognises. The sections themselves belong to the crates that read them."
 
 [dependencies]
 anyhow       = { workspace = true }
 serde        = { workspace = true }
-serde_json   = { workspace = true }
 serde_yaml   = { workspace = true }
 dirs         = { workspace = true }
 tracing      = { workspace = true }
-clap         = { workspace = true }
 shellexpand  = { workspace = true }
-sven-vocab   = { path = "../vocab" }
 
 [dev-dependencies]
 tempfile  = "3"
-anyhow    = "1"
-thiserror = "1"
+serde     = { workspace = true }

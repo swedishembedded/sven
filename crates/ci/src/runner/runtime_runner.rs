@@ -5,11 +5,11 @@
 //!
 //! This is the HSM-era replacement for [`super::CiRunner`]. It:
 //!
-//! 1. Builds a kernel [`SessionBundle`] via [`RuntimeBuilder::build_session`]
+//! 1. Opens a kernel session through the frontend's [`SessionController`]
 //!    in the reactive `agent` mode (the streaming, native-tool-calling coding
 //!    agent), answering every human gate at once - nobody is there to ask
 //!    in CI.
-//! 2. Subscribes to the outward observation plane.
+//! 2. Receives the session's [`AgentEvent`] stream.
 //! 3. Posts the initial [`Event::UserMessage`] from the step prompt.
 //! 4. Bridges every [`UiEvent`] to CI output: assistant text → stdout,
 //!    diagnostics (thinking, tool progress, usage, errors) → stderr.
@@ -19,14 +19,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use tokio::sync::broadcast::error::RecvError;
-
 use atif::Trajectory;
-use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
-use sven_config::{AgentMode, Config};
+use sven_bootstrap::Config;
+use sven_bootstrap::RuntimeContext;
+use sven_frontend::{SessionController, SessionOptions, SessionSpec};
 use sven_hsm::context::Context as KernelContext;
-use sven_hsm::{Event, UiEvent};
-use sven_kernel::EventSink;
+use sven_hsm::UiEvent;
 use sven_machines::{ERROR_FACT, NEEDS_HUMAN_FACT, VERDICT_FACT};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
@@ -34,6 +32,7 @@ use sven_session_store::{
     apply_outcome_to_trajectory, make_title, OutcomeFold, RunConclusion, Verdict,
 };
 use sven_tool_api::ToolCall;
+use sven_vocab::AgentMode;
 
 use crate::output::{
     finalise_stdout, format_token_usage_line, tool_output_snippet, write_progress, write_stderr,
@@ -63,11 +62,10 @@ pub struct RuntimeRunnerOptions {
     /// to the same "agent" machine string; `agent_mode` below is what
     /// actually differentiates their PERMISSION policy.
     pub mode: String,
-    /// The original interactive [`AgentMode`], passed to
-    /// `RuntimeBuilder::with_agent_mode`. Without this, `--mode plan`/
-    /// `--mode research` silently ran with full write permissions through
-    /// this runner (confirmed against a real packaged build before this fix)
-    /// -- see the identical field on `crate::kernel_agent::KernelAgent`.
+    /// The original interactive [`AgentMode`], the permissions the session
+    /// runs under. Without this, `--mode plan`/`--mode research` would run
+    /// with full write permissions -- see the identical field on
+    /// `crate::kernel_agent::KernelAgent`.
     pub agent_mode: AgentMode,
     /// The single user prompt to execute.
     pub prompt: String,
@@ -180,30 +178,25 @@ impl RuntimeRunner {
             ));
         }
 
-        let bundle = RuntimeBuilder::new(self.config.clone(), kernel_mode)
-            .with_runtime_context(runtime_ctx)
-            .with_agent_mode(opts.agent_mode)
-            .with_allow_interactive_oauth(false)
-            .with_initial_history(history)
-            .build_session()
+        // Nobody is at a headless run: its gates are answered at once, and an
+        // MCP server that wants a browser sign-in is not given one.
+        let (events, mut events_rx) = tokio::sync::mpsc::channel(256);
+        let mut options = SessionOptions::new(Arc::clone(&self.config), runtime_ctx, events);
+        options.allow_interactive_oauth = false;
+        let spec = SessionSpec {
+            machine: kernel_mode.to_string(),
+            permissions: opts.agent_mode,
+            model: self.config.model.clone(),
+        };
+        let (session, _mcp_events) = SessionController::open(options, spec, history)
             .await
             .context("failed to build kernel session")?;
 
-        let sink: EventSink = bundle.handle.sink();
-        let mut obs_rx = bundle.handle.subscribe_observations();
-
-        // Nobody is at a headless run: its gates are answered at once.
-        tokio::spawn(bundle.channels.answer_unattended());
-
         // Post the user prompt.
-        if !sink
-            .emit(Event::UserMessage {
-                text: opts.prompt.clone(),
-            })
+        session
+            .post(opts.prompt.clone())
             .await
-        {
-            anyhow::bail!("kernel event queue closed before UserMessage was delivered");
-        }
+            .map_err(|e| anyhow::anyhow!("{e} before UserMessage was delivered"))?;
 
         // The trajectory this run records: history replayed into the kernel
         // first, then the new prompt, so the document stands on its own.
@@ -264,12 +257,11 @@ impl RuntimeRunner {
         // swallowed instead.
         //
         // That leaves the real question open: what *does* signal completion?
-        // Not the observation channel closing - `bundle.runtime` (the
-        // `ErasedRuntime` this function still owns at this point) holds its
-        // own `ObservationSink` clone for its entire lifetime, including
-        // through the `join()` call below, so the broadcast channel's sender
-        // count never reaches zero while this function is still running:
-        // relying on `Err(RecvError::Closed)` here would deadlock forever.
+        // Not the event stream closing - the session (which this function
+        // still owns at this point) keeps the kernel's observation sink alive
+        // for its entire lifetime, including through the `join()` call below,
+        // so the stream never ends while this function is still running:
+        // waiting for it to close here would deadlock forever.
         // The kernel's status watch has no such problem - `status_rx` is an
         // independent `watch::Receiver` - so for this mode alone the loop
         // also races it and treats `RuntimeStatus.done` (set exactly when
@@ -277,7 +269,7 @@ impl RuntimeRunner {
         // from that branch is only a placeholder; the actual exit code is
         // computed from the joined `Context` after the loop (see below).
         let is_verified_task = kernel_mode == "verified-task";
-        let mut status_rx = bundle.runtime.status_watch();
+        let mut status_rx = session.handle().status_watch();
 
         let result = loop {
             if is_verified_task && status_rx.borrow().done {
@@ -287,7 +279,7 @@ impl RuntimeRunner {
                 Some(dl) => {
                     let remaining = dl.saturating_duration_since(Instant::now());
                     tokio::select! {
-                        r = tokio::time::timeout(remaining, obs_rx.recv()) => match r {
+                        r = tokio::time::timeout(remaining, events_rx.recv()) => match r {
                             Ok(r) => r,
                             Err(_) => {
                                 write_stderr(&format!(
@@ -304,7 +296,7 @@ impl RuntimeRunner {
                 }
                 None => {
                     tokio::select! {
-                        r = obs_rx.recv() => r,
+                        r = events_rx.recv() => r,
                         _ = status_rx.wait_for(|s| s.done), if is_verified_task => {
                             break EXIT_SUCCESS;
                         }
@@ -312,7 +304,7 @@ impl RuntimeRunner {
                 }
             };
             match received {
-                Ok(ev) => {
+                Some(ev) => {
                     let suppress_turn_complete =
                         is_verified_task && matches!(ev, UiEvent::TurnComplete);
                     if let Some(done) = handle_ui_event(ev, &mut state) {
@@ -326,7 +318,7 @@ impl RuntimeRunner {
                 // trailing conversation document is well-formed for a
                 // downstream pipe stage (mirrors the TurnComplete / Aborted
                 // finalisation paths).
-                Err(RecvError::Closed) => {
+                None => {
                     close_sven_section(&mut state);
                     finalise_stdout(&state.streamed_text);
                     print_total_usage(&state);
@@ -336,8 +328,6 @@ impl RuntimeRunner {
                         EXIT_SUCCESS
                     };
                 }
-                // Dropped some observations under load; keep going.
-                Err(RecvError::Lagged(_)) => continue,
             }
         };
 
@@ -354,7 +344,7 @@ impl RuntimeRunner {
         // mode keeps the existing detach-and-forget behaviour and its
         // loop-derived `result` unchanged.
         let (result, verdict) = if is_verified_task {
-            match bundle.runtime.join().await {
+            match session.join().await {
                 Ok(report) => (
                     exit_code_for_verified_task(&report.ctx),
                     verdict_from_context(&report.ctx),
@@ -368,7 +358,7 @@ impl RuntimeRunner {
             }
         } else {
             // Keep the runtime alive until here so the audit log flushes.
-            bundle.runtime.detach();
+            session.detach();
             (result, None)
         };
 

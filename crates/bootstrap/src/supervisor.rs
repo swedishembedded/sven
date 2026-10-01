@@ -18,7 +18,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use sven_config::Config;
+use crate::Config;
 use sven_hsm::Principal;
 use uuid::Uuid;
 

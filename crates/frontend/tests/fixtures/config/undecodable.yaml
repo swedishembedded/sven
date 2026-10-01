@@ -1,0 +1,7 @@
+# A value the schema cannot decode: the file is ignored, said loudly, and
+# the defaults apply.
+model:
+  - foo
+  - bar
+agent:
+  max_tool_rounds: 7

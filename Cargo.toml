@@ -129,7 +129,7 @@ name = "sven"
 path = "src/main.rs"
 
 [dependencies]
-sven-config      = { path = "crates/config" }
+sven-frontend    = { path = "crates/frontend" }
 sven-model       = { path = "crates/model" }
 sven-model-drivers = { path = "crates/model-drivers" }
 sven-session-store = { path = "crates/session-store" }
@@ -225,7 +225,6 @@ sven-bootstrap   = { path = "crates/bootstrap" }
 sven-tools-exec  = { path = "crates/tools-exec" }
 sven-tools-fs    = { path = "crates/tools-fs" }
 sven-tools-ctx   = { path = "crates/tools-ctx" }
-sven-config      = { path = "crates/config" }
 sven-model       = { path = "crates/model" }
 sven-vocab       = { path = "crates/vocab" }
 sven-model-mock  = { path = "crates/model-mock" }

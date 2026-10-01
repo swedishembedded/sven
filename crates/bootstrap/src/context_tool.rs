@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 
-use sven_config::{AgentMode, Config};
+use crate::context_query::ContextConfig;
 use sven_model::ModelProvider;
 use sven_tool_api::{
     events::ToolEvent,
@@ -25,6 +25,7 @@ use sven_tool_api::{
     tool::{Tool, ToolCall, ToolOutput},
 };
 use sven_tools_ctx::{ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore};
+use sven_vocab::AgentMode;
 
 use crate::context_query::{build_context_query_tools, ContextQueryTool, ContextReduceTool};
 
@@ -41,7 +42,7 @@ impl ContextTool {
     pub fn new(
         store: Arc<Mutex<ContextStore>>,
         model: Arc<dyn ModelProvider>,
-        cfg: &Config,
+        cfg: &ContextConfig,
         progress_tx: Option<mpsc::Sender<ToolEvent>>,
     ) -> Self {
         let (query, reduce) = build_context_query_tools(store.clone(), model, cfg, progress_tx);
@@ -286,15 +287,13 @@ mod tests {
 
     fn make_tool() -> ContextTool {
         use std::sync::Arc;
-        use sven_config::Config;
         use sven_model_mock::MockProvider;
         use sven_tools_ctx::ContextStore;
         use tokio::sync::Mutex;
 
         let store = Arc::new(Mutex::new(ContextStore::new()));
         let provider: Arc<dyn ModelProvider> = Arc::new(MockProvider);
-        let cfg = Config::default();
-        ContextTool::new(store, provider, &cfg, None)
+        ContextTool::new(store, provider, &ContextConfig::default(), None)
     }
 
     #[tokio::test]

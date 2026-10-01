@@ -536,8 +536,7 @@ impl App {
                 self.session.mode = mode;
             }
             AgentEvent::ModelChanged(model_str) => {
-                let resolved =
-                    sven_model_drivers::resolve_model_from_config(&self.config, &model_str);
+                let resolved = self.config.resolve_model(&model_str);
                 self.session.stage_model(resolved);
             }
             AgentEvent::CollabEvent(ev) => {

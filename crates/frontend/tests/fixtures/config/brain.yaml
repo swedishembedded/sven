@@ -1,0 +1,18 @@
+# docs/providers.md: whatever model a local brain is serving, and brain's
+# D-Bus transport as a named provider.
+model:
+  provider: brain
+  name: ""          # empty = use whatever model brain is serving
+providers:
+  brain_dbus:
+    name: dbus
+    input_modalities: [text, image, audio]
+    driver_options:
+      bus: session            # session | system | a raw D-Bus address
+      service: com.swedishembedded.Brain1
+      object_path: /com/swedishembedded/Brain1
+      action: generate
+      max_image_dim: 1024     # longest image side sent as raw pixels
+    models:
+      brain/omni:
+        max_tokens: 32768

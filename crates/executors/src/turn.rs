@@ -165,7 +165,7 @@ pub struct TurnExecutor {
     limits: sven_turn::TurnLimits,
 }
 
-/// Proactive-compaction settings, mirroring `sven_config::AgentConfig`'s
+/// Proactive-compaction settings, mirroring the agent settings'
 /// `compaction_*` fields (kept as a separate small struct so `TurnExecutor`'s
 /// constructor signature doesn't grow every time this feature gains a knob).
 #[derive(Clone)]
@@ -182,32 +182,22 @@ pub struct CompactionConfig {
     pub keep_recent: usize,
     /// Which prompt/format the model is asked to produce a summary in.
     /// See `AgentConfig::compaction_strategy`.
-    pub strategy: sven_config::CompactionStrategy,
+    pub strategy: sven_turn::CompactionStrategy,
 }
 
 impl Default for CompactionConfig {
-    /// Matches `sven_config::AgentConfig::default()`'s compaction fields.
+    /// Matches the agent settings' default compaction fields.
     fn default() -> Self {
         Self {
             threshold: 0.85,
             overhead_reserve: 0.10,
             keep_recent: 6,
-            strategy: sven_config::CompactionStrategy::Structured,
+            strategy: sven_turn::CompactionStrategy::Structured,
         }
     }
 }
 
 impl CompactionConfig {
-    #[must_use]
-    pub fn from_agent_config(cfg: &sven_config::AgentConfig) -> Self {
-        Self {
-            threshold: cfg.compaction_threshold,
-            overhead_reserve: cfg.compaction_overhead_reserve,
-            keep_recent: cfg.compaction_keep_recent,
-            strategy: cfg.compaction_strategy.clone(),
-        }
-    }
-
     /// The fraction of the usable input budget at which compaction should
     /// fire, after accounting for overhead reserve. Never negative.
     fn effective_threshold(&self) -> f32 {
@@ -333,10 +323,10 @@ impl TurnExecutor {
             {
                 Some(summary_text) if !summary_text.trim().is_empty() => {
                     let strategy_used = match self.compaction.strategy {
-                        sven_config::CompactionStrategy::Structured => {
+                        sven_turn::CompactionStrategy::Structured => {
                             CompactionStrategyUsed::Structured
                         }
-                        sven_config::CompactionStrategy::Narrative => {
+                        sven_turn::CompactionStrategy::Narrative => {
                             CompactionStrategyUsed::Narrative
                         }
                     };
@@ -486,8 +476,8 @@ impl EffectExecutor for TurnExecutor {
             to_model_schemas(self.tools.schemas_for_names(&req.tools))
         } else if !req.all_tools_mode.is_empty() {
             let mode_val = serde_json::Value::String(req.all_tools_mode.clone());
-            let mode = serde_json::from_value::<sven_config::AgentMode>(mode_val)
-                .unwrap_or(sven_config::AgentMode::Agent);
+            let mode = serde_json::from_value::<sven_vocab::AgentMode>(mode_val)
+                .unwrap_or(sven_vocab::AgentMode::Agent);
             to_model_schemas(self.tools.schemas_for_mode(mode))
         } else {
             vec![]

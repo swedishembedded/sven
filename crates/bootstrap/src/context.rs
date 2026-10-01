@@ -25,7 +25,7 @@ use sven_workspace::{CiContext, GitContext, SharedAgents, SharedKnowledge, Share
 
 /// Environment-detected context for an agent session.
 ///
-/// This is separate from [`sven_config::AgentConfig`] (which holds only
+/// This is separate from [`crate::AgentConfig`] (which holds only
 /// config-file fields) so that the two concerns - "what the user configured"
 /// and "what we found at runtime" - stay cleanly separated.
 #[derive(Default, Clone)]
@@ -283,7 +283,7 @@ impl ToolSetProfile {
     /// 4. Default → `Coding`
     pub fn detect(
         is_sub_agent: bool,
-        mode: sven_config::AgentMode,
+        mode: sven_vocab::AgentMode,
         project_root: Option<&std::path::Path>,
         question_tx: Option<mpsc::Sender<QuestionRequest>>,
         todos: Arc<Mutex<Vec<TodoItem>>>,
@@ -297,7 +297,7 @@ impl ToolSetProfile {
         }
 
         let questions = Questions::answered_or_unavailable(question_tx);
-        if mode == sven_config::AgentMode::Research {
+        if mode == sven_vocab::AgentMode::Research {
             return ToolSetProfile::Research { questions, todos };
         }
 
@@ -324,7 +324,7 @@ impl ToolSetProfile {
     /// depth variable `TaskTool` sets on the child it spawns, so the two
     /// halves cannot disagree about what a sub-agent is.
     pub fn for_session(
-        agent_mode: sven_config::AgentMode,
+        agent_mode: sven_vocab::AgentMode,
         project_root: Option<&std::path::Path>,
         question_tx: Option<mpsc::Sender<QuestionRequest>>,
         todos: Arc<Mutex<Vec<TodoItem>>>,
@@ -349,7 +349,7 @@ impl ToolSetProfile {
     /// tools at all.
     pub fn for_selection(
         selection: BuiltinTools,
-        agent_mode: sven_config::AgentMode,
+        agent_mode: sven_vocab::AgentMode,
         project_root: Option<&std::path::Path>,
         question_tx: Option<mpsc::Sender<QuestionRequest>>,
         park_questions: bool,
@@ -440,9 +440,9 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    use sven_config::AgentMode;
     use sven_tool_api::events::TodoItem;
     use sven_tools_fs::OutputBufferStore;
+    use sven_vocab::AgentMode;
     use sven_workspace::{SharedAgents, SharedSkills};
 
     use super::{has_gdb_config, RuntimeContext, ToolSetProfile};

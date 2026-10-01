@@ -31,6 +31,7 @@ use run::tui::run_tui;
 use run::workflow::validate_workflow;
 #[cfg(feature = "network")]
 use sven_acp::cli::run_acp_command;
+use sven_frontend::Settings;
 #[cfg(feature = "network")]
 use sven_mcp::cli::run_mcp_command;
 
@@ -64,13 +65,13 @@ async fn main() -> anyhow::Result<()> {
     if let Some(cmd) = &cli.command {
         match cmd {
             Commands::Tool { command } => {
-                let config = sven_config::load(cli.config.as_deref())?;
+                let config = Settings::load(cli.config.as_deref())?.runtime;
                 return run_tool_command(command, &config).await;
             }
             Commands::Agent { command } => {
-                let mut config = sven_config::load(cli.config.as_deref())?;
+                let mut config = Settings::load(cli.config.as_deref())?.runtime;
                 if let Some(m) = &cli.model {
-                    config.model = sven_model_drivers::resolve_model_from_config(&config, m);
+                    config.model = config.resolve_model(m);
                 }
                 return run_agent_command(command, config).await;
             }
@@ -87,8 +88,8 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
             Commands::ShowConfig => {
-                let config = sven_config::load(cli.config.as_deref())?;
-                println!("{}", serde_yaml::to_string(&config).unwrap_or_default());
+                let settings = Settings::load(cli.config.as_deref())?;
+                println!("{}", serde_yaml::to_string(&settings).unwrap_or_default());
                 return Ok(());
             }
             Commands::OauthCallback { url } => {
@@ -105,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
                 return validate_workflow(file);
             }
             Commands::AgentDispatch => {
-                let config = Arc::new(sven_config::load(cli.config.as_deref())?);
+                let config = Arc::new(Settings::load(cli.config.as_deref())?.runtime);
                 return run_agent_dispatch_command(config).await;
             }
             Commands::Map {
@@ -157,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
                 return run_questions_command(command);
             }
             Commands::Task { command } => {
-                let config = sven_config::load(cli.config.as_deref())?;
+                let config = Settings::load(cli.config.as_deref())?.runtime;
                 return run_task_command(command, &config).await;
             }
             Commands::ListModels {
@@ -165,7 +166,7 @@ async fn main() -> anyhow::Result<()> {
                 refresh,
                 json,
             } => {
-                let config = sven_config::load(cli.config.as_deref())?;
+                let config = Settings::load(cli.config.as_deref())?.runtime;
                 return list_models_cmd(&config, provider.as_deref(), *refresh, *json).await;
             }
             Commands::ListProviders { verbose, json } => {
@@ -174,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let config = Arc::new(sven_config::load(cli.config.as_deref())?);
+    let settings = Settings::load(cli.config.as_deref())?;
 
     // ── Teammate mode ─────────────────────────────────────────────────────────
     // When --team-name is set (injected by spawn_teammate), skip the normal CI
@@ -197,15 +198,15 @@ async fn main() -> anyhow::Result<()> {
             instructions: cli.append_system_prompt.clone(),
             initial_task: cli.prompt.clone(),
         };
-        return run_as_teammate(teammate, config).await;
+        return run_as_teammate(teammate, Arc::new(settings.runtime)).await;
     }
 
     if cli.is_headless() {
-        run_ci(cli, config).await
+        run_ci(cli, Arc::new(settings.runtime)).await
     } else {
         #[cfg(feature = "tui")]
         {
-            run_tui(cli, config).await
+            run_tui(cli, settings).await
         }
         #[cfg(not(feature = "tui"))]
         {

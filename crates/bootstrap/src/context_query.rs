@@ -28,7 +28,8 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
 
-use sven_config::{AgentMode, Config};
+use serde::{Deserialize, Serialize};
+use sven_config::Schema;
 use sven_model::{CompletionRequest, Message, ModelProvider, ResponseEvent};
 use sven_tool_api::{
     events::ToolEvent,
@@ -36,6 +37,52 @@ use sven_tool_api::{
     tool::{OutputCategory, Tool, ToolCall, ToolOutput},
 };
 use sven_tools_ctx::{ContextStore, SubQueryRunner};
+use sven_vocab::AgentMode;
+
+// ─── Configuration ────────────────────────────────────────────────────────────
+
+/// The `tools.context` section of the configuration file: the memory-mapped
+/// context tools that implement the RLM pattern.
+///
+/// These tools allow the agent to process files and directories far beyond the
+/// LLM context window by keeping content memory-mapped and providing the model
+/// with symbolic handles and structured access operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ContextConfig {
+    /// Maximum number of concurrent sub-agent queries for `context_query`.
+    pub max_parallel: usize,
+    /// Default number of lines per chunk when `chunk_lines` is not specified
+    /// in a `context_query` call.
+    pub default_chunk_lines: usize,
+    /// Maximum characters sent to each sub-query call.
+    /// Sub-queries are simple completions without tools; this caps their input.
+    pub sub_query_max_chars: usize,
+    /// Timeout in seconds for each individual sub-query API call.
+    /// If a sub-query does not complete within this time it is cancelled and
+    /// an error result is recorded for that chunk.  0 means no timeout.
+    pub sub_query_timeout_secs: u64,
+}
+
+impl Default for ContextConfig {
+    fn default() -> Self {
+        Self {
+            max_parallel: 4,
+            default_chunk_lines: 500,
+            sub_query_max_chars: 120_000,
+            sub_query_timeout_secs: 120,
+        }
+    }
+}
+
+impl ContextConfig {
+    /// The keys of the `tools.context` section: accepted as written, none of
+    /// them checked against the four fields.
+    #[must_use]
+    pub fn schema() -> Schema {
+        Schema::value()
+    }
+}
 
 // ─── ModelSubQueryRunner ──────────────────────────────────────────────────────
 
@@ -692,28 +739,28 @@ async fn tree_reduce_inner(
 pub fn build_context_query_tools(
     store: Arc<Mutex<ContextStore>>,
     provider: Arc<dyn ModelProvider>,
-    cfg: &Config,
+    cfg: &ContextConfig,
     progress_tx: Option<mpsc::Sender<ToolEvent>>,
 ) -> (ContextQueryTool, ContextReduceTool) {
     let runner: Arc<dyn SubQueryRunner> = Arc::new(ModelSubQueryRunner::new(
         provider,
-        cfg.tools.context.sub_query_max_chars,
-        cfg.tools.context.sub_query_timeout_secs,
+        cfg.sub_query_max_chars,
+        cfg.sub_query_timeout_secs,
     ));
 
     let query_tool = ContextQueryTool::new(
         store.clone(),
         runner.clone(),
-        cfg.tools.context.default_chunk_lines,
-        cfg.tools.context.max_parallel,
+        cfg.default_chunk_lines,
+        cfg.max_parallel,
         progress_tx,
     );
 
     let reduce_tool = ContextReduceTool::new(
         store,
         runner,
-        cfg.tools.context.sub_query_max_chars,
-        cfg.tools.context.default_chunk_lines,
+        cfg.sub_query_max_chars,
+        cfg.default_chunk_lines,
     );
 
     (query_tool, reduce_tool)

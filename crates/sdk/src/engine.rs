@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use sven_config::Config;
+use sven_bootstrap::Config;
 use sven_model::ModelProvider;
 
 use crate::agent::Agent;
@@ -101,7 +101,7 @@ pub enum ApprovalPolicy {
     Manual,
 }
 
-impl From<ApprovalPolicy> for sven_config::ApprovalMode {
+impl From<ApprovalPolicy> for sven_vocab::ApprovalMode {
     fn from(policy: ApprovalPolicy) -> Self {
         match policy {
             ApprovalPolicy::Auto => Self::Auto,
@@ -421,7 +421,7 @@ impl EngineBuilder {
     /// Without [`Self::config`] the engine uses [`Config::default`] rather than
     /// reading the user's configuration file - an embedded agent should not
     /// silently inherit whatever is on the host's disk. A caller that does want
-    /// the file loads it with `sven_config::load` and passes it in.
+    /// the file loads it with [`config::load`](crate::config::load) and passes it in.
     ///
     /// # Errors
     ///

@@ -3,15 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! [`SvenAcpAgent`] - implements the ACP `Agent` trait for sven.
 //!
-//! Each `new_session` call builds a fresh kernel session via
-//! [`sven_bootstrap::RuntimeBuilder`] and wraps it in a
-//! [`sven_bootstrap::KernelAgentSession`] — the shared HSM-kernel adapter that
-//! maps the kernel's outward observation plane onto the same
-//! [`AgentEvent`](sven_machines::AgentEvent) stream every other surface consumes.
-//! The session is stored in a [`SessionEntry`] keyed by ACP [`SessionId`];
-//! `set_session_mode` rebuilds it in the new mode from the session's
-//! settings, so the mode's policy and tools - not only its label - apply; it
-//! is refused while a prompt turn runs.
+//! Each `new_session` call opens a kernel session through the shared
+//! [`SessionController`], which maps the kernel's outward observation plane
+//! onto the same [`AgentEvent`](sven_machines::AgentEvent) stream every other
+//! surface consumes. The session is stored in a [`SessionEntry`] keyed by ACP
+//! [`SessionId`]; `set_session_mode` rebuilds it in the new mode, so the
+//! mode's policy and tools - not only its label - apply; it is refused while a
+//! prompt turn runs.
 //! `prompt` posts the user message through the session, drains the mapped
 //! `AgentEvent` stream, and bridges each event to an ACP `session/update`
 //! notification, returning when the turn completes or is cancelled.
@@ -22,7 +20,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,10 +51,12 @@ const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 
 use sven_bootstrap::session_handles::HumanGate;
-use sven_bootstrap::{KernelAgentSession, RuntimeBuilder, RuntimeContext};
-use sven_config::{AgentMode, ApprovalMode, Config};
+use sven_bootstrap::Config;
+use sven_bootstrap::RuntimeContext;
+use sven_frontend::{Gates, SessionController, SessionOptions, SessionSpec};
 use sven_hsm::ToolCapability;
 use sven_machines::AgentEvent;
+use sven_vocab::{AgentMode, ApprovalMode};
 
 /// `_meta` key under which a permission request names the capability the call
 /// exercises, as the agent's kernel classed it (`"WriteFile"`, ...). A `task`
@@ -92,7 +92,7 @@ pub enum ConnMessage {
 /// requests to the IDE over ACP via the `session/request_permission` method.
 ///
 /// Created per session in [`SvenAcpAgent::new_session`] and passed to
-/// [`RuntimeBuilder::with_permission_requester`] so that tools with
+/// [`SessionOptions::permission_requester`] so that tools with
 /// `ApprovalPolicy::Ask` gate their execution on an explicit IDE approval.
 struct AcpPermissionRequester {
     session_id: String,
@@ -222,36 +222,20 @@ impl TurnUsage {
 
 // ─── Session entry ────────────────────────────────────────────────────────────
 
-/// What a session is set up with. Every build of the session - the first,
-/// and each rebuild for a mode or model change - is made from exactly this.
-#[derive(Clone, Debug)]
-struct SessionSettings {
-    /// The working directory the session was opened in.
-    cwd: std::path::PathBuf,
-    mode: AgentMode,
-    /// The model the session runs on: the configured one until the agent
-    /// switches (`system` switch_model).
-    model: sven_config::ModelConfig,
-}
-
 /// Per-session state stored inside [`SvenAcpAgent`].
 struct SessionEntry {
-    /// Kernel session bridged onto the shared [`AgentEvent`] stream; owns the
-    /// runtime and keeps the kernel alive for the session's lifetime.
-    /// Replaced when the mode or model changes, never during a turn.
-    session: tokio::sync::Mutex<KernelAgentSession>,
-    settings: std::sync::Mutex<SessionSettings>,
-    /// The agent switched models during a turn: the session is rebuilt on
-    /// the new one before the next turn starts.
-    model_changed: AtomicBool,
-    /// The session's MCP servers, those the agent added included, kept
-    /// across rebuilds.
-    mcp_manager: Arc<sven_bootstrap::McpManager>,
+    /// The kernel session, bridged onto the shared [`AgentEvent`] stream.
+    /// Rebuilt - by the controller, which carries the conversation and the
+    /// MCP servers over - when the mode or model changes, never during a
+    /// turn.
+    session: tokio::sync::Mutex<SessionController>,
+    /// The model the agent switched to during a turn (`system`
+    /// switch_model): the session is rebuilt on it before the next turn
+    /// starts.
+    switched_model: std::sync::Mutex<Option<sven_model_drivers::ModelConfig>>,
     /// How many `prompt` calls are running or waiting on this session. A
     /// rebuild happens only while it is zero.
     turns_in_flight: AtomicUsize,
-    /// Where every build of the session sends its events.
-    event_tx: mpsc::Sender<AgentEvent>,
     /// Receiver for this session's mapped [`AgentEvent`] stream, drained one
     /// turn at a time by `prompt`.
     event_rx: tokio::sync::Mutex<mpsc::Receiver<AgentEvent>>,
@@ -260,17 +244,28 @@ struct SessionEntry {
 }
 
 impl SessionEntry {
-    fn settings(&self) -> SessionSettings {
-        self.settings
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
     /// Counts a `prompt` as in flight until the returned guard drops.
     fn begin_turn(&self) -> TurnInFlight<'_> {
         self.turns_in_flight.fetch_add(1, Ordering::SeqCst);
         TurnInFlight(&self.turns_in_flight)
+    }
+
+    /// What `session` runs next: in `mode` where given, on the model the
+    /// agent last switched to, if it has switched.
+    fn next_spec(&self, session: &SessionController, mode: Option<AgentMode>) -> SessionSpec {
+        let model = self
+            .switched_model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap_or_else(|| session.spec().model.clone());
+        match mode {
+            Some(mode) => SessionSpec::for_mode(mode, model),
+            None => SessionSpec {
+                model,
+                ..session.spec().clone()
+            },
+        }
     }
 }
 
@@ -319,88 +314,73 @@ impl SvenAcpAgent {
         self
     }
 
-    /// Builds the kernel session for `session_id` from `settings`, seeded
-    /// with `history`, bridged into `event_tx`, on `mcp_manager`'s servers
-    /// (a new manager when `None`).
-    async fn build_session(
+    /// Opens the kernel session for `session_id`, working in `cwd`, on the
+    /// configured model in `mode`. Every build of it - this one and each
+    /// rebuild - sends its events to `event_tx`.
+    async fn open_session(
         &self,
         session_id: &str,
-        settings: &SessionSettings,
-        history: Vec<sven_model::Message>,
+        cwd: &std::path::Path,
+        mode: AgentMode,
         event_tx: mpsc::Sender<AgentEvent>,
-        mcp_manager: Option<Arc<sven_bootstrap::McpManager>>,
-    ) -> AcpResult<KernelAgentSession> {
+    ) -> AcpResult<SessionController> {
         let requester = Arc::new(AcpPermissionRequester {
             session_id: session_id.to_string(),
             conn_tx: self.conn_tx.clone(),
             timeout: self.permission_timeout,
         });
-        let mut runtime_ctx = RuntimeContext::auto_detect();
-        runtime_ctx.project_root = Some(settings.cwd.clone());
-        let mut builder = RuntimeBuilder::new(Arc::clone(&self.config), "agent")
-            .with_runtime_context(runtime_ctx)
-            .with_model_config(settings.model.clone())
-            .with_agent_mode(settings.mode)
-            .with_approval_mode(self.approval)
-            .with_initial_history(history);
-        if let Some(manager) = mcp_manager {
-            builder = builder.with_mcp_manager(manager);
-        }
+        let mut runtime = RuntimeContext::auto_detect();
+        runtime.project_root = Some(cwd.to_path_buf());
+        let mut options = SessionOptions::new(Arc::clone(&self.config), runtime, event_tx);
+        options.approval = self.approval;
+        options.gates = Gates::Host(gate_responder(Arc::clone(&requester)));
         // Under manual approval the kernel asks about every call that is not
         // read-only, `Ask` tools included; asking the client again from the
         // registry would put the same call to it twice.
         if self.approval == ApprovalMode::Auto {
-            builder = builder.with_permission_requester(requester.clone());
+            options.permission_requester = Some(requester);
         }
-        let bundle = builder.build_session().await.map_err(|e| {
-            tracing::error!("ACP kernel build error: {e:#}");
-            Error::internal_error()
-        })?;
-        let (session, _mcp_event_rx) =
-            KernelAgentSession::spawn_answering(bundle, event_tx, gate_responder(requester));
+        let spec = SessionSpec::for_mode(mode, self.config.model.clone());
+        let (session, _mcp_events) = SessionController::open(options, spec, Vec::new())
+            .await
+            .map_err(|e| {
+                tracing::error!("ACP kernel build error: {e:#}");
+                Error::internal_error()
+            })?;
         Ok(session)
     }
 
-    /// Replaces `entry`'s session with one built from `settings`, carrying
-    /// the conversation so far and the MCP servers. `session` is the entry's
+    /// Replaces `entry`'s session with one running `spec`, carrying the
+    /// conversation so far and the MCP servers. `session` is the entry's
     /// locked session; the caller has made sure no turn is running on it.
+    /// The model the agent switched to is the session's own from here on.
     async fn rebuild_session(
         &self,
-        session_id: &str,
         entry: &SessionEntry,
-        session: &mut KernelAgentSession,
-        settings: SessionSettings,
+        session: &mut SessionController,
+        spec: SessionSpec,
     ) -> AcpResult<()> {
-        let history = session.history_snapshot();
-        *session = self
-            .build_session(
-                session_id,
-                &settings,
-                history,
-                entry.event_tx.clone(),
-                Some(Arc::clone(&entry.mcp_manager)),
-            )
-            .await?;
+        session.rebuild(spec).await.map_err(|e| {
+            tracing::error!("ACP kernel build error: {e:#}");
+            Error::internal_error()
+        })?;
         *entry
-            .settings
+            .switched_model
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = settings;
-        entry.model_changed.store(false, Ordering::SeqCst);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         Ok(())
     }
 
-    /// Records what a turn's `event` changes about the session's settings:
-    /// a model the agent switched to, which the session is rebuilt on before
-    /// the next turn.
+    /// Records what a turn's `event` changes about the session: a model the
+    /// agent switched to, which the session is rebuilt on before the next
+    /// turn.
     fn note_turn_event(&self, entry: &SessionEntry, event: &AgentEvent) {
         if let AgentEvent::ModelChanged(model) = event {
-            let model = sven_model_drivers::resolve_model_from_config(&self.config, model);
-            entry
-                .settings
+            let model = self.config.resolve_model(model);
+            *entry
+                .switched_model
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .model = model;
-            entry.model_changed.store(true, Ordering::SeqCst);
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(model);
         }
     }
 }
@@ -512,27 +492,19 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         debug!("ACP new_session: cwd={:?}", args.cwd);
 
         let session_id = uuid::Uuid::new_v4().to_string();
-        let settings = SessionSettings {
-            cwd: args.cwd.clone(),
-            mode: AgentMode::Agent,
-            model: self.config.model.clone(),
-        };
+        let initial_mode = AgentMode::Agent;
 
         // The event receiver is drained one turn at a time by `prompt`; every
         // build of the session (a mode change rebuilds it) sends into it.
         let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(256);
         let session = self
-            .build_session(&session_id, &settings, Vec::new(), event_tx.clone(), None)
+            .open_session(&session_id, &args.cwd, initial_mode, event_tx)
             .await?;
 
-        let initial_mode = settings.mode;
         let entry = Arc::new(SessionEntry {
-            mcp_manager: session.mcp_manager(),
             session: tokio::sync::Mutex::new(session),
-            settings: std::sync::Mutex::new(settings),
-            model_changed: AtomicBool::new(false),
+            switched_model: std::sync::Mutex::new(None),
             turns_in_flight: AtomicUsize::new(0),
-            event_tx,
             event_rx: tokio::sync::Mutex::new(event_rx),
             cancel_tx: tokio::sync::Mutex::new(None),
         });
@@ -597,11 +569,16 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         // switched to.
         {
             let mut session = entry.session.lock().await;
-            if entry.model_changed.load(Ordering::SeqCst) {
-                self.rebuild_session(&session_id, &entry, &mut session, entry.settings())
-                    .await?;
+            if entry
+                .switched_model
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_some()
+            {
+                let spec = entry.next_spec(&session, None);
+                self.rebuild_session(&entry, &mut session, spec).await?;
             }
-            session.send_user_message(text).await;
+            let _ = session.post(text).await;
         }
 
         // Bridge AgentEvents to ACP session/update notifications until the turn
@@ -714,12 +691,8 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
                  wait for the turn to end, or cancel it, then set the mode",
             ));
         }
-        let settings = SessionSettings {
-            mode: acp_mode_id_to_sven_mode(&args.mode_id),
-            ..entry.settings()
-        };
-        self.rebuild_session(&session_id, &entry, &mut session, settings)
-            .await?;
+        let spec = entry.next_spec(&session, Some(acp_mode_id_to_sven_mode(&args.mode_id)));
+        self.rebuild_session(&entry, &mut session, spec).await?;
 
         Ok(SetSessionModeResponse::new())
     }
@@ -887,14 +860,15 @@ mod tests {
             .set_session_mode(SetSessionModeRequest::new(id.clone(), "research"))
             .await
             .expect("the mode switches");
-        let settings = entry.settings();
-        assert_eq!(settings.mode, AgentMode::Research);
-        assert_eq!(settings.cwd, dir.path());
+        let session = entry.session.lock().await;
+        let spec = session.spec();
+        assert_eq!(spec.permissions, AgentMode::Research);
         assert_eq!(
-            (
-                settings.model.provider.as_str(),
-                settings.model.name.as_str()
-            ),
+            session.options().runtime.project_root.as_deref(),
+            Some(dir.path())
+        );
+        assert_eq!(
+            (spec.model.provider.as_str(), spec.model.name.as_str()),
             ("mock", "second-model")
         );
     }

@@ -1,13 +1,32 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! MCP server configuration: how sven reaches each configured server.
+//! The `mcp_servers:` section of the configuration file: how sven reaches
+//! each configured MCP server.
+//!
+//! Owned here because this crate is what reads it: [`crate::McpManager`] is
+//! built from a [`McpServers`] map. The section's keys are declared beside the
+//! types ([`mcp_servers_schema`]).
+//!
+//! Swedish Embedded AB implements MCP client integration for its clients. If
+//! your team needs expertise in connecting agents to Model Context Protocol
+//! servers then you can procure our services by sending an email to
+//! info@swedishembedded.com.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use sven_config::{default_true, Schema};
 
-use crate::schema::default_true;
+/// The configured servers, by the name that prefixes their tools.
+pub type McpServers = HashMap<String, McpServerConfig>;
+
+/// The keys of the `mcp_servers:` section: an entry per server, named by the
+/// user.
+#[must_use]
+pub fn mcp_servers_schema() -> Schema {
+    Schema::entries(McpServerConfig::schema())
+}
 
 /// Transport configuration for an MCP server.
 ///
@@ -141,6 +160,33 @@ pub struct McpServerConfig {
     pub timeout_secs: u64,
 }
 
+impl McpServerConfig {
+    /// The keys of an `mcp_servers.<name>` entry.
+    #[must_use]
+    pub fn schema() -> Schema {
+        Schema::fields([
+            // stdio: type, command, args; http: type, url, headers.
+            (
+                "transport",
+                Schema::keys(&["type", "command", "args", "url", "headers"]),
+            ),
+            ("enabled", Schema::value()),
+            ("env", Schema::value()),
+            (
+                "oauth",
+                Schema::keys(&[
+                    "scopes",
+                    "client_id",
+                    "client_secret",
+                    "redirect_uri",
+                    "callback_port",
+                ]),
+            ),
+            ("timeout_secs", Schema::value()),
+        ])
+    }
+}
+
 impl Default for McpServerConfig {
     fn default() -> Self {
         Self {
@@ -150,5 +196,32 @@ impl Default for McpServerConfig {
             oauth: None,
             timeout_secs: default_mcp_timeout(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_server_defaults_to_enabled_with_a_thirty_second_timeout() {
+        let server: McpServerConfig =
+            serde_yaml::from_str("transport: {type: http, url: 'https://x'}\n").unwrap();
+        assert!(server.enabled);
+        assert_eq!(server.timeout_secs, 30);
+        assert!(server.env.is_empty() && server.oauth.is_none());
+    }
+
+    #[test]
+    fn the_transport_is_chosen_by_its_type() {
+        let stdio: McpTransport =
+            serde_yaml::from_str("type: stdio\ncommand: npx\nargs: [a, b]\n").unwrap();
+        assert!(
+            matches!(stdio, McpTransport::Stdio { command, args } if command == "npx" && args == ["a", "b"])
+        );
+        let http: McpTransport = serde_yaml::from_str("type: http\nurl: u\n").unwrap();
+        assert!(
+            matches!(http, McpTransport::Http { url, headers } if url == "u" && headers.is_empty())
+        );
     }
 }

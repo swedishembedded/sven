@@ -18,6 +18,59 @@ lowest to highest priority (later files override earlier ones):
 
 ---
 
+## How the file is read
+
+Every file found is read as YAML and merged into one document before anything
+looks at it: mappings merge key by key, and where two files set the same key
+the later (higher-priority) one wins. A list or a scalar is replaced whole,
+not merged.
+
+**Environment variables.** Before a file is parsed, `${VAR}` and
+`${VAR:-default}` in its text are replaced from the process environment, and
+`$$` is a literal `$`. An unset `${VAR}` without a default becomes an empty
+string and logs a warning naming the variable and the file. A value that itself
+contains `${...}` is not expanded again. Use it to keep a key out of a file
+under version control:
+
+```yaml
+providers:
+  work:
+    name: anthropic
+    api_key: ${WORK_ANTHROPIC_KEY:-}
+```
+
+**Mistakes are reported, not fatal.** A key sven does not recognise is
+logged as a warning naming its path (``Unrecognised config field
+`model.temprature` ``), and a section that is accepted but acted on by nothing
+is reported once. A value of the wrong type is different: the file cannot be
+read, so sven logs `config could not be decoded and is being IGNORED IN FULL`
+and runs on the defaults rather than refusing to start. Read the warnings after
+editing the file; `sven show-config` prints what was actually loaded.
+
+**The model is chosen for you when the file names none.** With no `model:`
+section, sven picks a locally served brain model if one is detectable, then
+OpenRouter, Anthropic or OpenAI according to which API key is set
+(`SVEN_DISABLE_BRAIN_AUTODETECT=1` turns the brain check off). A
+`model.provider` that names an entry of `providers:` is expanded into that
+entry's endpoint, key and the model's own overrides when the file is loaded.
+
+**Who reads what.** Each section is defined, defaulted and checked by the part
+of sven that uses it, so a section's keys are documented with the feature they
+configure:
+
+| Section | Read by |
+|---------|---------|
+| `model`, `providers` | the model drivers (`sven-model-drivers`) |
+| `agent`, `tools` (patterns, `disabled`, `timeout_secs`, `context`) | the session assembly (`sven-bootstrap`) |
+| `tools.web`, `tools.lints` | the web tools (`sven-tools-web`) |
+| `tools.memory` | the memory tool (`sven-tools-ctx`) |
+| `tools.asr` | `attach_file` (`sven-tools-fs`) |
+| `tools.gdb` | the GDB tools (`sven-tools-gdb`), in every build |
+| `mcp_servers` | the MCP client (`sven-mcp-client`) |
+| `tui` | the interactive UI (`sven-frontend`) |
+
+---
+
 ## View your current configuration
 
 To see the full resolved configuration with all defaults filled in:

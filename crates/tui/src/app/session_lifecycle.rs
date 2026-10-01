@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use sven_config::AgentMode;
 use sven_machines::AgentEvent;
+use sven_vocab::AgentMode;
 use tokio::sync::mpsc;
 
 use crate::{

@@ -2,11 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use regex::Regex;
-use sven_config::ToolsConfig;
 use sven_tool_api::ApprovalPolicy;
 
-/// The shell-command patterns of `tools.auto_approve_patterns` and
-/// `tools.deny_patterns`, matched against the command text as written: a
+/// The shell-command patterns of the `tools.auto_approve_patterns` and
+/// `tools.deny_patterns` settings, matched against the command text as written: a
 /// command whose text matches a deny pattern is refused, and under manual
 /// approval one whose text matches an auto-approve pattern runs without
 /// asking. [`Default`] matches nothing.
@@ -23,13 +22,16 @@ pub struct ToolPolicy {
 }
 
 impl ToolPolicy {
-    pub fn from_config(cfg: &ToolsConfig) -> Self {
+    /// A policy of the glob patterns `auto_approve` and `deny`. A pattern
+    /// that is not a valid glob matches nothing.
+    #[must_use]
+    pub fn from_patterns(auto_approve: &[String], deny: &[String]) -> Self {
         let compile = |patterns: &[String]| -> Vec<Regex> {
             patterns.iter().filter_map(|p| glob_to_regex(p)).collect()
         };
         Self {
-            auto_patterns: compile(&cfg.auto_approve_patterns),
-            deny_patterns: compile(&cfg.deny_patterns),
+            auto_patterns: compile(auto_approve),
+            deny_patterns: compile(deny),
         }
     }
 
@@ -88,14 +90,11 @@ fn glob_to_regex(pattern: &str) -> Option<Regex> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sven_config::ToolsConfig;
 
     fn policy_with(auto: &[&str], deny: &[&str]) -> ToolPolicy {
-        ToolPolicy::from_config(&ToolsConfig {
-            auto_approve_patterns: auto.iter().map(|s| s.to_string()).collect(),
-            deny_patterns: deny.iter().map(|s| s.to_string()).collect(),
-            ..ToolsConfig::default()
-        })
+        let owned =
+            |patterns: &[&str]| -> Vec<String> { patterns.iter().map(|s| s.to_string()).collect() };
+        ToolPolicy::from_patterns(&owned(auto), &owned(deny))
     }
 
     // ── Deny takes priority ───────────────────────────────────────────────────
@@ -175,26 +174,6 @@ mod tests {
     fn empty_patterns_always_ask() {
         let p = policy_with(&[], &[]);
         assert_eq!(p.decide("anything"), ApprovalPolicy::Ask);
-    }
-
-    // ── Default config ────────────────────────────────────────────────────────
-
-    #[test]
-    fn default_config_auto_approves_cat() {
-        let p = ToolPolicy::from_config(&ToolsConfig::default());
-        assert_eq!(p.decide("cat README.md"), ApprovalPolicy::Auto);
-    }
-
-    #[test]
-    fn default_config_auto_approves_ls() {
-        let p = ToolPolicy::from_config(&ToolsConfig::default());
-        assert_eq!(p.decide("ls /tmp"), ApprovalPolicy::Auto);
-    }
-
-    #[test]
-    fn default_config_asks_for_write_command() {
-        let p = ToolPolicy::from_config(&ToolsConfig::default());
-        assert_eq!(p.decide("cargo build"), ApprovalPolicy::Ask);
     }
 
     // ── Adversarial policy inputs ─────────────────────────────────────────────

@@ -62,7 +62,9 @@ fn verify(contents: &str) -> Result<(), String> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let engine = Engine::builder().config(sven_config::load(None)?).build()?;
+    let engine = Engine::builder()
+        .config(sven_sdk::config::load(None)?)
+        .build()?;
 
     let plan_step = Method::<Plan>::new("plan")
         .role("You plan small, surgical edits to a Rust codebase.")

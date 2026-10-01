@@ -1,0 +1,11 @@
+# docs/05-configuration.md: prompt caching opted out layer by layer.
+model:
+  provider: anthropic
+  name: claude-sonnet-4-5
+  api_key_env: ANTHROPIC_API_KEY
+  extended_cache_time: true
+  cache_system_prompt: false
+  cache_tools: false
+  cache_conversation: false
+  cache_images: false
+  cache_tool_results: false

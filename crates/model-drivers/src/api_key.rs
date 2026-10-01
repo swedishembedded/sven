@@ -4,7 +4,7 @@
 //! Where a provider's API key comes from: explicit config, a named or
 //! registry-default environment variable, or a provider's local keys file.
 
-use sven_config::ModelConfig;
+use crate::config::ModelConfig;
 use sven_model::registry;
 
 /// Path to a provider's local keys file, when it has one.
@@ -25,6 +25,13 @@ pub(crate) fn key_file_for(provider: &str) -> Option<std::path::PathBuf> {
     if provider != "brain" {
         return None;
     }
+    brain_keys_file()
+}
+
+/// Where brain writes its keys (`--api-keys-out`), by the precedence
+/// [`key_file_for`] describes. Also what tells configuration loading that a
+/// local brain is there to use.
+pub(crate) fn brain_keys_file() -> Option<std::path::PathBuf> {
     if let Ok(p) = std::env::var("BRAIN_API_KEYS_FILE") {
         if !p.is_empty() {
             return Some(std::path::PathBuf::from(p));

@@ -267,7 +267,8 @@ mod tests {
     fn get_completions_preserves_cmd_complete_ordering() {
         use crate::{CommandContext, CommandRegistry, ParsedCommand};
         use std::sync::Arc;
-        use sven_config::Config;
+        use sven_mcp_client::McpServers;
+        use sven_model_drivers::Providers;
 
         let registry = Arc::new(CommandRegistry::with_builtins());
         let manager = CompletionManager::new(registry);
@@ -278,7 +279,8 @@ mod tests {
             partial: "".to_string(),
         };
         let ctx = CommandContext {
-            config: Arc::new(Config::default()),
+            providers: &Providers::new(),
+            mcp_servers: &McpServers::new(),
             current_model_provider: "openai".into(),
             current_model_name: "gpt-4o".into(),
         };

@@ -487,7 +487,7 @@ intermittently, which is the worst way for it to fail.
 An engine built without an explicit config uses `Config::default()`, not the
 user's configuration file. An embedded agent should not silently inherit
 whatever happens to be on the host's disk; a caller that wants the file loads it
-with `sven_config::load` and passes it to `EngineBuilder::config`.
+with `sven_sdk::config::load` and passes it to `EngineBuilder::config`.
 
 ## Examples
 

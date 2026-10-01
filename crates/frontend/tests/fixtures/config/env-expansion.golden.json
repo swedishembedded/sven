@@ -1,0 +1,97 @@
+{
+  "config": {
+    "agent": {
+      "child_run_timeout_secs": 3600,
+      "compaction_keep_recent": 6,
+      "compaction_overhead_reserve": 0.10000000149011612,
+      "compaction_strategy": "structured",
+      "compaction_threshold": 0.8500000238418579,
+      "default_mode": "agent",
+      "max_run_timeout_secs": 0,
+      "max_step_timeout_secs": 0,
+      "max_tool_rounds": 200,
+      "system_prompt": null,
+      "tool_result_token_cap": 4000
+    },
+    "mcp_servers": {},
+    "model": {
+      "api_key": null,
+      "api_key_env": null,
+      "aws_region": null,
+      "azure_api_version": null,
+      "azure_deployment": null,
+      "azure_resource": null,
+      "base_url": "https://openrouter.ai/api/v1",
+      "cache_conversation": true,
+      "cache_images": true,
+      "cache_system_prompt": true,
+      "cache_tool_results": true,
+      "cache_tools": true,
+      "driver_options": null,
+      "extended_cache_time": false,
+      "max_input_tokens": null,
+      "max_output_tokens": null,
+      "max_tokens": null,
+      "mock_responses_file": null,
+      "name": "openrouter/auto",
+      "provider": "openrouter",
+      "temperature": 0.20000000298023224
+    },
+    "providers": {},
+    "tools": {
+      "asr": {
+        "model": "brain/nemotronasr",
+        "timeout_secs": 120
+      },
+      "auto_approve_patterns": [
+        "cat *",
+        "ls *",
+        "find *",
+        "rg *",
+        "grep *"
+      ],
+      "context": {
+        "default_chunk_lines": 500,
+        "max_parallel": 4,
+        "sub_query_max_chars": 120000,
+        "sub_query_timeout_secs": 120
+      },
+      "deny_patterns": [
+        "rm -rf /*",
+        "dd if=*"
+      ],
+      "disabled": [],
+      "gdb": {
+        "command_timeout_secs": 10,
+        "connect_timeout_secs": 30,
+        "gdb_path": "gdb-multiarch",
+        "server_startup_wait_ms": 500
+      },
+      "lints": {
+        "python_command": null,
+        "rust_command": null,
+        "typescript_command": null
+      },
+      "memory": {
+        "memory_file": null
+      },
+      "timeout_secs": 30,
+      "web": {
+        "fetch_max_chars": 20000,
+        "search": {
+          "api_key": null
+        }
+      }
+    },
+    "tui": {
+      "ascii_borders": false,
+      "code_line_numbers": false,
+      "theme": "dark",
+      "wrap_width": 0
+    }
+  },
+  "warnings": [
+    "WARN config env var is not set; substituting empty string var=\"SVEN_GOLDEN_UNSET\" source=\"<fixtures>/env-expansion.yaml\"",
+    "WARN config env var is not set; substituting empty string var=\"VAR\" source=\"<fixtures>/env-expansion.yaml\""
+  ]
+}

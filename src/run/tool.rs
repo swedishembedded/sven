@@ -11,7 +11,7 @@ use sven_bootstrap::build_cli_tool_registry;
 
 pub(crate) async fn run_tool_command(
     cmd: &ToolCommands,
-    cfg: &sven_config::Config,
+    cfg: &sven_bootstrap::Config,
 ) -> anyhow::Result<()> {
     use sven_tool_api::tool::ToolCall;
 

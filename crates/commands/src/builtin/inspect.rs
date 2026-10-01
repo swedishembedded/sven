@@ -174,7 +174,7 @@ impl SlashCommand for McpCommand {
                 })
                 .collect()
         } else if arg_index == 1 {
-            let servers: Vec<&str> = ctx.config.mcp_servers.keys().map(String::as_str).collect();
+            let servers: Vec<&str> = ctx.mcp_servers.keys().map(String::as_str).collect();
             servers
                 .into_iter()
                 .filter(|s| s.starts_with(partial))

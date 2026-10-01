@@ -6,7 +6,7 @@ use sven_model::catalog::ModelCatalogEntry;
 
 /// List available models, optionally querying the provider API for live data.
 pub(crate) async fn list_models_cmd(
-    config: &sven_config::Config,
+    config: &sven_bootstrap::Config,
     provider_filter: Option<&str>,
     refresh: bool,
     as_json: bool,

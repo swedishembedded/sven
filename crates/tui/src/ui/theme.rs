@@ -9,7 +9,7 @@ use ratatui::{
     text::Span,
     widgets::{Block, BorderType, Borders},
 };
-use sven_config::AgentMode;
+use sven_vocab::AgentMode;
 
 // ── Brand palette ─────────────────────────────────────────────────────────────
 

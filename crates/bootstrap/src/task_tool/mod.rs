@@ -86,7 +86,6 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tracing::debug;
 
-use sven_config::{AgentMode, ApprovalMode};
 use sven_hsm::ChildRunContract;
 use sven_tool_api::{
     events::ToolEvent,
@@ -95,6 +94,7 @@ use sven_tool_api::{
     PathScope, PermissionRequester,
 };
 use sven_tools_fs::{BufGrepTool, BufReadTool, BufStatusTool, BufferSource, OutputBufferStore};
+use sven_vocab::{AgentMode, ApprovalMode};
 use sven_workspace::{AgentInfo, SharedAgents};
 
 mod report;
@@ -139,7 +139,7 @@ impl ChildApprover {
         host: Option<Arc<dyn PermissionRequester>>,
         approval: ApprovalMode,
         approvals: &mpsc::Sender<sven_executors::ApprovalRequest>,
-        tools: &sven_config::ToolsConfig,
+        tools: &crate::config::ToolsConfig,
     ) -> Option<Self> {
         match (host, approval) {
             (Some(host), _) => Some(Self::Host(host)),
@@ -267,7 +267,7 @@ impl TaskTool {
 
     /// Holds each child to the session's shell-command patterns.
     #[must_use]
-    pub fn with_command_patterns(mut self, tools: &sven_config::ToolsConfig) -> Self {
+    pub fn with_command_patterns(mut self, tools: &crate::config::ToolsConfig) -> Self {
         let patterns = (
             tools.deny_patterns.clone(),
             tools.auto_approve_patterns.clone(),
@@ -806,7 +806,7 @@ mod tests {
     use sven_workspace::{AgentInfo, SharedAgents};
 
     use super::{resolve_mode_and_prompt, TaskTool};
-    use sven_config::{AgentMode, ApprovalMode};
+    use sven_vocab::{AgentMode, ApprovalMode};
 
     fn make_task() -> TaskTool {
         make_task_with_agents(SharedAgents::empty())

@@ -1,1476 +1,206 @@
-// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+// Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-use std::collections::HashMap;
+//! The keys a configuration section recognises, as its owner declares them,
+//! and the report of every key in a document that no section recognises.
+//!
+//! A section's owner - the crate that reads it - describes its keys with a
+//! [`Schema`] next to the type that holds them. The program that loads a
+//! document composes its sections' schemas into one and asks the document
+//! which of its keys none of them knows ([`crate::ConfigDocument::unknown_keys`]).
+//! This crate knows no section itself.
 
-use serde::{Deserialize, Serialize};
+use serde_yaml::Value;
 
-use crate::mcp::McpServerConfig;
+/// The keys of a configuration value: which a section recognises, and how
+/// far into each the report looks.
+#[derive(Clone, Debug)]
+pub struct Schema(Kind);
 
-/// Serde default helper - returns `true`.
-///
-/// Used for config fields that should be enabled unless the user explicitly
-/// sets them to `false`.  `#[serde(default)]` on a `bool` always falls back
-/// to `bool::default()` (i.e. `false`), so a named function is required.
-pub(crate) fn default_true() -> bool {
-    true
+#[derive(Clone, Debug)]
+enum Kind {
+    /// Any value, not looked into.
+    Value,
+    /// A mapping with exactly these keys.
+    Fields(Vec<(&'static str, Schema)>),
+    /// A mapping whose keys the user chooses (a provider name, a server
+    /// name); each value is described by the inner schema.
+    Entries(Box<Schema>),
+    /// Accepted but acted on by nothing; reported once, with the reason.
+    Ignored(&'static str),
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Config {
-    #[serde(default)]
-    pub model: ModelConfig,
-    #[serde(default)]
-    pub agent: AgentConfig,
-    #[serde(default)]
-    pub tools: ToolsConfig,
-    #[serde(default)]
-    pub tui: TuiConfig,
-    /// Named provider configurations.
-    ///
-    /// Each entry defines a provider endpoint (a server or service) with its
-    /// driver backend, base URL, credentials, and a catalog of the models
-    /// available on that endpoint.  Reference a provider by name in
-    /// `model.provider`, and reference one of its models in `model.name`.
-    ///
-    /// **Environment variable expansion** - any string value in the config file
-    /// may contain `${VAR}` or `${VAR:-default}` placeholders that are expanded
-    /// at load time using the process environment.  Use this to keep API keys
-    /// out of version-controlled config files:
-    ///
-    /// ```yaml
-    /// providers:
-    ///   my_ollama:
-    ///     name: openai             # driver to use (openai-compatible API)
-    ///     base_url: http://localhost:8000/v1
-    ///     models:
-    ///       llama3.2:
-    ///         max_tokens: 40960
-    ///       codellama:
-    ///         max_tokens: 40960
-    ///         driver_options:
-    ///           parse_tool_calls: false
-    ///   openrouter:
-    ///     name: openrouter
-    ///     api_key: ${OPENROUTER_API_KEY}   # expanded from env at load time
-    ///     models:
-    ///       google/gemini-2.5-pro-preview:
-    ///         max_tokens: 205000          # total context window (input + output)
-    ///         max_output_tokens: 8192     # cap sent to API; total must be >= this
-    ///   work_anthropic:
-    ///     name: anthropic
-    ///     api_key: ${WORK_ANTHROPIC_KEY:-}  # optional, falls back to empty
-    ///     models:
-    ///       claude-opus-4-5:
-    ///         max_tokens: 200000
-    ///         max_output_tokens: 8192
-    /// ```
-    ///
-    /// Select the active model via:
-    /// ```yaml
-    /// model:
-    ///   provider: my_ollama
-    ///   name: llama3.2
-    /// ```
-    #[serde(default)]
-    pub providers: std::collections::HashMap<String, ProviderEntry>,
-
-    /// External MCP (Model Context Protocol) servers.
-    ///
-    /// Each entry is keyed by a short identifier used as the tool prefix.
-    /// For example, a server named `"github"` exposes tools as `"github-list_repos"`.
-    ///
-    /// Config layers are merged: later files override earlier ones.  When sven
-    /// adds an MCP server via the `system` tool, it writes to the nearest
-    /// `.sven/config.yaml` (the last override layer).
-    #[serde(default)]
-    pub mcp_servers: HashMap<String, McpServerConfig>,
-}
-
-impl Config {
-    /// `provider/model` naming the active model so that another sven process
-    /// loading the same config resolves the same endpoint, key and limits.
-    ///
-    /// A named `providers:` entry is expanded at load time, after which
-    /// `model.provider` holds only the driver id; handing a child process
-    /// `driver/model` would resolve the driver's defaults and silently drop the
-    /// entry's `base_url` and key. So the alias whose expansion produced the
-    /// active model (same driver, endpoint and key source) is named instead;
-    /// with no such entry the driver id is the right name.
-    pub fn model_reference(&self) -> String {
-        let model = &self.model;
-        // Several identical entries would all resolve the same; take the
-        // smallest name so the reference does not depend on map order.
-        let alias = self
-            .providers
-            .iter()
-            .filter(|(_, entry)| {
-                entry.name == model.provider
-                    && entry.base_url == model.base_url
-                    && entry.api_key_env == model.api_key_env
-                    && entry.api_key == model.api_key
-            })
-            .map(|(alias, _)| alias.as_str())
-            .min();
-        format!("{}/{}", alias.unwrap_or(&model.provider), model.name)
-    }
-}
-
-/// Per-model parameter overrides nested under a [`ProviderEntry`].
-///
-/// All fields are optional; absent fields inherit from the provider-level
-/// defaults defined in [`ProviderEntry`], which in turn fall back to the
-/// [`ModelConfig`] defaults.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ModelParams {
-    /// Total context window in tokens (input + output combined).
-    ///
-    /// When set, this value is used for session compaction decisions.
-    /// If `max_output_tokens` is not set, this also caps the per-request
-    /// output token limit (backward-compatible behaviour).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-    /// Maximum output tokens per completion request.
-    ///
-    /// Sent to the provider API as the output token limit.
-    /// When set alongside `max_tokens`, the constraint
-    /// `max_tokens >= max_input_tokens + max_output_tokens` must hold.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_output_tokens: Option<u32>,
-    /// Maximum input tokens allowed before compaction is forced.
-    ///
-    /// Optional cap on the input side of the context window.
-    /// When set alongside `max_tokens`, the constraint
-    /// `max_tokens >= max_input_tokens + max_output_tokens` must hold.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_input_tokens: Option<u32>,
-    /// Sampling temperature (0.0-2.0)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-    /// Free-form provider-specific options forwarded as-is to the driver.
-    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
-    pub driver_options: serde_json::Value,
-    /// Override cache_system_prompt for this model only
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_system_prompt: Option<bool>,
-    /// Override extended_cache_time for this model only
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extended_cache_time: Option<bool>,
-    /// Override cache_tools for this model only
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_tools: Option<bool>,
-    /// Override cache_conversation for this model only
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_conversation: Option<bool>,
-    /// Override cache_images for this model only
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_images: Option<bool>,
-    /// Override cache_tool_results for this model only
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_tool_results: Option<bool>,
-    /// Path to YAML mock-responses file (used when driver = "mock")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mock_responses_file: Option<String>,
-    /// Override the accepted input modalities for this model only.
-    /// Any of `text`, `image`, `audio`.  See [`ModelConfig::input_modalities`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_modalities: Option<Vec<String>>,
-}
-
-/// A named provider entry in the `providers` config section.
-///
-/// Represents a single API endpoint (e.g. a local LLM server, a cloud
-/// provider account) together with all the models available on that endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ProviderEntry {
-    /// Driver identifier that speaks this endpoint's protocol.
-    /// Run `sven list-providers` for the full list.
-    /// Examples: "openai" | "anthropic" | "google" | "ollama" | "vllm"
-    pub name: String,
-
-    /// Base URL override for this endpoint.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub base_url: Option<String>,
-
-    /// Environment variable that holds the API key for this endpoint.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_env: Option<String>,
-
-    /// Explicit API key; prefer `api_key_env` to keep secrets out of
-    /// version-controlled config files.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
-
-    /// Models available on this endpoint.
-    /// Keys are model names; values hold per-model parameter overrides that
-    /// take precedence over the provider-level defaults below.
-    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub models: std::collections::HashMap<String, ModelParams>,
-
-    // ── Provider-level defaults (inherited by all models unless overridden) ──
-    /// Default max_tokens for all models on this provider (can be overridden per-model)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-    /// Default temperature for all models on this provider
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-    /// Default driver options for all models on this provider
-    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
-    pub driver_options: serde_json::Value,
-
-    // ── Azure OpenAI ─────────────────────────────────────────────────────────
-    /// Azure resource name (the subdomain of `.openai.azure.com`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub azure_resource: Option<String>,
-    /// Azure deployment name.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub azure_deployment: Option<String>,
-    /// Azure REST API version string, e.g. `"2024-02-01"`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub azure_api_version: Option<String>,
-
-    // ── AWS Bedrock ───────────────────────────────────────────────────────────
-    /// AWS region override.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub aws_region: Option<String>,
-
-    // ── Mock provider ─────────────────────────────────────────────────────────
-    /// Path to YAML mock-responses file (used when name = "mock").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mock_responses_file: Option<String>,
-
-    // ── Multimodal capability declaration ────────────────────────────────────
-    /// Default accepted input modalities for all models on this endpoint.
-    /// Any of `text`, `image`, `audio`.  See [`ModelConfig::input_modalities`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_modalities: Option<Vec<String>>,
-}
-
-impl Default for ProviderEntry {
-    fn default() -> Self {
-        Self {
-            name: "openai".into(),
-            base_url: None,
-            api_key_env: None,
-            api_key: None,
-            models: std::collections::HashMap::new(),
-            max_tokens: None,
-            temperature: None,
-            driver_options: serde_json::Value::Null,
-            azure_resource: None,
-            azure_deployment: None,
-            azure_api_version: None,
-            aws_region: None,
-            mock_responses_file: None,
-            input_modalities: None,
-        }
-    }
-}
-
-impl ProviderEntry {
-    /// Build a [`ModelConfig`] for the given `model_name` by merging:
-    /// provider-level defaults → per-model overrides.
-    pub fn to_model_config(&self, model_name: &str) -> ModelConfig {
-        let mut cfg = ModelConfig {
-            provider: self.name.clone(),
-            name: model_name.to_string(),
-            base_url: self.base_url.clone(),
-            api_key_env: self.api_key_env.clone(),
-            api_key: self.api_key.clone(),
-            max_tokens: self.max_tokens,
-            max_output_tokens: None,
-            max_input_tokens: None,
-            temperature: self.temperature,
-            driver_options: self.driver_options.clone(),
-            azure_resource: self.azure_resource.clone(),
-            azure_deployment: self.azure_deployment.clone(),
-            azure_api_version: self.azure_api_version.clone(),
-            aws_region: self.aws_region.clone(),
-            mock_responses_file: self.mock_responses_file.clone(),
-            input_modalities: self.input_modalities.clone(),
-            ..ModelConfig::default()
-        };
-
-        // Per-model overrides take precedence over provider-level defaults.
-        if let Some(params) = self.models.get(model_name) {
-            if let Some(v) = params.max_tokens {
-                cfg.max_tokens = Some(v);
-            }
-            if let Some(v) = params.max_output_tokens {
-                cfg.max_output_tokens = Some(v);
-            }
-            if let Some(v) = params.max_input_tokens {
-                cfg.max_input_tokens = Some(v);
-            }
-            if let Some(v) = params.temperature {
-                cfg.temperature = Some(v);
-            }
-            if !params.driver_options.is_null() {
-                cfg.driver_options = params.driver_options.clone();
-            }
-            if let Some(v) = params.cache_system_prompt {
-                cfg.cache_system_prompt = v;
-            }
-            if let Some(v) = params.extended_cache_time {
-                cfg.extended_cache_time = v;
-            }
-            if let Some(v) = params.cache_tools {
-                cfg.cache_tools = v;
-            }
-            if let Some(v) = params.cache_conversation {
-                cfg.cache_conversation = v;
-            }
-            if let Some(v) = params.cache_images {
-                cfg.cache_images = v;
-            }
-            if let Some(v) = params.cache_tool_results {
-                cfg.cache_tool_results = v;
-            }
-            if let Some(ref f) = params.mock_responses_file {
-                cfg.mock_responses_file = Some(f.clone());
-            }
-            if let Some(ref m) = params.input_modalities {
-                cfg.input_modalities = Some(m.clone());
-            }
-        }
-
-        cfg
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ModelConfig {
-    /// Provider identifier.  Run `sven list-providers` for the full list.
-    /// Common values: "openai" | "anthropic" | "google" | "azure" | "aws" |
-    /// "groq" | "openrouter" | "ollama" | "mistral" | "deepseek" | "mock"
-    pub provider: String,
-    /// Model name forwarded to the provider API
-    pub name: String,
-    /// Environment variable that holds the API key (read at runtime)
-    pub api_key_env: Option<String>,
-    /// Explicit API key; prefer api_key_env in config files to avoid secrets
-    /// in version-controlled files
-    pub api_key: Option<String>,
-    /// Base URL override.  Useful for local proxies, LiteLLM, or Cloudflare.
-    /// For most hosted providers the correct default is auto-selected.
-    pub base_url: Option<String>,
-    /// Total context window in tokens (input + output combined).
-    ///
-    /// When set, this value is used for session compaction decisions.
-    /// If `max_output_tokens` is not set, this also acts as the per-request
-    /// output token limit for backward compatibility with older configs.
-    pub max_tokens: Option<u32>,
-    /// Maximum output tokens per completion request.
-    ///
-    /// Sent to the provider API as the output token limit (`max_tokens` or
-    /// `max_completion_tokens` depending on the provider).  When set together
-    /// with `max_tokens`, the constraint
-    /// `max_tokens >= max_input_tokens + max_output_tokens` must hold.
-    pub max_output_tokens: Option<u32>,
-    /// Maximum input tokens before compaction is forced.
-    ///
-    /// Optional cap on the input side of the context window used by the
-    /// compaction budget logic.  When set together with `max_tokens`, the
-    /// constraint `max_tokens >= max_input_tokens + max_output_tokens` must hold.
-    pub max_input_tokens: Option<u32>,
-    /// Sampling temperature (0.0-2.0)
-    pub temperature: Option<f32>,
-
-    // ── Azure OpenAI ─────────────────────────────────────────────────────────
-    /// Azure resource name (the subdomain of `.openai.azure.com`).
-    /// Required when provider = "azure" and base_url is not set.
-    pub azure_resource: Option<String>,
-    /// Azure deployment name.  Defaults to `model.name` when not set.
-    pub azure_deployment: Option<String>,
-    /// Azure REST API version string, e.g. `"2024-02-01"`.
-    pub azure_api_version: Option<String>,
-
-    // ── AWS Bedrock ───────────────────────────────────────────────────────────
-    /// AWS region override (also honoured via AWS_DEFAULT_REGION env var).
-    pub aws_region: Option<String>,
-
-    // ── Prompt caching ────────────────────────────────────────────────────────
-    /// Attach an explicit cache-control marker to the system message.
-    ///
-    /// **Anthropic**: adds `"cache_control": {"type": "ephemeral"}` to the
-    /// system block, which tells the API to cache the prefix up to and
-    /// including that block.  Anthropic charges a one-time write fee and
-    /// subsequent calls save ~90% on cached input tokens.
-    ///
-    /// **Other providers**: OpenAI and Google cache automatically; this flag
-    /// has no effect for those providers.
-    #[serde(default = "default_true")]
-    pub cache_system_prompt: bool,
-
-    /// Use the extended (1-hour) cache TTL instead of the default 5-minute
-    /// window.  Applies to the system prompt (when `cache_system_prompt = true`)
-    /// and to tool definitions (when `cache_tools = true`).  Only meaningful
-    /// for the Anthropic provider.  Sends the
-    /// `anthropic-beta: extended-cache-ttl-2025-04-11` header automatically.
-    ///
-    /// Conversation caching (`cache_conversation`) always uses the 5-minute
-    /// TTL regardless of this setting, because conversation turns are
-    /// typically frequent enough to keep the cache refreshed within 5 minutes.
-    #[serde(default)]
-    pub extended_cache_time: bool,
-
-    /// Cache tool definitions using Anthropic prompt caching.
-    ///
-    /// Tool definitions are stable across requests within a session, making
-    /// them ideal for caching.  The last tool in the list receives a
-    /// `cache_control` marker so Anthropic caches all tool definitions as a
-    /// prefix.  Uses the same TTL as `extended_cache_time` controls (1-hour
-    /// when true, 5-minute otherwise).
-    ///
-    /// With many tools (each ~200-500 tokens), this can save thousands of
-    /// tokens per request.
-    #[serde(default = "default_true")]
-    pub cache_tools: bool,
-
-    /// Enable automatic conversation caching (Anthropic only).
-    ///
-    /// Adds a top-level `cache_control` marker that instructs Anthropic to
-    /// automatically cache conversation history up to the last message.
-    /// Subsequent turns read prior context from cache at 10% of the base
-    /// token cost, dramatically reducing cost for multi-turn agent sessions.
-    ///
-    /// The cache breakpoint automatically advances with each new turn so no
-    /// manual management is needed.
-    #[serde(default = "default_true")]
-    pub cache_conversation: bool,
-
-    /// Cache image content blocks in conversation history (Anthropic only).
-    ///
-    /// Images are token-expensive: even a modest screenshot costs hundreds of
-    /// input tokens every turn it remains in context.  Marking the oldest image
-    /// blocks with `cache_control` preserves them across turns, saving ~90% on
-    /// those tokens for the rest of the session.
-    ///
-    /// Uses the same TTL tier as `extended_cache_time` controls.  The number
-    /// of cached images is bounded by the remaining Anthropic breakpoint budget
-    /// (maximum 4 breakpoints total across system, tools, conversation, and
-    /// images/tool-results).
-    #[serde(default = "default_true")]
-    pub cache_images: bool,
-
-    /// Cache large tool results in conversation history (Anthropic only).
-    ///
-    /// When an agent reads files, runs commands, or fetches documents, those
-    /// tool results can consume thousands of tokens on every subsequent turn.
-    /// Marking them with `cache_control` once saves ~90% on those tokens for
-    /// all following turns.
-    ///
-    /// A result is eligible when its serialised content exceeds 4 096
-    /// characters (~1 024 tokens, the Anthropic minimum cacheable length for
-    /// Sonnet-class models).  The oldest eligible results are cached first;
-    /// the count is bounded by the remaining breakpoint budget.
-    ///
-    /// Uses the same TTL tier as `extended_cache_time` controls.
-    #[serde(default = "default_true")]
-    pub cache_tool_results: bool,
-
-    // ── Provider-specific extras ──────────────────────────────────────────────
-    /// Free-form provider-specific options forwarded as-is to the driver.
-    /// Useful for headers or parameters not covered by the standard fields.
-    #[serde(default)]
-    pub driver_options: serde_json::Value,
-
-    // ── Mock provider ─────────────────────────────────────────────────────────
-    /// Path to YAML mock-responses file (used when provider = "mock").
-    /// Can also be set via the SVEN_MOCK_RESPONSES environment variable.
-    pub mock_responses_file: Option<String>,
-
-    // ── Multimodal capability declaration ────────────────────────────────────
-    /// Input modalities this model accepts: any of `text`, `image`, `audio`.
-    ///
-    /// The bundled static model catalog only knows about public models, so
-    /// self-hosted multimodal endpoints must declare their capabilities here.
-    /// When set, this overrides whatever the driver/catalog would report; when
-    /// absent, the driver's own answer is used.
-    ///
-    /// ```yaml
-    /// providers:
-    ///   brain_openai:
-    ///     name: openai
-    ///     base_url: http://127.0.0.1:8788/v1
-    ///     input_modalities: [text, image, audio]
-    /// ```
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_modalities: Option<Vec<String>>,
-}
-
-impl Default for ModelConfig {
-    fn default() -> Self {
-        Self {
-            provider: "openrouter".into(),
-            name: "openrouter/auto".into(),
-            // api_key_env is intentionally None here.  resolve_api_key() falls
-            // through to the driver registry, which already knows the canonical
-            // env-var name for each provider (OPENAI_API_KEY, ANTHROPIC_API_KEY,
-            // etc.).  Hard-coding it here would shadow the registry lookup and
-            // cause the wrong key to be sent whenever the provider is overridden
-            // at the step level (e.g. <!-- sven: provider=anthropic -->).
-            api_key_env: None,
-            api_key: None,
-            base_url: None,
-            max_tokens: None,
-            max_output_tokens: None,
-            max_input_tokens: None,
-            temperature: Some(0.2),
-            azure_resource: None,
-            azure_deployment: None,
-            azure_api_version: None,
-            aws_region: None,
-            // Comprehensive caching is on by default for every provider that
-            // supports it (currently Anthropic).  The flags are no-ops for
-            // providers such as OpenAI that cache automatically.  Only the
-            // extended (1-hour) TTL remains opt-in because it carries a 2×
-            // write cost that is only worthwhile when turns are >5 min apart.
-            cache_system_prompt: true,
-            extended_cache_time: false,
-            cache_tools: true,
-            cache_conversation: true,
-            cache_images: true,
-            cache_tool_results: true,
-            driver_options: serde_json::Value::Null,
-            mock_responses_file: None,
-            input_modalities: None,
-        }
-    }
-}
-
-fn default_agent_mode() -> AgentMode {
-    AgentMode::Agent
-}
-fn default_max_tool_rounds() -> u32 {
-    200
-}
-fn default_compaction_threshold() -> f32 {
-    0.85
-}
-
-/// Strategy used when compacting the session context.
-///
-/// `Structured` (default) instructs the model to produce a typed Markdown
-/// checkpoint with fixed sections (Active Task, Key Decisions, Files &
-/// Artifacts, Constraints, Pending Items, Session Narrative).  This produces
-/// checkpoints that are easier for the model to navigate on future turns.
-///
-/// `Narrative` uses the original free-form summarisation prompt and is
-/// available for backward-compatibility or when a simpler output is preferred.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum CompactionStrategy {
-    #[default]
-    Structured,
-    Narrative,
-}
-
-impl std::fmt::Display for CompactionStrategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CompactionStrategy::Structured => write!(f, "structured"),
-            CompactionStrategy::Narrative => write!(f, "narrative"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AgentConfig {
-    /// Default mode when none is specified on the CLI
-    #[serde(default = "default_agent_mode")]
-    pub default_mode: AgentMode,
-    /// Maximum number of autonomous tool-call rounds before stopping
-    #[serde(default = "default_max_tool_rounds")]
-    pub max_tool_rounds: u32,
-    /// Token fraction at which proactive compaction triggers (0.0-1.0),
-    /// checked by `TurnExecutor` before every turn against the usable input
-    /// budget (`sven_model::budget::effective_input_budget`), minus
-    /// `compaction_overhead_reserve`. See `sven_turn::prepare_compaction`.
-    #[serde(default = "default_compaction_threshold")]
-    pub compaction_threshold: f32,
-    /// Number of recent non-system messages preserved verbatim during
-    /// compaction.  The oldest messages beyond this tail are summarised by
-    /// the LLM.  Higher values retain more recent context but reduce the
-    /// compression benefit.
-    ///
-    /// A value of 6 corresponds to roughly 3 back-and-forth turns
-    /// (user + assistant per turn, tool results excluded from the count).
-    /// Set to 0 to summarise the full history (original behaviour).
-    #[serde(default = "default_compaction_keep_recent")]
-    pub compaction_keep_recent: usize,
-    /// Compaction checkpoint format.
-    ///
-    /// `structured` (default): produces a typed Markdown checkpoint with
-    /// fixed sections preserving tasks, decisions, files, and constraints.
-    /// `narrative`: uses the original free-form summarisation prompt.
-    #[serde(default)]
-    pub compaction_strategy: CompactionStrategy,
-    /// Maximum tokens allowed for a single tool result before it is
-    /// deterministically truncated before entering the session, applied by
-    /// `ToolExecutor` on the way into the conversation store (`sven_machines::
-    /// smart_truncate`; category comes from the tool's own
-    /// `Tool::output_category()`).
-    ///
-    /// Truncation is content-aware: shell output keeps head+tail lines, grep
-    /// keeps leading matches, read_file keeps head+tail lines.  A value of
-    /// 0 disables per-result truncation entirely.
-    ///
-    /// Only affects what's stored for the model's next turn - the full,
-    /// untruncated output still reaches `UiEvent::ToolFinished` (TUI
-    /// display) and the audit trail.
-    #[serde(default = "default_tool_result_token_cap")]
-    pub tool_result_token_cap: usize,
-    /// Fraction of the context window reserved for tool schemas, the dynamic
-    /// context block (git/CI info), and measurement error in the token
-    /// approximation.  Reduces the effective compaction trigger threshold.
-    ///
-    /// Example: threshold=0.85, reserve=0.10 → compaction fires when
-    /// calibrated session tokens reach 75% of the input budget.
-    #[serde(default = "default_compaction_overhead_reserve")]
-    pub compaction_overhead_reserve: f32,
-    /// System prompt override; leave None to use the built-in prompt
-    #[serde(default)]
-    pub system_prompt: Option<String>,
-
-    /// Per-step wall-clock timeout in seconds (0 = no limit).
-    /// Can be set in config, overridden by frontmatter or CLI flag.
-    #[serde(default)]
-    pub max_step_timeout_secs: u64,
-
-    /// Total run wall-clock timeout in seconds (0 = no limit).
-    #[serde(default)]
-    pub max_run_timeout_secs: u64,
-
-    /// Cap on estimated thinking/reasoning tokens for a single turn, guarding
-    /// against a model (observed with some local reasoning models, e.g. Qwen)
-    /// that loops indefinitely instead of converging to an answer. Checked by
-    /// `stream_turn` against a chars/4 estimate of accumulated
-    /// `ThinkingDelta` content. `None` (the default) falls back to 10% of the
-    /// model's resolved context window - or no cap at all when the window
-    /// isn't known. Live-adjustable in a session via `/think-limit`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_thinking_tokens: Option<u32>,
-
-    /// Cap on wall-clock time a model may spend emitting `ThinkingDelta`s
-    /// with no forward progress (a real text or tool-call delta) before the
-    /// turn is aborted - the other half of the thinking-loop watchdog beside
-    /// `max_thinking_tokens`, whichever fires first. Reset on every sign of
-    /// progress, so a legitimately long multi-step turn is never killed.
-    /// `None` (the default) falls back to 600s. Live-adjustable via
-    /// `/think-limit`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking_timeout_secs: Option<u64>,
-
-    /// Longest silence, in seconds, between two chunks of a streamed model
-    /// response before the connection is declared stale and the turn fails.
-    /// Raise it for a slow but live provider, such as CPU prefill of a long
-    /// prompt. `None` (the default) is 300s.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stream_idle_timeout_secs: Option<u64>,
-
-    /// Wall-clock budget, in seconds, of every child agent run this session
-    /// starts: a parallel SDLC task, a `task` sub-agent. The child is stopped
-    /// when it runs out, and never outlives its parent. 0 = no limit.
-    #[serde(default = "default_child_run_timeout_secs")]
-    pub child_run_timeout_secs: u64,
-}
-
-fn default_child_run_timeout_secs() -> u64 {
-    3600
-}
-fn default_compaction_keep_recent() -> usize {
-    6
-}
-fn default_tool_result_token_cap() -> usize {
-    4000
-}
-fn default_compaction_overhead_reserve() -> f32 {
-    0.10
-}
-
-impl AgentConfig {
-    /// The wall-clock budget of a child run, if bounded.
+impl Schema {
+    /// Any value, not looked into: a scalar, a list, a free-form mapping.
     #[must_use]
-    pub fn child_run_timeout(&self) -> Option<std::time::Duration> {
-        (self.child_run_timeout_secs > 0)
-            .then(|| std::time::Duration::from_secs(self.child_run_timeout_secs))
+    pub fn value() -> Self {
+        Self(Kind::Value)
     }
-}
 
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            default_mode: AgentMode::Agent,
-            max_tool_rounds: 200,
-            compaction_threshold: 0.85,
-            compaction_keep_recent: default_compaction_keep_recent(),
-            compaction_strategy: CompactionStrategy::Structured,
-            tool_result_token_cap: default_tool_result_token_cap(),
-            compaction_overhead_reserve: default_compaction_overhead_reserve(),
-            system_prompt: None,
-            max_step_timeout_secs: 0,
-            max_run_timeout_secs: 0,
-            child_run_timeout_secs: default_child_run_timeout_secs(),
-            max_thinking_tokens: None,
-            thinking_timeout_secs: None,
-            stream_idle_timeout_secs: None,
+    /// A mapping with exactly the keys `fields` names, each described by its
+    /// own schema.
+    #[must_use]
+    pub fn fields(fields: impl IntoIterator<Item = (&'static str, Schema)>) -> Self {
+        Self(Kind::Fields(fields.into_iter().collect()))
+    }
+
+    /// A mapping with exactly the keys `names`, none of them looked into.
+    #[must_use]
+    pub fn keys(names: &[&'static str]) -> Self {
+        Self::fields(names.iter().map(|&name| (name, Self::value())))
+    }
+
+    /// A mapping whose keys the user chooses, every value described by
+    /// `each`.
+    #[must_use]
+    pub fn entries(each: Schema) -> Self {
+        Self(Kind::Entries(Box::new(each)))
+    }
+
+    /// A section accepted but acted on by nothing: reported once, by name,
+    /// with `reason`, however many keys it holds.
+    #[must_use]
+    pub fn ignored(reason: &'static str) -> Self {
+        Self(Kind::Ignored(reason))
+    }
+
+    /// This mapping with `key` described by `schema`, replacing an existing
+    /// description of it. How a section composes keys whose owners differ.
+    ///
+    /// # Panics
+    ///
+    /// If this schema is not a mapping of [`Self::fields`] - a composition
+    /// error in the program, not in the user's file.
+    #[must_use]
+    pub fn with(mut self, key: &'static str, schema: Schema) -> Self {
+        let Kind::Fields(fields) = &mut self.0 else {
+            panic!("`{key}` added to a schema that is not a mapping of fields");
+        };
+        match fields.iter_mut().find(|(name, _)| *name == key) {
+            Some(field) => field.1 = schema,
+            None => fields.push((key, schema)),
+        }
+        self
+    }
+
+    /// Records a warning for every key under `value` this schema does not
+    /// recognise, and one for every ignored section present. `path` is the
+    /// dotted location of `value` in the document (empty at the root).
+    pub(crate) fn report(&self, value: &Value, path: &str, warnings: &mut Vec<String>) {
+        let Value::Mapping(map) = value else {
+            return;
+        };
+        let keys = map.iter().filter_map(|(key, value)| match key {
+            Value::String(key) => Some((key.as_str(), value)),
+            _ => None,
+        });
+        match &self.0 {
+            Kind::Value | Kind::Ignored(_) => {}
+            Kind::Entries(each) => {
+                for (key, value) in keys {
+                    each.report(value, &format!("{path}.{key}"), warnings);
+                }
+            }
+            Kind::Fields(fields) => {
+                for (key, value) in keys {
+                    let full_path = if path.is_empty() {
+                        key.to_string()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    match fields.iter().find(|(name, _)| *name == key) {
+                        None => warnings.push(format!(
+                            "Unrecognised config field `{path}.{key}` - check spelling or update sven"
+                        )),
+                        Some((_, Schema(Kind::Ignored(reason)))) => warnings.push(format!(
+                            "Config section `{full_path}` is ignored: {reason}"
+                        )),
+                        Some((_, schema)) => schema.report(value, &full_path, warnings),
+                    }
+                }
+            }
         }
     }
 }
-
-pub use sven_vocab::{AgentMode, ApprovalMode};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ToolsConfig {
-    /// Automatically approve shell commands matching these glob patterns
-    pub auto_approve_patterns: Vec<String>,
-    /// Block shell commands matching these glob patterns
-    pub deny_patterns: Vec<String>,
-    /// Tools, by name, a session never offers the model and never runs -
-    /// built-in, MCP or supplied by an embedding application alike.
-    pub disabled: Vec<String>,
-    /// Timeout in seconds for a single tool call
-    pub timeout_secs: u64,
-    /// Web fetch and search configuration
-    #[serde(default)]
-    pub web: WebConfig,
-    /// Persistent memory configuration
-    #[serde(default)]
-    pub memory: MemoryConfig,
-    /// Linter configuration
-    #[serde(default)]
-    pub lints: LintsConfig,
-    /// GDB debugging configuration
-    #[serde(default)]
-    pub gdb: GdbConfig,
-    /// Memory-mapped context tools configuration (RLM pattern)
-    #[serde(default)]
-    pub context: ContextConfig,
-    /// Speech-to-text fallback used by the `attach_file` tool when the active
-    /// model cannot accept audio natively.
-    #[serde(default)]
-    pub asr: AsrConfig,
-}
-
-/// Speech-to-text (ASR) fallback configuration.
-///
-/// `attach_file` sends audio to this brain model over D-Bus when it must turn
-/// it into text — either because the active model has no audio modality, or
-/// because the caller asked for `force_transcribe` (builds with `asr` only).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AsrConfig {
-    /// Manifest id of the served ASR model, as `ListModels` reports it
-    /// (`brain/nemotronasr`). This is NOT brain's CLI spelling: the CLI
-    /// dispatches on a bare architecture id, while the served surface uses
-    /// the prefixed manifest id.
-    #[serde(default = "default_asr_model")]
-    pub model: String,
-    /// Explicit D-Bus address of the brain server
-    /// (`unix:path=/run/brain/bus`). `None` uses the session bus. A DETACHED
-    /// server inherits no session bus, so it is reached by address.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bus_address: Option<String>,
-    /// Hard timeout for a single transcription call, in seconds.
-    #[serde(default = "default_asr_timeout_secs")]
-    pub timeout_secs: u64,
-}
-
-fn default_asr_model() -> String {
-    "brain/nemotronasr".into()
-}
-
-fn default_asr_timeout_secs() -> u64 {
-    120
-}
-
-impl Default for AsrConfig {
-    fn default() -> Self {
-        Self {
-            model: default_asr_model(),
-            bus_address: None,
-            timeout_secs: default_asr_timeout_secs(),
-        }
-    }
-}
-
-impl Default for ToolsConfig {
-    fn default() -> Self {
-        Self {
-            auto_approve_patterns: vec![
-                "cat *".into(),
-                "ls *".into(),
-                "find *".into(),
-                "rg *".into(),
-                "grep *".into(),
-            ],
-            deny_patterns: vec!["rm -rf /*".into(), "dd if=*".into()],
-            disabled: Vec::new(),
-            timeout_secs: 30,
-            web: WebConfig::default(),
-            memory: MemoryConfig::default(),
-            lints: LintsConfig::default(),
-            gdb: GdbConfig::default(),
-            context: ContextConfig::default(),
-            asr: AsrConfig::default(),
-        }
-    }
-}
-
-/// Configuration for memory-mapped context tools that implement the RLM pattern.
-///
-/// These tools allow the agent to process files and directories far beyond the
-/// LLM context window by keeping content memory-mapped and providing the model
-/// with symbolic handles and structured access operations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ContextConfig {
-    /// Maximum number of concurrent sub-agent queries for `context_query`.
-    pub max_parallel: usize,
-    /// Default number of lines per chunk when `chunk_lines` is not specified
-    /// in a `context_query` call.
-    pub default_chunk_lines: usize,
-    /// Maximum characters sent to each sub-query call.
-    /// Sub-queries are simple completions without tools; this caps their input.
-    pub sub_query_max_chars: usize,
-    /// Timeout in seconds for each individual sub-query API call.
-    /// If a sub-query does not complete within this time it is cancelled and
-    /// an error result is recorded for that chunk.  0 means no timeout.
-    pub sub_query_timeout_secs: u64,
-}
-
-impl Default for ContextConfig {
-    fn default() -> Self {
-        Self {
-            max_parallel: 4,
-            default_chunk_lines: 500,
-            sub_query_max_chars: 120_000,
-            sub_query_timeout_secs: 120,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct WebSearchConfig {
-    /// Brave Search API key (also checked via BRAVE_API_KEY env var)
-    pub api_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct WebConfig {
-    /// Search backend configuration
-    #[serde(default)]
-    pub search: WebSearchConfig,
-    /// Default maximum characters for web_fetch (default 20000)
-    pub fetch_max_chars: usize,
-}
-
-impl Default for WebConfig {
-    fn default() -> Self {
-        Self {
-            search: WebSearchConfig::default(),
-            fetch_max_chars: 20_000,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct MemoryConfig {
-    /// Path to the memory JSON file (default: ~/.config/sven/memory.json)
-    pub memory_file: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct GdbConfig {
-    /// Path to gdb-multiarch (or gdb) executable
-    #[serde(default = "GdbConfig::default_gdb_path")]
-    pub gdb_path: String,
-    /// Default timeout for GDB commands in seconds
-    #[serde(default = "GdbConfig::default_command_timeout_secs")]
-    pub command_timeout_secs: u64,
-    /// Timeout for the initial gdb_connect handshake in seconds.
-    /// This covers symbol loading (which can take 15-30s for large ELFs)
-    /// plus the TCP connection + GDB/MI startup.  Must be >= command_timeout_secs.
-    #[serde(default = "GdbConfig::default_connect_timeout_secs")]
-    pub connect_timeout_secs: u64,
-    /// Milliseconds to wait after spawning the GDB server before connecting
-    #[serde(default = "GdbConfig::default_server_startup_wait_ms")]
-    pub server_startup_wait_ms: u64,
-}
-
-impl GdbConfig {
-    fn default_gdb_path() -> String {
-        "gdb-multiarch".into()
-    }
-    fn default_command_timeout_secs() -> u64 {
-        10
-    }
-    fn default_connect_timeout_secs() -> u64 {
-        30
-    }
-    fn default_server_startup_wait_ms() -> u64 {
-        500
-    }
-}
-
-impl Default for GdbConfig {
-    fn default() -> Self {
-        Self {
-            gdb_path: Self::default_gdb_path(),
-            command_timeout_secs: Self::default_command_timeout_secs(),
-            connect_timeout_secs: Self::default_connect_timeout_secs(),
-            server_startup_wait_ms: Self::default_server_startup_wait_ms(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct LintsConfig {
-    /// Override the lint command for Rust projects
-    pub rust_command: Option<String>,
-    /// Override the lint command for TypeScript/JS projects
-    pub typescript_command: Option<String>,
-    /// Override the lint command for Python projects
-    pub python_command: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TuiConfig {
-    /// Colour theme: "dark" | "light" | "solarized"
-    pub theme: String,
-    /// Show line numbers in code blocks
-    pub code_line_numbers: bool,
-    /// Width used for markdown wrapping (0 = auto)
-    pub wrap_width: u16,
-    /// Use plain ASCII borders/indicators instead of Unicode box-drawing and
-    /// Braille characters.  Enable this when the terminal font lacks wide
-    /// Unicode support (the font renders replacement glyphs / "gibberish").
-    /// Can also be forced with the SVEN_ASCII_BORDERS=1 environment variable.
-    #[serde(default)]
-    pub ascii_borders: bool,
-}
-
-impl Default for TuiConfig {
-    fn default() -> Self {
-        Self {
-            theme: "dark".into(),
-            code_line_numbers: false,
-            wrap_width: 0,
-            ascii_borders: false,
-        }
-    }
-}
-
-// ─── Unit tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── Defaults ─────────────────────────────────────────────────────────────
+    fn report(schema: &Schema, yaml: &str) -> Vec<String> {
+        let value: Value = serde_yaml::from_str(yaml).unwrap();
+        let mut warnings = Vec::new();
+        schema.report(&value, "", &mut warnings);
+        warnings
+    }
 
-    #[test]
-    fn config_default_model_provider_is_openrouter() {
-        let c = Config::default();
-        assert_eq!(c.model.provider, "openrouter");
+    fn sample() -> Schema {
+        Schema::fields([
+            ("model", Schema::keys(&["provider", "name"])),
+            (
+                "servers",
+                Schema::entries(Schema::fields([
+                    ("transport", Schema::keys(&["type", "url"])),
+                    ("env", Schema::value()),
+                ])),
+            ),
+            (
+                "memory",
+                Schema::fields([
+                    ("file", Schema::value()),
+                    ("learning", Schema::ignored("nothing reads it")),
+                ]),
+            ),
+        ])
     }
 
     #[test]
-    fn config_default_model_is_openrouter_auto() {
-        let c = Config::default();
-        assert_eq!(c.model.provider, "openrouter");
-        assert_eq!(c.model.name, "openrouter/auto");
+    fn known_keys_earn_no_warning() {
+        let yaml = "model: {provider: openai, name: gpt}\nservers:\n  a:\n    transport: {type: http, url: u}\n    env: {ANY: thing}\n";
+        assert_eq!(report(&sample(), yaml), Vec::<String>::new());
     }
 
     #[test]
-    fn config_default_api_key_env_is_none() {
-        // api_key_env must be None in the default config so that resolve_api_key()
-        // falls through to the driver registry.  A hard-coded value here would
-        // shadow the registry and send the wrong key on per-step provider overrides.
-        let c = Config::default();
-        assert!(c.model.api_key_env.is_none());
-    }
-
-    #[test]
-    fn config_default_no_explicit_api_key() {
-        let c = Config::default();
-        assert!(c.model.api_key.is_none());
-    }
-
-    #[test]
-    fn config_default_agent_mode_is_agent() {
-        let c = Config::default();
-        assert_eq!(c.agent.default_mode, AgentMode::Agent);
-    }
-
-    #[test]
-    fn config_default_max_tool_rounds_positive() {
-        let c = Config::default();
-        assert!(c.agent.max_tool_rounds > 0);
-    }
-
-    #[test]
-    fn config_default_compaction_threshold_in_range() {
-        let c = Config::default();
-        assert!(c.agent.compaction_threshold > 0.0);
-        assert!(c.agent.compaction_threshold < 1.0);
-    }
-
-    #[test]
-    fn config_default_compaction_keep_recent_is_six() {
-        let c = Config::default();
-        assert_eq!(c.agent.compaction_keep_recent, 6);
-    }
-
-    #[test]
-    fn config_compaction_keep_recent_yaml_round_trip() {
-        let yaml_str = "agent:\n  compaction_keep_recent: 10\n";
-        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
-        assert_eq!(c.agent.compaction_keep_recent, 10);
-        // Round-trip
-        let back_yaml = serde_yaml::to_string(&c).unwrap();
-        let back: Config = serde_yaml::from_str(&back_yaml).unwrap();
-        assert_eq!(back.agent.compaction_keep_recent, 10);
-    }
-
-    #[test]
-    fn config_compaction_keep_recent_defaults_when_absent_from_yaml() {
-        // A YAML with an agent section but no compaction_keep_recent uses serde default.
-        let yaml_str =
-            "agent:\n  max_tool_rounds: 30\n  default_mode: agent\n  compaction_threshold: 0.9\n";
-        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
+    fn an_unknown_key_is_named_by_its_path() {
+        let warnings = report(
+            &sample(),
+            "modle: x\nmodel: {nme: y}\nservers: {a: {transport: {typ: http}}}\n",
+        );
         assert_eq!(
-            c.agent.compaction_keep_recent, 6,
-            "serde default must fill in missing field"
+            warnings,
+            [
+                "Unrecognised config field `.modle` - check spelling or update sven",
+                "Unrecognised config field `model.nme` - check spelling or update sven",
+                "Unrecognised config field `servers.a.transport.typ` - check spelling or update sven",
+            ]
         );
     }
 
     #[test]
-    fn config_default_no_system_prompt_override() {
-        let c = Config::default();
-        assert!(c.agent.system_prompt.is_none());
-    }
-
-    #[test]
-    fn config_default_tui_theme_is_dark() {
-        let c = Config::default();
-        assert_eq!(c.tui.theme, "dark");
-    }
-
-    #[test]
-    fn config_default_tools_has_auto_approve_patterns() {
-        let c = Config::default();
-        assert!(!c.tools.auto_approve_patterns.is_empty());
-    }
-
-    // ── AgentMode ─────────────────────────────────────────────────────────────
-
-    #[test]
-    fn agent_mode_display_research() {
-        assert_eq!(AgentMode::Research.to_string(), "research");
-    }
-
-    #[test]
-    fn agent_mode_display_plan() {
-        assert_eq!(AgentMode::Plan.to_string(), "plan");
-    }
-
-    #[test]
-    fn agent_mode_display_agent() {
-        assert_eq!(AgentMode::Agent.to_string(), "agent");
-    }
-
-    #[test]
-    fn agent_mode_equality() {
-        assert_eq!(AgentMode::Agent, AgentMode::Agent);
-        assert_ne!(AgentMode::Research, AgentMode::Plan);
-    }
-
-    // ── Prompt caching defaults ───────────────────────────────────────────────
-
-    #[test]
-    fn config_default_caching_enabled_except_extended_ttl() {
-        // All caching flags default to true - sven caches comprehensively
-        // out-of-the-box for every provider that supports explicit caching.
-        // extended_cache_time stays false: the 1-hour TTL has a 2× write cost
-        // and is only worthwhile when turns are more than 5 minutes apart.
-        let c = Config::default();
-        assert!(
-            c.model.cache_system_prompt,
-            "cache_system_prompt must default to true"
-        );
-        assert!(c.model.cache_tools, "cache_tools must default to true");
-        assert!(
-            c.model.cache_conversation,
-            "cache_conversation must default to true"
-        );
-        assert!(c.model.cache_images, "cache_images must default to true");
-        assert!(
-            c.model.cache_tool_results,
-            "cache_tool_results must default to true"
-        );
-        assert!(
-            !c.model.extended_cache_time,
-            "extended_cache_time must remain false by default"
-        );
-    }
-
-    #[test]
-    fn config_cache_flags_can_be_disabled_via_yaml() {
-        // Users may opt out of individual cache layers.
-        let yaml_str = "model:\n  provider: anthropic\n  name: claude-sonnet-4-5\n  \
-                        cache_system_prompt: false\n  cache_tools: false\n  \
-                        cache_conversation: false\n  cache_images: false\n  \
-                        cache_tool_results: false\n";
-        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
-        assert!(!c.model.cache_system_prompt);
-        assert!(!c.model.cache_tools);
-        assert!(!c.model.cache_conversation);
-        assert!(!c.model.cache_images);
-        assert!(!c.model.cache_tool_results);
-    }
-
-    #[test]
-    fn config_extended_cache_time_can_be_enabled_via_yaml() {
-        let yaml_str = "model:\n  provider: anthropic\n  name: claude-sonnet-4-5\n  \
-                        extended_cache_time: true\n";
-        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
-        assert!(c.model.extended_cache_time);
-    }
-
-    #[test]
-    fn config_cache_flags_omitted_yaml_uses_defaults() {
-        // When not specified in YAML the flags must use the struct defaults
-        // (true for caching flags, false for extended TTL).
-        let yaml_str = "model:\n  provider: anthropic\n  name: claude-sonnet-4-5\n";
-        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
-        assert!(
-            c.model.cache_system_prompt,
-            "cache_system_prompt must default to true"
-        );
-        assert!(c.model.cache_tools, "cache_tools must default to true");
-        assert!(
-            c.model.cache_conversation,
-            "cache_conversation must default to true"
-        );
-        assert!(
-            !c.model.extended_cache_time,
-            "extended_cache_time must default to false"
-        );
-        assert!(c.model.cache_images, "cache_images must default to true");
-        assert!(
-            c.model.cache_tool_results,
-            "cache_tool_results must default to true"
-        );
-    }
-
-    #[test]
-    fn config_cache_flags_round_trip_yaml() {
-        let mut c = Config::default();
-        c.model.provider = "anthropic".into();
-        // Flip all flags to the non-default values to verify round-trip fidelity.
-        c.model.cache_tools = false;
-        c.model.cache_conversation = false;
-        c.model.cache_images = false;
-        c.model.cache_tool_results = false;
-        c.model.extended_cache_time = true;
-        let yaml = serde_yaml::to_string(&c).unwrap();
-        let back: Config = serde_yaml::from_str(&yaml).unwrap();
-        assert!(!back.model.cache_tools);
-        assert!(!back.model.cache_conversation);
-        assert!(!back.model.cache_images);
-        assert!(!back.model.cache_tool_results);
-        assert!(back.model.extended_cache_time);
-    }
-
-    // ── YAML round-trip ───────────────────────────────────────────────────────
-
-    #[test]
-    fn config_serialises_to_valid_yaml() {
-        let c = Config::default();
-        let yaml_str = serde_yaml::to_string(&c).unwrap();
-        assert!(yaml_str.contains("provider"));
-        assert!(yaml_str.contains("openrouter"));
-    }
-
-    #[test]
-    fn config_deserialises_from_yaml() {
-        let yaml_str =
-            "model:\n  provider: anthropic\n  name: claude-opus-4-5\n  max_tokens: 8192\n";
-        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
-        assert_eq!(c.model.provider, "anthropic");
-        assert_eq!(c.model.name, "claude-opus-4-5");
-        assert_eq!(c.model.max_tokens, Some(8192));
-    }
-
-    #[test]
-    fn config_partial_yaml_fills_in_defaults() {
-        let yaml_str = "model:\n  name: gpt-4o-mini\n  provider: openai\n";
-        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
-        assert_eq!(c.model.name, "gpt-4o-mini");
+    fn an_ignored_section_earns_one_warning_whatever_it_holds() {
+        let warnings = report(&sample(), "memory:\n  file: f\n  learning: {a: 1, b: 2}\n");
         assert_eq!(
-            c.agent.max_tool_rounds,
-            AgentConfig::default().max_tool_rounds
+            warnings,
+            ["Config section `memory.learning` is ignored: nothing reads it"]
         );
     }
 
     #[test]
-    fn agent_mode_yaml_serde_roundtrip() {
-        #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
-        struct Wrap {
-            mode: AgentMode,
-        }
-        let w = Wrap {
-            mode: AgentMode::Plan,
-        };
-        let s = serde_yaml::to_string(&w).unwrap();
-        let back: Wrap = serde_yaml::from_str(&s).unwrap();
-        assert_eq!(back.mode, AgentMode::Plan);
-    }
-
-    // ── providers map ─────────────────────────────────────────────────────────
-
-    #[test]
-    fn config_default_providers_is_empty() {
-        let c = Config::default();
-        assert!(c.providers.is_empty(), "providers must be empty by default");
+    fn a_free_form_value_is_not_looked_into() {
+        assert!(report(&sample(), "servers: {a: {env: {whatever: 1}}}\n").is_empty());
     }
 
     #[test]
-    fn config_providers_deserialised_from_yaml() {
-        let yaml = r#"
-providers:
-  my_ollama:
-    name: openai
-    base_url: http://localhost:11434/v1
-    models:
-      llama3.2:
-        max_tokens: 4096
-"#;
-        let c: Config = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(c.providers.len(), 1);
-        let p = c.providers.get("my_ollama").unwrap();
-        assert_eq!(p.name, "openai");
-        assert_eq!(p.base_url.as_deref(), Some("http://localhost:11434/v1"));
-        assert!(p.models.contains_key("llama3.2"));
-        assert_eq!(p.models["llama3.2"].max_tokens, Some(4096));
-    }
-
-    #[test]
-    fn config_providers_round_trip_yaml() {
-        let yaml = r#"
-providers:
-  local:
-    name: openai
-    base_url: http://127.0.0.1:8080/v1
-    models:
-      phi-3:
-        max_tokens: 2048
-"#;
-        let c: Config = serde_yaml::from_str(yaml).unwrap();
-        let serialised = serde_yaml::to_string(&c).unwrap();
-        let back: Config = serde_yaml::from_str(&serialised).unwrap();
-        let p = back.providers.get("local").unwrap();
-        assert_eq!(p.name, "openai");
-        assert_eq!(p.base_url.as_deref(), Some("http://127.0.0.1:8080/v1"));
-        assert_eq!(p.models["phi-3"].max_tokens, Some(2048));
-    }
-
-    #[test]
-    fn config_providers_absent_in_yaml_uses_empty_default() {
-        let yaml = "model:\n  provider: openai\n  name: gpt-4o\n";
-        let c: Config = serde_yaml::from_str(yaml).unwrap();
-        assert!(c.providers.is_empty());
-    }
-
-    #[test]
-    fn provider_entry_to_model_config_applies_provider_defaults() {
-        let mut entry = ProviderEntry {
-            name: "openai".into(),
-            base_url: Some("http://local:8000/v1".into()),
-            max_tokens: Some(8192),
-            ..ProviderEntry::default()
-        };
-        entry.models.insert(
-            "my-model".into(),
-            ModelParams {
-                max_tokens: Some(4096),
-                ..ModelParams::default()
-            },
-        );
-        let cfg = entry.to_model_config("my-model");
-        assert_eq!(cfg.provider, "openai");
-        assert_eq!(cfg.name, "my-model");
-        assert_eq!(cfg.base_url.as_deref(), Some("http://local:8000/v1"));
-        // per-model max_tokens overrides provider-level
-        assert_eq!(cfg.max_tokens, Some(4096));
-    }
-
-    #[test]
-    fn provider_entry_to_model_config_uses_provider_defaults_when_no_model_override() {
-        let entry = ProviderEntry {
-            name: "openai".into(),
-            max_tokens: Some(8192),
-            ..ProviderEntry::default()
-        };
-        let cfg = entry.to_model_config("unknown-model");
-        assert_eq!(cfg.max_tokens, Some(8192));
-    }
-
-    #[test]
-    fn provider_entry_to_model_config_driver_options_override() {
-        let mut entry = ProviderEntry {
-            name: "openai".into(),
-            ..ProviderEntry::default()
-        };
-        let driver_opts = serde_json::json!({"parse_tool_calls": false});
-        entry.models.insert(
-            "local-model".into(),
-            ModelParams {
-                driver_options: driver_opts.clone(),
-                ..ModelParams::default()
-            },
-        );
-        let cfg = entry.to_model_config("local-model");
-        assert_eq!(cfg.driver_options, driver_opts);
-    }
-
-    // ── input_modalities ──────────────────────────────────────────────────────
-
-    #[test]
-    fn provider_entry_input_modalities_are_inherited_by_models() {
-        let entry = ProviderEntry {
-            name: "openai".into(),
-            input_modalities: Some(vec!["text".into(), "image".into(), "audio".into()]),
-            ..ProviderEntry::default()
-        };
-        let cfg = entry.to_model_config("brain/omni");
+    fn with_adds_and_replaces_a_key() {
+        let schema = Schema::keys(&["a"])
+            .with("b", Schema::keys(&["c"]))
+            .with("a", Schema::ignored("gone"));
         assert_eq!(
-            cfg.input_modalities.as_deref(),
-            Some(&["text".to_string(), "image".to_string(), "audio".to_string()][..])
+            report(&schema, "a: 1\nb: {c: 1, d: 2}\n"),
+            [
+                "Config section `a` is ignored: gone",
+                "Unrecognised config field `b.d` - check spelling or update sven",
+            ]
         );
-    }
-
-    #[test]
-    fn per_model_input_modalities_override_the_provider_default() {
-        let mut entry = ProviderEntry {
-            name: "openai".into(),
-            input_modalities: Some(vec!["text".into()]),
-            ..ProviderEntry::default()
-        };
-        entry.models.insert(
-            "brain/omni".into(),
-            ModelParams {
-                input_modalities: Some(vec!["text".into(), "audio".into()]),
-                ..ModelParams::default()
-            },
-        );
-        let cfg = entry.to_model_config("brain/omni");
-        assert_eq!(
-            cfg.input_modalities.as_deref(),
-            Some(&["text".to_string(), "audio".to_string()][..])
-        );
-    }
-
-    #[test]
-    fn input_modalities_default_to_unset() {
-        let entry = ProviderEntry {
-            name: "openai".into(),
-            ..ProviderEntry::default()
-        };
-        assert!(entry.to_model_config("gpt-4o").input_modalities.is_none());
-    }
-
-    #[test]
-    fn input_modalities_parse_from_yaml() {
-        let yaml = r#"
-name: openai
-base_url: http://127.0.0.1:8788/v1
-input_modalities: [text, image, audio]
-"#;
-        let entry: ProviderEntry = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            entry.input_modalities.as_deref(),
-            Some(&["text".to_string(), "image".to_string(), "audio".to_string()][..])
-        );
-    }
-
-    // ── ASR config ────────────────────────────────────────────────────────────
-
-    #[test]
-    fn asr_config_defaults_match_the_documented_values() {
-        let a = AsrConfig::default();
-        assert_eq!(a.model, "brain/nemotronasr");
-        assert_eq!(a.bus_address, None, "the session bus is the default");
-        assert_eq!(a.timeout_secs, 120);
-    }
-
-    #[test]
-    fn asr_config_partial_yaml_keeps_defaults_for_absent_keys() {
-        let a: AsrConfig = serde_yaml::from_str("bus_address: unix:path=/run/brain/bus\n").unwrap();
-        assert_eq!(a.bus_address.as_deref(), Some("unix:path=/run/brain/bus"));
-        assert_eq!(a.model, "brain/nemotronasr");
-        assert_eq!(a.timeout_secs, 120);
-    }
-
-    /// The served surface uses the prefixed manifest id, not brain's CLI
-    /// spelling. Confusing the two is how this default was wrong before: the
-    /// CLI rejects `brain/nemotronasr`, and `ListModels` never reports the
-    /// bare `nemotronasr`.
-    #[test]
-    fn asr_default_model_is_the_served_manifest_id() {
-        assert!(AsrConfig::default().model.starts_with("brain/"));
-    }
-
-    #[test]
-    fn tools_config_exposes_asr_defaults() {
-        assert_eq!(ToolsConfig::default().asr, AsrConfig::default());
-    }
-    #[test]
-    fn model_reference_names_the_provider_alias_the_model_came_from() {
-        let mut config = Config::default();
-        config.providers.insert(
-            "gateway".into(),
-            ProviderEntry {
-                name: "openai".into(),
-                base_url: Some("http://gateway:4000/v1".into()),
-                api_key_env: Some("GATEWAY_KEY".into()),
-                ..ProviderEntry::default()
-            },
-        );
-        config.model = config.providers["gateway"].to_model_config("main");
-        assert_eq!(config.model_reference(), "gateway/main");
-    }
-
-    #[test]
-    fn model_reference_is_the_driver_when_no_alias_matches() {
-        let mut config = Config::default();
-        config.providers.insert(
-            "gateway".into(),
-            ProviderEntry {
-                name: "openai".into(),
-                base_url: Some("http://gateway:4000/v1".into()),
-                ..ProviderEntry::default()
-            },
-        );
-        // Same driver, different endpoint: not the alias's config.
-        config.model = ModelConfig {
-            provider: "openai".into(),
-            name: "gpt-4o".into(),
-            ..ModelConfig::default()
-        };
-        assert_eq!(config.model_reference(), "openai/gpt-4o");
     }
 }

@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use sven_config::AgentMode;
 use sven_hsm::ToolCapability;
+use sven_vocab::AgentMode;
 
 use sven_tool_api::policy::PermissionRequester;
 use sven_tool_api::tool::ToolDisplayRegistry;

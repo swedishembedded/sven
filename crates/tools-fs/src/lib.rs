@@ -8,8 +8,11 @@
 //! The `file/` and `buffer/` modules do not reference each other.
 //! `GrepMatch`, shared with `sven-tools-ctx`'s `context/store.rs`, lives in
 //! `sven-tool-api` (kernel tier) rather than in either domain crate.
+mod asr_config;
 pub mod buffer;
 pub mod file;
+
+pub use asr_config::AsrConfig;
 
 pub use buffer::{
     BufGrepTool, BufReadTool, BufStatusTool, BufferSource, BufferStatus, OutputBufferStore,

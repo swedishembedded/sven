@@ -19,7 +19,7 @@ pub(super) async fn build_attachment_parts(
     prompt: &str,
     paths: &[PathBuf],
     model: &Arc<dyn sven_model::ModelProvider>,
-    asr: &sven_config::AsrConfig,
+    asr: &sven_tools_fs::AsrConfig,
 ) -> anyhow::Result<Vec<sven_model::ContentPart>> {
     let opts = sven_tools_fs::AttachOptions {
         supports_images: model.supports_images(),

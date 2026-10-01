@@ -18,7 +18,7 @@
 
 use std::path::Path;
 
-use sven_config::AsrConfig;
+use crate::AsrConfig;
 use sven_model::ContentPart;
 use thiserror::Error;
 

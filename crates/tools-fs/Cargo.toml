@@ -9,6 +9,7 @@ license     = "Apache-2.0"
 sven-tool-api = { path = "../tool-api" }
 sven-config   = { path = "../config" }
 sven-hsm      = { path = "../hsm" }
+sven-vocab    = { path = "../vocab" }
 sven-model    = { path = "../model" }
 # `media`: image and audio decoding.
 sven-image    = { path = "../image", optional = true }
@@ -18,6 +19,7 @@ sven-model-drivers = { path = "../model-drivers", optional = true }
 anyhow        = { workspace = true }
 async-trait   = { workspace = true }
 regex         = { workspace = true }
+serde         = { workspace = true }
 serde_json    = { workspace = true }
 similar       = { workspace = true }
 tempfile      = { workspace = true }
@@ -36,6 +38,7 @@ media = ["dep:sven-image", "dep:sven-audio"]
 asr = ["media", "dep:sven-model-drivers", "sven-model-drivers/dbus"]
 
 [dev-dependencies]
+serde_yaml = { workspace = true }
 sven-model-mock = { path = "../model-mock" }
 # A fake `Brain1.Manager` served over a plain `UnixStream` pair, so the
 # transcription path is exercised with no bus daemon, no server and no

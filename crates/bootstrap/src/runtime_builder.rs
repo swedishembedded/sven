@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sven_config::{AgentMode, ApprovalMode, Config, ModelConfig};
+use crate::Config;
 use sven_executors::ThreadStore;
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
@@ -36,9 +36,11 @@ use sven_hsm::{Context, ObservationSink, Principal, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, ErasedRuntime};
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
+use sven_model_drivers::ModelConfig;
 use sven_tool_api::events::ToolEvent;
 use sven_tool_api::PermissionRequester;
 use sven_tools_agent::QuestionRequest;
+use sven_vocab::{AgentMode, ApprovalMode};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -535,7 +537,7 @@ impl RuntimeBuilder {
         // Seed the mode lock from the interactive mode so in-session `/mode`
         // reads and mode-scoped tool views reflect the active mode.
         let mode_lock = Arc::new(tokio::sync::Mutex::new(
-            self.agent_mode.unwrap_or(sven_config::AgentMode::Agent),
+            self.agent_mode.unwrap_or(AgentMode::Agent),
         ));
         let (tool_event_tx, tool_event_rx) =
             tokio::sync::mpsc::channel::<sven_tool_api::events::ToolEvent>(64);
@@ -573,7 +575,7 @@ impl RuntimeBuilder {
             approval_mode: self.approval_mode,
         };
 
-        let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
+        let mode = self.agent_mode.unwrap_or(AgentMode::Agent);
         let root = self.runtime_ctx.project_root.as_deref();
         let q = self.tool_question_tx.clone();
         let tool_profile = ToolSetProfile::for_selection(
@@ -671,7 +673,7 @@ impl RuntimeBuilder {
         // there is no risk of a duplicate.
         let seed_thread = sven_machines::mode::primary_thread(&self.mode);
         if let Ok(mut store) = conv_store.lock() {
-            let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
+            let mode = self.agent_mode.unwrap_or(AgentMode::Agent);
             if let Some(system_msg) = runtime.build_system_message(mode) {
                 store.append(seed_thread, system_msg);
             }
@@ -759,10 +761,8 @@ impl RuntimeBuilder {
             cancel_handle.clone(),
         )
         .with_no_tools(runtime.no_tools)
-        .with_compaction_config(sven_executors::CompactionConfig::from_agent_config(
-            &self.config.agent,
-        ))
-        .with_turn_limits(sven_turn::TurnLimits::from_agent_config(&self.config.agent));
+        .with_compaction_config(self.config.agent.compaction())
+        .with_turn_limits(self.config.agent.turn_limits());
 
         // A caller-supplied executor (see `with_effect_executor`) replaces the
         // default composite wholesale; otherwise wire the default composite,
@@ -988,7 +988,7 @@ fn spawn_tool_event_forwarder(mut rx: mpsc::Receiver<ToolEvent>, obs: Observatio
                     update,
                 },
                 // No `UiEvent` counterpart — see the doc comment above.
-                ToolEvent::McpServerAdded { .. } | ToolEvent::McpServerRemoved(_) => continue,
+                ToolEvent::McpServerAdded(_) | ToolEvent::McpServerRemoved(_) => continue,
             };
             obs.emit(ui_event);
         }

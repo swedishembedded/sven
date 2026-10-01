@@ -71,12 +71,12 @@ impl std::error::Error for AbortedError {}
 /// Callback that resolves a model string (e.g. `"anthropic/claude-opus"`) to a
 /// live [`ModelProvider`].  Provided by the bootstrap layer so that the turn
 /// executor (`sven-executors`) can switch models mid-turn without depending
-/// on the full `sven-config::Config`.
+/// on the full the configuration.
 pub type ModelResolver =
     std::sync::Arc<dyn Fn(&str) -> anyhow::Result<std::sync::Arc<dyn ModelProvider>> + Send + Sync>;
 
 /// Longest silence between two stream chunks before the connection is
-/// declared stale, when `agent.stream_idle_timeout_secs` is not set.
+/// declared stale, when no stream idle limit is configured (`agent.stream_idle_timeout_secs`).
 const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Limits on one streamed model turn.
@@ -111,17 +111,15 @@ impl From<ThinkingBudget> for TurnLimits {
 }
 
 impl TurnLimits {
-    /// The limits an [`sven_config::AgentConfig`] sets.
+    /// The longest silence between two stream chunks, in seconds, before the
+    /// connection is declared stale. `None` or `0` is the default
+    /// ([`DEFAULT_STREAM_IDLE_TIMEOUT`]).
     #[must_use]
-    pub fn from_agent_config(cfg: &sven_config::AgentConfig) -> Self {
-        Self {
-            thinking: ThinkingBudget::from_agent_config(cfg),
-            stream_idle: cfg
-                .stream_idle_timeout_secs
-                .filter(|&secs| secs > 0)
-                .map_or(DEFAULT_STREAM_IDLE_TIMEOUT, Duration::from_secs),
-            max_output_tokens: None,
-        }
+    pub fn with_stream_idle_secs(mut self, secs: Option<u64>) -> Self {
+        self.stream_idle = secs
+            .filter(|&secs| secs > 0)
+            .map_or(DEFAULT_STREAM_IDLE_TIMEOUT, Duration::from_secs);
+        self
     }
 
     /// Caps each response at `tokens` output tokens.
@@ -199,20 +197,6 @@ pub struct ThinkingBudget {
 }
 
 impl ThinkingBudget {
-    /// Build from the workspace-wide `agent.max_thinking_tokens` /
-    /// `agent.thinking_timeout_secs` config fields (`sven_config::AgentConfig`).
-    /// A `None` field there means "use the built-in default" - preserved
-    /// as-is here rather than eagerly resolved, since the default token cap
-    /// depends on the model in use (via `context_window`, only known once a
-    /// specific `stream_turn` call has a `model` reference).
-    #[must_use]
-    pub fn from_agent_config(cfg: &sven_config::AgentConfig) -> Self {
-        Self {
-            max_thinking_tokens: cfg.max_thinking_tokens,
-            thinking_timeout_secs: cfg.thinking_timeout_secs,
-        }
-    }
-
     /// Resolve the effective `(token_cap, time_cap)`, filling in defaults for
     /// unset fields. `context_window` is only consulted for the default
     /// token cap; an explicit `max_thinking_tokens` always wins.
@@ -777,10 +761,6 @@ mod thinking_watchdog_tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_stream_silent_past_the_configured_limit_fails_the_turn() {
-        let cfg = sven_config::AgentConfig {
-            stream_idle_timeout_secs: Some(7),
-            ..Default::default()
-        };
         let (tx, drain) = drained_channel();
         let started = tokio::time::Instant::now();
         let result = stream_turn(
@@ -791,7 +771,7 @@ mod thinking_watchdog_tests {
             None,
             None,
             None,
-            TurnLimits::from_agent_config(&cfg),
+            TurnLimits::default().with_stream_idle_secs(Some(7)),
             &tx,
         )
         .await;

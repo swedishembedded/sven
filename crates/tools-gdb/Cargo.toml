@@ -10,19 +10,32 @@ sven-tool-api = { path = "../tool-api" }
 sven-tool-registry = { path = "../tool-registry" }
 sven-config   = { path = "../config" }
 sven-hsm      = { path = "../hsm" }
+sven-vocab    = { path = "../vocab" }
 anyhow        = { workspace = true }
 async-trait   = { workspace = true }
+serde         = { workspace = true }
 serde_json    = { workspace = true }
 tokio         = { workspace = true }
 tracing       = { workspace = true }
 regex         = { workspace = true }
-# This whole crate is Unix only (GDB signal APIs are not available on
-# Windows), so it has no non-unix code path to protect -- every
-# consumer already gates its `sven-tools-gdb` dependency itself under
-# `target.'cfg(unix)'.dependencies` (see crates/bootstrap/Cargo.toml), so
-# these can be plain, unconditional dependencies here.
-libc  = { workspace = true }
-gdbmi = "0.0.2"
+libc          = { workspace = true }
+
+# The GDB/MI client: what the `mi` feature adds. Without it the crate holds
+# only the `tools.gdb` configuration section, so a build that leaves the tools
+# out still reads a configuration file that names the section.
+[target.'cfg(unix)'.dependencies]
+gdbmi = { version = "0.0.2", optional = true }
+
+[features]
+default = ["mi"]
+# The GDB tools themselves (Unix only -- GDB signal APIs are not available on
+# Windows, where enabling this feature adds nothing).
+mi = ["dep:gdbmi"]
+
+[[test]]
+name = "gdb_integration"
+required-features = ["mi"]
 
 [dev-dependencies]
+serde_yaml = { workspace = true }
 tempfile = { workspace = true }

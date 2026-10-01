@@ -7,7 +7,9 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sven_config::Schema;
 use sven_workspace::SharedKnowledge;
 use tracing::debug;
 
@@ -17,6 +19,40 @@ use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
 use crate::knowledge::{list_knowledge::ListKnowledgeTool, search_knowledge::SearchKnowledgeTool};
+
+/// The `tools.memory` section of the configuration file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryConfig {
+    /// Path to the memory JSON file (default: ~/.config/sven/memory.json)
+    pub memory_file: Option<String>,
+}
+
+impl MemoryConfig {
+    /// The keys of the `tools.memory` section.
+    ///
+    /// `learning` is accepted for the files that already carry it, and
+    /// reported: sven does not train models, so nothing acts on it.
+    #[must_use]
+    pub fn schema() -> Schema {
+        Schema::fields([
+            ("memory_file", Schema::value()),
+            (
+                "learning",
+                Schema::ignored(
+                    "sven does not train models; an application that learns from sven's work \
+                     configures that itself",
+                ),
+            ),
+        ])
+    }
+
+    /// The `memory` tool, keeping its file where this section says.
+    #[must_use]
+    pub fn tool(&self, knowledge: SharedKnowledge) -> MemoryTool {
+        MemoryTool::new(self.memory_file.clone(), knowledge)
+    }
+}
 
 /// Compound memory tool - persistent KV store and project knowledge in one.
 pub struct MemoryTool {

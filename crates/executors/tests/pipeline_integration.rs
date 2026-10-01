@@ -661,7 +661,7 @@ async fn long_thread_triggers_compaction_before_the_next_turn() {
         threshold: 0.02,
         overhead_reserve: 0.0,
         keep_recent: 2,
-        strategy: sven_config::CompactionStrategy::Structured,
+        strategy: sven_turn::CompactionStrategy::Structured,
     });
     let executor = CompositeExecutorBuilder::default()
         .with_turn(turn_exec)
@@ -834,7 +834,7 @@ async fn compaction_falls_back_to_emergency_when_the_summarization_call_fails() 
         threshold: 0.02,
         overhead_reserve: 0.0,
         keep_recent: 2,
-        strategy: sven_config::CompactionStrategy::Structured,
+        strategy: sven_turn::CompactionStrategy::Structured,
     });
     let executor = CompositeExecutorBuilder::default()
         .with_turn(turn_exec)

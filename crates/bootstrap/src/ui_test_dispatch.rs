@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use sven_config::Config;
+use crate::Config;
 use sven_executors::ToolExecutor;
 use sven_hsm::Event;
 use sven_machines::machines::ui_test::{ask_user_binding, ERROR_FACT, RESULTS_FACT};
@@ -375,8 +375,8 @@ fn extract_vars(params: &Value) -> BTreeMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Config;
     use async_trait::async_trait;
-    use sven_config::Config;
     use sven_model_mock::ScriptedMockProvider;
     use sven_tool_api::policy::ApprovalPolicy;
     use sven_tool_api::{ToolCall, ToolOutput};

@@ -3,16 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Runtime context for an agent session.
 //!
-//! This is separate from [`sven_config::AgentConfig`], which holds only
-//! config-file fields.  [`AgentRuntimeContext`] carries values detected or
+//! This is separate from the agent settings (`sven_bootstrap::AgentConfig`),
+//! which hold only config-file fields.  [`AgentRuntimeContext`] carries values detected or
 //! specified at runtime (project root, git/CI context, prompt overrides,
 //! discovered skills).
 
 use std::path::PathBuf;
 
-use sven_config::AgentMode;
 use sven_model::Message;
 use sven_tool_api::PathScope;
+use sven_vocab::AgentMode;
 use sven_workspace::{SharedAgents, SharedKnowledge, SharedSkills};
 
 use crate::prompts::{system_prompt, PromptContext};

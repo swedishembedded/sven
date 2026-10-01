@@ -25,7 +25,7 @@
 //! bloating the interactive binaries.
 
 use serde::{Deserialize, Serialize};
-use sven_config::AgentMode;
+use sven_vocab::AgentMode;
 use uuid::Uuid;
 
 // ── Operator → Agent commands ─────────────────────────────────────────────────

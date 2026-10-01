@@ -14,7 +14,8 @@ sven-machines        = { path = "../machines" }
 sven-tool-api    = { path = "../tool-api" }
 sven-hsm         = { path = "../hsm" }
 sven-bootstrap   = { path = "../bootstrap" }
-sven-config      = { path = "../config" }
+sven-vocab       = { path = "../vocab" }
+sven-frontend    = { path = "../frontend" }
 sven-model       = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
 anyhow           = { workspace = true }

@@ -11,7 +11,7 @@ catalog and the mock providers.)
 ## Architecture overview
 
 ```
-sven_config::ModelConfig
+sven_model_drivers::ModelConfig
         │
         ▼
 sven_model_drivers::from_config()  ← single dispatch function
@@ -177,7 +177,7 @@ and wraps the response in a fake stream for API compatibility.
 
 ## Configuration schema
 
-All model settings live in `sven_config::ModelConfig`:
+All model settings live in `sven_model_drivers::ModelConfig`:
 
 ```yaml
 model:

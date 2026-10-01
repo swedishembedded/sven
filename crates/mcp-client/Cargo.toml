@@ -24,3 +24,6 @@ url          = "2.5"
 rand         = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 base64       = "0.22"
 webbrowser   = "1"
+
+[dev-dependencies]
+serde_yaml = { workspace = true }

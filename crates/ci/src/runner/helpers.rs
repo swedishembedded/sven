@@ -5,9 +5,9 @@
 //! agent mode parsing, cache key sanitisation, and label normalisation.
 
 use anyhow::Context;
-use sven_config::AgentMode;
 use sven_model::Message;
 use sven_session_store::serialize_conversation_turn;
+use sven_vocab::AgentMode;
 
 use crate::output::write_stderr;
 

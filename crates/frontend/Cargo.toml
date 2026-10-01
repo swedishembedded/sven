@@ -2,7 +2,7 @@
 name    = "sven-frontend"
 version.workspace = true
 edition = "2021"
-description = "Shared agent-wiring layer for sven frontends (TUI)"
+description = "Shared agent-wiring layer for sven frontends: the session controller the TUI, headless and ACP surfaces open their sessions through, and the whole configuration file"
 license = "Apache-2.0"
 
 [dependencies]
@@ -16,7 +16,9 @@ sven-tool-api    = { path = "../tool-api" }
 sven-tool-registry = { path = "../tool-registry" }
 sven-tools-agent = { path = "../tools-agent" }
 sven-machines        = { path = "../machines" }
-sven-bootstrap   = { path = "../bootstrap" }
+sven-vocab       = { path = "../vocab" }
+sven-hsm         = { path = "../hsm" }
+sven-bootstrap   = { path = "../bootstrap", default-features = false }
 sven-mcp-client  = { path = "../mcp-client" }
 sven-workspace     = { path = "../workspace" }
 # Transport-agnostic control protocol + kernel mappings (no transport deps).
@@ -38,6 +40,7 @@ tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tungstenite       = { version = "0.24", features = ["rustls-tls-native-roots"] }
 
 [dev-dependencies]
+tracing-subscriber = { workspace = true }
 tempfile = { workspace = true }
 async-trait = { workspace = true }
 sven-model-mock = { path = "../model-mock" }

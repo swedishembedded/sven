@@ -23,8 +23,9 @@ pub use completion::{CompletionItem, CompletionManager};
 pub use parser::{parse, ParsedCommand};
 pub use registry::CommandRegistry;
 
-use std::sync::Arc;
-use sven_config::{AgentMode, Config};
+use sven_mcp_client::McpServers;
+use sven_model_drivers::Providers;
+use sven_vocab::AgentMode;
 
 // ── Inspector kind ────────────────────────────────────────────────────────────
 
@@ -59,8 +60,11 @@ impl InspectorKind {
 // ── Context ───────────────────────────────────────────────────────────────────
 
 /// Context passed to commands when generating completions.
-pub struct CommandContext {
-    pub config: Arc<Config>,
+pub struct CommandContext<'a> {
+    /// The named providers of the `providers:` section.
+    pub providers: &'a Providers,
+    /// The servers of the `mcp_servers:` section.
+    pub mcp_servers: &'a McpServers,
     pub current_model_provider: String,
     pub current_model_name: String,
 }

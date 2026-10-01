@@ -23,7 +23,7 @@ pub use context::{
     ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore, SubQueryRunner,
 };
 pub use knowledge::{ListKnowledgeTool, SearchKnowledgeTool};
-pub use memory::MemoryTool;
+pub use memory::{MemoryConfig, MemoryTool};
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
 //

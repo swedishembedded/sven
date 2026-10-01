@@ -27,8 +27,8 @@ use anyhow::Context;
 use tokio::sync::mpsc;
 
 use atif::{TraceStep, Trajectory};
+use sven_bootstrap::Config;
 use sven_bootstrap::RuntimeContext;
-use sven_config::{AgentMode, Config};
 use sven_machines::AgentEvent;
 use sven_model::{ContentPart, Message, MessageContent, Role};
 use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
@@ -36,6 +36,7 @@ use sven_session_store::{
     apply_outcome_to_trajectory, parse_conversation, parse_frontmatter, parse_workflow,
     OutcomeFold, RunConclusion, SessionOutcome, Step, StepQueue,
 };
+use sven_vocab::AgentMode;
 use sven_workspace::resolve_auto_log_path;
 
 use crate::kernel_agent::KernelAgent;
@@ -437,7 +438,7 @@ impl CiRunner {
                 .cloned()
         });
         let model_cfg = if let Some(ref name) = model_override {
-            sven_model_drivers::resolve_model_from_config(&self.config, name)
+            self.config.resolve_model(name)
         } else {
             self.config.model.clone()
         };
@@ -572,8 +573,8 @@ impl CiRunner {
         let initial_mode = opts.mode;
 
         // ── Build the kernel-backed agent ────────────────────────────────────
-        // Each turn runs on a freshly-built HSM kernel session (via
-        // RuntimeBuilder) seeded with the accumulated history, so per-step mode
+        // Each turn runs on a freshly-built HSM kernel session (opened through
+        // the frontend's SessionController) seeded with the accumulated history, so per-step mode
         // and model overrides are honoured while the streaming AgentEvent
         // contract this runner consumes stays identical.
         let mut agent = KernelAgent::new(
@@ -826,8 +827,7 @@ impl CiRunner {
                 (None, None) => fm_mode_model,
             };
             if let Some(model_str) = &effective_model_str {
-                let step_model_cfg =
-                    sven_model_drivers::resolve_model_from_config(&self.config, model_str);
+                let step_model_cfg = self.config.resolve_model(model_str);
                 // Validate the override builds before switching; on failure keep
                 // the current model (mirrors the legacy runner's warn-and-continue).
                 match sven_model_drivers::from_config(&step_model_cfg) {

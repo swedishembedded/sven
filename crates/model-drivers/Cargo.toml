@@ -33,6 +33,7 @@ sven-audio = { path = "../sven-audio", optional = true }
 
 [dev-dependencies]
 base64 = { workspace = true }
+serde_yaml = { workspace = true }
 # `p2p` lets the D-Bus provider test serve a fake Brain1.Manager over a plain
 # UnixStream pair, with no dbus-daemon and no well-known name involved.
 zbus = { version = "5", default-features = false, features = ["tokio", "p2p"] }

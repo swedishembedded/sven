@@ -4,8 +4,8 @@
 //! The small agent API the headless runner ([`CiRunner`](crate::CiRunner))
 //! depends on, backed by the HSM kernel.
 //!
-//! [`KernelAgent`] runs each turn on the HSM kernel built by
-//! [`RuntimeBuilder`] and exposes a `submit → AgentEvent stream` contract to
+//! [`KernelAgent`] runs each turn on an HSM kernel session opened through the
+//! frontend's [`SessionController`] and exposes a `submit → AgentEvent stream` contract to
 //! the multi-step orchestration, output formatting, JSONL persistence,
 //! caching and artifact logic above it.
 //!
@@ -22,13 +22,15 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use tokio::sync::mpsc;
 
-use sven_bootstrap::{build_tool_registry, RuntimeBuilder, RuntimeContext, ToolSetProfile};
-use sven_config::{AgentMode, Config, ModelConfig};
-use sven_hsm::{Event, UiEvent};
+use sven_bootstrap::Config;
+use sven_bootstrap::{build_tool_registry, RuntimeContext, ToolSetProfile};
+use sven_frontend::{SessionController, SessionOptions, SessionSpec};
 use sven_machines::AgentEvent;
 use sven_model::Message;
+use sven_model_drivers::ModelConfig;
 use sven_session_model::reduce_history;
 use sven_tool_registry::ToolRegistry;
+use sven_vocab::AgentMode;
 
 /// The kernel-backed agent the headless runner drives.
 ///
@@ -40,20 +42,10 @@ use sven_tool_registry::ToolRegistry;
 pub struct KernelAgent {
     config: Arc<Config>,
     runtime_ctx: RuntimeContext,
-    /// Current kernel mode string (`"agent"`, `"chat"`, `"sdlc"`, …) — selects
-    /// which machine runs (`kernel_mode`: `Plan`/`Research`/`Agent` all drive
-    /// the same "agent"-string reactive machine).
-    mode: String,
-    /// The original interactive [`AgentMode`], kept alongside the derived
-    /// `mode` string and passed to `RuntimeBuilder::with_agent_mode` on every
-    /// rebuilt session. `Plan`/`Research` collapse to the SAME kernel-mode
-    /// string as `Agent` (see `kernel_mode`) since they drive the same
-    /// machine; the read-only permission policy that's the entire point of
-    /// those modes is selected by `with_agent_mode`, not by `mode`. Without
-    /// this field, `--mode plan` silently ran with full write permissions in
-    /// every headless run (`CiRunner`/`KernelAgent` is what `--output-trace`
-    /// always routes through) -- confirmed against a real packaged build
-    /// before this fix.
+    /// The interactive [`AgentMode`] each turn's session runs as. It selects
+    /// the machine (`Plan`/`Research`/`Agent` all drive the same reactive
+    /// one) and, what is the entire point of `Plan` and `Research`, the
+    /// permissions: a read-only mode forbids writing at the kernel gate.
     agent_mode: AgentMode,
     /// Current model config for the next turn (per-step overridable).
     model_cfg: ModelConfig,
@@ -76,7 +68,6 @@ impl KernelAgent {
         Self {
             config,
             runtime_ctx,
-            mode: kernel_mode(initial_mode).to_string(),
             agent_mode: initial_mode,
             model_cfg,
             history: Vec::new(),
@@ -86,7 +77,6 @@ impl KernelAgent {
 
     /// Override the mode used for subsequent turns (per-step `mode=` option).
     pub fn set_mode(&mut self, mode: AgentMode) {
-        self.mode = kernel_mode(mode).to_string();
         self.agent_mode = mode;
     }
 
@@ -122,7 +112,7 @@ impl KernelAgent {
             todos,
             buffer_store,
         };
-        let config = sven_config::Config {
+        let config = Config {
             model: self.model_cfg.clone(),
             ..(*self.config).clone()
         };
@@ -137,6 +127,25 @@ impl KernelAgent {
         Ok(Arc::new(reg))
     }
 
+    /// Opens a fresh kernel session for the next turn, seeded with `history`.
+    /// Nobody is at a headless run, so its gates are answered at once, and an
+    /// MCP server that wants a browser sign-in is not given one.
+    async fn open_session(
+        &self,
+        history: Vec<Message>,
+    ) -> anyhow::Result<(SessionController, mpsc::Receiver<AgentEvent>)> {
+        let (events, events_rx) = mpsc::channel(EVENT_CAPACITY);
+        let mut options =
+            SessionOptions::new(Arc::clone(&self.config), self.runtime_ctx.clone(), events);
+        options.allow_interactive_oauth = false;
+        options.wait_for_mcp_tools_ms = Some(self.wait_for_mcp_ms);
+        let spec = SessionSpec::for_mode(self.agent_mode, self.model_cfg.clone());
+        let (session, _mcp_events) = SessionController::open(options, spec, history)
+            .await
+            .context("failed to build kernel session")?;
+        Ok((session, events_rx))
+    }
+
     /// Run one turn on a freshly-built kernel session seeded with the
     /// accumulated history, streaming each mapped [`AgentEvent`] into `tx`.
     ///
@@ -144,41 +153,21 @@ impl KernelAgent {
     /// to the internal history so the next turn sees the full context — exactly
     /// as the legacy `Agent` maintained its session across `submit` calls.
     pub async fn submit(&mut self, text: &str, tx: mpsc::Sender<AgentEvent>) -> anyhow::Result<()> {
-        let ctx = self.runtime_ctx.clone();
-        let bundle = RuntimeBuilder::new(self.config.clone(), self.mode.clone())
-            .with_runtime_context(ctx)
-            .with_agent_mode(self.agent_mode)
-            .with_model_config(self.model_cfg.clone())
-            .with_allow_interactive_oauth(false)
-            .with_wait_for_mcp_tools(self.wait_for_mcp_ms)
-            .with_initial_history(self.history.clone())
-            .build_session()
-            .await
-            .context("failed to build kernel session")?;
-
-        // Nobody is at a headless run: its gates are answered at once.
-        tokio::spawn(bundle.channels.answer_unattended());
-
-        let sink = bundle.handle.sink();
-        let mut obs_rx = bundle.handle.subscribe_observations();
+        let (session, mut events_rx) = self.open_session(self.history.clone()).await?;
 
         // Record the user turn in the accumulated history before posting.
         self.history.push(Message::user(text));
 
-        if !sink
-            .emit(Event::UserMessage {
-                text: text.to_string(),
-            })
+        session
+            .post(text.to_string())
             .await
-        {
-            anyhow::bail!("kernel event queue closed before UserMessage was delivered");
-        }
+            .map_err(|e| anyhow::anyhow!("{e} before UserMessage was delivered"))?;
 
-        Self::drain_turn(&mut obs_rx, &mut self.history, &tx).await;
+        Self::drain_turn(&mut events_rx, &mut self.history, &tx).await;
 
         // Keep the runtime alive until the turn is fully drained so the audit
         // log flushes; dropping it shuts the session down.
-        bundle.runtime.detach();
+        session.detach();
         Ok(())
     }
 
@@ -190,9 +179,9 @@ impl KernelAgent {
     /// adding one is a cross-cutting change (new `Event` variant, every
     /// machine/executor that reads it) out of scope for a single attach
     /// flow. Instead this seeds the parts message directly into the fresh
-    /// session's conversation thread via `with_initial_history` (which
-    /// accepts full `Message`s, parts included) and then emits
-    /// `Event::UserMessage` with an *empty* text: `TurnExecutor` only
+    /// session's conversation thread via the initial history (which
+    /// accepts full `Message`s, parts included) and then posts a user message
+    /// with an *empty* text: `TurnExecutor` only
     /// appends its `instruction` to the thread `if !req.instruction.is_empty()`
     /// (`crates/executors/src/turn.rs`), so the empty text drives the turn
     /// without appending a second, duplicate plain-text message.
@@ -205,41 +194,21 @@ impl KernelAgent {
         let mut seeded_history = self.history.clone();
         seeded_history.push(user_msg.clone());
 
-        let ctx = self.runtime_ctx.clone();
-        let bundle = RuntimeBuilder::new(self.config.clone(), self.mode.clone())
-            .with_runtime_context(ctx)
-            .with_agent_mode(self.agent_mode)
-            .with_model_config(self.model_cfg.clone())
-            .with_allow_interactive_oauth(false)
-            .with_wait_for_mcp_tools(self.wait_for_mcp_ms)
-            .with_initial_history(seeded_history)
-            .build_session()
-            .await
-            .context("failed to build kernel session")?;
-
-        // Nobody is at a headless run: its gates are answered at once.
-        tokio::spawn(bundle.channels.answer_unattended());
-
-        let sink = bundle.handle.sink();
-        let mut obs_rx = bundle.handle.subscribe_observations();
+        let (session, mut events_rx) = self.open_session(seeded_history).await?;
 
         // Record the user turn in the accumulated history before posting.
         self.history.push(user_msg);
 
-        if !sink
-            .emit(Event::UserMessage {
-                text: String::new(),
-            })
+        session
+            .post(String::new())
             .await
-        {
-            anyhow::bail!("kernel event queue closed before UserMessage was delivered");
-        }
+            .map_err(|e| anyhow::anyhow!("{e} before UserMessage was delivered"))?;
 
-        Self::drain_turn(&mut obs_rx, &mut self.history, &tx).await;
+        Self::drain_turn(&mut events_rx, &mut self.history, &tx).await;
 
         // Keep the runtime alive until the turn is fully drained so the audit
         // log flushes; dropping it shuts the session down.
-        bundle.runtime.detach();
+        session.detach();
         Ok(())
     }
 
@@ -254,42 +223,26 @@ impl KernelAgent {
         Ok(Arc::from(model))
     }
 
-    /// Drain one turn's kernel observation stream into `tx`, growing
-    /// `history` via [`reduce_history`] as events arrive, until a terminal
-    /// event ([`UiEvent::TurnComplete`]/[`UiEvent::Aborted`]) or the channel
+    /// Drain one turn's event stream into `tx`, growing `history` via
+    /// [`reduce_history`] as events arrive, until a terminal event
+    /// ([`AgentEvent::TurnComplete`]/[`AgentEvent::Aborted`]) or the stream
     /// closes. Shared by [`Self::submit`] and [`Self::submit_with_parts`].
     async fn drain_turn(
-        obs_rx: &mut tokio::sync::broadcast::Receiver<UiEvent>,
+        events_rx: &mut mpsc::Receiver<AgentEvent>,
         history: &mut Vec<Message>,
         tx: &mpsc::Sender<AgentEvent>,
     ) {
-        loop {
-            match obs_rx.recv().await {
-                Ok(ev) => {
-                    let terminal = matches!(ev, UiEvent::TurnComplete | UiEvent::Aborted { .. });
-                    // Grow the internal history so the next turn is seeded
-                    // with this turn's output (mirrors the legacy session).
-                    reduce_history(&ev, history);
-                    if tx.send(ev).await.is_err() {
-                        break;
-                    }
-                    if terminal {
-                        break;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+        while let Some(ev) = events_rx.recv().await {
+            let terminal = matches!(ev, AgentEvent::TurnComplete | AgentEvent::Aborted { .. });
+            // Grow the internal history so the next turn is seeded
+            // with this turn's output (mirrors the legacy session).
+            reduce_history(&ev, history);
+            if tx.send(ev).await.is_err() || terminal {
+                break;
             }
         }
     }
 }
 
-/// Map a caller [`AgentMode`] to a registered kernel mode. Coding-family modes
-/// (agent/plan/research) all resolve to the reactive `agent` machine.
-fn kernel_mode(mode: AgentMode) -> &'static str {
-    match mode {
-        AgentMode::Chat => "chat",
-        AgentMode::Sdlc => "sdlc",
-        AgentMode::Agent | AgentMode::Plan | AgentMode::Research => "agent",
-    }
-}
+/// Capacity of the channel a turn's events travel on.
+const EVENT_CAPACITY: usize = 256;

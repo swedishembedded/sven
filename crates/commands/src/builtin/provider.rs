@@ -30,11 +30,10 @@ impl SlashCommand for ProviderCommand {
 
         let mut items: Vec<CompletionItem> = Vec::new();
 
-        let mut provider_names: Vec<&str> =
-            ctx.config.providers.keys().map(|s| s.as_str()).collect();
+        let mut provider_names: Vec<&str> = ctx.providers.keys().map(|s| s.as_str()).collect();
         provider_names.sort_unstable();
         for name in provider_names {
-            let cfg = &ctx.config.providers[name];
+            let cfg = &ctx.providers[name];
             let model_count = cfg.models.len();
             let display = format!("{} (driver: {}  models: {})", name, cfg.name, model_count);
             items.push(CompletionItem::with_desc(

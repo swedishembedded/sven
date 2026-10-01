@@ -5,9 +5,13 @@
 //! OpenAI/Anthropic/Google/AWS Bedrock/Cohere/D-Bus clients plus the shared
 //! OpenAI-compatible wire format that every other provider in
 //! `sven_model::registry` speaks) and the `from_config`/`from_config_probed`
-//! factory that selects and constructs one from a `sven_config::ModelConfig`,
-//! plus the resolution of a user-supplied model string into that
-//! configuration ([`ModelResolver`], [`resolve_model_from_config`]).
+//! factory that selects and constructs one from a [`ModelConfig`], plus the
+//! resolution of a user-supplied model string into that configuration
+//! ([`ModelResolver`], [`resolve_model_from_config`]).
+//!
+//! The provider section of the configuration file - [`ModelConfig`],
+//! [`ProviderEntry`] and how an unconfigured model is detected - is defined
+//! here too, in [`config`], because this is the crate that reads it.
 //!
 //! This is where `reqwest`, `aws-sdk`-style SigV4 signing, and every
 //! provider's own dependency closure live, so crates that only need the
@@ -17,6 +21,7 @@ mod anthropic;
 mod api_key;
 mod aws;
 mod cohere;
+pub mod config;
 pub mod dbus;
 mod google;
 mod openai;
@@ -24,6 +29,7 @@ pub(crate) mod openai_compat;
 mod resolve;
 
 pub use anthropic::AnthropicProvider;
+pub use config::{providers_schema, ModelConfig, ModelParams, ProviderEntry, Providers};
 pub use openai::OpenAiProvider;
 pub use resolve::{resolve_model_cfg, resolve_model_from_config, ModelResolver};
 
@@ -34,7 +40,6 @@ use futures::Stream;
 use openai_compat::{AuthStyle, OpenAICompatProvider};
 use std::pin::Pin;
 use std::time::Duration;
-use sven_config::ModelConfig;
 use sven_model::{catalog, registry, ModelProvider};
 use sven_model_mock::{MockProvider, YamlMockProvider};
 

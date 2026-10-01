@@ -1,0 +1,18 @@
+# A total context window smaller than its parts earns a warning, for the
+# active model and for every model a provider lists.
+model:
+  provider: openai
+  name: gpt-4o
+  max_tokens: 1000
+  max_input_tokens: 900
+  max_output_tokens: 200
+providers:
+  small:
+    name: openai
+    max_tokens: 500
+    models:
+      a:
+        max_output_tokens: 600
+      b:
+        max_tokens: 100
+        max_input_tokens: 200

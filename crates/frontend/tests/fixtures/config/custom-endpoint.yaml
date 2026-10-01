@@ -1,0 +1,10 @@
+# docs/providers.md: any OpenAI-compatible endpoint.
+model:
+  provider: openai
+  name: my-custom-model
+  base_url: https://my-custom-api.example.com/v1
+  api_key_env: MY_API_KEY
+  max_tokens: 128000
+  max_output_tokens: 8192
+  temperature: 0.0
+  input_modalities: [text]

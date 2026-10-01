@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `/mode` command - switch the agent mode for the next queued message.
 
-use sven_config::AgentMode;
+use sven_vocab::AgentMode;
 
 use crate::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
@@ -111,10 +111,11 @@ mod tests {
     #[test]
     fn complete_returns_all_three_modes_when_filter_is_empty() {
         use crate::CommandContext;
-        use std::sync::Arc;
-        use sven_config::Config;
+        use sven_mcp_client::McpServers;
+        use sven_model_drivers::Providers;
         let ctx = CommandContext {
-            config: Arc::new(Config::default()),
+            providers: &Providers::new(),
+            mcp_servers: &McpServers::new(),
             current_model_provider: "openai".into(),
             current_model_name: "gpt-4o".into(),
         };
@@ -128,10 +129,11 @@ mod tests {
     #[test]
     fn complete_filters_by_prefix() {
         use crate::CommandContext;
-        use std::sync::Arc;
-        use sven_config::Config;
+        use sven_mcp_client::McpServers;
+        use sven_model_drivers::Providers;
         let ctx = CommandContext {
-            config: Arc::new(Config::default()),
+            providers: &Providers::new(),
+            mcp_servers: &McpServers::new(),
             current_model_provider: "openai".into(),
             current_model_name: "gpt-4o".into(),
         };

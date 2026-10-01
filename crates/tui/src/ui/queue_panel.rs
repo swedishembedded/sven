@@ -11,7 +11,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{List, ListItem, ListState, Widget},
 };
-use sven_config::AgentMode;
+use sven_vocab::AgentMode;
 
 use super::theme::pane_block;
 use super::width_utils::{display_width, truncate_to_width};

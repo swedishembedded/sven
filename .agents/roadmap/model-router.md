@@ -276,7 +276,7 @@ real `brain serve --dbus` on this machine generating an image with
 
 ### Phase 2 — compact tools, roles, sub-agent routing (sven)
 
-The three tools. Model roles in `sven-config`.
+The three tools. Model roles in `sven-model-drivers`' provider section.
 
 `TaskTool` used to drop a persona's `model:` outright; it now resolves it,
 with `effective_model` stating the precedence (explicit argument, persona,

@@ -1,0 +1,213 @@
+# docs/05-configuration.md: the annotated reference configuration, verbatim.
+
+# ── Model ──────────────────────────────────────────────────────────────────
+
+model:
+  # Provider to use. Supported values: "openai", "anthropic", "mock"
+  provider: openai
+
+  # Model name forwarded to the provider.
+  name: gpt-4o
+
+  # Environment variable that holds the API key.
+  # The variable is read at runtime so it never needs to be in this file.
+  api_key_env: OPENAI_API_KEY
+
+  # Alternatively, embed the key directly (not recommended for shared files).
+  # api_key: sk-...
+
+  # Override the provider's API base URL.
+  # Useful for local proxies (e.g. LiteLLM) or self-hosted models.
+  # base_url: http://localhost:4000/v1
+
+  # Maximum tokens to request in a single response.
+  # When unset, the model's max output tokens from the built-in catalog is used.
+  # max_tokens: 4096
+
+  # Sampling temperature (0.0 = deterministic, 2.0 = very random).
+  temperature: 0.2
+
+  # Path to a YAML file of scripted mock responses (provider: "mock" only).
+  # Can also be set with the SVEN_MOCK_RESPONSES environment variable.
+  # mock_responses_file: /path/to/responses.yaml
+
+  # ── Anthropic prompt caching ─────────────────────────────────────────────
+  #
+  # Sven uses all four of Anthropic's available cache breakpoints, making it
+  # the most cache-efficient agent available:
+  #
+  #   Breakpoint 1 (tools)        - tool definitions, stable per session
+  #   Breakpoint 2 (system)       - system prompt, stable per session
+  #   Breakpoint 3 (images/tools) - oldest image or large tool result in history
+  #   Breakpoint 4 (conversation) - automatic, advances each turn
+  #
+  # Reading from cache costs 10% of base input-token price; writing costs 125%.
+  # For a 50-turn session caching 10,000 tokens: ~88% savings on those tokens.
+
+  # Cache the stable system prompt (Anthropic only).  DEFAULT: true
+  # Saves ~90% on system prompt tokens after the first request.
+  # Charges a one-time 25% write premium, then 10% per read.
+  # cache_system_prompt: true
+
+  # Cache tool definitions (Anthropic only).  DEFAULT: true
+  # All tool definitions are cached as a prefix when true.
+  # Ideal for saving 5,000-10,000+ tokens per request when many tools are in use.
+  # cache_tools: true
+
+  # Enable automatic conversation caching (Anthropic only).  DEFAULT: true
+  # Adds a top-level cache_control marker so Anthropic automatically caches
+  # conversation history up to the last message.  The cache breakpoint advances
+  # with each turn - no manual management required.
+  # Delivers the largest savings for multi-turn agent sessions.
+  # cache_conversation: true
+
+  # Cache image content blocks in conversation history (Anthropic only).  DEFAULT: true
+  # Images cost hundreds of tokens each, every single turn.  Marking them
+  # with cache_control once reduces that cost by ~90% for all following turns.
+  # The oldest images are cached first; the budget is bounded to 4 total slots.
+  # cache_images: true
+
+  # Cache large tool results in conversation history (Anthropic only).  DEFAULT: true
+  # File reads, command output, and fetched documents that remain in context
+  # for many turns are cached once their content exceeds 4096 characters.
+  # Saves ~90% on those tokens every subsequent turn.
+  # cache_tool_results: true
+
+  # Use 1-hour cache TTL instead of the default 5-minute window.  DEFAULT: false
+  # Applies to system prompt, tool definitions, images, and tool results when
+  # their respective caching flags are enabled.  Sends the
+  # extended-cache-ttl-2025-04-11 beta header automatically.  Best for
+  # workflows where requests are spaced more than 5 minutes apart (e.g. CI).
+  # extended_cache_time: false
+
+
+# ── Agent ──────────────────────────────────────────────────────────────────
+
+agent:
+  # Default mode when --mode is not given on the command line.
+  # Values: "research", "plan", "agent"
+  default_mode: agent
+
+  # Maximum number of tool-call rounds before sven stops and reports.
+  # When the limit is reached, the model gets one final tool-free turn to
+  # summarise progress before the turn ends.  Increase for very long tasks.
+  max_tool_rounds: 200
+
+  # Fraction of the input budget at which proactive compaction triggers.
+  # The input budget is context_window − 256 (a minimal output reserve; the
+  # output limit itself is scaled per-request to whatever room the prompt
+  # leaves), so this threshold is applied against the usable input space
+  # rather than the raw model window.
+  # 0.85 means compaction fires when 85% of the input budget is consumed.
+  compaction_threshold: 0.85
+
+  # Number of recent non-system messages to keep verbatim after compaction.
+  # The oldest messages beyond this tail are summarised. Default: 6.
+  # Set to 0 to summarise the full history (original behaviour).
+  compaction_keep_recent: 6
+
+  # Compaction checkpoint format.
+  # "structured" (default): produces a typed Markdown checkpoint with fixed
+  #   sections (Active Task, Key Decisions, Files & Artifacts, Constraints,
+  #   Pending Items, Session Narrative). Easier for the model to navigate.
+  # "narrative": uses the original free-form summarisation prompt.
+  compaction_strategy: structured
+
+  # Maximum tokens allowed for a single tool result before it is
+  # deterministically truncated before entering the session.
+  # Truncation is content-aware:
+  #   shell                         : keeps first 60 + last 40 lines
+  #   grep                          : keeps leading matches
+  #   read_file                      : keeps head + tail lines
+  #   everything else                : hard-truncates at the character limit
+  # A truncation notice is always appended so the model knows more exists.
+  # Set to 0 to disable per-result truncation entirely.
+  tool_result_token_cap: 4000
+
+  # Fraction of the context window reserved for tool schemas, the dynamic
+  # context block (git / CI info), and measurement error in the token
+  # approximation. Reduces the effective compaction trigger threshold.
+  #
+  # Example: compaction_threshold=0.85, compaction_overhead_reserve=0.10
+  # → compaction fires when calibrated session tokens reach 75% of the
+  # input budget (effectively threshold − reserve = 0.75).
+  compaction_overhead_reserve: 0.10
+
+  # Override the system prompt sent to the model.
+  # Leave unset to use the built-in prompt.
+  # system_prompt: "You are a careful coding assistant..."
+
+
+# ── Tools ──────────────────────────────────────────────────────────────────
+
+tools:
+  # Under --approval manual, shell commands matching these glob patterns run
+  # without asking for confirmation. (Under the default auto approval nothing
+  # asks anyway.)
+  auto_approve_patterns:
+    - "cat *"
+    - "ls *"
+    - "find *"
+    - "rg *"
+    - "grep *"
+
+  # Shell commands matching these patterns are always refused, whatever the
+  # approval mode.
+  deny_patterns:
+    - "rm -rf /*"
+    - "dd if=*"
+
+  # Timeout for a single tool call, in seconds.
+  timeout_secs: 30
+
+
+# ── Web tools ──────────────────────────────────────────────────────────────
+
+  web:
+    # Maximum number of characters fetched from a URL.
+    fetch_max_chars: 50000
+
+    search:
+      # API key for the Brave Search backend.
+      # Can also be set with BRAVE_API_KEY environment variable.
+      # api_key: BSA...
+
+
+# ── Memory ─────────────────────────────────────────────────────────────────
+
+  memory:
+    # Path to the persistent memory JSON file.
+    # Defaults to ~/.config/sven/memory.json
+    # memory_file: /path/to/memory.json
+
+
+# ── Lints ──────────────────────────────────────────────────────────────────
+
+  lints:
+    # Override the lint command for Rust projects.
+    # Default: cargo clippy --message-format json
+    # rust_command: cargo clippy --message-format json
+
+    # Override the lint command for TypeScript/JavaScript projects.
+    # typescript_command: npx eslint --format json .
+
+    # Override the lint command for Python projects.
+    # python_command: ruff check --output-format json .
+
+
+# ── TUI appearance ─────────────────────────────────────────────────────────
+
+tui:
+  # Colour theme. Values: "dark", "light", "solarized"
+  theme: dark
+
+  # Show line numbers inside code blocks.
+  code_line_numbers: false
+
+  # Column at which markdown text wraps (0 = use terminal width).
+  wrap_width: 0
+
+  # Use plain ASCII characters instead of Unicode box-drawing characters.
+  # Enable this if your terminal font renders Unicode as gibberish.
+  # Can also be forced with SVEN_ASCII_BORDERS=1 environment variable.
+  ascii_borders: false

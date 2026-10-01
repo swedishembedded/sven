@@ -4,8 +4,6 @@
 //! Test-only `App` constructors and state-injection helpers, shared by the
 //! `#[cfg(test)]` suites in `submit.rs` and elsewhere in the crate.
 
-use std::sync::Arc;
-
 use crate::{
     agent::AgentRequest,
     app::{ui_state::FocusPane, App, AppOptions},
@@ -15,9 +13,8 @@ use crate::{
 #[cfg(test)]
 impl App {
     pub fn for_testing() -> (Self, tokio::sync::mpsc::Receiver<AgentRequest>) {
-        let config = Arc::new(sven_config::Config::default());
         let opts = AppOptions {
-            mode: sven_config::AgentMode::Agent,
+            mode: sven_vocab::AgentMode::Agent,
             initial_prompt: None,
             no_nvim: true,
             model_override: None,
@@ -26,10 +23,10 @@ impl App {
             initial_queue: Vec::new(),
             node_backend: None,
             open_resume_picker: false,
-            approval: sven_config::ApprovalMode::Auto,
+            approval: sven_vocab::ApprovalMode::Auto,
         };
         let (tx, rx) = tokio::sync::mpsc::channel(64);
-        let mut app = Self::new(config, opts);
+        let mut app = Self::new(sven_frontend::Settings::default(), opts);
         app.agent.tx = Some(tx);
         (app, rx)
     }

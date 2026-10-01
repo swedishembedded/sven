@@ -59,7 +59,8 @@ impl App {
     pub(crate) async fn submit_user_input(&mut self, text: &str) -> bool {
         if text.starts_with('/') {
             let ctx = CommandContext {
-                config: self.config.clone(),
+                providers: &self.config.providers,
+                mcp_servers: &self.config.mcp_servers,
                 current_model_provider: self.session.model_cfg.provider.clone(),
                 current_model_name: self.session.model_cfg.name.clone(),
             };
@@ -334,8 +335,7 @@ impl App {
                     // the remote as a `SetModel` so a remote `/model` re-points
                     // the server-side provider (the node still owns `/mode`).
                     if let Some(model_str) = result.model_override {
-                        let resolved =
-                            sven_model_drivers::resolve_model_from_config(&self.config, &model_str);
+                        let resolved = self.config.resolve_model(&model_str);
                         self.session.stage_model(resolved);
                     }
                     if !self.is_node_proxy {
@@ -387,7 +387,8 @@ impl App {
     /// Handle a slash command from the Neovim buffer (apply immediately, no staging).
     pub(crate) async fn submit_nvim_command(&mut self, text: &str) -> bool {
         let ctx = CommandContext {
-            config: self.config.clone(),
+            providers: &self.config.providers,
+            mcp_servers: &self.config.mcp_servers,
             current_model_provider: self.session.model_cfg.provider.clone(),
             current_model_name: self.session.model_cfg.name.clone(),
         };
@@ -397,8 +398,7 @@ impl App {
             }
             if !self.is_node_proxy {
                 if let Some(model_str) = result.model_override {
-                    let resolved =
-                        sven_model_drivers::resolve_model_from_config(&self.config, &model_str);
+                    let resolved = self.config.resolve_model(&model_str);
                     self.session.apply_model(resolved);
                 }
                 if let Some(mode) = result.mode_override {
@@ -607,7 +607,7 @@ impl App {
 
 #[cfg(test)]
 mod submit_integration_tests {
-    use sven_config::AgentMode;
+    use sven_vocab::AgentMode;
 
     use crate::agent::AgentRequest;
     use crate::app::App;

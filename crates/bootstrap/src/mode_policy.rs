@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The kernel permission policy that goes with an interactive mode.
 
-use sven_config::{AgentMode, ApprovalMode};
 use sven_hsm::{PermissionPolicy, ToolCapability};
 use sven_machines::{ReactiveAgentMachine, SdlcMachine, UiTestMachine, VerifiedTaskMachine};
+use sven_vocab::{AgentMode, ApprovalMode};
 
 /// The policy a session running `kernel_mode` enforces: the machine's own
 /// (so, say, SDLC disallows writes outside Execution), under `approval`.
@@ -36,8 +36,8 @@ pub(crate) fn session_policy(
 
 /// The calls manual approval approves without asking: a `shell` command
 /// matching `tools.auto_approve_patterns` (and no deny pattern).
-pub(crate) fn preapproval(tools: &sven_config::ToolsConfig) -> sven_executors::Preapproval {
-    let policy = sven_tool_registry::ToolPolicy::from_config(tools);
+pub(crate) fn preapproval(tools: &crate::config::ToolsConfig) -> sven_executors::Preapproval {
+    let policy = tools.policy();
     std::sync::Arc::new(move |call: &sven_hsm::GatedCall| {
         call.name == "shell"
             && call

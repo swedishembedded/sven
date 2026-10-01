@@ -15,9 +15,9 @@
 //! ```
 
 use futures::StreamExt;
-use sven_config::ModelConfig;
 use sven_model::{CompletionRequest, Message, ResponseEvent, ToolSchema};
 use sven_model_drivers::from_config;
+use sven_model_drivers::ModelConfig;
 
 // ── Shared harness ────────────────────────────────────────────────────────────
 

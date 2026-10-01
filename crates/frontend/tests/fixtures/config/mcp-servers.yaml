@@ -1,0 +1,26 @@
+# docs/05-configuration.md: MCP servers over HTTP with OAuth, and over stdio.
+mcp_servers:
+  atlassian:
+    transport:
+      type: http
+      url: "https://mcp.atlassian.com/v1/mcp"
+    oauth:
+      redirect_uri: "cursor://cursor.mcp/callback"
+      callback_port: 5598
+    enabled: true
+  linear:
+    transport:
+      type: http
+      url: "https://mcp.linear.app/mcp"
+      headers:
+        Authorization: "Bearer example"
+    oauth: {}
+  github:
+    transport:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: "example"
+    enabled: false
+    timeout_secs: 90

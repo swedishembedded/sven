@@ -241,7 +241,7 @@ check/fmt:
 ##                  transports and media. The workspace build unifies every
 ##                  feature on, so nothing else would ever compile them. One
 ##                  package per run: features unify across the packages of a run.
-FEATURE_OFF_PACKAGES = sven-model-drivers sven-tools-fs sven-bootstrap sven-sdk
+FEATURE_OFF_PACKAGES = sven-model-drivers sven-tools-fs sven-tools-gdb sven-bootstrap sven-sdk
 check/features:
 	@for p in $(FEATURE_OFF_PACKAGES); do \
 		echo "clippy -p $$p --no-default-features"; \

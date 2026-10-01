@@ -17,9 +17,9 @@
 
 use std::sync::Arc;
 
+use crate::AsrConfig;
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sven_config::AsrConfig;
 use sven_model::ModelProvider;
 use tracing::debug;
 

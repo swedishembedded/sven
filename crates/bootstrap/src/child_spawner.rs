@@ -50,7 +50,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use sven_config::{ApprovalMode, Config};
+use crate::Config;
 use sven_executors::{
     ApprovalRequest, CompositeExecutorBuilder, ThreadStore, ToolExecutor, TurnExecutor,
     UserExecutor, UserQuestion,
@@ -62,6 +62,7 @@ use sven_hsm::{
 use sven_kernel::{ChildRun, ChildSpawner, ErasedRuntime, EventSink, SystemClock};
 use sven_machines::{TaskMachine, MAX_TOOL_ROUNDS_FACT};
 use sven_tool_registry::ToolRegistry;
+use sven_vocab::ApprovalMode;
 
 /// The parent session's human-gate channels, shared with its children.
 #[derive(Clone)]
@@ -169,8 +170,7 @@ impl SdlcChildSpawner {
         // probed (`runtime_builder.rs::build`); only a per-state/per-child
         // model override (this path) is not.
         let model_resolver: sven_turn::ModelResolver = Arc::new(move |model_str: &str| {
-            let model_cfg =
-                sven_model_drivers::resolve_model_from_config(&resolver_config, model_str);
+            let model_cfg = resolver_config.resolve_model(model_str);
             let provider = sven_model_drivers::from_config(&model_cfg)?;
             Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
         });
@@ -184,7 +184,9 @@ impl SdlcChildSpawner {
             turn_abort_slot,
         )
         .with_turn_limits(
-            sven_turn::TurnLimits::from_agent_config(&self.config.agent)
+            self.config
+                .agent
+                .turn_limits()
                 .with_max_output_tokens(contract.max_output_tokens),
         );
 

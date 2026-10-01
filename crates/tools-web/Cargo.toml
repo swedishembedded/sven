@@ -9,8 +9,10 @@ license     = "Apache-2.0"
 sven-tool-api = { path = "../tool-api" }
 sven-hsm      = { path = "../hsm" }
 sven-vocab    = { path = "../vocab" }
+sven-config   = { path = "../config" }
 anyhow        = { workspace = true }
 async-trait   = { workspace = true }
+serde         = { workspace = true }
 serde_json    = { workspace = true }
 tokio         = { workspace = true }
 tracing       = { workspace = true }
@@ -20,4 +22,5 @@ sha2          = { workspace = true }
 hex           = { workspace = true }
 
 [dev-dependencies]
+serde_yaml = { workspace = true }
 tempfile = { workspace = true }

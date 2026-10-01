@@ -22,19 +22,20 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 
-use sven_config::{AgentMode, Config};
+use crate::Config;
 use sven_model::ModelProvider;
 use sven_tool_api::events::{TodoItem, ToolEvent};
 use sven_tool_registry::ToolRegistry;
 use sven_tools_agent::{AskQuestionTool, ModelCatalogEntry, SkillTool, SystemTool, TodoTool};
-use sven_tools_ctx::{ContextStore, MemoryTool};
+use sven_tools_ctx::ContextStore;
 use sven_tools_exec::ShellTool;
 #[cfg(feature = "media")]
 use sven_tools_fs::AttachFileTool;
 use sven_tools_fs::{EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool, WriteTool};
 #[cfg(all(unix, feature = "gdb"))]
 use sven_tools_gdb::GdbSessionState;
-use sven_tools_web::{GrepTool, WebFetchTool, WebSearchTool};
+use sven_tools_web::GrepTool;
+use sven_vocab::AgentMode;
 use sven_workspace::Shared;
 
 use sven_turn::AgentRuntimeContext;
@@ -61,7 +62,7 @@ pub struct IntegrationProviders {
     /// session's own approval gate. Without one they are refused.
     pub approver: Option<ChildApprover>,
     /// The session's approval mode, which its `task` sub-agents are held to.
-    pub approval_mode: sven_config::ApprovalMode,
+    pub approval_mode: sven_vocab::ApprovalMode,
 }
 
 /// The semantic memory store (SQLite + FTS5) for the `semantic_memory` tool.
@@ -270,7 +271,7 @@ struct FullProfileParams<'a> {
     buffer_store: Arc<Mutex<OutputBufferStore>>,
     include_gdb_context: bool,
     approver: Option<ChildApprover>,
-    approval_mode: sven_config::ApprovalMode,
+    approval_mode: sven_vocab::ApprovalMode,
 }
 
 /// Full and Coding profiles share the same builder; `include_gdb_context`
@@ -341,14 +342,9 @@ fn build_profile_research(
     reg.register(ReadFileTool::new(paths.clone()));
     reg.register(FindFileTool::new(paths.clone()));
     reg.register(GrepTool::new(paths.clone()));
-    reg.register(WebFetchTool::new(cfg.tools.web.fetch_max_chars));
-    reg.register(WebSearchTool {
-        api_key: cfg.tools.web.search.api_key.clone(),
-    });
-    reg.register(MemoryTool::new(
-        cfg.tools.memory.memory_file.clone(),
-        runtime.knowledge.clone(),
-    ));
+    reg.register(cfg.tools.web.fetch_tool());
+    reg.register(cfg.tools.web.search_tool());
+    reg.register(cfg.tools.memory.tool(runtime.knowledge.clone()));
     reg.register(SkillTool::new(runtime.skills.clone()));
     reg.register(system_tool(
         Arc::clone(&mode_lock),
@@ -459,21 +455,16 @@ fn register_base_tools(
     reg.register(ShellTool {
         timeout_secs: cfg.tools.timeout_secs,
         scope: paths.clone(),
-        policy: Arc::new(sven_tool_registry::ToolPolicy::from_config(&cfg.tools)),
+        policy: Arc::new(cfg.tools.policy()),
     });
 
     // ── Web ───────────────────────────────────────────────────────────────────
-    reg.register(WebFetchTool::new(cfg.tools.web.fetch_max_chars));
-    reg.register(WebSearchTool {
-        api_key: cfg.tools.web.search.api_key.clone(),
-    });
+    reg.register(cfg.tools.web.fetch_tool());
+    reg.register(cfg.tools.web.search_tool());
 
     // ── Memory (KV + project knowledge) ──────────────────────────────────────
     // Compound tool: set|get|delete|list|search_knowledge|list_knowledge
-    reg.register(MemoryTool::new(
-        cfg.tools.memory.memory_file.clone(),
-        runtime.knowledge.clone(),
-    ));
+    reg.register(cfg.tools.memory.tool(runtime.knowledge.clone()));
 
     // ── Skills ────────────────────────────────────────────────────────────────
     reg.register(SkillTool::new(runtime.skills.clone()));
@@ -485,7 +476,7 @@ fn register_base_tools(
         reg.register(ContextTool::new(
             context_store,
             model,
-            cfg,
+            &cfg.tools.context,
             Some(tool_event_tx),
         ));
 
@@ -495,9 +486,8 @@ fn register_base_tools(
         {
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
             reg.register(
-                GdbTool::new(gdb_state, cfg.tools.gdb.clone()).with_command_policy(Arc::new(
-                    sven_tool_registry::ToolPolicy::from_config(&cfg.tools),
-                )),
+                GdbTool::new(gdb_state, cfg.tools.gdb.clone())
+                    .with_command_policy(Arc::new(cfg.tools.policy())),
             );
         }
     } else {
@@ -531,15 +521,13 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     reg.register(GrepTool::default());
 
     // ── Web ───────────────────────────────────────────────────────────────────
-    reg.register(WebFetchTool::new(cfg.tools.web.fetch_max_chars));
-    reg.register(WebSearchTool {
-        api_key: cfg.tools.web.search.api_key.clone(),
-    });
+    reg.register(cfg.tools.web.fetch_tool());
+    reg.register(cfg.tools.web.search_tool());
 
     // ── System ────────────────────────────────────────────────────────────────
     reg.register(ShellTool {
         timeout_secs: cfg.tools.timeout_secs,
-        policy: Arc::new(sven_tool_registry::ToolPolicy::from_config(&cfg.tools)),
+        policy: Arc::new(cfg.tools.policy()),
         ..ShellTool::default()
     });
 
@@ -551,10 +539,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
 
     // ── Memory ────────────────────────────────────────────────────────────────
     let knowledge = Shared::empty();
-    reg.register(MemoryTool::new(
-        cfg.tools.memory.memory_file.clone(),
-        knowledge,
-    ));
+    reg.register(cfg.tools.memory.tool(knowledge));
 
     // ── Context (no model available for query/reduce) ─────────────────────────
     // Only open/read/grep are fully usable without a model.
@@ -567,9 +552,8 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     {
         let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
         reg.register(
-            GdbTool::new(gdb_state, cfg.tools.gdb.clone()).with_command_policy(Arc::new(
-                sven_tool_registry::ToolPolicy::from_config(&cfg.tools),
-            )),
+            GdbTool::new(gdb_state, cfg.tools.gdb.clone())
+                .with_command_policy(Arc::new(cfg.tools.policy())),
         );
     }
 

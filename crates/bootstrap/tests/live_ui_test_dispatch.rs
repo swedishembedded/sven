@@ -11,7 +11,7 @@
 //! attached AND the live run is opted into, mirroring
 //! `sven-tools-android/tests/live_device.rs`'s own hardware gate - so
 //! `make test` stays green on a box with neither present. The step
-//! compiler's model call still goes through whatever `sven_config::Config`
+//! compiler's model call still goes through whatever `sven_bootstrap::Config`
 //! resolves for real (no model override): if the environment has no usable
 //! model credentials, this test reports that as a skip too rather than a
 //! failure, since proving a specific LLM works is out of scope here - the
@@ -25,8 +25,8 @@
 
 use std::sync::Arc;
 
+use sven_bootstrap::Config;
 use sven_bootstrap::{dispatch_ui_test_step, UiTestDispatchOverrides};
-use sven_config::Config;
 use sven_tools_android::adb;
 
 /// Returns the serial of a single ready device, or `None` (meaning: skip).

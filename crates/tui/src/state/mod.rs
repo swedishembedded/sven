@@ -7,7 +7,8 @@
 //! All transitions go through its methods; the fields themselves are `pub` for
 //! read access only (no direct mutation outside this module is expected).
 
-use sven_config::{AgentMode, ModelConfig};
+use sven_model_drivers::ModelConfig;
+use sven_vocab::AgentMode;
 
 /// Unified session state: active model/mode plus staged transitions.
 #[derive(Clone)]
@@ -104,7 +105,6 @@ impl SessionState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sven_config::ModelConfig;
 
     fn mock_cfg(provider: &str, name: &str) -> ModelConfig {
         ModelConfig {

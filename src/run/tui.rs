@@ -2,14 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
-
 use anyhow::Context;
 
 use crate::cli::Cli;
-use sven_config::AgentMode;
+use sven_frontend::Settings;
 use sven_session_store::{parse_frontmatter, parse_workflow};
 use sven_tui::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
+use sven_vocab::AgentMode;
 
 /// Whether the Kitty keyboard-enhancement flags were actually pushed for this
 /// run. Push/Pop is a per-terminal *stack*: pushing unconditionally (without
@@ -23,7 +22,7 @@ use sven_tui::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
 static KEYBOARD_ENHANCEMENT_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-pub(crate) async fn run_tui(mut cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
+pub(crate) async fn run_tui(mut cli: Cli, settings: Settings) -> anyhow::Result<()> {
     use ratatui::crossterm::{
         event::{
             DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
@@ -56,7 +55,7 @@ pub(crate) async fn run_tui(mut cli: Cli, config: Arc<sven_config::Config>) -> a
         }
     };
 
-    if cli.approval == sven_config::ApprovalMode::Manual && node_backend.is_some() {
+    if cli.approval == sven_vocab::ApprovalMode::Manual && node_backend.is_some() {
         anyhow::bail!(
             "--approval manual needs a local session: in node-proxy mode \
              (SVEN_NODE_URL) the node answers its own approvals"
@@ -228,14 +227,13 @@ pub(crate) async fn run_tui(mut cli: Cli, config: Arc<sven_config::Config>) -> a
                 Ok(content) => {
                     let (fm, body) = parse_frontmatter(&content);
                     let _ = fm; // Frontmatter used by runner, not TUI queue loader
-                    let config_ref = config.clone();
+                    let config_ref = &settings.runtime;
                     let mut wf = parse_workflow(body);
                     let mut q = Vec::new();
                     while let Some(step) = wf.steps.pop() {
                         // Resolve per-step model string into a ModelDirective
                         let model_transition = step.options.model.as_deref().map(|name| {
-                            let cfg =
-                                sven_model_drivers::resolve_model_from_config(&config_ref, name);
+                            let cfg = config_ref.resolve_model(name);
                             ModelDirective::SwitchTo(Box::new(cfg))
                         });
                         // Resolve per-step mode string into an AgentMode
@@ -290,7 +288,7 @@ pub(crate) async fn run_tui(mut cli: Cli, config: Arc<sven_config::Config>) -> a
         open_resume_picker,
     };
 
-    let app = App::new(config, opts);
+    let app = App::new(settings, opts);
     let result = app.run(terminal).await;
 
     if KEYBOARD_ENHANCEMENT_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {

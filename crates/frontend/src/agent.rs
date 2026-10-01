@@ -4,16 +4,19 @@
 //! Background agent task and request/event channel types.
 //!
 //! This module is shared by Sven frontends. It provides the
-//! `AgentRequest` enum and the `kernel_session_task` that drives a full
-//! [`RuntimeBuilder`] kernel session (via the shared [`KernelAgentSession`]
-//! adapter) and bridges `UiEvent`s back to the existing
-//! [`AgentEvent`] renderers.
+//! `AgentRequest` enum and the `kernel_session_task` that drives a kernel
+//! session through the [`SessionController`] and bridges `UiEvent`s back to
+//! the existing [`AgentEvent`] renderers.
 
 use std::sync::Arc;
 
 use futures::StreamExt;
-use sven_bootstrap::{KernelAgentSession, McpManager, RuntimeBuilder, RuntimeContext};
-use sven_config::{AgentMode, ApprovalMode, Config, ModelConfig};
+use sven_bootstrap::Config;
+use sven_bootstrap::{McpManager, RuntimeContext};
+use sven_model_drivers::ModelConfig;
+use sven_vocab::{AgentMode, ApprovalMode};
+
+use crate::controller::{Gates, ProviderFactory, SessionController, SessionOptions, SessionSpec};
 use sven_machines::AgentEvent;
 use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
@@ -117,15 +120,21 @@ async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Optio
 
 // ── Kernel session task ───────────────────────────────────────────────────────
 
+/// Optional test seam: supply the MCP tool set a `RefreshMcpTools` request
+/// installs. Production passes `None` and the tools are pulled from the live
+/// [`McpManager`].
+type McpToolsSource = Box<dyn Fn() -> Vec<Arc<dyn sven_tool_api::Tool>> + Send + Sync>;
+
 /// Background task that owns an HSM-kernel session and forwards its
 /// [`AgentEvent`] stream back to the frontend.
 ///
-/// Builds a full [`RuntimeBuilder`] session for the requested mode, then wraps
-/// it in the shared [`KernelAgentSession`] adapter, which subscribes to the
-/// kernel's outward observation bus and bridges `UiEvent`s
-/// into the existing [`AgentEvent`] renderers plus relays kernel `AskUser` /
-/// approval prompts to the frontend's [`QuestionRequest`] modal channel. The
-/// TUI therefore consumes the same `AgentEvent` contract as every other surface.
+/// Opens a [`SessionController`] session for the requested mode, which wraps
+/// it in the shared [`sven_bootstrap::KernelAgentSession`] adapter: the
+/// adapter subscribes to the kernel's outward observation bus and bridges
+/// `UiEvent`s into the existing [`AgentEvent`] renderers, plus relays kernel
+/// `AskUser` / approval prompts to the frontend's [`QuestionRequest`] modal
+/// channel. The TUI therefore consumes the same `AgentEvent` contract as every
+/// other surface.
 ///
 /// The startup model is passed as an already-resolved `ModelConfig` (the
 /// frontend applied the CLI `--model` override before spawning). Per-message
@@ -136,21 +145,6 @@ async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Optio
 /// `cancel_handle` is a shared slot holding the sender half of a per-submission
 /// cancellation channel; it is wired into the kernel session at build time so
 /// the frontend can interrupt the in-flight turn.
-/// Optional test seam: map a `(ModelConfig, AgentMode)` to a concrete provider.
-///
-/// Production passes `None` and the kernel builds the provider from config via
-/// `sven_model_drivers::from_config`. Tests inject distinguishable mock providers to
-/// assert that a model / mode override actually re-drives the kernel through
-/// the intended provider.
-type ProviderFactory = Box<
-    dyn Fn(&ModelConfig, AgentMode) -> Option<Box<dyn sven_model::ModelProvider>> + Send + Sync,
->;
-
-/// Optional test seam: supply the MCP tool set a `RefreshMcpTools` request
-/// installs. Production passes `None` and the tools are pulled from the live
-/// [`McpManager`].
-type McpToolsSource = Box<dyn Fn() -> Vec<Arc<dyn sven_tool_api::Tool>> + Send + Sync>;
-
 #[allow(clippy::too_many_arguments)]
 pub async fn kernel_session_task(
     config: Arc<Config>,
@@ -183,62 +177,6 @@ pub async fn kernel_session_task(
     .await
 }
 
-/// `true` if two model configs select a different provider/model/endpoint.
-///
-/// `ModelConfig` is not `PartialEq`; comparing the provider, model name and
-/// base URL is sufficient to detect a per-message model override that requires
-/// re-driving the kernel through a different provider.
-fn model_cfg_changed(a: &ModelConfig, b: &ModelConfig) -> bool {
-    a.provider != b.provider || a.name != b.name || a.base_url != b.base_url
-}
-
-/// Build (or rebuild) a fully-wired [`KernelAgentSession`] for `(mode,
-/// model_cfg)`, seeded with `history` and bridged into `tx`.
-///
-/// When `shared_mcp` is `Some`, the existing [`McpManager`] is reused so the
-/// frontend's manager handle and MCP connections stay valid across rebuilds.
-#[allow(clippy::too_many_arguments)]
-async fn build_kernel_session(
-    config: &Arc<Config>,
-    ctx: &RuntimeContext,
-    mode: AgentMode,
-    approval: ApprovalMode,
-    model_cfg: &ModelConfig,
-    history: Vec<Message>,
-    question_tx: &mpsc::Sender<QuestionRequest>,
-    cancel_handle: &Arc<Mutex<Option<oneshot::Sender<()>>>>,
-    shared_mcp: Option<Arc<McpManager>>,
-    provider_factory: Option<&ProviderFactory>,
-    tx: &mpsc::Sender<AgentEvent>,
-) -> Result<(KernelAgentSession, mpsc::Receiver<McpEvent>), String> {
-    let kernel_mode = mode_to_kernel_mode(mode);
-    let mut builder = RuntimeBuilder::new(config.clone(), kernel_mode)
-        .with_runtime_context(ctx.clone())
-        .with_model_config(model_cfg.clone())
-        .with_agent_mode(mode)
-        .with_approval_mode(approval)
-        .with_tool_question_tx(question_tx.clone())
-        .with_cancel_handle(cancel_handle.clone())
-        .with_initial_history(history);
-    if let Some(mcp) = shared_mcp {
-        builder = builder.with_mcp_manager(mcp);
-    }
-    if let Some(factory) = provider_factory {
-        if let Some(provider) = factory(model_cfg, mode) {
-            builder = builder.with_model_provider(provider);
-        }
-    }
-    let bundle = builder
-        .build_session()
-        .await
-        .map_err(|e| format!("kernel session init: {e:#}"))?;
-    Ok(KernelAgentSession::spawn(
-        bundle,
-        tx.clone(),
-        question_tx.clone(),
-    ))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_kernel_session_task(
     config: Arc<Config>,
@@ -257,102 +195,52 @@ pub(crate) async fn run_kernel_session_task(
 ) {
     // Reuses the caller's already-discovered skills/agents (the TUI discovers
     // them once at startup) instead of re-walking the search hierarchy here.
-    let ctx = RuntimeContext::auto_detect_with(
+    let runtime = RuntimeContext::auto_detect_with(
         sven_workspace::find_project_root().ok(),
         shared_skills,
         shared_agents,
     );
+    let mut options = SessionOptions::new(config, runtime, tx.clone());
+    options.approval = approval;
+    options.gates = Gates::Modal(question_tx);
+    options.abort_slot = Some(cancel_handle);
+    options.provider_factory = provider_factory;
 
-    // Build the initial session. `shared_mcp = None` so the builder constructs
-    // and connects the session's own McpManager, which is then shared across
-    // any later rebuilds and handed to the frontend below.
-    let (mut session, mcp_event_rx) = match build_kernel_session(
-        &config,
-        &ctx,
-        mode,
-        approval,
-        &startup_model_cfg,
-        Vec::new(),
-        &question_tx,
-        &cancel_handle,
-        None,
-        provider_factory.as_ref(),
-        &tx,
-    )
-    .await
+    // Open the initial session. Its MCP manager is the one reused across
+    // every later rebuild and handed to the frontend below.
+    let spec = SessionSpec::for_mode(mode, startup_model_cfg.clone());
+    let (mut session, mcp_event_rx) = match SessionController::open(options, spec, Vec::new()).await
     {
-        Ok(pair) => pair,
+        Ok(opened) => opened,
         Err(e) => {
-            let _ = tx.send(AgentEvent::Error(e)).await;
+            let _ = tx.send(AgentEvent::Error(format!("{e:#}"))).await;
             return;
         }
     };
 
-    // The one McpManager reused across rebuilds so the TUI's handle stays valid.
-    let shared_mcp = session.mcp_manager();
-
     // Unblock the TUI's `mcp_rx.await` by sending the manager immediately.
     // Without this the render loop never starts (blank screen).
     if let Some(mcp_tx) = mcp_manager_tx {
-        let _ = mcp_tx.send((shared_mcp.clone(), mcp_event_rx));
+        let _ = mcp_tx.send((session.mcp_manager(), mcp_event_rx));
     }
 
-    // Track the active mode + model config: title generation uses the current
-    // model, and a differing override triggers a session rebuild.
-    let mut current_model_cfg = startup_model_cfg;
-    let mut current_mode = mode;
-
-    loop {
-        let req = match rx.recv().await {
-            Some(r) => r,
-            None => break,
-        };
-
+    // Title generation uses the model the session currently runs.
+    while let Some(req) = rx.recv().await {
         match req {
             AgentRequest::Submit {
                 content,
                 model_override,
                 mode_override,
             } => {
-                let new_mode = mode_override.unwrap_or(current_mode);
-                let new_model = model_override.unwrap_or_else(|| current_model_cfg.clone());
-                // A mid-session mode/model change is honoured by rebuilding the
-                // kernel with the new policy/provider, seeded with the history
-                // accumulated so far so context carries across the switch.
-                if new_mode != current_mode || model_cfg_changed(&new_model, &current_model_cfg) {
-                    let history = session.history_snapshot();
-                    match build_kernel_session(
-                        &config,
-                        &ctx,
-                        new_mode,
-                        approval,
-                        &new_model,
-                        history,
-                        &question_tx,
-                        &cancel_handle,
-                        Some(shared_mcp.clone()),
-                        provider_factory.as_ref(),
-                        &tx,
-                    )
-                    .await
-                    {
-                        Ok((s, _rx)) => session = s,
-                        Err(e) => {
-                            let _ = tx.send(AgentEvent::Error(e)).await;
-                            break;
-                        }
-                    }
-                }
-                current_mode = new_mode;
-                current_model_cfg = new_model;
                 debug!(
                     msg_len = content.len(),
                     "kernel task: posting UserMessage (Submit)"
                 );
-                if !session.send_user_message(content).await {
-                    let _ = tx
-                        .send(AgentEvent::Error("kernel queue closed".into()))
-                        .await;
+                // A mid-session mode/model change is honoured by rebuilding
+                // the kernel with the new policy/provider, seeded with the
+                // history accumulated so far so context carries across.
+                if let Err(e) = session.submit(content, mode_override, model_override).await {
+                    let _ = tx.send(AgentEvent::Error(e.to_string())).await;
                     break;
                 }
             }
@@ -364,43 +252,14 @@ pub(crate) async fn run_kernel_session_task(
                 mode_override,
             } => {
                 debug!("kernel task: resubmit");
-                let new_mode = mode_override.unwrap_or(current_mode);
-                let new_model = model_override.unwrap_or_else(|| current_model_cfg.clone());
                 // `messages` is the frontend's authoritative reconstructed
                 // history (it supports edit-resubmit). The next turn must see
-                // exactly it — either by seeding the live store, or, when the
-                // mode/model also changed, by seeding the rebuilt kernel.
-                if new_mode != current_mode || model_cfg_changed(&new_model, &current_model_cfg) {
-                    match build_kernel_session(
-                        &config,
-                        &ctx,
-                        new_mode,
-                        approval,
-                        &new_model,
-                        messages,
-                        &question_tx,
-                        &cancel_handle,
-                        Some(shared_mcp.clone()),
-                        provider_factory.as_ref(),
-                        &tx,
-                    )
+                // exactly it.
+                if let Err(e) = session
+                    .resubmit(messages, new_user_content, mode_override, model_override)
                     .await
-                    {
-                        Ok((s, _rx)) => session = s,
-                        Err(e) => {
-                            let _ = tx.send(AgentEvent::Error(e)).await;
-                            break;
-                        }
-                    }
-                } else {
-                    session.seed_history(messages);
-                }
-                current_mode = new_mode;
-                current_model_cfg = new_model;
-                if !session.send_user_message(new_user_content).await {
-                    let _ = tx
-                        .send(AgentEvent::Error("kernel queue closed".into()))
-                        .await;
+                {
+                    let _ = tx.send(AgentEvent::Error(e.to_string())).await;
                     break;
                 }
             }
@@ -414,7 +273,7 @@ pub(crate) async fn run_kernel_session_task(
             }
 
             AgentRequest::GenerateTitle { user_text } => {
-                let cfg = current_model_cfg.clone();
+                let cfg = session.spec().model.clone();
                 let event_tx = tx.clone();
                 tokio::spawn(async move {
                     let openrouter_title = {
@@ -452,18 +311,6 @@ pub(crate) async fn run_kernel_session_task(
     }
 }
 
-/// Select the kernel mode string for a given [`AgentMode`].
-///
-/// The `"agent"` / reactive machine handles all coding-oriented modes;
-/// `"chat"` and `"sdlc"` map to their dedicated machines.
-fn mode_to_kernel_mode(mode: AgentMode) -> &'static str {
-    match mode {
-        AgentMode::Chat => "chat",
-        AgentMode::Sdlc => "sdlc",
-        AgentMode::Agent | AgentMode::Plan | AgentMode::Research => "agent",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! Regression tests for the interactive fields the kernel session task must
@@ -477,10 +324,12 @@ mod tests {
 
     use async_trait::async_trait;
     use serde_json::{json, Value};
-    use sven_config::{AgentMode, Config, ModelConfig};
+    use sven_bootstrap::Config;
     use sven_model::{CompletionRequest, ModelProvider, ResponseEvent};
+    use sven_model_drivers::ModelConfig;
     use sven_model_mock::ScriptedMockProvider;
     use sven_tool_api::{policy::ApprovalPolicy, Tool, ToolCall, ToolOutput};
+    use sven_vocab::AgentMode;
     use sven_workspace::{SharedAgents, SharedSkills};
     use tokio::sync::{mpsc, Mutex};
     use tokio::task::JoinHandle;

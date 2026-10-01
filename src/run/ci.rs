@@ -10,7 +10,7 @@ use anyhow::Context;
 
 use crate::cli::{Cli, OutputFormatArg};
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
-use sven_config::AgentMode;
+use sven_vocab::AgentMode;
 
 /// How long stdin may stay silent before the wait is announced. Long enough
 /// that an ordinary pipe never prints it, short enough that a stuck run is
@@ -50,7 +50,10 @@ fn read_stdin_to_end() -> anyhow::Result<String> {
     result.context("reading stdin")
 }
 
-pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
+pub(crate) async fn run_ci(
+    mut cli: Cli,
+    config: Arc<sven_bootstrap::Config>,
+) -> anyhow::Result<()> {
     // ── Detect project root ──────────────────────────────────────────────────
     let project_root = find_project_root().ok();
 
@@ -252,7 +255,7 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
         // (the legacy CiRunner does the same before constructing its agent).
         let kernel_config = if let Some(m) = &cli.model {
             let mut cfg = (*config).clone();
-            cfg.model = sven_model_drivers::resolve_model_from_config(&cfg, m);
+            cfg.model = cfg.resolve_model(m);
             Arc::new(cfg)
         } else {
             config.clone()

@@ -19,7 +19,7 @@ flowchart TD
 
 ### `sven acp serve`
 
-The process reads the sven configuration (`~/.config/sven/config.yaml`), builds a fresh kernel session per ACP session (`sven_bootstrap::RuntimeBuilder`, wrapped in a `KernelAgentSession`), and drives it directly.  Notifications (text deltas, tool calls, plan updates, mode changes) are streamed back to the client as `session/notification` messages.
+The process reads the sven configuration (`~/.config/sven/config.yaml`), opens a fresh kernel session per ACP session through the shared `sven_frontend::SessionController` (which assembles it with `sven_bootstrap::RuntimeBuilder` and wraps it in a `KernelAgentSession`), and drives it directly. A mode change, or a model the agent switched to, rebuilds the session through the controller with the conversation and the MCP servers carried over.  Notifications (text deltas, tool calls, plan updates, mode changes) are streamed back to the client as `session/notification` messages.
 
 ## Running
 

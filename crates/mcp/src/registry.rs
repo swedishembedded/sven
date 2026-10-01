@@ -16,9 +16,9 @@
 //! MCP client or the agent sees. A second tool for a job the first already
 //! does is a choice pushed onto the caller with nothing to decide it on.
 
-use sven_config::ToolsConfig;
+use sven_bootstrap::ToolsConfig;
 use sven_tool_api::PathScope;
-use sven_tool_registry::{ToolPolicy, ToolRegistry};
+use sven_tool_registry::ToolRegistry;
 use sven_tools_exec::ShellTool;
 use sven_tools_fs::{EditFileTool, FindFileTool, ReadFileTool, WriteTool};
 use sven_tools_web::{GrepTool, ReadLintsTool, WebFetchTool, WebSearchTool};
@@ -94,7 +94,7 @@ pub fn build_mcp_registry(
         reg.register(ShellTool {
             timeout_secs: tools.timeout_secs,
             scope: scope.clone(),
-            policy: std::sync::Arc::new(ToolPolicy::from_config(tools)),
+            policy: std::sync::Arc::new(tools.policy()),
         });
     }
     if allow("web_fetch") {

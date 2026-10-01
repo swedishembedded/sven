@@ -33,7 +33,9 @@ struct Report<'a> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let engine = Engine::builder().config(sven_config::load(None)?).build()?;
+    let engine = Engine::builder()
+        .config(sven_sdk::config::load(None)?)
+        .build()?;
 
     // The method is declared next to the type it returns, so its instructions
     // and its schema cannot drift apart.

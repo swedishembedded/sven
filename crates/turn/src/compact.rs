@@ -1,9 +1,35 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-use sven_config::CompactionStrategy;
+use serde::{Deserialize, Serialize};
 use sven_model::{Message, Role};
 use sven_tool_api::OutputCategory;
+
+/// Strategy used when compacting the session context (`agent.compaction_strategy`).
+///
+/// `Structured` (default) instructs the model to produce a typed Markdown
+/// checkpoint with fixed sections (Active Task, Key Decisions, Files &
+/// Artifacts, Constraints, Pending Items, Session Narrative).  This produces
+/// checkpoints that are easier for the model to navigate on future turns.
+///
+/// `Narrative` uses the original free-form summarisation prompt and is
+/// available for backward-compatibility or when a simpler output is preferred.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CompactionStrategy {
+    #[default]
+    Structured,
+    Narrative,
+}
+
+impl std::fmt::Display for CompactionStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompactionStrategy::Structured => write!(f, "structured"),
+            CompactionStrategy::Narrative => write!(f, "narrative"),
+        }
+    }
+}
 
 // ─── Compaction prompts ───────────────────────────────────────────────────────
 

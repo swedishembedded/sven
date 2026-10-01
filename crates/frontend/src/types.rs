@@ -5,8 +5,9 @@
 
 use std::path::PathBuf;
 
-use sven_config::{AgentMode, ModelConfig};
+use sven_model_drivers::ModelConfig;
 use sven_session_store::SessionId;
+use sven_vocab::AgentMode;
 
 use crate::segment::ChatSegment;
 

@@ -156,7 +156,7 @@ approves the call it was asked for (`PendingApproval::call_id`,
 asked about again. A `PermissionPolicy` is assembled with a builder
 (`allow_in`, `allow_globally`, `require_approval`).
 
-A session's **approval mode** (`sven_config::ApprovalMode`, set with
+A session's **approval mode** (`sven_vocab::ApprovalMode`, set with
 `RuntimeBuilder::with_approval_mode`) decides which of the two it runs:
 
 | Mode | Tool calls | A machine's decision approval (SDLC `need_approval`) |

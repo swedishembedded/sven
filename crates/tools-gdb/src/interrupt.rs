@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::debug;
 
-use sven_config::AgentMode;
+use sven_vocab::AgentMode;
 
 use sven_hsm::ToolCapability;
 

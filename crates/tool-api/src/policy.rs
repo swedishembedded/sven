@@ -7,8 +7,8 @@
 //!
 //! The config-driven policy *engine* that decides which [`ApprovalPolicy`] a
 //! given command gets (`ToolPolicy`) lives one tier up, in
-//! `sven-tool-registry` -- it needs `sven-config`'s `ToolsConfig` and a
-//! compiled pattern set, which is registry-shaped state, not part of the
+//! `sven-tool-registry` -- it needs a compiled
+//! pattern set, which is registry-shaped state, not part of the
 //! `Tool` trait's interface. `ApprovalPolicy` itself has to
 //! live here rather than there: `Tool::default_policy(&self) -> ApprovalPolicy`
 //! is part of the trait signature, so the type it names cannot sit at a higher

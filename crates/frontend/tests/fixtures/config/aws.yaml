@@ -1,0 +1,5 @@
+# docs/providers.md: AWS Bedrock.
+model:
+  provider: aws
+  name: us.anthropic.claude-3-5-sonnet-20241022-v2:0
+  aws_region: us-east-1  # optional, defaults to AWS_DEFAULT_REGION

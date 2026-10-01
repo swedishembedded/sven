@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-use sven_config::{AgentMode, McpServerConfig};
+use sven_vocab::AgentMode;
 pub use sven_vocab::{SubagentUpdate, TodoItem, TodoStatus};
 
 /// Events emitted by tools to communicate state changes back to the agent loop.
@@ -60,12 +60,10 @@ pub enum ToolEvent {
     ///
     /// The TUI / agent loop should connect the new server and re-register its
     /// tools with the `ToolRegistry`.
-    McpServerAdded {
-        /// The server name (used as tool prefix, e.g. `"github"`).
-        name: String,
-        /// Full server configuration.
-        config: McpServerConfig,
-    },
+    ///
+    /// Carries the server name (the tool prefix, e.g. `"github"`); the
+    /// configuration is already in the file the `system` tool wrote.
+    McpServerAdded(String),
     /// An MCP server was removed or disabled via the `system` tool.
     ///
     /// The TUI / agent loop should disconnect the server and unregister its

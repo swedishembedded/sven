@@ -12,10 +12,10 @@ use agent_client_protocol::{
     PlanEntryStatus, SessionModeId, SessionUpdate, ToolCall as AcpToolCall, ToolCallStatus,
     ToolKind, UsageUpdate,
 };
-use sven_config::AgentMode;
 use sven_hsm::UiEvent;
 use sven_machines::AgentEvent;
 use sven_tool_api::events::{TodoItem, TodoStatus};
+use sven_vocab::AgentMode;
 
 // ─── Mode mapping ─────────────────────────────────────────────────────────────
 

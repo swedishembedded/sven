@@ -440,11 +440,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("marker");
         let t = ShellTool {
-            policy: std::sync::Arc::new(sven_tool_registry::ToolPolicy::from_config(
-                &sven_config::ToolsConfig {
-                    deny_patterns: vec!["touch *".into()],
-                    ..Default::default()
-                },
+            policy: std::sync::Arc::new(sven_tool_registry::ToolPolicy::from_patterns(
+                &[],
+                &["touch *".to_string()],
             )),
             ..Default::default()
         };

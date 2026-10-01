@@ -22,7 +22,7 @@ use crate::cli::AgentCommands;
 /// Dispatches `sven agent …`.
 pub(crate) async fn run_agent_command(
     command: &AgentCommands,
-    config: sven_config::Config,
+    config: sven_bootstrap::Config,
 ) -> anyhow::Result<()> {
     match command {
         AgentCommands::Step {

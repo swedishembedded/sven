@@ -1,0 +1,28 @@
+# The provider-first layout: a named endpoint with per-model overrides,
+# selected by model.provider. tests/e2e/basic/18_subagent_provider.bats
+# configures a scripted mock the same way.
+providers:
+  scripted:
+    name: mock
+    mock_responses_file: responses.yaml
+  my_ollama:
+    name: openai
+    base_url: http://localhost:8000/v1
+    api_key_env: OLLAMA_KEY
+    max_tokens: 8192
+    temperature: 0.4
+    driver_options:
+      parse_tool_calls: true
+    models:
+      llama3.2:
+        max_tokens: 40960
+        max_output_tokens: 4096
+        max_input_tokens: 32768
+        cache_tools: false
+        input_modalities: [text, image]
+      codellama:
+        driver_options:
+          parse_tool_calls: false
+model:
+  provider: my_ollama
+  name: llama3.2

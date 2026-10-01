@@ -15,13 +15,15 @@ is the in-repo consumer that keeps the surface honest.
 Described in [docs/technical/sdk.md](../technical/sdk.md) and
 [docs/technical/resumable-agents.md](../technical/resumable-agents.md).
 
-Not done: migrating the existing surfaces (`sven-tui`, `sven-ci`, `sven-acp`,
-`sven-mcp`) onto the SDK. They construct kernels through `RuntimeBuilder`
-directly and need capabilities the SDK does not yet publish - interactive
-approval interception, mid-session mode and model changes, and token-level
-streaming control. Growing the SDK to cover them is worth doing only if it can
-be done without turning the facade back into `RuntimeBuilder` with different
-names.
+The surfaces (`sven-tui`, `sven-ci`, `sven-acp`) open their sessions through
+`sven-frontend`'s `SessionController`, the live-session counterpart of the
+SDK's per-turn `Agent`: a TUI or an editor keeps one kernel session - its
+debugger connections, its open contexts, its todo list, its MCP connections -
+alive between turns and rebuilds it, carrying the conversation, when the mode or the model
+changes, where an SDK `Agent` is built for a step and put down. Both are
+`RuntimeBuilder` consumers and neither re-exports it: the facade stays a small
+typed surface, and the controller is where session assembly, gates and rebuilds
+are written once. `sven-mcp` serves tools and runs no session.
 
 ## Context
 

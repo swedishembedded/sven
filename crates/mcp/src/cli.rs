@@ -53,7 +53,7 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             tools,
             brave_api_key,
         } => {
-            let config = sven_config::load(None)?;
+            let config = sven_bootstrap::Config::load(None)?;
             let root = std::env::current_dir()?;
             let scope = sven_tool_api::PathScope::confined(&root)
                 .map_err(|e| anyhow::anyhow!("serving {}: {e}", root.display()))?;

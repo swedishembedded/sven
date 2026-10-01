@@ -28,7 +28,7 @@ use anyhow::Result;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::debug;
 
-use sven_config::Config;
+use sven_bootstrap::Config;
 
 use agent::{ConnMessage, SvenAcpAgent};
 
@@ -43,7 +43,7 @@ pub async fn serve_stdio(config: Arc<Config>) -> Result<()> {
     serve_stdio_with(
         config,
         agent::DEFAULT_PERMISSION_TIMEOUT,
-        sven_config::ApprovalMode::Auto,
+        sven_vocab::ApprovalMode::Auto,
     )
     .await
 }
@@ -54,7 +54,7 @@ pub async fn serve_stdio(config: Arc<Config>) -> Result<()> {
 pub async fn serve_stdio_with(
     config: Arc<Config>,
     permission_timeout: std::time::Duration,
-    approval: sven_config::ApprovalMode,
+    approval: sven_vocab::ApprovalMode,
 ) -> Result<()> {
     debug!("Starting ACP local server");
 

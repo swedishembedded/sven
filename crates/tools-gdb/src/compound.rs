@@ -13,7 +13,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
-use sven_config::{AgentMode, GdbConfig};
+use crate::GdbConfig;
+use sven_vocab::AgentMode;
 
 use sven_hsm::ToolCapability;
 
@@ -315,8 +316,8 @@ impl Tool for GdbTool {
 
 #[cfg(test)]
 mod tests {
+    use crate::GdbConfig;
     use serde_json::json;
-    use sven_config::GdbConfig;
 
     use super::*;
     use sven_tool_api::tool::ToolCall;
@@ -339,10 +340,7 @@ mod tests {
     /// it, or the shell side of a `shell`/`!`/`pipe`/`|` passthrough.
     #[tokio::test]
     async fn a_denied_host_command_is_refused() {
-        let policy = sven_tool_registry::ToolPolicy::from_config(&sven_config::ToolsConfig {
-            deny_patterns: vec!["rm *".into()],
-            ..Default::default()
-        });
+        let policy = sven_tool_registry::ToolPolicy::from_patterns(&[], &["rm *".to_string()]);
         let t = make_tool().with_command_policy(Arc::new(policy));
         for args in [
             json!({"action": "command", "command": "shell rm -rf build"}),

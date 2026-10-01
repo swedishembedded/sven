@@ -160,7 +160,7 @@ pub async fn node_agent_task(
             &ws_out_tx,
             &Cmd::NewSession {
                 id: sid,
-                mode: sven_config::AgentMode::Agent,
+                mode: sven_vocab::AgentMode::Agent,
                 working_dir: None,
             },
         )

@@ -504,7 +504,8 @@ impl App {
         };
         let parsed = parse(&parse_source);
         let ctx = CommandContext {
-            config: self.config.clone(),
+            providers: &self.config.providers,
+            mcp_servers: &self.config.mcp_servers,
             current_model_provider: self.session.model_cfg.provider.clone(),
             current_model_name: self.session.model_cfg.name.clone(),
         };

@@ -13,7 +13,7 @@
 //! - `None` - no authentication (local servers like Ollama / LM Studio)
 //!
 //! # Usage
-//! Configure via `sven_config::ModelConfig` and call
+//! Configure via [`crate::ModelConfig`] and call
 //! `sven_model_drivers::from_config`. This module is `pub(crate)` - direct
 //! construction is handled in `sven_model_drivers::from_config`.
 

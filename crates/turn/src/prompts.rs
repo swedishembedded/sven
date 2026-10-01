@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use sven_config::AgentMode;
+use sven_vocab::AgentMode;
 use sven_workspace::{find_workspace_root, AgentInfo, KnowledgeInfo, SkillInfo};
 
 /// All optional contextual blocks that can be injected into the system prompt.
@@ -684,7 +684,7 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use sven_config::AgentMode;
+    use sven_vocab::AgentMode;
 
     fn p(s: &str) -> PathBuf {
         PathBuf::from(s)

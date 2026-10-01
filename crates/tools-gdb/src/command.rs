@@ -10,7 +10,8 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::debug;
 
-use sven_config::{AgentMode, GdbConfig};
+use crate::GdbConfig;
+use sven_vocab::AgentMode;
 
 use sven_hsm::ToolCapability;
 
@@ -161,7 +162,7 @@ impl Tool for GdbCommandTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sven_config::GdbConfig;
+    use crate::GdbConfig;
     use sven_tool_api::tool::ToolCall;
 
     fn call(args: Value) -> ToolCall {

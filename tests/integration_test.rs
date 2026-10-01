@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 /// Integration tests for sven's core logic using the mock model provider.
-use sven_config::Config;
+use sven_bootstrap::Config;
 use sven_model::{Message, Role};
 use sven_session_store::{parse_conversation, parse_workflow, serialize_conversation_turn};
 
@@ -54,25 +54,24 @@ fn config_defaults_are_valid() {
 
 #[test]
 fn tool_policy_auto_approve() {
-    use sven_config::ToolsConfig;
-    use sven_tool_registry::{ApprovalPolicy, ToolPolicy};
+    use sven_bootstrap::ToolsConfig;
+    use sven_tool_registry::ApprovalPolicy;
 
-    let cfg = ToolsConfig::default();
-    let policy = ToolPolicy::from_config(&cfg);
+    let policy = ToolsConfig::default().policy();
     assert_eq!(policy.decide("cat /etc/hosts"), ApprovalPolicy::Auto);
     assert_eq!(policy.decide("ls /tmp"), ApprovalPolicy::Auto);
 }
 
 #[test]
 fn tool_policy_deny() {
-    use sven_config::ToolsConfig;
-    use sven_tool_registry::{ApprovalPolicy, ToolPolicy};
+    use sven_bootstrap::ToolsConfig;
+    use sven_tool_registry::ApprovalPolicy;
 
     let cfg = ToolsConfig {
         deny_patterns: vec!["rm -rf /*".into()],
         ..ToolsConfig::default()
     };
-    let policy = ToolPolicy::from_config(&cfg);
+    let policy = cfg.policy();
     assert_eq!(policy.decide("rm -rf /*"), ApprovalPolicy::Deny);
 }
 

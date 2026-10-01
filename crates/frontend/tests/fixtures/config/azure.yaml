@@ -1,0 +1,8 @@
+# docs/providers.md: Azure OpenAI.
+model:
+  provider: azure
+  name: gpt-4o
+  api_key_env: AZURE_OPENAI_API_KEY
+  azure_resource: myresource       # subdomain of .openai.azure.com
+  azure_deployment: my-gpt4o-dep  # deployment name in Azure portal
+  azure_api_version: "2024-02-01" # optional, defaults to 2024-02-01

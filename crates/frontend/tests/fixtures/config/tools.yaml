@@ -1,0 +1,38 @@
+# docs/05-configuration.md: approval patterns, the GDB tools and the
+# memory-mapped context tools.
+tools:
+  auto_approve_patterns:
+    - "cat *"
+    - "ls *"
+    - "rg *"
+    - "grep *"
+    - "cargo test*"    # auto-approve test runs
+    - "make check"     # auto-approve linting
+  deny_patterns:
+    - "rm -rf /*"
+    - "dd if=*"
+    - "curl * | sh"    # block shell-pipe downloads
+  disabled: [web_search]
+  timeout_secs: 45
+  web:
+    fetch_max_chars: 50000
+    search:
+      api_key: BSA-example
+  memory:
+    memory_file: notes/memory.json
+  lints:
+    rust_command: cargo clippy --message-format json
+  gdb:
+    gdb_path: /usr/bin/gdb-multiarch
+    command_timeout_secs: 30
+    server_startup_wait_ms: 1000
+  context:
+    max_parallel: 8          # faster on high-core machines with generous rate limits
+    default_chunk_lines: 300 # smaller chunks for dense files (e.g. generated C)
+    sub_query_max_chars: 80000
+  asr:
+    bus_address: unix:path=/run/brain/bus
+    timeout_secs: 60
+tui:
+  ascii_borders: true
+  wrap_width: 100

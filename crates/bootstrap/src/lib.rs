@@ -21,6 +21,7 @@
 //! registry-building loops.
 
 pub mod child_spawner;
+pub mod config;
 pub mod context;
 pub mod context_query;
 pub mod context_tool;
@@ -35,9 +36,11 @@ pub mod task_tool;
 #[cfg(feature = "android")]
 pub mod ui_test_dispatch;
 
+pub use config::{AgentConfig, Config, ToolsConfig};
 pub use context::{BuiltinTools, Questions, RuntimeContext, ToolSetProfile};
 pub use context_query::{
-    build_context_query_tools, ContextQueryTool, ContextReduceTool, ModelSubQueryRunner,
+    build_context_query_tools, ContextConfig, ContextQueryTool, ContextReduceTool,
+    ModelSubQueryRunner,
 };
 pub use context_tool::ContextTool;
 pub use kernel_bridge::{spawn_observation_bridge, spawn_question_bridge, KernelAgentSession};

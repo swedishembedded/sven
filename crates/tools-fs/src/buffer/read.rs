@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
-use sven_config::AgentMode;
+use sven_vocab::AgentMode;
 
 use sven_hsm::ToolCapability;
 
