@@ -133,7 +133,10 @@ where
             .unwrap_or_else(|_| serde_json::json!({"type": "object"}))
     }
 
-    /// The instruction text for one call, given a rendered input.
+    /// The instruction text for one call, given a rendered input: the task,
+    /// the input, and the JSON schema the answer must match. The schema is
+    /// also the request's response format, but a provider that cannot
+    /// constrain decoding ignores that field, so the prompt describes it too.
     pub(crate) fn instruction(&self, input: &str) -> String {
         let mut out = String::new();
         if !self.task.is_empty() {
@@ -142,6 +145,10 @@ where
         }
         out.push_str("Input:\n");
         out.push_str(input);
+        out.push_str(
+            "\n\nAnswer with nothing but one JSON object that matches this JSON schema:\n",
+        );
+        out.push_str(&self.schema().to_string());
         out
     }
 }

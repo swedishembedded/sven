@@ -102,6 +102,24 @@ async fn the_request_carries_a_schema_derived_from_the_return_type() {
     }
 }
 
+/// A provider that cannot constrain decoding ignores the response format,
+/// so the prompt itself must tell the model the shape it answers in.
+#[tokio::test]
+async fn the_prompt_describes_the_schema_for_a_provider_that_ignores_it() {
+    let (engine, provider) = engine_with(vec![says(r#"{"risk":3,"summary":"ok"}"#)]);
+    let mut agent = engine.agent_for(&assess());
+    agent.call(&assess(), &a_change()).await.expect("a result");
+
+    let seen = provider.last_request.lock().unwrap().clone().unwrap();
+    let prompt = format!("{:?}", seen.messages);
+    for described in ["risk", "summary", "How risky the change is"] {
+        assert!(
+            prompt.contains(described),
+            "{described:?} missing from {prompt}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn the_model_is_offered_no_tools_for_a_prediction() {
     let (engine, provider) = engine_with(vec![says(r#"{"risk":1,"summary":"ok"}"#)]);
