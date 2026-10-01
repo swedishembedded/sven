@@ -20,48 +20,6 @@ use crate::{
     },
 };
 
-// ── UiMode ────────────────────────────────────────────────────────────────────
-
-/// The current exclusive overlay/modal mode driven by the kernel projection.
-///
-/// The TUI checks `UiMode` in `term_events.rs` before falling through to the
-/// legacy overlay-field checks so that kernel-driven states take precedence.
-/// Legacy overlay fields (`question_modal`, `confirm_modal`, etc.) remain for
-/// backward compatibility with the old `AgentEvent` path.
-#[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
-pub enum UiMode {
-    /// Normal editing and navigation. No overlay active.
-    #[default]
-    Normal,
-    /// Kernel is asking a question; user must answer before continuing.
-    AwaitingUserInput { question: serde_json::Value },
-    /// Kernel is requesting human approval for a dangerous action.
-    AwaitingApproval { request: serde_json::Value },
-    /// Full-screen pager (driven by kernel, not agent-task).
-    Pager,
-    /// Full-screen inspector (driven by kernel, not agent-task).
-    Inspector,
-    /// Inline search within the chat panel.
-    SearchActive,
-    /// Editing a segment already in the chat.
-    EditSegment,
-    /// Editing an item in the send queue.
-    EditQueue,
-    /// Team/peer selection overlay.
-    TeamPicker,
-    /// Confirmation dialog before a destructive action.
-    Confirm { action: String },
-}
-
-impl UiMode {
-    /// `true` if this mode suppresses normal key routing (overlay is active).
-    #[allow(dead_code)]
-    pub fn is_overlay(&self) -> bool {
-        !matches!(self, UiMode::Normal | UiMode::SearchActive)
-    }
-}
-
 // ── FocusPane ─────────────────────────────────────────────────────────────────
 
 /// Which pane currently holds keyboard focus.
@@ -120,8 +78,6 @@ impl Toast {
 
 /// All UI overlay / modal / focus state.
 pub(crate) struct UiState {
-    /// Kernel-driven UI mode. Checked before legacy overlay fields.
-    pub ui_mode: UiMode,
     pub focus: FocusPane,
     pub show_help: bool,
     pub search: SearchState,
@@ -163,7 +119,6 @@ pub(crate) struct UiState {
 impl UiState {
     pub fn new() -> Self {
         Self {
-            ui_mode: UiMode::Normal,
             focus: FocusPane::Input,
             show_help: false,
             search: SearchState::default(),

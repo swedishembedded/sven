@@ -35,7 +35,7 @@ pub use tool::ToolCommands;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
 use std::path::PathBuf;
-use sven_config::AgentMode;
+use sven_config::{AgentMode, ApprovalMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 pub enum OutputFormatArg {
@@ -90,9 +90,20 @@ pub struct Cli {
     #[arg(long, short = 'H')]
     pub headless: bool,
 
-    /// Agent mode
+    /// Agent mode: what the agent may do at all (research and plan never write)
     #[arg(long, short = 'm', value_enum, default_value = "agent")]
     pub mode: AgentMode,
+
+    /// Whether tool calls wait for your approval.
+    ///
+    /// `auto` (the default) runs every call the mode allows - shell and file
+    /// writes included - without asking. `manual` shows you each call that is
+    /// not read-only, with the tool and its command, path or arguments, and
+    /// runs it only once you approve; a `task` sub-agent's and an SDLC task's
+    /// calls come to the same prompt. Manual approval needs the interactive
+    /// TUI: sven refuses to start it headless, in a pipe, or as a team member.
+    #[arg(long, value_enum, default_value = "auto")]
+    pub approval: ApprovalMode,
 
     /// Model to use, e.g. "gpt-4o" or "anthropic/claude-opus-4-5"
     #[arg(long, short = 'M', env = "SVEN_MODEL")]
@@ -575,6 +586,31 @@ impl Cli {
             || !std::io::stdout().is_terminal()
     }
 
+    /// Refuses `--approval manual` anywhere but the interactive TUI: nobody
+    /// could answer the prompts, and approving on their behalf is exactly
+    /// what manual approval rules out. Checked before anything runs.
+    pub fn check_approval(&self) -> anyhow::Result<()> {
+        if self.approval != ApprovalMode::Manual {
+            return Ok(());
+        }
+        let not_interactive = if self.command.is_some() {
+            Some("a subcommand runs no interactive session")
+        } else if self.team_name.is_some() {
+            Some("a team member runs unattended")
+        } else if self.is_headless() {
+            Some("this run is headless (--headless, a PROMPT, or stdin/stdout not a terminal)")
+        } else {
+            None
+        };
+        match not_interactive {
+            Some(why) => anyhow::bail!(
+                "--approval manual needs the interactive TUI on a terminal, and {why}; \
+                 run `sven` in a terminal, or drop --approval manual"
+            ),
+            None => Ok(()),
+        }
+    }
+
     /// Whether a headless run reads stdin: when --stdin asks for it, or when
     /// there is no PROMPT and stdin is not a terminal, so stdin is the task.
     /// Deciding from the arguments alone means an inherited pipe that nobody
@@ -613,3 +649,50 @@ pub fn print_completions(shell: Shell) {
 // TTY detection re-uses the stdlib IsTerminal trait (stable since Rust 1.70).
 // Import it into scope so callers can call .is_terminal() on Stdin/Stdout.
 use std::io::IsTerminal as _;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cli(args: &[&str]) -> Cli {
+        Cli::try_parse_from(std::iter::once("sven").chain(args.iter().copied()))
+            .expect("the arguments parse")
+    }
+
+    /// Manual approval with nobody at a terminal to answer is refused before
+    /// anything runs, never left to hang at the first prompt.
+    #[test]
+    fn manual_approval_is_refused_where_nobody_can_answer() {
+        for args in [
+            &["--approval", "manual", "--headless", "fix it"][..],
+            &["--approval", "manual", "fix it"],
+            &[
+                "--approval",
+                "manual",
+                "--team-name",
+                "t",
+                "--agent-name",
+                "a",
+            ],
+            &["--approval", "manual", "chats"],
+        ] {
+            let err = cli(args).check_approval().expect_err("refused");
+            assert!(
+                err.to_string()
+                    .contains("--approval manual needs the interactive TUI"),
+                "{args:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_approval_runs_anywhere_and_is_the_default() {
+        assert_eq!(cli(&["fix it"]).approval, ApprovalMode::Auto);
+        for args in [
+            &["--headless", "fix it"][..],
+            &["--approval", "auto", "chats"],
+        ] {
+            assert!(cli(args).check_approval().is_ok(), "{args:?}");
+        }
+    }
+}

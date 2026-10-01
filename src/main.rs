@@ -42,6 +42,9 @@ async fn main() -> anyhow::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let cli = Cli::parse();
+    // Before anything runs: manual approval without a person to ask fails
+    // here, never by hanging at the first prompt.
+    cli.check_approval()?;
 
     // In TUI mode writing to stderr corrupts the display.
     // Suppress all tracing output unless the caller explicitly opts in by

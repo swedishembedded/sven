@@ -29,7 +29,7 @@ pub(crate) mod ui_state;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use sven_config::{AgentMode, Config};
+use sven_config::{AgentMode, ApprovalMode, Config};
 use sven_mcp_client::McpManager;
 use sven_tools_agent::QuestionRequest;
 use tokio::sync::mpsc;
@@ -77,6 +77,9 @@ pub struct AppOptions {
     pub node_backend: Option<NodeBackend>,
     /// Open the `/resume` session picker at startup (bare `--resume`, no id).
     pub open_resume_picker: bool,
+    /// Whether the agent's tool calls wait for the user's approval
+    /// (`--approval`); every session of this TUI runs under it.
+    pub approval: ApprovalMode,
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -85,6 +88,8 @@ pub struct AppOptions {
 pub struct App {
     // ── Persistent configuration ──────────────────────────────────────────────
     pub(crate) config: Arc<Config>,
+    /// Whether tool calls wait for the user's approval (`--approval`).
+    pub(crate) approval: ApprovalMode,
     /// Node-proxy backend, consumed once in `run()`.
     pub(crate) node_backend: Option<NodeBackend>,
     /// True when the TUI is connected to a running sven node over WebSocket.

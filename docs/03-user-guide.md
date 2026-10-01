@@ -218,10 +218,11 @@ Idle → Intake → Discovery → Planning → Execution → Verification → De
 Chit-chat or under-specified requests keep the machine in `Intake` and ask
 clarifying questions; only a confirmed, actionable scope advances to `Discovery`.
 
-**Human gates**: phases pause for you via real question and approval gates
-(scope, plan, and delivery). The TUI shows the prompt; you answer or
-approve/reject. In CI / headless mode (`RuntimeRunner`) these gates are
-auto-approved so a run completes unattended.
+**Human gates**: a phase that needs your input asks you in the TUI. Under
+`--approval manual` it also pauses for your approval at scope, plan, and
+delivery; by default those are approved. In CI / headless mode
+(`RuntimeRunner`) nobody is asked: a question is answered at once saying no
+user is available, so a run completes unattended.
 
 **Parallel execution**: `Execution` decomposes the plan and fans out one
 concurrent child kernel per task, then merges the child summaries back into the
@@ -235,7 +236,8 @@ append-only / cache-safe thread invariant - see the
 [Deliberation Engine](technical/deliberation-engine.md) reference.
 
 Use `sdlc` when you want sven to implement a feature end-to-end with full
-traceability, or when you need the approval gate for safety:
+traceability, or - with `--approval manual` - when you want to approve scope,
+plan and delivery yourself:
 
 ```sh
 sven --mode sdlc "Add rate limiting to the API."
@@ -274,16 +276,26 @@ sven "Implement the rate-limiting layer described in the plan."
 Press `F4` inside the TUI to cycle through `research → plan → agent → research`.
 For `chat` and `sdlc`, use the `/mode` command or restart with `--mode`.
 
-### Human approval in the TUI
+### Approving tool calls
 
-When the `sdlc` machine (or any machine emitting `RequestHumanApproval`)
-reaches an approval gate, the TUI enters `AwaitingApproval` mode and shows a
-modal with the proposed change description. Key bindings:
+By default (`--approval auto`) every call the mode allows runs without a
+prompt. Start the TUI with `sven --approval manual` to approve each call that
+is not read-only yourself: it opens as a question modal showing the tool and
+its command, path or arguments, with `yes` and `no` options. A `task`
+sub-agent's calls and an SDLC task child's calls come to the same modal. Each
+call is asked about on its own - approving one `shell` command does not
+approve the next.
 
 | Key | Action |
 |-----|--------|
-| `y` / `Enter` | Approve - machine continues into `ApplyPatch` |
-| `n` / `Esc` | Reject - machine enters `Recovery` |
+| `↑` / `↓`, `1`-`9` | Choose `yes` or `no` |
+| `Enter` | Answer - `yes` runs the call, anything else refuses it |
+| `Esc` | Dismiss - the call is refused |
+
+A refused call is answered to the model with the refusal, so it can take
+another route. An SDLC decision that needs approval (`need_approval`) is put
+to you the same way under manual approval, and approved automatically under
+auto.
 
 ---
 

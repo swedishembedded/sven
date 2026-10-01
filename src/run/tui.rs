@@ -32,6 +32,37 @@ pub(crate) async fn run_tui(mut cli: Cli, config: Arc<sven_config::Config>) -> a
         execute,
     };
 
+    // Auto-detect node-proxy mode: when SVEN_NODE_URL and SVEN_NODE_TOKEN
+    // are present (injected by the node into web PTY sessions), connect the
+    // TUI to the running node so the agent has full P2P peer access.
+    let node_backend = {
+        let url = std::env::var("SVEN_NODE_URL")
+            .or_else(|_| std::env::var("SVEN_GATEWAY_URL"))
+            .ok();
+        let token = std::env::var("SVEN_NODE_TOKEN")
+            .or_else(|_| std::env::var("SVEN_GATEWAY_TOKEN"))
+            .ok();
+        let insecure = std::env::var("SVEN_NODE_INSECURE")
+            .or_else(|_| std::env::var("SVEN_GATEWAY_INSECURE"))
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        match (url, token) {
+            (Some(url), Some(token)) => Some(NodeBackend {
+                url,
+                token,
+                insecure,
+            }),
+            _ => None,
+        }
+    };
+
+    if cli.approval == sven_config::ApprovalMode::Manual && node_backend.is_some() {
+        anyhow::bail!(
+            "--approval manual needs a local session: in node-proxy mode \
+             (SVEN_NODE_URL) the node answers its own approvals"
+        );
+    }
+
     // `--resume <id>` resolves to the same `--trace PATH` semantics as an
     // explicit `--trace` flag (both load source and sync-after-every-turn
     // target - see `AppOptions::trace_path`'s doc comment). Bare `--resume`
@@ -245,32 +276,9 @@ pub(crate) async fn run_tui(mut cli: Cli, config: Arc<sven_config::Config>) -> a
     let trace_load_path = cli.effective_load_trace()?.cloned();
     let trace_save_path = cli.effective_output_trace().cloned();
 
-    // Auto-detect node-proxy mode: when SVEN_NODE_URL and SVEN_NODE_TOKEN
-    // are present (injected by the node into web PTY sessions), connect the
-    // TUI to the running node so the agent has full P2P peer access.
-    let node_backend = {
-        let url = std::env::var("SVEN_NODE_URL")
-            .or_else(|_| std::env::var("SVEN_GATEWAY_URL"))
-            .ok();
-        let token = std::env::var("SVEN_NODE_TOKEN")
-            .or_else(|_| std::env::var("SVEN_GATEWAY_TOKEN"))
-            .ok();
-        let insecure = std::env::var("SVEN_NODE_INSECURE")
-            .or_else(|_| std::env::var("SVEN_GATEWAY_INSECURE"))
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        match (url, token) {
-            (Some(url), Some(token)) => Some(NodeBackend {
-                url,
-                token,
-                insecure,
-            }),
-            _ => None,
-        }
-    };
-
     let opts = AppOptions {
         mode: cli.mode,
+        approval: cli.approval,
         initial_prompt: cli.prompt,
         no_nvim: !cli.nvim,
         model_override: cli.model,

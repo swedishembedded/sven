@@ -459,6 +459,20 @@ Both caps can also be adjusted live in a running session with `/think-limit`
 
 ---
 
+### Approvals and questions
+
+Whether a tool call waits for your approval is chosen per run, not in the
+configuration: `sven --approval auto` (the default) runs every call the mode
+allows without a prompt; `sven --approval manual` shows you each call that is
+not read-only - with the tool and its command, path or arguments - before it
+runs, sub-agents' calls included. Manual approval needs the interactive TUI;
+sven refuses to start it headless, in a pipe, or as a team member. The mode
+(`--mode`, `agent.default_mode`) still decides what may run at all.
+
+A question the agent asks reaches you only in the interactive TUI. Everywhere
+else it is answered at once: "No user is available to answer this question.
+Proceed on your best judgement and state the assumption you made."
+
 ### `tools`
 
 Controls what the agent is allowed to do and how.

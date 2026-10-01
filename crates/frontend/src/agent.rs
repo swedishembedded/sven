@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use sven_bootstrap::{KernelAgentSession, McpManager, RuntimeBuilder, RuntimeContext};
-use sven_config::{AgentMode, Config, ModelConfig};
+use sven_config::{AgentMode, ApprovalMode, Config, ModelConfig};
 use sven_machines::AgentEvent;
 use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
@@ -156,6 +156,7 @@ pub async fn kernel_session_task(
     config: Arc<Config>,
     startup_model_cfg: ModelConfig,
     mode: AgentMode,
+    approval: ApprovalMode,
     rx: mpsc::Receiver<AgentRequest>,
     tx: mpsc::Sender<AgentEvent>,
     question_tx: mpsc::Sender<QuestionRequest>,
@@ -168,6 +169,7 @@ pub async fn kernel_session_task(
         config,
         startup_model_cfg,
         mode,
+        approval,
         rx,
         tx,
         question_tx,
@@ -200,6 +202,7 @@ async fn build_kernel_session(
     config: &Arc<Config>,
     ctx: &RuntimeContext,
     mode: AgentMode,
+    approval: ApprovalMode,
     model_cfg: &ModelConfig,
     history: Vec<Message>,
     question_tx: &mpsc::Sender<QuestionRequest>,
@@ -213,6 +216,7 @@ async fn build_kernel_session(
         .with_runtime_context(ctx.clone())
         .with_model_config(model_cfg.clone())
         .with_agent_mode(mode)
+        .with_approval_mode(approval)
         .with_tool_question_tx(question_tx.clone())
         .with_cancel_handle(cancel_handle.clone())
         .with_initial_history(history);
@@ -240,6 +244,7 @@ pub(crate) async fn run_kernel_session_task(
     config: Arc<Config>,
     startup_model_cfg: ModelConfig,
     mode: AgentMode,
+    approval: ApprovalMode,
     mut rx: mpsc::Receiver<AgentRequest>,
     tx: mpsc::Sender<AgentEvent>,
     question_tx: mpsc::Sender<QuestionRequest>,
@@ -265,6 +270,7 @@ pub(crate) async fn run_kernel_session_task(
         &config,
         &ctx,
         mode,
+        approval,
         &startup_model_cfg,
         Vec::new(),
         &question_tx,
@@ -319,6 +325,7 @@ pub(crate) async fn run_kernel_session_task(
                         &config,
                         &ctx,
                         new_mode,
+                        approval,
                         &new_model,
                         history,
                         &question_tx,
@@ -368,6 +375,7 @@ pub(crate) async fn run_kernel_session_task(
                         &config,
                         &ctx,
                         new_mode,
+                        approval,
                         &new_model,
                         messages,
                         &question_tx,
@@ -516,6 +524,7 @@ mod tests {
             config,
             startup_model,
             mode,
+            ApprovalMode::Auto,
             req_rx,
             event_tx,
             question_tx,

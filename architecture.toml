@@ -307,8 +307,5 @@ lines = 850
 path = "crates/workspace/src/skills.rs"
 lines = 825
 [[allow.large_file]]
-path = "crates/tui/src/app/term_events.rs"
-lines = 814
-[[allow.large_file]]
 path = "crates/executors/src/turn.rs"
 lines = 812

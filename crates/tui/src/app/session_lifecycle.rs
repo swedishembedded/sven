@@ -412,6 +412,7 @@ impl App {
             cfg,
             startup_model_cfg,
             mode,
+            self.approval,
             submit_rx,
             evt_tx,
             question_tx,

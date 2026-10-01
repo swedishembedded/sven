@@ -49,7 +49,7 @@ tools it is allowed to use.
 | Mode | What the agent can do |
 |------|----------------------|
 | `chat` | Conversational coding assistant. A streaming, native-tool-calling agent (the same engine as `agent`/`reactive`) for questions, analysis, code review, and edits. **Default.** |
-| `sdlc` | Full software-development lifecycle. Formally structured: Intake → Discovery → Planning → Execution → Verification → Delivery, with a Recovery path. Each phase runs a scoped LLM↔tool deliberation and pauses for human approval at scope, plan, and delivery. |
+| `sdlc` | Full software-development lifecycle. Formally structured: Intake → Discovery → Planning → Execution → Verification → Delivery, with a Recovery path. Each phase runs a scoped LLM↔tool deliberation; with `--approval manual` it pauses for your approval at scope, plan, and delivery. |
 | `research` | Read files and run read-only commands. No writes. |
 | `plan` | Reads freely, produces structured plans, no file writes. |
 | `agent` | Full read/write access. Use for general-purpose agentic tasks. |
@@ -105,11 +105,13 @@ next transition.
 **What executors do.** Executors are the only code that performs I/O. They stream
 live progress (text, thinking, tool starts/finishes, token usage) outward for
 the UI to render, then post one result event back into the kernel queue. A
-`UserExecutor` surfaces a question or approval prompt and waits for your
-decision.
+`UserExecutor` surfaces a question - and, under `--approval manual`, an
+approval prompt - and waits for your decision.
 
-In headless / CI mode the same kernel runs with every human gate auto-approved,
-writing final output to stdout. For the full technical design see
+By default every call the mode allows runs without a prompt. In headless / CI
+mode nobody is there to answer, so the same kernel answers every gate at once
+- a question gets "No user is available; proceed on your best judgement and
+state the assumption" - and writes final output to stdout. For the full technical design see
 **[HSM Architecture](technical/hsm-architecture.md)**, the **[Deliberation
 Engine](technical/deliberation-engine.md)**, and **[Parallel Submachine
 Fan-out](technical/parallel-submachines.md)**.

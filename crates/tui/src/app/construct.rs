@@ -148,6 +148,7 @@ impl App {
 
         let mut app = Self {
             config,
+            approval: opts.approval,
             node_backend: opts.node_backend,
             is_node_proxy,
             node_url,

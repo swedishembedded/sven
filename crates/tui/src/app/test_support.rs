@@ -26,6 +26,7 @@ impl App {
             initial_queue: Vec::new(),
             node_backend: None,
             open_resume_picker: false,
+            approval: sven_config::ApprovalMode::Auto,
         };
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut app = Self::new(config, opts);

@@ -87,6 +87,7 @@ impl App {
 
             let cfg = self.config.clone();
             let mode = self.session.mode;
+            let approval = self.approval;
             let startup_model_cfg = self.session.model_cfg.clone();
             let cancel_handle_task = self.agent.cancel.clone();
             let shared_skills_task = self.shared_skills.clone();
@@ -100,6 +101,7 @@ impl App {
                     cfg,
                     startup_model_cfg,
                     mode,
+                    approval,
                     submit_rx,
                     event_tx,
                     question_tx,

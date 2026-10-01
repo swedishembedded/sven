@@ -62,12 +62,26 @@ sven completions bash >> ~/.bashrc      # also: zsh, fish, powershell
 | Mode | Behaviour |
 |------|-----------|
 | `chat` | Conversational AI assistant. Handles Q&A, analysis, and exploration. Seamlessly hands off to `sdlc` for engineering tasks. |
-| `sdlc` | Full software-development lifecycle machine. 57 formally-defined states covering Intake → Discovery → Planning → Execution → Verification → Delivery with approval gates and automatic recovery. |
+| `sdlc` | Full software-development lifecycle machine. 57 formally-defined states covering Intake → Discovery → Planning → Execution → Verification → Delivery with decision gates and automatic recovery. |
 | `research` | Read-only tools. Good for exploration and analysis. |
 | `plan` | No file writes. Produces structured plans without side effects. |
 | `agent` | Full read/write access. Default. |
 
 Set with `--mode <name>`. Cycle the legacy trio live in the TUI with `F4`.
+
+The mode decides what the agent may do at all. Whether a call waits for you is
+a separate choice, `--approval`:
+
+| `--approval` | Behaviour |
+|--------------|-----------|
+| `auto` | Default, in every kind of session (TUI, headless, CI, SDK, sub-agents, teams). Every call the mode allows runs without a prompt - shell and file writes included. |
+| `manual` | Every call that is not read-only is shown to you with the tool and its command, path or arguments, and runs only once you approve it; a `task` sub-agent's and an SDLC task's calls come to the same prompt. Needs the interactive TUI: sven refuses to start it headless, in a pipe, or as a team member. |
+
+A question the agent asks reaches you only in the interactive TUI. Anywhere
+nobody is at a terminal - headless and CI runs, pipes, `sven acp serve`, team
+members - it is answered at once with "No user is available to answer this
+question. Proceed on your best judgement and state the assumption you made.",
+so no run ever waits for a person who is not there.
 
 ## Conversation history
 
@@ -227,7 +241,9 @@ See [docs/technical/hsm-architecture.md](docs/technical/hsm-architecture.md) for
 
 †`ask_question` is only available in interactive TUI sessions.
 
-Each tool call goes through a configurable approval policy - auto-approved, denied, or presented for confirmation based on glob patterns.
+Each tool call is held to the mode's permission policy; with `--approval
+manual` each call that is not read-only also waits for your approval (see
+[Agent modes](#agent-modes)).
 
 ## TUI key bindings
 

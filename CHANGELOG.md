@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **sven-tool-api**: `PermissionRequester::request_permission` takes the call's `ToolCapability` as a second parameter (`Tool::call_capability`); an implementation decides on it rather than on the tool's name.
 
 ### Added
+- `sven --approval auto|manual` (`sven_config::ApprovalMode`, in `sven-vocab`). `auto`, the default, runs every call the mode allows without a prompt; `manual` shows each call that is not read-only in the TUI - the tool and its command, path or arguments - and runs it only once approved, one call at a time, a `task` sub-agent's and an SDLC task child's calls included. `--approval manual` fails at start, before anything runs, where nobody could answer: with `--headless` or a PROMPT, when stdin or stdout is not a terminal, with a subcommand, as a team member, or in node-proxy mode.
 - `sven-sdk`: `ApprovalPolicy::{Auto, Manual}`, `EngineBuilder::human_gates` (the handler that answers questions and, under `Manual`, approvals) and `EngineBuilder::park_questions`; `sven_sdk::tool::NO_USER_ANSWER`.
 - `RuntimeBuilder::with_approval_mode`, `UserExecutor::with_approval_mode`, `KernelAgentSession::spawn_answering`; `sven acp serve --approval auto|manual`, whose manual permission requests name the call's capability under `_meta` `sven.capability` (`CAPABILITY_META_KEY`).
 - `NO_USER_ANSWER` (`sven-vocab`, re-exported by `sven-tool-api`), `KernelChannels::{answer_unattended, closed}`, `RuntimeBuilder::with_parked_questions`, `AskQuestionTool::{parking, no_user}`.
