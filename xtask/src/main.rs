@@ -623,30 +623,70 @@ const FORBIDDEN_IN_MINIMAL: &[&str] = &[
     "zbus",
 ];
 
+/// What the minimal SDK (`sven-sdk` without default features) must not resolve
+/// on top of [`FORBIDDEN_IN_MINIMAL`]: no image or audio decoding and no
+/// Android device control. The `minimal` binary keeps images and audio for
+/// `--attach`, so this list applies to the SDK alone.
+const FORBIDDEN_IN_MINIMAL_SDK: &[&str] =
+    &["image", "sven-image", "sven-audio", "sven-tools-android"];
+
 /// `--profile <name>` support: asserts the resolved dependency closure for a
 /// named Cargo feature profile (`cargo tree -p sven --no-default-features
 /// --features <name> -e normal`) contains none of [`FORBIDDEN_IN_MINIMAL`].
-/// Only meaningful for `--profile minimal`; other profile names run the same
-/// check against their own resolved closure (harmless, just not the
-/// portability target the check exists for).
+/// `--profile minimal` also asserts the minimal SDK's closure (`cargo tree -p
+/// sven-sdk --no-default-features -e normal`) contains none of those nor of
+/// [`FORBIDDEN_IN_MINIMAL_SDK`]. Other profile names run the binary check
+/// against their own resolved closure (harmless, just not the portability
+/// target the check exists for).
 fn check_profile(workspace_root: &Path, profile: &str) -> Result<Vec<String>> {
+    let binary = ["-p", "sven", "--no-default-features", "--features", profile];
+    let mut violations = forbidden_in_closure(
+        workspace_root,
+        &format!("--profile {profile}"),
+        "the `sven` binary",
+        &binary,
+        FORBIDDEN_IN_MINIMAL,
+    )?;
+    if profile == "minimal" {
+        let sdk = ["-p", "sven-sdk", "--no-default-features"];
+        let forbidden: Vec<&str> = FORBIDDEN_IN_MINIMAL
+            .iter()
+            .chain(FORBIDDEN_IN_MINIMAL_SDK)
+            .copied()
+            .collect();
+        violations.extend(forbidden_in_closure(
+            workspace_root,
+            "the minimal SDK",
+            "`sven-sdk --no-default-features`",
+            &sdk,
+            &forbidden,
+        )?);
+    }
+    violations.sort();
+    violations.dedup();
+    Ok(violations)
+}
+
+/// Every crate of `forbidden` in the normal-dependency closure `cargo tree
+/// <selection> -e normal` resolves.
+fn forbidden_in_closure(
+    workspace_root: &Path,
+    label: &str,
+    subject: &str,
+    selection: &[&str],
+    forbidden: &[&str],
+) -> Result<Vec<String>> {
+    let command = format!("cargo tree {} -e normal", selection.join(" "));
     let output = Command::new("cargo")
-        .args([
-            "tree",
-            "-p",
-            "sven",
-            "--no-default-features",
-            "--features",
-            profile,
-            "-e",
-            "normal",
-        ])
+        .arg("tree")
+        .args(selection)
+        .args(["-e", "normal"])
         .current_dir(workspace_root)
         .output()
-        .context("running `cargo tree` for --profile check")?;
+        .with_context(|| format!("running `{command}` for {label}"))?;
     if !output.status.success() {
         bail!(
-            "`cargo tree -p sven --no-default-features --features {profile} -e normal` failed:\n{}",
+            "`{command}` failed:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -662,14 +702,12 @@ fn check_profile(workspace_root: &Path, profile: &str) -> Result<Vec<String>> {
             .split_whitespace()
             .next()
             .unwrap_or("");
-        if let Some(forbidden) = FORBIDDEN_IN_MINIMAL.iter().find(|f| **f == name) {
+        if let Some(found) = forbidden.iter().find(|f| **f == name) {
             violations.push(format!(
-                "error[ARCH-007]: forbidden crate in --profile {profile}\n  = note: `{forbidden}` is resolved into the `sven` binary's normal-dependency closure\n  = help: this profile must exclude {forbidden} (see FORBIDDEN_IN_MINIMAL in xtask); check which enabled feature pulls it in with `cargo tree -p sven --no-default-features --features {profile} -e normal -i {forbidden}`"
+                "error[ARCH-007]: forbidden crate in {label}\n  = note: `{found}` is resolved into {subject}'s normal-dependency closure\n  = help: it must exclude {found} (see FORBIDDEN_IN_MINIMAL in xtask); check which enabled feature pulls it in with `{command} -i {found}`"
             ));
         }
     }
-    violations.sort();
-    violations.dedup();
     Ok(violations)
 }
 

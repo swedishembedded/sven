@@ -11,7 +11,7 @@ use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
 use crate::machines::{
     predict::PredictMachine, reactive_agent::ReactiveAgentMachine, sdlc::SdlcMachine,
-    ui_test::UiTestMachine, verified_task::VerifiedTaskMachine,
+    verified_task::VerifiedTaskMachine,
 };
 
 /// The conversation thread a mode's machine reads.
@@ -55,16 +55,21 @@ impl Default for ModeRegistry {
 }
 
 impl ModeRegistry {
-    /// Builds the registry pre-loaded with the built-in machines:
+    /// Builds the registry pre-loaded with the built-in machines that need no
+    /// particular tool:
     /// - `"agent"` / `"reactive"` / `"chat"` → [`ReactiveAgentMachine`]
     ///   (streaming, native-tool-calling agent — ChatGPT-style)
     /// - `"sdlc"` → [`SdlcMachine`]
     ///   (multi-phase software-development lifecycle with in-state tool loops)
     /// - `"verified-task"` → [`VerifiedTaskMachine`]
     ///   (freeze-before-attempt, externally-verified single task with retry)
-    /// - `"ui-test"` → [`UiTestMachine`]
-    ///   (deterministic Android UI-test step runner: screenshot → ground →
-    ///   act → verify → next step; see `.agents/roadmap/android-ui-test.md`)
+    /// - `"predict"` → [`PredictMachine`]
+    ///
+    /// A machine that drives one specific tool is not here: its mode is
+    /// registered by the assembly that compiles that tool in, so no registry
+    /// offers a mode whose every step would call a tool that does not exist.
+    /// [`UiTestMachine`](crate::UiTestMachine) (`"ui-test"`, the `android`
+    /// tool) is one.
     pub fn default_registry() -> Self {
         let mut reg = Self {
             factories: HashMap::new(),
@@ -93,10 +98,6 @@ impl ModeRegistry {
         reg.register(
             "predict",
             Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(PredictMachine::new())) }),
-        );
-        reg.register(
-            "ui-test",
-            Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(UiTestMachine::new())) }),
         );
         reg
     }
@@ -141,13 +142,12 @@ mod tests {
         let _ = machine.init(&mut ctx);
     }
 
+    /// `ui-test` drives the `android` tool, which this crate cannot know is
+    /// compiled in; the assembly that compiles it in registers the mode.
     #[test]
-    fn default_registry_has_ui_test() {
+    fn default_registry_offers_no_mode_tied_to_one_tool() {
         let reg = ModeRegistry::default_registry();
-        let factory = reg.get("ui-test").expect("ui-test mode must be registered");
-        let mut machine = factory();
-        let mut ctx = Context::new();
-        let _ = machine.init(&mut ctx);
+        assert!(reg.get("ui-test").is_none());
     }
 
     #[test]

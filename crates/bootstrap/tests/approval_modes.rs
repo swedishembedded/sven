@@ -387,6 +387,7 @@ async fn manual_approval_asks_about_a_memory_write_but_not_the_todo_list() {
 /// A ui-test step runs dispatched and its machine does not hold a call for
 /// an approval: manual approval is refused when the session is built, never
 /// left to stall at the first device call.
+#[cfg(feature = "android")]
 #[tokio::test]
 async fn manual_approval_of_a_ui_test_session_is_refused_at_build() {
     let err = RuntimeBuilder::new(Arc::new(Config::default()), "ui-test")

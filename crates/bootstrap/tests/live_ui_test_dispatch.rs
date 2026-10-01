@@ -17,6 +17,11 @@
 //! failure, since proving a specific LLM works is out of scope here - the
 //! machine-level tests already cover the step compiler against a scripted
 //! model exhaustively; this test's whole point is the REAL-tool wiring.
+//!
+//! Compiled only with the `android` feature, which is what brings the tool and
+//! the dispatch entry point in.
+
+#![cfg(feature = "android")]
 
 use std::sync::Arc;
 

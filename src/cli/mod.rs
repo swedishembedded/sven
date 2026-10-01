@@ -549,6 +549,9 @@ pub enum Commands {
     /// reserved for a genuine subcommand-level fault: malformed stdin, or an
     /// internal error building/joining the kernel session.
     ///
+    /// The one mode is `ui-test`, in a build with the `android` feature (the
+    /// default build); any other mode is answered `{"ok": false}`.
+    ///
     ///   echo '{"mode": "ui-test", "params": {...}}' | sven agent-dispatch
     AgentDispatch,
 

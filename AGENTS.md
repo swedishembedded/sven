@@ -70,7 +70,9 @@ CHANGELOG.md is history and exempt.
   TUI → `.cursor/skills/programming/ratatui/SKILL.md`.
 - **New behaviour**: a new `Machine` impl in `machines/src/machines/` reusing
   `loop_core` for the tool-loop plumbing; register it in
-  `machines/src/mode.rs::default_registry()`. (A prior graph-DSL extension path
+  `machines/src/mode.rs::default_registry()` - or, when the machine drives one
+  specific tool, in `bootstrap/src/modes.rs::mode_registry()` behind that
+  tool's feature, so no build lists a mode whose tool it lacks. (A prior graph-DSL extension path
   was deleted - see `docs/adr/0001-delete-graph-dsl.md`.)
 - **Tests**: `make test` (unit/integration), `make check` (rustfmt + text
   gates + `xtask arch` + clippy `-D warnings`, zero-warning policy),
@@ -169,7 +171,8 @@ The `sven` binary itself has cargo features controlling what's linked in:
 together, not independently toggleable), `gdb` (the GDB/MI tool suite),
 `memory` (semantic memory, SQLite), the tool presets `coding` (attach images
 and audio, transcribe speech) and `research` (read images), `dbus` (brain's
-D-Bus model transport), and `minimal` (none of the above - headless CI +
+D-Bus model transport), `android` (the `android` tool and the `ui-test` mode),
+and `minimal` (none of the above - headless CI +
 `tool`/`index`/`map`/`tee`/`reduce` only, the portability target).
 `default` is everything but `minimal`. `cargo run -p xtask -- arch --profile
 minimal` asserts the `minimal` build's resolved dependency closure excludes
@@ -239,7 +242,8 @@ tool, parked-question ledger; the `memory` feature of `sven-bootstrap`)
 its executor slots, `ThreadStore`)
 
 ### assembly
-`sven-bootstrap` (`RuntimeBuilder` - the one kernel-assembly point) ·
+`sven-bootstrap` (`RuntimeBuilder` - the one kernel-assembly point;
+`mode_registry` - the modes this build can run; the feature presets) ·
 `sven-commands` (`SlashCommand` trait + builtins)
 
 ### wiring
@@ -356,7 +360,10 @@ and `sven-tool-registry` the registry; neither holds a concrete tool.
    resume. `crates/machines/tests/restorable.rs` fails the suite if you skip
    the first; nothing catches the second but a corrupted production session.
    See [docs/technical/resumable-agents.md](docs/technical/resumable-agents.md).
-3. `machines/src/mode.rs::default_registry()` - register the mode string.
+3. `machines/src/mode.rs::default_registry()` - register the mode string; a
+   machine that drives one specific tool registers instead in
+   `bootstrap/src/modes.rs` (`mode_registry`, behind the tool's feature) and
+   gives its sessions that tool there (`register_mode_tools`).
 4. Its `permission_policy()`.
 5. `bootstrap/src/runtime_builder.rs` - any child-spawner wiring.
 6. Config: `sven-config` `AgentMode` if it's user-selectable.

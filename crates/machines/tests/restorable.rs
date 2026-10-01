@@ -13,12 +13,23 @@
 //! your team needs expertise in event-sourced state-machine kernels then you
 //! can procure our services by sending an email to info@swedishembedded.com.
 
-use sven_hsm::Context;
-use sven_machines::ModeRegistry;
+use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine, Context};
+use sven_machines::{ModeRegistry, UiTestMachine};
+
+/// Every machine this crate defines: the built-in modes, plus the ones an
+/// assembly registers when it compiles their tool in.
+fn every_machine() -> ModeRegistry {
+    let mut registry = ModeRegistry::default_registry();
+    registry.register(
+        "ui-test",
+        Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(UiTestMachine::new())) }),
+    );
+    registry
+}
 
 #[test]
 fn every_registered_mode_enumerates_the_states_it_can_be_resumed_into() {
-    let registry = ModeRegistry::default_registry();
+    let registry = every_machine();
 
     for mode in registry.modes() {
         let factory = registry.get(mode).expect("a mode the registry listed");
@@ -34,7 +45,7 @@ fn every_registered_mode_enumerates_the_states_it_can_be_resumed_into() {
 
 #[test]
 fn every_registered_mode_resumes_into_each_of_its_own_states() {
-    let registry = ModeRegistry::default_registry();
+    let registry = every_machine();
 
     for mode in registry.modes() {
         let factory = registry.get(mode).expect("a mode the registry listed");

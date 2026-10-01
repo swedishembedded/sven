@@ -10,6 +10,11 @@
 //!   child processes)
 //! - Kernel runtime assembly ([`RuntimeBuilder`]) and the
 //!   [`KernelAgentSession`] adapter
+//! - The modes this build can run ([`mode_registry`])
+//!
+//! Without default features this is the minimal assembly: no D-Bus, no image
+//! or audio decoding, no Android device control. The `coding` and `research`
+//! presets, `dbus`, `android`, `gdb` and `memory` add them (see Cargo.toml).
 //!
 //! Frontends (`sven-ci`, `sven-tui`, `sven-acp`, `sven-frontend`,
 //! `sven-sdk`) depend on this crate instead of inlining their own
@@ -21,11 +26,13 @@ pub mod context_query;
 pub mod context_tool;
 pub mod kernel_bridge;
 mod mode_policy;
+pub mod modes;
 pub mod registry;
 pub mod runtime_builder;
 pub mod session_handles;
 pub mod supervisor;
 pub mod task_tool;
+#[cfg(feature = "android")]
 pub mod ui_test_dispatch;
 
 pub use context::{BuiltinTools, Questions, RuntimeContext, ToolSetProfile};
@@ -34,6 +41,7 @@ pub use context_query::{
 };
 pub use context_tool::ContextTool;
 pub use kernel_bridge::{spawn_observation_bridge, spawn_question_bridge, KernelAgentSession};
+pub use modes::mode_registry;
 pub use registry::{
     build_cli_tool_registry, build_tool_registry, build_tool_registry_with_integrations,
     IntegrationProviders,
@@ -46,6 +54,7 @@ pub use sven_mcp_client::McpManager;
 /// What a session's `ask_question` tool sends a surface that answers it.
 pub use sven_tools_agent::{Question, QuestionRequest};
 pub use task_tool::{ChildApprover, TaskTool};
+#[cfg(feature = "android")]
 pub use ui_test_dispatch::{
     dispatch_ui_test_step, StateReporter, UiTestDevice, UiTestDispatchOverrides,
 };

@@ -27,12 +27,15 @@ tokio          = { workspace = true }
 
 [features]
 # The presets mirror `Toolset::coding()` / `Toolset::research()`: each compiles
-# in what that toolset's tools need. `dbus` is brain's D-Bus model transport.
-# `default-features = false` is the minimal SDK: no D-Bus, no attachments.
-default = ["coding", "research", "dbus"]
+# in what that toolset's tools need. `dbus` is brain's D-Bus model transport;
+# `android` the `android` tool and the `ui-test` mode that drives it.
+# `default-features = false` is the minimal SDK: no D-Bus, no image or audio
+# decoding, no Android device control, and no `ui-test` mode.
+default = ["coding", "research", "dbus", "android"]
 coding = ["sven-bootstrap/coding"]
 research = ["sven-bootstrap/research"]
 dbus = ["sven-bootstrap/dbus"]
+android = ["sven-bootstrap/android"]
 
 [dev-dependencies]
 async-trait     = { workspace = true }

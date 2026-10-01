@@ -253,9 +253,7 @@ impl Engine {
     fn knows_mode(&self, mode: &str) -> bool {
         match &self.machines {
             Some(registry) => registry.get(mode).is_some(),
-            None => sven_machines::ModeRegistry::default_registry()
-                .get(mode)
-                .is_some(),
+            None => sven_bootstrap::mode_registry().get(mode).is_some(),
         }
     }
 
@@ -267,7 +265,7 @@ impl Engine {
         };
         match &self.machines {
             Some(registry) => owned(registry),
-            None => owned(&sven_machines::ModeRegistry::default_registry()),
+            None => owned(&sven_bootstrap::mode_registry()),
         }
     }
 }
@@ -348,7 +346,7 @@ impl EngineBuilder {
         factory: sven_machines::mode::MachineFactory,
     ) -> Self {
         self.machines
-            .get_or_insert_with(sven_machines::ModeRegistry::default_registry)
+            .get_or_insert_with(sven_bootstrap::mode_registry)
             .register(mode.as_ref(), factory);
         self
     }

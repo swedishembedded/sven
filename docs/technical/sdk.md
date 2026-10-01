@@ -67,20 +67,25 @@ whether a call waits for a person (see "A tool of your own").
 
 ### Cargo features
 
-What a preset can offer is decided when the application is compiled.
-`sven-sdk`'s default features are `coding`, `research` and `dbus`:
+What a preset can offer, and which modes an engine can run, is decided when
+the application is compiled. `sven-sdk`'s default features are `coding`,
+`research`, `dbus` and `android`:
 
 | Feature | Compiles in |
 |---------|-------------|
 | `coding` | image and audio attachments (`attach_file`), images in `read_file`, speech-to-text for audio a model cannot take (Unix) |
 | `research` | images in `read_file` |
 | `dbus` | `provider: dbus`, brain's D-Bus model transport (Unix) |
+| `android` | the `android` tool and the `ui-test` mode that drives it |
 
 `default-features = false` is the minimal SDK: the kernel, every HTTP model
-provider and the plain-text tools, with no D-Bus, image or audio code linked in
-at all. Its `Toolset::coding()` offers no `attach_file`, its `read_file` reads
-an image as a binary file, and `provider: dbus` is refused by name. Enable a
-preset on top of it:
+provider and the plain-text tools, with no D-Bus, image, audio or Android code
+linked in at all. Its `Toolset::coding()` offers no `attach_file`, its
+`read_file` reads an image as a binary file, `provider: dbus` is refused by
+name, and there is no `ui-test` mode: `Engine::modes()` does not list it and
+`Engine::resume` refuses an agent in it. With `android`, a `ui-test` agent is
+given the `android` tool (and `ask_question`, answered as the engine answers
+questions) whatever its `Toolset`. Enable a preset on top of it:
 
 ```toml
 sven-sdk = { version = "2", default-features = false, features = ["research"] }

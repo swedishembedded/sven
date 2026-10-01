@@ -34,7 +34,6 @@ use sven_executors::{
 };
 use sven_hsm::{Context, ObservationSink, Principal, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, ErasedRuntime};
-use sven_machines::ModeRegistry;
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
 use sven_tool_api::events::ToolEvent;
@@ -141,8 +140,8 @@ pub struct RuntimeBuilder {
 impl RuntimeBuilder {
     /// Create a builder with the given configuration.
     ///
-    /// `mode` selects the machine from [`ModeRegistry`] (e.g. `"chat"` or
-    /// `"sdlc"`). Defaults to `"chat"` if empty.
+    /// `mode` selects the machine from [`crate::mode_registry`] (e.g. `"chat"`
+    /// or `"sdlc"`). Defaults to `"chat"` if empty.
     pub fn new(config: Arc<Config>, mode: impl Into<String>) -> Self {
         let mode = {
             let s = mode.into();
@@ -371,9 +370,8 @@ impl RuntimeBuilder {
     /// Look the mode's machine up in `registry` instead of the default one.
     ///
     /// The extension point for a machine that does not live in this workspace:
-    /// a caller builds a registry from
-    /// [`ModeRegistry::default_registry`](sven_machines::ModeRegistry::default_registry),
-    /// registers its own factory, and passes it here.
+    /// a caller builds a registry from [`crate::mode_registry`] (every mode
+    /// this build can run), registers its own factory, and passes it here.
     pub fn with_mode_registry(mut self, registry: Arc<sven_machines::ModeRegistry>) -> Self {
         self.mode_registry = Some(registry);
         self
@@ -426,7 +424,7 @@ impl RuntimeBuilder {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The mode is not registered in [`ModeRegistry`].
+    /// - The mode is not registered in the mode registry.
     /// - The model provider cannot be initialised from config.
     pub async fn build(
         mut self,
@@ -446,7 +444,7 @@ impl RuntimeBuilder {
         // ── Look up machine ───────────────────────────────────────────────────
         let registry = match self.mode_registry.take() {
             Some(supplied) => supplied,
-            None => Arc::new(ModeRegistry::default_registry()),
+            None => Arc::new(crate::modes::mode_registry()),
         };
         let factory = registry.get(&self.mode).ok_or_else(|| {
             anyhow::anyhow!(
@@ -605,6 +603,14 @@ impl RuntimeBuilder {
             ),
             None => sven_tool_registry::ToolRegistry::new(),
         };
+
+        #[cfg(feature = "android")]
+        crate::modes::register_mode_tools(
+            &self.mode,
+            &mut tool_registry,
+            self.tool_question_tx.clone(),
+            self.park_questions,
+        );
 
         let mcp_tools: Vec<McpTool> = mcp_manager.tools().await;
         for tool in mcp_tools {

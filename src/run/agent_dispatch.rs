@@ -14,7 +14,8 @@
 //! malformed request or an internal fault (couldn't parse stdin, couldn't
 //! build/join the kernel session) exits non-zero. See
 //! `.agents/roadmap/android-ui-test.md` for the full contract this
-//! implements.
+//! implements. `ui-test` exists only in a build with the `android` feature;
+//! without it the request is answered `{"ok": false}` with that reason.
 //!
 //! Swedish Embedded AB implements solutions for orchestrated, CI-dispatched
 //! test automation for its clients. If your team needs expertise in agent
@@ -28,7 +29,6 @@ use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use sven_bootstrap::{dispatch_ui_test_step, UiTestDevice, UiTestDispatchOverrides};
 use sven_config::Config;
 
 /// One agent-dispatch request - exactly what a dispatching host writes to
@@ -49,6 +49,8 @@ struct DispatchRequest {
 }
 
 #[derive(Debug, Deserialize)]
+// Only the `ui-test` mode reads a device.
+#[cfg_attr(not(feature = "android"), allow(dead_code))]
 struct DispatchDevice {
     provider_id: String,
     device_id: String,
@@ -81,30 +83,45 @@ pub(crate) async fn run_agent_dispatch_command(config: Arc<Config>) -> anyhow::R
         .with_context(|| format!("stdin is not a valid agent-dispatch request: {raw:?}"))?;
 
     let reply = match request.mode.as_str() {
-        "ui-test" => {
-            let device = request.device.map(|d| UiTestDevice {
-                provider_id: d.provider_id,
-                device_id: d.device_id,
-                serial: d.serial,
-                apps: d.apps,
-            });
-            match dispatch_ui_test_step(
-                config,
-                device.as_ref(),
-                &request.params,
-                UiTestDispatchOverrides::default(),
-            )
-            .await
-            {
-                Ok(output) => json!({ "ok": true, "output": output }),
-                Err(error) => json!({ "ok": false, "error": error }),
-            }
-        }
+        "ui-test" => dispatch_ui_test(config, request).await,
         other => json!({ "ok": false, "error": format!("unsupported mode: {other}") }),
     };
 
     println!("{reply}");
     Ok(())
+}
+
+/// One `ui-test` step on the device the request names.
+#[cfg(feature = "android")]
+async fn dispatch_ui_test(config: Arc<Config>, request: DispatchRequest) -> Value {
+    use sven_bootstrap::{dispatch_ui_test_step, UiTestDevice, UiTestDispatchOverrides};
+
+    let device = request.device.map(|d| UiTestDevice {
+        provider_id: d.provider_id,
+        device_id: d.device_id,
+        serial: d.serial,
+        apps: d.apps,
+    });
+    match dispatch_ui_test_step(
+        config,
+        device.as_ref(),
+        &request.params,
+        UiTestDispatchOverrides::default(),
+    )
+    .await
+    {
+        Ok(output) => json!({ "ok": true, "output": output }),
+        Err(error) => json!({ "ok": false, "error": error }),
+    }
+}
+
+/// A build without Android device control has no `ui-test` mode to run.
+#[cfg(not(feature = "android"))]
+async fn dispatch_ui_test(_config: Arc<Config>, _request: DispatchRequest) -> Value {
+    json!({
+        "ok": false,
+        "error": "mode ui-test is not available in this build (it needs the `android` feature)",
+    })
 }
 
 #[cfg(test)]

@@ -249,7 +249,7 @@ fn system_tool(
 }
 
 /// Offers `ask_question` routed as `questions` says, if at all.
-fn register_ask_question(reg: &mut ToolRegistry, questions: Questions) {
+pub(crate) fn register_ask_question(reg: &mut ToolRegistry, questions: Questions) {
     match questions {
         Questions::Answered(tx) => reg.register(AskQuestionTool::new_tui(tx)),
         Questions::Parked => reg.register(AskQuestionTool::parking()),
