@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-01
+
 ### Migrating from 2.0.0
 - **An SDK host that never called `.approvals()` now runs shell and delete calls.** 2.0.0's default `ApprovalPolicy::Deny` refused every call the kernel asked about - `ExecuteShell` and `DeleteFile` - and answered questions with nothing. The default is now `ApprovalPolicy::Auto`: every call the agent's mode allows runs. A host that relied on the refusal picks a read-only mode or `Toolset`, or asks a person: `.approvals(ApprovalPolicy::Manual).human_gates(handler)`.
 - **sven-sdk**: `ApprovalPolicy` is `Auto` (the default) or `Manual`. `ApprovalPolicy::AutoApprove` → drop the `.approvals(..)` call. `ApprovalPolicy::ask(f)` → `.approvals(ApprovalPolicy::Manual).human_gates(f)` to be asked about each call that is not read-only, or `.human_gates(f)` alone to answer only questions. `ApprovalPolicy::Deny` → a read-only mode or `Toolset`; under `Manual`, a handler that replies `false` refuses every call.
@@ -628,7 +630,9 @@ Phase 3.7 closes here. **Another correction to the plan's premise, same pattern 
 - Circular delegation false-positive caused by empty peer ID in P2P
 - Agent stall nudge firing on legitimate single-tool-call + answer patterns
 
-[Unreleased]: https://github.com/bosun-ai/sven/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/bosun-ai/sven/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/bosun-ai/sven/compare/v2.0.0...v3.0.0
+[2.0.0]: https://github.com/bosun-ai/sven/compare/v1.9.1...v2.0.0
 [1.9.0]: https://github.com/bosun-ai/sven/releases/tag/v1.9.0
 [1.8.1]: https://github.com/bosun-ai/sven/releases/tag/v1.8.1
 [1.8.0]: https://github.com/bosun-ai/sven/releases/tag/v1.8.0
