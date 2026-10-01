@@ -61,9 +61,9 @@ let engine = Engine::builder()
 ```
 
 `Toolset::research()` is the read-only preset. A registered tool is gated and
-audited like a built-in one: its `kernel_capability` picks the permission
-bucket, and that bucket decides whether a call waits for a human (see
-"A tool of your own").
+audited like a built-in one: its `kernel_capability` (required) picks the
+permission bucket - the mode decides whether it may run, the approval policy
+whether a call waits for a person (see "A tool of your own").
 
 ## Project root
 
@@ -334,12 +334,14 @@ let engine = Engine::builder()
 
 Registered on top of the built-in set, so the agent keeps everything it already
 had. From then on it is permission-gated and audited exactly like a built-in:
-`kernel_capability()` decides which bucket the kernel gates it under. In an
-agent session the capability alone decides whether a call waits for a human:
-`ExecuteShell` and `DeleteFile` always do, and an approval
-grants that capability for the rest of the session. `default_policy()` applies
-where a permission requester fronts the registry directly (the ACP server's IDE
-prompt, the MCP server). Declaring the capability honestly is what
+`kernel_capability()` (required: the widest effect any call has) decides
+which bucket the kernel gates it under, and `call_capability(args)` refines
+it per call for a tool whose actions differ in effect: the agent's mode
+decides whether that bucket may run at all, and nothing asks a person unless
+the policy requires approval for it, one call at a time. `default_policy()`
+applies where a host's permission requester fronts the registry directly
+(the ACP server's IDE prompt): `Ask` puts the call to the host, `Deny` never
+runs it. Declaring the capability honestly is what
 keeps the permission model meaningful - a tool that reaches the network and
 claims otherwise has disabled a guarantee for everyone.
 

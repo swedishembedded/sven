@@ -753,6 +753,9 @@ mod tests {
         fn name(&self) -> &str {
             "mcp_refreshed_tool"
         }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
         fn description(&self) -> &str {
             "a tool that only exists after an MCP refresh"
         }

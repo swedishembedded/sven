@@ -496,6 +496,9 @@ mod tests {
         fn name(&self) -> &str {
             "marker"
         }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
         fn description(&self) -> &str {
             "test-only marker tool"
         }
@@ -562,6 +565,9 @@ mod tests {
     impl sven_tool_api::Tool for ParkingTool {
         fn name(&self) -> &str {
             "parking"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
         }
         fn description(&self) -> &str {
             "test-only tool that always parks"
@@ -632,6 +638,9 @@ mod tests {
     impl sven_tool_api::Tool for BigOutputTool {
         fn name(&self) -> &str {
             "big"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
         }
         fn description(&self) -> &str {
             "test-only large-output tool"
@@ -865,6 +874,9 @@ mod watchdog_tests {
         fn name(&self) -> &str {
             "hangs"
         }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
         fn description(&self) -> &str {
             "never returns"
         }
@@ -885,6 +897,9 @@ mod watchdog_tests {
     impl Tool for PanickingTool {
         fn name(&self) -> &str {
             "panics"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
         }
         fn description(&self) -> &str {
             "panics"
@@ -939,6 +954,9 @@ mod watchdog_tests {
     impl Tool for HeldTool {
         fn name(&self) -> &str {
             "held"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
         }
         fn description(&self) -> &str {
             "runs until dropped"

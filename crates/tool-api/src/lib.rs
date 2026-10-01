@@ -26,6 +26,7 @@ pub use path_scope::{PathScope, PathScopeError};
 pub use policy::{ApprovalPolicy, PermissionRequester};
 pub use sven_hsm::ToolCapability;
 pub use tool::{
-    OutputCategory, Tool, ToolCall, ToolDisplay, ToolDisplayRegistry, ToolOutput, ToolOutputPart,
+    capability_by_action, OutputCategory, Tool, ToolCall, ToolDisplay, ToolDisplayRegistry,
+    ToolOutput, ToolOutputPart,
 };
 pub use tool_summary::{shorten_path, tool_category, tool_icon, tool_smart_summary};

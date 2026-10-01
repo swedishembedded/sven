@@ -27,6 +27,9 @@ impl Tool for Echo {
     fn name(&self) -> &str {
         "echo"
     }
+    fn kernel_capability(&self) -> sven_sdk::tool::ToolCapability {
+        sven_sdk::tool::ToolCapability::ReadFile
+    }
     fn description(&self) -> &str {
         "Repeat the input."
     }

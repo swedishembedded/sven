@@ -12,6 +12,6 @@ pub use registry::{SharedToolDisplays, SharedTools, ToolDisplayInfo, ToolRegistr
 // alongside the registry itself, so `sven_tool_registry::{Tool, ToolCall,
 // ApprovalPolicy, ...}` works without an extra `sven-tool-api` dependency.
 pub use sven_tool_api::{
-    ApprovalPolicy, OutputCategory, PermissionRequester, Tool, ToolCall, ToolDisplay,
-    ToolDisplayRegistry, ToolOutput, ToolOutputPart,
+    ApprovalPolicy, OutputCategory, PermissionRequester, Tool, ToolCall, ToolCapability,
+    ToolDisplay, ToolDisplayRegistry, ToolOutput, ToolOutputPart,
 };

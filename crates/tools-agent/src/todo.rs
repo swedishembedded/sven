@@ -78,8 +78,10 @@ impl Tool for TodoTool {
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
     }
+    /// The list lives in the session only: nothing outside the run changes,
+    /// so it is read-only, available in every mode and never asked about.
     fn kernel_capability(&self) -> ToolCapability {
-        ToolCapability::WriteFile
+        ToolCapability::ReadFile
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

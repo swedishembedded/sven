@@ -102,7 +102,22 @@ impl Tool for MemoryTool {
         ApprovalPolicy::Auto
     }
     fn kernel_capability(&self) -> ToolCapability {
-        ToolCapability::ReadFile
+        ToolCapability::WriteFile
+    }
+    /// `set` and `delete` write the memory file; the rest only read.
+    fn call_capability(&self, args: &Value) -> ToolCapability {
+        sven_tool_api::capability_by_action(
+            args,
+            &[
+                ("set", ToolCapability::WriteFile),
+                ("delete", ToolCapability::WriteFile),
+                ("get", ToolCapability::ReadFile),
+                ("list", ToolCapability::ReadFile),
+                ("search_knowledge", ToolCapability::ReadFile),
+                ("list_knowledge", ToolCapability::ReadFile),
+            ],
+            ToolCapability::WriteFile,
+        )
     }
 
     fn output_category(&self) -> OutputCategory {
@@ -234,6 +249,26 @@ mod tests {
 
     use super::*;
     use sven_tool_api::tool::{Tool, ToolCall};
+
+    /// Writing to memory is a write: a read-only mode refuses it and manual
+    /// approval asks about it; reading it is not.
+    #[test]
+    fn a_call_is_classed_by_what_it_does() {
+        let t = make_tool();
+        for (action, capability) in [
+            ("set", ToolCapability::WriteFile),
+            ("delete", ToolCapability::WriteFile),
+            ("get", ToolCapability::ReadFile),
+            ("search_knowledge", ToolCapability::ReadFile),
+            ("fly", ToolCapability::WriteFile),
+        ] {
+            assert_eq!(
+                t.call_capability(&json!({"action": action})),
+                capability,
+                "{action}"
+            );
+        }
+    }
 
     fn make_tool() -> MemoryTool {
         use std::sync::atomic::{AtomicU32, Ordering};

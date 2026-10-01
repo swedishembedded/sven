@@ -26,6 +26,9 @@ impl Tool for Step {
     fn name(&self) -> &str {
         "step"
     }
+    fn kernel_capability(&self) -> sven_sdk::tool::ToolCapability {
+        sven_sdk::tool::ToolCapability::ReadFile
+    }
     fn description(&self) -> &str {
         "Take one step."
     }

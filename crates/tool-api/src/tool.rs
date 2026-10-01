@@ -44,18 +44,40 @@ pub trait Tool: Send + Sync {
     fn is_mcp(&self) -> bool {
         false
     }
-    /// The kernel-level capability bucket this tool exercises.
+    /// The kernel-level capability bucket this tool exercises: the widest
+    /// effect any call of it can have (MCP tools: `NetworkAccess`).
     ///
-    /// The kernel uses this for permission gating and audit.  Every built-in
-    /// tool overrides this to return the tightest fitting bucket.  The default
-    /// (`ReadFile`) is the most conservative non-dangerous capability; MCP
-    /// tools override to `NetworkAccess`.
-    fn kernel_capability(&self) -> ToolCapability {
-        ToolCapability::ReadFile
+    /// The kernel gates and audits every call under a capability, so there is
+    /// no default: a tool with a side effect that inherited "reads a file"
+    /// would run where only reading is allowed, and never be asked about
+    /// under manual approval.
+    fn kernel_capability(&self) -> ToolCapability;
+    /// The capability one call exercises, for a tool whose actions differ in
+    /// effect (a memory tool that reads and writes). What the kernel gates
+    /// that call under. Defaults to [`Self::kernel_capability`].
+    fn call_capability(&self, _args: &Value) -> ToolCapability {
+        self.kernel_capability()
     }
     /// Execute the tool.  Errors should be wrapped in [`ToolOutput::err`].
     async fn execute(&self, call: &ToolCall) -> ToolOutput;
 }
+/// The capability of a call to a tool whose `action` argument decides its
+/// effect: the capability `actions` names for it, or `widest` for a missing
+/// or unknown action - a call that cannot be classified is held to the most
+/// the tool can do.
+#[must_use]
+pub fn capability_by_action(
+    args: &Value,
+    actions: &[(&str, ToolCapability)],
+    widest: ToolCapability,
+) -> ToolCapability {
+    let action = args.get("action").and_then(Value::as_str);
+    actions
+        .iter()
+        .find(|(name, _)| Some(*name) == action)
+        .map_or(widest, |(_, capability)| *capability)
+}
+
 /// Trait for providing display metadata for tools in the TUI.
 ///
 /// All methods have sensible defaults.  Implement only what you need.
@@ -181,6 +203,9 @@ mod tests {
         fn name(&self) -> &str {
             "minimal"
         }
+        fn kernel_capability(&self) -> crate::ToolCapability {
+            crate::ToolCapability::ReadFile
+        }
         fn description(&self) -> &str {
             "a minimal tool"
         }
@@ -206,6 +231,9 @@ mod tests {
     impl Tool for HeadTailTool {
         fn name(&self) -> &str {
             "ht"
+        }
+        fn kernel_capability(&self) -> crate::ToolCapability {
+            crate::ToolCapability::ReadFile
         }
         fn description(&self) -> &str {
             "produces terminal output"

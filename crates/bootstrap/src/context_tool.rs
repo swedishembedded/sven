@@ -149,6 +149,27 @@ impl Tool for ContextTool {
         ApprovalPolicy::Auto
     }
 
+    /// `query` and `reduce` send the content to the model provider; the
+    /// rest only read it.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::NetworkAccess
+    }
+
+    fn call_capability(&self, args: &Value) -> sven_tool_api::ToolCapability {
+        use sven_tool_api::ToolCapability::{NetworkAccess, ReadFile};
+        sven_tool_api::capability_by_action(
+            args,
+            &[
+                ("open", ReadFile),
+                ("read", ReadFile),
+                ("grep", ReadFile),
+                ("query", NetworkAccess),
+                ("reduce", NetworkAccess),
+            ],
+            NetworkAccess,
+        )
+    }
+
     fn modes(&self) -> &[AgentMode] {
         &[AgentMode::Agent]
     }

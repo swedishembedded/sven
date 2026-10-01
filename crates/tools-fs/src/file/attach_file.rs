@@ -131,6 +131,12 @@ impl Tool for AttachFileTool {
         ApprovalPolicy::Auto
     }
 
+    /// Reads the file into the model's context; transcribing audio changes
+    /// nothing outside the run.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::ReadFile
+    }
+
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let path_str = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) if !p.trim().is_empty() => p.to_string(),

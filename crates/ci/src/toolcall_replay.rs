@@ -74,6 +74,9 @@ mod tests {
         fn name(&self) -> &str {
             "echo"
         }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
         fn description(&self) -> &str {
             "echoes message"
         }

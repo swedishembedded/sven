@@ -68,6 +68,11 @@ impl Tool for CreateTaskTool {
         "create_task"
     }
 
+    /// Writes the shared task list.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::WriteFile
+    }
+
     fn description(&self) -> &str {
         "Create a new task in the team's shared task list. \
          This is the correct way to give work to teammates. \
@@ -178,6 +183,11 @@ impl Tool for ClaimTaskTool {
         "claim_task"
     }
 
+    /// Writes the shared task list.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::WriteFile
+    }
+
     fn description(&self) -> &str {
         "Claim a pending task from the team's shared task list. \
          Atomically marks the task as in-progress so other teammates won't claim it. \
@@ -257,6 +267,11 @@ impl Tool for CompleteTaskTool {
         "complete_task"
     }
 
+    /// Writes the shared task list.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::WriteFile
+    }
+
     fn description(&self) -> &str {
         "Mark a task as completed with a summary of what was accomplished. \
          The summary is shown in list_tasks output and helps the lead synthesize results. \
@@ -327,6 +342,11 @@ pub struct ListTasksTool {
 impl Tool for ListTasksTool {
     fn name(&self) -> &str {
         "list_tasks"
+    }
+
+    /// Reads the shared task list.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::ReadFile
     }
 
     fn description(&self) -> &str {
@@ -473,6 +493,11 @@ impl Tool for AssignTaskTool {
         "assign_task"
     }
 
+    /// Writes the shared task list.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::WriteFile
+    }
+
     fn description(&self) -> &str {
         "Assign a pending task to a specific teammate. \
          This is the correct way to direct a teammate to do specific work. \
@@ -553,6 +578,11 @@ pub struct UpdateTaskTool {
 impl Tool for UpdateTaskTool {
     fn name(&self) -> &str {
         "update_task"
+    }
+
+    /// Writes the shared task list.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::WriteFile
     }
 
     fn description(&self) -> &str {

@@ -32,6 +32,9 @@ impl Tool for EchoTool {
     fn name(&self) -> &str {
         "echo"
     }
+    fn kernel_capability(&self) -> sven_tool_registry::ToolCapability {
+        sven_tool_registry::ToolCapability::ReadFile
+    }
     fn description(&self) -> &str {
         "Echoes the message argument back to the caller"
     }
@@ -63,6 +66,9 @@ impl Tool for AlwaysFailTool {
     fn name(&self) -> &str {
         "always_fail"
     }
+    fn kernel_capability(&self) -> sven_tool_registry::ToolCapability {
+        sven_tool_registry::ToolCapability::ReadFile
+    }
     fn description(&self) -> &str {
         "Always returns an error"
     }
@@ -85,6 +91,9 @@ struct AskPolicyTool;
 impl Tool for AskPolicyTool {
     fn name(&self) -> &str {
         "dangerous_op"
+    }
+    fn kernel_capability(&self) -> sven_tool_registry::ToolCapability {
+        sven_tool_registry::ToolCapability::ReadFile
     }
     fn description(&self) -> &str {
         "A tool that requires human approval"

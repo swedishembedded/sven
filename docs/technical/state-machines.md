@@ -111,18 +111,25 @@ All `CallLlm` effects use `kind = "turn"`, handled by `TurnExecutor`:
 Every `CallTool` effect carries a `ToolCapability` that the `PermissionPolicy`
 checks against what the machine's current state is allowed to do.
 
-| Capability | Tools that use it | Dangerous? |
+| Capability | Tools that use it | Read-only? |
 |------------|-------------------|------------|
-| `ReadFile` | `read_file`, `find_file`, `grep`, `context_*`, `buf_*`, `list_*`, `search_*` | No |
-| `WriteFile` | `write_file`, `edit_file` | No |
-| `DeleteFile` | none (no built-in tool uses it) | Yes (requires approval) |
-| `ExecuteShell` | `shell`, `gdb_*` | Yes (requires approval) |
-| `NetworkAccess` | `web_fetch`, `web_search`, MCP tools | No |
+| `ReadFile` | `read_file`, `find_file`, `grep`, `buf_*`, `todo` (in-session only), `memory` get/list/search, `semantic_memory` recall/list/get, `context` open/read/grep, `system` switch_mode/switch_model | Yes |
+| `WriteFile` | `write_file`, `edit_file`, `memory` set/delete, `semantic_memory` remember/forget, `system` remove_mcp_server | No |
+| `DeleteFile` | none (no built-in tool uses it) | No |
+| `ExecuteShell` | `shell`, `gdb`, `system` add_mcp_server | No |
+| `NetworkAccess` | `web_fetch`, `web_search`, `context` query/reduce, MCP tools | No |
 | `GitOperation` | `git_*` | No |
-| `SpawnChild` | none - `Effect::InstantiateSubmachine` starts a child run | No |
+| `ControlDevice` | `android` | No |
+| `RunVerifier` | none - `Effect::Verify` | Yes |
+| `SpawnChild` | none - `Effect::InstantiateSubmachine` starts a child run | Yes |
 
-Capabilities marked **Dangerous** always require an explicit `HumanApproved`
-event before the kernel dispatches them, regardless of the per-state allow-set.
+A tool declares its capability (`Tool::kernel_capability`, required: no tool
+inherits "reads a file"), and one whose actions differ in effect classes each
+call by its arguments (`Tool::call_capability`). What a state allows runs
+without anyone being asked. A policy under manual
+approval (`PermissionPolicy::with_manual_approval`) asks a person about each
+call whose capability is not read-only; the call runs only after a
+`HumanApproved` for that very call.
 
 ---
 

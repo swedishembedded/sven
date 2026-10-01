@@ -27,6 +27,9 @@ impl Tool for Lookup {
     fn name(&self) -> &str {
         "lookup"
     }
+    fn kernel_capability(&self) -> sven_sdk::tool::ToolCapability {
+        sven_sdk::tool::ToolCapability::ReadFile
+    }
     fn description(&self) -> &str {
         "Look a word up."
     }

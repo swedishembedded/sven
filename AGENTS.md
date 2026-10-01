@@ -315,8 +315,9 @@ Tool implementations live in the domain-tier `sven-tools-*` crates, split by
 concern (see the crate table above). `sven-tool-api` holds the `Tool` trait
 and `sven-tool-registry` the registry; neither holds a concrete tool.
 1. Pick (or create) the right `sven-tools-*` crate for the new tool's concern;
-   implement `Tool` (+ `parameters_schema`, `kernel_capability`,
-   `default_policy`, `modes`) and `ToolDisplay`.
+   implement `Tool` (+ `parameters_schema`, `kernel_capability` - required,
+   the widest effect any call has - `call_capability` when actions differ in
+   effect, `default_policy`, `modes`) and `ToolDisplay`.
 2. Register it: `sven-bootstrap`'s tool-registry assembly
    (`crates/bootstrap/src/registry.rs`).
 3. If exposed over MCP: `mcp/src/registry.rs`'s `DEFAULT_TOOL_NAMES` -

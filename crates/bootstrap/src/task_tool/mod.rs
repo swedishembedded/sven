@@ -445,6 +445,12 @@ impl Tool for TaskTool {
         ApprovalPolicy::Ask
     }
 
+    /// Admitted wherever reads are: what the sub-agent itself may do is held
+    /// to the parent's ceiling by its contract (see `child_mode_allowed`).
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::ReadFile
+    }
+
     fn modes(&self) -> &[AgentMode] {
         &[AgentMode::Agent]
     }

@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use sven_tool_api::{
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolDisplay, ToolOutput},
+    ToolCapability,
 };
 
 use crate::{
@@ -126,6 +127,25 @@ impl Tool for SemanticMemoryTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::WriteFile
+    }
+
+    /// `remember` and `forget` change the store; the rest only read it.
+    fn call_capability(&self, args: &Value) -> ToolCapability {
+        sven_tool_api::capability_by_action(
+            args,
+            &[
+                ("remember", ToolCapability::WriteFile),
+                ("forget", ToolCapability::WriteFile),
+                ("recall", ToolCapability::ReadFile),
+                ("list", ToolCapability::ReadFile),
+                ("get", ToolCapability::ReadFile),
+            ],
+            ToolCapability::WriteFile,
+        )
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

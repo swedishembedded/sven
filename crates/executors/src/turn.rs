@@ -96,7 +96,7 @@ fn register_calls(
     let mut proposed = Vec::with_capacity(calls.len());
     if let Ok(mut reg) = registry.lock() {
         for tc in calls {
-            let capability = tools.capability_of(&tc.name);
+            let capability = tools.capability_of_call(tc);
             let call_id = ToolCallId::from_str_lossy(&tc.id);
             reg.insert(call_id, (thread_id.to_string(), tc.id.clone()));
             proposed.push(ProposedToolCall {

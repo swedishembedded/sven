@@ -33,6 +33,9 @@ impl Tool for Weather {
     fn name(&self) -> &str {
         "weather"
     }
+    fn kernel_capability(&self) -> sven_sdk::tool::ToolCapability {
+        sven_sdk::tool::ToolCapability::ReadFile
+    }
     fn description(&self) -> &str {
         "Today's weather in a city."
     }

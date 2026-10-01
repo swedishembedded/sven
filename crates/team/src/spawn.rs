@@ -41,6 +41,11 @@ impl Tool for CreateTeamTool {
         "create_team"
     }
 
+    /// Writes the team directory and its config.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::WriteFile
+    }
+
     fn description(&self) -> &str {
         "Initialize a new agent team. You become the team lead. \
          Creates the shared task list and team config. \
@@ -188,6 +193,11 @@ impl Tool for ListTeamTool {
         "list_team"
     }
 
+    /// Reads the team config.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::ReadFile
+    }
+
     fn description(&self) -> &str {
         "Show team members with their role, current status, and active task. \
          Closed and exited teammates are hidden by default - pass show_closed=true to see them. \
@@ -323,6 +333,11 @@ impl Tool for CleanupTeamTool {
         "cleanup_team"
     }
 
+    /// Removes the team directory.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::DeleteFile
+    }
+
     fn description(&self) -> &str {
         "Clean up team resources when all work is done. \
          Only the team lead can run cleanup. \
@@ -417,6 +432,11 @@ pub struct LoadTeamTool {
 impl Tool for LoadTeamTool {
     fn name(&self) -> &str {
         "load_team"
+    }
+
+    /// Writes the team config from a definition.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::WriteFile
     }
 
     fn description(&self) -> &str {
@@ -519,6 +539,11 @@ pub struct RegisterTeammateTool {
 impl Tool for RegisterTeammateTool {
     fn name(&self) -> &str {
         "register_teammate"
+    }
+
+    /// Writes the member into the team config.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::WriteFile
     }
 
     fn description(&self) -> &str {
@@ -655,6 +680,11 @@ pub struct SpawnTeammateTool {
 impl Tool for SpawnTeammateTool {
     fn name(&self) -> &str {
         "spawn_teammate"
+    }
+
+    /// Starts a teammate process.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::ExecuteShell
     }
 
     fn description(&self) -> &str {
@@ -889,6 +919,11 @@ pub struct ShutdownTeammateTool {
 impl Tool for ShutdownTeammateTool {
     fn name(&self) -> &str {
         "shutdown_teammate"
+    }
+
+    /// Marks the member closed in the team config.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::WriteFile
     }
 
     fn description(&self) -> &str {

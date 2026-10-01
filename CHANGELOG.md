@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Migrating from 2.0.0
+- **sven-tool-api, sven-sdk**: `Tool::kernel_capability` has no default - it used to be `ReadFile`. A tool of your own declares the widest effect any call has (`ToolCapability::ReadFile` for one that only reads); a tool whose actions differ also implements `call_capability`.
 - `sven acp serve --permission-timeout-secs 0` is rejected: the wait is always bounded. Pass a positive number of seconds.
 - `ToolCapability` gains `SpawnChild`, and `Effect::InstantiateSubmachine` now requires it: a machine that spawns children must allow `SpawnChild` in the spawning state, and an exhaustive `match` on `ToolCapability` needs the new arm.
 - `ChildSpawner::spawn_child` takes a `run: ChildRun` parameter (the contract and the child's cancel scope).
@@ -18,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `PermissionPolicy::with_manual_approval`, `ToolCapability::is_read_only`, `Context::is_call_approved`.
+- `Tool::call_capability`, `sven_tool_api::capability_by_action`, `ToolRegistry::capability_of_call`.
 - `ChildRunContract` (`sven-hsm`): the capabilities, budgets and deadline a child run holds; `narrow` only ever tightens them. `PermissionPolicy::{allows, allows_in_every_state, requires_approval, ceiling_in, ceiling_in_every_state, intersect}`, `ToolCapability::ALL`, `known_capability_for_tool_name`.
 - `sven-kernel`: `CancelScope`, `DeadlineTimer`, `ChildRun`, `ErasedRuntime::spawn_child_run`, `Runtime`/`ErasedRuntime::{cancel, cancel_scope}`, `RUN_CANCELLED`, `EventSink::closed`.
 - `ToolRegistry::remove`, the `tools.disabled` configuration, `agent.child_run_timeout_secs` (default 3600).
@@ -26,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **No capability asks a person by itself** (**BREAKING**, sven-hsm, sven-sdk). `ExecuteShell` and `DeleteFile` no longer need an approval wherever they are allowed; a call waits for a person only where the policy requires approval (`PermissionPolicy::with_manual_approval`: every capability that is not `ToolCapability::is_read_only`). An approval lets exactly the call it was given for run - the next call of the same capability is asked about again - instead of granting the capability for the rest of the session. What a state allows is unchanged.
+- **Tools are classed by what they do.** `memory` set/delete and `semantic_memory` remember/forget are `WriteFile`, their reads `ReadFile`; `context` query/reduce is `NetworkAccess`; `system` switch_mode/switch_model is `ReadFile`, remove_mcp_server `WriteFile`, add_mcp_server `ExecuteShell`; `todo`, which changes only the session's list, is `ReadFile`; the team tools declare theirs. So a read-only mode refuses a memory write, and manual approval asks about it but not about the todo list.
 - **A permission request to an ACP client is always bounded** (**BREAKING**, sven-acp). `SvenAcpAgent::with_permission_timeout` and `serve_stdio_with` take a `Duration`; a `task` parent passes its sub-agent the time left before the contract's deadline, or nothing (the 60-second default) when the contract has none.
 - **Every child run is held to a contract.** A child holds only what its parent holds in the spawning state, narrowed by the spawner's terms; cancelling, aborting or dropping the parent cancels its children; `ErasedRuntime::spawn_child_run` applies the contract's policy and cancels the run at its deadline.
 - **Headless SDLC children now follow the session's approval behaviour.** A task child's questions and approval requests go to the parent session's question and approval channels - answered by a person in the TUI, auto-approved by the headless runner, as the parent's own - instead of ending the task. They hold only what the parent holds in `Execution` (no network), take at most `agent.max_tool_rounds` rounds, write at most the session's configured output cap per response, and stop after `agent.child_run_timeout_secs`; their tool calls in flight are aborted with them.

@@ -238,6 +238,11 @@ impl Tool for ContextQueryTool {
         ApprovalPolicy::Auto
     }
 
+    /// Sends the content to the model provider.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::NetworkAccess
+    }
+
     fn output_category(&self) -> OutputCategory {
         OutputCategory::Generic
     }
@@ -518,6 +523,11 @@ impl Tool for ContextReduceTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+
+    /// Sends the content to the model provider.
+    fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+        sven_tool_api::ToolCapability::NetworkAccess
     }
 
     fn output_category(&self) -> OutputCategory {

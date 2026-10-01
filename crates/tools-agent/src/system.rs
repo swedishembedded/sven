@@ -253,8 +253,24 @@ impl Tool for SystemTool {
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
     }
+    /// The widest action, `add_mcp_server`, starts a command.
     fn kernel_capability(&self) -> ToolCapability {
-        ToolCapability::ReadFile
+        ToolCapability::ExecuteShell
+    }
+
+    /// Switching mode or model changes only the session; removing an MCP
+    /// server writes the configuration; adding one also starts its command.
+    fn call_capability(&self, args: &Value) -> ToolCapability {
+        sven_tool_api::capability_by_action(
+            args,
+            &[
+                ("switch_mode", ToolCapability::ReadFile),
+                ("switch_model", ToolCapability::ReadFile),
+                ("remove_mcp_server", ToolCapability::WriteFile),
+                ("add_mcp_server", ToolCapability::ExecuteShell),
+            ],
+            ToolCapability::ExecuteShell,
+        )
     }
 
     // Available in all modes: switch_model has no mode restriction, and
@@ -572,6 +588,29 @@ mod tests {
         let out = tool.execute(&mode_call("plan")).await;
         assert!(!out.is_error, "{}", out.content);
         assert_eq!(*current.lock().await, AgentMode::Plan);
+    }
+
+    /// Each action is held to what it does: adding an MCP server starts a
+    /// command, removing one writes the configuration, switching mode or
+    /// model changes only the session.
+    #[tokio::test]
+    async fn system_actions_are_classed_by_effect() {
+        let (tool, _current, _rx) = make_tool(AgentMode::Agent);
+        assert_eq!(
+            tool.call_capability(&json!({"action": "add_mcp_server"})),
+            ToolCapability::ExecuteShell
+        );
+        for action in ["switch_mode", "switch_model"] {
+            assert_eq!(
+                tool.call_capability(&json!({ "action": action })),
+                ToolCapability::ReadFile,
+                "{action}"
+            );
+        }
+        assert_eq!(
+            tool.call_capability(&json!({"action": "remove_mcp_server"})),
+            ToolCapability::WriteFile
+        );
     }
 
     #[tokio::test]

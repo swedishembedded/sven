@@ -217,6 +217,16 @@ impl ToolRegistry {
             .unwrap_or(ToolCapability::NetworkAccess)
     }
 
+    /// The capability `call` exercises ([`Tool::call_capability`]), with the
+    /// same fallback for an unknown tool as [`Self::capability_of`].
+    pub fn capability_of_call(&self, call: &ToolCall) -> ToolCapability {
+        self.tools
+            .read()
+            .ok()
+            .and_then(|g| g.get(&call.name).map(|t| t.call_capability(&call.args)))
+            .unwrap_or(ToolCapability::NetworkAccess)
+    }
+
     pub async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let tool = match self
             .tools
@@ -412,6 +422,9 @@ mod tests {
         fn name(&self) -> &str {
             self.name
         }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
         fn description(&self) -> &str {
             "echoes its input"
         }
@@ -433,6 +446,9 @@ mod tests {
     impl Tool for TerminalTool {
         fn name(&self) -> &str {
             "terminal"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
         }
         fn description(&self) -> &str {
             "runs shell commands"
@@ -458,6 +474,9 @@ mod tests {
         fn name(&self) -> &str {
             "search"
         }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
         fn description(&self) -> &str {
             "searches text"
         }
@@ -481,6 +500,9 @@ mod tests {
     impl Tool for FileTool {
         fn name(&self) -> &str {
             "file"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
         }
         fn description(&self) -> &str {
             "reads files"
@@ -638,6 +660,9 @@ mod tests {
         fn name(&self) -> &str {
             "ask_tool"
         }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
         fn description(&self) -> &str {
             "requires approval"
         }
@@ -659,6 +684,9 @@ mod tests {
     impl Tool for DenyTool {
         fn name(&self) -> &str {
             "deny_tool"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
         }
         fn description(&self) -> &str {
             "always denied"
@@ -824,6 +852,9 @@ mod tests {
         impl Tool for GenericTool {
             fn name(&self) -> &str {
                 "terminal"
+            }
+            fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+                sven_tool_api::ToolCapability::ReadFile
             }
             fn description(&self) -> &str {
                 "generic"
