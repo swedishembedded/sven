@@ -367,9 +367,13 @@ not loop-internal prompts:
   `ctx.approve`), while `HumanRejected` either revises (Intake, Planning,
   Delivery re-deliberate with a `revise_request`) or routes to Recovery.
 
-In **CI / headless** mode the `RuntimeRunner` auto-approves every gate (questions
-get an empty answer, approvals get `true`), so the same gated flow runs
-unattended without changing the machine.
+In **CI / headless** mode nobody is there to answer, so the `RuntimeRunner`
+answers every gate at once: a question gets the no-user answer ("No user is
+available to answer this question. Proceed on your best judgement and state
+the assumption you made."), and a `need_approval` decision is approved by the
+`UserExecutor` itself, since a headless run is always under auto approval
+(`KernelChannels::answer_unattended` refuses any approval request that reaches
+it). The same gated flow runs unattended without changing the machine.
 
 ---
 

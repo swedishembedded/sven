@@ -85,10 +85,12 @@ pub fn spawn_observation_bridge(
 /// and sends the user's answer back to the kernel:
 ///
 /// * `AskUser` → free-text question (empty `options`); the raw answer string is
-///   returned verbatim.
+///   returned verbatim, and [`NO_USER_ANSWER`](sven_tool_api::NO_USER_ANSWER)
+///   when there is no frontend or it drops the question unanswered.
 /// * `RequestHumanApproval` → a yes/no question; `"yes"` (case-insensitive,
 ///   trimmed) approves, anything else denies. When the modal channel is closed
-///   the request is denied — interactive sessions never blanket auto-approve.
+///   the request is denied: only a session under manual approval asks, and
+///   nobody approves on the user's behalf.
 ///
 /// A question or approval the kernel withdraws while it is pending (its run
 /// stopped, see `UserExecutor`) is withdrawn from the frontend the same way:
@@ -122,12 +124,17 @@ pub fn spawn_question_bridge(
                             // the question withdraws it from the frontend.
                             tokio::select! {
                                 answer = answer_rx => {
-                                    let _ = kernel_q.reply_tx.send(answer.unwrap_or_default());
+                                    // Dropped unanswered: nobody will answer.
+                                    let answer = answer.unwrap_or_else(|_| {
+                                        sven_tool_api::NO_USER_ANSWER.to_string()
+                                    });
+                                    let _ = kernel_q.reply_tx.send(answer);
                                 }
                                 () = kernel_q.reply_tx.closed() => {}
                             }
                         } else {
-                            let _ = kernel_q.reply_tx.send(String::new());
+                            // No frontend to show it on: nobody can answer.
+                            let _ = kernel_q.reply_tx.send(sven_tool_api::NO_USER_ANSWER.to_string());
                         }
                     }
                     None => break,
@@ -216,6 +223,31 @@ impl KernelAgentSession {
         event_tx: mpsc::Sender<AgentEvent>,
         question_tx: mpsc::Sender<QuestionRequest>,
     ) -> (Self, mpsc::Receiver<sven_mcp_client::McpEvent>) {
+        Self::spawn_with(bundle, event_tx, |channels| {
+            spawn_question_bridge(channels, question_tx)
+        })
+    }
+
+    /// [`Self::spawn`] for a host that answers the session's gates itself:
+    /// each question and approval goes to `responder` as a
+    /// [`HumanGate`](crate::session_handles::HumanGate), carrying the gated
+    /// call and its capability, instead of becoming a modal question.
+    #[must_use]
+    pub fn spawn_answering(
+        bundle: SessionBundle,
+        event_tx: mpsc::Sender<AgentEvent>,
+        responder: crate::session_handles::HumanGateResponder,
+    ) -> (Self, mpsc::Receiver<sven_mcp_client::McpEvent>) {
+        Self::spawn_with(bundle, event_tx, |channels| {
+            tokio::spawn(channels.forward_to(responder))
+        })
+    }
+
+    fn spawn_with(
+        bundle: SessionBundle,
+        event_tx: mpsc::Sender<AgentEvent>,
+        answer_gates: impl FnOnce(KernelChannels) -> JoinHandle<()>,
+    ) -> (Self, mpsc::Receiver<sven_mcp_client::McpEvent>) {
         let SessionBundle {
             runtime,
             handle,
@@ -226,7 +258,7 @@ impl KernelAgentSession {
 
         let obs_rx = handle.subscribe_observations();
         let obs_task = spawn_observation_bridge(obs_rx, event_tx);
-        let question_task = spawn_question_bridge(channels, question_tx);
+        let question_task = answer_gates(channels);
 
         let session = Self {
             handle,
@@ -420,6 +452,36 @@ mod tests {
             .expect("kernel should get an answer")
             .expect("reply channel open");
         assert_eq!(answer, "config.toml");
+    }
+
+    /// A frontend that drops a question without answering it leaves nobody
+    /// to answer: the kernel gets the no-user answer, not an empty one.
+    #[tokio::test]
+    async fn a_question_the_frontend_drops_gets_the_no_user_answer() {
+        let (kq_tx, question_rx) = mpsc::channel::<UserQuestion>(4);
+        let (_ka_tx, approval_rx) = mpsc::channel::<ApprovalRequest>(4);
+        let channels = KernelChannels {
+            question_rx,
+            approval_rx,
+        };
+        let (ui_tx, mut ui_rx) = mpsc::channel::<QuestionRequest>(4);
+        let _task = spawn_question_bridge(channels, ui_tx);
+
+        let (reply_tx, reply_rx) = oneshot::channel::<String>();
+        kq_tx
+            .send(UserQuestion {
+                prompt: "Which file?".into(),
+                reply_tx,
+            })
+            .await
+            .unwrap();
+        drop(ui_rx.recv().await.expect("the question is shown"));
+
+        let answer = tokio::time::timeout(Duration::from_secs(2), reply_rx)
+            .await
+            .expect("the kernel gets an answer")
+            .expect("reply channel open");
+        assert_eq!(answer, sven_tool_api::NO_USER_ANSWER);
     }
 
     /// A question the kernel withdraws (its run stopped, dropping the

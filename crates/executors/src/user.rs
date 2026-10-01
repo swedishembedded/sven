@@ -10,10 +10,16 @@
 //! * [`Effect::AskUser`] → sends a [`UserQuestion`] (with a `reply_tx`
 //!   oneshot) to the `question_tx` channel. A background task awaits the
 //!   reply and posts `Event::UserMessage { text }` to the kernel queue.
-//! * [`Effect::RequestHumanApproval`] → sends an [`ApprovalRequest`] (with
-//!   a `reply_tx` oneshot) to the `approval_tx` channel. A background task
-//!   awaits the reply (`true` = approved) and posts `Event::HumanApproved`
-//!   or `Event::HumanRejected`.
+//! * [`Effect::RequestHumanApproval`] → under [`ApprovalMode::Manual`], sends
+//!   an [`ApprovalRequest`] (with a `reply_tx` oneshot) to the `approval_tx`
+//!   channel; a background task awaits the reply (`true` = approved) and posts
+//!   `Event::HumanApproved` or `Event::HumanRejected`. Under
+//!   [`ApprovalMode::Auto`] (the default) nobody is asked: it posts
+//!   `Event::HumanApproved` at once. A tool call never asks under auto - the
+//!   session's policy requires no approval - so what arrives here is a
+//!   decision a machine puts to a person (an SDLC `need_approval`).
+//! * A question dropped unanswered gets [`sven_vocab::NO_USER_ANSWER`]; an
+//!   approval dropped unanswered is refused.
 //! * A question or approval still waiting when its run stops is withdrawn:
 //!   the waiting task drops its receiver, so the frontend holding the
 //!   request sees `reply_tx` close and can take the prompt down.
@@ -36,6 +42,7 @@ use sven_hsm::{
     ApprovalId, Effect, Event, ObservationSink, QuestionId, ToolCallId, ToolCapability,
 };
 use sven_kernel::{EffectExecutor, EventSink};
+use sven_vocab::ApprovalMode;
 use tokio::sync::{mpsc, oneshot};
 
 // ── Channel message types ─────────────────────────────────────────────────────
@@ -83,6 +90,7 @@ pub struct UserExecutor {
     question_tx: mpsc::Sender<UserQuestion>,
     approval_tx: mpsc::Sender<ApprovalRequest>,
     parked_tx: Option<mpsc::Sender<ParkedQuestion>>,
+    approval_mode: ApprovalMode,
 }
 
 impl UserExecutor {
@@ -103,7 +111,16 @@ impl UserExecutor {
             question_tx,
             approval_tx,
             parked_tx: None,
+            approval_mode: ApprovalMode::Auto,
         }
+    }
+
+    /// Puts approval requests to a person only under
+    /// [`ApprovalMode::Manual`]; see the module doc.
+    #[must_use]
+    pub fn with_approval_mode(mut self, mode: ApprovalMode) -> Self {
+        self.approval_mode = mode;
+        self
     }
 
     /// Routes [`Effect::RequestHumanAnswer`] to `tx` instead of dropping it.
@@ -152,10 +169,11 @@ impl EffectExecutor for UserExecutor {
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let question = UserQuestion { prompt, reply_tx };
                 if self.question_tx.send(question).await.is_err() {
-                    tracing::warn!("UserExecutor: question channel closed; emitting empty reply");
+                    // Nobody holds the other end: nobody can answer.
+                    tracing::warn!("UserExecutor: question channel closed; answering that no user is available");
                     let _ = sink
                         .emit(Event::UserMessage {
-                            text: String::new(),
+                            text: sven_vocab::NO_USER_ANSWER.to_string(),
                         })
                         .await;
                     return;
@@ -168,14 +186,17 @@ impl EffectExecutor for UserExecutor {
                         reply = reply_rx => reply,
                         () = sink.closed() => return,
                     };
-                    match reply {
-                        Ok(text) => {
-                            let _ = sink.emit(Event::UserMessage { text }).await;
-                        }
-                        Err(_) => {
-                            tracing::warn!("UserExecutor: reply oneshot dropped before answer");
-                        }
-                    }
+                    // A question dropped unanswered - its answerer ignores
+                    // questions - gets the no-user answer, as a dropped
+                    // approval is refused: the run never waits on a reply
+                    // nobody will send.
+                    let text = reply.unwrap_or_else(|_| {
+                        tracing::warn!(
+                            "UserExecutor: question dropped unanswered; no user is available"
+                        );
+                        sven_vocab::NO_USER_ANSWER.to_string()
+                    });
+                    let _ = sink.emit(Event::UserMessage { text }).await;
                 });
             }
 
@@ -185,6 +206,10 @@ impl EffectExecutor for UserExecutor {
                 description,
                 call,
             } => {
+                if self.approval_mode == ApprovalMode::Auto {
+                    let _ = sink.emit(Event::HumanApproved { approval_id }).await;
+                    return;
+                }
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let req = ApprovalRequest {
                     approval_id,
@@ -265,7 +290,7 @@ mod tests {
     use sven_kernel::{EffectExecutor, EventSink, Runtime};
     use tokio::sync::mpsc;
 
-    use super::{ApprovalRequest, UserExecutor, UserQuestion};
+    use super::{ApprovalMode, ApprovalRequest, UserExecutor, UserQuestion};
 
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
     enum TS {
@@ -391,11 +416,51 @@ mod tests {
         assert_eq!(kind, "UserMessage");
     }
 
+    /// A question whose answerer drops it without replying (a host handler
+    /// that ignores questions) is answered with the no-user answer: the run
+    /// never waits for a reply that cannot come.
+    #[tokio::test]
+    async fn a_dropped_question_gets_the_no_user_answer() {
+        let (q_tx, mut q_rx) = mpsc::channel::<UserQuestion>(4);
+        let (a_tx, _a_rx) = mpsc::channel::<ApprovalRequest>(4);
+        let mut exec = UserExecutor::new(q_tx, a_tx);
+        tokio::spawn(async move {
+            let question = q_rx.recv().await.unwrap();
+            drop(question);
+        });
+        let rt = Runtime::spawn(
+            Hsm::new(OneShotMachine::new()),
+            Context::new(),
+            PermissionPolicy::builder().build(),
+            NoOpExec,
+            16,
+        );
+        exec.execute(
+            Effect::AskUser {
+                prompt: "which?".into(),
+            },
+            &rt.sink(),
+            &ObservationSink::default(),
+        )
+        .await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), rt.wait_done())
+            .await
+            .expect("answered without waiting for anyone");
+        let report = rt.join().await.unwrap();
+        assert_eq!(
+            report
+                .ctx
+                .fact("received_event_kind")
+                .and_then(|v| v.as_str()),
+            Some("UserMessage")
+        );
+    }
+
     #[tokio::test]
     async fn request_approval_emits_human_approved_when_accepted() {
         let (q_tx, _q_rx) = mpsc::channel::<UserQuestion>(4);
         let (a_tx, mut a_rx) = mpsc::channel::<ApprovalRequest>(4);
-        let mut exec = UserExecutor::new(q_tx, a_tx);
+        let mut exec = UserExecutor::new(q_tx, a_tx).with_approval_mode(ApprovalMode::Manual);
 
         let approval_id = ApprovalId::new();
         let effect = Effect::RequestHumanApproval {
@@ -418,7 +483,7 @@ mod tests {
     async fn request_approval_emits_human_rejected_when_denied() {
         let (q_tx, _q_rx) = mpsc::channel::<UserQuestion>(4);
         let (a_tx, mut a_rx) = mpsc::channel::<ApprovalRequest>(4);
-        let mut exec = UserExecutor::new(q_tx, a_tx);
+        let mut exec = UserExecutor::new(q_tx, a_tx).with_approval_mode(ApprovalMode::Manual);
 
         let approval_id = ApprovalId::new();
         let effect = Effect::RequestHumanApproval {
@@ -435,6 +500,29 @@ mod tests {
 
         let kind = run_user_effect(&mut exec, effect).await;
         assert_eq!(kind, "HumanRejected");
+    }
+
+    /// Under auto approval nobody is asked: the approval is given at once and
+    /// nothing reaches the approval channel.
+    #[tokio::test]
+    async fn auto_approval_approves_at_once_without_asking() {
+        let (q_tx, _q_rx) = mpsc::channel::<UserQuestion>(4);
+        let (a_tx, mut a_rx) = mpsc::channel::<ApprovalRequest>(4);
+        let mut exec = UserExecutor::new(q_tx, a_tx);
+        let effect = Effect::RequestHumanApproval {
+            approval_id: ApprovalId::new(),
+            capability: ToolCapability::GitOperation,
+            description: "approve the plan".into(),
+            call: None,
+        };
+        let kind = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_user_effect(&mut exec, effect),
+        )
+        .await
+        .expect("answered without waiting for anyone");
+        assert_eq!(kind, "HumanApproved");
+        assert!(a_rx.try_recv().is_err(), "nobody was asked");
     }
 
     #[tokio::test]
@@ -488,7 +576,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ask_user_with_closed_channel_emits_empty_user_message() {
+    async fn ask_user_with_closed_channel_answers_that_no_user_is_available() {
         let (q_tx, q_rx) = mpsc::channel::<UserQuestion>(4);
         let (a_tx, _a_rx) = mpsc::channel::<ApprovalRequest>(4);
         drop(q_rx); // close the receiver
@@ -507,7 +595,7 @@ mod tests {
         for approval in [false, true] {
             let (qtx, mut qrx) = mpsc::channel(4);
             let (atx, mut arx) = mpsc::channel(4);
-            let mut exec = UserExecutor::new(qtx, atx);
+            let mut exec = UserExecutor::new(qtx, atx).with_approval_mode(ApprovalMode::Manual);
             let rt = Runtime::spawn(
                 Hsm::new(OneShotMachine::new()),
                 Context::new(),

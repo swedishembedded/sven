@@ -39,6 +39,32 @@ tool passes its sub-agent's budgets through them:
 | `--wall-clock-secs SECS` | the server, and every session in it, stops after `SECS` seconds |
 | `--disable-tool NAME` | the sessions never offer nor run `NAME` (repeatable; adds to `tools.disabled`) |
 | `--permission-timeout-secs SECS` | a tool call waits `SECS` for the client's permission answer before it is denied (default 60, at least 1) |
+| `--approval auto\|manual` | whose policy decides which calls go to the client (see below; default `auto`) |
+
+Under `--approval auto` (the default) the agent's own gate asks nobody, and
+a tool whose policy is `Ask` (`shell`, `write_file`, `edit_file`, MCP tools,
+...) is put to the client with `session/request_permission` - the client's
+choice whether to ask its user. Under `--approval manual` every call that is
+not read-only is put to the client instead. Every request names the
+capability the call exercises in its `_meta` (`"sven.capability":
+"WriteFile"`, ...). Either way a call is denied if no answer arrives within the permission
+timeout, so a client that never answers never stalls the session. The `task`
+tool starts its sub-agents with the parent's approval mode and command
+patterns, so a manual parent sees every call of its sub-agent that is not
+read-only.
+
+`session/set_mode` rebuilds the session in the new mode, carrying the
+conversation, its working directory, its model and its MCP servers: the
+mode's policy and tools apply, so a session switched to `research` has no
+writing tools. It is refused with an `Invalid request` error while a prompt
+turn is running on the session; wait for the turn to end or cancel it
+first. A model the agent switches to (`system` switch_model) takes effect
+from the session's next turn.
+
+ACP carries no question from the agent to the client, so an explicit question
+(an SDLC `need_user_input`) is answered at once: "No user is available to
+answer this question. Proceed on your best judgement and state the assumption
+you made."
 
 Each prompt response reports the tokens the turn used (`usage`: input,
 output, total), so a client that pays for the agent can charge them.

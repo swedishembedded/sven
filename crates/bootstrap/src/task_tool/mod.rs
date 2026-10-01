@@ -37,16 +37,20 @@
 //!   ceiling (`child_mode_allowed`); if the child refuses to switch to it,
 //!   the run is abandoned and the child killed rather than left in its
 //!   default, wider mode.
-//! - A permission request the child sends is allowed outright only when the
-//!   parent would run the call itself without asking anyone: a known tool
-//!   whose capability the contract allows without approval, under a parent
-//!   whose host does not ask about every call. Everything else goes to the
-//!   parent's [`ChildApprover`], and is refused only when there is none.
+//! - A permission request the child sends names a tool; its capability is
+//!   what the kernel holds that tool to (`capability_for_tool_name`: an
+//!   unknown tool, such as an MCP one, is `NetworkAccess`). A call outside
+//!   the contract is refused. Within it, a parent whose host asks about every
+//!   call ([`ChildApprover::Host`], an IDE over ACP) puts it to the host; a
+//!   parent under manual approval puts a call that is not read-only to its
+//!   own approval gate ([`ChildApprover::Gate`]); everything else is allowed
+//!   without anyone being asked.
 //! - The child's server is started with the parent's disabled tools, turn
 //!   budgets and the time left before the deadline, rounded up so the parent
 //!   sees its deadline first (`sven acp serve --disable-tool
 //!   --max-tool-rounds --max-output-tokens --wall-clock-secs
-//!   --permission-timeout-secs`).
+//!   --permission-timeout-secs`); without a deadline the child's own
+//!   permission timeout applies, so no request waits unbounded.
 //! - The tokens the child's turn used are passed on as
 //!   `SubagentUpdate::TokensUsed`, to be charged with the parent's.
 //!
@@ -82,7 +86,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tracing::debug;
 
-use sven_config::AgentMode;
+use sven_config::{AgentMode, ApprovalMode};
 use sven_hsm::ChildRunContract;
 use sven_tool_api::{
     events::ToolEvent,
@@ -105,6 +109,11 @@ use session::{run_acp_session, CancelGuard, SpawnArgs};
 /// a second literal there would let the spawner and the spawned disagree.
 pub(crate) const SUBAGENT_DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
 
+/// `_meta` key under which `sven acp serve` names, on every permission
+/// request, the capability the call exercises (`"WriteFile"`, ...), so the
+/// parent answering it knows what the call does.
+pub const CAPABILITY_META_KEY: &str = "sven.capability";
+
 // ── Who answers a sub-agent's requests ───────────────────────────────────────
 
 /// Who answers a sub-agent's permission request that is not allowed outright.
@@ -114,12 +123,32 @@ pub enum ChildApprover {
     /// call a tool's policy marks `Ask`, in the parent as in the child, so no
     /// child request is allowed without it.
     Host(Arc<dyn PermissionRequester>),
-    /// The session's own approval gate (`GateApprover`), asked about what the
-    /// session's policy does not allow without asking.
+    /// The session's own approval gate (`GateApprover`), asked under manual
+    /// approval about what the session's policy does not allow without
+    /// asking.
     Gate(Arc<dyn PermissionRequester>),
 }
 
 impl ChildApprover {
+    /// Who answers a sub-agent's requests in a session with `host`'s
+    /// requester (an IDE over ACP), under `approval`: the host when there is
+    /// one, the session's own approval gate (`approvals`) under manual
+    /// approval, and nobody under auto - there the contract settles every
+    /// request.
+    pub(crate) fn for_session(
+        host: Option<Arc<dyn PermissionRequester>>,
+        approval: ApprovalMode,
+        approvals: &mpsc::Sender<sven_executors::ApprovalRequest>,
+    ) -> Option<Self> {
+        match (host, approval) {
+            (Some(host), _) => Some(Self::Host(host)),
+            (None, ApprovalMode::Manual) => Some(Self::Gate(Arc::new(
+                crate::session_handles::GateApprover::new(approvals.clone()),
+            ))),
+            (None, ApprovalMode::Auto) => None,
+        }
+    }
+
     /// The requester that is asked.
     pub(crate) fn requester(&self) -> &dyn PermissionRequester {
         match self {
@@ -160,6 +189,8 @@ pub struct TaskTool {
     /// Answers a child's permission request the contract does not settle on
     /// its own, when the host can ask someone.
     approver: Option<ChildApprover>,
+    /// The session's approval mode; a child's contract carries it.
+    approval_mode: ApprovalMode,
     /// Tools the session never runs, so its children never run them either.
     disabled_tools: Vec<String>,
 }
@@ -183,6 +214,7 @@ impl TaskTool {
             max_tool_rounds: None,
             max_output_tokens: None,
             approver: None,
+            approval_mode: ApprovalMode::Auto,
             disabled_tools: Vec::new(),
         }
     }
@@ -206,11 +238,17 @@ impl TaskTool {
         self
     }
 
-    /// Puts the child permission requests the contract does not allow
-    /// outright to `approver` instead of refusing them.
+    /// Holds each child to the session's `approval_mode`, and puts the child
+    /// permission requests the contract does not allow outright to
+    /// `approver` instead of refusing them.
     #[must_use]
-    pub fn with_approver(mut self, approver: Option<ChildApprover>) -> Self {
+    pub fn with_approver(
+        mut self,
+        approver: Option<ChildApprover>,
+        approval_mode: ApprovalMode,
+    ) -> Self {
         self.approver = approver;
+        self.approval_mode = approval_mode;
         self
     }
 
@@ -257,14 +295,16 @@ pub(crate) fn child_mode_allowed(parent: AgentMode, child: &str) -> Result<(), S
     }
 }
 
-/// The contract a child of a session in `parent` mode runs under, started
-/// at `now`.
+/// The contract a child of a session in `parent` mode under `approval` runs
+/// under, started at `now`.
 fn child_contract(
     parent: AgentMode,
+    approval: ApprovalMode,
     wall_clock: Option<Duration>,
     now: Instant,
 ) -> ChildRunContract {
-    let contract = ChildRunContract::new(crate::mode_policy::session_ceiling(parent));
+    let ceiling = crate::mode_policy::session_ceiling(parent);
+    let contract = ChildRunContract::new(crate::mode_policy::with_approval(ceiling, approval));
     match wall_clock {
         Some(budget) => contract.with_deadline_after(now, budget),
         None => contract,
@@ -691,10 +731,18 @@ impl Tool for TaskTool {
             contract: ChildRunContract {
                 max_tool_rounds: self.max_tool_rounds,
                 max_output_tokens: self.max_output_tokens,
-                ..child_contract(parent_mode, self.wall_clock, Instant::now())
+                ..child_contract(
+                    parent_mode,
+                    self.approval_mode,
+                    self.wall_clock,
+                    Instant::now(),
+                )
             },
             approver: self.approver.clone(),
-            disabled_tools: self.disabled_tools.clone(),
+            terms: session::ServeTerms {
+                disabled_tools: self.disabled_tools.clone(),
+                approval: self.approval_mode,
+            },
             workdir,
             model_override,
             handle_id: handle_id.clone(),
@@ -741,7 +789,7 @@ mod tests {
     use sven_workspace::{AgentInfo, SharedAgents};
 
     use super::{resolve_mode_and_prompt, TaskTool};
-    use sven_config::AgentMode;
+    use sven_config::{AgentMode, ApprovalMode};
 
     fn make_task() -> TaskTool {
         make_task_with_agents(SharedAgents::empty())
@@ -794,15 +842,22 @@ mod tests {
         use sven_hsm::ToolCapability;
         let now = Instant::now();
         let budget = Some(Duration::from_secs(30));
-        let child = super::child_contract(AgentMode::Research, budget, now);
+        let child = super::child_contract(AgentMode::Research, ApprovalMode::Auto, budget, now);
         assert!(child.allows_without_asking(ToolCapability::ReadFile));
         assert!(!child
             .policy
             .allows_in_every_state(ToolCapability::WriteFile));
         assert_eq!(child.remaining(now), budget);
-        let child = super::child_contract(AgentMode::Agent, None, now);
+        let child = super::child_contract(AgentMode::Agent, ApprovalMode::Auto, None, now);
         assert!(child.allows_without_asking(ToolCapability::WriteFile));
+        assert!(child.allows_without_asking(ToolCapability::ExecuteShell));
         assert_eq!(child.deadline, None);
+        let child = super::child_contract(AgentMode::Agent, ApprovalMode::Manual, None, now);
+        assert!(child.allows_without_asking(ToolCapability::ReadFile));
+        assert!(!child.allows_without_asking(ToolCapability::WriteFile));
+        assert!(child
+            .policy
+            .allows_in_every_state(ToolCapability::WriteFile));
     }
 
     #[test]

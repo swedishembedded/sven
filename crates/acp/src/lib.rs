@@ -40,19 +40,28 @@ use agent::{ConnMessage, SvenAcpAgent};
 /// subprocess).  All ACP framing happens over stdin/stdout; tracing is written
 /// to stderr.
 pub async fn serve_stdio(config: Arc<Config>) -> Result<()> {
-    serve_stdio_with(config, agent::DEFAULT_PERMISSION_TIMEOUT).await
+    serve_stdio_with(
+        config,
+        agent::DEFAULT_PERMISSION_TIMEOUT,
+        sven_config::ApprovalMode::Auto,
+    )
+    .await
 }
 
 /// [`serve_stdio`] with a chosen wait for the client's permission answers,
-/// after which a call is denied.
+/// after which a call is denied, and a chosen approval mode (see
+/// `SvenAcpAgent::with_approval_mode`).
 pub async fn serve_stdio_with(
     config: Arc<Config>,
     permission_timeout: std::time::Duration,
+    approval: sven_config::ApprovalMode,
 ) -> Result<()> {
     debug!("Starting ACP local server");
 
     let (conn_tx, mut conn_rx) = tokio::sync::mpsc::unbounded_channel::<ConnMessage>();
-    let acp_agent = SvenAcpAgent::new(config, conn_tx).with_permission_timeout(permission_timeout);
+    let acp_agent = SvenAcpAgent::new(config, conn_tx)
+        .with_permission_timeout(permission_timeout)
+        .with_approval_mode(approval);
 
     let local = tokio::task::LocalSet::new();
     local

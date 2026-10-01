@@ -458,14 +458,19 @@ A `task` sub-agent never holds more than the session that started it:
   session may start any child, a `research`, `plan` or `chat` session only
   `research`/`plan` children, and an SDLC session none. If the child will not
   switch to that mode, it is stopped rather than left in its default mode.
-- A permission request it sends is allowed outright only when the parent
-  would run that call itself without asking anyone: the tool's name says
-  what it does, the parent's policy allows that without approval (writing
-  files in `agent` mode, say), and the parent's host does not ask about
-  every call. Anything else - a shell command, an MCP tool, any request under
-  an IDE over ACP - is put to the parent's approver: the session's own
-  approval gate, as the same prompt (tool and command or path) its own shell
-  commands get, or the IDE. A request is refused only when there is neither.
+- A permission request it sends is held to what the parent may do: the
+  request names the capability the sub-agent classed the call under (a
+  request that does not is held to what its tool's name says, but never
+  taken for a read; an unknown tool, such as an MCP one, counts as network
+  access, as it does in the kernel), and a call the parent's mode
+  does not allow - a write under a `research` parent, say - is refused
+  without asking anyone. Within that, the call runs without a prompt, as the
+  parent's own would; under the parent's manual approval (`--approval
+  manual`) every call of the sub-agent that is not read-only - a web fetch or
+  a memory write as much as a shell command - is put to the parent's own
+  approval prompt (tool and command or path), and under an IDE driving the
+  parent over ACP it is put to the IDE. The sub-agent is started with the
+  parent's approval mode and `tools.deny_patterns`/`auto_approve_patterns`.
 - It never runs a tool the parent session has disabled (`tools.disabled`,
   passed on as `--disable-tool`), takes at most the parent's
   `agent.max_tool_rounds` tool rounds a turn, and writes at most the parent's

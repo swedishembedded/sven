@@ -7,8 +7,8 @@
 //!
 //! 1. Builds a kernel [`SessionBundle`] via [`RuntimeBuilder::build_session`]
 //!    in the reactive `agent` mode (the streaming, native-tool-calling coding
-//!    agent), with auto-approval for all human gates (no interactive prompts
-//!    in CI).
+//!    agent), answering every human gate at once - nobody is there to ask
+//!    in CI.
 //! 2. Subscribes to the outward observation plane.
 //! 3. Posts the initial [`Event::UserMessage`] from the step prompt.
 //! 4. Bridges every [`UiEvent`] to CI output: assistant text → stdout,
@@ -48,7 +48,7 @@ use crate::runner::{
 /// Headless CI runner backed by the HSM kernel.
 ///
 /// Runs exactly one prompt and waits for the reactive agent turn to finish,
-/// auto-approving any tool-permission gates. Multi-step workflow / JSONL
+/// answering every human gate at once. Multi-step workflow / JSONL
 /// piping continues to live in [`super::CiRunner`]; this runner is the
 /// single-prompt kernel path.
 pub struct RuntimeRunner {
@@ -192,8 +192,8 @@ impl RuntimeRunner {
         let sink: EventSink = bundle.handle.sink();
         let mut obs_rx = bundle.handle.subscribe_observations();
 
-        // Auto-approve all human gates (CI is non-interactive).
-        tokio::spawn(bundle.channels.auto_approve());
+        // Nobody is at a headless run: its gates are answered at once.
+        tokio::spawn(bundle.channels.answer_unattended());
 
         // Post the user prompt.
         if !sink

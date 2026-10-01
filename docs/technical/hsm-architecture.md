@@ -104,7 +104,7 @@ The complete effect vocabulary (11 variants):
 | `CallLlm { request }` | Ask the reasoning service for a result. `request` is opaque JSON; the `kind` field must be `"turn"` (handled by `TurnExecutor` - the only wired executor in production) |
 | `CallTool { call_id, name, capability, args }` | Invoke a tool through the kernel. Requires the named `capability` to be permitted in the current state |
 | `AskUser { prompt }` | Ask the human a question (non-blocking; the answer arrives as a later event) |
-| `RequestHumanApproval { approval_id, capability, description }` | Request explicit approval before a dangerous capability is used |
+| `RequestHumanApproval { approval_id, capability, description, call }` | Put a call (or a machine's decision) to a person for approval; under auto approval the `UserExecutor` approves it at once |
 | `RequestHumanAnswer { question_id, call_id, prompt, options }` | Park a tool's question for the human; the answer arrives as `HumanAnswered` |
 | `ScheduleTimeout { timer_id, duration }` | Schedule a one-shot timer that posts `Timeout` |
 | `CancelTimeout { timer_id }` | Cancel a scheduled timer |
@@ -156,6 +156,22 @@ approves the call it was asked for (`PendingApproval::call_id`,
 asked about again. A `PermissionPolicy` is assembled with a builder
 (`allow_in`, `allow_globally`, `require_approval`).
 
+A session's **approval mode** (`sven_config::ApprovalMode`, set with
+`RuntimeBuilder::with_approval_mode`) decides which of the two it runs:
+
+| Mode | Tool calls | A machine's decision approval (SDLC `need_approval`) |
+|------|------------|------------------------------------------------------|
+| `auto` (default) | every call the mode allows runs; nothing is asked | the `UserExecutor` approves it at once |
+| `manual` | every call that is not read-only goes to the session's approval channel, one call at a time | goes to the approval channel |
+
+Either way the mode's policy decides what may run at all: approval only
+narrows it. The mode is carried to children - an SDLC task child's policy is
+the parent's narrowed and its `UserExecutor` shares the parent's approval
+mode; a `task` sub-agent's contract carries it, so the parent answers the
+child's permission requests from it (`task_tool::session::answer_permission`).
+Only a session with a person answering its approval channel may run manual:
+the CLI refuses `--approval manual` without an interactive terminal, and the
+SDK refuses a manual engine without an approval handler.
 
 In production, `RuntimeBuilder` uses each machine's own `permission_policy()`
 (`SdlcMachine::permission_policy()` / `ReactiveAgentMachine::permission_policy()`)
@@ -576,11 +592,16 @@ event source:
 `RuntimeRunner` (`ci/src/runner/runtime_runner.rs`) drives the kernel with
 no UI. It builds a `SessionBundle` (mapping the caller's mode to a registered
 kernel mode - coding/plan/research all resolve to `agent`, `chat`→`chat`,
-`sdlc`→`sdlc`), **auto-approves every human gate** (questions get an empty
-answer, approvals get `true`), posts the prompt as `Event::UserMessage`, bridges
+`sdlc`→`sdlc`), **answers every human gate at once** - nobody is there to ask
+(`KernelChannels::answer_unattended`: a question gets `NO_USER_ANSWER`, "no user
+is available; proceed on your best judgement and state the assumption"; a
+decision approval was already given by the `UserExecutor` under auto approval,
+so an approval request reaching the channel - only a manual session sends one,
+and a manual session never runs headless - is refused) - posts the prompt as
+`Event::UserMessage`, bridges
 each `UiEvent` to stdout/stderr, and returns exit code `0` on `TurnComplete`,
-non-zero on error or timeout. The CI auto-approve behaviour preserves the same
-human-gate flow as interactive mode without blocking.
+non-zero on error or timeout. Answering at once preserves the same human-gate
+flow as interactive mode without ever waiting for a person.
 
 ---
 

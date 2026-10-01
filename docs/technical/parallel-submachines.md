@@ -245,8 +245,11 @@ through and that `KernelChannels` hands to the host. Each child gets a
 
 - a decision of `need_user_input` becomes `Effect::AskUser`; the child waits
   in `Run`, and the answer arrives as `UserMessage` and goes to the model in a
-  follow-up turn;
+  follow-up turn - the person's answer in an interactive session, the
+  no-user answer at once otherwise;
 - a decision of `need_approval` becomes `Effect::RequestHumanApproval`;
+  under the parent's auto approval the child's `UserExecutor` approves it at
+  once, under manual approval it goes to the parent's approval channel.
   `HumanApproved` continues the task and `HumanRejected` ends it with
   `ok: false`;
 - a tool call the child's policy asks approval for (one the parent's policy

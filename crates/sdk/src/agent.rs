@@ -424,7 +424,8 @@ impl Agent {
             .with_context_facts(facts)
             .with_builtin_tools(self.engine.toolset().builtin())
             .with_extra_tools(self.engine.tools())
-            .with_initial_history(self.state.history.clone());
+            .with_initial_history(self.state.history.clone())
+            .with_parked_questions();
         if let Some(registry) = self.engine.machines() {
             builder = builder.with_mode_registry(registry);
         }
@@ -450,10 +451,10 @@ impl Agent {
 
         match self.engine.approvals() {
             ApprovalPolicy::AutoApprove => {
-                tokio::spawn(bundle.channels.auto_approve());
+                tokio::spawn(bundle.channels.answer_unattended());
             }
             ApprovalPolicy::Deny => {
-                tokio::spawn(bundle.channels.deny_all());
+                tokio::spawn(bundle.channels.answer_unattended());
             }
             ApprovalPolicy::Ask(responder) => {
                 tokio::spawn(bundle.channels.forward_to(responder));

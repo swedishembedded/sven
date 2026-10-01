@@ -87,7 +87,7 @@ const MAX_ATTEMPTS_PER_STEP: u32 = 3;
 pub(super) const HANDOFF_OPTIONS: &[&str] = &["Done", "Cancel"];
 /// Options offered on a genuine `ask_user` step with no options of its own -
 /// `ask_question` requires at least two; a human answers for real via its
-/// free-form "Other: <text>" path (see `step::extract_answer_text`).
+/// free-form "Other: <text>" path (see `step::normalize_answer`).
 pub(super) const ASK_USER_OPTIONS: &[&str] = &["Provide the value", "Skip this step"];
 
 const STEPS_FACT: &str = "ui_test_steps";
@@ -105,6 +105,9 @@ pub(super) const BASELINE_SIG_FACT: &str = "ui_test_baseline_signature";
 pub const RESULTS_FACT: &str = "ui_test_results";
 const PENDING_CALL_FACT: &str = "ui_test_pending_call";
 pub(super) const ASK_BIND_FACT: &str = "ui_test_ask_bind";
+/// `true` while the step's pending question is the secure-screen hand-off,
+/// which only [`HANDOFF_OPTIONS`]' "Done" completes.
+pub(super) const HANDOFF_FACT: &str = "ui_test_handoff";
 const LAST_FAILURE_FACT: &str = "ui_test_last_failure";
 /// Set only in [`UiTestState::Failed`]; a run that never reaches `Failed`
 /// never sets it.
@@ -320,6 +323,33 @@ pub(super) fn fail_or_retry(ctx: &mut Context, reason: impl Into<String>) -> Rea
     }
 }
 
+/// The answer to the question the step asked a person, if it ends the run
+/// instead of completing the step: no user is available to answer, or the
+/// person did not confirm a secure-screen hand-off as done. No retry can
+/// stand in for a person, so the run fails with the reason.
+fn answer_failing_the_step(ctx: &mut Context, answer: &str) -> Option<Reaction<UiTestState>> {
+    let reason = if answer == sven_vocab::NO_USER_ANSWER {
+        "the step needs a person and no user is available"
+    } else if ctx.fact(HANDOFF_FACT).and_then(Value::as_bool) == Some(true)
+        && step::normalize_answer(answer) != HANDOFF_OPTIONS[0]
+    {
+        "the person cancelled the secure-screen hand-off"
+    } else {
+        return None;
+    };
+    let index = load_index(ctx);
+    let instruction = load_steps(ctx)
+        .get(index as usize)
+        .map_or("", String::as_str)
+        .to_string();
+    append_result(ctx, index, &instruction, false, Some(reason));
+    ctx.set_fact(
+        ERROR_FACT,
+        format!("step {index} (\"{instruction}\"): {reason}"),
+    );
+    Some(Reaction::transition(UiTestState::Failed, [], reason))
+}
+
 /// Resolve `Some(value)` when `answer` should be bound under [`ASK_BIND_FACT`].
 fn maybe_bind_answer(ctx: &mut Context, answer: &str) {
     if let Some(name) = ctx
@@ -462,6 +492,9 @@ impl Machine for UiTestMachine {
                         return Reaction::Ignored;
                     }
                     if let Some(text) = observation.as_str() {
+                        if let Some(failed) = answer_failing_the_step(ctx, text) {
+                            return failed;
+                        }
                         maybe_bind_answer(ctx, text);
                     }
                     begin_verification_or_finish(ctx)
@@ -500,10 +533,10 @@ impl Machine for UiTestMachine {
                     question_id,
                     answer,
                 } => match ctx.resolve_question(*question_id) {
-                    Some(_) => {
+                    Some(_) => answer_failing_the_step(ctx, answer).unwrap_or_else(|| {
                         maybe_bind_answer(ctx, answer);
                         advance_or_finish(ctx)
-                    }
+                    }),
                     None => Reaction::Ignored,
                 },
                 _ => Reaction::Ignored,
@@ -931,6 +964,76 @@ mod tests {
         assert_eq!(args["questions"][0]["options"], json!(["Done", "Cancel"]));
     }
 
+    /// Hands the one step of a fresh run off on a secure screen and answers
+    /// the hand-off with `answer`, as a tool result or as a person's answer
+    /// to the parked question.
+    fn answer_secure_hand_off(answer: &str, parked: bool) -> (UiTestState, Context) {
+        let (mut m, mut ctx, mut state) = make();
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Confirm on the secure screen"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(json!({ "verb": "tap", "target": "confirm" })),
+        );
+        let gate_id = pending_call_id(&ctx);
+        let secure_json = json!({ "secure_screen": true }).to_string();
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(gate_id, json!(secure_json)),
+        );
+        let ask_id = pending_call_id(&ctx);
+        if parked {
+            drive(
+                &mut m,
+                &mut ctx,
+                &mut state,
+                Event::QuestionAsked {
+                    call_id: ask_id,
+                    call_ref: "ask".into(),
+                    prompt: "hand-off".into(),
+                    options: vec!["Done".into(), "Cancel".into()],
+                },
+            );
+            let question_id = sven_hsm::ids::QuestionId::from_uuid(ask_id.as_uuid());
+            drive(
+                &mut m,
+                &mut ctx,
+                &mut state,
+                Event::HumanAnswered {
+                    question_id,
+                    answer: answer.into(),
+                },
+            );
+        } else {
+            drive(&mut m, &mut ctx, &mut state, tool_ok(ask_id, json!(answer)));
+        }
+        (state, ctx)
+    }
+
+    /// A person who cancels the secure-screen hand-off has not done the
+    /// step: it fails, saying so, and only "Done" completes it.
+    #[test]
+    fn a_cancelled_secure_screen_hand_off_fails_the_step() {
+        for parked in [false, true] {
+            let (state, ctx) = answer_secure_hand_off("Cancel", parked);
+            assert_eq!(state, UiTestState::Failed, "parked: {parked}");
+            let error = ctx.fact(ERROR_FACT).and_then(Value::as_str).unwrap_or("");
+            assert!(error.contains("cancelled"), "{error}");
+            let (state, _) = answer_secure_hand_off("Done", parked);
+            assert_eq!(state, UiTestState::Done, "parked: {parked}");
+        }
+    }
+
     #[test]
     fn a_target_not_found_on_screen_is_a_failure_not_a_crash() {
         let (mut m, mut ctx, mut state) = make();
@@ -1091,6 +1194,41 @@ mod tests {
         };
         assert_eq!(args["action"], "type_text");
         assert_eq!(args["text"], "123456");
+    }
+
+    /// A step that needs a value from a person fails, with the reason, when
+    /// no user is available: the no-user sentence is never bound as the
+    /// value, typed into the device, or taken as a hand-off's "Done".
+    #[test]
+    fn a_step_needing_a_person_fails_when_no_user_is_available() {
+        let (mut m, mut ctx, mut state) = make();
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::UserMessage {
+                text: script(&["Ask the user for the code", "Enter the code"]),
+            },
+        );
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            compiled_llm_turn(
+                json!({ "verb": "ask_user", "target": "What is the code?", "bind": "code" }),
+            ),
+        );
+        let ask_id = pending_call_id(&ctx);
+        drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            tool_ok(ask_id, json!(sven_vocab::NO_USER_ANSWER)),
+        );
+        assert_eq!(state, UiTestState::Failed);
+        assert_eq!(vars::resolve(&ctx, "code"), None, "nothing was bound");
+        let error = ctx.fact(ERROR_FACT).and_then(Value::as_str).unwrap_or("");
+        assert!(error.contains("no user is available"), "{error}");
     }
 
     #[test]

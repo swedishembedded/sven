@@ -87,7 +87,7 @@ directly; it asks the kernel to do it by returning an effect.
 | `CallLlm` | `request: Value` | Ask the LLM service for a response; result arrives as `LlmTurnComplete` or `LlmFailed` |
 | `CallTool` | `call_id, name, capability, args` | Invoke a tool; result arrives as `ToolSucceeded` or `ToolFailed` |
 | `AskUser` | `prompt: String` | Ask the human a question; answer arrives as `UserMessage` |
-| `RequestHumanApproval` | `approval_id, capability, description` | Gate a dangerous capability on human consent; answer arrives as `HumanApproved` or `HumanRejected` |
+| `RequestHumanApproval` | `approval_id, capability, description, call` | Put a call (manual approval) or a machine's decision to a person; answer arrives as `HumanApproved` or `HumanRejected` - at once, approved, under auto approval |
 | `ScheduleTimeout` | `timer_id, duration` | Post `Timeout { timer_id }` after `duration` |
 | `CancelTimeout` | `timer_id` | Cancel a previously scheduled timer |
 | `PersistAudit` | - | Flush the in-memory audit log to durable storage |

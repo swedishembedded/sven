@@ -20,7 +20,7 @@ use sven_hsm::{context::Context, status::Reaction};
 use super::{
     advance_or_finish, attempt_number, fail_or_retry, load_compiled, load_index, load_steps,
     set_pending, step, UiTestState, ASK_BIND_FACT, ASK_USER_OPTIONS, BASELINE_SIG_FACT,
-    HANDOFF_OPTIONS, LOCATING_PHASE_FACT,
+    HANDOFF_FACT, HANDOFF_OPTIONS, LOCATING_PHASE_FACT,
 };
 use step::CompiledStep;
 
@@ -146,6 +146,7 @@ pub(super) fn dispatch_compiled(
             let (effect, call_id) = step::ask_user_effect(index, attempt, &question, options);
             set_pending(ctx, call_id);
             ctx.set_fact(ASK_BIND_FACT, json!(compiled.bind));
+            ctx.set_fact(HANDOFF_FACT, false);
             Reaction::transition(
                 UiTestState::Acting,
                 vec![effect],
@@ -156,6 +157,7 @@ pub(super) fn dispatch_compiled(
             Ok((effect, call_id)) => {
                 set_pending(ctx, call_id);
                 ctx.set_fact(ASK_BIND_FACT, Value::Null);
+                ctx.set_fact(HANDOFF_FACT, false);
                 Reaction::transition(
                     UiTestState::Acting,
                     vec![effect],
@@ -213,6 +215,7 @@ pub(super) fn handle_locating_success(
                 let (effect, call_id) = step::ask_user_effect(index, attempt, &question, options);
                 set_pending(ctx, call_id);
                 ctx.set_fact(ASK_BIND_FACT, Value::Null);
+                ctx.set_fact(HANDOFF_FACT, true);
                 return Reaction::transition(
                     UiTestState::Acting,
                     vec![effect],
@@ -276,6 +279,7 @@ pub(super) fn handle_locating_success(
                     Ok((effect, call_id)) => {
                         set_pending(ctx, call_id);
                         ctx.set_fact(ASK_BIND_FACT, Value::Null);
+                        ctx.set_fact(HANDOFF_FACT, false);
                         Reaction::transition(
                             UiTestState::Acting,
                             vec![effect],

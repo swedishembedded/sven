@@ -8,7 +8,10 @@
 //! [`sven_bootstrap::KernelAgentSession`] — the shared HSM-kernel adapter that
 //! maps the kernel's outward observation plane onto the same
 //! [`AgentEvent`](sven_machines::AgentEvent) stream every other surface consumes.
-//! The session is stored in a [`SessionEntry`] keyed by ACP [`SessionId`].
+//! The session is stored in a [`SessionEntry`] keyed by ACP [`SessionId`];
+//! `set_session_mode` rebuilds it in the new mode from the session's
+//! settings, so the mode's policy and tools - not only its label - apply; it
+//! is refused while a prompt turn runs.
 //! `prompt` posts the user message through the session, drains the mapped
 //! `AgentEvent` stream, and bridges each event to an ACP `session/update`
 //! notification, returning when the turn completes or is cancelled.
@@ -19,6 +22,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,10 +52,16 @@ const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 /// `session/request_permission` request before defaulting to denial.
 pub const DEFAULT_PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 
+use sven_bootstrap::session_handles::HumanGate;
 use sven_bootstrap::{KernelAgentSession, RuntimeBuilder, RuntimeContext};
-use sven_config::{AgentMode, Config};
+use sven_config::{AgentMode, ApprovalMode, Config};
+use sven_hsm::ToolCapability;
 use sven_machines::AgentEvent;
-use sven_tools_agent::QuestionRequest;
+
+/// `_meta` key under which a permission request names the capability the call
+/// exercises, as the agent's kernel classed it (`"WriteFile"`, ...). A `task`
+/// parent answering its sub-agent reads it; a client may ignore it.
+pub use sven_bootstrap::task_tool::CAPABILITY_META_KEY;
 
 use crate::bridge::{
     acp_mode_id_to_sven_mode, agent_event_to_session_update, sven_mode_to_acp_mode_id,
@@ -94,7 +104,19 @@ struct AcpPermissionRequester {
 
 #[async_trait::async_trait]
 impl sven_tool_api::PermissionRequester for AcpPermissionRequester {
-    async fn request_permission(&self, call: &sven_tool_api::ToolCall) -> bool {
+    async fn request_permission(
+        &self,
+        call: &sven_tool_api::ToolCall,
+        capability: ToolCapability,
+    ) -> bool {
+        self.ask(call, capability).await
+    }
+}
+
+impl AcpPermissionRequester {
+    /// Asks the client about `call`, naming `capability` in the request's
+    /// `_meta`; `false` unless the client allows it within the timeout.
+    async fn ask(&self, call: &sven_tool_api::ToolCall, capability: ToolCapability) -> bool {
         // Clone all borrowed data up-front so the future is 'static and Send.
         let call_id = call.id.clone();
         let call_name = call.name.clone();
@@ -102,12 +124,19 @@ impl sven_tool_api::PermissionRequester for AcpPermissionRequester {
         let session_id = self.session_id.clone();
         let conn_tx = self.conn_tx.clone();
 
+        // A unit variant always serializes, to its name.
+        let meta = serde_json::to_value(capability).ok().map(|cap| {
+            let mut meta = serde_json::Map::new();
+            meta.insert(CAPABILITY_META_KEY.to_string(), cap);
+            meta
+        });
         let tool_call_update = ToolCallUpdate::new(
             call_id,
             ToolCallUpdateFields::new()
                 .title(call_name.clone())
                 .raw_input(call_args),
-        );
+        )
+        .meta(meta);
 
         let allow_once_id = "allow_once";
         let reject_once_id = "reject_once";
@@ -193,18 +222,65 @@ impl TurnUsage {
 
 // ─── Session entry ────────────────────────────────────────────────────────────
 
+/// What a session is set up with. Every build of the session - the first,
+/// and each rebuild for a mode or model change - is made from exactly this.
+#[derive(Clone, Debug)]
+struct SessionSettings {
+    /// The working directory the session was opened in.
+    cwd: std::path::PathBuf,
+    mode: AgentMode,
+    /// The model the session runs on: the configured one until the agent
+    /// switches (`system` switch_model).
+    model: sven_config::ModelConfig,
+}
+
 /// Per-session state stored inside [`SvenAcpAgent`].
 struct SessionEntry {
     /// Kernel session bridged onto the shared [`AgentEvent`] stream; owns the
     /// runtime and keeps the kernel alive for the session's lifetime.
-    session: KernelAgentSession,
+    /// Replaced when the mode or model changes, never during a turn.
+    session: tokio::sync::Mutex<KernelAgentSession>,
+    settings: std::sync::Mutex<SessionSettings>,
+    /// The agent switched models during a turn: the session is rebuilt on
+    /// the new one before the next turn starts.
+    model_changed: AtomicBool,
+    /// The session's MCP servers, those the agent added included, kept
+    /// across rebuilds.
+    mcp_manager: Arc<sven_bootstrap::McpManager>,
+    /// How many `prompt` calls are running or waiting on this session. A
+    /// rebuild happens only while it is zero.
+    turns_in_flight: AtomicUsize,
+    /// Where every build of the session sends its events.
+    event_tx: mpsc::Sender<AgentEvent>,
     /// Receiver for this session's mapped [`AgentEvent`] stream, drained one
     /// turn at a time by `prompt`.
     event_rx: tokio::sync::Mutex<mpsc::Receiver<AgentEvent>>,
-    /// Mode lock shared between the agent loop and mode-change requests.
-    mode_lock: Arc<tokio::sync::Mutex<AgentMode>>,
     /// Cancellation sender; replaced on each new prompt turn.
     cancel_tx: tokio::sync::Mutex<Option<oneshot::Sender<()>>>,
+}
+
+impl SessionEntry {
+    fn settings(&self) -> SessionSettings {
+        self.settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Counts a `prompt` as in flight until the returned guard drops.
+    fn begin_turn(&self) -> TurnInFlight<'_> {
+        self.turns_in_flight.fetch_add(1, Ordering::SeqCst);
+        TurnInFlight(&self.turns_in_flight)
+    }
+}
+
+/// A `prompt` running on a session; see [`SessionEntry::begin_turn`].
+struct TurnInFlight<'a>(&'a AtomicUsize);
+
+impl Drop for TurnInFlight<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 // ─── SvenAcpAgent ─────────────────────────────────────────────────────────────
@@ -217,6 +293,7 @@ pub struct SvenAcpAgent {
     sessions: RefCell<HashMap<String, Arc<SessionEntry>>>,
     conn_tx: mpsc::UnboundedSender<ConnMessage>,
     permission_timeout: Duration,
+    approval: ApprovalMode,
 }
 
 impl SvenAcpAgent {
@@ -226,9 +303,145 @@ impl SvenAcpAgent {
             sessions: RefCell::new(HashMap::new()),
             conn_tx,
             permission_timeout: DEFAULT_PERMISSION_TIMEOUT,
+            approval: ApprovalMode::Auto,
         }
     }
 
+    /// Runs every session under `approval`. Under [`ApprovalMode::Manual`]
+    /// each call that is not read-only is put to the client
+    /// (`session/request_permission`) - how a `task` parent under manual
+    /// approval sees its sub-agent's calls. Under auto only a tool whose
+    /// policy is `Ask` is put to the client: the host's own policy. Every
+    /// request carries the call's capability under [`CAPABILITY_META_KEY`].
+    #[must_use]
+    pub fn with_approval_mode(mut self, approval: ApprovalMode) -> Self {
+        self.approval = approval;
+        self
+    }
+
+    /// Builds the kernel session for `session_id` from `settings`, seeded
+    /// with `history`, bridged into `event_tx`, on `mcp_manager`'s servers
+    /// (a new manager when `None`).
+    async fn build_session(
+        &self,
+        session_id: &str,
+        settings: &SessionSettings,
+        history: Vec<sven_model::Message>,
+        event_tx: mpsc::Sender<AgentEvent>,
+        mcp_manager: Option<Arc<sven_bootstrap::McpManager>>,
+    ) -> AcpResult<KernelAgentSession> {
+        let requester = Arc::new(AcpPermissionRequester {
+            session_id: session_id.to_string(),
+            conn_tx: self.conn_tx.clone(),
+            timeout: self.permission_timeout,
+        });
+        let mut runtime_ctx = RuntimeContext::auto_detect();
+        runtime_ctx.project_root = Some(settings.cwd.clone());
+        let mut builder = RuntimeBuilder::new(Arc::clone(&self.config), "agent")
+            .with_runtime_context(runtime_ctx)
+            .with_model_config(settings.model.clone())
+            .with_agent_mode(settings.mode)
+            .with_approval_mode(self.approval)
+            .with_initial_history(history);
+        if let Some(manager) = mcp_manager {
+            builder = builder.with_mcp_manager(manager);
+        }
+        // Under manual approval the kernel asks about every call that is not
+        // read-only, `Ask` tools included; asking the client again from the
+        // registry would put the same call to it twice.
+        if self.approval == ApprovalMode::Auto {
+            builder = builder.with_permission_requester(requester.clone());
+        }
+        let bundle = builder.build_session().await.map_err(|e| {
+            tracing::error!("ACP kernel build error: {e:#}");
+            Error::internal_error()
+        })?;
+        let (session, _mcp_event_rx) =
+            KernelAgentSession::spawn_answering(bundle, event_tx, gate_responder(requester));
+        Ok(session)
+    }
+
+    /// Replaces `entry`'s session with one built from `settings`, carrying
+    /// the conversation so far and the MCP servers. `session` is the entry's
+    /// locked session; the caller has made sure no turn is running on it.
+    async fn rebuild_session(
+        &self,
+        session_id: &str,
+        entry: &SessionEntry,
+        session: &mut KernelAgentSession,
+        settings: SessionSettings,
+    ) -> AcpResult<()> {
+        let history = session.history_snapshot();
+        *session = self
+            .build_session(
+                session_id,
+                &settings,
+                history,
+                entry.event_tx.clone(),
+                Some(Arc::clone(&entry.mcp_manager)),
+            )
+            .await?;
+        *entry
+            .settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = settings;
+        entry.model_changed.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Records what a turn's `event` changes about the session's settings:
+    /// a model the agent switched to, which the session is rebuilt on before
+    /// the next turn.
+    fn note_turn_event(&self, entry: &SessionEntry, event: &AgentEvent) {
+        if let AgentEvent::ModelChanged(model) = event {
+            let model = sven_model::resolve_model_from_config(&self.config, model);
+            entry
+                .settings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .model = model;
+            entry.model_changed.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Answers a session's kernel gates. ACP carries no question from the agent
+/// to the client, so nobody can answer one: it is answered at once, saying
+/// so. An approval (manual only) goes to the client with the call's
+/// capability, bounded by the permission timeout.
+fn gate_responder(
+    requester: Arc<AcpPermissionRequester>,
+) -> sven_bootstrap::session_handles::HumanGateResponder {
+    Arc::new(move |gate| match gate {
+        HumanGate::Question { reply_tx, .. } => {
+            let _ = reply_tx.send(sven_tool_api::NO_USER_ANSWER.to_string());
+        }
+        HumanGate::Approval {
+            capability,
+            call,
+            reply_tx,
+            ..
+        } => {
+            let requester = Arc::clone(&requester);
+            tokio::spawn(async move {
+                let approved = match call {
+                    Some(call) => {
+                        let call = sven_tool_api::ToolCall {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            name: call.name,
+                            args: call.args,
+                        };
+                        requester.ask(&call, capability).await
+                    }
+                    None => false,
+                };
+                let _ = reply_tx.send(approved);
+            });
+        }
+    })
+}
+
+impl SvenAcpAgent {
     /// How long a tool call waits for the client's permission answer before
     /// it is denied.
     #[must_use]
@@ -299,57 +512,28 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         debug!("ACP new_session: cwd={:?}", args.cwd);
 
         let session_id = uuid::Uuid::new_v4().to_string();
-        let initial_mode = AgentMode::Agent;
+        let settings = SessionSettings {
+            cwd: args.cwd.clone(),
+            mode: AgentMode::Agent,
+            model: self.config.model.clone(),
+        };
 
-        let permission_requester = Arc::new(AcpPermissionRequester {
-            session_id: session_id.clone(),
-            conn_tx: self.conn_tx.clone(),
-            timeout: self.permission_timeout,
-        });
-
-        let mut runtime_ctx = RuntimeContext::auto_detect();
-        runtime_ctx.project_root = Some(args.cwd.clone());
-
-        let bundle = RuntimeBuilder::new(Arc::clone(&self.config), "agent")
-            .with_runtime_context(runtime_ctx)
-            .with_permission_requester(permission_requester)
-            .build_session()
-            .await
-            .map_err(|e| {
-                tracing::error!("ACP kernel build error: {e:#}");
-                Error::internal_error()
-            })?;
-
-        // Bridge the kernel session onto the shared `AgentEvent` stream via the
-        // reusable `KernelAgentSession` adapter. The event receiver is drained
-        // one turn at a time by `prompt`; the question channel carries
-        // kernel-level clarification / approval gates.
+        // The event receiver is drained one turn at a time by `prompt`; every
+        // build of the session (a mode change rebuilds it) sends into it.
         let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(256);
-        let (question_tx, mut question_rx) = mpsc::channel::<QuestionRequest>(16);
-        let (session, _mcp_event_rx) = KernelAgentSession::spawn(bundle, event_tx, question_tx);
+        let session = self
+            .build_session(&session_id, &settings, Vec::new(), event_tx.clone(), None)
+            .await?;
 
-        // Auto-answer kernel-level gates so headless sessions never block:
-        // free-text questions resolve to an empty answer and capability
-        // approvals are granted. Tool-call approvals are gated separately via
-        // `AcpPermissionRequester` on the IDE `session/request_permission` path.
-        tokio::spawn(async move {
-            while let Some(req) = question_rx.recv().await {
-                let is_approval = req.questions.first().is_some_and(|q| !q.options.is_empty());
-                let answer = if is_approval {
-                    "yes".to_string()
-                } else {
-                    String::new()
-                };
-                let _ = req.answer_tx.send(answer);
-            }
-        });
-
-        let mode_lock = Arc::new(tokio::sync::Mutex::new(initial_mode));
-
+        let initial_mode = settings.mode;
         let entry = Arc::new(SessionEntry {
-            session,
+            mcp_manager: session.mcp_manager(),
+            session: tokio::sync::Mutex::new(session),
+            settings: std::sync::Mutex::new(settings),
+            model_changed: AtomicBool::new(false),
+            turns_in_flight: AtomicUsize::new(0),
+            event_tx,
             event_rx: tokio::sync::Mutex::new(event_rx),
-            mode_lock,
             cancel_tx: tokio::sync::Mutex::new(None),
         });
 
@@ -391,6 +575,10 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             .collect::<Vec<_>>()
             .join("\n");
 
+        // Counted before the first await, so a mode change that arrives while
+        // this turn waits or runs sees it and is refused.
+        let _turn = entry.begin_turn();
+
         // Set up cancellation.
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         *entry.cancel_tx.lock().await = Some(cancel_tx);
@@ -405,8 +593,16 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         // in the common case.
         while event_rx.try_recv().is_ok() {}
 
-        // Post the user message to the kernel.
-        entry.session.send_user_message(text).await;
+        // Post the user message to the kernel, on the model the agent last
+        // switched to.
+        {
+            let mut session = entry.session.lock().await;
+            if entry.model_changed.load(Ordering::SeqCst) {
+                self.rebuild_session(&session_id, &entry, &mut session, entry.settings())
+                    .await?;
+            }
+            session.send_user_message(text).await;
+        }
 
         // Bridge AgentEvents to ACP session/update notifications until the turn
         // completes (TurnComplete), is aborted (Aborted), or errors.
@@ -424,7 +620,7 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             tokio::select! {
                 _ = &mut cancel_rx => {
                     // Cancellation requested from `cancel()`.
-                    entry.session.cancel().await;
+                    entry.session.lock().await.cancel().await;
                     stop_reason = Some(StopReason::Cancelled);
                     break;
                 }
@@ -455,6 +651,7 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
                         }
                         other => {
                             used.add(&other);
+                            self.note_turn_event(&entry, &other);
                             // Non-terminal events are forwarded when they
                             // have an ACP equivalent; the loop keeps draining
                             // until a terminal `TurnComplete`/`Aborted`/
@@ -505,8 +702,24 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             .get_session(&session_id)
             .ok_or_else(Error::invalid_params)?;
 
-        let new_mode = acp_mode_id_to_sven_mode(&args.mode_id);
-        *entry.mode_lock.lock().await = new_mode;
+        // The mode decides the kernel's policy and the session's tools, both
+        // fixed when a session is built: switching rebuilds it with the
+        // session's settings, carrying the conversation so far. Never under
+        // a running turn, which would be left waiting on the old session.
+        let mut session = entry.session.lock().await;
+        if entry.turns_in_flight.load(Ordering::SeqCst) > 0 {
+            return Err(Error::new(
+                i32::from(ErrorCode::InvalidRequest),
+                "the session mode cannot change while a prompt turn is running: \
+                 wait for the turn to end, or cancel it, then set the mode",
+            ));
+        }
+        let settings = SessionSettings {
+            mode: acp_mode_id_to_sven_mode(&args.mode_id),
+            ..entry.settings()
+        };
+        self.rebuild_session(&session_id, &entry, &mut session, settings)
+            .await?;
 
         Ok(SetSessionModeResponse::new())
     }
@@ -556,20 +769,183 @@ mod tests {
             name: "shell".into(),
             args: serde_json::json!({"command": "ls"}),
         };
-        let asking = requester.request_permission(&call);
+        let asking = requester.request_permission(&call, ToolCapability::ExecuteShell);
         tokio::pin!(asking);
         // Nobody answers; the pending request is held open meanwhile.
-        let _held = tokio::select! {
+        let held = tokio::select! {
             msg = conn_rx.recv() => msg,
             _ = &mut asking => panic!("answered before the request was sent"),
         };
+        let Some(ConnMessage::RequestPermission { request, .. }) = &held else {
+            panic!("the client is asked");
+        };
+        let meta = request
+            .tool_call
+            .meta
+            .as_ref()
+            .expect("the capability is named");
+        assert_eq!(meta[CAPABILITY_META_KEY], "ExecuteShell");
         tokio::time::timeout(Duration::from_secs(5), asking)
             .await
             .ok()
     }
 
+    /// A mode is not a label: switching an ACP session to research rebuilds
+    /// it with the research tools and policy, so a sub-agent started in
+    /// research mode cannot write.
+    #[tokio::test]
+    async fn a_mode_switch_rebuilds_the_session_in_that_mode() {
+        use agent_client_protocol::Agent as _;
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+        let (conn_tx, _conn_rx) = mpsc::unbounded_channel();
+        let agent = SvenAcpAgent::new(Arc::new(config), conn_tx);
+        let dir = tempfile::tempdir().unwrap();
+        let id = agent
+            .new_session(NewSessionRequest::new(dir.path()))
+            .await
+            .expect("a session")
+            .session_id
+            .to_string();
+        let offers = |tool: &'static str| {
+            let entry = agent.get_session(&id).expect("the session");
+            async move {
+                let session = entry.session.lock().await;
+                session.tool_registry().get(tool).is_some()
+            }
+        };
+        assert!(offers("write_file").await, "an agent session writes");
+        agent
+            .set_session_mode(SetSessionModeRequest::new(
+                id.clone(),
+                SessionModeId::new("research"),
+            ))
+            .await
+            .expect("the mode switches");
+        assert!(!offers("write_file").await, "a research session does not");
+        assert!(offers("read_file").await);
+    }
+
+    fn mock_agent() -> SvenAcpAgent {
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+        let (conn_tx, _conn_rx) = mpsc::unbounded_channel();
+        SvenAcpAgent::new(Arc::new(config), conn_tx)
+    }
+
+    /// A mode change while a turn runs would pull the session out from under
+    /// it: it is refused, telling the client why, and the turn completes.
+    #[tokio::test]
+    async fn a_mode_change_during_a_turn_is_refused() {
+        use agent_client_protocol::Agent as _;
+        let agent = mock_agent();
+        let dir = tempfile::tempdir().unwrap();
+        let id = agent
+            .new_session(NewSessionRequest::new(dir.path()))
+            .await
+            .expect("a session")
+            .session_id;
+        let set_mode =
+            || agent.set_session_mode(SetSessionModeRequest::new(id.clone(), "research"));
+        let (turn, during) = tokio::join!(
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                agent.prompt(PromptRequest::new(id.clone(), vec!["hello".into()])),
+            ),
+            set_mode(),
+        );
+        let refused = during.expect_err("refused while the turn runs");
+        assert!(refused.message.contains("turn is running"), "{refused:?}");
+        let turn = turn
+            .expect("the turn is not stranded")
+            .expect("the turn ends");
+        assert_eq!(turn.stop_reason, StopReason::EndTurn);
+        set_mode().await.expect("allowed once the turn is over");
+    }
+
+    /// A mode change rebuilds the session with everything the old one was
+    /// set up with: its directory, and the model the agent switched to.
+    #[tokio::test]
+    async fn a_mode_change_keeps_the_session_settings() {
+        use agent_client_protocol::Agent as _;
+        let agent = mock_agent();
+        let dir = tempfile::tempdir().unwrap();
+        let id = agent
+            .new_session(NewSessionRequest::new(dir.path()))
+            .await
+            .expect("a session")
+            .session_id
+            .to_string();
+        let entry = agent.get_session(&id).expect("the session");
+        agent.note_turn_event(
+            &entry,
+            &AgentEvent::ModelChanged("mock/second-model".into()),
+        );
+        agent
+            .set_session_mode(SetSessionModeRequest::new(id.clone(), "research"))
+            .await
+            .expect("the mode switches");
+        let settings = entry.settings();
+        assert_eq!(settings.mode, AgentMode::Research);
+        assert_eq!(settings.cwd, dir.path());
+        assert_eq!(
+            (
+                settings.model.provider.as_str(),
+                settings.model.name.as_str()
+            ),
+            ("mock", "second-model")
+        );
+    }
+
+    /// Under manual approval a kernel approval goes to the client as a
+    /// permission request naming the call's capability; a question gets the
+    /// no-user answer.
+    #[tokio::test]
+    async fn a_kernel_approval_goes_to_the_client_with_its_capability() {
+        let (conn_tx, mut conn_rx) = mpsc::unbounded_channel();
+        let respond = gate_responder(Arc::new(AcpPermissionRequester {
+            session_id: "s".into(),
+            conn_tx,
+            timeout: Duration::from_secs(5),
+        }));
+        let (reply_tx, reply_rx) = oneshot::channel();
+        respond(HumanGate::Approval {
+            capability: ToolCapability::NetworkAccess,
+            prompt: "fetch".into(),
+            call: Some(sven_hsm::GatedCall {
+                name: "web_fetch".into(),
+                args: serde_json::json!({"url": "https://example.com"}),
+            }),
+            reply_tx,
+        });
+        let Some(ConnMessage::RequestPermission {
+            request,
+            response_tx,
+        }) = conn_rx.recv().await
+        else {
+            panic!("the client is asked");
+        };
+        let meta = request.tool_call.meta.expect("the capability is named");
+        assert_eq!(meta[CAPABILITY_META_KEY], "NetworkAccess");
+        let allow = request.options[0].option_id.clone();
+        let _ = response_tx.send(RequestPermissionResponse::new(
+            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(allow)),
+        ));
+        assert!(reply_rx.await.unwrap(), "the client allowed it");
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        respond(HumanGate::Question {
+            prompt: "which?".into(),
+            reply_tx,
+        });
+        assert_eq!(reply_rx.await.unwrap(), sven_tool_api::NO_USER_ANSWER);
+    }
+
     /// A client that never answers a permission request cannot stall the
-    /// session: the call is denied once the wait runs out.
+    /// session: the call is denied once the wait runs out. The request names
+    /// the call's capability, as every request from a tool's policy does.
     #[tokio::test]
     async fn an_unanswered_permission_request_is_denied_when_its_wait_runs_out() {
         assert_eq!(ask(Duration::from_millis(20)).await, Some(false));

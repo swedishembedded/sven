@@ -39,7 +39,8 @@ use tokio::time::Instant;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, warn};
 
-use sven_hsm::{known_capability_for_tool_name, ChildRunContract};
+use sven_config::ApprovalMode;
+use sven_hsm::{capability_for_tool_name, ChildRunContract, ToolCapability};
 use sven_tool_api::{
     events::{SubagentUpdate, ToolEvent},
     tool::{ToolCall, ToolOutput},
@@ -126,13 +127,16 @@ impl Client for AcpTaskClient {
 
 /// The answer to one of the child's permission requests.
 ///
-/// The request names the tool. It is allowed outright only when the parent
-/// itself would run that call without asking anyone: the parent's host does
-/// not ask about every call (no [`ChildApprover::Host`]), the tool's name
-/// says what it does (`known_capability_for_tool_name`) and the contract
-/// allows that without approval. Everything else - an unknown tool such as
-/// an MCP one included - goes to `approver`, and is refused when there is
-/// none.
+/// The request names the capability the child classed the call under
+/// ([`CAPABILITY_META_KEY`](super::CAPABILITY_META_KEY)). One that does not
+/// is held to what its tool's name says (`capability_for_tool_name`), but
+/// never to a read-only capability: a tool's name is the child's to choose,
+/// and an MCP server may call anything `read_file`. A call outside the contract
+/// is refused without asking anyone. Within it, a parent whose host asks
+/// about every call ([`ChildApprover::Host`]) puts it to the host; a call the
+/// contract allows without approval is allowed; any other - one that is not
+/// read-only, under a parent's manual approval - goes to `approver` (the
+/// parent's own gate), and is refused when there is none.
 async fn answer_permission(
     contract: &ChildRunContract,
     approver: Option<&ChildApprover>,
@@ -140,10 +144,24 @@ async fn answer_permission(
 ) -> RequestPermissionOutcome {
     let fields = &request.tool_call.fields;
     let name = fields.title.clone().unwrap_or_default();
-    let capability = known_capability_for_tool_name(&name);
+    let capability = request
+        .tool_call
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get(super::CAPABILITY_META_KEY))
+        .and_then(|cap| serde_json::from_value::<ToolCapability>(cap.clone()).ok())
+        .unwrap_or_else(|| match capability_for_tool_name(&name) {
+            named if named.is_read_only() => ToolCapability::NetworkAccess,
+            named => named,
+        });
     let host_asks = approver.is_some_and(ChildApprover::asks_every_call);
-    let outright = !host_asks && capability.is_some_and(|cap| contract.allows_without_asking(cap));
-    let allowed = if outright {
+    let allowed = if !contract.policy.allows_in_every_state(capability) {
+        debug!(
+            ?capability,
+            "task: refusing a sub-agent call outside its contract"
+        );
+        false
+    } else if !host_asks && contract.allows_without_asking(capability) {
         true
     } else if let Some(approver) = approver {
         let call = ToolCall {
@@ -151,9 +169,12 @@ async fn answer_permission(
             name,
             args: fields.raw_input.clone().unwrap_or(Value::Null),
         };
-        approver.requester().request_permission(&call).await
+        approver
+            .requester()
+            .request_permission(&call, capability)
+            .await
     } else {
-        debug!(?capability, "task: refusing a sub-agent permission request");
+        debug!(?capability, "task: nobody to ask about a sub-agent call");
         false
     };
     let wanted: &[PermissionOptionKind] = if allowed {
@@ -193,8 +214,8 @@ pub(super) struct SpawnArgs {
     pub(super) contract: ChildRunContract,
     /// Who answers the permission requests the contract does not settle.
     pub(super) approver: Option<ChildApprover>,
-    /// Tools the child's server must not offer, as the parent does not.
-    pub(super) disabled_tools: Vec<String>,
+    /// How the child's server is held to the parent's terms.
+    pub(super) terms: ServeTerms,
     pub(super) workdir: PathBuf,
     pub(super) model_override: Option<String>,
     pub(super) handle_id: String,
@@ -204,6 +225,17 @@ pub(super) struct SpawnArgs {
     /// Fires when the parent's tool call is cancelled (or `execute` completes)
     /// so `run_acp_session` can forward a `session/cancel` to the child.
     pub(super) cancel_rx: tokio::sync::oneshot::Receiver<()>,
+}
+
+/// The parent's terms the child's server is started with, beyond the
+/// contract's budgets.
+#[derive(Clone, Debug, Default)]
+pub(super) struct ServeTerms {
+    /// Tools the child's server must not offer, as the parent does not.
+    pub(super) disabled_tools: Vec<String>,
+    /// The parent's approval mode: under manual, every call of the child
+    /// that is not read-only comes to the parent.
+    pub(super) approval: ApprovalMode,
 }
 
 // ── The protocol exchange ─────────────────────────────────────────────────────
@@ -426,7 +458,7 @@ where
 fn serve_args(
     model_override: Option<&str>,
     contract: &ChildRunContract,
-    disabled_tools: &[String],
+    terms: &ServeTerms,
     now: std::time::Instant,
 ) -> Vec<String> {
     let mut args = vec!["acp".to_string(), "serve".to_string()];
@@ -443,8 +475,11 @@ fn serve_args(
     if let Some(tokens) = contract.max_output_tokens {
         flag("max-output-tokens", tokens.to_string());
     }
-    for tool in disabled_tools {
+    for tool in &terms.disabled_tools {
         flag("disable-tool", tool.clone());
+    }
+    if terms.approval == ApprovalMode::Manual {
+        flag("approval", "manual".to_string());
     }
     let seconds = contract
         .remaining(now)
@@ -464,7 +499,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         mode,
         contract,
         approver,
-        disabled_tools,
+        terms,
         workdir,
         model_override,
         handle_id,
@@ -479,7 +514,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     cmd.args(serve_args(
         model_override.as_deref(),
         &contract,
-        &disabled_tools,
+        &terms,
         std::time::Instant::now(),
     ))
     .env(SUBAGENT_DEPTH_ENV, depth.to_string())
@@ -687,7 +722,21 @@ mod tests {
         ChildRunContract::new(crate::mode_policy::session_ceiling(mode).with_manual_approval())
     }
 
+    /// A sub-agent's request for `tool`, naming the capability its kernel
+    /// classed the call under, as a sven sub-agent always does.
     fn request(tool: &str) -> RequestPermissionRequest {
+        let capability = serde_json::to_value(capability_for_tool_name(tool)).unwrap();
+        let mut request = unlabelled(tool);
+        request.tool_call.meta = Some(
+            [(super::super::CAPABILITY_META_KEY.to_string(), capability)]
+                .into_iter()
+                .collect(),
+        );
+        request
+    }
+
+    /// A request for `tool` that does not say what the call does.
+    fn unlabelled(tool: &str) -> RequestPermissionRequest {
         RequestPermissionRequest::new(
             "s",
             ToolCallUpdate::new(
@@ -718,7 +767,7 @@ mod tests {
 
     #[async_trait]
     impl PermissionRequester for Approver {
-        async fn request_permission(&self, call: &ToolCall) -> bool {
+        async fn request_permission(&self, call: &ToolCall, _: ToolCapability) -> bool {
             self.asked.lock().unwrap().push(call.name.clone());
             self.answer
         }
@@ -778,17 +827,53 @@ mod tests {
         );
     }
 
+    /// A request that does not name its capability is never taken for a
+    /// read on its tool's name alone - an MCP server may call a tool
+    /// `read_file` - so the parent's manual approval is asked about it.
     #[tokio::test]
-    async fn an_unknown_tool_is_never_allowed_outright() {
-        let agent = contract_for(AgentMode::Agent);
-        let outcome = answer_permission(&agent, None, &request("github-create_issue")).await;
-        assert_eq!(chosen(&outcome), "reject");
+    async fn a_request_without_its_capability_is_not_taken_for_a_read() {
+        let agent = manual_contract_for(AgentMode::Agent);
         let gate = approver(true);
         let child = ChildApprover::Gate(gate.clone());
-        let outcome =
-            answer_permission(&agent, Some(&child), &request("github-create_issue")).await;
+        let outcome = answer_permission(&agent, Some(&child), &unlabelled("read_file")).await;
         assert_eq!(chosen(&outcome), "allow");
-        assert_eq!(asked(&gate), ["github-create_issue"]);
+        assert_eq!(asked(&gate), ["read_file"]);
+        let research = contract_for(AgentMode::Research);
+        let outcome = answer_permission(&research, None, &unlabelled("write_file")).await;
+        assert_eq!(chosen(&outcome), "reject", "a named write is still a write");
+    }
+
+    /// An unknown tool (an MCP one) is held to `NetworkAccess`, as the kernel
+    /// holds it: allowed where the contract allows the network, refused
+    /// where it does not, whoever could be asked.
+    #[tokio::test]
+    async fn an_unknown_tool_is_held_to_network_access() {
+        let agent = contract_for(AgentMode::Agent);
+        let outcome = answer_permission(&agent, None, &request("github-create_issue")).await;
+        assert_eq!(chosen(&outcome), "allow");
+        let sdlc = contract_for(AgentMode::Sdlc);
+        let gate = approver(true);
+        let child = ChildApprover::Gate(gate.clone());
+        let outcome = answer_permission(&sdlc, Some(&child), &request("github-create_issue")).await;
+        assert_eq!(chosen(&outcome), "reject");
+        assert!(
+            asked(&gate).is_empty(),
+            "outside the contract, nobody is asked"
+        );
+    }
+
+    /// A call beyond the contract is refused even when a person would say
+    /// yes, and even when the host asks about every call.
+    #[tokio::test]
+    async fn a_call_beyond_the_contract_is_refused_without_asking() {
+        let research = manual_contract_for(AgentMode::Research);
+        for child in [
+            ChildApprover::Gate(approver(true)),
+            ChildApprover::Host(approver(true)),
+        ] {
+            let outcome = answer_permission(&research, Some(&child), &request("write_file")).await;
+            assert_eq!(chosen(&outcome), "reject");
+        }
     }
 
     #[tokio::test]
@@ -808,7 +893,11 @@ mod tests {
             .with_max_tool_rounds(12)
             .with_max_output_tokens(4096)
             .with_deadline(now + Duration::from_secs(90));
-        let args = serve_args(Some("fast"), &contract, &["shell".to_string()], now);
+        let terms = ServeTerms {
+            disabled_tools: vec!["shell".to_string()],
+            approval: ApprovalMode::Manual,
+        };
+        let args = serve_args(Some("fast"), &contract, &terms, now);
         assert_eq!(
             args,
             [
@@ -822,14 +911,22 @@ mod tests {
                 "4096",
                 "--disable-tool",
                 "shell",
+                "--approval",
+                "manual",
                 "--wall-clock-secs",
                 "90",
                 "--permission-timeout-secs",
                 "90"
-            ]
+            ],
+            "the child gets the parent's budgets, approval mode and command patterns"
         );
         assert_eq!(
-            serve_args(None, &contract_for(AgentMode::Agent), &[], now),
+            serve_args(
+                None,
+                &contract_for(AgentMode::Agent),
+                &ServeTerms::default(),
+                now
+            ),
             ["acp", "serve"],
             "without a deadline the child's own bounded permission timeout applies"
         );
@@ -837,8 +934,43 @@ mod tests {
         // own deadline.
         let contract =
             contract_for(AgentMode::Agent).with_deadline(now + Duration::from_millis(89_400));
-        let args = serve_args(None, &contract, &[], now);
+        let args = serve_args(None, &contract, &ServeTerms::default(), now);
         assert_eq!(args[2..4], ["--wall-clock-secs", "90"]);
+    }
+
+    /// The child's kernel names the capability of a call it asks about; the
+    /// parent answers by that, not by the tool's name: under manual approval
+    /// a web fetch is asked about, a read is not.
+    #[tokio::test]
+    async fn the_child_named_capability_decides() {
+        let manual = manual_contract_for(AgentMode::Agent);
+        let with_capability = |tool: &str, capability: ToolCapability| {
+            let mut request = request(tool);
+            let mut meta = serde_json::Map::new();
+            meta.insert(
+                super::super::CAPABILITY_META_KEY.to_string(),
+                serde_json::to_value(capability).unwrap(),
+            );
+            request.tool_call.meta = Some(meta);
+            request
+        };
+        let gate = approver(false);
+        let child = ChildApprover::Gate(gate.clone());
+        let outcome = answer_permission(
+            &manual,
+            Some(&child),
+            &with_capability("memory", ToolCapability::ReadFile),
+        )
+        .await;
+        assert_eq!(chosen(&outcome), "allow");
+        let outcome = answer_permission(
+            &manual,
+            Some(&child),
+            &with_capability("web_fetch", ToolCapability::NetworkAccess),
+        )
+        .await;
+        assert_eq!(chosen(&outcome), "reject");
+        assert_eq!(asked(&gate), ["web_fetch"]);
     }
 
     #[tokio::test]

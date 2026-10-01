@@ -435,17 +435,6 @@ pub fn normalize_answer(text: &str) -> String {
     t.to_string()
 }
 
-/// Extract the answer half of `ask_question`'s plain-terminal formatting
-/// (`"Q: <prompt>\nA: <answer>"`), if present; otherwise the text is already
-/// the bare answer (the TUI and headless/parked paths both return it plain).
-#[must_use]
-pub fn extract_answer_text(content: &str) -> String {
-    if let Some(idx) = content.find("\nA: ") {
-        return normalize_answer(&content[idx + 4..]);
-    }
-    normalize_answer(content)
-}
-
 /// Deterministic [`ToolCallId`] derivation, so a replay of the same event
 /// stream reproduces the same id `ToolSucceeded`/`ToolFailed` correlate
 /// against. Mirrors `reactive_agent.rs`'s `derive_call_id` (duplicated
@@ -648,20 +637,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn extract_answer_text_handles_the_plain_terminal_qa_format() {
-        assert_eq!(
-            extract_answer_text("Q: What is the code?\nA: 123456"),
-            "123456"
-        );
-    }
-
-    #[test]
-    fn extract_answer_text_strips_an_other_prefix() {
-        assert_eq!(extract_answer_text("Other: 123456"), "123456");
-        assert_eq!(extract_answer_text("123456"), "123456");
     }
 
     #[test]

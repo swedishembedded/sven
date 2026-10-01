@@ -25,6 +25,8 @@ pub use grep_match::GrepMatch;
 pub use path_scope::{PathScope, PathScopeError};
 pub use policy::{ApprovalPolicy, PermissionRequester};
 pub use sven_hsm::ToolCapability;
+/// What a question gets when no person can answer it.
+pub use sven_vocab::NO_USER_ANSWER;
 pub use tool::{
     capability_by_action, OutputCategory, Tool, ToolCall, ToolDisplay, ToolDisplayRegistry,
     ToolOutput, ToolOutputPart,

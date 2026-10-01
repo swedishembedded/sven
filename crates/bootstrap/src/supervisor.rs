@@ -23,7 +23,7 @@ use sven_hsm::Principal;
 use uuid::Uuid;
 
 use crate::context::RuntimeContext;
-use crate::runtime_builder::{RuntimeBuilder, SessionBundle};
+use crate::runtime_builder::{KernelChannels, RuntimeBuilder, SessionBundle};
 
 // ── SessionId ───────────────────────────────────────────────────────────────
 
@@ -129,7 +129,13 @@ impl SessionSupervisor {
         if let Some(p) = principal.clone() {
             builder = builder.with_principal(p);
         }
-        let bundle = builder.build_session().await?;
+        let mut bundle = builder.build_session().await?;
+        // Nobody answers a supervised session's gates: they are answered at
+        // once (a question gets the no-user answer, an approval request is
+        // refused - a supervised session runs under auto approval, so none
+        // arrives), and the bundle keeps closed channels in their place.
+        let channels = std::mem::replace(&mut bundle.channels, KernelChannels::closed());
+        tokio::spawn(channels.answer_unattended());
         let id = SessionId::new();
         self.sessions.insert(id, bundle);
         if let Some(p) = principal {
@@ -148,7 +154,7 @@ impl SessionSupervisor {
         self.sessions.get(&id)
     }
 
-    /// Mutably borrow a live session by id (e.g. to drain its channels).
+    /// Mutably borrow a live session by id.
     pub fn get_mut(&mut self, id: SessionId) -> Option<&mut SessionBundle> {
         self.sessions.get_mut(&id)
     }
@@ -230,6 +236,25 @@ mod tests {
         config.model.provider = "mock".into();
         config.model.name = "mock-model".into();
         Arc::new(config)
+    }
+
+    /// A supervised session's gates are answered by the supervisor, never
+    /// left for a caller who may not drain them.
+    #[tokio::test]
+    async fn a_supervised_session_never_waits_on_its_gates() {
+        let mut sup = SessionSupervisor::new(mock_config());
+        let id = sup
+            .spawn_session("chat", RuntimeContext::empty())
+            .await
+            .expect("session should spawn with mock provider");
+        let bundle = sup.get_mut(id).expect("the session");
+        assert!(
+            matches!(
+                bundle.channels.question_rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+            ),
+            "the live channels are answered by the supervisor"
+        );
     }
 
     #[tokio::test]

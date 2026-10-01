@@ -206,8 +206,12 @@ pub enum Questions {
     /// To a surface that answers while the run waits (the TUI).
     Answered(mpsc::Sender<QuestionRequest>),
     /// Parked: the run stops on the question and resumes when an answer is
-    /// posted for it, however much later that is.
+    /// posted for it, however much later that is. An embedding host's
+    /// explicit choice.
     Parked,
+    /// Nobody can answer: the question is answered at once with
+    /// [`sven_tool_api::NO_USER_ANSWER`].
+    NoUser,
     /// Not offered: the session has no `ask_question` tool.
     Unavailable,
 }
@@ -348,9 +352,18 @@ impl ToolSetProfile {
         agent_mode: sven_config::AgentMode,
         project_root: Option<&std::path::Path>,
         question_tx: Option<mpsc::Sender<QuestionRequest>>,
+        park_questions: bool,
         todos: Arc<Mutex<Vec<TodoItem>>>,
         buffer_store: Arc<Mutex<OutputBufferStore>>,
     ) -> Option<Self> {
+        // An explicit preset is an embedding host's choice. With no surface
+        // to answer a question, asking parks the run if the host chose that,
+        // and is otherwise answered at once: nobody is there.
+        let unanswered = if park_questions {
+            Questions::Parked
+        } else {
+            Questions::NoUser
+        };
         match selection {
             BuiltinTools::Detect => Some(Self::for_session(
                 agent_mode,
@@ -359,15 +372,13 @@ impl ToolSetProfile {
                 todos,
                 buffer_store,
             )),
-            // An explicit preset is an embedding host's choice; with no
-            // surface to answer a question, asking parks the run.
             BuiltinTools::Coding => Some(ToolSetProfile::Coding {
-                questions: question_tx.map_or(Questions::Parked, Questions::Answered),
+                questions: question_tx.map_or(unanswered, Questions::Answered),
                 todos,
                 buffer_store,
             }),
             BuiltinTools::Research => Some(ToolSetProfile::Research {
-                questions: question_tx.map_or(Questions::Parked, Questions::Answered),
+                questions: question_tx.map_or(unanswered, Questions::Answered),
                 todos,
             }),
             BuiltinTools::None => None,

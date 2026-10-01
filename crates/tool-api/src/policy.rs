@@ -31,10 +31,16 @@ pub enum ApprovalPolicy {
 /// Implementors bridge from the tool-execution pipeline to an external approval
 /// mechanism.  When Sven runs as an ACP server the implementation calls
 /// `AgentSideConnection::request_permission` so the IDE can allow or deny the
-/// call.  When no requester is wired up, `ToolRegistry` falls back to the
-/// `ApprovalPolicy` declared on the tool itself.
+/// call.  When no requester is wired up, a tool whose policy is `Ask` runs.
 #[async_trait::async_trait]
 pub trait PermissionRequester: Send + Sync {
     /// Return `true` to allow the tool call, `false` to deny it.
-    async fn request_permission(&self, call: &crate::ToolCall) -> bool;
+    /// `capability` is what the call does
+    /// ([`Tool::call_capability`](crate::Tool::call_capability)), so the
+    /// answer never rests on the tool's name.
+    async fn request_permission(
+        &self,
+        call: &crate::ToolCall,
+        capability: crate::ToolCapability,
+    ) -> bool;
 }

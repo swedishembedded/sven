@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sven_config::{AgentMode, Config, ModelConfig};
+use sven_config::{AgentMode, ApprovalMode, Config, ModelConfig};
 use sven_executors::ThreadStore;
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
@@ -34,7 +34,7 @@ use sven_executors::{
 };
 use sven_hsm::{Context, ObservationSink, Principal, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, ErasedRuntime};
-use sven_machines::{ModeRegistry, SdlcMachine, UiTestMachine};
+use sven_machines::ModeRegistry;
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
 use sven_tool_api::events::ToolEvent;
@@ -84,6 +84,10 @@ pub struct RuntimeBuilder {
     /// Tool-level question channel: forwarded into the tool registry so
     /// tools that call `ask_user` can route questions to the TUI modal.
     tool_question_tx: Option<mpsc::Sender<QuestionRequest>>,
+    /// See [`RuntimeBuilder::with_parked_questions`].
+    park_questions: bool,
+    /// See [`RuntimeBuilder::with_approval_mode`].
+    approval_mode: ApprovalMode,
     /// Conversation history to seed into the machine's thread before the
     /// first turn (used when resuming or switching sessions).
     initial_history: Vec<Message>,
@@ -156,6 +160,8 @@ impl RuntimeBuilder {
             wait_for_mcp_tools_ms: None,
             model_cfg_override: None,
             tool_question_tx: None,
+            park_questions: false,
+            approval_mode: ApprovalMode::Auto,
             initial_history: Vec::new(),
             permission_requester: None,
             cancel_handle: None,
@@ -230,6 +236,24 @@ impl RuntimeBuilder {
     /// calls to the TUI question modal.
     pub fn with_tool_question_tx(mut self, tx: mpsc::Sender<QuestionRequest>) -> Self {
         self.tool_question_tx = Some(tx);
+        self
+    }
+
+    /// Whether a tool call waits for a person's approval (default
+    /// [`ApprovalMode::Auto`]). Under manual approval every call that is not
+    /// read-only, its children's included, goes to
+    /// [`KernelChannels::approval_rx`] first: a person must answer it.
+    #[must_use]
+    pub fn with_approval_mode(mut self, mode: ApprovalMode) -> Self {
+        self.approval_mode = mode;
+        self
+    }
+
+    /// With a built-in preset and no question sender, `ask_question` parks
+    /// the run instead of answering that no user is available.
+    #[must_use]
+    pub fn with_parked_questions(mut self) -> Self {
+        self.park_questions = true;
         self
     }
 
@@ -413,6 +437,12 @@ impl RuntimeBuilder {
         Arc<McpManager>,
         mpsc::Receiver<McpEvent>,
     )> {
+        // Before anything starts: a session that cannot run as asked fails here.
+        let policy = crate::mode_policy::session_policy(
+            &self.mode,
+            self.agent_mode.unwrap_or(AgentMode::Agent),
+            self.approval_mode,
+        )?;
         // ── Look up machine ───────────────────────────────────────────────────
         let registry = match self.mode_registry.take() {
             Some(supplied) => supplied,
@@ -530,12 +560,11 @@ impl RuntimeBuilder {
         // requester, when it brought one).
         let (question_tx, question_rx) = mpsc::channel::<UserQuestion>(16);
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalRequest>(16);
-        let approver = match self.permission_requester.clone() {
-            Some(host) => ChildApprover::Host(host),
-            None => ChildApprover::Gate(Arc::new(crate::session_handles::GateApprover::new(
-                approval_tx.clone(),
-            ))),
-        };
+        let approver = ChildApprover::for_session(
+            self.permission_requester.clone(),
+            self.approval_mode,
+            &approval_tx,
+        );
         // Semantic memory (SQLite + FTS5 `semantic_memory` tool) is
         // constructed here, the one real assembly point every surface
         // (headless CI, interactive TUI, ACP, MCP) goes through, so it is on
@@ -546,7 +575,8 @@ impl RuntimeBuilder {
         // tool.
         #[allow(unused_mut)]
         let mut integration_providers = IntegrationProviders {
-            approver: Some(approver),
+            approver,
+            approval_mode: self.approval_mode,
             ..IntegrationProviders::default()
         };
         #[cfg(feature = "memory")]
@@ -568,8 +598,15 @@ impl RuntimeBuilder {
         let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
         let root = self.runtime_ctx.project_root.as_deref();
         let q = self.tool_question_tx.clone();
-        let tool_profile =
-            ToolSetProfile::for_selection(self.builtin_tools, mode, root, q, todos, buffer_store);
+        let tool_profile = ToolSetProfile::for_selection(
+            self.builtin_tools,
+            mode,
+            root,
+            q,
+            self.park_questions,
+            todos,
+            buffer_store,
+        );
         // The registry describes the model this session actually runs on, which
         // an override may have replaced (sub-agents are told to use it).
         let registry_config = Config {
@@ -661,35 +698,10 @@ impl RuntimeBuilder {
             (String, String),
         >::new()));
 
-        // A parked question's durable record is the same regardless of which
-        // surface is driving this session (TUI, headless, ACP), unlike
-        // question_tx/approval_tx above (which need a UI to actually collect
-        // a reply) - so the drain lives here, once, rather than being pushed
-        // out to every surface to wire up itself.
+        // A parked question's durable record is the same whichever surface
+        // drives this session, so the drain is wired here, once.
         #[cfg(feature = "memory")]
-        let (parked_tx, mut parked_rx) = sven_executors::UserExecutor::parked_channel(16);
-        #[cfg(feature = "memory")]
-        tokio::spawn(async move {
-            let ledger = sven_memory::QuestionLedger::at_default_path();
-            while let Some(q) = parked_rx.recv().await {
-                let asked_at = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                if let Err(err) = ledger.record_asked(&sven_memory::QuestionAskedRecord {
-                    question_id: q.question_id,
-                    call_id: q.call_id,
-                    prompt: q.prompt,
-                    options: q.options,
-                    asked_at,
-                }) {
-                    tracing::warn!(
-                        error = %err,
-                        "failed to record a parked question; it will not appear in `sven questions list`"
-                    );
-                }
-            }
-        });
+        let parked_tx = crate::session_handles::spawn_parked_question_ledger();
 
         // ── Audit log path ────────────────────────────────────────────────────
         let audit_log_path: PathBuf = self
@@ -737,7 +749,11 @@ impl RuntimeBuilder {
                     Arc::clone(&self.config),
                     Arc::clone(&tool_registry),
                 )
-                .with_gates(question_tx.clone(), approval_tx.clone()),
+                .with_gates(
+                    question_tx.clone(),
+                    approval_tx.clone(),
+                    self.approval_mode,
+                ),
             ))
         } else {
             None
@@ -769,7 +785,8 @@ impl RuntimeBuilder {
         let executor: Box<dyn EffectExecutor> = match self.effect_executor {
             Some(custom) => custom,
             None => {
-                let user_executor = sven_executors::UserExecutor::new(question_tx, approval_tx);
+                let user_executor = sven_executors::UserExecutor::new(question_tx, approval_tx)
+                    .with_approval_mode(self.approval_mode);
                 #[cfg(feature = "memory")]
                 let user_executor = user_executor.with_parked_questions(parked_tx);
                 let base = CompositeExecutorBuilder::default()
@@ -801,16 +818,6 @@ impl RuntimeBuilder {
                 };
                 Box::new(composed.build())
             }
-        };
-
-        // ── Permission policy — per-machine real policy ───────────────────────
-        // Use the machine's declared policy so the kernel enforces capability
-        // restrictions per state (e.g. SDLC disallows writes outside Execution).
-        let policy = match self.mode.as_str() {
-            "sdlc" => SdlcMachine::permission_policy(),
-            "verified-task" => sven_machines::VerifiedTaskMachine::permission_policy(),
-            "ui-test" => UiTestMachine::permission_policy(),
-            _ => crate::mode_policy::reactive_policy(self.agent_mode.unwrap_or(AgentMode::Agent)),
         };
 
         // ── Spawn runtime ─────────────────────────────────────────────────────

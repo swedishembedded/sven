@@ -273,18 +273,17 @@ wrong for this machine). Tools are wired via `RuntimeBuilder::
 with_tool_executor_override` - the real `sven-tools-android::AndroidTool`
 (device-selected per above), `sven-tools-ground::GroundTool` (unchanged,
 brain's real `ground` capability + its FLAG_SECURE local detection), and
-`sven-tools-agent::AskQuestionTool::new_headless()` for `UiTestMachine`'s
-OWN internal `ask_user`/FLAG_SECURE hand-off - untouched by this change,
-still the mechanism for sven's standalone/local multi-step runs. Since
-nothing outside this one-shot process is listening on the kernel's human-
-answer channel, it is auto-approved exactly like every other headless sven
-surface already does (`sven_ci::RuntimeRunner` spawns the identical
-`auto_approve` for CI runs) - a real per-node orchestrator dispatch is not
-expected to hit this path at all (a workflow author routes anything needing
-literal human entry to a separate graph-level node instead, per this file's
-own FLAG_SECURE constraint and Phase 4 update's reverted human-in-the-loop
-attempt), but a step whose compiler genuinely resolves to `ask_user` still
-completes rather than hanging forever with no answerer.
+`sven-tools-agent::AskQuestionTool::no_user()` for `UiTestMachine`'s OWN
+internal `ask_user`/FLAG_SECURE hand-off. Nothing outside this one-shot
+process can answer, so that tool answers every question at once with
+`NO_USER_ANSWER`, and the machine fails the step with "the step needs a
+person and no user is available" rather than binding that text as a value
+or treating the hand-off as done. A step that needs a person - a value to
+enter, a secure screen to act on - therefore fails fast with that reason
+instead of hanging with no answerer; a workflow author routes such a step to
+a separate graph-level node (per this file's own FLAG_SECURE constraint).
+The dispatched session runs under auto approval, and `--approval manual` is
+refused for it: no approval can be given where nobody is listening.
 
 **Tests** (all against fakes/mocks, TDD'd red-then-green; no real device or
 checkpoint needed for the default `cargo test` run):

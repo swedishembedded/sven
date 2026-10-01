@@ -724,7 +724,7 @@ impl Default for AgentConfig {
     }
 }
 
-pub use sven_vocab::AgentMode;
+pub use sven_vocab::{AgentMode, ApprovalMode};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

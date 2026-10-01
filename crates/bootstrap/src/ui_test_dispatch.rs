@@ -88,7 +88,9 @@ pub struct UiTestDispatchOverrides {
     /// Replaces the real `android` tool (`sven_tools_android::AndroidTool`).
     pub android_tool: Option<Arc<dyn Tool>>,
     /// Replaces the real `ask_question` tool
-    /// (`sven_tools_agent::AskQuestionTool::new_headless`).
+    /// (`sven_tools_agent::AskQuestionTool::no_user`: a dispatched step has
+    /// nobody to ask, so a step that needs a person - a value to enter, a
+    /// secure screen to act on - fails at once, saying so).
     pub ask_tool: Option<Arc<dyn Tool>>,
     /// Replaces the real device lister
     /// (`sven_tools_android::adb::RealDeviceLister`) [`resolve_effective_serial`]
@@ -117,15 +119,11 @@ pub struct UiTestDispatchOverrides {
     /// Who answers the kernel-level question and approval gates this step
     /// raises.
     ///
-    /// `None` keeps the long-standing behaviour: auto-approve, because the
-    /// hosts this entry was written for (CI, one-shot demos) have nobody to
-    /// ask and a step that hangs forever helps none of them.
-    ///
-    /// That default is only defensible while it is TRUE that nobody is
-    /// listening. A host with a person attached - a workflow runner with an
-    /// operator, say - passing `None` is deciding on that person's behalf and not
-    /// telling them, which is exactly what `deny_all`'s own doc warns
-    /// about. Such a host passes a responder, and then it is the host's
+    /// `None` answers them at once
+    /// ([`KernelChannels::answer_unattended`](crate::session_handles::KernelChannels::answer_unattended)):
+    /// the hosts this entry was written for (CI, one-shot demos) have nobody
+    /// to ask, and a step that waits for nobody helps none of them. A host
+    /// with a person attached passes a responder, and then it is the host's
     /// business whether it asks, denies, or approves-and-records.
     pub on_human_gate: Option<HumanGateResponder>,
 }
@@ -184,7 +182,7 @@ pub async fn dispatch_ui_test_step(
     });
     let ask_tool = overrides
         .ask_tool
-        .unwrap_or_else(|| Arc::new(sven_tools_agent::AskQuestionTool::new_headless()));
+        .unwrap_or_else(|| Arc::new(sven_tools_agent::AskQuestionTool::no_user()));
 
     let factory: ToolExecutorFactory = Box::new(move |conv_store, call_id_to_thread| {
         let mut registry = ToolRegistry::new();
@@ -211,20 +209,14 @@ pub async fn dispatch_ui_test_step(
         .map_err(|e| format!("could not build the ui-test kernel session: {e:#}"))?;
 
     let sink = bundle.handle.sink();
-    // `UiTestMachine`'s own `ask_question` hand-off (the FLAG_SECURE
-    // path, and any step the compiler resolves to a plain `ask_user` verb)
-    // uses the kernel's ordinary human-gate channel - see this module's own
-    // doc. Nothing outside
-    // this process is listening on that channel here, so auto-approve it
-    // exactly like every other headless sven surface already does
-    // (`sven_ci::RuntimeRunner` spawns the same `auto_approve` for CI runs)
-    // rather than hanging forever with no answerer.
-    // Answering the gate is mandatory: a turn whose gate is never answered
-    // parks forever. WHAT the answer is, though, is the dispatching host's
-    // call and not this function's -- see `on_human_gate`.
+    // Answering the kernel's gates is mandatory: a turn whose gate is never
+    // answered waits forever. Nothing outside this process is listening
+    // here, so they are answered at once exactly as every other headless
+    // surface answers them - unless the dispatching host brought a responder
+    // (`on_human_gate`).
     match overrides.on_human_gate.clone() {
         Some(responder) => tokio::spawn(bundle.channels.forward_to(responder)),
-        None => tokio::spawn(bundle.channels.auto_approve()),
+        None => tokio::spawn(bundle.channels.answer_unattended()),
     };
 
     let mut status_rx = bundle.runtime.status_watch();

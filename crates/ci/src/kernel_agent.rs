@@ -156,8 +156,8 @@ impl KernelAgent {
             .await
             .context("failed to build kernel session")?;
 
-        // Auto-approve all human gates (headless CI is non-interactive).
-        tokio::spawn(bundle.channels.auto_approve());
+        // Nobody is at a headless run: its gates are answered at once.
+        tokio::spawn(bundle.channels.answer_unattended());
 
         let sink = bundle.handle.sink();
         let mut obs_rx = bundle.handle.subscribe_observations();
@@ -217,8 +217,8 @@ impl KernelAgent {
             .await
             .context("failed to build kernel session")?;
 
-        // Auto-approve all human gates (headless CI is non-interactive).
-        tokio::spawn(bundle.channels.auto_approve());
+        // Nobody is at a headless run: its gates are answered at once.
+        tokio::spawn(bundle.channels.answer_unattended());
 
         let sink = bundle.handle.sink();
         let mut obs_rx = bundle.handle.subscribe_observations();

@@ -239,7 +239,9 @@ impl ToolRegistry {
         };
         if let Some(ref requester) = self.permission_requester {
             if matches!(tool.default_policy(), ApprovalPolicy::Ask)
-                && !requester.request_permission(call).await
+                && !requester
+                    .request_permission(call, tool.call_capability(&call.args))
+                    .await
             {
                 return ToolOutput::err(
                     &call.id,
@@ -303,7 +305,10 @@ impl ToolRegistry {
                         );
                     }
                     Some(r) => {
-                        if !r.request_permission(call).await {
+                        if !r
+                            .request_permission(call, tool.call_capability(&call.args))
+                            .await
+                        {
                             return ToolOutput::err(
                                 &call.id,
                                 format!("tool '{}' was denied by the operator", call.name),
@@ -707,7 +712,11 @@ mod tests {
 
     #[async_trait]
     impl sven_tool_api::policy::PermissionRequester for FixedRequester {
-        async fn request_permission(&self, _call: &ToolCall) -> bool {
+        async fn request_permission(
+            &self,
+            _call: &ToolCall,
+            _capability: sven_tool_api::ToolCapability,
+        ) -> bool {
             self.0
         }
     }

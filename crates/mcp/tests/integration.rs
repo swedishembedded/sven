@@ -114,7 +114,11 @@ struct FixedRequester(bool);
 
 #[async_trait]
 impl sven_tool_registry::PermissionRequester for FixedRequester {
-    async fn request_permission(&self, _call: &ToolCall) -> bool {
+    async fn request_permission(
+        &self,
+        _call: &ToolCall,
+        _capability: sven_tool_registry::ToolCapability,
+    ) -> bool {
         self.0
     }
 }

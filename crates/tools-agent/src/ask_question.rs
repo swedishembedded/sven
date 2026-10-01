@@ -11,6 +11,7 @@ use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
 use sven_vocab::provenance::FactSource;
+use sven_vocab::NO_USER_ANSWER;
 
 /// A single structured question with multiple-choice options.
 #[derive(Debug, Clone)]
@@ -28,48 +29,50 @@ pub struct QuestionRequest {
     pub answer_tx: oneshot::Sender<String>,
 }
 
-/// Interactively ask the user one or more questions and collect their answers.
+/// Ask the user one or more questions and collect their answers.
 ///
-/// In TUI mode a `question_tx` channel is provided; the tool sends a
-/// [`QuestionRequest`] and awaits the answer from the UI.  In plain terminal
-/// mode stdin must be a TTY; in headless/CI mode the tool parks instead of
-/// blocking or guessing - see [`sven_vocab::ParkedAnswer`].
+/// Where the questions go is fixed when the tool is built, never guessed from
+/// the process's terminal: to a surface a person answers while the run waits
+/// ([`Self::new_tui`]), parked for an answer that may come much later
+/// ([`Self::parking`]), or - with nobody to ask - answered at once with
+/// [`NO_USER_ANSWER`] ([`Self::no_user`]).
 pub struct AskQuestionTool {
-    /// When set, routes questions to the TUI instead of reading from stdin.
-    question_tx: Option<mpsc::Sender<QuestionRequest>>,
-    /// Force headless mode regardless of TTY detection. Used in tests and CI.
-    force_headless: bool,
+    asking: Asking,
+}
+
+/// Who answers the questions.
+enum Asking {
+    /// A person, through the surface holding the other end.
+    Person(mpsc::Sender<QuestionRequest>),
+    /// Nobody now: the run parks on the question - see
+    /// [`sven_vocab::ParkedAnswer`].
+    Parked,
+    /// Nobody at all: the question is answered with [`NO_USER_ANSWER`].
+    NoUser,
 }
 
 impl AskQuestionTool {
-    pub fn new() -> Self {
-        Self {
-            question_tx: None,
-            force_headless: false,
-        }
-    }
-
-    /// Create a TUI-aware instance that sends questions via `tx`.
+    /// Sends each question to `tx`, whose holder shows it to a person and
+    /// replies with the answer.
     pub fn new_tui(tx: mpsc::Sender<QuestionRequest>) -> Self {
         Self {
-            question_tx: Some(tx),
-            force_headless: false,
+            asking: Asking::Person(tx),
         }
     }
 
-    /// Create an instance that always behaves as headless (non-interactive).
-    /// Use in tests and CI environments where stdin must not be read.
-    pub fn new_headless() -> Self {
+    /// Parks the run on each question until an answer is posted for it.
+    pub fn parking() -> Self {
         Self {
-            question_tx: None,
-            force_headless: true,
+            asking: Asking::Parked,
         }
     }
-}
 
-impl Default for AskQuestionTool {
-    fn default() -> Self {
-        Self::new()
+    /// Answers each question at once with [`NO_USER_ANSWER`]: for a session
+    /// nobody is at.
+    pub fn no_user() -> Self {
+        Self {
+            asking: Asking::NoUser,
+        }
     }
 }
 
@@ -83,8 +86,8 @@ impl Tool for AskQuestionTool {
         "Present structured multiple-choice questions to the user and collect responses.\n\
          Each question: prompt, options (≥2). allow_multiple: false by default.\n\
          Do NOT include 'Other' in options - it is always appended automatically.\n\
-         In headless/CI/piped mode this parks rather than answering immediately:\n\
-         the run pauses until a human answers out of band, however long that takes.\n\
+         When no user is available it says so at once; then decide yourself and\n\
+         state the assumption you made.\n\
          Use for decisions requiring explicit choice; for yes/no just ask directly in text."
     }
 
@@ -202,92 +205,55 @@ impl Tool for AskQuestionTool {
 
         debug!(count = questions.len(), "ask_question tool");
 
-        // ── TUI mode ─────────────────────────────────────────────────────────
-        if let Some(tx) = &self.question_tx {
-            let (answer_tx, answer_rx) = oneshot::channel();
-            let questions_for_provenance = questions.clone();
-            let req = QuestionRequest {
-                id: call.id.clone(),
-                questions,
-                answer_tx,
-            };
-            if tx.send(req).await.is_err() {
-                return ToolOutput::err(&call.id, "TUI question channel closed unexpectedly");
+        let tx = match &self.asking {
+            Asking::Person(tx) => tx,
+            // Parking cannot be answered synchronously - and must not be
+            // guessed at either. The run stops advancing on this call,
+            // `Event::QuestionAsked` records why, and it resumes only from a
+            // real `Event::HumanAnswered`. The parking primitive carries one
+            // prompt/one option set (see `Effect::RequestHumanAnswer`), so
+            // several questions are combined into one free-form prompt
+            // instead of silently answering only the first.
+            Asking::Parked => {
+                let (prompt, options) = match questions.as_slice() {
+                    [only] => (only.prompt.clone(), only.options.clone()),
+                    many => {
+                        let combined = many
+                            .iter()
+                            .enumerate()
+                            .map(|(i, q)| format!("{}. {}", i + 1, q.prompt))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        (combined, Vec::new())
+                    }
+                };
+                return ToolOutput::parked(&call.id, prompt, options);
             }
-            return match answer_rx.await {
-                // The user answered. This tool writes nothing itself - it
-                // only attaches the provenance of the answer, as either `UserChoice` (a genuine pick between named
-                // alternatives) or `UserStated` (the user's own words).
-                Ok(answer) => {
-                    let source = choice_or_stated(&call.id, &questions_for_provenance, &answer);
-                    ToolOutput::ok(&call.id, answer).with_provenance(source)
-                }
-                Err(_) => ToolOutput::err(&call.id, "Question was cancelled by the user"),
-            };
-        }
+            // Nobody will ever answer. Saying so is not an answer on the
+            // user's behalf, so it carries no user provenance.
+            Asking::NoUser => return ToolOutput::ok(&call.id, NO_USER_ANSWER),
+        };
 
-        // ── Plain terminal / headless mode ────────────────────────────────────
-        // Cannot be answered synchronously - and must not be guessed at either
-        // (a fabricated "proceed with your best judgement" answer is exactly
-        // the self-grading failure mode this tool must not enable). Park it:
-        // the run stops advancing on this call, `Event::QuestionAsked` records
-        // why, and it resumes only from a real `Event::HumanAnswered`, however
-        // long that takes. See `sven_hsm::event::Event::QuestionAsked`.
-        if self.force_headless || !stdin_is_tty() {
-            // The parking primitive carries one prompt/one option set (see
-            // `Effect::RequestHumanAnswer`) - the same reasoning
-            // `choice_or_stated` already applies to provenance: only a single
-            // question can honestly carry its own options through. Multiple
-            // questions are combined into one free-form prompt instead of
-            // silently answering only the first.
-            let (prompt, options) = match questions.as_slice() {
-                [only] => (only.prompt.clone(), only.options.clone()),
-                many => {
-                    let combined = many
-                        .iter()
-                        .enumerate()
-                        .map(|(i, q)| format!("{}. {}", i + 1, q.prompt))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    (combined, Vec::new())
-                }
-            };
-            return ToolOutput::parked(&call.id, prompt, options);
+        let (answer_tx, answer_rx) = oneshot::channel();
+        let questions_for_provenance = questions.clone();
+        let req = QuestionRequest {
+            id: call.id.clone(),
+            questions,
+            answer_tx,
+        };
+        if tx.send(req).await.is_err() {
+            return ToolOutput::err(&call.id, "TUI question channel closed unexpectedly");
         }
-
-        eprintln!();
-        eprintln!("╔══ Questions from agent ══════════════════════════╗");
-        for (i, q) in questions.iter().enumerate() {
-            eprintln!("  {}. {}", i + 1, q.prompt);
-            for (j, opt) in q.options.iter().enumerate() {
-                eprintln!("     {}. {}", j + 1, opt);
+        match answer_rx.await {
+            // The user answered. This tool writes nothing itself - it
+            // only attaches the provenance of the answer, as either `UserChoice` (a genuine pick between named
+            // alternatives) or `UserStated` (the user's own words).
+            Ok(answer) => {
+                let source = choice_or_stated(&call.id, &questions_for_provenance, &answer);
+                ToolOutput::ok(&call.id, answer).with_provenance(source)
             }
-            eprintln!("     {}. Other (type your answer)", q.options.len() + 1);
-            if q.allow_multiple {
-                eprintln!("     (You can select multiple: e.g. \"1,2\" or \"3\")");
-            }
+            Err(_) => ToolOutput::err(&call.id, "Question was cancelled by the user"),
         }
-        eprintln!("╚══════════════════════════════════════════════════╝");
-
-        let mut answers: Vec<String> = Vec::new();
-        let mut raw_answers: Vec<String> = Vec::new();
-        for (i, q) in questions.iter().enumerate() {
-            eprint!("  Answer {}: ", i + 1);
-            let input = read_stdin_line().await;
-            let answer = parse_stdin_answer(&input, &q.options, q.allow_multiple);
-            answers.push(format!("Q: {}\nA: {}", q.prompt, answer));
-            raw_answers.push(answer);
-        }
-        eprintln!();
-
-        // Only the single-question case can name a genuine choice; see
-        // `choice_or_stated` for why that is the only shape `FactSource::
-        // UserChoice` can honestly represent.
-        let source = raw_answers
-            .first()
-            .map(|answer| choice_or_stated(&call.id, &questions, answer))
-            .unwrap_or(FactSource::UserStated);
-        ToolOutput::ok(&call.id, answers.join("\n\n")).with_provenance(source)
     }
 }
 
@@ -318,92 +284,6 @@ fn choice_or_stated(question_id: &str, questions: &[Question], answer: &str) -> 
     }
 }
 
-/// Returns true only when stdin is connected to an interactive terminal.
-/// Uses `libc::isatty` on Unix; always false on other platforms.
-fn stdin_is_tty() -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        // SAFETY: isatty is async-signal-safe and only reads an fd number.
-        unsafe { libc::isatty(std::io::stdin().as_raw_fd()) != 0 }
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
-}
-
-async fn read_stdin_line() -> String {
-    use tokio::io::AsyncBufReadExt;
-    let stdin = tokio::io::stdin();
-    let mut reader = tokio::io::BufReader::new(stdin);
-    let mut line = String::new();
-    match reader.read_line(&mut line).await {
-        Ok(_) => line
-            .trim_end_matches('\n')
-            .trim_end_matches('\r')
-            .to_string(),
-        Err(_) => String::new(),
-    }
-}
-
-/// Parse stdin input for multiple-choice questions.
-/// Input can be:
-/// - "1" for option 1
-/// - "1,2,3" for multiple options
-/// - "other: custom text" for custom answer
-fn parse_stdin_answer(input: &str, options: &[String], allow_multiple: bool) -> String {
-    let input = input.trim();
-
-    // Check for "other:" prefix (case-insensitive)
-    if input.to_lowercase().starts_with("other:") || input.to_lowercase().starts_with("other ") {
-        let text = input[6..].trim();
-        if text.is_empty() {
-            return "Other (no text provided)".to_string();
-        }
-        return format!("Other: {}", text);
-    }
-
-    // Try to parse as comma-separated numbers
-    let selections: Vec<usize> = input
-        .split(',')
-        .filter_map(|s| s.trim().parse::<usize>().ok())
-        .filter(|&n| n > 0 && n <= options.len() + 1)
-        .collect();
-
-    if selections.is_empty() {
-        // If parsing failed, treat as "Other" with custom text
-        return if input.is_empty() {
-            "(no selection made)".to_string()
-        } else {
-            format!("Other: {}", input)
-        };
-    }
-
-    // Check if "Other" option (last number) was selected
-    let other_idx = options.len() + 1;
-    if selections.contains(&other_idx) {
-        return "Other".to_string();
-    }
-
-    // Map selections to option strings
-    let selected: Vec<String> = selections
-        .iter()
-        .filter_map(|&n| options.get(n - 1).cloned())
-        .collect();
-
-    if selected.is_empty() {
-        return "(no valid selection)".to_string();
-    }
-
-    if !allow_multiple && selected.len() > 1 {
-        // If multiple not allowed, take first
-        selected[0].clone()
-    } else {
-        selected.join(", ")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,7 +291,7 @@ mod tests {
 
     #[test]
     fn schema_requires_questions() {
-        let t = AskQuestionTool::new();
+        let t = AskQuestionTool::no_user();
         let schema = t.parameters_schema();
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v.as_str() == Some("questions")));
@@ -421,7 +301,7 @@ mod tests {
     async fn missing_questions_is_error() {
         use serde_json::json;
         use sven_tool_api::tool::ToolCall;
-        let t = AskQuestionTool::new();
+        let t = AskQuestionTool::no_user();
         let call = ToolCall {
             id: "1".into(),
             name: "ask_question".into(),
@@ -436,7 +316,7 @@ mod tests {
     async fn too_many_questions_is_error() {
         use serde_json::json;
         use sven_tool_api::tool::ToolCall;
-        let t = AskQuestionTool::new();
+        let t = AskQuestionTool::no_user();
         let make_q = |prompt: &str| {
             json!({
                 "prompt": prompt,
@@ -455,18 +335,38 @@ mod tests {
         assert!(out.content.contains("at most 3"));
     }
 
-    /// In headless/CI mode the tool must park rather than block forever
-    /// waiting for interactive input - and, just as importantly, rather than
-    /// fabricate an answer. A single question keeps its own options through
-    /// the park.
+    /// Nobody at the session: the question is answered at once, saying so,
+    /// and nothing is attributed to the user.
     #[tokio::test]
-    async fn headless_mode_parks_a_single_question_with_its_options() {
+    async fn with_no_user_a_question_is_answered_at_once_saying_so() {
         use serde_json::json;
         use sven_tool_api::tool::ToolCall;
 
-        // Use new_headless() so the test is deterministic regardless of whether
-        // the test runner inherits a TTY from the calling terminal.
-        let t = AskQuestionTool::new_headless();
+        let t = AskQuestionTool::no_user();
+        let call = ToolCall {
+            id: "1".into(),
+            name: "ask_question".into(),
+            args: json!({
+                "questions": [{ "prompt": "What language?", "options": ["Rust", "Go"] }]
+            }),
+        };
+        let out = tokio::time::timeout(std::time::Duration::from_secs(5), t.execute(&call))
+            .await
+            .expect("answered without waiting for anyone");
+        assert!(!out.is_error);
+        assert!(out.parked.is_none());
+        assert_eq!(out.content, NO_USER_ANSWER);
+        assert!(out.provenance.is_none());
+    }
+
+    /// A parking tool parks rather than fabricating an answer. A single
+    /// question keeps its own options through the park.
+    #[tokio::test]
+    async fn parking_parks_a_single_question_with_its_options() {
+        use serde_json::json;
+        use sven_tool_api::tool::ToolCall;
+
+        let t = AskQuestionTool::parking();
         let call = ToolCall {
             id: "1".into(),
             name: "ask_question".into(),
@@ -481,7 +381,7 @@ mod tests {
             !out.is_error,
             "a parked call has not failed - it has not concluded"
         );
-        let parked = out.parked.expect("headless mode must park, not guess");
+        let parked = out.parked.expect("a parking tool parks, it does not guess");
         assert_eq!(parked.prompt, "What language?");
         assert_eq!(
             parked.options,
@@ -498,11 +398,11 @@ mod tests {
     /// are combined into one free-form prompt instead of silently answering
     /// only the first and discarding the rest.
     #[tokio::test]
-    async fn headless_mode_parks_multiple_questions_as_one_combined_free_form_prompt() {
+    async fn parking_combines_multiple_questions_into_one_free_form_prompt() {
         use serde_json::json;
         use sven_tool_api::tool::ToolCall;
 
-        let t = AskQuestionTool::new_headless();
+        let t = AskQuestionTool::parking();
         let call = ToolCall {
             id: "1".into(),
             name: "ask_question".into(),
@@ -514,7 +414,7 @@ mod tests {
             }),
         };
         let out = t.execute(&call).await;
-        let parked = out.parked.expect("headless mode must park, not guess");
+        let parked = out.parked.expect("a parking tool parks, it does not guess");
         assert!(parked.prompt.contains("What language?"));
         assert!(parked.prompt.contains("What framework?"));
         assert!(

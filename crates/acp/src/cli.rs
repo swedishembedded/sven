@@ -68,6 +68,15 @@ pub enum AcpCommands {
         /// answers must not stall the session).
         #[arg(long, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..))]
         permission_timeout_secs: Option<u64>,
+
+        /// Whether a session's tool calls wait for the client's permission.
+        /// `auto` (default): a tool whose policy is `Ask` (shell, file
+        /// writes, MCP tools) is put to the client. `manual`: every call that
+        /// is not read-only is - how a `task` parent under manual approval
+        /// sees its sub-agent's calls. Either way the request names the
+        /// call's capability in its `_meta` (`sven.capability`).
+        #[arg(long, value_enum, default_value = "auto")]
+        approval: sven_config::ApprovalMode,
     },
 }
 
@@ -109,6 +118,7 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             wall_clock_secs,
             disable_tools,
             permission_timeout_secs,
+            approval,
         } => {
             let mut config = sven_config::load(None)?;
             if let Some(ref name) = model {
@@ -127,7 +137,8 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
                 crate::agent::DEFAULT_PERMISSION_TIMEOUT,
                 std::time::Duration::from_secs,
             );
-            let serving = crate::serve_stdio_with(std::sync::Arc::new(config), permission_timeout);
+            let serving =
+                crate::serve_stdio_with(std::sync::Arc::new(config), permission_timeout, *approval);
             match wall_clock_secs {
                 Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(*secs), serving)
                     .await

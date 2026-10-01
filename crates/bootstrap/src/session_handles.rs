@@ -57,11 +57,15 @@ impl GateApprover {
 
 #[async_trait::async_trait]
 impl sven_tool_api::PermissionRequester for GateApprover {
-    async fn request_permission(&self, call: &sven_tool_api::ToolCall) -> bool {
+    async fn request_permission(
+        &self,
+        call: &sven_tool_api::ToolCall,
+        capability: sven_hsm::ToolCapability,
+    ) -> bool {
         let (reply_tx, reply_rx) = oneshot::channel();
         let request = ApprovalRequest {
             approval_id: sven_hsm::ApprovalId::new(),
-            capability: sven_hsm::capability_for_tool_name(&call.name),
+            capability,
             description: format!("a sub-agent wants to run the tool `{}`", call.name),
             call: Some(sven_hsm::GatedCall {
                 name: call.name.clone(),
@@ -77,12 +81,22 @@ impl sven_tool_api::PermissionRequester for GateApprover {
 }
 
 impl KernelChannels {
+    /// Channels nobody sends on: what a bundle keeps once its live channels
+    /// were handed to whoever answers them.
+    #[must_use]
+    pub fn closed() -> Self {
+        Self {
+            question_rx: mpsc::channel(1).1,
+            approval_rx: mpsc::channel(1).1,
+        }
+    }
+
     /// Hands every kernel-level question and approval gate to `responder`,
     /// which owns replying to each.
     ///
-    /// The third option beside [`Self::auto_approve`] and [`Self::deny_all`],
-    /// and the only one that is not a decision made on the absent person's
-    /// behalf. Returns once both channels close.
+    /// The alternative to [`Self::answer_unattended`] for a host that has a
+    /// person (or its own policy) to answer. Returns once both channels
+    /// close.
     pub async fn forward_to(mut self, responder: HumanGateResponder) {
         loop {
             tokio::select! {
@@ -106,20 +120,27 @@ impl KernelChannels {
         }
     }
 
-    /// Refuses every kernel-level question and approval gate, replying
-    /// immediately so the session never blocks on a human who isn't there:
-    /// an empty string for every `AskUser`, `false` (deny) for every
-    /// `RequestHumanApproval`. Returns once both channels close.
+    /// Answers every kernel-level question and approval gate at once, so a
+    /// session nobody is at never blocks: every `AskUser` gets
+    /// [`NO_USER_ANSWER`](sven_tool_api::NO_USER_ANSWER), and every approval
+    /// request is refused. Returns once both channels close.
     ///
-    /// The counterpart to [`Self::auto_approve`], and the safe default for an
-    /// unattended session: answering the gate is mandatory - a turn that
-    /// ignores it hangs - but answering it with "yes" hands a dangerous
-    /// capability to nobody's judgement.
-    pub async fn deny_all(mut self) {
+    /// Only a session under manual approval puts anything on the approval
+    /// channel (under auto the `UserExecutor` approves decisions itself and
+    /// no tool call asks), and manual approval is never started without a
+    /// person to answer - so a request here has nobody to approve it, and is
+    /// not approved on their behalf.
+    ///
+    /// This is the unattended path - headless and CI runs, `acp serve`,
+    /// dispatched steps. Typically driven with
+    /// `tokio::spawn(channels.answer_unattended())`.
+    ///
+    /// **Prefer [`Self::forward_to`] whenever the host CAN answer.**
+    pub async fn answer_unattended(mut self) {
         loop {
             tokio::select! {
                 q = self.question_rx.recv() => match q {
-                    Some(q) => { let _ = q.reply_tx.send(String::new()); }
+                    Some(q) => { let _ = q.reply_tx.send(sven_tool_api::NO_USER_ANSWER.to_string()); }
                     None => break,
                 },
                 a = self.approval_rx.recv() => match a {
@@ -129,32 +150,36 @@ impl KernelChannels {
             }
         }
     }
+}
 
-    /// Auto-consumes every kernel-level question and approval gate, replying
-    /// immediately so the session never blocks on a human who isn't there:
-    /// an empty string for every `AskUser`, `true` (approve) for every
-    /// `RequestHumanApproval`. Returns once both channels close.
-    ///
-    /// This is the unattended path - CI runs and one-shot test/demo wiring.
-    /// Typically driven with `tokio::spawn(channels.auto_approve())`.
-    ///
-    /// **Prefer [`Self::forward_to`] whenever the host CAN answer.** A host
-    /// with a person attached that calls this is deciding on their behalf
-    /// without telling them.
-    pub async fn auto_approve(mut self) {
-        loop {
-            tokio::select! {
-                q = self.question_rx.recv() => match q {
-                    Some(q) => { let _ = q.reply_tx.send(String::new()); }
-                    None => break,
-                },
-                a = self.approval_rx.recv() => match a {
-                    Some(a) => { let _ = a.reply_tx.send(true); }
-                    None => break,
-                },
+/// Records every question a session parks in the question ledger, where
+/// `sven questions` finds it, and returns the channel the session's
+/// `UserExecutor` sends them down.
+#[cfg(feature = "memory")]
+pub(crate) fn spawn_parked_question_ledger() -> mpsc::Sender<sven_executors::user::ParkedQuestion> {
+    let (parked_tx, mut parked_rx) = sven_executors::UserExecutor::parked_channel(16);
+    tokio::spawn(async move {
+        let ledger = sven_memory::QuestionLedger::at_default_path();
+        while let Some(q) = parked_rx.recv().await {
+            let asked_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if let Err(err) = ledger.record_asked(&sven_memory::QuestionAskedRecord {
+                question_id: q.question_id,
+                call_id: q.call_id,
+                prompt: q.prompt,
+                options: q.options,
+                asked_at,
+            }) {
+                tracing::warn!(
+                    error = %err,
+                    "failed to record a parked question; it will not appear in `sven questions list`"
+                );
             }
         }
-    }
+    });
+    parked_tx
 }
 
 // ── RuntimeHandle ─────────────────────────────────────────────────────────────
@@ -305,7 +330,7 @@ mod tests {
 
     /// When the sub-agent's request is given up (the session that sent it
     /// ended), the gate sees its reply channel close and can withdraw the
-    /// prompt; and the prompt shows the call it gates.
+    /// prompt; and the prompt shows the call it gates and what it does.
     #[tokio::test]
     async fn a_given_up_sub_agent_request_is_withdrawn_from_the_gate() {
         use sven_tool_api::PermissionRequester as _;
@@ -316,11 +341,13 @@ mod tests {
             name: "shell".into(),
             args: serde_json::json!({"command": "make"}),
         };
-        let mut asking = Box::pin(approver.request_permission(&call));
+        let mut asking =
+            Box::pin(approver.request_permission(&call, sven_hsm::ToolCapability::ExecuteShell));
         let mut request = tokio::select! {
             request = gate.recv() => request.expect("the gate is asked"),
             _ = &mut asking => panic!("answered before anyone was asked"),
         };
+        assert_eq!(request.capability, sven_hsm::ToolCapability::ExecuteShell);
         assert_eq!(
             request.call.as_ref().map(|c| c.args["command"].clone()),
             Some("make".into())
@@ -329,6 +356,51 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(2), request.reply_tx.closed())
             .await
             .expect("the prompt is withdrawn");
+    }
+
+    /// A session nobody is at never waits for a person: a question is
+    /// answered at once, saying that no user is available.
+    #[tokio::test]
+    async fn an_unattended_question_is_answered_at_once_with_the_no_user_answer() {
+        let (question_tx, question_rx) = mpsc::channel(4);
+        let (approval_tx, approval_rx) = mpsc::channel(4);
+        tokio::spawn(
+            KernelChannels {
+                question_rx,
+                approval_rx,
+            }
+            .answer_unattended(),
+        );
+        let (reply_tx, reply_rx) = oneshot::channel();
+        question_tx
+            .send(UserQuestion {
+                prompt: "which database?".into(),
+                reply_tx,
+            })
+            .await
+            .expect("queued");
+        let answer = tokio::time::timeout(std::time::Duration::from_secs(5), reply_rx)
+            .await
+            .expect("answered without waiting for anyone")
+            .expect("a reply");
+        assert_eq!(answer, sven_tool_api::NO_USER_ANSWER);
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        approval_tx
+            .send(ApprovalRequest {
+                approval_id: sven_hsm::ApprovalId::new(),
+                capability: ToolCapability::ExecuteShell,
+                description: "rm -rf build".into(),
+                call: None,
+                reply_tx,
+            })
+            .await
+            .expect("queued");
+        let approved = tokio::time::timeout(std::time::Duration::from_secs(5), reply_rx)
+            .await
+            .expect("answered at once")
+            .expect("a reply");
+        assert!(!approved, "nobody approves on an absent person's behalf");
     }
 
     /// The seam's whole reason for existing: the host decides, and it may

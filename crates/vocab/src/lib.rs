@@ -101,6 +101,53 @@ pub struct ToolOutput {
     pub parked: Option<Box<ParkedAnswer>>,
 }
 
+/// The answer a question gets when no person can answer it: a session with
+/// no interactive terminal (headless, CI, a pipe, `acp serve`, a team member)
+/// or an embedding host that installed no question handler.
+///
+/// It says so plainly rather than inventing a reply on the user's behalf:
+/// the model reads it as the result of its question and carries on, naming
+/// the assumption it made instead.
+pub const NO_USER_ANSWER: &str = "No user is available to answer this question. \
+Proceed on your best judgement and state the assumption you made.";
+
+/// Whether a tool call waits for a person's approval before it runs.
+///
+/// The mode's capability ceiling (what a mode allows at all) is not affected:
+/// approval only ever decides whether an allowed call is put to a person
+/// first.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    clap::ValueEnum,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum ApprovalMode {
+    /// Every call the mode allows runs without asking. The default.
+    #[default]
+    Auto,
+    /// Every call that is not read-only is put to the user, with the tool
+    /// and its command, path or arguments, and runs only once approved.
+    /// Needs a person at an interactive terminal (or an embedding host's
+    /// approval handler).
+    Manual,
+}
+
+impl std::fmt::Display for ApprovalMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Auto => "auto",
+            Self::Manual => "manual",
+        })
+    }
+}
+
 /// A question a tool could not answer itself, parked for a human.
 ///
 /// Distinct from returning an error: an error says the call failed, while a

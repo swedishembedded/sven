@@ -60,6 +60,8 @@ pub struct IntegrationProviders {
     /// session's policy does not allow outright: the host's requester, or the
     /// session's own approval gate. Without one they are refused.
     pub approver: Option<ChildApprover>,
+    /// The session's approval mode, which its `task` sub-agents are held to.
+    pub approval_mode: sven_config::ApprovalMode,
 }
 
 /// Converts the model catalog into the slice-of-fields `SystemTool`'s
@@ -141,6 +143,7 @@ pub fn build_tool_registry_with_integrations(
             buffer_store,
             include_gdb_context: true,
             approver: integrations.approver.clone(),
+            approval_mode: integrations.approval_mode,
         }),
         ToolSetProfile::Coding {
             questions,
@@ -157,6 +160,7 @@ pub fn build_tool_registry_with_integrations(
             buffer_store,
             include_gdb_context: false,
             approver: integrations.approver.clone(),
+            approval_mode: integrations.approval_mode,
         }),
         ToolSetProfile::Research { questions, todos } => build_profile_research(
             cfg,
@@ -165,7 +169,7 @@ pub fn build_tool_registry_with_integrations(
             todos,
             tool_event_tx,
             &sub_agent_runtime,
-            integrations.approver.clone(),
+            &integrations,
         ),
         ToolSetProfile::SubAgent {
             todos,
@@ -229,7 +233,8 @@ fn system_tool(
 fn register_ask_question(reg: &mut ToolRegistry, questions: Questions) {
     match questions {
         Questions::Answered(tx) => reg.register(AskQuestionTool::new_tui(tx)),
-        Questions::Parked => reg.register(AskQuestionTool::new_headless()),
+        Questions::Parked => reg.register(AskQuestionTool::parking()),
+        Questions::NoUser => reg.register(AskQuestionTool::no_user()),
         Questions::Unavailable => {}
     }
 }
@@ -246,6 +251,7 @@ struct FullProfileParams<'a> {
     buffer_store: Arc<Mutex<OutputBufferStore>>,
     include_gdb_context: bool,
     approver: Option<ChildApprover>,
+    approval_mode: sven_config::ApprovalMode,
 }
 
 /// Full and Coding profiles share the same builder; `include_gdb_context`
@@ -290,7 +296,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
             Some(p.cfg.agent.max_tool_rounds),
             p.cfg.model.max_output_tokens,
         )
-        .with_approver(p.approver)
+        .with_approver(p.approver, p.approval_mode)
         .with_disabled_tools(p.cfg.tools.disabled.clone()),
     );
 
@@ -306,7 +312,7 @@ fn build_profile_research(
     todos: Arc<Mutex<Vec<TodoItem>>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     runtime: &AgentRuntimeContext,
-    approver: Option<ChildApprover>,
+    integrations: &IntegrationProviders,
 ) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
 
@@ -347,7 +353,7 @@ fn build_profile_research(
         .with_scope(paths.clone())
         .with_wall_clock(cfg.agent.child_run_timeout())
         .with_turn_budgets(Some(cfg.agent.max_tool_rounds), cfg.model.max_output_tokens)
-        .with_approver(approver)
+        .with_approver(integrations.approver.clone(), integrations.approval_mode)
         .with_disabled_tools(cfg.tools.disabled.clone()),
     );
 

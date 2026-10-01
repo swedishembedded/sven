@@ -3,9 +3,45 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The kernel permission policy that goes with an interactive mode.
 
-use sven_config::AgentMode;
+use sven_config::{AgentMode, ApprovalMode};
 use sven_hsm::{PermissionPolicy, ToolCapability};
-use sven_machines::{ReactiveAgentMachine, SdlcMachine};
+use sven_machines::{ReactiveAgentMachine, SdlcMachine, UiTestMachine, VerifiedTaskMachine};
+
+/// The policy a session running `kernel_mode` enforces: the machine's own
+/// (so, say, SDLC disallows writes outside Execution), under `approval`.
+///
+/// # Errors
+///
+/// Manual approval of a `ui-test` session: its machine drives a device step
+/// by step and does not hold a call for a person's answer, and it runs only
+/// dispatched, where nobody could give one.
+pub(crate) fn session_policy(
+    kernel_mode: &str,
+    agent_mode: AgentMode,
+    approval: ApprovalMode,
+) -> anyhow::Result<PermissionPolicy> {
+    anyhow::ensure!(
+        !(kernel_mode == "ui-test" && approval == ApprovalMode::Manual),
+        "manual approval is not available for a ui-test step: it runs dispatched, \
+         with nobody to answer, and its machine does not wait for approvals"
+    );
+    let policy = match kernel_mode {
+        "sdlc" => SdlcMachine::permission_policy(),
+        "verified-task" => VerifiedTaskMachine::permission_policy(),
+        "ui-test" => UiTestMachine::permission_policy(),
+        _ => reactive_policy(agent_mode),
+    };
+    Ok(with_approval(policy, approval))
+}
+
+/// `policy` under `approval`: manual approval asks about every call that is
+/// not read-only; auto asks about none.
+pub(crate) fn with_approval(policy: PermissionPolicy, approval: ApprovalMode) -> PermissionPolicy {
+    match approval {
+        ApprovalMode::Auto => policy,
+        ApprovalMode::Manual => policy.with_manual_approval(),
+    }
+}
 
 /// The policy the reactive agent machine runs under in `mode`: the read-only
 /// planning modes withhold `WriteFile`, so the kernel forbids file mutations

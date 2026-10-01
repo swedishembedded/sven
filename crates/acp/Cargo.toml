@@ -12,7 +12,6 @@ path = "src/bin/sven-acp.rs"
 [dependencies]
 sven-machines        = { path = "../machines" }
 sven-tool-api    = { path = "../tool-api" }
-sven-tools-agent = { path = "../tools-agent" }
 sven-hsm         = { path = "../hsm" }
 sven-bootstrap   = { path = "../bootstrap" }
 sven-config      = { path = "../config" }
@@ -35,3 +34,4 @@ futures-util     = { version = "0.3", default-features = false, features = ["sin
 
 [dev-dependencies]
 tokio  = { workspace = true }
+tempfile = { workspace = true }

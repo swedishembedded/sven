@@ -20,7 +20,8 @@
 //! for a task:
 //!
 //! - capabilities: read, write, git, shell and network, each only if the
-//!   parent holds it. Shell stays approval-gated in the child as everywhere.
+//!   parent holds it. Under a parent's manual approval, every call of the
+//!   child that is not read-only is asked about, as the parent's are.
 //! - tool rounds: the task's own cap, lowered to the session's
 //!   `agent.max_tool_rounds` when that is smaller.
 //! - wall clock: `agent.child_run_timeout_secs`, never later than the
@@ -32,11 +33,14 @@
 //! # Reaching a person
 //!
 //! When the parent session has question and approval channels (see
-//! [`SdlcChildSpawner::with_gates`]), a child's questions and approval
-//! requests - a decision that needs input or approval, a tool call that needs
-//! approval - go to those same channels, and the child waits for the answer
-//! within its deadline. Without them, a task that needs a person ends with
-//! `ok: false` and says so.
+//! [`SdlcChildSpawner::with_gates`]), a child's questions go to the same
+//! question channel, answered as the parent's are - by the person in an
+//! interactive session, at once with the no-user answer otherwise. Its
+//! approvals follow the parent's approval mode: under auto a decision that
+//! needs approval is approved at once, under manual it - and each tool call
+//! that is not read-only - goes to the parent's approval channel, and the
+//! child waits for the answer within its deadline. Without gates, a task that
+//! needs a person ends with `ok: false` and says so.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,7 +50,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use sven_config::Config;
+use sven_config::{ApprovalMode, Config};
 use sven_executors::{
     ApprovalRequest, CompositeExecutorBuilder, ThreadStore, ToolExecutor, TurnExecutor,
     UserExecutor, UserQuestion,
@@ -64,6 +68,8 @@ use sven_tool_registry::ToolRegistry;
 struct Gates {
     questions: mpsc::Sender<UserQuestion>,
     approvals: mpsc::Sender<ApprovalRequest>,
+    /// Whether the children's approvals go to `approvals` or are given.
+    approval_mode: ApprovalMode,
 }
 
 /// Spawns isolated child task kernels for parallel SDLC execution.
@@ -90,18 +96,20 @@ impl SdlcChildSpawner {
         }
     }
 
-    /// Lets children ask the parent's person: their questions and approval
-    /// requests go to these channels, the same ones the parent session's own
-    /// gates use.
+    /// Lets children ask the parent's person: their questions and, under
+    /// the parent's `approval_mode`, approval requests go to these channels,
+    /// the same ones the parent session's own gates use.
     #[must_use]
     pub fn with_gates(
         mut self,
         questions: mpsc::Sender<UserQuestion>,
         approvals: mpsc::Sender<ApprovalRequest>,
+        approval_mode: ApprovalMode,
     ) -> Self {
         self.gates = Some(Gates {
             questions,
             approvals,
+            approval_mode,
         });
         self
     }
@@ -192,10 +200,10 @@ impl SdlcChildSpawner {
             .with_tool_executor(tool_executor)
             .with_timers(Arc::new(SystemClock::new()));
         match &self.gates {
-            Some(gates) => builder.with_user_slot(Box::new(UserExecutor::new(
-                gates.questions.clone(),
-                gates.approvals.clone(),
-            ))),
+            Some(gates) => builder.with_user_slot(Box::new(
+                UserExecutor::new(gates.questions.clone(), gates.approvals.clone())
+                    .with_approval_mode(gates.approval_mode),
+            )),
             None => builder,
         }
         .build()
@@ -402,7 +410,8 @@ mod tests {
         let last_request = Arc::clone(&model.last_request);
         let (questions, mut asked) = mpsc::channel(4);
         let (approvals, _approvals_rx) = mpsc::channel(4);
-        let spawner = spawner(model, Config::default()).with_gates(questions, approvals);
+        let spawner =
+            spawner(model, Config::default()).with_gates(questions, approvals, ApprovalMode::Auto);
 
         let parent = ErasedRuntime::spawn(
             Box::new(Hsm::new(Collector(MachineId::new()))) as Box<dyn ErasedMachine>,
@@ -457,7 +466,8 @@ mod tests {
         )]);
         let (questions, mut asked) = mpsc::channel(4);
         let (approvals, _approvals_rx) = mpsc::channel(4);
-        let spawner = spawner(model, Config::default()).with_gates(questions, approvals);
+        let spawner =
+            spawner(model, Config::default()).with_gates(questions, approvals, ApprovalMode::Auto);
         let parent = ErasedRuntime::spawn(
             Box::new(Hsm::new(Collector(MachineId::new()))) as Box<dyn ErasedMachine>,
             Context::new(),
@@ -498,5 +508,114 @@ mod tests {
             .cloned()
             .unwrap();
         assert_eq!(result["ok"], json!(false), "{result}");
+    }
+
+    /// A tool that records how often it ran.
+    struct Shell(Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl sven_tool_api::Tool for Shell {
+        fn name(&self) -> &str {
+            "shell"
+        }
+        fn description(&self) -> &str {
+            "runs a command"
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({"type": "object"})
+        }
+        fn default_policy(&self) -> sven_tool_api::ApprovalPolicy {
+            sven_tool_api::ApprovalPolicy::Ask
+        }
+        fn kernel_capability(&self) -> ToolCapability {
+            ToolCapability::ExecuteShell
+        }
+        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            sven_tool_api::ToolOutput::ok(&call.id, "built")
+        }
+    }
+
+    /// Runs a task child that makes one shell call under the parent's
+    /// `approval`, with the person answering `answer`. Returns how often the
+    /// call ran and how many approvals reached the parent's gate.
+    async fn child_shell_call(approval: ApprovalMode, answer: bool) -> (usize, usize) {
+        let model = ScriptedMockProvider::new(vec![
+            vec![
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: "s1".into(),
+                    name: "shell".into(),
+                    arguments: json!({"command": "make"}).to_string(),
+                },
+                ResponseEvent::Done,
+            ],
+            decision(json!({"status": "proceed", "message": "built"})),
+        ]);
+        let ran = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Shell(Arc::clone(&ran)));
+        let (questions, _asked) = mpsc::channel(4);
+        let (approvals, mut gate) = mpsc::channel::<ApprovalRequest>(4);
+        let spawner = SdlcChildSpawner::new(
+            Arc::new(model),
+            Arc::new(Config::default()),
+            Arc::new(registry),
+        )
+        .with_gates(questions, approvals, approval);
+        let parent_policy =
+            crate::mode_policy::with_approval(SdlcMachine::permission_policy(), approval);
+        let parent = ErasedRuntime::spawn(
+            Box::new(Hsm::new(Collector(MachineId::new()))) as Box<dyn ErasedMachine>,
+            Context::new(),
+            PermissionPolicy::builder().build(),
+            sven_executors::CompositeExecutorBuilder::default().build(),
+            8,
+        );
+        let run = ChildRun {
+            contract: ChildRunContract::inherit(&parent_policy, &SdlcState::Execution),
+            cancel: parent.cancel_scope().child(),
+        };
+        spawner
+            .spawn_child(
+                MachineId::new(),
+                json!({"task": "build"}),
+                run,
+                parent.sink(),
+            )
+            .await;
+        let person = tokio::spawn(async move {
+            let mut asked = 0;
+            while let Some(request) = gate.recv().await {
+                asked += 1;
+                assert_eq!(
+                    request.call.as_ref().map(|c| c.name.as_str()),
+                    Some("shell")
+                );
+                let _ = request.reply_tx.send(answer);
+            }
+            asked
+        });
+        tokio::time::timeout(Duration::from_secs(10), parent.wait_done())
+            .await
+            .expect("the child finishes without waiting for anyone else");
+        drop(parent.join().await);
+        drop(spawner);
+        let asked = tokio::time::timeout(Duration::from_secs(10), person)
+            .await
+            .expect("the gate closes")
+            .unwrap();
+        (ran.load(std::sync::atomic::Ordering::SeqCst), asked)
+    }
+
+    #[tokio::test]
+    async fn a_task_child_runs_a_shell_call_without_asking_by_default() {
+        assert_eq!(child_shell_call(ApprovalMode::Auto, false).await, (1, 0));
+    }
+
+    #[tokio::test]
+    async fn a_task_child_of_a_manual_parent_asks_the_parent_gate() {
+        assert_eq!(child_shell_call(ApprovalMode::Manual, true).await, (1, 1));
+        assert_eq!(child_shell_call(ApprovalMode::Manual, false).await, (0, 1));
     }
 }
