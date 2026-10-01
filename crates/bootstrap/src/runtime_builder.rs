@@ -365,6 +365,11 @@ impl RuntimeBuilder {
     /// Facts seeded this way are applied on top of a resumed snapshot's own
     /// facts, so a caller can re-seed per step without losing what the machine
     /// accumulated.
+    pub fn with_context_facts(mut self, facts: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.context_facts = facts;
+        self
+    }
+
     /// Selects the built-in tools this session registers. Defaults to
     /// [`BuiltinTools::Detect`]; [`BuiltinTools::None`] also connects no MCP
     /// servers, so the session has exactly the tools passed to
@@ -372,11 +377,6 @@ impl RuntimeBuilder {
     #[must_use]
     pub fn with_builtin_tools(mut self, selection: BuiltinTools) -> Self {
         self.builtin_tools = selection;
-        self
-    }
-
-    pub fn with_context_facts(mut self, facts: serde_json::Map<String, serde_json::Value>) -> Self {
-        self.context_facts = facts;
         self
     }
 
