@@ -32,6 +32,41 @@ pub(crate) fn session_ceiling(mode: AgentMode) -> PermissionPolicy {
     }
 }
 
+/// The most a session in `mode` can ever do, in whichever state: its
+/// machine's policy across all states, as [`session_ceiling`] maps it. A
+/// reactive session also starts sub-agents through its `task` tool (which
+/// the kernel admits as a read), so it holds `SpawnChild` as an SDLC
+/// session's Execution state does.
+pub(crate) fn mode_authority(mode: AgentMode) -> PermissionPolicy {
+    if mode == AgentMode::Sdlc {
+        return SdlcMachine::permission_policy().ceiling_in_any_state();
+    }
+    let reactive = session_ceiling(mode);
+    PermissionPolicy::builder()
+        .allow_globally(ToolCapability::ALL.into_iter().filter(|&cap| {
+            cap == ToolCapability::SpawnChild || reactive.allows_in_every_state(cap)
+        }))
+        .build()
+}
+
+/// The modes a session that started in `start` may switch itself to: those
+/// that can do nothing, in any of their states, that `start` cannot do in
+/// one of its own. Comparing only what every state may do would let a
+/// read-only session switch to `sdlc` and write in its Execution state.
+pub(crate) fn modes_within(start: AgentMode) -> Vec<AgentMode> {
+    let authority = mode_authority(start);
+    [
+        AgentMode::Research,
+        AgentMode::Plan,
+        AgentMode::Agent,
+        AgentMode::Chat,
+        AgentMode::Sdlc,
+    ]
+    .into_iter()
+    .filter(|&mode| exceeds(&mode_authority(mode), &authority).is_none())
+    .collect()
+}
+
 /// The first capability `child` grants beyond `ceiling`: one `ceiling` does
 /// not allow, or one it allows only with an approval that `child` waives.
 /// `None` when `child` stays within `ceiling`.
@@ -44,4 +79,33 @@ pub(crate) fn exceeds(
             && (!ceiling.allows_in_every_state(cap)
                 || (ceiling.requires_approval(cap) && !child.requires_approval(cap)))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A session may switch only to a mode that can do nothing, in any of
+    /// its states, that the starting mode cannot do in one of its own.
+    #[test]
+    fn a_mode_switch_never_gains_what_any_state_of_the_start_lacks() {
+        for start in [AgentMode::Research, AgentMode::Plan, AgentMode::Chat] {
+            assert!(
+                !modes_within(start).contains(&AgentMode::Sdlc),
+                "{start:?} -> sdlc would gain Execution's writes"
+            );
+        }
+        assert!(modes_within(AgentMode::Agent).contains(&AgentMode::Sdlc));
+        for target in modes_within(AgentMode::Sdlc) {
+            assert!(
+                exceeds(&mode_authority(target), &mode_authority(AgentMode::Sdlc)).is_none(),
+                "sdlc -> {target:?}"
+            );
+        }
+        assert!(
+            !modes_within(AgentMode::Sdlc).contains(&AgentMode::Agent),
+            "agent reaches the network, which no sdlc state does"
+        );
+        assert!(modes_within(AgentMode::Sdlc).contains(&AgentMode::Sdlc));
+    }
 }

@@ -195,6 +195,23 @@ impl PermissionPolicy {
         }
     }
 
+    /// What any state may do, as a policy that allows all of it in every
+    /// state: the most a run of this machine can ever do, whichever states
+    /// it passes through.
+    #[must_use]
+    pub fn ceiling_in_any_state(&self) -> Self {
+        Self {
+            per_state: HashMap::new(),
+            global_allowed: self
+                .global_allowed
+                .iter()
+                .chain(self.per_state.values().flatten())
+                .copied()
+                .collect(),
+            approval_required: self.approval_required.clone(),
+        }
+    }
+
     /// The policy that allows a capability in a state only where both
     /// `self` and `other` allow it there, and requires approval for anything
     /// either requires approval for. Never allows more than either side.
@@ -513,6 +530,18 @@ mod tests {
         let everywhere = a.ceiling_in_every_state();
         assert!(everywhere.allows_in_every_state(ToolCapability::ReadFile));
         assert!(!everywhere.allows(&S::Executing, ToolCapability::ExecuteShell));
+    }
+
+    /// Everything any state may do, held in every state.
+    #[test]
+    fn the_ceiling_in_any_state_is_the_union_of_the_states() {
+        let (a, _) = disagreeing_policies();
+        let anywhere = a.ceiling_in_any_state();
+        for cap in ToolCapability::ALL {
+            let somewhere = a.allows(&S::Reading, cap) || a.allows(&S::Executing, cap);
+            assert_eq!(anywhere.allows_in_every_state(cap), somewhere, "{cap:?}");
+            assert_eq!(anywhere.requires_approval(cap), a.requires_approval(cap));
+        }
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //! Compound `system` tool that consolidates agent self-modification capabilities.
 //!
 //! Actions:
-//! - `switch_mode`       - switch the agent's operating mode in any direction.
+//! - `switch_mode`       - switch the agent's operating mode, within the modes
+//!   the session may use (never wider than the one it started in).
 //! - `switch_model`      - change the active LLM using an fzf-style fuzzy search string.
 //! - `add_mcp_server`    - add an MCP server to the nearest config file.
 //! - `remove_mcp_server` - remove an MCP server from the nearest config file.
@@ -43,6 +44,10 @@ pub struct SystemTool {
     current_mode: Arc<Mutex<AgentMode>>,
     event_tx: mpsc::Sender<ToolEvent>,
     model_catalog: Vec<ModelCatalogEntry>,
+    /// The modes `switch_mode` may switch to; `None` for any.
+    allowed_modes: Option<Vec<AgentMode>>,
+    /// Whether `add_mcp_server`/`remove_mcp_server` are offered at all.
+    manages_mcp: bool,
 }
 
 impl SystemTool {
@@ -55,7 +60,45 @@ impl SystemTool {
             current_mode,
             event_tx,
             model_catalog,
+            allowed_modes: None,
+            manages_mcp: true,
         }
+    }
+
+    /// Lets `switch_mode` switch only to `modes`: the model may narrow what
+    /// the session may do, never widen it past where it started.
+    #[must_use]
+    pub fn with_allowed_modes(mut self, modes: Vec<AgentMode>) -> Self {
+        self.allowed_modes = Some(modes);
+        self
+    }
+
+    /// Withholds `add_mcp_server` and `remove_mcp_server`: they write the
+    /// configuration and start an arbitrary command, which a read-only or
+    /// delegated session must not do.
+    #[must_use]
+    pub fn without_mcp_management(mut self) -> Self {
+        self.manages_mcp = false;
+        self
+    }
+
+    /// Refuses an MCP-server action where it may not run: withheld from this
+    /// session, or the session is not in `agent` mode (the only one that both
+    /// writes files and runs commands).
+    async fn refuse_mcp_action(&self, call: &ToolCall) -> Option<ToolOutput> {
+        if !self.manages_mcp {
+            return Some(ToolOutput::err(
+                &call.id,
+                "MCP servers cannot be managed from this session",
+            ));
+        }
+        let mode = *self.current_mode.lock().await;
+        (mode != AgentMode::Agent).then(|| {
+            ToolOutput::err(
+                &call.id,
+                format!("MCP servers can be managed only in agent mode, not in {mode} mode"),
+            )
+        })
     }
 
     async fn exec_switch_mode(&self, call: &ToolCall) -> ToolOutput {
@@ -72,6 +115,22 @@ impl SystemTool {
             "sdlc" => AgentMode::Sdlc,
             other => return ToolOutput::err(&call.id, format!("unknown mode: {other}")),
         };
+
+        if let Some(allowed) = &self.allowed_modes {
+            if !allowed.contains(&target) {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "cannot switch to {target} mode: this session may use only {}",
+                        allowed
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                );
+            }
+        }
 
         // Hold the lock for the entire check-then-write to avoid TOCTOU.
         let mut mode_guard = self.current_mode.lock().await;
@@ -92,6 +151,9 @@ impl SystemTool {
     }
 
     async fn exec_add_mcp_server(&self, call: &ToolCall) -> ToolOutput {
+        if let Some(refused) = self.refuse_mcp_action(call).await {
+            return refused;
+        }
         let name = match call.args.get("name").and_then(|v| v.as_str()) {
             Some(n) => n.to_string(),
             None => return ToolOutput::err(&call.id, "missing 'name' parameter"),
@@ -120,6 +182,9 @@ impl SystemTool {
     }
 
     async fn exec_remove_mcp_server(&self, call: &ToolCall) -> ToolOutput {
+        if let Some(refused) = self.refuse_mcp_action(call).await {
+            return refused;
+        }
         let name = match call.args.get("name").and_then(|v| v.as_str()) {
             Some(n) => n.to_string(),
             None => return ToolOutput::err(&call.id, "missing 'name' parameter"),
@@ -196,7 +261,8 @@ impl Tool for SystemTool {
     fn description(&self) -> &str {
         "Agent system controls: mode/model switching and MCP server management.\n\
          action: switch_mode | switch_model | add_mcp_server | remove_mcp_server\n\n\
-         switch_mode: Switch operating mode freely (research ↔ plan ↔ agent).\n\n\
+         switch_mode: Switch operating mode (research, plan, agent) within the\n\
+         modes this session may use.\n\n\
          switch_model: Switch the active LLM (e.g. \"claude-opus\", \"gpt4o\").\n\n\
          add_mcp_server: Add an external MCP server. Writes to the nearest config file.\n\
            - stdio: provide command + args (e.g. npx -y @modelcontextprotocol/server-github)\n\
@@ -588,6 +654,42 @@ mod tests {
         let out = tool.execute(&mode_call("plan")).await;
         assert!(!out.is_error, "{}", out.content);
         assert_eq!(*current.lock().await, AgentMode::Plan);
+    }
+
+    /// The model may not widen what the session may do: a session that
+    /// started read-only stays read-only.
+    #[tokio::test]
+    async fn switch_mode_stays_within_the_allowed_modes() {
+        let (tool, current, _rx) = make_tool(AgentMode::Research);
+        let tool = tool.with_allowed_modes(vec![AgentMode::Research, AgentMode::Plan]);
+        let out = tool.execute(&mode_call("agent")).await;
+        assert!(out.is_error, "{}", out.content);
+        assert_eq!(*current.lock().await, AgentMode::Research);
+        let out = tool.execute(&mode_call("plan")).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(*current.lock().await, AgentMode::Plan);
+    }
+
+    /// Adding an MCP server writes the configuration and starts a command:
+    /// refused where the session is not in agent mode or does not manage
+    /// servers at all.
+    #[tokio::test]
+    async fn mcp_servers_are_managed_only_where_that_is_allowed() {
+        let add = ToolCall {
+            id: "m".into(),
+            name: "system".into(),
+            args: json!({"action": "add_mcp_server", "name": "x", "command": "evil"}),
+        };
+        let (tool, _current, _rx) = make_tool(AgentMode::Plan);
+        let out = tool.execute(&add).await;
+        assert!(
+            out.is_error && out.content.contains("agent mode"),
+            "{}",
+            out.content
+        );
+        let (tool, _current, _rx) = make_tool(AgentMode::Agent);
+        let out = tool.without_mcp_management().execute(&add).await;
+        assert!(out.is_error, "{}", out.content);
     }
 
     /// Each action is held to what it does: adding an MCP server starts a

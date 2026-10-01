@@ -200,6 +200,31 @@ fn register_integration_tools(_reg: &mut ToolRegistry, _providers: IntegrationPr
     }
 }
 
+/// The `system` tool for a session that starts in `mode_lock`'s mode: it may
+/// switch only to modes within that mode's authority, and manages MCP
+/// servers only when `manages_mcp` (never in a read-only or sub-agent
+/// session).
+fn system_tool(
+    mode_lock: Arc<Mutex<AgentMode>>,
+    tool_event_tx: mpsc::Sender<ToolEvent>,
+    manages_mcp: bool,
+) -> SystemTool {
+    // The lock was just created with the session's starting mode, so nobody
+    // else holds it. Should someone, the start is unknown and no switch is
+    // allowed: any mode assumed in its place could be wider.
+    let allowed = mode_lock.try_lock().map_or_else(
+        |_| Vec::new(),
+        |start| crate::mode_policy::modes_within(*start),
+    );
+    let tool = SystemTool::new(mode_lock, tool_event_tx, model_catalog_for_tools())
+        .with_allowed_modes(allowed);
+    if manages_mcp {
+        tool
+    } else {
+        tool.without_mcp_management()
+    }
+}
+
 /// Offers `ask_question` routed as `questions` says, if at all.
 fn register_ask_question(reg: &mut ToolRegistry, questions: Questions) {
     match questions {
@@ -232,12 +257,16 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     // loading the same config (a named provider stays named).
     let model_id = p.cfg.model_reference();
     let parent_mode = Arc::clone(&p.mode_lock);
+    reg.register(system_tool(
+        Arc::clone(&p.mode_lock),
+        p.tool_event_tx.clone(),
+        true,
+    ));
 
     register_base_tools(
         &mut reg,
         p.cfg,
         p.model,
-        p.mode_lock,
         p.tool_event_tx.clone(),
         p.runtime,
         Arc::clone(&p.buffer_store),
@@ -295,10 +324,10 @@ fn build_profile_research(
         runtime.knowledge.clone(),
     ));
     reg.register(SkillTool::new(runtime.skills.clone()));
-    reg.register(SystemTool::new(
+    reg.register(system_tool(
         Arc::clone(&mode_lock),
         tool_event_tx.clone(),
-        model_catalog_for_tools(),
+        false,
     ));
 
     register_ask_question(&mut reg, questions);
@@ -336,12 +365,16 @@ fn build_profile_subagent(
     buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
+    reg.register(system_tool(
+        Arc::clone(&mode_lock),
+        tool_event_tx.clone(),
+        false,
+    ));
 
     register_base_tools(
         &mut reg,
         cfg,
         model,
-        mode_lock,
         tool_event_tx.clone(),
         runtime,
         buffer_store,
@@ -365,7 +398,6 @@ fn register_base_tools(
     reg: &mut ToolRegistry,
     cfg: &Config,
     model: Arc<dyn ModelProvider>,
-    mode_lock: Arc<Mutex<AgentMode>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     runtime: &AgentRuntimeContext,
     buffer_store: Arc<Mutex<OutputBufferStore>>,
@@ -416,13 +448,6 @@ fn register_base_tools(
 
     // ── Skills ────────────────────────────────────────────────────────────────
     reg.register(SkillTool::new(runtime.skills.clone()));
-
-    // ── System (mode + model switching) ──────────────────────────────────────
-    reg.register(SystemTool::new(
-        mode_lock,
-        tool_event_tx.clone(),
-        model_catalog_for_tools(),
-    ));
 
     // ── Context and GDB (Full profile only) ──────────────────────────────────
     if include_full {
@@ -516,6 +541,30 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
 mod tests {
     use super::*;
     use sven_model_mock::MockProvider;
+
+    /// The `system` tool reads the session's starting mode to bound its mode
+    /// switches; if it cannot, it allows none rather than guessing a mode.
+    #[tokio::test]
+    async fn a_system_tool_that_cannot_read_the_start_mode_switches_to_nothing() {
+        use sven_tool_api::Tool as _;
+        let (tx, _rx) = mpsc::channel::<ToolEvent>(16);
+        let mode_lock = Arc::new(Mutex::new(AgentMode::Research));
+        let held = Arc::clone(&mode_lock);
+        let guard = held.lock().await;
+        let tool = system_tool(Arc::clone(&mode_lock), tx, false);
+        drop(guard);
+        for mode in ["agent", "research"] {
+            let out = tool
+                .execute(&sven_tool_api::ToolCall {
+                    id: "c".into(),
+                    name: "system".into(),
+                    args: serde_json::json!({"action": "switch_mode", "mode": mode}),
+                })
+                .await;
+            assert!(out.is_error, "{mode}: {}", out.content);
+        }
+        assert_eq!(*mode_lock.lock().await, AgentMode::Research);
+    }
 
     /// Every tool the agent is offered, with its description.
     fn agent_tools() -> Vec<(String, String, serde_json::Value)> {
