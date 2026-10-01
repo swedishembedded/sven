@@ -335,7 +335,7 @@ impl App {
                     // the server-side provider (the node still owns `/mode`).
                     if let Some(model_str) = result.model_override {
                         let resolved =
-                            sven_model::resolve_model_from_config(&self.config, &model_str);
+                            sven_model_drivers::resolve_model_from_config(&self.config, &model_str);
                         self.session.stage_model(resolved);
                     }
                     if !self.is_node_proxy {
@@ -397,7 +397,8 @@ impl App {
             }
             if !self.is_node_proxy {
                 if let Some(model_str) = result.model_override {
-                    let resolved = sven_model::resolve_model_from_config(&self.config, &model_str);
+                    let resolved =
+                        sven_model_drivers::resolve_model_from_config(&self.config, &model_str);
                     self.session.apply_model(resolved);
                 }
                 if let Some(mode) = result.mode_override {

@@ -26,7 +26,7 @@ use tracing::{debug, warn};
 /// Request sent from a frontend to the background agent task.
 ///
 /// All model overrides carry an already-resolved `ModelConfig`. The frontend
-/// resolves the config via `sven_model::resolve_model_from_config`; the agent
+/// resolves the config via `sven_model_drivers::resolve_model_from_config`; the agent
 /// task only calls `sven_model_drivers::from_config` to instantiate the provider,
 /// never re-derives which model to use.
 #[derive(Debug)]

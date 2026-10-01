@@ -10,7 +10,6 @@ default = ["dbus"]
 dbus = ["dep:zbus", "dep:nix"]
 
 [dependencies]
-sven-config        = { path = "../config" }
 sven-model-catalog = { path = "../model-catalog" }
 sven-image  = { path = "../image" }
 sven-audio  = { path = "../sven-audio" }

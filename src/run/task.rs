@@ -89,7 +89,7 @@ async fn run(
 
     let kernel_config = if let Some(m) = model {
         let mut cfg = config.clone();
-        cfg.model = sven_model::resolve_model_from_config(&cfg, m);
+        cfg.model = sven_model_drivers::resolve_model_from_config(&cfg, m);
         std::sync::Arc::new(cfg)
     } else {
         std::sync::Arc::new(config.clone())

@@ -207,7 +207,8 @@ import, `sven migrate-sessions`) · `sven-tool-registry`
 (`ToolRegistry`, `ApprovalPolicy`, fs_root jail) · `sven-mcp-client` (MCP
 client: stdio + Streamable HTTP, OAuth) · `sven-kernel` (`ErasedRuntime`,
 `EffectExecutor`, `EventSink`, `ChildSpawner`) · `sven-model-drivers` (34
-provider driver impls, `openai_compat`) · `sven-model-mock` (`--model mock`
+provider driver impls, `openai_compat`, model-string resolution:
+`ModelResolver`/`resolve_model_from_config`) · `sven-model-mock` (`--model mock`
 test/dev providers)
 
 ### domain (concrete tool implementations + integrations)

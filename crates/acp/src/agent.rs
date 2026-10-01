@@ -394,7 +394,7 @@ impl SvenAcpAgent {
     /// the next turn.
     fn note_turn_event(&self, entry: &SessionEntry, event: &AgentEvent) {
         if let AgentEvent::ModelChanged(model) = event {
-            let model = sven_model::resolve_model_from_config(&self.config, model);
+            let model = sven_model_drivers::resolve_model_from_config(&self.config, model);
             entry
                 .settings
                 .lock()

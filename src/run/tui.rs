@@ -234,7 +234,8 @@ pub(crate) async fn run_tui(mut cli: Cli, config: Arc<sven_config::Config>) -> a
                     while let Some(step) = wf.steps.pop() {
                         // Resolve per-step model string into a ModelDirective
                         let model_transition = step.options.model.as_deref().map(|name| {
-                            let cfg = sven_model::resolve_model_from_config(&config_ref, name);
+                            let cfg =
+                                sven_model_drivers::resolve_model_from_config(&config_ref, name);
                             ModelDirective::SwitchTo(Box::new(cfg))
                         });
                         // Resolve per-step mode string into an AgentMode

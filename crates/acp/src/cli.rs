@@ -143,7 +143,7 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
         } => {
             let mut config = sven_config::load(None)?;
             if let Some(ref name) = model {
-                config.model = sven_model::resolve_model_from_config(&config, name);
+                config.model = sven_model_drivers::resolve_model_from_config(&config, name);
             }
             if let Some(ref prov) = provider {
                 config.model.provider = prov.clone();

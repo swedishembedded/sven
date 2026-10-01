@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
             Commands::Agent { command } => {
                 let mut config = sven_config::load(cli.config.as_deref())?;
                 if let Some(m) = &cli.model {
-                    config.model = sven_model::resolve_model_from_config(&config, m);
+                    config.model = sven_model_drivers::resolve_model_from_config(&config, m);
                 }
                 return run_agent_command(command, config).await;
             }

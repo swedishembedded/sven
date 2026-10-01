@@ -5,7 +5,9 @@
 //! OpenAI/Anthropic/Google/AWS Bedrock/Cohere/D-Bus clients plus the shared
 //! OpenAI-compatible wire format that every other provider in
 //! `sven_model::registry` speaks) and the `from_config`/`from_config_probed`
-//! factory that selects and constructs one from a `sven_config::ModelConfig`.
+//! factory that selects and constructs one from a `sven_config::ModelConfig`,
+//! plus the resolution of a user-supplied model string into that
+//! configuration ([`ModelResolver`], [`resolve_model_from_config`]).
 //!
 //! This is where `reqwest`, `aws-sdk`-style SigV4 signing, and every
 //! provider's own dependency closure live, so crates that only need the
@@ -19,9 +21,11 @@ mod dbus;
 mod google;
 mod openai;
 pub(crate) mod openai_compat;
+mod resolve;
 
 pub use anthropic::AnthropicProvider;
 pub use openai::OpenAiProvider;
+pub use resolve::{resolve_model_cfg, resolve_model_from_config, ModelResolver};
 
 use anyhow::bail;
 use api_key::{read_key_from_file, resolve_api_key};

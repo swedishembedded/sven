@@ -235,6 +235,3 @@ mod normalize_tests {
         assert_eq!(normalize_label("my_step"), "my_step");
     }
 }
-
-// resolve_model_cfg has been moved to sven_model::resolve_model_cfg.
-// resolve_model_from_config (config-aware variant) lives at sven_model::resolve_model_from_config.

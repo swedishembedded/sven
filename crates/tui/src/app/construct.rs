@@ -65,7 +65,7 @@ impl App {
         };
 
         let initial_model_cfg = if let Some(ref mo) = opts.model_override {
-            sven_model::resolve_model_from_config(&config, mo)
+            sven_model_drivers::resolve_model_from_config(&config, mo)
         } else {
             config.model.clone()
         };

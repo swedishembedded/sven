@@ -16,6 +16,7 @@ sven-hsm         = { path = "../hsm" }
 sven-bootstrap   = { path = "../bootstrap" }
 sven-config      = { path = "../config" }
 sven-model       = { path = "../model" }
+sven-model-drivers = { path = "../model-drivers" }
 anyhow           = { workspace = true }
 clap             = { workspace = true }
 serde            = { workspace = true }

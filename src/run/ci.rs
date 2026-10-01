@@ -252,7 +252,7 @@ pub(crate) async fn run_ci(mut cli: Cli, config: Arc<sven_config::Config>) -> an
         // (the legacy CiRunner does the same before constructing its agent).
         let kernel_config = if let Some(m) = &cli.model {
             let mut cfg = (*config).clone();
-            cfg.model = sven_model::resolve_model_from_config(&cfg, m);
+            cfg.model = sven_model_drivers::resolve_model_from_config(&cfg, m);
             Arc::new(cfg)
         } else {
             config.clone()

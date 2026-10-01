@@ -437,7 +437,7 @@ impl CiRunner {
                 .cloned()
         });
         let model_cfg = if let Some(ref name) = model_override {
-            sven_model::resolve_model_from_config(&self.config, name)
+            sven_model_drivers::resolve_model_from_config(&self.config, name)
         } else {
             self.config.model.clone()
         };
@@ -826,7 +826,8 @@ impl CiRunner {
                 (None, None) => fm_mode_model,
             };
             if let Some(model_str) = &effective_model_str {
-                let step_model_cfg = sven_model::resolve_model_from_config(&self.config, model_str);
+                let step_model_cfg =
+                    sven_model_drivers::resolve_model_from_config(&self.config, model_str);
                 // Validate the override builds before switching; on failure keep
                 // the current model (mirrors the legacy runner's warn-and-continue).
                 match sven_model_drivers::from_config(&step_model_cfg) {
