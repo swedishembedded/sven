@@ -467,6 +467,23 @@ let trajectory = agent.trajectory();
 sven_sdk::atif::persist::write_trajectory_atomic(&path, &trajectory, None)?;
 ```
 
+## Records of what an application did
+
+An application that records more than the conversation (checks it ran,
+decisions it took, files it changed) keeps those records in the log format
+sven's own audit trail uses: `sven_sdk::chain` is a hash-chained, append-only
+JSONL log. `append_chain` serialises writers across threads and processes,
+chains from the tip on disk and repairs a torn final line; `verify_chain`
+reports an edited, reordered, inserted or deleted record. It detects
+accidental corruption and non-adaptive tampering, not an adversary who can
+rewrite the whole file.
+
+```rust
+use sven_sdk::chain::{append_chain, verify_chain};
+append_chain(&path, vec![serde_json::json!({"kind": "check", "ok": true})])?;
+assert_eq!(verify_chain(&path)?, 1);
+```
+
 ## Where the state comes from
 
 `AgentState` carries the conversation history and a kernel `Snapshot`. The

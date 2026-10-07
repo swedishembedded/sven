@@ -121,6 +121,14 @@ pub mod machine {
 /// See the [`agent`] macro's own documentation for the rules.
 pub use sven_sdk_macros::agent;
 
+/// A hash-chained, append-only JSONL log, the format sven's own audit trail
+/// and ledgers are written in.
+///
+/// Re-exported so an application that records what its agents did can keep
+/// its records in the same tamper-evident, crash-safe and multi-writer-safe
+/// form instead of writing a second log format.
+pub use sven_chain as chain;
+
 /// The event stream an agent emits while it works.
 ///
 /// Re-exported so a consumer never needs to name a kernel crate to render
