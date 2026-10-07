@@ -484,6 +484,18 @@ append_chain(&path, vec![serde_json::json!({"kind": "check", "ok": true})])?;
 assert_eq!(verify_chain(&path)?, 1);
 ```
 
+## Which definitions were in effect
+
+`sven_sdk::workspace` lists the Markdown subagents, skills and commands that
+apply in a project, by the rules the interactive sessions use (a project's own
+definitions override those of its parent directories and of the user's home).
+An application that runs an agent can record their names, files and contents
+with its result, so a later reader knows which definitions produced it.
+
+```rust
+let agents = sven_sdk::workspace::discover_agents(Some(&project_root));
+```
+
 ## Where the state comes from
 
 `AgentState` carries the conversation history and a kernel `Snapshot`. The

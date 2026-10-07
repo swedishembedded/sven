@@ -18,6 +18,7 @@ sven-session-store = { path = "../session-store" }
 atif           = { path = "../atif" }
 sven-chain     = { path = "../chain" }
 sven-vocab     = { path = "../vocab" }
+sven-workspace = { path = "../workspace" }
 anyhow         = { workspace = true }
 schemars       = { workspace = true }
 serde          = { workspace = true }

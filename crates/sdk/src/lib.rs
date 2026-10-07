@@ -129,6 +129,21 @@ pub use sven_sdk_macros::agent;
 /// form instead of writing a second log format.
 pub use sven_chain as chain;
 
+/// The definitions that shape an agent in a project: Markdown subagents,
+/// skills and reusable commands, found by the same rules the interactive
+/// sessions use (a project's own definitions override those of its parent
+/// directories and of the user's home).
+///
+/// Re-exported so an application that runs an agent in a project can report
+/// exactly which definitions were in effect, without a second discovery
+/// implementation that could disagree with sven's.
+pub mod workspace {
+    pub use sven_workspace::{
+        discover_agents, discover_commands, discover_skills, find_project_context_file, AgentInfo,
+        SkillInfo,
+    };
+}
+
 /// The event stream an agent emits while it works.
 ///
 /// Re-exported so a consumer never needs to name a kernel crate to render
