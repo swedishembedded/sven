@@ -543,26 +543,24 @@ fn fuzzy_score(pattern: &str, candidate: &str) -> Option<usize> {
 
     for pat_ch in &pattern_lc {
         let found = candidate_lc[cand_idx..].iter().position(|c| c == pat_ch);
-        match found {
-            Some(offset) => {
-                let actual_idx = cand_idx + offset;
-                score += 1;
-                if prev_matched && offset == 0 {
-                    score += 3;
-                }
-                if actual_idx == 0 {
-                    score += 5;
-                }
-                if actual_idx > 0 {
-                    let prev = candidate_lc[actual_idx - 1];
-                    if matches!(prev, '/' | '-' | '_' | ' ') {
-                        score += 2;
-                    }
-                }
-                cand_idx = actual_idx + 1;
-                prev_matched = offset == 0;
+        {
+            let offset = found?;
+            let actual_idx = cand_idx + offset;
+            score += 1;
+            if prev_matched && offset == 0 {
+                score += 3;
             }
-            None => return None,
+            if actual_idx == 0 {
+                score += 5;
+            }
+            if actual_idx > 0 {
+                let prev = candidate_lc[actual_idx - 1];
+                if matches!(prev, '/' | '-' | '_' | ' ') {
+                    score += 2;
+                }
+            }
+            cand_idx = actual_idx + 1;
+            prev_matched = offset == 0;
         }
     }
 

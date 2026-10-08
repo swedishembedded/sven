@@ -208,7 +208,7 @@ fn parse_inline_to_spans(text: &str) -> Vec<(String, Style)> {
             Event::End(TagEnd::Strikethrough) => {
                 style_stack.pop();
             }
-            Event::Start(Tag::Link { dest_url: _, .. }) => {
+            Event::Start(Tag::Link { .. }) => {
                 let base = *style_stack.last().unwrap_or(&Style::default());
                 style_stack.push(base.fg(Color::Cyan).add_modifier(Modifier::UNDERLINED));
             }

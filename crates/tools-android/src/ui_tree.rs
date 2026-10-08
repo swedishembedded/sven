@@ -158,10 +158,8 @@ pub fn parse(xml: &str) -> Vec<Element> {
                     stack.push(out.len() - 1);
                 }
             }
-            Ok(Event::End(e)) => {
-                if e.name().as_ref() == b"node" {
-                    stack.pop();
-                }
+            Ok(Event::End(e)) if e.name().as_ref() == b"node" => {
+                stack.pop();
             }
             _ => {}
         }
@@ -418,7 +416,7 @@ pub fn signature(elements: &[Element]) -> String {
             )
             .as_bytes(),
         );
-        hasher.update([b'\n']);
+        hasher.update(*b"\n");
     }
     hex::encode(hasher.finalize())
 }

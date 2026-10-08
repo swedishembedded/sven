@@ -55,11 +55,7 @@ pub fn format_token_usage_line(
     } else {
         0
     };
-    let ctx_cache = if total_ctx > 0 {
-        cache_read * 100 / total_ctx
-    } else {
-        0
-    };
+    let ctx_cache = (cache_read * 100).checked_div(total_ctx).unwrap_or(0);
     // Always show cache_read/cache_write, even at 0 - "no cache activity" is
     // itself useful signal (e.g. a provider/config that doesn't cache at
     // all), and was previously indistinguishable from "not computed".

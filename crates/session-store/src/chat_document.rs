@@ -465,7 +465,7 @@ pub fn list_chats(limit: Option<usize>) -> Result<Vec<ChatEntry>> {
         }
     }
 
-    entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
     if let Some(n) = limit {
         entries.truncate(n);
     }

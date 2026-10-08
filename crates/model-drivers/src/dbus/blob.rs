@@ -233,7 +233,9 @@ mod tests {
         let blob = encode_image(&png_data_url(), 1024).unwrap();
         let px: Vec<f32> = blob
             .bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         assert_eq!(px.len(), 3);

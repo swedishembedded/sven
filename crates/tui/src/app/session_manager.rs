@@ -728,7 +728,7 @@ impl SessionManager {
             }
         };
         // Sort newest first; already sorted by list_all_sessions but re-sort to be safe.
-        entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
 
         // Separate roots and children; register roots first so parents exist
         // when we add children. Orphan children (parent not loaded) become roots.

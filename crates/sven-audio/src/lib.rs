@@ -192,11 +192,15 @@ fn decode_samples(data: &[u8], fmt: &WavFmt) -> Result<Vec<f32>, AudioError> {
                 .collect::<Vec<_>>())
         }
         (WAVE_FORMAT_PCM, 16) => Ok(data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32_768.0)
             .collect()),
         (WAVE_FORMAT_PCM, 24) => Ok(data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| {
                 // Sign-extend 24-bit little-endian into i32.
                 let v = ((c[2] as i32) << 24 | (c[1] as i32) << 16 | (c[0] as i32) << 8) >> 8;
@@ -204,15 +208,21 @@ fn decode_samples(data: &[u8], fmt: &WavFmt) -> Result<Vec<f32>, AudioError> {
             })
             .collect()),
         (WAVE_FORMAT_PCM, 32) => Ok(data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / 2_147_483_648.0)
             .collect()),
         (WAVE_FORMAT_IEEE_FLOAT, 32) => Ok(data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect()),
         (WAVE_FORMAT_IEEE_FLOAT, 64) => Ok(data
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|c| f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]) as f32)
             .collect()),
         (tag, bits) => Err(AudioError::UnsupportedSampleFormat(format!(
@@ -776,7 +786,9 @@ mod tests {
         let samples = vec![0.25f32, -0.5, 0.75];
         let bytes = to_f32_le_bytes(&samples);
         let back: Vec<f32> = bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         assert_eq!(back, samples);

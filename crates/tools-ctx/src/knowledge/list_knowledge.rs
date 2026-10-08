@@ -79,7 +79,7 @@ impl Tool for ListKnowledgeTool {
                 "{:<30} {:<40} {:<12} {}",
                 "Subsystem", "Covers", "Updated", "File"
             ),
-            format!("{}", "-".repeat(100)),
+            "-".repeat(100).to_string(),
         ];
 
         for doc in docs.iter() {

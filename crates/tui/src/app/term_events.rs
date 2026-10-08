@@ -218,11 +218,9 @@ impl App {
                         }
                         None => {}
                     },
-                    MouseEventKind::Up(MouseButton::Left) => {
-                        if self.layout.resize_drag.is_some() {
-                            self.layout.resize_drag = None;
-                            return false;
-                        }
+                    MouseEventKind::Up(MouseButton::Left) if self.layout.resize_drag.is_some() => {
+                        self.layout.resize_drag = None;
+                        return false;
                     }
                     _ => {}
                 }

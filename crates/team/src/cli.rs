@@ -90,8 +90,7 @@ pub fn cmd_status(team_name: &str) -> anyhow::Result<()> {
     }
     println!("Lead: {}", cfg.lead_peer_id);
     println!("Created: {}", cfg.created_at.format("%Y-%m-%d %H:%M UTC"));
-    if cfg.token_budget > 0 {
-        let pct = (cfg.tokens_used * 100) / cfg.token_budget;
+    if let Some(pct) = (cfg.tokens_used * 100).checked_div(cfg.token_budget) {
         println!(
             "Token budget: {}/{} ({pct}% used)",
             cfg.tokens_used, cfg.token_budget
@@ -454,8 +453,7 @@ pub fn cmd_watch(team_name: &str, interval_secs: u64, timeout_secs: u64) -> anyh
                 }
 
                 // Token budget check.
-                if cfg.token_budget > 0 {
-                    let pct = cfg.tokens_used * 100 / cfg.token_budget;
+                if let Some(pct) = (cfg.tokens_used * 100).checked_div(cfg.token_budget) {
                     if pct >= 80 {
                         eprintln!(
                             "[sven:watch:{timestamp}] token_budget={}/{} ({pct}%)",

@@ -1081,7 +1081,7 @@ pub fn list_all_sessions(limit: Option<usize>) -> Result<Vec<UnifiedSessionEntry
     let native = list_sessions(None)?;
     let legacy = crate::chat_document::list_chats(None).unwrap_or_default();
     let mut out = merge_native_and_legacy(native, legacy);
-    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    out.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
     if let Some(n) = limit {
         out.truncate(n);
     }

@@ -144,7 +144,7 @@ impl Tool for SearchKnowledgeTool {
         }
 
         // Sort by descending match count so most relevant doc comes first.
-        results.sort_by(|a, b| b.0.cmp(&a.0));
+        results.sort_by_key(|r| std::cmp::Reverse(r.0));
         results.truncate(MAX_DOCS_IN_RESULTS);
 
         let total_docs_searched = docs.len();

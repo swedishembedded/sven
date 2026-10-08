@@ -386,7 +386,9 @@ async fn image_pixels_arrive_as_f32_le_in_unit_range() {
 
     let seen = seen.lock().unwrap().clone().unwrap();
     let px: Vec<f32> = seen.blobs["image"]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     assert_eq!(px.len(), 6, "2 pixels × 3 channels");

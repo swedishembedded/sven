@@ -26,7 +26,7 @@ impl SearchState {
             return;
         }
 
-        let re = regex::Regex::new(&format!("(?i){}", &self.query)).ok();
+        let re = regex::Regex::new(&format!("(?i){}", self.query)).ok();
         self.regex = re.clone();
 
         self.matches = lines

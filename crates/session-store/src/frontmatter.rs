@@ -129,10 +129,8 @@ fn parse_simple_yaml(src: &str) -> Option<WorkflowMetadata> {
                         current_section = "vars";
                     }
                 }
-                "models" => {
-                    if val.is_empty() {
-                        current_section = "models";
-                    }
+                "models" if val.is_empty() => {
+                    current_section = "models";
                 }
                 // Silently ignore unknown / removed keys for forward compat
                 _ => {}

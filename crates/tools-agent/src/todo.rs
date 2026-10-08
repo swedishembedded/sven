@@ -250,7 +250,7 @@ fn parse_patch_items(call: &ToolCall) -> Result<Vec<(String, TodoStatus, Option<
         let status_str = item
             .get("status")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("todo '{}' missing 'status'", &fallback))?;
+            .ok_or_else(|| format!("todo '{}' missing 'status'", fallback))?;
         let status = serde_json::from_value::<TodoStatus>(Value::String(status_str.to_string()))
             .map_err(|_| {
                 format!(
