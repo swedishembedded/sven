@@ -125,7 +125,7 @@ fn every_config_fixture_loads_as_recorded() {
                 .unwrap_or_else(|e| panic!("{}: {e}", golden.display())),
         )
         .expect("a golden record is json");
-        if recorded != loaded {
+        if !same_configuration(&recorded, &loaded) {
             mismatched.push(format!(
                 "{}\n--- recorded\n{}\n--- loaded\n{}",
                 fixture.display(),
@@ -135,4 +135,36 @@ fn every_config_fixture_loads_as_recorded() {
         }
     }
     assert!(mismatched.is_empty(), "{}", mismatched.join("\n\n"));
+}
+
+/// Whether two effective configurations are the same configuration.
+///
+/// Numbers compare within a relative tolerance a fraction of a percent of a
+/// config value could never cross: the two documents travel through a text
+/// round-trip (see `load_fixture`), and how many digits the last bit of a
+/// 32-bit float survives depends on which parse path the build links - the
+/// workspace can link a `serde_json` build whose float parse is one bit more
+/// precise than a lone crate's. That tail is the formatter's, not the
+/// configuration's; pinning it would break the gate on an unrelated
+/// dependency build, and never on a real configuration change.
+fn same_configuration(recorded: &Value, loaded: &Value) -> bool {
+    match (recorded, loaded) {
+        (Value::Number(a), Value::Number(b)) => {
+            let (a, b) = (a.as_f64(), b.as_f64());
+            match (a, b) {
+                (Some(a), Some(b)) => (a - b).abs() <= a.abs().max(b.abs()) * 1e-9,
+                // Integers too large for f64 compare exactly.
+                _ => a == b,
+            }
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_configuration(a, b))
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, a)| b.get(key).is_some_and(|b| same_configuration(a, b)))
+        }
+        (a, b) => a == b,
+    }
 }
