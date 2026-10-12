@@ -35,7 +35,7 @@ const HEADROOM_DEN: usize = 10;
 /// an optional dynamic system-prompt suffix, all under the same chars/4
 /// heuristic [`Message::approx_tokens`] uses, so the estimate is internally
 /// consistent (mixing heuristics would make the headroom multiplier
-/// meaningless), plus [`HEADROOM_NUM`]/[`HEADROOM_DEN`] headroom.
+/// meaningless), plus `HEADROOM_NUM`/`HEADROOM_DEN` headroom.
 pub fn estimate_request_tokens(
     messages: &[Message],
     tools: &[ToolSchema],
@@ -97,7 +97,7 @@ const CHAT_TEMPLATE_OVERHEAD_RESERVE: usize = 128;
 /// The usable input budget: total context window minus the output room a
 /// request actually needs to reserve.
 ///
-/// Always reserves at least [`MIN_OUTPUT_RESERVE`] when the window is known -
+/// Always reserves at least `MIN_OUTPUT_RESERVE` when the window is known -
 /// never the full configured (or defaulted) output cap. Reserving the full
 /// amount regardless of how large the prompt actually is wastes input budget
 /// on every short prompt (e.g. a 2-token "hi" against a 1024-token window

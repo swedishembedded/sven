@@ -12,7 +12,7 @@
 //!    `~/.config/sven/model-cache/<provider>.json` written by previous
 //!    sessions.  Loaded at most once per provider per process via
 //!    [`load_disk_cache`].  Entries are only used when the file is younger
-//!    than [`CACHE_TTL_SECS`].
+//!    than `CACHE_TTL_SECS`.
 //!
 //! 2. **Background refresh** - a tokio task spawned by the model provider
 //!    after a successful live `GET /models` call.  Updates both the in-memory
@@ -153,9 +153,9 @@ fn disk_cache_path(provider: &str) -> Option<std::path::PathBuf> {
 
 /// Load the on-disk cache for `provider` into the in-memory live cache.
 ///
-/// Called at most once per provider per process (guarded by [`disk_loaded`]).
+/// Called at most once per provider per process (guarded by `disk_loaded`).
 /// Does nothing when the file is absent, unreadable, invalid JSON, or older
-/// than [`CACHE_TTL_SECS`].
+/// than `CACHE_TTL_SECS`.
 pub fn load_disk_cache(provider: &str) {
     // Guard: only load once per provider per process.
     {
