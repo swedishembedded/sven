@@ -141,6 +141,12 @@ pub struct RuntimeBuilder {
     /// steps may resolve their children against. See
     /// [`Self::with_harnesses`].
     harnesses: Arc<sven_harness_runtime::HarnessRegistry>,
+    /// An explicit machine and its permission policy, replacing the mode
+    /// registry's lookup. See [`Self::with_machine`].
+    machine_override: Option<(
+        Box<dyn sven_hsm::submachine::ErasedMachine>,
+        sven_hsm::PermissionPolicy,
+    )>,
 }
 
 impl RuntimeBuilder {
@@ -182,7 +188,27 @@ impl RuntimeBuilder {
             agent_mode: None,
             shared_mcp_manager: None,
             harnesses: Arc::new(sven_harness_runtime::HarnessRegistry::new()),
+            machine_override: None,
         }
+    }
+
+    /// Runs this session with an explicitly supplied machine instead of one
+    /// looked up from the mode registry.
+    ///
+    /// The machine arrives with its own permission policy: the host that
+    /// constructed it answers for what it may do, and no policy is guessed
+    /// from the mode name. Everything else — executors, tools, threads,
+    /// child spawning — is wired exactly as a mode-registered session. This
+    /// is the seam a harness run goes through: the harness machine is an
+    /// ordinary kernel machine, assembled by the same builder.
+    #[must_use]
+    pub fn with_machine(
+        mut self,
+        machine: Box<dyn sven_hsm::submachine::ErasedMachine>,
+        policy: sven_hsm::PermissionPolicy,
+    ) -> Self {
+        self.machine_override = Some((machine, policy));
+        self
     }
 
     /// Register the named harness documents this session's `delegate` and
@@ -455,25 +481,33 @@ impl RuntimeBuilder {
         // ── Look up machine ───────────────────────────────────────────────────
         // Before anything starts: a session that cannot run as asked fails
         // here. The mode's policy comes from its registration, never guessed
-        // from its name, so an unregistered mode is refused outright.
-        let registry = match self.mode_registry.take() {
-            Some(supplied) => supplied,
-            None => Arc::new(crate::modes::mode_registry()),
+        // from its name, so an unregistered mode is refused outright —
+        // unless the caller supplied its own machine, which carries its own
+        // policy and answers for what it may do.
+        let (machine, policy) = match self.machine_override.take() {
+            Some((machine, policy)) => (machine, policy),
+            None => {
+                let registry = match self.mode_registry.take() {
+                    Some(supplied) => supplied,
+                    None => Arc::new(crate::modes::mode_registry()),
+                };
+                let registration = registry.get(&self.mode).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unknown mode {:?}; available: {:?}",
+                        self.mode,
+                        registry.modes()
+                    )
+                })?;
+                let policy = crate::mode_policy::session_policy(
+                    &registry,
+                    &self.mode,
+                    self.agent_mode.unwrap_or(AgentMode::Agent),
+                    self.approval_mode,
+                )?;
+                let machine = (registration.factory)();
+                (machine, policy)
+            }
         };
-        let registration = registry.get(&self.mode).ok_or_else(|| {
-            anyhow::anyhow!(
-                "unknown mode {:?}; available: {:?}",
-                self.mode,
-                registry.modes()
-            )
-        })?;
-        let policy = crate::mode_policy::session_policy(
-            &registry,
-            &self.mode,
-            self.agent_mode.unwrap_or(AgentMode::Agent),
-            self.approval_mode,
-        )?;
-        let machine = (registration.factory)();
 
         // ── Initialise model provider ─────────────────────────────────────────
         let model_cfg = self

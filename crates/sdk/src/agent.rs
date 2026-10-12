@@ -681,7 +681,7 @@ fn strip_fence(text: &str) -> &str {
 /// the questions' prompts, each with its options, and the host's reply
 /// returned as the answer. The channel closes when the session drops the
 /// tool.
-fn ask_through(
+pub(crate) fn ask_through(
     responder: sven_bootstrap::session_handles::HumanGateResponder,
 ) -> tokio::sync::mpsc::Sender<sven_bootstrap::QuestionRequest> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<sven_bootstrap::QuestionRequest>(4);

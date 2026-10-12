@@ -98,6 +98,31 @@ impl HarnessRegistry {
         Ok(name)
     }
 
+    /// Registers an already-compiled plan with its helper set.
+    ///
+    /// A host that compiled the plan offline — the same compile a child
+    /// spawn clears — registers the result directly; the used↔declared
+    /// helper checks already ran in that compile. Registration compiles
+    /// nothing twice and refuses a name that is already taken, exactly as
+    /// [`Self::register`](Self::register) does.
+    ///
+    /// # Errors
+    ///
+    /// The plan's name is already registered.
+    pub fn register_compiled(
+        &self,
+        plan: Arc<HarnessPlan>,
+        helpers: BTreeMap<String, Helper>,
+    ) -> Result<String, HarnessRunError> {
+        let name = plan.name.clone();
+        let mut plans = self.plans.write().expect("registry lock poisoned");
+        if plans.contains_key(&name) {
+            return Err(HarnessRunError::DuplicateHarness(name));
+        }
+        plans.insert(name.clone(), Registered { plan, helpers });
+        Ok(name)
+    }
+
     /// The registered plan called `name`, if one is.
     #[must_use]
     pub fn resolve(&self, name: &str) -> Option<Arc<HarnessPlan>> {

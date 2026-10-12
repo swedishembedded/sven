@@ -47,6 +47,7 @@
 mod agent;
 mod engine;
 mod error;
+mod harness;
 mod method;
 mod run;
 mod state;
@@ -57,6 +58,7 @@ pub use agent::Agent;
 pub use atif;
 pub use engine::{ApprovalPolicy, Engine, EngineBuilder, Toolset};
 pub use error::CallError;
+pub use harness::{Harness, HarnessCheckpoint, HarnessFailure, HarnessOutcome, HarnessRun};
 pub use method::{Method, Strategy};
 pub use run::{CancelToken, Question, RunConclusion, RunOptions, RunOutcome, Usage};
 /// The schema derive a [`Method`]'s return type needs (`#[derive(JsonSchema)]`),

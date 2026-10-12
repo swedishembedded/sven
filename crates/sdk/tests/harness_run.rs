@@ -1,0 +1,421 @@
+// Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//! Spec: the SDK harness contract - load a YAML-defined harness on an
+//! engine, start a run, execute it to a typed outcome, stop it on a bound,
+//! and resume the checkpoint under the same program.
+//!
+//! Swedish Embedded AB implements embeddable agent runtimes for its clients. If
+//! your team needs expertise in building high-throughput services on top of
+//! agent state machines then you can procure our services by sending an email
+//! to info@swedishembedded.com.
+
+use std::sync::Arc;
+
+use serde_json::{json, Value};
+use sven_harness_runtime::TraceRecord;
+use sven_model::ResponseEvent;
+use sven_model_mock::ScriptedMockProvider;
+use sven_sdk::{
+    tool::{ApprovalPolicy as ToolApprovalPolicy, Tool, ToolCall, ToolCapability, ToolOutput},
+    CallError, CancelToken, Engine, RunConclusion, RunOptions,
+};
+use tokio::sync::oneshot;
+
+/// One scripted assistant reply.
+fn says(text: &str) -> Vec<ResponseEvent> {
+    vec![
+        ResponseEvent::TextDelta(text.to_string()),
+        ResponseEvent::Done,
+    ]
+}
+
+/// An engine wired to a scripted provider.
+fn engine_with(scripts: Vec<Vec<ResponseEvent>>) -> (Engine, Arc<ScriptedMockProvider>) {
+    let provider = Arc::new(ScriptedMockProvider::new(scripts));
+    let engine = Engine::builder()
+        .model_provider(Arc::clone(&provider) as Arc<_>)
+        .build()
+        .expect("an engine builds from a default config");
+    (engine, provider)
+}
+
+const GREET: &str = r#"
+api_version: "1"
+name: greet
+entry: ask
+inputs:
+  topic: string
+limits: { max_steps: 20 }
+steps:
+  ask:
+    predict:
+      prompt: "Name one word about {{ inputs.topic }}."
+      store_as: word
+      then: done
+  done:
+    return:
+      value:
+        topic: "{{ inputs.topic }}"
+        word: "{{ facts.word }}"
+"#;
+
+const FAILING: &str = r#"
+api_version: "1"
+name: refusing
+entry: boom
+limits: { max_steps: 20 }
+steps:
+  boom:
+    fail:
+      code: not_ready
+      message: "the answer is no"
+"#;
+
+const GATED: &str = r#"
+api_version: "1"
+name: gated
+entry: attempt
+capabilities: [NetworkAccess]
+limits: { max_steps: 50 }
+steps:
+  attempt:
+    retry:
+      attempts: 2
+      body: call
+      then: done
+      on_exhausted: give_up
+  call:
+    tool:
+      name: gate
+      store_as: answer
+      then: done
+  done:
+    return:
+      value: "{{ facts.answer }}"
+  give_up:
+    fail:
+      code: gate_stuck
+      message: "the gate never opened"
+"#;
+
+const GATED_EDITED: &str = r#"
+api_version: "1"
+name: gated
+entry: attempt
+capabilities: [NetworkAccess]
+limits: { max_steps: 50 }
+steps:
+  attempt:
+    retry:
+      attempts: 3
+      body: call
+      then: done
+      on_exhausted: give_up
+  call:
+    tool:
+      name: gate
+      store_as: answer
+      then: done
+  done:
+    return:
+      value: "{{ facts.answer }}"
+  give_up:
+    fail:
+      code: gate_stuck
+      message: "the gate never opened"
+"#;
+
+/// The `gate` tool: its first call blocks until `release` is opened (and
+/// announces itself on `started`), every later call answers at once.
+struct Gate {
+    started: std::sync::Mutex<Option<oneshot::Sender<()>>>,
+    release: Arc<tokio::sync::Notify>,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl Tool for Gate {
+    fn name(&self) -> &str {
+        "gate"
+    }
+
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::NetworkAccess
+    }
+
+    fn description(&self) -> &str {
+        "answers once it is opened"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({"type": "object", "properties": {}})
+    }
+
+    fn default_policy(&self) -> ToolApprovalPolicy {
+        ToolApprovalPolicy::Auto
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let call_number = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if call_number == 0 {
+            if let Some(started) = self.started.lock().expect("gate lock").take() {
+                let _ = started.send(());
+            }
+            self.release.notified().await;
+        }
+        ToolOutput::ok(&call.id, r#"{"pass": true}"#)
+    }
+}
+
+/// An engine carrying the `gate` tool, so a harness can park on its call.
+fn gated_engine(started_tx: oneshot::Sender<()>, release: Arc<tokio::sync::Notify>) -> Engine {
+    Engine::builder()
+        .model_provider(Arc::new(ScriptedMockProvider::new(vec![])) as Arc<_>)
+        .tool(Arc::new(Gate {
+            started: std::sync::Mutex::new(Some(started_tx)),
+            release,
+            calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }))
+        .build()
+        .expect("the engine takes the tool")
+}
+
+#[tokio::test]
+async fn a_harness_runs_to_its_return_value() {
+    let (engine, _p) = engine_with(vec![says("resilience")]);
+    let harness = engine
+        .load_harness_from_str(GREET)
+        .expect("a valid harness loads");
+    assert_eq!(harness.name(), "greet");
+    assert!(!harness.digest().is_empty());
+
+    let mut run = harness
+        .start(json!({"topic": "reliability"}))
+        .expect("inputs check out");
+    let outcome = run.execute(RunOptions::new()).await.expect("the run ends");
+    assert_eq!(outcome.conclusion, RunConclusion::Success);
+    assert!(
+        matches!(&outcome.result, Some(Ok(value))
+            if value == &json!({"topic": "reliability", "word": "resilience"})),
+        "the run returns the plan's value, got {:?}",
+        outcome.result
+    );
+    assert!(
+        outcome.trace.iter().any(
+            |record| matches!(record, TraceRecord::StepCompleted { step, .. } if step == "ask")
+        ),
+        "the trace records the step that ran: {:?}",
+        outcome.trace
+    );
+    assert!(
+        run.checkpoint().is_none(),
+        "a finished run has nothing to resume"
+    );
+}
+
+#[tokio::test]
+async fn inputs_are_validated_before_anything_runs() {
+    let (engine, provider) = engine_with(vec![says("unused")]);
+    let harness = engine.load_harness_from_str(GREET).expect("loads");
+
+    let error = match harness.start(json!({})) {
+        Err(error) => error,
+        Ok(_) => panic!("a missing input is refused"),
+    };
+    assert!(
+        matches!(&error, CallError::Precondition(detail) if detail.contains("topic")),
+        "the refusal names the violated field: {error:?}"
+    );
+    assert!(
+        provider.last_request.lock().unwrap().is_none(),
+        "nothing ran: the model was never asked"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_harness_reports_its_own_failure() {
+    let (engine, _p) = engine_with(vec![]);
+    let harness = engine.load_harness_from_str(FAILING).expect("loads");
+
+    let mut run = harness.start(json!({})).expect("starts");
+    let outcome = run.execute(RunOptions::new()).await.expect("ends");
+    assert_eq!(
+        outcome.conclusion,
+        RunConclusion::Success,
+        "the run completed"
+    );
+    assert!(
+        matches!(&outcome.result, Some(Err(failure))
+            if failure.code == "not_ready" && failure.message == "the answer is no"),
+        "the plan's own failure is the verdict, got {:?}",
+        outcome.result
+    );
+}
+
+#[tokio::test]
+async fn a_bounded_run_checkpoints_and_resumes_under_the_same_program() {
+    let (started_tx, started_rx) = oneshot::channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let engine = gated_engine(started_tx, Arc::clone(&release));
+    let harness = engine.load_harness_from_str(GATED).expect("loads");
+
+    let mut run = harness.start(json!({})).expect("starts");
+    let worker = tokio::spawn(async move {
+        let outcome = run
+            // A deadline, not a cancel: the bound suspends the run where it
+            // rests, and the checkpoint is what a resume continues.
+            .execute(RunOptions::new().deadline(std::time::Duration::from_millis(200)))
+            .await
+            .expect("the run stops on the bound");
+        (outcome, run.checkpoint())
+    });
+
+    // The tool call is in flight: the run is parked on it. Let the bound
+    // stop it there.
+    started_rx.await.expect("the run reached its tool step");
+    let (outcome, checkpoint) = worker.await.expect("the worker ends");
+
+    assert_eq!(outcome.conclusion, RunConclusion::Timeout);
+    assert!(
+        outcome.result.is_none(),
+        "a suspended run has no verdict: {:?}",
+        outcome.result
+    );
+    let checkpoint = checkpoint.expect("a suspend on a parked run leaves a checkpoint");
+    assert_eq!(checkpoint.plan_digest, harness.digest());
+
+    // The abandoned call ended with the suspension. The resumed run settles
+    // it through the step's retry policy, and the second call is answered
+    // at once.
+    release.notify_waiters();
+    let mut second = harness
+        .resume(checkpoint)
+        .expect("the same program resumes");
+    let outcome = second
+        .execute(RunOptions::new())
+        .await
+        .expect("the run ends");
+    assert_eq!(outcome.conclusion, RunConclusion::Success);
+    assert!(
+        matches!(&outcome.result, Some(Ok(value)) if value == &json!("{\"pass\": true}")),
+        "the resumed run finishes the plan, got {:?}",
+        outcome.result
+    );
+    assert!(
+        outcome
+            .trace
+            .iter()
+            .any(|record| matches!(record, TraceRecord::RetryAttempt { .. })),
+        "the interrupted step went through its retry policy: {:?}",
+        outcome.trace
+    );
+}
+
+#[tokio::test]
+async fn a_cancelled_run_settles_into_its_own_cancelled_state() {
+    let (started_tx, started_rx) = oneshot::channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let engine = gated_engine(started_tx, Arc::clone(&release));
+    let harness = engine.load_harness_from_str(GATED).expect("loads");
+
+    let cancel = CancelToken::new();
+    let worker_cancel = cancel.clone();
+    let mut run = harness.start(json!({})).expect("starts");
+    let worker = tokio::spawn(async move {
+        let outcome = run
+            .execute(RunOptions::new().cancel(worker_cancel))
+            .await
+            .expect("the run ends");
+        (outcome, run.checkpoint())
+    });
+    started_rx.await.expect("the run parks on its tool");
+    cancel.cancel();
+    let (outcome, checkpoint) = worker.await.expect("ends");
+
+    assert_eq!(outcome.conclusion, RunConclusion::Cancelled);
+    assert!(
+        matches!(&outcome.result, Some(Err(failure)) if failure.code == "cancelled"),
+        "a cancelled run reports its own cancelled failure, got {:?}",
+        outcome.result
+    );
+    assert!(
+        checkpoint.is_none(),
+        "a cancelled run is terminal; there is nothing to resume"
+    );
+    release.notify_waiters();
+}
+
+#[tokio::test]
+async fn a_checkpoint_refuses_a_changed_program() {
+    let (started_tx, started_rx) = oneshot::channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let engine = gated_engine(started_tx, release.clone());
+    let harness = engine.load_harness_from_str(GATED).expect("loads");
+
+    let mut run = harness.start(json!({})).expect("starts");
+    let worker = tokio::spawn(async move {
+        run.execute(RunOptions::new().deadline(std::time::Duration::from_millis(200)))
+            .await
+            .expect("the run stops");
+        run.checkpoint()
+    });
+    started_rx.await.expect("the run parks on its tool");
+    let checkpoint = worker.await.expect("ends").expect("checkpoints");
+
+    // A different engine, a different program that only claims the same
+    // name: the checkpoint must refuse it.
+    let (other, _p) = engine_with(vec![]);
+    let edited = other
+        .load_harness_from_str(GATED_EDITED)
+        .expect("the edited harness loads on its own engine");
+    let error = match edited.resume(checkpoint) {
+        Err(error) => error,
+        Ok(_) => panic!("a changed program must not adopt the checkpoint"),
+    };
+    assert!(
+        matches!(error, CallError::Precondition(_)),
+        "the refusal is a precondition, not a crash: {error:?}"
+    );
+    release.notify_waiters();
+}
+
+#[tokio::test]
+async fn runs_through_one_engine_are_independent() {
+    let (engine, _p) = engine_with(vec![says("alpha"), says("beta")]);
+    let harness = engine
+        .load_harness_from_str(GREET)
+        .expect("a valid harness loads");
+
+    let mut first = harness.start(json!({"topic": "salt"})).expect("starts");
+    let mut second = harness.start(json!({"topic": "pepper"})).expect("starts");
+    let (first, second) = tokio::join!(
+        first.execute(RunOptions::new()),
+        second.execute(RunOptions::new()),
+    );
+    let first = first.expect("the first run ends");
+    let second = second.expect("the second run ends");
+    assert!(
+        matches!(&first.result, Some(Ok(value)) if value["topic"] == json!("salt")),
+        "{first:?}"
+    );
+    assert!(
+        matches!(&second.result, Some(Ok(value)) if value["topic"] == json!("pepper")),
+        "{second:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_run_executes_once() {
+    let (engine, _p) = engine_with(vec![says("resilience")]);
+    let harness = engine.load_harness_from_str(GREET).expect("loads");
+    let mut run = harness
+        .start(json!({"topic": "reliability"}))
+        .expect("starts");
+    run.execute(RunOptions::new()).await.expect("ends");
+    let error = run
+        .execute(RunOptions::new())
+        .await
+        .expect_err("a second execute is refused");
+    assert!(matches!(error, CallError::Precondition(_)), "{error:?}");
+}

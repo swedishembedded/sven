@@ -106,6 +106,13 @@ impl HarnessMachine {
         self.run.plan()
     }
 
+    /// The run data this machine was built with: the plan, the inputs, and
+    /// — for a bundle run — the helpers and the pinned bundle digest.
+    #[must_use]
+    pub fn run(&self) -> &HarnessRunData {
+        &self.run
+    }
+
     /// The effect the most recently entered step emitted, if the walk is
     /// parked on a side-effecting step. A convenience for drivers that
     /// deliver effects one at a time; the kernel's runtime takes effects

@@ -34,6 +34,10 @@ pub struct Engine {
     toolset: Toolset,
     machines: Option<Arc<sven_machines::ModeRegistry>>,
     paths: sven_tool_api::PathScope,
+    /// The named harnesses this engine's sessions resolve `delegate` and
+    /// `parallel` children against, and that [`Engine::load_harness`]
+    /// registers into.
+    pub(crate) harnesses: Arc<sven_harness_runtime::HarnessRegistry>,
 }
 
 /// The built-in tools an engine's agents get, on top of those registered with
@@ -461,6 +465,7 @@ impl EngineBuilder {
             toolset: self.toolset,
             machines: self.machines.map(Arc::new),
             paths,
+            harnesses: Arc::new(sven_harness_runtime::HarnessRegistry::new()),
         })
     }
 }
