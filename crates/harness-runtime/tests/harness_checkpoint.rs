@@ -82,34 +82,31 @@ fn a_started_run_records_the_digest_of_the_plan_it_started_under() {
 
 #[test]
 fn a_checkpoint_resumes_at_the_step_it_stopped_on() {
-    let (mut m, mut ctx, mut state) = start(GREET, serde_json::json!({ "name": "Ada" }));
+    // The checkpoint is taken with the turn in flight: the walk parked on
+    // the predict step and nothing has come back yet.
+    let (m, ctx, _state) = start(GREET, serde_json::json!({ "name": "Ada" }));
     assert!(
         matches!(m.step_effect(), Some(Effect::CallLlm { .. })),
         "the walk parks on the predict step"
     );
-    let _ = drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        turn("harness.greet", "Hello Ada"),
-    );
-
     let snap = m.snapshot(&ctx);
     let (mut m2, mut ctx2) = HarnessMachine::restore(GREET.to_string(), snap)
         .expect("the unchanged document restores its own checkpoint");
     assert_eq!(
         ctx2.fact(RUN_STATE_FACT)
             .and_then(|v| v.get("current").and_then(|c| c.as_str())),
-        Some("save"),
+        Some("ask"),
         "the checkpoint resumes at the stored step, not the entry"
     );
+
+    // The recorded turn settles the restored run, which walks on by itself.
     let mut state = sven_harness_runtime::HarnessState::WaitingForModel;
-    for _ in 0..8 {
-        if state == sven_harness_runtime::HarnessState::Completed {
-            break;
-        }
-        let _ = drive(&mut m2, &mut ctx2, &mut state, Event::user_message("tick"));
-    }
+    let _ = drive(
+        &mut m2,
+        &mut ctx2,
+        &mut state,
+        turn("harness.greet", "Hello Ada"),
+    );
     assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
     assert_eq!(
         m2.outcome().expect("finished")["message"],
@@ -264,13 +261,14 @@ steps:
     let fx = drive(&mut m, &mut ctx, &mut state, Event::user_message("start"));
     let first = find_child(&fx).expect("the first delegate spawned a child");
     ids.push(first.as_uuid().to_string());
-    let _ = drive(
+    // The first child's completion advances the walk, which spawns the
+    // second child in the same drive (the advance signal bounce).
+    let fx = drive(
         &mut m,
         &mut ctx,
         &mut state,
         common::child_completed(&first, serde_json::json!({})),
     );
-    let fx = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
     let second = find_child(&fx).expect("the second delegate spawned a child");
     ids.push(second.as_uuid().to_string());
     assert_ne!(
@@ -285,4 +283,157 @@ fn find_child(fx: &[Effect]) -> Option<sven_hsm::MachineId> {
         Effect::InstantiateSubmachine { machine, .. } => Some(*machine),
         _ => None,
     })
+}
+
+/// A run that asks the model and then calls a tool: the replay topology
+/// that exercises both waiting states.
+const ASKER: &str = r#"
+api_version: "1"
+name: asker
+entry: ask
+limits: { max_steps: 50, max_model_turns: 5, max_tool_calls: 5 }
+steps:
+  ask:
+    predict:
+      prompt: "What shall I read?"
+      store_as: subject
+      then: read
+  read:
+    tool:
+      name: read_file
+      args: { path: "{{ facts.subject }}" }
+      then: out
+  out:
+    return:
+      value:
+        subject: "{{ facts.subject }}"
+        text: "{{ steps.read.value }}"
+"#;
+
+#[test]
+fn a_model_and_tool_run_replays_from_its_recorded_events() {
+    // The recorded log: every completion event the original run's
+    // executors posted. The completions are inputs to the replay; the
+    // effects the replay emits (its turns and calls) are collected, never
+    // executed - nothing here runs a tool.
+    let events = vec![
+        Event::user_message("start"),
+        turn("harness.asker", "read the notes"),
+        Event::ToolSucceeded {
+            call_id: sven_harness_runtime::step_call_id("asker", "read"),
+            observation: serde_json::json!("the notes"),
+        },
+        Event::user_message("tick"),
+    ];
+    let (m1, ctx1, state1, fx1) = run_asker(&events);
+    let (m2, ctx2, state2, fx2) = run_asker(&events);
+    assert_eq!(state1, sven_harness_runtime::HarnessState::Completed);
+    assert_eq!(state2, sven_harness_runtime::HarnessState::Completed);
+    assert_eq!(
+        ctx1.fact(RUN_STATE_FACT),
+        ctx2.fact(RUN_STATE_FACT),
+        "both reconstructions reach the same logical state"
+    );
+    assert_eq!(
+        fx1, fx2,
+        "both reconstructions emit the same turns and calls"
+    );
+    assert_eq!(m1.outcome(), m2.outcome());
+    assert_eq!(
+        m1.outcome().map(|o| o["subject"].clone()),
+        Some(serde_json::json!("read the notes"))
+    );
+}
+
+/// Drives a fresh `ASKER` machine through `events`, collecting the effects
+/// it emits (as an executor would observe them, executing nothing).
+fn run_asker(
+    events: &[Event],
+) -> (
+    HarnessMachine,
+    sven_hsm::Context,
+    sven_harness_runtime::HarnessState,
+    Vec<Effect>,
+) {
+    let run = sven_harness_runtime::HarnessRunData::new(ASKER, serde_json::json!({}))
+        .expect("valid harness");
+    let mut m = HarnessMachine::new(run);
+    let mut ctx = sven_hsm::Context::new();
+    let mut state = m.initial();
+    let mut effects = Vec::new();
+    for event in events {
+        effects.extend(drive(&mut m, &mut ctx, &mut state, event.clone()));
+    }
+    (m, ctx, state, effects)
+}
+
+#[test]
+fn a_restored_run_never_repeats_the_operation_in_flight() {
+    const READER: &str = r#"
+api_version: "1"
+name: reader
+entry: fetch
+limits: { max_steps: 50, max_tool_calls: 5 }
+steps:
+  fetch:
+    tool:
+      name: read_file
+      args: { path: "notes.txt" }
+      then: out
+  out:
+    return: { value: "{{ steps.fetch.value }}" }
+"#;
+    let (m, ctx, _state) = start(READER, serde_json::json!({}));
+    let expected = sven_harness_runtime::step_call_id("reader", "fetch");
+    let snap = m.snapshot(&ctx);
+
+    // The restore itself emits nothing: the call already left the process
+    // before the checkpoint, and re-emitting it would run the tool twice.
+    let (mut m2, mut ctx2) = HarnessMachine::restore(READER.to_string(), snap)
+        .expect("the unchanged document restores its own checkpoint");
+    assert!(
+        m2.step_effect().is_none(),
+        "a restored machine does not re-emit the call in flight"
+    );
+    let mut state = sven_harness_runtime::HarnessState::WaitingForTool;
+    let mut effects = Vec::new();
+    effects.extend(drive(
+        &mut m2,
+        &mut ctx2,
+        &mut state,
+        Event::ToolSucceeded {
+            call_id: expected,
+            observation: serde_json::json!("the notes"),
+        },
+    ));
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Completed {
+            break;
+        }
+        effects.extend(drive(
+            &mut m2,
+            &mut ctx2,
+            &mut state,
+            Event::user_message("tick"),
+        ));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
+    assert!(
+        effects
+            .iter()
+            .all(|fx| !matches!(fx, Effect::CallTool { .. })),
+        "the resumed run never calls the tool again: {effects:?}"
+    );
+    let trace = m2.trace(&ctx2);
+    assert_eq!(
+        trace
+            .iter()
+            .filter(|r| matches!(
+                r,
+                sven_harness_runtime::TraceRecord::StepCompleted { step, .. } if step.as_str() == "fetch"
+            ))
+            .count(),
+        1,
+        "the in-flight operation settled exactly once: {trace:?}"
+    );
 }

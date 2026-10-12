@@ -859,6 +859,58 @@ steps:
         assert_eq!(result, json!({"which": "entry"}), "{result}");
     }
 
+    /// A harness child advances past its model turn by itself: no tick
+    /// driver pumps a spawned run, so the run walks on after storing a
+    /// turn's answer, or the child never reports to its parent.
+    #[tokio::test]
+    async fn a_harness_child_advances_past_its_model_turn_by_itself() {
+        const THINKER: &str = r#"
+api_version: "1"
+name: thinker
+entry: ask
+limits: { max_steps: 50, max_model_turns: 5 }
+steps:
+  ask:
+    predict:
+      prompt: "Think"
+      store_as: thought
+      then: out
+  out:
+    return: { value: { thought: "{{ facts.thought }}" } }
+"#;
+        let registry = sven_harness_runtime::HarnessRegistry::new();
+        registry.register(THINKER).expect("the document registers");
+        let spawner = spawner(
+            ScriptedMockProvider::new(vec![vec![
+                ResponseEvent::TextDelta("deep".into()),
+                ResponseEvent::Done,
+            ]]),
+            Config::default(),
+        )
+        .with_harnesses(Arc::new(registry));
+        let parent = ErasedRuntime::spawn(
+            Box::new(Hsm::new(Collector(MachineId::new()))) as Box<dyn ErasedMachine>,
+            Context::new(),
+            PermissionPolicy::builder().build(),
+            sven_executors::CompositeExecutorBuilder::default().build(),
+            8,
+        );
+        spawner
+            .spawn_child(
+                MachineId::new(),
+                json!({"harness": "thinker", "input": {}}),
+                child_run(&parent),
+                parent.sink(),
+            )
+            .await;
+        tokio::time::timeout(Duration::from_secs(10), parent.wait_done())
+            .await
+            .expect("the harness child finishes its own run");
+        let report = parent.join().await.unwrap();
+        let result = report.ctx.fact("child").cloned().unwrap();
+        assert_eq!(result, json!({"thought": "deep"}), "{result}");
+    }
+
     /// A parallel fan-out descriptor names the branch: the child starts at
     /// that step, not the plan's entry.
     #[tokio::test]

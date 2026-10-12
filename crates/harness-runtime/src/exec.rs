@@ -371,9 +371,16 @@ impl HarnessMachine {
             .unwrap_or_default();
         run.current = then;
         run.store(ctx);
-        // Effect-free: the pure tail waits for the next tick (the driver's
-        // UserMessage advance), keeping completion dispatches I/O-clean.
-        Reaction::handled()
+        // The walk advances through Advancing: its entry emits the advance
+        // signal, which the kernel's executor bounces back and which then
+        // executes the step the walk points at. A run never rests after a
+        // stored completion waiting for an external tick — a spawned child
+        // has no tick driver.
+        Reaction::Transition {
+            target: HarnessState::Advancing,
+            effects: Vec::new(),
+            rationale: format!("step `{step_id}` completed"),
+        }
     }
 
     /// A side effect failed: loop the active retry frame (straight back

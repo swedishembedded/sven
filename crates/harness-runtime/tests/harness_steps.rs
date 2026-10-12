@@ -53,9 +53,12 @@ fn a_predict_step_with_a_schema_constrains_the_turn() {
         &mut state,
         turn("harness.shaped", "{\"greeting\": \"hi Ada\"}"),
     );
+    // Storing the answer advances the walk itself: internal signals and
+    // audit bookkeeping, but no I/O.
     assert!(
-        fx.is_empty(),
-        "storing the answer advances by internal event only"
+        fx.iter()
+            .all(|fx| matches!(fx, Effect::EmitInternal { .. } | Effect::PersistAudit)),
+        "storing the answer advances without I/O: {fx:?}"
     );
     assert_eq!(
         ctx.fact(RUN_STATE_FACT).and_then(|v| v
@@ -129,9 +132,12 @@ fn a_delegate_step_emits_instantiate_submachine_and_parks_waiting_for_child() {
             serde_json::json!({ "ok": true, "summary": "rust is nice" }),
         ),
     );
+    // Storing the child's result advances the walk itself: internal signals
+    // and audit bookkeeping, but no I/O.
     assert!(
-        fx.is_empty(),
-        "storing the result advances by internal event only"
+        fx.iter()
+            .all(|fx| matches!(fx, Effect::EmitInternal { .. } | Effect::PersistAudit)),
+        "storing the result advances without I/O: {fx:?}"
     );
     assert_eq!(
         ctx.fact(RUN_STATE_FACT).and_then(|v| v

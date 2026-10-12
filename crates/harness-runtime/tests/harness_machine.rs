@@ -73,9 +73,13 @@ fn a_predict_step_emits_one_call_llm_and_stores_its_answer() {
         &mut state,
         turn("harness.greet", "Hello Ada"),
     );
+    // Storing the answer advances the walk itself (the advance signal
+    // bounce) through the pure tail to the run's end: internal signals and
+    // audit bookkeeping, but no I/O.
     assert!(
-        fx.is_empty(),
-        "storing the answer advances by internal event only"
+        fx.iter()
+            .all(|fx| matches!(fx, Effect::EmitInternal { .. } | Effect::PersistAudit)),
+        "storing the answer advances without I/O: {fx:?}"
     );
     assert_eq!(
         ctx.fact(RUN_STATE_FACT).and_then(|v| v
@@ -333,7 +337,11 @@ steps:
         &mut state,
         turn("harness.worker", "wrote x.txt"),
     );
-    assert!(fx.is_empty(), "a final turn just stores the answer");
+    assert!(
+        fx.iter()
+            .all(|fx| matches!(fx, Effect::EmitInternal { .. } | Effect::PersistAudit)),
+        "a final turn stores the answer and advances without I/O: {fx:?}"
+    );
     for _ in 0..8 {
         if state == sven_harness_runtime::HarnessState::Completed {
             break;
