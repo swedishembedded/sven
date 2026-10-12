@@ -319,3 +319,29 @@ fn a_delegate_beyond_max_delegate_depth_fails_before_emitting() {
     assert_eq!(m.outcome().expect("outcome")["code"], "delegate_depth");
     let _ = ctx;
 }
+
+/// A parked run ignores a tick: a run with I/O in flight does not advance
+/// its pure chain, and re-executing a parked side effect would emit a
+/// second child for the same step.
+#[test]
+fn a_tick_while_a_delegate_child_is_in_flight_is_ignored() {
+    let (mut m, mut ctx, mut state) = start(CALLER, serde_json::json!({}));
+    let first = m
+        .step_effect()
+        .expect("the delegate step emitted its child effect")
+        .clone();
+    let Effect::InstantiateSubmachine { machine, .. } = &first else {
+        panic!("delegate emits InstantiateSubmachine, got {first:?}");
+    };
+    assert_eq!(state, HarnessState::WaitingForChild);
+
+    let fx = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    assert!(fx.is_empty(), "a tick does not re-execute a parked step");
+    assert_eq!(state, HarnessState::WaitingForChild);
+    // The child record still names the one machine the step emitted.
+    let child = ctx
+        .fact(RUN_STATE_FACT)
+        .and_then(|v| v.get("child").cloned())
+        .expect("the child record survives the ignored tick");
+    assert_eq!(child["machine"], machine.as_uuid().to_string());
+}

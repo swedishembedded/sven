@@ -582,7 +582,10 @@ impl HarnessMachine {
                 self.complete_step(&mut run, &step, result.clone(), ctx)
             }
             Event::EffectFailed { error, .. } => self.side_effect_failed(&mut run, error, ctx),
-            _ => self.tick_when_idle(&mut run, event, ctx),
+            // The tick rule: a run with I/O in flight does not advance its
+            // pure chain, and re-executing a parked step would emit a
+            // second child for the same delegate.
+            _ => Reaction::Ignored,
         }
     }
 
