@@ -36,6 +36,10 @@ pub struct HarnessPlan {
     /// Declared outputs, by name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outputs: Option<std::collections::BTreeMap<String, crate::spec::InputValue>>,
+    /// Named JSON Schemas, by name. A `predict` step's `schema` names one;
+    /// the runtime sends it as the turn's response format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schemas: Option<std::collections::BTreeMap<String, serde_json::Value>>,
     /// Declared capabilities, sorted, deduplicated.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
@@ -268,6 +272,7 @@ pub fn compile(spec: &HarnessSpec) -> HarnessPlan {
         entry: spec.entry.clone(),
         inputs: spec.inputs.clone(),
         outputs: spec.outputs.clone(),
+        schemas: spec.schemas.clone(),
         capabilities,
         limits,
         steps,

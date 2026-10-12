@@ -364,3 +364,127 @@ steps:
     let err = extra.compile().expect_err("unreferenced helper");
     assert!(err.to_string().contains("unused"), "{err}");
 }
+
+#[test]
+fn a_predict_step_names_a_schema_declared_in_the_document() {
+    let yaml = r#"
+api_version: "1"
+name: shaped
+entry: ask
+limits: { max_steps: 10, max_model_turns: 3 }
+schemas:
+  answer:
+    type: object
+    properties:
+      greeting: { type: string }
+    required: [greeting]
+steps:
+  ask:
+    predict:
+      prompt: "Say hello"
+      schema: answer
+      store_as: spoken
+      then: done
+  done:
+    return:
+      value: {}
+"#;
+    let plan = doc(yaml).expect("a named schema must compile");
+    let Some(schema) = plan.schemas.as_ref().and_then(|s| s.get("answer")) else {
+        panic!("the declared schema must be carried in the plan");
+    };
+    assert_eq!(schema["type"], "object");
+    let sven_harness_spec::PlanPrimitive::Predict { schema: named, .. } =
+        &plan.step("ask").expect("step").primitive
+    else {
+        panic!("ask must be a predict step");
+    };
+    assert_eq!(named.as_deref(), Some("answer"));
+}
+
+#[test]
+fn a_schema_name_without_a_declared_schema_is_rejected() {
+    let yaml = r#"
+api_version: "1"
+name: dangling
+entry: ask
+limits: { max_steps: 10, max_model_turns: 3 }
+steps:
+  ask:
+    predict:
+      prompt: "Say hello"
+      schema: nope
+      then: done
+  done:
+    return:
+      value: {}
+"#;
+    let err = doc(yaml).expect_err("a dangling schema name must be rejected");
+    assert!(err.to_string().contains("nope"), "{err}");
+}
+
+#[test]
+fn a_declared_but_unused_schema_is_rejected() {
+    let yaml = r#"
+api_version: "1"
+name: unused
+entry: done
+schemas:
+  orphan:
+    type: string
+steps:
+  done:
+    return:
+      value: {}
+"#;
+    let err = doc(yaml).expect_err("an unreferenced schema must be rejected");
+    assert!(err.to_string().contains("orphan"), "{err}");
+}
+
+#[test]
+fn a_schema_that_is_not_an_object_is_rejected() {
+    let yaml = r#"
+api_version: "1"
+name: badshape
+entry: ask
+limits: { max_steps: 10, max_model_turns: 3 }
+schemas:
+  answer: "not a schema"
+steps:
+  ask:
+    predict:
+      prompt: "Say hello"
+      schema: answer
+      then: done
+  done:
+    return:
+      value: {}
+"#;
+    let err = doc(yaml).expect_err("a non-object schema must be rejected");
+    assert!(err.to_string().contains("answer"), "{err}");
+}
+
+#[test]
+fn a_declared_schema_changes_the_plan_digest() {
+    let base = r#"
+api_version: "1"
+name: pinned
+entry: ask
+limits: { max_steps: 10, max_model_turns: 3 }
+schemas:
+  answer: { type: string }
+steps:
+  ask:
+    predict:
+      prompt: "Say hello"
+      schema: answer
+      then: done
+  done:
+    return:
+      value: {}
+"#;
+    let changed = base.replace("type: string", "type: integer");
+    let a = doc(base).expect("a");
+    let b = doc(&changed).expect("b");
+    assert_ne!(a.digest, b.digest, "schema bytes are program meaning");
+}

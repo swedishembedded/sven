@@ -73,7 +73,11 @@ impl HarnessMachine {
                 });
                 self.walk_to(run, &body, ctx)
             }
-            PlanPrimitive::Predict { ref prompt, .. } => {
+            PlanPrimitive::Predict {
+                ref prompt,
+                ref schema,
+                ..
+            } => {
                 run.counts.model_turns += 1;
                 if run.exceeds_model_budget(self.run.plan()) {
                     return self.fail_now(
@@ -83,7 +87,7 @@ impl HarnessMachine {
                         ctx,
                     );
                 }
-                let effect = self.turn_effect(run, prompt);
+                let effect = self.turn_effect(run, prompt, schema.as_deref());
                 self.cache_effect(effect.clone());
                 self.park(run, &step, Waiting::Model);
                 run.store(ctx);
@@ -114,7 +118,7 @@ impl HarnessMachine {
                     pending: Vec::new(),
                     rounds: 0,
                 });
-                let effect = self.turn_effect(run, prompt);
+                let effect = self.turn_effect(run, prompt, None);
                 self.cache_effect(effect.clone());
                 self.park(run, &step, Waiting::Model);
                 run.store(ctx);
@@ -257,8 +261,28 @@ impl HarnessMachine {
         error: &str,
         ctx: &mut Context,
     ) -> Reaction<HarnessState> {
+        self.step_failed(run, "side_effect_failed", error, ctx)
+    }
+
+    /// A schema'd predict answer did not parse as JSON: the same retry
+    /// handling as any other failed step, with its own failure code.
+    pub(super) fn invalid_answer(
+        &mut self,
+        run: &mut HarnessRunState,
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
+        self.step_failed(run, "invalid_answer", "answer is not valid JSON", ctx)
+    }
+
+    fn step_failed(
+        &mut self,
+        run: &mut HarnessRunState,
+        code: &str,
+        error: &str,
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
         let Some(frame) = run.retry.clone() else {
-            return self.fail_now(run, "side_effect_failed", error, ctx);
+            return self.fail_now(run, code, error, ctx);
         };
         if frame.left <= 1 {
             run.retry = None;

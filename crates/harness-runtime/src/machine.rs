@@ -193,6 +193,23 @@ impl HarnessMachine {
         self.leaf = leaf;
     }
 
+    /// The value a completed predict step stores. A step without a schema
+    /// stores the raw text; a step that named a schema must return a JSON
+    /// document, otherwise the step failed its contract.
+    pub(super) fn answer_value(&self, step_id: &str, text: &str) -> Option<Value> {
+        let schema = match self.plan().step(step_id) {
+            Some(sven_harness_spec::PlanStep {
+                primitive: PlanPrimitive::Predict { schema, .. },
+                ..
+            }) => schema.clone(),
+            _ => None,
+        };
+        if schema.is_none() {
+            return Some(Value::String(text.to_string()));
+        }
+        serde_json::from_str(text).ok()
+    }
+
     /// The deterministic call id of `step` (with the active retry frame's
     /// attempt suffix, when the step is a retry body).
     pub(super) fn call_id_for(&self, step: &PlanStep, state: &HarnessRunState) -> ToolCallId {
@@ -206,16 +223,31 @@ impl HarnessMachine {
     }
 
     /// Builds a single-turn `CallLlm` request for `prompt`: no tools, no
-    /// all-tools fallback, no tool rounds — a constrained turn.
-    pub(super) fn turn_effect(&self, state: &HarnessRunState, prompt: &Template) -> Effect {
+    /// all-tools fallback, no tool rounds — a constrained turn. When the
+    /// step names a declared schema, the turn carries it as the response
+    /// format.
+    pub(super) fn turn_effect(
+        &self,
+        state: &HarnessRunState,
+        prompt: &Template,
+        schema_name: Option<&str>,
+    ) -> Effect {
         let instruction = state.resolve_template(prompt);
+        let mut schema = Value::Null;
+        let mut name = String::new();
+        if let Some(want) = schema_name {
+            if let Some(body) = self.plan().schemas.as_ref().and_then(|s| s.get(want)) {
+                name = want.to_string();
+                schema = body.clone();
+            }
+        }
         let request = TurnRequest {
             thread: harness_thread(self.plan()),
             instruction: instruction.as_str().unwrap_or_default().to_string(),
             tools: Vec::new(),
             all_tools_mode: String::new(),
-            schema: Value::Null,
-            schema_name: String::new(),
+            schema,
+            schema_name: name,
             model: None,
             dynamic_suffix: None,
             max_tool_rounds: Some(0),
@@ -405,8 +437,14 @@ impl HarnessMachine {
                         return self.on_agent_turn(&mut run, agent, text, tool_calls, ctx);
                     }
                 }
-                // `predict`: the turn's text is the answer.
-                self.complete_step(&mut run, &inflight.step, Value::String(text.clone()), ctx)
+                // `predict`: the turn's text is the answer. A schema'd
+                // answer must parse as JSON (providers enforce the format,
+                // but the caller always post-parses).
+                let answer = match self.answer_value(&inflight.step, text) {
+                    Some(v) => v,
+                    None => return self.invalid_answer(&mut run, ctx),
+                };
+                self.complete_step(&mut run, &inflight.step, answer, ctx)
             }
             Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                 self.side_effect_failed(&mut run, error, ctx)

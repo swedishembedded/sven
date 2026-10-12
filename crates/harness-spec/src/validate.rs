@@ -21,6 +21,9 @@
 //!    bounds.
 //! 6. The output contract: every `return` step's value shape satisfies the
 //!    declared `outputs`.
+//! 7. The schema set: every declared schema is a JSON object, every
+//!    `predict` step's `schema` names a declared schema, and every declared
+//!    schema is named by some step.
 
 use crate::error::HarnessError;
 use crate::expr::{Expr, Template};
@@ -44,11 +47,45 @@ const PATH_ROOTS: [&str; 4] = ["inputs", "facts", "steps", "env"];
 pub fn validate(spec: &HarnessSpec) -> Result<(), HarnessError> {
     validate_version(spec)?;
     validate_structure(spec)?;
+    validate_schemas(spec)?;
     validate_references(spec)?;
     validate_reachability(spec)?;
     validate_capabilities(spec)?;
     validate_limits(spec)?;
     validate_outputs(spec)
+}
+
+/// Validates the declared schema set: every schema is a JSON object (the
+/// only shape a JSON Schema document takes), and every declared schema is
+/// named by some `predict` step — a schema nothing references is dead
+/// weight the digest would pin without anyone reading it.
+fn validate_schemas(spec: &HarnessSpec) -> Result<(), HarnessError> {
+    let Some(schemas) = &spec.schemas else {
+        return Ok(());
+    };
+    for (name, schema) in schemas {
+        if !schema.is_object() {
+            return Err(HarnessError::Invalid(format!(
+                "schema `{name}` must be a JSON Schema object, got {schema}"
+            )));
+        }
+    }
+    let used: std::collections::BTreeSet<&str> = spec
+        .steps
+        .values()
+        .filter_map(|step| match step {
+            StepSpec::Predict(p) => p.schema.as_deref(),
+            _ => None,
+        })
+        .collect();
+    for name in schemas.keys() {
+        if !used.contains(name.as_str()) {
+            return Err(HarnessError::Invalid(format!(
+                "schema `{name}` is declared but no `predict` step names it"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
@@ -91,10 +128,23 @@ fn validate_references(spec: &HarnessSpec) -> Result<(), HarnessError> {
                 )));
             }
         }
+        if let StepSpec::Predict(p) = step {
+            let Some(name) = &p.schema else { continue };
+            if !declared_schemas(spec).any(|(declared, _)| declared == name) {
+                return Err(HarnessError::Invalid(format!(
+                    "step `{id}` names schema `{name}`, which the document does not declare"
+                )));
+            }
+        }
         validate_step_shape(id, step)?;
         validate_step_paths(id, step)?;
     }
     Ok(())
+}
+
+/// The document's declared schemas: `(name, value)` pairs, sorted by name.
+fn declared_schemas(spec: &HarnessSpec) -> impl Iterator<Item = (&String, &serde_json::Value)> {
+    spec.schemas.iter().flatten()
 }
 
 /// Validates one step's internal shape (beyond what serde enforced).

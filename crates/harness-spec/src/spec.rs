@@ -194,6 +194,11 @@ pub struct HarnessSpec {
     /// Descriptions of the values the harness takes at start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Named JSON Schemas the document declares, by name. A `predict`
+    /// step's `schema` names one of these; the schema travels in the plan,
+    /// so the run constrains its model turns without any external source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schemas: Option<std::collections::BTreeMap<String, serde_json::Value>>,
     /// Typed inputs, by name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inputs: Option<std::collections::BTreeMap<String, InputValue>>,
@@ -247,8 +252,8 @@ pub struct LimitsSpec {
     into = "serde_json::Value"
 )]
 pub enum StepSpec {
-    /// One constrained model turn: the model answers, the harness validates
-    /// the answer against a schema, and the result is stored.
+    /// One constrained model turn: the model answers a JSON-schema-shaped
+    /// question (when a schema is named) and the answer is stored.
     Predict(Box<PredictStepSpec>),
     /// A model turn with a tool loop: the model may call tools until it
     /// answers.
@@ -280,11 +285,12 @@ pub enum StepSpec {
 pub struct PredictStepSpec {
     /// What to ask. A template over run data.
     pub prompt: String,
-    /// Optional JSON-schema name the answer must satisfy. The schema itself
-    /// is resolved by the runtime from the harness bundle.
+    /// Optional name of a JSON Schema declared in the document's top-level
+    /// `schemas` map. The named schema travels in the plan and constrains
+    /// the turn's response format; the answer must parse as JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
-    /// Where to store the answer's text.
+    /// Where to store the answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_as: Option<String>,
     /// The next step.
