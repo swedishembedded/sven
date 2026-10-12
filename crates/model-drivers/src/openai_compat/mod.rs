@@ -1896,6 +1896,45 @@ mod tests {
     }
 
     #[test]
+    fn sse_comment_keepalive_chunk_yields_liveness_without_content() {
+        // A server that commits the SSE response and then keeps the connection
+        // alive with comment lines while it prefills a long prompt (the SSE
+        // spec's recommended keepalive, and what axum's `Sse::keep_alive`
+        // emits).  Comments produce no `data:` event, but the bytes DID arrive
+        // - the stream-idle watchdog must be reset, or a multi-minute local
+        // prefill reads as a stale connection.  The chunk therefore yields one
+        // empty TextDelta (a no-op for content, liveness for the watchdog) -
+        // the same contract the Anthropic driver applies to its `ping` event.
+        let mut buf = b": ping\n\n".to_vec();
+        let events = drain_complete_sse_lines_bytes(&mut buf);
+        assert_eq!(events.len(), 1, "a comment-only chunk must signal liveness");
+        assert!(
+            matches!(&events[0], Ok(ResponseEvent::TextDelta(t)) if t.is_empty()),
+            "the liveness signal must carry no content: {:?}",
+            events[0]
+        );
+        assert!(buf.is_empty(), "the blank line after the comment is consumed");
+
+        // A real delta after the keepalives is unaffected.
+        buf.extend_from_slice(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n",
+        );
+        let events = drain_complete_sse_lines_bytes(&mut buf);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], Ok(ResponseEvent::TextDelta(t)) if t == "hi"));
+    }
+
+    #[test]
+    fn partial_line_chunk_yields_no_liveness() {
+        // Bytes that do not complete a line are not a heartbeat: an SSE event
+        // legitimately spans TCP packets, so a partial line must stay silent
+        // (no watchdog reset) and remain buffered.
+        let mut buf = b": pin".to_vec();
+        assert!(drain_complete_sse_lines_bytes(&mut buf).is_empty());
+        assert_eq!(buf, b": pin", "partial line must stay in the buffer");
+    }
+
+    #[test]
     fn crlf_line_ending_unicode_preserved() {
         // CRLF endings (Windows-style) must also work correctly.
         let content = "caf\u{00e9}";

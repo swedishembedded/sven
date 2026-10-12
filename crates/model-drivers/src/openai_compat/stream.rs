@@ -30,19 +30,33 @@ pub(super) fn parse_sse_data_line(line: &str) -> Option<anyhow::Result<ResponseE
 /// a `\n` position is guaranteed to be complete UTF-8.  This is the canonical
 /// implementation; `drain_complete_sse_lines` (the `&mut String` variant below)
 /// delegates here so that tests can continue to use the simpler `String` API.
+///
+/// A chunk that completes at least one SSE line but yields no parseable event
+/// (comment keepalives - `: ping` - blank lines, unknown non-`data` fields)
+/// still returns one empty `TextDelta`: bytes arrived, so the connection is
+/// alive and the caller's stream-idle watchdog must be reset.  The same
+/// contract as the Anthropic driver, which maps the wire-level `ping` event
+/// to an empty `TextDelta` for exactly this reason.  An empty `TextDelta` is
+/// a no-op downstream (`stream_turn`'s non-empty guard skips it) beyond that
+/// watchdog reset.
 pub(crate) fn drain_complete_sse_lines_bytes(
     buf: &mut Vec<u8>,
 ) -> Vec<anyhow::Result<ResponseEvent>> {
     let mut events = Vec::new();
+    let mut completed_line = false;
     while let Some(nl_pos) = buf.iter().position(|&b| b == b'\n') {
         let line_bytes: Vec<u8> = buf.drain(..=nl_pos).collect();
         // Safe: the slice ends at a '\n' byte boundary, so it is valid UTF-8.
         let line = String::from_utf8_lossy(&line_bytes)
             .trim_end_matches(['\r', '\n'])
             .to_string();
+        completed_line = true;
         if let Some(ev) = parse_sse_data_line(&line) {
             events.push(ev);
         }
+    }
+    if events.is_empty() && completed_line {
+        events.push(Ok(ResponseEvent::TextDelta(String::new())));
     }
     events
 }
