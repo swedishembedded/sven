@@ -139,7 +139,10 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         | AgentEvent::SubagentStarted { .. }
         | AgentEvent::SubagentEvent { .. }
         | AgentEvent::ModelChanged(_)
-        | AgentEvent::PeerList(_) => None,
+        | AgentEvent::PeerList(_)
+        // A harness run's lifecycle is the host's concern; the ACP wire
+        // carries the agent's own progress, not the harness around it.
+        | AgentEvent::Harness { .. } => None,
     }
 }
 

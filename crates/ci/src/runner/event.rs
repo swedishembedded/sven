@@ -353,6 +353,11 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         AgentEvent::ToolProgress { message, .. } => {
             write_stderr(&format!("[sven:progress] {message}"));
         }
+        // A harness run's lifecycle, one line per event: headless output
+        // keeps the run's progress even when it only shows the answer.
+        AgentEvent::Harness { event, .. } => {
+            write_stderr(&format!("[sven:harness] {event}"));
+        }
         AgentEvent::TurnComplete
         | AgentEvent::QuestionAnswer { .. }
         | AgentEvent::CollabEvent(_)

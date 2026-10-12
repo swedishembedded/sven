@@ -16,7 +16,7 @@ use sven_harness_spec::{DelegateTarget, PlanPrimitive, PlanStep};
 use sven_hsm::{capability_for_tool_name, Context, Effect, Event, Reaction};
 use sven_vocab::verify::VerifierSpec;
 
-use crate::machine::{harness_thread, store_as_of, then_of, HarnessMachine};
+use crate::machine::{harness_thread, primitive_word, store_as_of, then_of, HarnessMachine};
 use crate::run::{
     child_machine_id, AgentLoop, ChildRun, HarnessRunState, Inflight, ParallelJoin, RetryFrame,
     TraceRecord, Waiting, OUTCOME_FACT,
@@ -79,6 +79,19 @@ impl HarnessMachine {
         if run.counts.steps > run.step_budget(self.run.plan()) {
             return self.fail_now(run, "step_budget", "the run exceeded its step budget", ctx);
         }
+        // The walk's progress record: a consumer watching the run sees each
+        // step begin, and the retry frame's body re-entries carry which
+        // attempt they are. The body's attempt is the frame's spent count,
+        // counted from 1.
+        let attempt = run
+            .retry
+            .as_ref()
+            .map_or(1, |frame| frame.attempts - frame.left + 1);
+        run.trace.push(TraceRecord::StepStarted {
+            step: step_id.clone(),
+            primitive: primitive_word(&step.primitive).to_string(),
+            attempt,
+        });
         match step.primitive.clone() {
             PlanPrimitive::Assign { set, then } => {
                 for (name, raw) in set {
@@ -92,11 +105,13 @@ impl HarnessMachine {
                 when_true,
                 when_false,
             } => {
-                let chosen = if run.eval_expr(&on) {
-                    when_true
-                } else {
-                    when_false
-                };
+                let condition = run.eval_expr(&on);
+                let chosen = if condition { when_true } else { when_false };
+                run.trace.push(TraceRecord::BranchSelected {
+                    step: step_id.clone(),
+                    condition,
+                    selected: chosen.clone(),
+                });
                 self.walk_to(run, &chosen, ctx)
             }
             PlanPrimitive::Retry { attempts, body, .. } => {
@@ -581,10 +596,12 @@ impl HarnessMachine {
         frame.left -= 1;
         let body = frame.body.clone();
         let attempt = frame.attempt();
+        let remaining = frame.left - 1;
         run.retry = Some(frame);
         run.trace.push(TraceRecord::RetryAttempt {
             step: body.clone(),
             attempt,
+            remaining,
         });
         run.awaiting = None;
         run.inflight = None;

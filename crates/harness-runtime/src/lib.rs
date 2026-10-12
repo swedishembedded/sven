@@ -26,6 +26,7 @@
 
 mod checkpoint;
 mod error;
+mod events;
 mod exec;
 mod machine;
 mod registry;
@@ -33,6 +34,7 @@ mod run;
 mod state;
 
 pub use error::HarnessRunError;
+pub use events::harness_event;
 pub use machine::HarnessMachine;
 pub use registry::HarnessRegistry;
 pub use run::{

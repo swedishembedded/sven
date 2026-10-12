@@ -318,6 +318,16 @@ pub struct Counts {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TraceRecord {
+    /// A step began executing; the attempt it is on, 1-based (the body of
+    /// a `retry` re-enters for a second attempt, everything else is 1).
+    StepStarted {
+        /// The step that began.
+        step: String,
+        /// The step's primitive, in words (`predict`, `tool`, ...).
+        primitive: String,
+        /// The attempt this execution is, 1-based.
+        attempt: u64,
+    },
     /// A step's result was stored; the id of the tool call that produced
     /// it, when the step called a tool.
     StepCompleted {
@@ -327,12 +337,31 @@ pub enum TraceRecord {
         #[serde(skip_serializing_if = "Option::is_none")]
         call_id: Option<ToolCallId>,
     },
+    /// A `branch` step chose its successor.
+    BranchSelected {
+        /// The branch step.
+        step: String,
+        /// The condition's result.
+        condition: bool,
+        /// The step it selected.
+        selected: String,
+    },
+    /// A `verify` step settled its verdict.
+    Verified {
+        /// The verifier's kind, in words (`file_exists`, ...).
+        verifier: String,
+        /// Whether the verdict passed.
+        ok: bool,
+    },
     /// A retry frame looped back; the attempt it is about to make.
     RetryAttempt {
         /// The body step re-entered.
         step: String,
         /// The 1-based attempt about to run.
         attempt: u64,
+        /// Attempts left after this one.
+        #[serde(default)]
+        remaining: u64,
     },
     /// A delegate step started a child run.
     ChildStarted {

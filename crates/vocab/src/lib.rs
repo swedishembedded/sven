@@ -22,9 +22,12 @@
 
 use serde_json::Value;
 
+pub mod harness;
 pub mod provenance;
 pub mod turn;
 pub mod verify;
+
+pub use harness::HarnessEvent;
 
 pub use turn::{RefusedCall, TurnRequest, TURN_KIND};
 
@@ -684,5 +687,14 @@ pub enum SessionEvent {
         to: String,
         /// The kind of event dispatched.
         event: String,
+    },
+    /// A structured harness lifecycle event, streamed from a running
+    /// harness. The run id links the run's events across a suspend and a
+    /// resume - a resumed run keeps the id its checkpoint carried.
+    Harness {
+        /// The run the event belongs to.
+        run_id: String,
+        /// What happened.
+        event: crate::harness::HarnessEvent,
     },
 }

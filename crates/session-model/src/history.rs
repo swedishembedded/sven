@@ -44,7 +44,8 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
         // plus every event with no message-history representation: streaming
         // deltas (folded into the eventual TextComplete), progress/usage/
         // compaction telemetry, mode/model/todo bookkeeping, questions,
-        // titles, team/subagent/peer observations, and the transition trace.
+        // titles, team/subagent/peer observations, harness lifecycle, and
+        // the transition trace.
         SessionEvent::TextComplete(_)
         | SessionEvent::Aborted { .. }
         | SessionEvent::TextDelta(_)
@@ -66,6 +67,7 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
         | SessionEvent::SubagentStarted { .. }
         | SessionEvent::SubagentEvent { .. }
         | SessionEvent::PeerList(_)
+        | SessionEvent::Harness { .. }
         | SessionEvent::Transition { .. } => {}
     }
 }

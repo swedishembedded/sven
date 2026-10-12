@@ -261,6 +261,7 @@ async fn a_bounded_run_checkpoints_and_resumes_under_the_same_program() {
     let harness = engine.load_harness_from_str(GATED).expect("loads");
 
     let mut run = harness.start(json!({})).expect("starts");
+    let run_id = run.run_id().to_string();
     let worker = tokio::spawn(async move {
         let outcome = run
             // A deadline, not a cancel: the bound suspends the run where it
@@ -284,6 +285,7 @@ async fn a_bounded_run_checkpoints_and_resumes_under_the_same_program() {
     );
     let checkpoint = checkpoint.expect("a suspend on a parked run leaves a checkpoint");
     assert_eq!(checkpoint.plan_digest, harness.digest());
+    assert_eq!(checkpoint.run_id, run_id, "the checkpoint names its run");
 
     // The abandoned call ended with the suspension. The resumed run settles
     // it through the step's retry policy, and the second call is answered
@@ -309,6 +311,63 @@ async fn a_bounded_run_checkpoints_and_resumes_under_the_same_program() {
             .any(|record| matches!(record, TraceRecord::RetryAttempt { .. })),
         "the interrupted step went through its retry policy: {:?}",
         outcome.trace
+    );
+    // The resume keeps the run id: both episodes' events read as one
+    // run's.
+    assert_eq!(second.run_id(), run_id, "a resume keeps the run id");
+}
+
+#[tokio::test]
+async fn a_run_streams_its_lifecycle_events() {
+    use sven_vocab::{HarnessEvent, SessionEvent};
+
+    let (engine, _p) = engine_with(vec![says("resilience")]);
+    let harness = engine.load_harness_from_str(GREET).expect("loads");
+    let mut run = harness
+        .start(json!({"topic": "reliability"}))
+        .expect("starts");
+    let mut events = run.events();
+    let outcome = run.execute(RunOptions::new()).await.expect("ends");
+    assert_eq!(outcome.conclusion, RunConclusion::Success);
+
+    let mut seen = Vec::new();
+    loop {
+        match events.try_recv() {
+            Ok(SessionEvent::Harness { run_id, event }) => {
+                assert_eq!(run_id, run.run_id(), "every event names its run");
+                seen.push(event);
+            }
+            Ok(_) => continue,
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+            Err(_) => break,
+        }
+    }
+    assert!(
+        matches!(
+            seen.first(),
+            Some(HarnessEvent::Started { plan_digest, bundle_digest: None, .. })
+                if plan_digest == harness.digest()
+        ),
+        "the stream opens with the run's start: {seen:?}"
+    );
+    assert!(
+        seen.iter().any(|event| matches!(
+            event,
+            HarnessEvent::StepStarted { step, primitive, attempt: 1 }
+                if step == "ask" && primitive == "predict"
+        )),
+        "the stream records each step's start: {seen:?}"
+    );
+    assert!(
+        seen.iter().any(|event| matches!(
+            event,
+            HarnessEvent::StepCompleted { step, .. } if step == "ask"
+        )),
+        "the stream records each step's completion: {seen:?}"
+    );
+    assert!(
+        matches!(seen.last(), Some(HarnessEvent::Completed { .. })),
+        "the stream closes with the run's outcome: {seen:?}"
     );
 }
 

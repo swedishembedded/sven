@@ -666,6 +666,13 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                 write_progress(&format!("[sven:progress] {message}"));
             }
         }
+        // A harness run's lifecycle, one line per event, behind the same
+        // verbosity gate as the other progress traces.
+        UiEvent::Harness { event, .. } => {
+            if state.trace >= 1 {
+                write_progress(&format!("[sven:harness] {event}"));
+            }
+        }
         UiEvent::ToolCallFinished {
             call_id,
             tool_name: name,

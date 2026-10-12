@@ -493,12 +493,28 @@ impl HarnessMachine {
             return Reaction::Ignored;
         };
         match event {
-            Event::VerificationComplete { verdict } => self.complete_step(
-                &mut run,
-                &inflight.step,
-                Value::String(verdict_text(verdict)),
-                ctx,
-            ),
+            Event::VerificationComplete { verdict } => {
+                // The verdict's own record: which verifier ran and what it
+                // said, so a trace answers "which verification failed"
+                // without re-reading the plan.
+                if let Some(step) = self.run.plan().step(&inflight.step) {
+                    if let PlanPrimitive::Verify { spec, .. } = &step.primitive {
+                        let parsed: sven_vocab::verify::VerifierSpec =
+                            serde_json::from_value(spec.clone())
+                                .unwrap_or(sven_vocab::verify::VerifierSpec::Unsupported);
+                        run.trace.push(TraceRecord::Verified {
+                            verifier: verifier_word(&parsed).to_string(),
+                            ok: matches!(verdict, VerifierVerdict::Passed),
+                        });
+                    }
+                }
+                self.complete_step(
+                    &mut run,
+                    &inflight.step,
+                    Value::String(verdict_text(verdict)),
+                    ctx,
+                )
+            }
             Event::EffectFailed { error, .. } => self.side_effect_failed(&mut run, error, ctx),
             _ => Reaction::Ignored,
         }
@@ -671,6 +687,40 @@ pub(super) fn verdict_text(verdict: &VerifierVerdict) -> String {
         VerifierVerdict::Failed { reason } => format!("failed: {reason}"),
         VerifierVerdict::NeedsHuman { .. } => "needs_human".to_string(),
         VerifierVerdict::Unknown { reason } => format!("unknown: {reason}"),
+    }
+}
+
+/// A primitive in words — the same word a `StepStarted` trace record and
+/// its event carry.
+pub(super) fn primitive_word(primitive: &PlanPrimitive) -> &'static str {
+    match primitive {
+        PlanPrimitive::Predict { .. } => "predict",
+        PlanPrimitive::Agent { .. } => "agent",
+        PlanPrimitive::Tool { .. } => "tool",
+        PlanPrimitive::Verify { .. } => "verify",
+        PlanPrimitive::Assign { .. } => "assign",
+        PlanPrimitive::Branch { .. } => "branch",
+        PlanPrimitive::Retry { .. } => "retry",
+        PlanPrimitive::Parallel { .. } => "parallel",
+        PlanPrimitive::Delegate { .. } => "delegate",
+        PlanPrimitive::Transform { .. } => "transform",
+        PlanPrimitive::Return { .. } => "return",
+        PlanPrimitive::Fail { .. } => "fail",
+    }
+}
+
+/// A verifier's kind in words — the identity a `Verified` record carries.
+pub(super) fn verifier_word(spec: &sven_vocab::verify::VerifierSpec) -> &'static str {
+    use sven_vocab::verify::VerifierSpec;
+    match spec {
+        VerifierSpec::FileExists { .. } => "file_exists",
+        VerifierSpec::FileHash { .. } => "file_hash",
+        VerifierSpec::JsonPredicate { .. } => "json_predicate",
+        VerifierSpec::HttpPredicate { .. } => "http_predicate",
+        VerifierSpec::AskHuman { .. } => "ask_human",
+        VerifierSpec::All { .. } => "all",
+        VerifierSpec::Any { .. } => "any",
+        VerifierSpec::Unsupported => "unsupported",
     }
 }
 

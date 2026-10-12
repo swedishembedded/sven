@@ -35,13 +35,13 @@ use std::time::Duration;
 use serde_json::Value;
 use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
 use sven_harness_runtime::{
-    HarnessMachine, HarnessRegistry, HarnessRunData, HarnessRunState, TraceRecord, Waiting,
-    OUTCOME_FACT,
+    harness_event, HarnessMachine, HarnessRegistry, HarnessRunData, HarnessRunState, TraceRecord,
+    Waiting, OUTCOME_FACT,
 };
 use sven_harness_spec::{HarnessBundle, HarnessPlan};
 use sven_hsm::submachine::ErasedMachine;
 use sven_hsm::{Context, EffectKind, Event, Snapshot};
-use sven_vocab::SessionEvent;
+use sven_vocab::{HarnessEvent, SessionEvent};
 use tokio::sync::broadcast;
 
 use crate::agent::ask_through;
@@ -93,7 +93,7 @@ impl Engine {
     /// registered is refused.
     pub fn load_harness_from_str(&self, yaml: &str) -> Result<Harness, CallError> {
         let refuse = |detail: String| CallError::Precondition(detail);
-        let (plan, source) = match bundle_or_document(yaml).map_err(refuse)? {
+        let (plan, source, bundle_digest) = match bundle_or_document(yaml).map_err(refuse)? {
             Either::Bundle(bundle) => {
                 let compiled = bundle.compile().map_err(|e| refuse(e.to_string()))?;
                 let plan = Arc::new(compiled.plan);
@@ -101,7 +101,7 @@ impl Engine {
                 self.harnesses
                     .register_compiled(Arc::clone(&plan), helpers)
                     .map_err(|e| refuse(e.to_string()))?;
-                (plan, HarnessSource::Bundle(bundle))
+                (plan, HarnessSource::Bundle(bundle), Some(compiled.digest))
             }
             Either::Document(text) => {
                 let plan = Arc::new(
@@ -110,13 +110,14 @@ impl Engine {
                 self.harnesses
                     .register_compiled(Arc::clone(&plan), Default::default())
                     .map_err(|e| refuse(e.to_string()))?;
-                (plan, HarnessSource::Document(text))
+                (plan, HarnessSource::Document(text), None)
             }
         };
         Ok(Harness {
             engine: self.clone(),
             plan,
             source,
+            bundle_digest,
         })
     }
 
@@ -165,6 +166,9 @@ pub struct Harness {
     engine: Engine,
     plan: Arc<HarnessPlan>,
     source: HarnessSource,
+    /// The bundle's content digest, when the harness carries helpers: the
+    /// identity a fresh run pins itself to.
+    bundle_digest: Option<String>,
 }
 
 /// A suspended harness run: the kernel snapshot, pinned to the plan (and,
@@ -176,6 +180,9 @@ pub struct HarnessCheckpoint {
     pub plan_digest: String,
     /// The digest of the bundle the run pinned, when it ran from one.
     pub bundle_digest: Option<String>,
+    /// The id the run published its events under; a resume keeps it, so
+    /// the two episodes' events read as one run's.
+    pub run_id: String,
 }
 
 impl Harness {
@@ -241,10 +248,16 @@ impl Harness {
     /// plan.
     pub fn start(&self, inputs: Value) -> Result<HarnessRun, CallError> {
         self.validate_inputs(&inputs)?;
+        let bundle = match &self.source {
+            HarnessSource::Bundle(bundle) => Some(Arc::new(bundle.clone())),
+            HarnessSource::Document(_) => None,
+        };
         Ok(HarnessRun::starting(
             self.engine.clone(),
             Arc::clone(&self.plan),
             inputs,
+            bundle,
+            self.bundle_digest.clone(),
         ))
     }
 
@@ -281,6 +294,7 @@ impl Harness {
             Box::new(sven_hsm::Hsm::new(machine)),
             policy,
             checkpoint.snapshot,
+            checkpoint.run_id,
         ))
     }
 }
@@ -297,6 +311,15 @@ pub struct HarnessRun {
     /// A fresh run's inputs (unset for a resumed one — the restored run
     /// state carries them).
     inputs: Value,
+    /// The bundle a fresh run builds from, when the harness carries
+    /// helpers: the helpers travel with the run and the run pins the
+    /// bundle's digest.
+    bundle: Option<Arc<HarnessBundle>>,
+    /// The pinned bundle digest (unset for a document-only harness and a
+    /// resumed run, whose snapshot state carries its own).
+    bundle_digest: Option<String>,
+    /// The id this run's events are published under.
+    run_id: String,
     /// The machine a resume starts from, with its policy and snapshot.
     restored: Option<RestoredMachine>,
     events: broadcast::Sender<SessionEvent>,
@@ -316,8 +339,14 @@ struct RestoredMachine {
 }
 
 impl HarnessRun {
-    fn starting(engine: Engine, plan: Arc<HarnessPlan>, inputs: Value) -> Self {
-        Self::new(engine, plan, inputs, None)
+    fn starting(
+        engine: Engine,
+        plan: Arc<HarnessPlan>,
+        inputs: Value,
+        bundle: Option<Arc<HarnessBundle>>,
+        bundle_digest: Option<String>,
+    ) -> Self {
+        Self::new(engine, plan, inputs, bundle, bundle_digest, None, None)
     }
 
     fn resumed(
@@ -326,31 +355,42 @@ impl HarnessRun {
         machine: Box<dyn ErasedMachine>,
         policy: sven_hsm::PermissionPolicy,
         snapshot: Snapshot,
+        run_id: String,
     ) -> Self {
         let trace_len = HarnessRunState::load(&snapshot.context).trace.len();
         Self::new(
             engine,
             plan,
             Value::Null,
+            None,
+            None,
             Some(RestoredMachine {
                 machine,
                 policy,
                 snapshot,
                 trace_len,
             }),
+            Some(run_id),
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         engine: Engine,
         plan: Arc<HarnessPlan>,
         inputs: Value,
+        bundle: Option<Arc<HarnessBundle>>,
+        bundle_digest: Option<String>,
         restored: Option<RestoredMachine>,
+        run_id: Option<String>,
     ) -> Self {
         Self {
             engine,
             plan,
             inputs,
+            bundle,
+            bundle_digest,
+            run_id: run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             restored,
             events: broadcast::channel(256).0,
             trace_tx: broadcast::channel(256).0,
@@ -362,6 +402,14 @@ impl HarnessRun {
     /// Subscribes to the session events the run's kernel publishes.
     pub fn events(&self) -> broadcast::Receiver<SessionEvent> {
         self.events.subscribe()
+    }
+
+    /// The id this run's events are published under. A resumed run keeps
+    /// the id its checkpoint carried, so its two episodes' events read as
+    /// one run's.
+    #[must_use]
+    pub fn run_id(&self) -> &str {
+        &self.run_id
     }
 
     /// Subscribes to the run's structured lifecycle trace: one record per
@@ -442,14 +490,22 @@ impl HarnessRun {
         // its suspension interrupted (a failed-effect event, which the
         // step's declared retry policy answers).
         let resumed_trace_len = resumed.as_ref().map_or(0, |r| r.trace_len);
-        let kickoff = match resumed.as_ref() {
+        let restored_state = resumed
+            .as_ref()
+            .map(|restored| HarnessRunState::load(&restored.snapshot.context));
+        let kickoff = match &restored_state {
+            Some(state) => match interrupted_failure(state) {
+                Some(event) => event,
+                None => Event::user_message("start"),
+            },
             None => Event::user_message("start"),
-            Some(restored) => {
-                match interrupted_failure(&HarnessRunState::load(&restored.snapshot.context)) {
-                    Some(event) => event,
-                    None => Event::user_message("start"),
-                }
-            }
+        };
+        // What the run is running and what it started with, as its first
+        // event names them. A resumed run reads both off its snapshot
+        // state; a fresh run knows them from its harness.
+        let (run_inputs, run_bundle_digest) = match &restored_state {
+            Some(state) => (state.inputs.clone(), state.bundle_digest.clone()),
+            None => (self.inputs.clone(), self.bundle_digest.clone()),
         };
 
         // The machine and the policy it answers for. A fresh run's policy is
@@ -461,7 +517,14 @@ impl HarnessRun {
                 (restored.machine, restored.policy)
             }
             None => {
-                let data = HarnessRunData::from_parts((*self.plan).clone(), self.inputs.clone());
+                // A bundle run travels with its helpers and pins the
+                // bundle's digest, exactly as a resume does: a fresh start
+                // is not a way to run a bundle without its program.
+                let data = match &self.bundle {
+                    Some(bundle) => HarnessRunData::from_bundle(bundle, self.inputs.clone())
+                        .map_err(|e| CallError::Precondition(format!("cannot start: {e}")))?,
+                    None => HarnessRunData::from_parts((*self.plan).clone(), self.inputs.clone()),
+                };
                 let policy = HarnessMachine::permission_policy_for(&data);
                 (
                     Box::new(sven_hsm::Hsm::new(HarnessMachine::new(data)))
@@ -472,16 +535,27 @@ impl HarnessRun {
         };
         builder = builder.with_machine(machine, policy);
 
-        let bundle = builder
+        let session = builder
             .build_session()
             .await
             .map_err(CallError::Infrastructure)?;
         match human {
-            Some(responder) => tokio::spawn(bundle.channels.forward_to(responder)),
-            None => tokio::spawn(bundle.channels.answer_unattended()),
+            Some(responder) => tokio::spawn(session.channels.forward_to(responder)),
+            None => tokio::spawn(session.channels.answer_unattended()),
         };
 
-        if !bundle.handle.sink().emit(kickoff).await {
+        // The run announces itself before its first step: which program,
+        // which helpers, which inputs.
+        let _ = self.events.send(SessionEvent::Harness {
+            run_id: self.run_id.clone(),
+            event: HarnessEvent::Started {
+                plan_digest: self.plan.digest.clone(),
+                bundle_digest: run_bundle_digest,
+                input_digest: HarnessPlan::canonical_digest(&run_inputs),
+            },
+        });
+
+        if !session.handle.sink().emit(kickoff).await {
             return Err(CallError::Infrastructure(anyhow::anyhow!(
                 "kernel event queue closed before the run was started"
             )));
@@ -506,28 +580,31 @@ impl HarnessRun {
         tokio::pin!(deadline);
         // How long a stopped run may take to wind down before it is left.
         let mut wind_down = std::pin::pin!(tokio::time::sleep(Duration::MAX / 4));
+        // When the previous trace record was observed: a step's duration
+        // is the gap between observations.
+        let mut observed: Option<tokio::time::Instant> = None;
 
         // The select loop borrows the runtime for its capture requests; it
         // must be over — the borrow dropped — before the run's final state
         // is joined below.
         {
-            let mut observations = bundle.handle.subscribe_observations();
+            let mut observations = session.handle.subscribe_observations();
             // A capture is served when the kernel has nothing left to do; it
             // carries the trace as it stands, which is what the live stream
             // publishes from. `None` means the consumer task is gone — the
             // run is over, and the final state comes from the join below.
-            let mut settled = Box::pin(bundle.runtime.capture());
+            let mut settled = Box::pin(session.runtime.capture());
 
             loop {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled(), if stopped.is_none() => {
                         stopped = Some(RunConclusion::Cancelled);
-                        settle_cancel(&bundle.handle, &abort_slot, wind_down.as_mut()).await;
+                        settle_cancel(&session.handle, &abort_slot, wind_down.as_mut()).await;
                     }
                     () = &mut deadline, if stopped.is_none() && bounds.deadline.is_some() => {
                         stopped = Some(RunConclusion::Timeout);
-                        bundle.runtime.cancel();
+                        session.runtime.cancel();
                         wind_down.as_mut().reset(tokio::time::Instant::now() + WIND_DOWN);
                     }
                     () = &mut wind_down, if stopped.is_some() => break,
@@ -540,8 +617,16 @@ impl HarnessRun {
                                     if stopped.is_none()
                                         && bounds.max_output_tokens.is_some_and(|max| spent >= max)
                                     {
+                                        let _ = self.events.send(SessionEvent::Harness {
+                                            run_id: self.run_id.clone(),
+                                            event: HarnessEvent::BudgetExhausted {
+                                                budget: "output_tokens".to_string(),
+                                                consumed: spent,
+                                                limit: bounds.max_output_tokens.unwrap_or(0),
+                                            },
+                                        });
                                         stopped = Some(RunConclusion::BudgetExhausted);
-                                        bundle.runtime.cancel();
+                                        session.runtime.cancel();
                                         wind_down.as_mut().reset(tokio::time::Instant::now() + WIND_DOWN);
                                     }
                                 }
@@ -557,14 +642,21 @@ impl HarnessRun {
                     },
                     captured = settled.as_mut() => match captured {
                         Some(snapshot) => {
-                            publish_trace(&snapshot.context, &mut emitted_trace, &self.trace_tx);
+                            publish_trace(
+                                &snapshot.context,
+                                &mut emitted_trace,
+                                &self.trace_tx,
+                                &self.events,
+                                &self.run_id,
+                                &mut observed,
+                            );
                             // A capture is only served when the machine has
                             // nothing left to do; two in a row over the very
                             // same processed count mean it can no longer make
                             // progress — most plausibly it ignored the event
                             // that was meant to settle it. Report that rather
                             // than re-arming forever.
-                            let processed = bundle.runtime.status().processed;
+                            let processed = session.runtime.status().processed;
                             if processed == last_processed {
                                 idle_captures += 1;
                                 if idle_captures > STALLED_CAPTURES {
@@ -576,7 +668,7 @@ impl HarnessRun {
                                         )
                                     });
                                     stopped.get_or_insert(RunConclusion::AgentError);
-                                    bundle.runtime.cancel();
+                                    session.runtime.cancel();
                                     wind_down.as_mut().reset(
                                         tokio::time::Instant::now() + WIND_DOWN,
                                     );
@@ -585,7 +677,7 @@ impl HarnessRun {
                                 idle_captures = 0;
                             }
                             last_processed = processed;
-                            settled = Box::pin(bundle.runtime.capture());
+                            settled = Box::pin(session.runtime.capture());
                         }
                         None => break,
                     },
@@ -596,13 +688,20 @@ impl HarnessRun {
         // The report carries the machine's final state and context — the
         // outcome fact, the trace, the counts — whether the run ended on
         // its own or was stopped by a bound.
-        let report = bundle
+        let report = session
             .runtime
             .join()
             .await
             .map_err(|e| CallError::Infrastructure(anyhow::anyhow!(e)))?;
         let run_state = HarnessRunState::load(&report.ctx);
-        publish_trace(&report.ctx, &mut emitted_trace, &self.trace_tx);
+        publish_trace(
+            &report.ctx,
+            &mut emitted_trace,
+            &self.trace_tx,
+            &self.events,
+            &self.run_id,
+            &mut observed,
+        );
         let result = outcome_of(&report.state_label, report.ctx.fact(OUTCOME_FACT));
         if stopped.is_none() && result.is_none() {
             return match failure {
@@ -627,6 +726,7 @@ impl HarnessRun {
                     .clone()
                     .unwrap_or_else(|| self.plan.digest.clone()),
                 bundle_digest: run_state.bundle_digest.clone(),
+                run_id: self.run_id.clone(),
             });
         }
         Ok(HarnessOutcome {
@@ -688,11 +788,30 @@ async fn settle_cancel(
     wind_down.reset(tokio::time::Instant::now() + WIND_DOWN);
 }
 
-/// Publishes the trace records `ctx` gained since the last publish.
-fn publish_trace(ctx: &Context, emitted: &mut usize, trace_tx: &broadcast::Sender<TraceRecord>) {
+/// Publishes the trace records `ctx` gained since the last publish: each
+/// as a raw record on the trace stream and as its session event on the
+/// event stream, so one run's progress has one form everywhere. `observed`
+/// carries when the previous record was seen; a step's duration is the gap
+/// between observations — approximately what the step cost, zero when the
+/// run is observed in a burst.
+fn publish_trace(
+    ctx: &Context,
+    emitted: &mut usize,
+    trace_tx: &broadcast::Sender<TraceRecord>,
+    events: &broadcast::Sender<SessionEvent>,
+    run_id: &str,
+    observed: &mut Option<tokio::time::Instant>,
+) {
     let state = HarnessRunState::load(ctx);
     for record in state.trace.iter().skip(*emitted) {
+        let duration_ms = observed
+            .replace(tokio::time::Instant::now())
+            .map_or(0, |previous| previous.elapsed().as_millis() as u64);
         let _ = trace_tx.send(record.clone());
+        let _ = events.send(SessionEvent::Harness {
+            run_id: run_id.to_string(),
+            event: harness_event(record, duration_ms),
+        });
     }
     *emitted = state.trace.len();
 }

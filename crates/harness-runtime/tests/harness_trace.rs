@@ -330,7 +330,7 @@ steps:
     assert!(
         trace.iter().any(|r| matches!(
             r,
-            TraceRecord::RetryAttempt { step, attempt: 2 }
+            TraceRecord::RetryAttempt { step, attempt: 2, .. }
                 if step.as_str() == "probe"
         )),
         "the retry records the attempt it is about to make: {trace:?}"
