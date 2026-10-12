@@ -25,6 +25,7 @@ sven-vocab         = { path = "../vocab" }
 # are the `gdb` feature, Unix only.
 sven-tools-gdb     = { path = "../tools-gdb", default-features = false }
 sven-kernel        = { path = "../kernel" }
+sven-harness-runtime = { path = "../harness-runtime" }
 sven-executors     = { path = "../executors" }
 # New integration crates - optional at bootstrap level
 sven-memory        = { path = "../memory", optional = true }

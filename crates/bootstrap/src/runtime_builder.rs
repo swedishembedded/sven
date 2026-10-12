@@ -137,6 +137,10 @@ pub struct RuntimeBuilder {
     /// frontends share one manager across session rebuilds so the TUI's manager
     /// handle and MCP connections stay valid when mode/model changes.
     shared_mcp_manager: Option<Arc<McpManager>>,
+    /// The named harness documents this session's `delegate` and `parallel`
+    /// steps may resolve their children against. See
+    /// [`Self::with_harnesses`].
+    harnesses: Arc<sven_harness_runtime::HarnessRegistry>,
 }
 
 impl RuntimeBuilder {
@@ -177,7 +181,17 @@ impl RuntimeBuilder {
             mode_registry: None,
             agent_mode: None,
             shared_mcp_manager: None,
+            harnesses: Arc::new(sven_harness_runtime::HarnessRegistry::new()),
         }
+    }
+
+    /// Register the named harness documents this session's `delegate` and
+    /// `parallel` steps may resolve their children against. A session with
+    /// a non-empty registry installs the child spawner, the same one SDLC
+    /// sessions use for their task children.
+    pub fn with_harnesses(mut self, harnesses: Arc<sven_harness_runtime::HarnessRegistry>) -> Self {
+        self.harnesses = harnesses;
+        self
     }
 
     /// Set the interactive [`AgentMode`] for this session.
@@ -732,24 +746,29 @@ impl RuntimeBuilder {
 
         // Parallel-execution fan-out: in SDLC mode install a child spawner so
         // the kernel can service `Effect::InstantiateSubmachine` by running each
-        // decomposed task as an isolated concurrent child kernel.
+        // decomposed task as an isolated concurrent child kernel. A session
+        // with registered harness documents installs it too: a harness's
+        // `delegate` and `parallel` steps emit the same effect and their
+        // children resolve through the session's registry.
         let is_sdlc = self.mode.as_str() == "sdlc";
-        let child_spawner: Option<Arc<dyn sven_kernel::ChildSpawner>> = if is_sdlc {
-            Some(Arc::new(
-                crate::child_spawner::SdlcChildSpawner::new(
-                    model.clone(),
-                    Arc::clone(&self.config),
-                    Arc::clone(&tool_registry),
-                )
-                .with_gates(
-                    question_tx.clone(),
-                    approval_tx.clone(),
-                    self.approval_mode,
-                ),
-            ))
-        } else {
-            None
-        };
+        let child_spawner: Option<Arc<dyn sven_kernel::ChildSpawner>> =
+            if is_sdlc || !self.harnesses.is_empty() {
+                Some(Arc::new(
+                    crate::child_spawner::SdlcChildSpawner::new(
+                        model.clone(),
+                        Arc::clone(&self.config),
+                        Arc::clone(&tool_registry),
+                    )
+                    .with_harnesses(Arc::clone(&self.harnesses))
+                    .with_gates(
+                        question_tx.clone(),
+                        approval_tx.clone(),
+                        self.approval_mode,
+                    ),
+                ))
+            } else {
+                None
+            };
 
         // ── TurnExecutor (kernel-native single-turn LLM+tools loop) ──────────
         // All modes now use TurnExecutor for kind="turn" effects.
