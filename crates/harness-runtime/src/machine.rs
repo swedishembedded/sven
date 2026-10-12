@@ -356,7 +356,7 @@ impl Machine for HarnessMachine {
             HarnessState::WaitingForTool => self.on_tool(event, ctx),
             HarnessState::WaitingForVerifier => self.on_verifier(event, ctx),
             HarnessState::WaitingForChild => self.on_child(event, ctx),
-            HarnessState::WaitingForJoin => self.on_deferred(event, ctx),
+            HarnessState::WaitingForJoin => self.on_join(event, ctx),
             HarnessState::Completed | HarnessState::Failed | HarnessState::Cancelled => {
                 Reaction::Ignored
             }
@@ -544,14 +544,50 @@ impl HarnessMachine {
         }
     }
 
-    /// Parallel joins are wired in later work; the state exists now so the
-    /// hierarchy stays fixed.
-    fn on_deferred(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
+    /// A parallel step's branches are in flight. Each child completion
+    /// fills its declared-order slot; a completion for a machine no
+    /// branch spawned settles nothing. The join settles only when every
+    /// branch is in, and the aggregate — the branch results in declared
+    /// order, whatever order they completed in — is stored under the
+    /// parallel step's value, where the join step's templates read it.
+    /// A failed emission (no spawner configured, a child refused to
+    /// start) takes the same retry/fail path as any other side effect.
+    fn on_join(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
         if matches!(event, Event::UserCancelled) {
             return self.cancel(ctx);
         }
         let mut run = self.run_state(ctx);
-        self.tick_when_idle(&mut run, event, ctx)
+        if run.awaiting != Some(Waiting::Join) {
+            return self.tick_when_idle(&mut run, event, ctx);
+        }
+        let Some(join) = run.join.clone() else {
+            return Reaction::Ignored;
+        };
+        match event {
+            Event::Internal(InternalEvent::SubmachineCompleted { machine, result }) => {
+                let Some(slot) = join.machines.iter().position(|(_, id)| id == machine) else {
+                    // A completion for a child nobody waits on (a stale
+                    // delivery, a sibling run's child) is ignored.
+                    return Reaction::Ignored;
+                };
+                let mut join = join;
+                join.results[slot] = Some(result.clone());
+                if join.results.iter().any(Option::is_none) {
+                    run.join = Some(join);
+                    run.store(ctx);
+                    return Reaction::handled();
+                }
+                let aggregate = Value::Array(join.results.into_iter().flatten().collect());
+                let step = join.step;
+                run.join = None;
+                self.complete_step(&mut run, &step, aggregate, ctx)
+            }
+            Event::EffectFailed { error, .. } => self.side_effect_failed(&mut run, error, ctx),
+            // The tick rule: a run with I/O in flight does not advance
+            // its pure chain, and re-executing a parked step would
+            // fan out a second batch of children.
+            _ => Reaction::Ignored,
+        }
     }
 
     /// A delegated child run is in flight. Its completion arrives
@@ -670,9 +706,9 @@ pub(super) fn then_of(primitive: &PlanPrimitive) -> String {
         | PlanPrimitive::Assign { then, .. }
         | PlanPrimitive::Retry { then, .. }
         | PlanPrimitive::Delegate { then, .. }
-        | PlanPrimitive::Transform { then, .. } => then.clone(),
+        | PlanPrimitive::Transform { then, .. }
+        | PlanPrimitive::Parallel { join: then, .. } => then.clone(),
         PlanPrimitive::Branch { .. }
-        | PlanPrimitive::Parallel { .. }
         | PlanPrimitive::Return { .. }
         | PlanPrimitive::Fail { .. } => String::new(),
     }

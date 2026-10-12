@@ -488,3 +488,48 @@ steps:
     let b = doc(&changed).expect("b");
     assert_ne!(a.digest, b.digest, "schema bytes are program meaning");
 }
+
+#[test]
+fn a_parallel_fan_out_beyond_max_parallel_fails_to_compile() {
+    let yaml = r#"
+api_version: "1"
+name: wide
+entry: split
+limits: { max_steps: 10, max_parallel: 1 }
+steps:
+  split:
+    parallel:
+      branches: [a, b]
+      join: merge
+  a:
+    return: { value: "a" }
+  b:
+    return: { value: "b" }
+  merge:
+    return: { value: {} }
+"#;
+    let err = doc(yaml).expect_err("fan-out beyond max_parallel must not compile");
+    assert!(err.to_string().contains("max_parallel"), "{err}");
+}
+
+#[test]
+fn a_parallel_fan_out_within_max_parallel_compiles() {
+    let yaml = r#"
+api_version: "1"
+name: narrow
+entry: split
+limits: { max_steps: 10, max_parallel: 2 }
+steps:
+  split:
+    parallel:
+      branches: [a, b]
+      join: merge
+  a:
+    return: { value: "a" }
+  b:
+    return: { value: "b" }
+  merge:
+    return: { value: {} }
+"#;
+    let _ = doc(yaml).expect("fan-out within max_parallel compiles");
+}

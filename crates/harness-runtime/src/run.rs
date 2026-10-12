@@ -156,6 +156,20 @@ pub struct ChildRun {
     pub step: String,
 }
 
+/// A parallel step's open fan-out: one child per branch (in declared
+/// order) and the results collected so far. The join settles only when
+/// every slot is filled, and the aggregate is always the declared order —
+/// whatever order the children complete in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParallelJoin {
+    /// The parallel step whose fan-out is in flight.
+    pub step: String,
+    /// (branch step id, machine uuid) per branch, in declared order.
+    pub machines: Vec<(String, String)>,
+    /// Each branch's result; `None` until the matching child completes.
+    pub results: Vec<Option<Value>>,
+}
+
 impl RetryFrame {
     /// The 1-based number of the attempt now running.
     #[must_use]
@@ -206,6 +220,8 @@ pub struct HarnessRunState {
     pub retry: Option<RetryFrame>,
     /// The delegated child in flight, when a delegate step is waiting.
     pub child: Option<ChildRun>,
+    /// The parallel step's open fan-out, while the join waits.
+    pub join: Option<ParallelJoin>,
     /// This run's delegation depth (a top-level run is at 1; a delegated
     /// child starts at its parent's depth + 1).
     pub delegate_depth: u64,

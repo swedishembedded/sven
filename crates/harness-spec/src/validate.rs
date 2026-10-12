@@ -427,6 +427,21 @@ fn validate_limits(spec: &HarnessSpec) -> Result<(), HarnessError> {
                 .into(),
         ));
     }
+    // Fan-out is static: a parallel step's branch count is known at
+    // compile time, so a fan-out wider than the declared `max_parallel`
+    // is rejected offline rather than failing mid-run.
+    if let Some(max) = limits.max_parallel {
+        for (id, step) in &spec.steps {
+            if let StepSpec::Parallel(p) = step {
+                let branches = p.branches.len() as u64;
+                if branches > max {
+                    return Err(HarnessError::Invalid(format!(
+                        "step `{id}` fans out to {branches} branches but `max_parallel` is {max}"
+                    )));
+                }
+            }
+        }
+    }
     Ok(())
 }
 

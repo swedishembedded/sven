@@ -17,7 +17,9 @@ use sven_hsm::{capability_for_tool_name, Context, Effect, Event, MachineId, Reac
 use sven_vocab::verify::VerifierSpec;
 
 use crate::machine::{harness_thread, store_as_of, then_of, HarnessMachine};
-use crate::run::{AgentLoop, ChildRun, HarnessRunState, Inflight, RetryFrame, Waiting};
+use crate::run::{
+    AgentLoop, ChildRun, HarnessRunState, Inflight, ParallelJoin, RetryFrame, Waiting,
+};
 use crate::state::HarnessState;
 
 impl HarnessMachine {
@@ -201,12 +203,64 @@ impl HarnessMachine {
                 "transform steps need the helper runtime, which this build does not carry",
                 ctx,
             ),
-            PlanPrimitive::Parallel { .. } => self.fail_now(
-                run,
-                "unsupported_parallel",
-                "parallel steps are not wired yet",
-                ctx,
-            ),
+            PlanPrimitive::Parallel { ref branches, .. } => {
+                // Each branch child runs one level below this run; the
+                // depth budget bounds recursive fan-out the same way it
+                // bounds delegation.
+                let depth = run.delegate_depth + 1;
+                let max = self
+                    .run
+                    .plan()
+                    .limits
+                    .as_ref()
+                    .and_then(|l| l.max_delegate_depth);
+                if let Some(max) = max {
+                    if depth > max {
+                        return self.fail_now(
+                            run,
+                            "delegate_depth",
+                            &format!("fan-out would exceed max_delegate_depth ({max})"),
+                            ctx,
+                        );
+                    }
+                }
+                // One child per branch, in declared order; the join record
+                // is the correlation table for their completions. Branches
+                // run this same plan from their step, with the run's input
+                // namespace (compile-time max_parallel bounds the count).
+                let name = self.run.plan().name.clone();
+                let mut effects = Vec::new();
+                let mut machines = Vec::new();
+                for branch in branches {
+                    let machine = MachineId::new();
+                    let descriptor = serde_json::json!({
+                        "harness": name,
+                        "entry": branch,
+                        "input": run.inputs,
+                    });
+                    effects.push(Effect::InstantiateSubmachine {
+                        machine,
+                        descriptor,
+                    });
+                    machines.push((branch.clone(), machine.as_uuid().to_string()));
+                }
+                if let Some(effect) = effects.first() {
+                    self.cache_effect(effect.clone());
+                }
+                self.park(run, &step, Waiting::Join);
+                let fan_out = branches.len();
+                run.join = Some(ParallelJoin {
+                    step: step_id.clone(),
+                    results: vec![None; fan_out],
+                    machines,
+                });
+                run.store(ctx);
+                Reaction::Transition {
+                    target: HarnessState::WaitingForJoin,
+                    effects,
+                    rationale: format!("parallel step `{step_id}` fans out {fan_out} branches"),
+                }
+            }
             PlanPrimitive::Delegate {
                 ref target,
                 ref as_kind,
