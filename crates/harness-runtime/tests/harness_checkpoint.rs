@@ -10,7 +10,7 @@ mod common;
 
 use common::{drive, start, turn};
 use sven_harness_runtime::{HarnessMachine, RUN_STATE_FACT};
-use sven_hsm::{Effect, Event};
+use sven_hsm::{Effect, Event, Machine};
 
 const GREET: &str = r#"
 api_version: "1"
@@ -142,4 +142,147 @@ fn a_modified_document_cannot_silently_replace_a_checkpointed_plan() {
         text.contains("digest"),
         "the refusal says why: the plan's digest no longer matches: {text}"
     );
+}
+
+/// A harness that delegates: its replayable event log contains the child's
+/// completion, which names the machine id the parent's own emission chose.
+const DELEGATOR: &str = r#"
+api_version: "1"
+name: delegator
+entry: ask
+capabilities: [SpawnChild]
+limits: { max_steps: 50, max_delegate_depth: 2 }
+steps:
+  ask:
+    delegate:
+      target: helper
+      input: { task: "dig" }
+      then: done
+  done:
+    return:
+      value:
+        found: "{{ steps.ask.value }}"
+"#;
+
+/// Drives a fresh machine through `events`, returning the effects the run
+/// emitted (as an executor would collect them, executing nothing).
+fn run_events(
+    events: &[Event],
+) -> (
+    HarnessMachine,
+    sven_hsm::Context,
+    sven_harness_runtime::HarnessState,
+    Vec<Effect>,
+) {
+    let run = sven_harness_runtime::HarnessRunData::new(DELEGATOR, serde_json::json!({}))
+        .expect("valid harness");
+    let mut m = HarnessMachine::new(run);
+    let mut ctx = sven_hsm::Context::new();
+    let mut state = m.initial();
+    let mut effects = Vec::new();
+    for event in events {
+        effects.extend(drive(&mut m, &mut ctx, &mut state, event.clone()));
+    }
+    (m, ctx, state, effects)
+}
+
+#[test]
+fn a_delegate_run_replays_from_its_recorded_events() {
+    // Record: the run's own emission names the child machine id; the
+    // recorded completion carries that id, as a real executor's would.
+    let (_, _, state, fx) = run_events(&[Event::user_message("start")]);
+    assert_eq!(state, sven_harness_runtime::HarnessState::WaitingForChild);
+    let child = fx
+        .iter()
+        .find_map(|fx| match fx {
+            Effect::InstantiateSubmachine { machine, .. } => Some(*machine),
+            _ => None,
+        })
+        .expect("the delegate step spawned a child");
+    let events = vec![
+        Event::user_message("start"),
+        common::child_completed(&child, serde_json::json!({ "found": "spade" })),
+        Event::user_message("tick"),
+    ];
+
+    // Two independent reconstructions from the same recorded log.
+    let (m1, ctx1, state1, fx1) = run_events(&events);
+    let (m2, ctx2, state2, fx2) = run_events(&events);
+    assert_eq!(
+        state1,
+        sven_harness_runtime::HarnessState::Completed,
+        "replay 1 completes"
+    );
+    assert_eq!(
+        state2,
+        sven_harness_runtime::HarnessState::Completed,
+        "replay 2 completes"
+    );
+    assert_eq!(
+        ctx1.fact(RUN_STATE_FACT),
+        ctx2.fact(RUN_STATE_FACT),
+        "both reconstructions reach the same logical state"
+    );
+    assert_eq!(fx1, fx2, "both reconstructions emit the same effects");
+    assert_eq!(m1.outcome(), m2.outcome());
+    assert_eq!(
+        m1.outcome().map(|o| o["found"].clone()),
+        Some(serde_json::json!({ "found": "spade" })),
+        "a delegate stores the child's whole result as the step's value"
+    );
+}
+
+#[test]
+fn two_children_of_one_run_are_named_differently() {
+    const TWICE: &str = r#"
+api_version: "1"
+name: twice
+entry: first
+capabilities: [SpawnChild]
+limits: { max_steps: 50, max_delegate_depth: 2 }
+steps:
+  first:
+    delegate:
+      target: helper
+      input: { task: "one" }
+      then: second
+  second:
+    delegate:
+      target: helper
+      input: { task: "two" }
+      then: done
+  done:
+    return:
+      value: "ok"
+"#;
+    let run =
+        sven_harness_runtime::HarnessRunData::new(TWICE, serde_json::json!({})).expect("valid");
+    let mut m = HarnessMachine::new(run);
+    let mut ctx = sven_hsm::Context::new();
+    let mut state = m.initial();
+    let mut ids = Vec::new();
+    let fx = drive(&mut m, &mut ctx, &mut state, Event::user_message("start"));
+    let first = find_child(&fx).expect("the first delegate spawned a child");
+    ids.push(first.as_uuid().to_string());
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        common::child_completed(&first, serde_json::json!({})),
+    );
+    let fx = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    let second = find_child(&fx).expect("the second delegate spawned a child");
+    ids.push(second.as_uuid().to_string());
+    assert_ne!(
+        ids[0], ids[1],
+        "two children of one run are distinct machines"
+    );
+    let _ = m;
+}
+
+fn find_child(fx: &[Effect]) -> Option<sven_hsm::MachineId> {
+    fx.iter().find_map(|fx| match fx {
+        Effect::InstantiateSubmachine { machine, .. } => Some(*machine),
+        _ => None,
+    })
 }

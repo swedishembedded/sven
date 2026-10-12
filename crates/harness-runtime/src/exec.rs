@@ -13,7 +13,7 @@
 
 use serde_json::Value;
 use sven_harness_spec::{DelegateTarget, PlanPrimitive, PlanStep};
-use sven_hsm::{capability_for_tool_name, Context, Effect, Event, MachineId, Reaction};
+use sven_hsm::{capability_for_tool_name, Context, Effect, Event, Reaction};
 use sven_vocab::verify::VerifierSpec;
 
 use crate::machine::{harness_thread, store_as_of, then_of, HarnessMachine};
@@ -233,7 +233,13 @@ impl HarnessMachine {
                 let mut effects = Vec::new();
                 let mut machines = Vec::new();
                 for branch in branches {
-                    let machine = MachineId::new();
+                    run.counts.children += 1;
+                    let machine = crate::run::child_machine_id(
+                        &name,
+                        &step_id,
+                        Some(branch.as_str()),
+                        run.counts.children,
+                    );
                     let descriptor = serde_json::json!({
                         "harness": name,
                         "entry": branch,
@@ -288,7 +294,13 @@ impl HarnessMachine {
                         );
                     }
                 }
-                let machine = MachineId::new();
+                run.counts.children += 1;
+                let machine = crate::run::child_machine_id(
+                    &self.run.plan().name,
+                    &step_id,
+                    None,
+                    run.counts.children,
+                );
                 let mut descriptor = serde_json::Map::new();
                 if *as_kind == DelegateTarget::Machine {
                     descriptor.insert("mode".into(), Value::String(target.clone()));

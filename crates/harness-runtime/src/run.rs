@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sven_harness_spec::{Expr, HarnessPlan, Path, Template};
-use sven_hsm::{Context, ToolCallId};
+use sven_hsm::{Context, MachineId, ToolCallId};
 use uuid::Uuid;
 
 use crate::error::HarnessRunError;
@@ -36,6 +36,23 @@ pub const RUN_STATE_FACT: &str = "harness.run";
 /// child's report — a caller that only ever holds the context — reads the
 /// same value.
 pub const OUTCOME_FACT: &str = "harness.outcome";
+
+/// Derives the machine id of a child run a parent spawns.
+///
+/// Deterministic per (parent plan, step, branch, emission ordinal): a
+/// restore or an event replay re-derives the same id, so a recorded child
+/// completion still correlates after reconstruction, and repeated
+/// delegation of one step still names its children apart. The ordinal is
+/// the parent's `counts.children` counter at the emission — a pure function
+/// of the run state a replay reconstructs.
+#[must_use]
+pub fn child_machine_id(plan: &str, step: &str, branch: Option<&str>, ordinal: u64) -> MachineId {
+    let name = format!(
+        "harness/child/{plan}/{step}/{}/{ordinal}",
+        branch.unwrap_or("-")
+    );
+    MachineId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_URL, name.as_bytes()))
+}
 
 /// Derives the tool call id of a harness step's call.
 ///
@@ -225,6 +242,9 @@ pub struct Counts {
     pub model_turns: u64,
     /// Tool calls emitted.
     pub tool_calls: u64,
+    /// Child runs spawned (delegation and fan-out branches).
+    #[serde(default)]
+    pub children: u64,
 }
 
 /// The whole run state, serialized under [`RUN_STATE_FACT`].
