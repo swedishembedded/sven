@@ -44,7 +44,9 @@ use sven_vocab::verify::VerifierVerdict;
 use sven_vocab::TurnRequest;
 
 use crate::error::HarnessRunError;
-use crate::run::{step_call_id, AgentLoop, HarnessRunData, HarnessRunState, Inflight, Waiting};
+use crate::run::{
+    step_call_id, AgentLoop, HarnessRunData, HarnessRunState, Inflight, TraceRecord, Waiting,
+};
 use crate::state::{superstate_of, HarnessState};
 
 /// The machine's internal advance signal: the kernel's executor re-enters
@@ -118,6 +120,13 @@ impl HarnessMachine {
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.leaf.is_terminal()
+    }
+
+    /// The run's structured execution trace, as recorded in the run state
+    /// (so it travels with a checkpoint).
+    #[must_use]
+    pub fn trace(&self, ctx: &Context) -> Vec<TraceRecord> {
+        HarnessRunState::load(ctx).trace
     }
 
     /// Suspends the run into a serializable [`Snapshot`]: the tracked leaf
@@ -590,6 +599,13 @@ impl HarnessMachine {
                 };
                 let mut join = join;
                 join.results[slot] = Some(result.clone());
+                run.trace.push(TraceRecord::ChildCompleted {
+                    step: join.step.clone(),
+                    child: machine.clone(),
+                    // An absent `ok` is a child that returned normally; the child
+                    // failure protocol is an explicit ok:false result.
+                    ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
+                });
                 if join.results.iter().any(Option::is_none) {
                     run.join = Some(join);
                     run.store(ctx);
@@ -597,6 +613,10 @@ impl HarnessMachine {
                 }
                 let aggregate = Value::Array(join.results.into_iter().flatten().collect());
                 let step = join.step;
+                run.trace.push(TraceRecord::Joined {
+                    step: step.clone(),
+                    results: aggregate.as_array().map(Vec::len).unwrap_or_default(),
+                });
                 run.join = None;
                 self.complete_step(&mut run, &step, aggregate, ctx)
             }
@@ -631,6 +651,13 @@ impl HarnessMachine {
                     // delivery from an earlier incarnation) is ignored.
                     return Reaction::Ignored;
                 }
+                run.trace.push(TraceRecord::ChildCompleted {
+                    step: child.step.clone(),
+                    child: child.machine.clone(),
+                    // An absent `ok` is a child that returned normally; the child
+                    // failure protocol is an explicit ok:false result.
+                    ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
+                });
                 run.child = None;
                 let step = child.step;
                 self.complete_step(&mut run, &step, result.clone(), ctx)

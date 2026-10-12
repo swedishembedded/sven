@@ -18,7 +18,8 @@ use sven_vocab::verify::VerifierSpec;
 
 use crate::machine::{harness_thread, store_as_of, then_of, HarnessMachine};
 use crate::run::{
-    AgentLoop, ChildRun, HarnessRunState, Inflight, ParallelJoin, RetryFrame, Waiting, OUTCOME_FACT,
+    child_machine_id, AgentLoop, ChildRun, HarnessRunState, Inflight, ParallelJoin, RetryFrame,
+    TraceRecord, Waiting, OUTCOME_FACT,
 };
 use crate::state::HarnessState;
 
@@ -177,6 +178,9 @@ impl HarnessMachine {
             }
             PlanPrimitive::Return { ref value } => {
                 let outcome = run.resolve_value(value);
+                run.trace.push(TraceRecord::Outcome {
+                    outcome: outcome.clone(),
+                });
                 run.store(ctx);
                 ctx.set_fact(OUTCOME_FACT, outcome.clone());
                 self.outcome_cache = Some(outcome);
@@ -234,7 +238,7 @@ impl HarnessMachine {
                 let mut machines = Vec::new();
                 for branch in branches {
                     run.counts.children += 1;
-                    let machine = crate::run::child_machine_id(
+                    let machine = child_machine_id(
                         &name,
                         &step_id,
                         Some(branch.as_str()),
@@ -254,6 +258,10 @@ impl HarnessMachine {
                 if let Some(effect) = effects.first() {
                     self.cache_effect(effect.clone());
                 }
+                run.trace.push(TraceRecord::FanOut {
+                    step: step_id.clone(),
+                    branches: branches.clone(),
+                });
                 self.park(run, &step, Waiting::Join);
                 let fan_out = branches.len();
                 run.join = Some(ParallelJoin {
@@ -295,12 +303,8 @@ impl HarnessMachine {
                     }
                 }
                 run.counts.children += 1;
-                let machine = crate::run::child_machine_id(
-                    &self.run.plan().name,
-                    &step_id,
-                    None,
-                    run.counts.children,
-                );
+                let machine =
+                    child_machine_id(&self.run.plan().name, &step_id, None, run.counts.children);
                 let mut descriptor = serde_json::Map::new();
                 if *as_kind == DelegateTarget::Machine {
                     descriptor.insert("mode".into(), Value::String(target.clone()));
@@ -317,6 +321,10 @@ impl HarnessMachine {
                 run.child = Some(ChildRun {
                     machine: machine.as_uuid().to_string(),
                     step: step_id.clone(),
+                });
+                run.trace.push(TraceRecord::ChildStarted {
+                    step: step_id.clone(),
+                    child: machine.as_uuid().to_string(),
                 });
                 run.store(ctx);
                 Reaction::Transition {
@@ -348,6 +356,10 @@ impl HarnessMachine {
             .plan()
             .step(step_id)
             .and_then(|step| store_as_of(&step.primitive));
+        run.trace.push(TraceRecord::StepCompleted {
+            step: step_id.to_string(),
+            call_id: run.inflight.as_ref().and_then(|inflight| inflight.call_id),
+        });
         run.store_step_value(step_id, value, store_as.as_deref());
         run.awaiting = None;
         run.inflight = None;
@@ -406,7 +418,12 @@ impl HarnessMachine {
         let mut frame = frame;
         frame.left -= 1;
         let body = frame.body.clone();
+        let attempt = frame.attempt();
         run.retry = Some(frame);
+        run.trace.push(TraceRecord::RetryAttempt {
+            step: body.clone(),
+            attempt,
+        });
         run.awaiting = None;
         run.inflight = None;
         run.child = None;
@@ -506,6 +523,20 @@ impl HarnessMachine {
         message: &str,
         ctx: &mut Context,
     ) -> Reaction<HarnessState> {
+        // The in-flight operation's id: what this failure belonged to (a
+        // tool call, or the child run whose result carried it).
+        let operation = run
+            .inflight
+            .as_ref()
+            .and_then(|inflight| inflight.call_id)
+            .map(|call_id| call_id.as_uuid().to_string())
+            .or_else(|| run.child.as_ref().map(|child| child.machine.clone()));
+        run.trace.push(TraceRecord::Failed {
+            step: run.current.clone(),
+            code: code.to_string(),
+            message: message.to_string(),
+            operation,
+        });
         run.awaiting = None;
         run.inflight = None;
         run.retry = None;
@@ -529,15 +560,18 @@ impl HarnessMachine {
     /// Cancels the run from anywhere.
     pub(super) fn cancel(&mut self, ctx: &mut Context) -> Reaction<HarnessState> {
         let mut run = self.run_state(ctx);
+        let outcome = serde_json::json!({
+            "code": "cancelled",
+            "message": "the user cancelled the run",
+        });
+        run.trace.push(TraceRecord::Outcome {
+            outcome: outcome.clone(),
+        });
         run.awaiting = None;
         run.inflight = None;
         run.child = None;
         run.join = None;
         run.store(ctx);
-        let outcome = serde_json::json!({
-            "code": "cancelled",
-            "message": "the user cancelled the run",
-        });
         ctx.set_fact(OUTCOME_FACT, outcome.clone());
         self.outcome_cache = Some(outcome);
         Reaction::Transition {

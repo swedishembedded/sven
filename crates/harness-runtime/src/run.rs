@@ -247,6 +247,81 @@ pub struct Counts {
     pub children: u64,
 }
 
+/// One structured record of what a run did: the execution trace a
+/// checkpoint carries and an inspector reads. Records belong to the run
+/// that wrote them — its own run state — and name cross-run operations
+/// (child machine ids, tool call ids) explicitly, so nested children stay
+/// associated with the parent step that started them, and failures point at
+/// the step and operation they came from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum TraceRecord {
+    /// A step's result was stored; the id of the tool call that produced
+    /// it, when the step called a tool.
+    StepCompleted {
+        /// The step that completed.
+        step: String,
+        /// The operation's call id, when the step called a tool.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        call_id: Option<ToolCallId>,
+    },
+    /// A retry frame looped back; the attempt it is about to make.
+    RetryAttempt {
+        /// The body step re-entered.
+        step: String,
+        /// The 1-based attempt about to run.
+        attempt: u64,
+    },
+    /// A delegate step started a child run.
+    ChildStarted {
+        /// The delegate step that started it.
+        step: String,
+        /// The child's machine id.
+        child: String,
+    },
+    /// A child run of a delegate or parallel step completed.
+    ChildCompleted {
+        /// The parent step whose child completed.
+        step: String,
+        /// The child's machine id.
+        child: String,
+        /// Whether the child reported success.
+        ok: bool,
+    },
+    /// A parallel step fanned out, in declared order.
+    FanOut {
+        /// The parallel step.
+        step: String,
+        /// The branch steps, in declared order.
+        branches: Vec<String>,
+    },
+    /// A parallel step's join settled.
+    Joined {
+        /// The parallel step.
+        step: String,
+        /// How many results the join settled.
+        results: usize,
+    },
+    /// The run failed.
+    Failed {
+        /// The step that was in flight.
+        step: String,
+        /// The failure code.
+        code: String,
+        /// The failure message.
+        message: String,
+        /// The in-flight operation's id (a tool call's or a child run's),
+        /// when the failure belongs to one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        operation: Option<String>,
+    },
+    /// The run reached its terminal outcome.
+    Outcome {
+        /// The resolved outcome value.
+        outcome: Value,
+    },
+}
+
 /// The whole run state, serialized under [`RUN_STATE_FACT`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct HarnessRunState {
@@ -279,6 +354,8 @@ pub struct HarnessRunState {
     /// digest no longer matches — an edited harness cannot silently replace
     /// the version a run was checkpointed under.
     pub plan_digest: Option<String>,
+    /// The structured execution trace: what the run did, in order.
+    pub trace: Vec<TraceRecord>,
     /// Limit counters.
     pub counts: Counts,
 }
