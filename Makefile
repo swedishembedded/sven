@@ -206,6 +206,17 @@ docs-pdf: docs
 		-o target/docs/sven-user-guide.pdf
 	@echo "PDF guide written to target/docs/sven-user-guide.pdf"
 
+## papers/<name>/pdf - build one paper's PDF (see papers/paper.mk); papers/pdf builds every paper
+PAPER_DIRS := $(patsubst %/Makefile,%,$(wildcard papers/*/Makefile))
+PAPER_TARGETS := $(addsuffix /pdf,$(PAPER_DIRS))
+
+papers/pdf: $(PAPER_TARGETS)
+
+.PHONY: papers/pdf $(PAPER_TARGETS)
+
+$(PAPER_TARGETS): papers/%/pdf:
+	$(MAKE) -C papers/$*
+
 ## fmt       - format all code
 fmt:
 	$(CARGO) fmt --all
