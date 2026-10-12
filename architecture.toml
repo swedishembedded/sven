@@ -78,6 +78,7 @@ sven-tools-gdb     = "domain"
 
 # machines
 sven-machines  = "machines"
+sven-harness-runtime = "machines"
 sven-executors = "machines"
 
 # assembly
@@ -154,6 +155,46 @@ why  = "Machines are pure transition functions: they emit typed effects and neve
 
 [[forbidden]]
 from = "sven-machines"
+to   = "sven-workspace"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-harness-runtime"
+to   = "sven-model"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-harness-runtime"
+to   = "sven-tool-api"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-harness-runtime"
+to   = "sven-tool-registry"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-harness-runtime"
+to   = "sven-turn"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-harness-runtime"
+to   = "sven-executors"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-harness-runtime"
+to   = "sven-kernel"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-harness-runtime"
+to   = "sven-config"
+why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
+
+[[forbidden]]
+from = "sven-harness-runtime"
 to   = "sven-workspace"
 why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."
 

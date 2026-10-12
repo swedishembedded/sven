@@ -293,11 +293,19 @@ fn can_reach_terminal(
 }
 
 /// The capability each primitive exercises.
+///
+/// A tool or agent step's exercised capability is the *tool's* own bucket,
+/// derived from its name by the kernel's naming conventions (`read_file` →
+/// ReadFile, `shell` → ExecuteShell, an MCP name → unknowable here and left
+/// to the run-time gate). The declared `capabilities` list stays the whole
+/// contract: the permission policy grants exactly the declared set, so a
+/// call whose bucket is undeclared is refused at the gate.
 fn required_capability(step: &StepSpec) -> Option<&'static str> {
-    match step {
-        StepSpec::Tool(_) | StepSpec::Agent(_) => Some("ExecuteShell"),
-        StepSpec::Verify(_) => Some("RunVerifier"),
-        StepSpec::Delegate(_) => Some("SpawnChild"),
+    let names: Vec<&str> = match step {
+        StepSpec::Tool(t) => vec![t.name.as_str()],
+        StepSpec::Agent(a) => a.tools.iter().flatten().map(|t| t.as_str()).collect(),
+        StepSpec::Verify(_) => return Some("RunVerifier"),
+        StepSpec::Delegate(_) => return Some("SpawnChild"),
         StepSpec::Predict(_)
         | StepSpec::Assign(_)
         | StepSpec::Branch(_)
@@ -305,8 +313,17 @@ fn required_capability(step: &StepSpec) -> Option<&'static str> {
         | StepSpec::Parallel(_)
         | StepSpec::Transform(_)
         | StepSpec::Return(_)
-        | StepSpec::Fail(_) => None,
+        | StepSpec::Fail(_) => return None,
+    };
+    // Mirror the kernel's ExecuteShell naming convention (shell*, run_terminal*,
+    // gdb*): a step that can run arbitrary commands must declare it.
+    for name in names {
+        if name.starts_with("shell") || name.starts_with("run_terminal") || name.starts_with("gdb")
+        {
+            return Some("ExecuteShell");
+        }
     }
+    None
 }
 
 fn validate_capabilities(spec: &HarnessSpec) -> Result<(), HarnessError> {

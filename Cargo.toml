@@ -4,6 +4,7 @@ members = [
     ".",
     "crates/hsm",
     "crates/harness-spec",
+    "crates/harness-runtime",
     "crates/kernel",
     "crates/chain",
     "crates/vocab",

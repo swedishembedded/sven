@@ -1,0 +1,636 @@
+// Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//! [`HarnessMachine`]: the one generic machine that interprets compiled
+//! harness plans.
+//!
+//! The machine is a dispatcher, not a parser: at every step it matches the
+//! plan step's primitive, does the pure work inline (store, resolve,
+//! branch), emits the kernel's typed effects for the impure primitives, and
+//! points the walk at the successor step. There is no second engine here —
+//! every side effect is an existing kernel `Effect`, every completion an
+//! existing kernel `Event`, and the permission gate sees nothing it does
+//! not already see for the hardcoded machines.
+//!
+//! # Driving a run
+//!
+//! * A `UserMessage` **starts** the run (in [`HarnessState::Ready`]) and is
+//!   the universal **tick** afterwards: whenever nothing is in flight, a
+//!   message executes the step the walk points at. A pure chain (assign,
+//!   branch, retry bookkeeping) advances itself through the machine's
+//!   internal advance signal — the kernel's executor bounces each
+//!   `EmitInternal` back as an internal event, the same round trip the
+//!   other machines use.
+//! * An impure primitive parks the run in its `Waiting*` state and emits
+//!   its effect as a transition action. The completion event stores the
+//!   result, follows the step's `then` edge, and leaves the run resting:
+//!   the next tick advances. A failed side effect loops the active retry
+//!   frame (straight back into the body's waiting state, next attempt's
+//!   call emitted at once) or fails the run.
+//! * A terminal state absorbs everything.
+//!
+//! Swedish Embedded AB implements programmable, data-defined agent harnesses
+//! for its clients. If your team needs expertise in declarative agent
+//! workflow languages then you can procure our services by sending an email
+//! to info@swedishembedded.com.
+
+use serde_json::Value;
+use sven_harness_spec::{HarnessPlan, PlanPrimitive, PlanStep, Template};
+use sven_hsm::{
+    Context, Effect, Event, InternalEvent, Machine, MachineId, ProposedToolCall, Reaction,
+    Snapshot, ToolCallId, ToolCapability,
+};
+use sven_vocab::verify::VerifierVerdict;
+use sven_vocab::TurnRequest;
+
+use crate::error::HarnessRunError;
+use crate::run::{step_call_id, AgentLoop, HarnessRunData, HarnessRunState, Inflight, Waiting};
+use crate::state::{superstate_of, HarnessState};
+
+/// The machine's internal advance signal: the kernel's executor re-enters
+/// it as `InternalEvent::Custom`, and the handler executes the step the
+/// walk points at. This is how a pure chain advances without an external
+/// tick.
+pub(super) const ADVANCE_SIGNAL: &str = "harness.advance";
+
+/// The thread every harness model turn runs in: the plan's own
+/// conversation, separate from any host session thread.
+pub(super) fn harness_thread(plan: &HarnessPlan) -> String {
+    format!("harness.{}", plan.name)
+}
+
+/// Runs one harness plan through the HSM kernel.
+///
+/// The struct holds only identity, the compiled program, and the two
+/// conveniences a driver reads between dispatches (the emitted step effect
+/// and the terminal outcome). Every durable bit of run state lives in the
+/// [`Context`] under [`RUN_STATE_FACT`](crate::RUN_STATE_FACT).
+pub struct HarnessMachine {
+    pub(super) id: MachineId,
+    pub(super) run: HarnessRunData,
+    /// The leaf this machine's transitions moved the walk to. Snapshot
+    /// labels come from here; a restored machine takes its leaf from the
+    /// snapshot instead.
+    pub(super) leaf: HarnessState,
+    /// The effect of the step the walk most recently parked on — what
+    /// [`HarnessMachine::step_effect`] answers.
+    pub(super) step_effect_cache: Option<Effect>,
+    /// The outcome, once a terminal step executed.
+    pub(super) outcome_cache: Option<Value>,
+}
+
+impl HarnessMachine {
+    /// Creates a machine for a validated run.
+    #[must_use]
+    pub fn new(run: HarnessRunData) -> Self {
+        Self {
+            id: MachineId::new(),
+            leaf: HarnessState::Ready,
+            run,
+            step_effect_cache: None,
+            outcome_cache: None,
+        }
+    }
+
+    /// The compiled plan this machine executes.
+    #[must_use]
+    pub fn plan(&self) -> &HarnessPlan {
+        self.run.plan()
+    }
+
+    /// The effect the most recently entered step emitted, if the walk is
+    /// parked on a side-effecting step. A convenience for drivers that
+    /// deliver effects one at a time; the kernel's runtime takes effects
+    /// from dispatch outcomes instead.
+    #[must_use]
+    pub fn step_effect(&self) -> Option<Effect> {
+        self.step_effect_cache.clone()
+    }
+
+    /// The run's outcome once it rests in a terminal state: a `return`
+    /// step's resolved value, or a `fail` step's `{code, message}` object.
+    #[must_use]
+    pub fn outcome(&self) -> Option<Value> {
+        self.outcome_cache.clone()
+    }
+
+    /// `true` when the run rests in a terminal state.
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        self.leaf.is_terminal()
+    }
+
+    /// Suspends the run into a serializable [`Snapshot`]: the tracked leaf
+    /// plus the context (which carries the whole run state under
+    /// [`RUN_STATE_FACT`](crate::RUN_STATE_FACT)).
+    #[must_use]
+    pub fn snapshot(&self, ctx: &Context) -> Snapshot {
+        Snapshot {
+            state: format!("{:?}", self.leaf),
+            context: ctx.clone(),
+        }
+    }
+
+    /// Rebuilds a machine from `yaml` and resumes it from `snap`: the walk
+    /// continues from the snapshotted state and run data; no entry action
+    /// re-fires and no completed step re-executes.
+    ///
+    /// # Errors
+    ///
+    /// [`HarnessRunError::Spec`] when `yaml` no longer parses or compiles;
+    /// [`HarnessRunError::Unrestorable`] when the snapshot names a state
+    /// this machine cannot rest in.
+    pub fn restore(yaml: String, snap: Snapshot) -> Result<(Self, Context), HarnessRunError> {
+        let run = HarnessRunData::new(&yaml, Value::Null)?;
+        let leaf = crate::state::resolve_label(&snap.state)
+            .ok_or_else(|| HarnessRunError::Unrestorable(snap.state.clone()))?;
+        let machine = Self {
+            id: MachineId::new(),
+            run,
+            leaf,
+            step_effect_cache: None,
+            outcome_cache: None,
+        };
+        Ok((machine, snap.context))
+    }
+
+    /// The labels a snapshot of this machine may name: every state but the
+    /// root, which a running machine never rests in.
+    #[must_use]
+    pub fn restorable_state_labels(&self) -> Vec<String> {
+        crate::state::ALL_STATES
+            .into_iter()
+            .filter(|s| *s != HarnessState::Root)
+            .map(|s| format!("{s:?}"))
+            .collect()
+    }
+
+    /// The permission policy of a harness run: exactly the plan's declared
+    /// capabilities, allowed in every state. An undeclared capability is
+    /// granted nowhere — the plan is the whole contract, and nothing in the
+    /// runtime widens it.
+    #[must_use]
+    pub fn permission_policy_for(run: &HarnessRunData) -> sven_hsm::PermissionPolicy {
+        let declared: Vec<ToolCapability> = run
+            .plan()
+            .capabilities
+            .iter()
+            .filter_map(|name| capability_by_name(name))
+            .collect();
+        sven_hsm::PermissionPolicy::builder()
+            .allow_globally(declared)
+            .build()
+    }
+
+    // ── run-state and effect helpers ────────────────────────────────────
+
+    pub(super) fn run_state(&self, ctx: &Context) -> HarnessRunState {
+        HarnessRunState::load(ctx)
+    }
+
+    /// Records the leaf this machine transitioned to.
+    pub(super) fn set_leaf(&mut self, leaf: HarnessState) {
+        self.leaf = leaf;
+    }
+
+    /// The deterministic call id of `step` (with the active retry frame's
+    /// attempt suffix, when the step is a retry body).
+    pub(super) fn call_id_for(&self, step: &PlanStep, state: &HarnessRunState) -> ToolCallId {
+        let label = match &state.retry {
+            Some(frame) if frame.body == step.id => {
+                format!("{}-{}", step.id, frame.attempt())
+            }
+            _ => step.id.clone(),
+        };
+        step_call_id(&self.plan().name, &label)
+    }
+
+    /// Builds a single-turn `CallLlm` request for `prompt`: no tools, no
+    /// all-tools fallback, no tool rounds — a constrained turn.
+    pub(super) fn turn_effect(&self, state: &HarnessRunState, prompt: &Template) -> Effect {
+        let instruction = state.resolve_template(prompt);
+        let request = TurnRequest {
+            thread: harness_thread(self.plan()),
+            instruction: instruction.as_str().unwrap_or_default().to_string(),
+            tools: Vec::new(),
+            all_tools_mode: String::new(),
+            schema: Value::Null,
+            schema_name: String::new(),
+            model: None,
+            dynamic_suffix: None,
+            max_tool_rounds: Some(0),
+            refused_calls: Vec::new(),
+        };
+        Effect::CallLlm {
+            request: request.to_value(),
+        }
+    }
+
+    /// The agent loop's continuation turn: the next model round after the
+    /// proposed tools settled.
+    pub(super) fn continuation_effect(&self, state: &HarnessRunState) -> Option<Effect> {
+        let agent = state.agent.as_ref()?;
+        let request = TurnRequest {
+            thread: agent.thread.clone(),
+            instruction: String::new(),
+            tools: agent.tools.clone(),
+            all_tools_mode: String::new(),
+            schema: Value::Null,
+            schema_name: String::new(),
+            model: None,
+            dynamic_suffix: None,
+            max_tool_rounds: Some(0),
+            refused_calls: Vec::new(),
+        };
+        Some(Effect::CallLlm {
+            request: request.to_value(),
+        })
+    }
+
+    /// Parks the run on `step`: records what is in flight so the
+    /// completion events can be matched.
+    pub(super) fn park(&mut self, state: &mut HarnessRunState, step: &PlanStep, waiting: Waiting) {
+        let call_id = matches!(waiting, Waiting::Tool).then(|| self.call_id_for(step, state));
+        state.awaiting = Some(waiting);
+        state.inflight = Some(Inflight {
+            step: step.id.clone(),
+            call_id,
+        });
+    }
+
+    /// Remembers the effect a parked step emitted, for `step_effect`.
+    pub(super) fn cache_effect(&mut self, effect: Effect) {
+        self.step_effect_cache = Some(effect);
+    }
+
+    /// The advance signal for the step the walk points at.
+    fn advance_signal(step: &str) -> Effect {
+        Effect::EmitInternal {
+            name: ADVANCE_SIGNAL.to_string(),
+            payload: serde_json::json!({ "step": step }),
+        }
+    }
+}
+
+impl Machine for HarnessMachine {
+    type State = HarnessState;
+
+    fn id(&self) -> MachineId {
+        self.id
+    }
+
+    fn top(&self) -> Self::State {
+        HarnessState::Root
+    }
+
+    fn initial(&self) -> Self::State {
+        HarnessState::Ready
+    }
+
+    /// The hierarchy is flat: every state sits directly under the root.
+    fn superstate(&self, state: Self::State) -> Self::State {
+        superstate_of(state)
+    }
+
+    fn is_terminal(&self, state: Self::State) -> bool {
+        state.is_terminal()
+    }
+
+    fn all_states(&self) -> Vec<Self::State> {
+        crate::state::ALL_STATES.to_vec()
+    }
+
+    fn dispatch_state(
+        &mut self,
+        state: Self::State,
+        event: &Event,
+        ctx: &mut Context,
+    ) -> Reaction<Self::State> {
+        // Advancing's entry emits its advance signal (entry handlers never
+        // transition; the kernel's executor bounces the EmitInternal back
+        // as an internal event, which executes the step the walk points
+        // at).
+        if state == HarnessState::Advancing
+            && matches!(event, Event::Internal(InternalEvent::Entry))
+        {
+            let run = self.run_state(ctx);
+            return Reaction::Handled(vec![Self::advance_signal(&run.current)]);
+        }
+        let reaction = match state {
+            HarnessState::Root => Reaction::Ignored,
+            HarnessState::Ready => self.on_ready(event, ctx),
+            HarnessState::Advancing => self.on_advancing(event, ctx),
+            HarnessState::WaitingForModel => self.on_model(event, ctx),
+            HarnessState::WaitingForTool => self.on_tool(event, ctx),
+            HarnessState::WaitingForVerifier => self.on_verifier(event, ctx),
+            HarnessState::WaitingForChild | HarnessState::WaitingForJoin => {
+                self.on_deferred(event, ctx)
+            }
+            HarnessState::Completed | HarnessState::Failed | HarnessState::Cancelled => {
+                Reaction::Ignored
+            }
+        };
+        // A transition's target is where the walk now rests; keep the
+        // tracked leaf in step so snapshots name it.
+        if let Reaction::Transition { target, .. } = &reaction {
+            self.set_leaf(*target);
+        }
+        reaction
+    }
+}
+
+impl HarnessMachine {
+    // ── state handlers ──────────────────────────────────────────────────
+
+    /// A message starts the run: seed the run state and point the walk at
+    /// the entry step. Every later message is a tick (handled by the
+    /// waiting states).
+    fn on_ready(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
+        if !matches!(event, Event::UserMessage { .. }) {
+            return Reaction::Ignored;
+        }
+        let mut state = self.run_state(ctx);
+        state.start(self.run.plan(), self.run.inputs());
+        state.store(ctx);
+        Reaction::Transition {
+            target: HarnessState::Advancing,
+            effects: Vec::new(),
+            rationale: "run started".into(),
+        }
+    }
+
+    /// The walk is between side effects. Its entry emits the advance
+    /// signal (the kernel's executor bounces it back as an internal
+    /// event); the bounced event executes the step the walk points at and
+    /// keeps executing pure steps inline until the walk parks on a side
+    /// effect or rests terminal. A message is also an advance — a tick for
+    /// a run that parked idle after its last side effect completed. A
+    /// cancel moves to [`HarnessState::Cancelled`].
+    fn on_advancing(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
+        if matches!(event, Event::UserCancelled) {
+            return self.cancel(ctx);
+        }
+        let advance = match event {
+            Event::Internal(InternalEvent::Custom { name, .. }) if name == ADVANCE_SIGNAL => true,
+            Event::UserMessage { .. } => true,
+            _ => false,
+        };
+        if !advance {
+            return Reaction::Ignored;
+        }
+        let mut state = self.run_state(ctx);
+        self.execute_current(&mut state, ctx)
+    }
+
+    /// A model turn is in flight (`predict`, or an `agent` loop's rounds).
+    /// Nothing is in flight any more (the completion already stored and
+    /// followed the `then` edge): a tick advances the walk.
+    fn on_model(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
+        if matches!(event, Event::UserCancelled) {
+            return self.cancel(ctx);
+        }
+        let mut run = self.run_state(ctx);
+        if run.awaiting != Some(Waiting::Model) {
+            return self.tick_when_idle(&mut run, event, ctx);
+        }
+        let Some(inflight) = run.inflight.clone() else {
+            return Reaction::Ignored;
+        };
+        match event {
+            Event::LlmTurnComplete {
+                text, tool_calls, ..
+            } => {
+                if let Some(agent) = run.agent.clone() {
+                    if agent.step == inflight.step {
+                        return self.on_agent_turn(&mut run, agent, text, tool_calls, ctx);
+                    }
+                }
+                // `predict`: the turn's text is the answer.
+                self.complete_step(&mut run, &inflight.step, Value::String(text.clone()), ctx)
+            }
+            Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
+                self.side_effect_failed(&mut run, error, ctx)
+            }
+            _ => Reaction::Ignored,
+        }
+    }
+
+    /// A tool call's result is in flight (a `tool` step, or an agent
+    /// loop's proposed calls). Nothing in flight: a tick advances.
+    fn on_tool(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
+        if matches!(event, Event::UserCancelled) {
+            return self.cancel(ctx);
+        }
+        let mut run = self.run_state(ctx);
+        if run.awaiting != Some(Waiting::Tool) {
+            return self.tick_when_idle(&mut run, event, ctx);
+        }
+        let Some(inflight) = run.inflight.clone() else {
+            return Reaction::Ignored;
+        };
+        // An agent loop's proposed call: settle it and re-open the loop's
+        // model wait (the next turn arrives as LlmTurnComplete).
+        if run
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent.step == inflight.step && !agent.pending.is_empty())
+        {
+            return match event {
+                Event::ToolSucceeded { call_id: done, .. }
+                | Event::ToolFailed { call_id: done, .. } => {
+                    let mut agent = run.agent.clone().expect("checked above");
+                    agent.pending.retain(|id| id != done);
+                    run.agent = Some(agent);
+                    if run
+                        .agent
+                        .as_ref()
+                        .is_some_and(|agent| agent.pending.is_empty())
+                    {
+                        run.awaiting = Some(Waiting::Model);
+                        run.inflight = Some(Inflight {
+                            step: inflight.step,
+                            call_id: None,
+                        });
+                        run.store(ctx);
+                        let effect = self.continuation_effect(&run);
+                        self.cache_effect_opt(effect.clone());
+                        return Reaction::Transition {
+                            target: HarnessState::WaitingForModel,
+                            effects: effect.into_iter().collect(),
+                            rationale: "agent loop continues after its tools settled".into(),
+                        };
+                    }
+                    run.store(ctx);
+                    Reaction::handled()
+                }
+                _ => Reaction::Ignored,
+            };
+        }
+        match event {
+            Event::ToolSucceeded {
+                call_id: done,
+                observation,
+            } if Some(done) == inflight.call_id.as_ref() => {
+                self.complete_step(&mut run, &inflight.step, observation.clone(), ctx)
+            }
+            Event::ToolFailed {
+                call_id: done,
+                error,
+            } if Some(done) == inflight.call_id.as_ref() => {
+                self.side_effect_failed(&mut run, error, ctx)
+            }
+            _ => Reaction::Ignored,
+        }
+    }
+
+    /// A verifier verdict is in flight. Nothing in flight: a tick advances.
+    fn on_verifier(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
+        if matches!(event, Event::UserCancelled) {
+            return self.cancel(ctx);
+        }
+        let mut run = self.run_state(ctx);
+        if run.awaiting != Some(Waiting::Verifier) {
+            return self.tick_when_idle(&mut run, event, ctx);
+        }
+        let Some(inflight) = run.inflight.clone() else {
+            return Reaction::Ignored;
+        };
+        match event {
+            Event::VerificationComplete { verdict } => self.complete_step(
+                &mut run,
+                &inflight.step,
+                Value::String(verdict_text(verdict)),
+                ctx,
+            ),
+            Event::EffectFailed { error, .. } => self.side_effect_failed(&mut run, error, ctx),
+            _ => Reaction::Ignored,
+        }
+    }
+
+    /// Child runs and parallel joins are wired in later work; the states
+    /// exist now so the hierarchy stays fixed.
+    fn on_deferred(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
+        if matches!(event, Event::UserCancelled) {
+            return self.cancel(ctx);
+        }
+        let mut run = self.run_state(ctx);
+        self.tick_when_idle(&mut run, event, ctx)
+    }
+
+    // ── agent loop ──────────────────────────────────────────────────────
+
+    /// One turn of an agent step's model↔tool loop: tool proposals run as
+    /// `CallTool` effects (the loop stays in [`HarnessState::WaitingForModel`]
+    /// and receives the results there, via the tool-settling arm), a
+    /// text-only turn is the loop's final answer.
+    fn on_agent_turn(
+        &mut self,
+        run: &mut HarnessRunState,
+        mut agent: AgentLoop,
+        text: &str,
+        tool_calls: &[ProposedToolCall],
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
+        agent.rounds += 1;
+        if let Some(budget) = self
+            .run
+            .plan()
+            .limits
+            .as_ref()
+            .and_then(|l| l.max_model_turns)
+        {
+            if agent.rounds > budget {
+                return self.fail_now(
+                    run,
+                    "model_turn_budget",
+                    "agent loop exceeded its model-turn budget",
+                    ctx,
+                );
+            }
+        }
+        if !tool_calls.is_empty() {
+            let effects: Vec<Effect> = tool_calls
+                .iter()
+                .map(|call| Effect::CallTool {
+                    call_id: call.call_id,
+                    name: call.name.clone(),
+                    capability: call.capability,
+                    args: call.args.clone(),
+                })
+                .collect();
+            agent.pending = tool_calls.iter().map(|call| call.call_id).collect();
+            run.agent = Some(agent);
+            // Still Waiting::Model: the loop's tool results arrive in the
+            // same state through the tool-settling arm.
+            run.awaiting = Some(Waiting::Model);
+            run.inflight = Some(Inflight {
+                step: run.agent.as_ref().expect("just set").step.clone(),
+                call_id: None,
+            });
+            run.counts.tool_calls += tool_calls.len() as u64;
+            run.store(ctx);
+            return Reaction::Handled(effects);
+        }
+        run.agent = None;
+        run.awaiting = None;
+        run.inflight = None;
+        let step = agent.step.clone();
+        self.complete_step(run, &step, Value::String(text.to_string()), ctx)
+    }
+}
+/// A verdict's stored form: the word a template can address.
+pub(super) fn verdict_text(verdict: &VerifierVerdict) -> String {
+    match verdict {
+        VerifierVerdict::Passed => "passed".to_string(),
+        VerifierVerdict::Failed { reason } => format!("failed: {reason}"),
+        VerifierVerdict::NeedsHuman { .. } => "needs_human".to_string(),
+        VerifierVerdict::Unknown { reason } => format!("unknown: {reason}"),
+    }
+}
+
+/// A primitive's `then` successor, if it has one.
+pub(super) fn then_of(primitive: &PlanPrimitive) -> String {
+    match primitive {
+        PlanPrimitive::Predict { then, .. }
+        | PlanPrimitive::Agent { then, .. }
+        | PlanPrimitive::Tool { then, .. }
+        | PlanPrimitive::Verify { then, .. }
+        | PlanPrimitive::Assign { then, .. }
+        | PlanPrimitive::Retry { then, .. }
+        | PlanPrimitive::Delegate { then, .. }
+        | PlanPrimitive::Transform { then, .. } => then.clone(),
+        PlanPrimitive::Branch { .. }
+        | PlanPrimitive::Parallel { .. }
+        | PlanPrimitive::Return { .. }
+        | PlanPrimitive::Fail { .. } => String::new(),
+    }
+}
+
+/// Where a primitive stores its result, if it stores one.
+pub(super) fn store_as_of(primitive: &PlanPrimitive) -> Option<String> {
+    match primitive {
+        PlanPrimitive::Predict { store_as, .. }
+        | PlanPrimitive::Agent { store_as, .. }
+        | PlanPrimitive::Tool { store_as, .. }
+        | PlanPrimitive::Verify { store_as, .. }
+        | PlanPrimitive::Delegate { store_as, .. }
+        | PlanPrimitive::Transform { store_as, .. } => store_as.clone(),
+        _ => None,
+    }
+}
+
+/// A plan capability name's kernel bucket; unknown names grant nothing.
+pub(super) fn capability_by_name(name: &str) -> Option<ToolCapability> {
+    match name {
+        "ReadFile" => Some(ToolCapability::ReadFile),
+        "WriteFile" => Some(ToolCapability::WriteFile),
+        "DeleteFile" => Some(ToolCapability::DeleteFile),
+        "ExecuteShell" => Some(ToolCapability::ExecuteShell),
+        "NetworkAccess" => Some(ToolCapability::NetworkAccess),
+        "GitOperation" => Some(ToolCapability::GitOperation),
+        "RunVerifier" => Some(ToolCapability::RunVerifier),
+        "ControlDevice" => Some(ToolCapability::ControlDevice),
+        "SpawnChild" => Some(ToolCapability::SpawnChild),
+        _ => None,
+    }
+}

@@ -245,8 +245,11 @@ tool, parked-question ledger; the `memory` feature of `sven-bootstrap`)
 ### machines
 `sven-machines` (pure `Machine` impls: `ReactiveAgentMachine`, `SdlcMachine`,
 `TaskMachine`, `ModeRegistry`, `loop_core`; depends only on `sven-hsm` and
-`sven-vocab`) · `sven-executors` (the real I/O layer: `CompositeExecutor` +
-its executor slots, `ThreadStore`)
+`sven-vocab`) · `sven-harness-runtime` (the YAML-harness machine:
+`HarnessMachine` + `HarnessRunData`/`HarnessRunState`; compiles through
+`sven-harness-spec` and the same kernel, depends only on `sven-hsm`,
+`sven-vocab` and `sven-harness-spec`) · `sven-executors` (the real I/O layer:
+`CompositeExecutor` + its executor slots, `ThreadStore`)
 
 ### assembly
 `sven-bootstrap` (`RuntimeBuilder` - the one kernel-assembly point;

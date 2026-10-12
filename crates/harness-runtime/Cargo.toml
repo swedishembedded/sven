@@ -1,0 +1,15 @@
+[package]
+name        = "sven-harness-runtime"
+version.workspace = true
+edition     = "2021"
+description = "The harness machine: executes compiled sven-harness-spec plans through the HSM kernel's existing effects, events and permission planes. Depends only on sven-hsm and sven-vocab."
+license     = "Apache-2.0"
+
+[dependencies]
+sven-harness-spec = { path = "../harness-spec" }
+sven-hsm          = { path = "../hsm" }
+sven-vocab        = { path = "../vocab" }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+uuid             = { workspace = true, features = ["v5"] }
+thiserror        = { workspace = true }
