@@ -34,6 +34,7 @@ pub fn mode_registry() -> ModeRegistry {
                 sven_machines::UiTestMachine::new(),
             ))
         }),
+        sven_machines::UiTestMachine::permission_policy(),
     );
     registry
 }

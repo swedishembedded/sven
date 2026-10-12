@@ -105,7 +105,7 @@ impl ToolCapability {
 /// person's approval per call.
 ///
 /// Build one with [`PermissionPolicy::builder`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PermissionPolicy {
     /// Capabilities allowed per state (keyed by the state's `Debug` label).
     per_state: HashMap<String, HashSet<ToolCapability>>,

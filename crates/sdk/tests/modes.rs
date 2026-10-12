@@ -61,8 +61,10 @@ fn a_machine_of_your_own_extends_the_modes_this_build_offers() {
             "mine",
             Box::new(|| {
                 let builtins = ModeRegistry::default_registry();
-                builtins.get("agent").expect("the agent mode is built in")()
+                let registration = builtins.get("agent").expect("the agent mode is built in");
+                (registration.factory)()
             }),
+            sven_hsm::PermissionPolicy::default(),
         )
         .build()
         .expect("an engine builds");

@@ -329,10 +329,14 @@ impl EngineBuilder {
         self
     }
 
-    /// Registers a state machine of your own under `mode`.
+    /// Registers a state machine of your own under `mode`, running under
+    /// `policy`.
     ///
     /// The kernel drives it exactly as it drives the built-in machines -
-    /// permissions, audit, suspend and resume all apply. Registering an
+    /// permissions, audit, suspend and resume all apply, and every session in
+    /// the mode is gated on `policy` (then narrowed by the session's approval
+    /// mode). A policy is part of what a mode is: without one the kernel
+    /// would have to guess what the machine's states may do. Registering an
     /// existing mode name replaces it.
     ///
     /// The machine must implement `all_states()`, or agents running it cannot
@@ -344,10 +348,11 @@ impl EngineBuilder {
         mut self,
         mode: impl AsRef<str>,
         factory: sven_machines::mode::MachineFactory,
+        policy: sven_hsm::PermissionPolicy,
     ) -> Self {
         self.machines
             .get_or_insert_with(sven_bootstrap::mode_registry)
-            .register(mode.as_ref(), factory);
+            .register(mode.as_ref(), factory, policy);
         self
     }
 

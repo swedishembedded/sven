@@ -127,10 +127,10 @@ pub struct RuntimeBuilder {
     /// See [`RuntimeBuilder::with_mode_registry`].
     mode_registry: Option<Arc<sven_machines::ModeRegistry>>,
     /// The interactive [`AgentMode`] this session runs as (see
-    /// [`Self::with_agent_mode`]). Selects the permission policy for the
-    /// reactive machine — `Plan`/`Research` get a read-only policy — and seeds
-    /// the tool registry's mode lock. `None` preserves the historical
-    /// full-agent behaviour.
+    /// [`Self::with_agent_mode`]). Narrows the mode's registered permission
+    /// policy — a `Plan`/`Research` session never writes files, whatever
+    /// machine runs — and seeds the tool registry's mode lock. `None`
+    /// preserves the historical full-agent behaviour.
     agent_mode: Option<AgentMode>,
     /// A pre-built, already-connected [`McpManager`] to reuse instead of
     /// creating a fresh one (see [`Self::with_mcp_manager`]). Interactive
@@ -182,11 +182,12 @@ impl RuntimeBuilder {
 
     /// Set the interactive [`AgentMode`] for this session.
     ///
-    /// The mode selects the reactive machine's permission policy —
-    /// `Plan`/`Research` build a read-only policy that forbids `WriteFile` at
-    /// the kernel gate — and seeds the tool registry's mode lock. It does not
-    /// change which kernel machine runs (that is the `mode` string passed to
-    /// [`new`](Self::new)); `Plan` and `Agent` both drive the reactive machine.
+    /// The mode narrows the kernel machine's registered permission policy —
+    /// a `Plan`/`Research` session never holds `WriteFile`, whatever machine
+    /// runs — and seeds the tool registry's mode lock. It does not change
+    /// which kernel machine runs (that is the `mode` string passed to
+    /// [`new`](Self::new)); `Plan` and `Agent` both drive the reactive
+    /// machine.
     pub fn with_agent_mode(mut self, mode: AgentMode) -> Self {
         self.agent_mode = Some(mode);
         self
@@ -437,25 +438,28 @@ impl RuntimeBuilder {
         Arc<McpManager>,
         mpsc::Receiver<McpEvent>,
     )> {
-        // Before anything starts: a session that cannot run as asked fails here.
-        let policy = crate::mode_policy::session_policy(
-            &self.mode,
-            self.agent_mode.unwrap_or(AgentMode::Agent),
-            self.approval_mode,
-        )?;
         // ── Look up machine ───────────────────────────────────────────────────
+        // Before anything starts: a session that cannot run as asked fails
+        // here. The mode's policy comes from its registration, never guessed
+        // from its name, so an unregistered mode is refused outright.
         let registry = match self.mode_registry.take() {
             Some(supplied) => supplied,
             None => Arc::new(crate::modes::mode_registry()),
         };
-        let factory = registry.get(&self.mode).ok_or_else(|| {
+        let registration = registry.get(&self.mode).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown mode {:?}; available: {:?}",
                 self.mode,
                 registry.modes()
             )
         })?;
-        let machine = factory();
+        let policy = crate::mode_policy::session_policy(
+            &registry,
+            &self.mode,
+            self.agent_mode.unwrap_or(AgentMode::Agent),
+            self.approval_mode,
+        )?;
+        let machine = (registration.factory)();
 
         // ── Initialise model provider ─────────────────────────────────────────
         let model_cfg = self

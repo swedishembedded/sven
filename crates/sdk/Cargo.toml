@@ -42,5 +42,6 @@ android = ["sven-bootstrap/android"]
 async-trait     = { workspace = true }
 futures         = { workspace = true }
 schemars        = { workspace = true }
+sven-hsm        = { path = "../hsm" }
 sven-model-mock = { path = "../model-mock" }
 tempfile        = { workspace = true }

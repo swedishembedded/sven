@@ -23,6 +23,7 @@ fn every_machine() -> ModeRegistry {
     registry.register(
         "ui-test",
         Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(UiTestMachine::new())) }),
+        UiTestMachine::permission_policy(),
     );
     registry
 }
@@ -32,8 +33,8 @@ fn every_registered_mode_enumerates_the_states_it_can_be_resumed_into() {
     let registry = every_machine();
 
     for mode in registry.modes() {
-        let factory = registry.get(mode).expect("a mode the registry listed");
-        let machine = factory();
+        let registration = registry.get(mode).expect("a mode the registry listed");
+        let machine = (registration.factory)();
 
         assert!(
             !machine.all_state_labels().is_empty(),
@@ -48,11 +49,11 @@ fn every_registered_mode_resumes_into_each_of_its_own_states() {
     let registry = every_machine();
 
     for mode in registry.modes() {
-        let factory = registry.get(mode).expect("a mode the registry listed");
-        let labels = factory().all_state_labels();
+        let registration = registry.get(mode).expect("a mode the registry listed");
+        let labels = (registration.factory)().all_state_labels();
 
         for label in labels {
-            let mut machine = factory();
+            let mut machine = (registration.factory)();
             machine.restore_state(&label).unwrap_or_else(|e| {
                 panic!("mode {mode:?} cannot resume into its own state {label:?}: {e}")
             });
@@ -68,9 +69,9 @@ fn every_registered_mode_resumes_into_each_of_its_own_states() {
 #[test]
 fn a_resumed_machine_does_not_re_run_its_entry_actions() {
     let registry = ModeRegistry::default_registry();
-    let factory = registry.get("agent").expect("the agent mode is registered");
+    let registration = registry.get("agent").expect("the agent mode is registered");
 
-    let mut machine = factory();
+    let mut machine = (registration.factory)();
     machine
         .restore_state("Generating")
         .expect("Generating is a reactive-agent state");

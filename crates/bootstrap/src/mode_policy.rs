@@ -4,18 +4,26 @@
 //! The kernel permission policy that goes with an interactive mode.
 
 use sven_hsm::{PermissionPolicy, ToolCapability};
-use sven_machines::{ReactiveAgentMachine, SdlcMachine, UiTestMachine, VerifiedTaskMachine};
+use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
 use sven_vocab::{AgentMode, ApprovalMode};
 
-/// The policy a session running `kernel_mode` enforces: the machine's own
-/// (so, say, SDLC disallows writes outside Execution), under `approval`.
+/// The policy a session running `kernel_mode` enforces: the mode's
+/// registered machine policy (so, say, SDLC disallows writes outside
+/// Execution), narrowed by the host for the read-only `AgentMode`s, under
+/// `approval`.
+///
+/// The mode's own policy comes from its registry registration, never from
+/// this name: a mode nobody registered has no policy, and is refused here
+/// rather than silently granted a default.
 ///
 /// # Errors
 ///
-/// Manual approval of a `ui-test` session: its machine drives a device step
-/// by step and does not hold a call for a person's answer, and it runs only
-/// dispatched, where nobody could give one.
+/// An unregistered `kernel_mode`; and manual approval of a `ui-test`
+/// session — its machine drives a device step by step and does not hold a
+/// call for a person's answer, and it runs only dispatched, where nobody
+/// could give one.
 pub(crate) fn session_policy(
+    registry: &ModeRegistry,
     kernel_mode: &str,
     agent_mode: AgentMode,
     approval: ApprovalMode,
@@ -25,13 +33,30 @@ pub(crate) fn session_policy(
         "manual approval is not available for a ui-test step: it runs dispatched, \
          with nobody to answer, and its machine does not wait for approvals"
     );
-    let policy = match kernel_mode {
-        "sdlc" => SdlcMachine::permission_policy(),
-        "verified-task" => VerifiedTaskMachine::permission_policy(),
-        "ui-test" => UiTestMachine::permission_policy(),
-        _ => reactive_policy(agent_mode),
-    };
-    Ok(with_approval(policy, approval))
+    let registration = registry.get(kernel_mode).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown mode {:?}; it has no registered machine policy, so it cannot run",
+            kernel_mode
+        )
+    })?;
+    Ok(with_approval(
+        host_narrowing(registration.policy.clone(), agent_mode),
+        approval,
+    ))
+}
+
+/// What the host withholds from a machine's registered policy for the
+/// session's interactive mode: the read-only planning modes (`Plan` /
+/// `Research`) never write files, whatever machine runs beneath them. The
+/// registration's policy stays untouched; this only narrows it — the first
+/// intersection of the authorization model (host ∩ machine).
+fn host_narrowing(policy: PermissionPolicy, agent_mode: AgentMode) -> PermissionPolicy {
+    match agent_mode {
+        AgentMode::Plan | AgentMode::Research => {
+            policy.intersect(&ReactiveAgentMachine::plan_permission_policy())
+        }
+        _ => policy,
+    }
 }
 
 /// The calls manual approval approves without asking: a `shell` command
@@ -76,6 +101,10 @@ pub(crate) fn reactive_policy(mode: AgentMode) -> PermissionPolicy {
 /// `chat` runs under the full reactive policy, but its tools are read-only
 /// (the writing tools run only in `agent` mode), so what it can hand on is
 /// the read-only policy.
+// The ceilings below restate each mode's registered policy by machine, not
+// by registry lookup, because they answer "what may a *kind* of session
+// hand on" for every session of that kind, including hypothetical ones —
+// a registry lookup would answer only for the modes this build registers.
 pub(crate) fn session_ceiling(mode: AgentMode) -> PermissionPolicy {
     match mode {
         AgentMode::Sdlc => SdlcMachine::permission_policy().ceiling_in_every_state(),
@@ -136,6 +165,7 @@ pub(crate) fn exceeds(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
 
     /// A session may switch only to a mode that can do nothing, in any of
     /// its states, that the starting mode cannot do in one of its own.
@@ -159,5 +189,111 @@ mod tests {
             "agent reaches the network, which no sdlc state does"
         );
         assert!(modes_within(AgentMode::Sdlc).contains(&AgentMode::Sdlc));
+    }
+
+    /// A mode nobody registered has no policy: building the session is
+    /// refused, and nothing falls back to the reactive policy — a silent
+    /// default grant is how an unknown mode would get away with everything
+    /// the reactive agent may do.
+    #[test]
+    fn an_unregistered_mode_has_no_policy_and_cannot_run() {
+        let registry = ModeRegistry::default_registry();
+        let err = session_policy(&registry, "teleport", AgentMode::Agent, ApprovalMode::Auto)
+            .expect_err("an unregistered mode must be refused");
+        assert!(
+            err.to_string().contains("teleport"),
+            "the error names the mode: {err}"
+        );
+    }
+
+    /// The policy a session runs is the mode's *registered* policy under the
+    /// session's approval mode — per-state grants intact (sdlc writes in
+    /// Execution, not in Planning).
+    #[test]
+    fn a_session_runs_its_registered_policy_under_its_approval_mode() {
+        let registry = ModeRegistry::default_registry();
+        let policy = session_policy(&registry, "sdlc", AgentMode::Sdlc, ApprovalMode::Auto)
+            .expect("sdlc is registered");
+        assert_eq!(policy, SdlcMachine::permission_policy());
+        use sven_machines::machines::sdlc::SdlcState;
+        assert!(
+            policy.allows(&SdlcState::Execution, ToolCapability::WriteFile),
+            "the Execution state writes"
+        );
+        assert!(
+            !policy.allows(&SdlcState::Planning, ToolCapability::WriteFile),
+            "Planning does not"
+        );
+    }
+
+    /// The host narrows, never widens: a `plan` session on the reactive
+    /// machine cannot write, and the same session on a machine whose
+    /// registered policy allows nothing (predict) stays at nothing.
+    #[test]
+    fn host_narrowing_never_widens_a_registered_policy() {
+        let registry = ModeRegistry::default_registry();
+        let plan = session_policy(&registry, "agent", AgentMode::Plan, ApprovalMode::Auto)
+            .expect("agent is registered");
+        assert!(
+            !plan.allows_in_every_state(ToolCapability::WriteFile),
+            "a plan session never writes files"
+        );
+        assert!(
+            plan.allows_in_every_state(ToolCapability::ReadFile),
+            "reading stays"
+        );
+
+        let predict = session_policy(&registry, "predict", AgentMode::Agent, ApprovalMode::Auto)
+            .expect("predict is registered");
+        for cap in ToolCapability::ALL {
+            assert!(
+                !predict.allows_in_every_state(cap),
+                "predict's registered policy allows nothing; {cap:?} leaked in"
+            );
+        }
+    }
+
+    /// Manual approval only adds approval requirements; auto leaves the
+    /// registered policy exactly as registered.
+    #[test]
+    fn approval_narrows_but_never_widens() {
+        let registry = ModeRegistry::default_registry();
+        let auto = session_policy(&registry, "agent", AgentMode::Agent, ApprovalMode::Auto)
+            .expect("agent is registered");
+        let manual = session_policy(&registry, "agent", AgentMode::Agent, ApprovalMode::Manual)
+            .expect("agent is registered");
+        assert!(!auto.requires_approval(ToolCapability::ExecuteShell));
+        assert!(manual.requires_approval(ToolCapability::ExecuteShell));
+        for cap in ToolCapability::ALL {
+            assert!(
+                !(auto.allows_in_every_state(cap) && !manual.allows_in_every_state(cap)),
+                "manual approval must not withdraw {cap:?}"
+            );
+        }
+    }
+
+    /// The registered policy of a mode is its machine's own — pinned for the
+    /// reactive pair here, per-mode in `sven-machines`.
+    #[test]
+    fn the_registry_policy_comes_from_the_registration_not_the_name() {
+        let mut registry = ModeRegistry::default_registry();
+        // A mode named "chat" with a different machine is that machine's
+        // policy, not what "chat" used to grant: the name carries nothing.
+        registry.register(
+            "chat",
+            Box::new(|| -> Box<dyn sven_hsm::submachine::ErasedMachine> {
+                Box::new(sven_hsm::dispatch::Hsm::new(SdlcMachine::new()))
+            }),
+            SdlcMachine::permission_policy(),
+        );
+        let policy = session_policy(&registry, "chat", AgentMode::Agent, ApprovalMode::Auto)
+            .expect("chat is registered");
+        assert_eq!(policy, SdlcMachine::permission_policy());
+        assert_ne!(
+            policy,
+            ReactiveAgentMachine::permission_policy(),
+            "what a mode named \"chat\" grants is its machine's, not what the \
+             reactive machine used to grant every unmatched name"
+        );
     }
 }

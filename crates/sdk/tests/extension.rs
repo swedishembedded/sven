@@ -212,6 +212,7 @@ async fn a_machine_defined_outside_the_workspace_can_be_registered_and_run() {
                     id: MachineId::new(),
                 }))
             }),
+            sven_hsm::PermissionPolicy::default(),
         )
         .build()
         .expect("an engine builds");
@@ -253,6 +254,7 @@ async fn registering_a_machine_keeps_the_built_in_modes() {
                     id: MachineId::new(),
                 }))
             }),
+            sven_hsm::PermissionPolicy::default(),
         )
         .build()
         .expect("an engine builds");
@@ -276,6 +278,7 @@ async fn a_custom_machine_agent_suspends_and_resumes() {
                         id: MachineId::new(),
                     }))
                 }),
+                sven_hsm::PermissionPolicy::default(),
             )
             .build()
             .expect("an engine builds")
