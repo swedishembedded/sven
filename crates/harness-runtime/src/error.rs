@@ -21,4 +21,11 @@ pub enum HarnessRunError {
     /// The snapshot's run state was not the JSON shape this machine wrote.
     #[error("harness run state is corrupt: {0}")]
     CorruptRunState(String),
+    /// A harness name was registered twice; a registry is a set, not a
+    /// scratchpad.
+    #[error("harness `{0}` is already registered")]
+    DuplicateHarness(String),
+    /// A run was entered at a step the plan does not declare.
+    #[error("cannot enter harness at unknown step `{0}`")]
+    UnknownEntry(String),
 }

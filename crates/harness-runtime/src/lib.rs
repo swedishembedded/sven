@@ -27,11 +27,13 @@
 mod error;
 mod exec;
 mod machine;
+mod registry;
 mod run;
 mod state;
 
 pub use error::HarnessRunError;
 pub use machine::HarnessMachine;
+pub use registry::HarnessRegistry;
 pub use run::{
     step_call_id, AgentLoop, ChildRun, Counts, HarnessRunData, HarnessRunState, Inflight,
     ParallelJoin, RetryFrame, StepRecord, Waiting, OUTCOME_FACT, RUN_STATE_FACT,

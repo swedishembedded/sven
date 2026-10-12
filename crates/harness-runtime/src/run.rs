@@ -89,6 +89,27 @@ impl HarnessRunData {
     pub fn inputs(&self) -> &Value {
         &self.inputs
     }
+
+    /// Builds a run from a compiled plan and the run's inputs — how a
+    /// child spawner starts a registered harness without re-parsing it.
+    #[must_use]
+    pub fn from_parts(plan: HarnessPlan, inputs: Value) -> Self {
+        Self { plan, inputs }
+    }
+
+    /// Re-enters this run's plan at `step`: how a parallel fan-out starts
+    /// a child at its branch.
+    ///
+    /// # Errors
+    ///
+    /// `step` is not one of the plan's steps.
+    pub fn with_entry(mut self, step: &str) -> Result<Self, HarnessRunError> {
+        if !self.plan.steps.contains_key(step) {
+            return Err(HarnessRunError::UnknownEntry(step.to_string()));
+        }
+        self.plan.entry = step.to_string();
+        Ok(self)
+    }
 }
 
 /// One executed step's stored result.
