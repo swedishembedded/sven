@@ -1,0 +1,13 @@
+[package]
+name        = "sven-harness-spec"
+version.workspace = true
+edition     = "2021"
+description = "The sven harness language: YAML agent-harness documents, their typed AST, static validation and the compiler to a canonical, content-hashed HarnessPlan. Zero dependencies on other sven crates."
+license     = "Apache-2.0"
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+sha2       = { workspace = true }
+thiserror  = { workspace = true }

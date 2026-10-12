@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     ".",
     "crates/hsm",
+    "crates/harness-spec",
     "crates/kernel",
     "crates/chain",
     "crates/vocab",

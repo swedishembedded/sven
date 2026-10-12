@@ -99,9 +99,10 @@ const MAX_WORKSPACE_ASCENT: usize = 5;
 /// Heuristically locate the workspace root - the directory above the git
 /// repository that contains shared tooling used by multiple projects.
 ///
-/// **This function uses heuristics** (see [`WORKSPACE_MARKERS`]) and may
-/// return an incorrect result when the filesystem layout is unusual.  Callers
-/// should treat the result as a best-effort hint, not a guarantee.
+/// **This function uses heuristics** (it looks for the marker files listed
+/// by the private `WORKSPACE_MARKERS` constant) and may return an incorrect
+/// result when the filesystem layout is unusual.  Callers should treat the
+/// result as a best-effort hint, not a guarantee.
 pub fn find_workspace_root(project_root: &Path) -> PathBuf {
     // Begin one level above project_root so that any workspace markers that
     // happen to exist *inside* the project are never matched.

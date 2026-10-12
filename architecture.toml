@@ -41,6 +41,7 @@ order = [
 sven-audio       = "foundation"
 sven-chain       = "foundation"
 sven-config      = "foundation"
+sven-harness-spec = "foundation"
 sven-hsm         = "foundation"
 sven-image       = "foundation"
 sven-tui-nvim    = "foundation"
