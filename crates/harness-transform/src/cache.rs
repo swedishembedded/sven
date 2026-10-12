@@ -34,7 +34,16 @@ impl ModuleCache {
     /// The compiled module for these bytes, decoding and validating on a
     /// miss.
     pub fn load(&mut self, wasm: &[u8]) -> Result<Arc<Module>, TransformError> {
-        let key = crate::digest(wasm);
+        self.load_hashed(crate::digest(wasm), wasm)
+    }
+
+    /// The compiled module for bytes whose digest the caller already took
+    /// — one hash when a caller needs the digest itself.
+    pub fn load_hashed(
+        &mut self,
+        key: [u8; 32],
+        wasm: &[u8],
+    ) -> Result<Arc<Module>, TransformError> {
         if let Some(module) = self.entries.get(&key) {
             return Ok(Arc::clone(module));
         }

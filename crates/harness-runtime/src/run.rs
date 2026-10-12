@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sven_harness_spec::{Expr, HarnessPlan, Path, Template};
+use sven_harness_spec::{Expr, HarnessBundle, HarnessPlan, Helper, Path, Template};
 use sven_hsm::{Context, MachineId, ToolCallId};
 use uuid::Uuid;
 
@@ -78,6 +78,13 @@ pub fn step_call_id(harness: &str, label: &str) -> ToolCallId {
 pub struct HarnessRunData {
     plan: HarnessPlan,
     inputs: Value,
+    /// The bundle's helpers, by name. A run built from a bare document has
+    /// none; its `transform` steps fail with `helper_missing` when reached.
+    helpers: BTreeMap<String, Helper>,
+    /// The bundle's digest, when the run was built from one: a checkpoint
+    /// pins it, and a resume that offers a different bundle is refused —
+    /// a changed helper is a changed program.
+    bundle_digest: Option<String>,
 }
 
 impl HarnessRunData {
@@ -92,6 +99,8 @@ impl HarnessRunData {
         Ok(Self {
             plan: sven_harness_spec::compile_str(yaml)?,
             inputs,
+            helpers: BTreeMap::new(),
+            bundle_digest: None,
         })
     }
 
@@ -111,7 +120,60 @@ impl HarnessRunData {
     /// child spawner starts a registered harness without re-parsing it.
     #[must_use]
     pub fn from_parts(plan: HarnessPlan, inputs: Value) -> Self {
-        Self { plan, inputs }
+        Self {
+            plan,
+            inputs,
+            helpers: BTreeMap::new(),
+            bundle_digest: None,
+        }
+    }
+
+    /// Builds a run from a bundle: the document is compiled against the
+    /// helper set (a `transform` step naming a helper the bundle does not
+    /// carry, or a helper no step references, is refused here, offline),
+    /// and the helpers travel with the run.
+    ///
+    /// # Errors
+    ///
+    /// Every parse, validation and compile failure of the harness language,
+    /// plus the bundle's own used↔declared helper checks.
+    pub fn from_bundle(bundle: &HarnessBundle, inputs: Value) -> Result<Self, HarnessRunError> {
+        let compiled = bundle.compile()?;
+        Ok(Self {
+            plan: compiled.plan,
+            inputs,
+            helpers: bundle.helpers.clone(),
+            bundle_digest: Some(compiled.digest),
+        })
+    }
+
+    /// Attaches helpers to a run built from parts — how a child spawner
+    /// hands a registered harness's helpers to its child.
+    #[must_use]
+    pub fn with_helpers(mut self, helpers: BTreeMap<String, Helper>) -> Self {
+        self.helpers = helpers;
+        self
+    }
+
+    /// The helper named `name`, if the run carries one.
+    #[must_use]
+    pub fn helper(&self, name: &str) -> Option<&Helper> {
+        self.helpers.get(name)
+    }
+
+    /// The bundle this run was built from, as its digest; `None` for a run
+    /// built from a bare document.
+    #[must_use]
+    pub fn bundle_digest(&self) -> Option<&str> {
+        self.bundle_digest.as_deref()
+    }
+
+    /// Pins the run to a bundle digest — how a bundle resume attaches the
+    /// pin its checkpoint carries.
+    #[must_use]
+    pub fn pinned_to_bundle(mut self, digest: String) -> Self {
+        self.bundle_digest = Some(digest);
+        self
     }
 
     /// Re-enters this run's plan at `step`: how a parallel fan-out starts
@@ -354,6 +416,12 @@ pub struct HarnessRunState {
     /// digest no longer matches — an edited harness cannot silently replace
     /// the version a run was checkpointed under.
     pub plan_digest: Option<String>,
+    /// The bundle's content digest, when the run was built from one. A
+    /// checkpoint pins it alongside the plan digest: a helper's bytes are
+    /// part of the program's meaning, so a resume that offers a different
+    /// bundle is refused even when the plan itself is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_digest: Option<String>,
     /// The structured execution trace: what the run did, in order.
     pub trace: Vec<TraceRecord>,
     /// Limit counters.
@@ -379,11 +447,12 @@ impl HarnessRunState {
 
     /// Seeds a fresh run: clears all bookkeeping, stores the inputs, and
     /// points the walk at the plan's entry step.
-    pub fn start(&mut self, plan: &HarnessPlan, inputs: &Value) {
+    pub fn start(&mut self, plan: &HarnessPlan, inputs: &Value, bundle_digest: Option<&str>) {
         *self = Self {
             current: plan.entry.clone(),
             inputs: inputs.clone(),
             plan_digest: Some(plan.digest.clone()),
+            bundle_digest: bundle_digest.map(str::to_string),
             // A top-level run is the whole delegation chain's depth 1;
             // delegated children reseed with their inherited depth.
             delegate_depth: 1,

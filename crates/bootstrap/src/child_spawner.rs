@@ -374,7 +374,8 @@ impl SdlcChildSpawner {
             .await;
             return;
         };
-        let data = sven_harness_runtime::HarnessRunData::from_parts((*plan).clone(), input);
+        let data = sven_harness_runtime::HarnessRunData::from_parts((*plan).clone(), input)
+            .with_helpers(self.harnesses.helpers(name));
         let data = match entry {
             Some(step) => match data.with_entry(step) {
                 Ok(data) => data,

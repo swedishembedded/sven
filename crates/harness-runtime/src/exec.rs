@@ -23,6 +23,38 @@ use crate::run::{
 };
 use crate::state::HarnessState;
 
+/// The helper budgets a plan does not set itself: generous enough that any
+/// real JSON transform fits, bounded enough that a runaway helper fails as
+/// a typed error in bounded time. A plan's `max_helper_fuel` and
+/// `max_helper_pages` override them per run.
+#[cfg(feature = "transform")]
+const DEFAULT_HELPER_FUEL: u64 = 1_000_000;
+#[cfg(feature = "transform")]
+const DEFAULT_HELPER_PAGES: u32 = 256;
+
+/// The failure code naming the boundary a helper invocation broke. The
+/// message travels with it unchanged — the error type's own report.
+#[cfg(feature = "transform")]
+fn transform_failure_code(err: &sven_harness_transform::TransformError) -> &'static str {
+    use sven_harness_transform::{SchemaStage, TransformError};
+    match err {
+        TransformError::Decode(_) => "helper_decode",
+        TransformError::Abi(_) => "helper_abi",
+        TransformError::Fuel => "helper_fuel",
+        TransformError::Memory => "helper_memory",
+        TransformError::Trap(_) => "helper_trap",
+        TransformError::Schema {
+            stage: SchemaStage::Input,
+            ..
+        } => "helper_input_schema",
+        TransformError::Schema {
+            stage: SchemaStage::Output,
+            ..
+        } => "helper_output_schema",
+        TransformError::Contract(_) => "helper_contract",
+    }
+}
+
 impl HarnessMachine {
     /// Executes the step the walk points at: the one place a primitive is
     /// interpreted. Pure primitives resolve inline and point the walk at
@@ -202,12 +234,15 @@ impl HarnessMachine {
                 let text = message.as_str().unwrap_or_default().to_string();
                 self.fail_now(run, &code, &text, ctx)
             }
+            #[cfg(not(feature = "transform"))]
             PlanPrimitive::Transform { .. } => self.fail_now(
                 run,
                 "unsupported_transform",
                 "transform steps need the helper runtime, which this build does not carry",
                 ctx,
             ),
+            #[cfg(feature = "transform")]
+            PlanPrimitive::Transform { .. } => self.run_transform(run, &step, ctx),
             PlanPrimitive::Parallel { ref branches, .. } => {
                 // Each branch child runs one level below this run; the
                 // depth budget bounds recursive fan-out the same way it
@@ -333,6 +368,126 @@ impl HarnessMachine {
                     rationale: format!("delegate step `{step_id}` starts child `{target}`"),
                 }
             }
+        }
+    }
+
+    /// A transform step: the plan's one pure computation with teeth. The
+    /// helper's identity is checked first (a missing helper or a foreign
+    /// ABI version is refused before any of its bytes are decoded), then
+    /// the bytes are compiled (memoized by content hash), the input is
+    /// resolved and run through a fresh sandbox instance, and the walk
+    /// carries the output to the step's successor. A helper failure is a
+    /// step failure like any other, mapped onto the code naming the
+    /// boundary that broke.
+    #[cfg(feature = "transform")]
+    fn run_transform(
+        &mut self,
+        run: &mut HarnessRunState,
+        step: &PlanStep,
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
+        use base64::Engine as _;
+        use sven_harness_transform::Transform;
+
+        let PlanPrimitive::Transform {
+            ref helper,
+            ref input,
+            ref store_as,
+            ref then,
+        } = step.primitive
+        else {
+            return self.fail_now(
+                run,
+                "internal",
+                "transform dispatch reached a non-transform step",
+                ctx,
+            );
+        };
+        let Some(spec) = self.run.helper(helper) else {
+            return self.fail_now(
+                run,
+                "helper_missing",
+                &format!(
+                    "transform step `{}` names helper `{helper}`, which the run does not carry",
+                    step.id
+                ),
+                ctx,
+            );
+        };
+        if spec.abi != sven_harness_transform::HELPER_ABI {
+            return self.fail_now(
+                run,
+                "helper_abi",
+                &format!(
+                    "helper `{helper}` was written against ABI `{}`, this runtime implements `{}`",
+                    spec.abi,
+                    sven_harness_transform::HELPER_ABI
+                ),
+                ctx,
+            );
+        }
+        if spec.language != "wasm" {
+            return self.fail_now(
+                run,
+                "helper_language",
+                &format!(
+                    "helper `{helper}` is {}, but only `wasm` helpers run here",
+                    spec.language
+                ),
+                ctx,
+            );
+        }
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(&spec.content) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return self.fail_now(
+                    run,
+                    "helper_encoding",
+                    &format!("helper `{helper}` is not valid base64"),
+                    ctx,
+                );
+            }
+        };
+        let digest = sven_harness_transform::digest(&bytes);
+        // A cache miss only decodes and validates: decode failure is the
+        // one way this fails, reported by the error type's own Display.
+        let module = match self.helper_modules.load_hashed(digest, &bytes) {
+            Ok(module) => module,
+            Err(err) => return self.fail_now(run, "helper_decode", &err.to_string(), ctx),
+        };
+        let transform = match Transform::from_module(module, digest, None, None) {
+            Ok(transform) => transform,
+            Err(err) => {
+                return self.fail_now(run, "helper_abi", &err.to_string(), ctx);
+            }
+        };
+        let limits = sven_harness_transform::Limits {
+            fuel: self
+                .run
+                .plan()
+                .limits
+                .as_ref()
+                .and_then(|l| l.max_helper_fuel)
+                .unwrap_or(DEFAULT_HELPER_FUEL),
+            max_pages: self
+                .run
+                .plan()
+                .limits
+                .as_ref()
+                .and_then(|l| l.max_helper_pages)
+                .unwrap_or(DEFAULT_HELPER_PAGES),
+        };
+        let value = run.resolve_value(input);
+        match transform.run(&value, &limits) {
+            Ok(out) => {
+                run.trace.push(TraceRecord::StepCompleted {
+                    step: step.id.clone(),
+                    call_id: None,
+                });
+                run.store_step_value(&step.id, out, store_as.as_deref());
+                self.walk_to(run, then, ctx)
+            }
+            Err(err) => self.step_failed(run, transform_failure_code(&err), &err.to_string(), ctx),
         }
     }
 

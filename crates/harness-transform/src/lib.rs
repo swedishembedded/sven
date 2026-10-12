@@ -36,6 +36,14 @@ pub use error::{SchemaStage, TransformError};
 
 use wasm::{decode::decode, exec, validate::validate_module, Export, Module, Val, ValType};
 
+/// The helper ABI version this runtime implements, in the form a bundle's
+/// `Helper.abi` names. A helper written against another version is refused
+/// before any of its bytes run: the packed-result contract
+/// (`run(input_ptr, input_len) -> (out_ptr << 32) | out_len`) is versioned
+/// exactly so a helper built for a different host cannot be invoked by
+/// mistake.
+pub const HELPER_ABI: &str = "helper-run/1";
+
 /// The execution budget of one helper invocation. Both bounds are explicit
 /// in every call; there are no ambient knobs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

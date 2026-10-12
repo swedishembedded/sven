@@ -22,8 +22,8 @@ pub mod decode;
 pub mod exec;
 pub mod validate;
 
-#[cfg(test)]
-pub(crate) mod testutil;
+#[cfg(any(test, feature = "test-util"))]
+pub mod testutil;
 
 /// Why decoding, validation or execution refused or failed.
 #[derive(Debug, Clone, PartialEq)]

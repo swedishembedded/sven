@@ -24,6 +24,7 @@
 //! workflow languages then you can procure our services by sending an email
 //! to info@swedishembedded.com.
 
+mod checkpoint;
 mod error;
 mod exec;
 mod machine;

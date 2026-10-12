@@ -16,12 +16,21 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use crate::error::HarnessRunError;
-use sven_harness_spec::HarnessPlan;
+use sven_harness_spec::{HarnessBundle, HarnessPlan, Helper};
+
+/// What a name resolves to: the compiled plan plus the helpers its
+/// `transform` steps run. Harnesses registered from a bare document have
+/// no helpers and fail such steps when reached; a registered bundle
+/// carries its own.
+struct Registered {
+    plan: Arc<HarnessPlan>,
+    helpers: BTreeMap<String, Helper>,
+}
 
 /// Named harness plans, resolved at child-spawn time.
 #[derive(Default)]
 pub struct HarnessRegistry {
-    plans: RwLock<BTreeMap<String, Arc<HarnessPlan>>>,
+    plans: RwLock<BTreeMap<String, Registered>>,
 }
 
 impl HarnessRegistry {
@@ -42,6 +51,32 @@ impl HarnessRegistry {
         self.register_plan(sven_harness_spec::compile_str(yaml)?)
     }
 
+    /// Registers a bundle: the document is compiled against its helper set
+    /// (so a `transform` step naming a helper the bundle does not carry is
+    /// refused here, offline), and both the plan and the helpers register
+    /// under the plan's own name.
+    ///
+    /// # Errors
+    ///
+    /// The document's parse, validation or compile failure, the bundle's
+    /// used↔declared helper checks, or the name is already registered.
+    pub fn register_bundle(&self, bundle: &HarnessBundle) -> Result<String, HarnessRunError> {
+        let compiled = bundle.compile()?;
+        let name = compiled.plan.name.clone();
+        let mut plans = self.plans.write().expect("registry lock poisoned");
+        if plans.contains_key(&name) {
+            return Err(HarnessRunError::DuplicateHarness(name));
+        }
+        plans.insert(
+            name.clone(),
+            Registered {
+                plan: Arc::new(compiled.plan),
+                helpers: bundle.helpers.clone(),
+            },
+        );
+        Ok(name)
+    }
+
     /// Registers a compiled plan under its own name.
     ///
     /// # Errors
@@ -53,7 +88,13 @@ impl HarnessRegistry {
         if plans.contains_key(&name) {
             return Err(HarnessRunError::DuplicateHarness(name));
         }
-        plans.insert(name.clone(), Arc::new(plan));
+        plans.insert(
+            name.clone(),
+            Registered {
+                plan: Arc::new(plan),
+                helpers: BTreeMap::new(),
+            },
+        );
         Ok(name)
     }
 
@@ -64,7 +105,19 @@ impl HarnessRegistry {
             .read()
             .expect("registry lock poisoned")
             .get(name)
-            .cloned()
+            .map(|registered| Arc::clone(&registered.plan))
+    }
+
+    /// The helpers a registered harness carries, by name. Empty for a
+    /// harness registered from a bare document.
+    #[must_use]
+    pub fn helpers(&self, name: &str) -> BTreeMap<String, Helper> {
+        self.plans
+            .read()
+            .expect("registry lock poisoned")
+            .get(name)
+            .map(|registered| registered.helpers.clone())
+            .unwrap_or_default()
     }
 
     /// Whether nothing is registered (a session with no harness children).

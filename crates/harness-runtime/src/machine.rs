@@ -38,12 +38,11 @@ use serde_json::Value;
 use sven_harness_spec::{HarnessPlan, PlanPrimitive, PlanStep, Template};
 use sven_hsm::{
     Context, Effect, Event, InternalEvent, Machine, MachineId, ProposedToolCall, Reaction,
-    Snapshot, ToolCallId, ToolCapability,
+    ToolCallId, ToolCapability,
 };
 use sven_vocab::verify::VerifierVerdict;
 use sven_vocab::TurnRequest;
 
-use crate::error::HarnessRunError;
 use crate::run::{
     step_call_id, AgentLoop, HarnessRunData, HarnessRunState, Inflight, TraceRecord, Waiting,
 };
@@ -79,6 +78,11 @@ pub struct HarnessMachine {
     pub(super) step_effect_cache: Option<Effect>,
     /// The outcome, once a terminal step executed.
     pub(super) outcome_cache: Option<Value>,
+    /// Compiled helper modules, keyed by the SHA-256 of their bytes. A
+    /// cache, not run state: everything in it is derived from the run's
+    /// helpers, so a restored machine rebuilds it on demand.
+    #[cfg(feature = "transform")]
+    pub(super) helper_modules: sven_harness_transform::cache::ModuleCache,
 }
 
 impl HarnessMachine {
@@ -91,6 +95,8 @@ impl HarnessMachine {
             run,
             step_effect_cache: None,
             outcome_cache: None,
+            #[cfg(feature = "transform")]
+            helper_modules: sven_harness_transform::cache::ModuleCache::bounded(64),
         }
     }
 
@@ -127,86 +133,6 @@ impl HarnessMachine {
     #[must_use]
     pub fn trace(&self, ctx: &Context) -> Vec<TraceRecord> {
         HarnessRunState::load(ctx).trace
-    }
-
-    /// Suspends the run into a serializable [`Snapshot`]: the tracked leaf
-    /// plus the context (which carries the whole run state under
-    /// [`RUN_STATE_FACT`](crate::RUN_STATE_FACT)).
-    #[must_use]
-    pub fn snapshot(&self, ctx: &Context) -> Snapshot {
-        Snapshot {
-            state: format!("{:?}", self.leaf),
-            context: ctx.clone(),
-        }
-    }
-
-    /// Rebuilds a machine from `yaml` and resumes it from `snap`: the walk
-    /// continues from the snapshotted state and run data; no entry action
-    /// re-fires and no completed step re-executes.
-    ///
-    /// The snapshot's run state records the digest of the plan the run
-    /// started under; a document that compiles to a different digest is not
-    /// the checkpointed plan and is refused — recorded results must never be
-    /// replayed through changed steps.
-    ///
-    /// # Errors
-    ///
-    /// [`HarnessRunError::Spec`] when `yaml` no longer parses or compiles;
-    /// [`HarnessRunError::PinnedPlanMismatch`] when the document is a
-    /// modified version of the checkpointed plan;
-    /// [`HarnessRunError::Unrestorable`] when the snapshot names a state
-    /// this machine cannot rest in.
-    pub fn restore(yaml: String, snap: Snapshot) -> Result<(Self, Context), HarnessRunError> {
-        let resumed = HarnessRunState::load(&snap.context);
-        let plan = sven_harness_spec::compile_str(&yaml)?;
-        if let Some(checkpoint) = &resumed.plan_digest {
-            if plan.digest != *checkpoint {
-                return Err(HarnessRunError::PinnedPlanMismatch {
-                    name: plan.name.clone(),
-                    checkpoint: checkpoint.clone(),
-                    document: plan.digest.clone(),
-                });
-            }
-        }
-        let run = HarnessRunData::from_parts(plan, resumed.inputs.clone());
-        let leaf = crate::state::resolve_label(&snap.state)
-            .ok_or_else(|| HarnessRunError::Unrestorable(snap.state.clone()))?;
-        let machine = Self {
-            id: MachineId::new(),
-            run,
-            leaf,
-            step_effect_cache: None,
-            outcome_cache: None,
-        };
-        Ok((machine, snap.context))
-    }
-
-    /// The labels a snapshot of this machine may name: every state but the
-    /// root, which a running machine never rests in.
-    #[must_use]
-    pub fn restorable_state_labels(&self) -> Vec<String> {
-        crate::state::ALL_STATES
-            .into_iter()
-            .filter(|s| *s != HarnessState::Root)
-            .map(|s| format!("{s:?}"))
-            .collect()
-    }
-
-    /// The permission policy of a harness run: exactly the plan's declared
-    /// capabilities, allowed in every state. An undeclared capability is
-    /// granted nowhere — the plan is the whole contract, and nothing in the
-    /// runtime widens it.
-    #[must_use]
-    pub fn permission_policy_for(run: &HarnessRunData) -> sven_hsm::PermissionPolicy {
-        let declared: Vec<ToolCapability> = run
-            .plan()
-            .capabilities
-            .iter()
-            .filter_map(|name| capability_by_name(name))
-            .collect();
-        sven_hsm::PermissionPolicy::builder()
-            .allow_globally(declared)
-            .build()
     }
 
     // ── run-state and effect helpers ────────────────────────────────────
@@ -408,7 +334,7 @@ impl HarnessMachine {
             return Reaction::Ignored;
         }
         let mut state = self.run_state(ctx);
-        state.start(self.run.plan(), self.run.inputs());
+        state.start(self.run.plan(), self.run.inputs(), self.run.bundle_digest());
         state.store(ctx);
         Reaction::Transition {
             target: HarnessState::Advancing,

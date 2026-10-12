@@ -13,3 +13,19 @@ serde            = { workspace = true }
 serde_json       = { workspace = true }
 uuid             = { workspace = true, features = ["v5"] }
 thiserror        = { workspace = true }
+# The helper runtime for `transform` steps: optional by design. The HSM
+# kernel and the harness machine's semantics never depend on it; a build
+# without the `transform` feature reports an unsupported step instead of
+# carrying the interpreter.
+sven-harness-transform = { path = "../harness-transform", optional = true }
+base64           = { workspace = true, optional = true }
+
+[features]
+transform = ["dep:sven-harness-transform", "dep:base64"]
+
+[dev-dependencies]
+# The transform tests build helper fixtures with the crate's test-only wasm
+# encoder (its `test-util` feature) and name bundle pieces directly.
+sven-harness-transform = { path = "../harness-transform", features = ["test-util"] }
+sven-harness-spec = { path = "../harness-spec" }
+base64           = { workspace = true }

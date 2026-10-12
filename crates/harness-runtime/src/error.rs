@@ -45,4 +45,20 @@ pub enum HarnessRunError {
         /// The digest the offered document compiles to.
         document: String,
     },
+    /// A checkpoint was taken under a bundle, and the offered resume is not
+    /// that bundle (or offers no bundle at all). A bundle's helpers are
+    /// part of the program's meaning; replaying recorded steps through
+    /// different helper bytes would not be the same run.
+    #[error(
+        "harness `{name}`: the checkpoint was taken under bundle digest {checkpoint}, \
+         but {offered} was offered; resume requires the same bundle"
+    )]
+    PinnedBundleMismatch {
+        /// The harness name the checkpoint and the bundle share.
+        name: String,
+        /// The bundle digest recorded in the checkpoint's run state.
+        checkpoint: String,
+        /// What the resume offered instead of that bundle.
+        offered: String,
+    },
 }

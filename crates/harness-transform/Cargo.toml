@@ -13,3 +13,9 @@ sha2       = { workspace = true }
 # HTTP/file resolution machinery is compiled out and an external `$ref` is a
 # schema-compilation failure.
 jsonschema = { version = "0.49", default-features = false }
+
+[features]
+# Exposes the crate's test-only wasm module encoder (`wasm::testutil`) for
+# other crates' integration tests - the harness runtime's transform tests
+# build helper fixtures with it. Not part of the library's supported surface.
+test-util = []

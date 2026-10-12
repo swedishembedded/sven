@@ -70,6 +70,14 @@ pub struct PlanLimits {
     /// Most concurrent branches per `parallel`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_parallel: Option<u64>,
+    /// Most interpreter ticks per helper invocation. Unset means the
+    /// runtime's default budget applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_helper_fuel: Option<u64>,
+    /// Most linear memory per helper instance, in 64 KiB pages. Unset means
+    /// the runtime's default budget applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_helper_pages: Option<u32>,
 }
 
 /// A compiled step: the primitive plus its resolved successor edges.
@@ -264,6 +272,8 @@ pub fn compile(spec: &HarnessSpec) -> HarnessPlan {
         max_tool_calls: l.max_tool_calls,
         max_delegate_depth: l.max_delegate_depth,
         max_parallel: l.max_parallel,
+        max_helper_fuel: l.max_helper_fuel,
+        max_helper_pages: l.max_helper_pages,
     });
 
     let mut plan = HarnessPlan {

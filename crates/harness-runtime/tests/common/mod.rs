@@ -73,7 +73,9 @@ pub fn drive(
 }
 
 /// Compiles a harness from YAML, seeds a fresh context with its run data,
-/// and drives the machine through its initial transition.
+/// and drives the machine through its initial transition. Each test binary
+/// compiles this module; some of them do not use this driver.
+#[allow(dead_code)]
 pub fn start(
     yaml: &str,
     inputs: serde_json::Value,
@@ -86,7 +88,9 @@ pub fn start(
     (m, ctx, state)
 }
 
-/// The thread every harness model turn runs in.
+/// The thread every harness model turn runs in. Each test binary compiles
+/// this module; some of them do not use this driver.
+#[allow(dead_code)]
 pub fn turn(thread: &str, text: &str) -> Event {
     Event::LlmTurnComplete {
         thread: thread.into(),

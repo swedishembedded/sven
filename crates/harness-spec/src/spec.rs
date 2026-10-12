@@ -239,6 +239,15 @@ pub struct LimitsSpec {
     /// The most concurrent branches one `parallel` step may start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_parallel: Option<u64>,
+    /// The most interpreter ticks one helper invocation may spend
+    /// (one per executed instruction). Unset means the runtime's default
+    /// budget applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_helper_fuel: Option<u64>,
+    /// The most linear memory one helper instance may hold, in 64 KiB
+    /// pages. Unset means the runtime's default budget applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_helper_pages: Option<u32>,
 }
 
 /// One step of a harness: exactly one primitive.
