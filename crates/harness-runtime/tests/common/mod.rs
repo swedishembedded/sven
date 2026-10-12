@@ -94,3 +94,14 @@ pub fn turn(thread: &str, text: &str) -> Event {
         tool_calls: vec![],
     }
 }
+
+/// A child machine's completion event for `machine`, carrying `result`.
+/// Each test binary compiles this module; the child tests live in one of
+/// them, so the other sees the helper as dead.
+#[allow(dead_code)]
+pub fn child_completed(machine: &sven_hsm::MachineId, result: serde_json::Value) -> Event {
+    Event::Internal(sven_hsm::event::InternalEvent::SubmachineCompleted {
+        machine: machine.as_uuid().to_string(),
+        result,
+    })
+}

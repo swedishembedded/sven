@@ -355,9 +355,8 @@ impl Machine for HarnessMachine {
             HarnessState::WaitingForModel => self.on_model(event, ctx),
             HarnessState::WaitingForTool => self.on_tool(event, ctx),
             HarnessState::WaitingForVerifier => self.on_verifier(event, ctx),
-            HarnessState::WaitingForChild | HarnessState::WaitingForJoin => {
-                self.on_deferred(event, ctx)
-            }
+            HarnessState::WaitingForChild => self.on_child(event, ctx),
+            HarnessState::WaitingForJoin => self.on_deferred(event, ctx),
             HarnessState::Completed | HarnessState::Failed | HarnessState::Cancelled => {
                 Reaction::Ignored
             }
@@ -545,14 +544,46 @@ impl HarnessMachine {
         }
     }
 
-    /// Child runs and parallel joins are wired in later work; the states
-    /// exist now so the hierarchy stays fixed.
+    /// Parallel joins are wired in later work; the state exists now so the
+    /// hierarchy stays fixed.
     fn on_deferred(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
         if matches!(event, Event::UserCancelled) {
             return self.cancel(ctx);
         }
         let mut run = self.run_state(ctx);
         self.tick_when_idle(&mut run, event, ctx)
+    }
+
+    /// A delegated child run is in flight. Its completion arrives
+    /// correlated by the machine id the `InstantiateSubmachine` effect
+    /// carried; a completion for some other machine settles nothing. A
+    /// failed effect (no spawner configured, the child run errored) takes
+    /// the same retry/fail path as any other side effect.
+    fn on_child(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
+        if matches!(event, Event::UserCancelled) {
+            return self.cancel(ctx);
+        }
+        let mut run = self.run_state(ctx);
+        if run.awaiting != Some(Waiting::Child) {
+            return self.tick_when_idle(&mut run, event, ctx);
+        }
+        let Some(child) = run.child.clone() else {
+            return Reaction::Ignored;
+        };
+        match event {
+            Event::Internal(InternalEvent::SubmachineCompleted { machine, result }) => {
+                if *machine != child.machine {
+                    // A completion for a child nobody waits on (a stale
+                    // delivery from an earlier incarnation) is ignored.
+                    return Reaction::Ignored;
+                }
+                run.child = None;
+                let step = child.step;
+                self.complete_step(&mut run, &step, result.clone(), ctx)
+            }
+            Event::EffectFailed { error, .. } => self.side_effect_failed(&mut run, error, ctx),
+            _ => self.tick_when_idle(&mut run, event, ctx),
+        }
     }
 
     // ── agent loop ──────────────────────────────────────────────────────

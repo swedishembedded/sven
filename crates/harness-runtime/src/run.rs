@@ -144,6 +144,18 @@ pub struct RetryFrame {
     pub left: u64,
 }
 
+/// The delegated child run currently in flight: the machine id the
+/// `InstantiateSubmachine` effect carried (the correlation key for its
+/// `SubmachineCompleted`) and the delegate step it belongs to. One child at
+/// a time — the walk is linear, and `parallel` joins keep their own record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChildRun {
+    /// The child's machine instance id, as the effect emitted it.
+    pub machine: String,
+    /// The delegate step that started it.
+    pub step: String,
+}
+
 impl RetryFrame {
     /// The 1-based number of the attempt now running.
     #[must_use]
@@ -192,6 +204,11 @@ pub struct HarnessRunState {
     pub agent: Option<AgentLoop>,
     /// The active retry frame, when a retry step is in play.
     pub retry: Option<RetryFrame>,
+    /// The delegated child in flight, when a delegate step is waiting.
+    pub child: Option<ChildRun>,
+    /// This run's delegation depth (a top-level run is at 1; a delegated
+    /// child starts at its parent's depth + 1).
+    pub delegate_depth: u64,
     /// Limit counters.
     pub counts: Counts,
 }
@@ -219,6 +236,9 @@ impl HarnessRunState {
         *self = Self {
             current: plan.entry.clone(),
             inputs: inputs.clone(),
+            // A top-level run is the whole delegation chain's depth 1;
+            // delegated children reseed with their inherited depth.
+            delegate_depth: 1,
             ..Self::default()
         };
     }

@@ -12,12 +12,12 @@
 //! happens between two pieces of I/O.
 
 use serde_json::Value;
-use sven_harness_spec::{PlanPrimitive, PlanStep};
-use sven_hsm::{capability_for_tool_name, Context, Effect, Event, Reaction};
+use sven_harness_spec::{DelegateTarget, PlanPrimitive, PlanStep};
+use sven_hsm::{capability_for_tool_name, Context, Effect, Event, MachineId, Reaction};
 use sven_vocab::verify::VerifierSpec;
 
 use crate::machine::{harness_thread, store_as_of, then_of, HarnessMachine};
-use crate::run::{AgentLoop, HarnessRunState, Inflight, RetryFrame, Waiting};
+use crate::run::{AgentLoop, ChildRun, HarnessRunState, Inflight, RetryFrame, Waiting};
 use crate::state::HarnessState;
 
 impl HarnessMachine {
@@ -207,12 +207,57 @@ impl HarnessMachine {
                 "parallel steps are not wired yet",
                 ctx,
             ),
-            PlanPrimitive::Delegate { .. } => self.fail_now(
-                run,
-                "unsupported_delegate",
-                "delegate steps are not wired yet",
-                ctx,
-            ),
+            PlanPrimitive::Delegate {
+                ref target,
+                ref as_kind,
+                ref input,
+                ..
+            } => {
+                // Depth: this run sits at its own depth; a child would live
+                // one below it. The plan's `max_delegate_depth` counts the
+                // top-level run as 1, so a child needs depth < max.
+                let depth = run.delegate_depth + 1;
+                let max = self
+                    .run
+                    .plan()
+                    .limits
+                    .as_ref()
+                    .and_then(|l| l.max_delegate_depth);
+                if let Some(max) = max {
+                    if depth > max {
+                        return self.fail_now(
+                            run,
+                            "delegate_depth",
+                            &format!("delegation would exceed max_delegate_depth ({max})"),
+                            ctx,
+                        );
+                    }
+                }
+                let machine = MachineId::new();
+                let mut descriptor = serde_json::Map::new();
+                if *as_kind == DelegateTarget::Machine {
+                    descriptor.insert("mode".into(), Value::String(target.clone()));
+                } else {
+                    descriptor.insert("harness".into(), Value::String(target.clone()));
+                }
+                descriptor.insert("input".into(), run.resolve_value(input));
+                let effect = Effect::InstantiateSubmachine {
+                    machine,
+                    descriptor: Value::Object(descriptor),
+                };
+                self.cache_effect(effect.clone());
+                self.park(run, &step, Waiting::Child);
+                run.child = Some(ChildRun {
+                    machine: machine.as_uuid().to_string(),
+                    step: step_id.clone(),
+                });
+                run.store(ctx);
+                Reaction::Transition {
+                    target: HarnessState::WaitingForChild,
+                    effects: vec![effect],
+                    rationale: format!("delegate step `{step_id}` starts child `{target}`"),
+                }
+            }
         }
     }
 
@@ -288,6 +333,7 @@ impl HarnessMachine {
             run.retry = None;
             run.awaiting = None;
             run.inflight = None;
+            run.child = None;
             return self.walk_to(run, &frame.step, ctx);
         }
         let mut frame = frame;
@@ -296,6 +342,7 @@ impl HarnessMachine {
         run.retry = Some(frame);
         run.awaiting = None;
         run.inflight = None;
+        run.child = None;
         run.current = body.clone();
         let Some(step) = self.run.plan().step(&body).cloned() else {
             return self.fail_now(
@@ -396,6 +443,7 @@ impl HarnessMachine {
         run.inflight = None;
         run.retry = None;
         run.agent = None;
+        run.child = None;
         run.store(ctx);
         self.outcome_cache = Some(serde_json::json!({
             "code": code,
@@ -413,6 +461,7 @@ impl HarnessMachine {
         let mut run = self.run_state(ctx);
         run.awaiting = None;
         run.inflight = None;
+        run.child = None;
         run.store(ctx);
         self.outcome_cache = Some(serde_json::json!({
             "code": "cancelled",

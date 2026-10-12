@@ -33,7 +33,7 @@ mod state;
 pub use error::HarnessRunError;
 pub use machine::HarnessMachine;
 pub use run::{
-    step_call_id, AgentLoop, Counts, HarnessRunData, HarnessRunState, Inflight, RetryFrame,
-    StepRecord, Waiting, RUN_STATE_FACT,
+    step_call_id, AgentLoop, ChildRun, Counts, HarnessRunData, HarnessRunState, Inflight,
+    RetryFrame, StepRecord, Waiting, RUN_STATE_FACT,
 };
 pub use state::HarnessState;
