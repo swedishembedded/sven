@@ -254,6 +254,11 @@ pub struct HarnessRunState {
     /// This run's delegation depth (a top-level run is at 1; a delegated
     /// child starts at its parent's depth + 1).
     pub delegate_depth: u64,
+    /// The compiled plan's content digest, recorded when the run starts.
+    /// A checkpoint carries it, and resuming refuses a document whose
+    /// digest no longer matches — an edited harness cannot silently replace
+    /// the version a run was checkpointed under.
+    pub plan_digest: Option<String>,
     /// Limit counters.
     pub counts: Counts,
 }
@@ -281,6 +286,7 @@ impl HarnessRunState {
         *self = Self {
             current: plan.entry.clone(),
             inputs: inputs.clone(),
+            plan_digest: Some(plan.digest.clone()),
             // A top-level run is the whole delegation chain's depth 1;
             // delegated children reseed with their inherited depth.
             delegate_depth: 1,

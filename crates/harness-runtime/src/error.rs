@@ -28,4 +28,21 @@ pub enum HarnessRunError {
     /// A run was entered at a step the plan does not declare.
     #[error("cannot enter harness at unknown step `{0}`")]
     UnknownEntry(String),
+    /// A checkpoint was taken under a different version of the plan than
+    /// the document offered at resume. The checkpoint carries the digest of
+    /// the plan it started under; resuming under an edited document would
+    /// replay recorded results through changed steps, so it refuses.
+    #[error(
+        "harness `{name}`: the checkpoint was taken under digest {checkpoint}, but the \
+         document compiles to {document}; a modified harness cannot replace a checkpointed \
+         plan"
+    )]
+    PinnedPlanMismatch {
+        /// The harness name the checkpoint and the document share.
+        name: String,
+        /// The digest recorded in the checkpoint's run state.
+        checkpoint: String,
+        /// The digest the offered document compiles to.
+        document: String,
+    },
 }

@@ -135,13 +135,31 @@ impl HarnessMachine {
     /// continues from the snapshotted state and run data; no entry action
     /// re-fires and no completed step re-executes.
     ///
+    /// The snapshot's run state records the digest of the plan the run
+    /// started under; a document that compiles to a different digest is not
+    /// the checkpointed plan and is refused — recorded results must never be
+    /// replayed through changed steps.
+    ///
     /// # Errors
     ///
     /// [`HarnessRunError::Spec`] when `yaml` no longer parses or compiles;
+    /// [`HarnessRunError::PinnedPlanMismatch`] when the document is a
+    /// modified version of the checkpointed plan;
     /// [`HarnessRunError::Unrestorable`] when the snapshot names a state
     /// this machine cannot rest in.
     pub fn restore(yaml: String, snap: Snapshot) -> Result<(Self, Context), HarnessRunError> {
-        let run = HarnessRunData::new(&yaml, Value::Null)?;
+        let resumed = HarnessRunState::load(&snap.context);
+        let plan = sven_harness_spec::compile_str(&yaml)?;
+        if let Some(checkpoint) = &resumed.plan_digest {
+            if plan.digest != *checkpoint {
+                return Err(HarnessRunError::PinnedPlanMismatch {
+                    name: plan.name.clone(),
+                    checkpoint: checkpoint.clone(),
+                    document: plan.digest.clone(),
+                });
+            }
+        }
+        let run = HarnessRunData::from_parts(plan, resumed.inputs.clone());
         let leaf = crate::state::resolve_label(&snap.state)
             .ok_or_else(|| HarnessRunError::Unrestorable(snap.state.clone()))?;
         let machine = Self {
