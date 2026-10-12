@@ -1,0 +1,15 @@
+[package]
+name        = "sven-harness-transform"
+version.workspace = true
+edition     = "2021"
+description = "The harness helper runtime: an isolated WASM interpreter for `transform` steps, with fuel and memory caps, JSON Schema boundaries at both ends and no host interface a helper could reach the world through. Zero dependencies on other sven crates."
+license     = "Apache-2.0"
+
+[dependencies]
+serde_json = { workspace = true }
+sha2       = { workspace = true }
+# No default features: the helper sandbox must not resolve remote schema
+# references (that would make a `transform` step reach the network), so the
+# HTTP/file resolution machinery is compiled out and an external `$ref` is a
+# schema-compilation failure.
+jsonschema = { version = "0.49", default-features = false }

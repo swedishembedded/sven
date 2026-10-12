@@ -58,6 +58,9 @@ members = [
     # how a sample rots into something that no longer compiles.
     "samples/study/svf",
     "samples/agent/task",
+    # The harness helper runtime: an isolated WASM interpreter for `transform`
+    # steps. Depends on no other sven crate, on purpose.
+    "crates/harness-transform",
 ]
 
 # Single source of truth for the sven release version. The top-level `sven`
