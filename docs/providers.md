@@ -519,6 +519,19 @@ model:
   name: ""          # empty = use whatever model brain is serving
 ```
 
+A typical local session - pull a quant, serve it, name it explicitly:
+
+```sh
+brain pull unsloth/Qwen3.8-27B-GGUF-Q8_0
+brain serve --openai -d --qwen35-gguf unsloth/Qwen3.8-27B-GGUF-Q8_0 --qwen35-ctx 32768
+sven -M brain/unsloth/Qwen3.8-27B-GGUF "Hello"
+```
+
+The model name is the artifact's store position after the pull (what
+`/v1/models` lists); a long agent prompt needs the context sized for it, hence
+`--qwen35-ctx`. An explicitly named `model.name` bypasses resolution and is
+sent as-is, so a stale keys file cannot silently switch the resident model.
+
 **Auto-detected**: when no model is configured at all, sven selects `brain`
 automatically if `BRAIN_API_KEY`, `BRAIN_API_KEYS_FILE`, or brain's default
 api-keys file (`$XDG_RUNTIME_DIR/brain/api-keys.json`) is present — see
