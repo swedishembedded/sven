@@ -29,6 +29,14 @@ use crate::error::HarnessRunError;
 /// The context fact under which a harness run's whole state is serialized.
 pub const RUN_STATE_FACT: &str = "harness.run";
 
+/// The context fact under which a run's terminal outcome is reported: a
+/// `return`'s resolved value, a `fail`'s code and message, or the cancelled
+/// marker. The machine writes what it also keeps for its own `outcome()`
+/// access into the context at the same dispatch, so a parent harvesting a
+/// child's report — a caller that only ever holds the context — reads the
+/// same value.
+pub const OUTCOME_FACT: &str = "harness.outcome";
+
 /// Derives the tool call id of a harness step's call.
 ///
 /// Deterministic per (harness, label): event-sourced replay and checkpoint

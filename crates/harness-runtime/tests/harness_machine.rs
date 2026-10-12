@@ -9,9 +9,26 @@
 mod common;
 
 use common::{drive, start, turn};
-use sven_harness_runtime::{HarnessMachine, HarnessRunData, RUN_STATE_FACT};
+use sven_harness_runtime::{HarnessMachine, HarnessRunData, OUTCOME_FACT, RUN_STATE_FACT};
 use sven_hsm::{Effect, Event, Machine};
 use sven_vocab::verify::{VerifierSpec, VerifierVerdict};
+
+const FAILING: &str = r#"
+api_version: "1"
+name: moody
+entry: ask
+limits: { max_steps: 50, max_model_turns: 5 }
+steps:
+  ask:
+    predict:
+      prompt: "Mood?"
+      store_as: mood
+      then: bad
+  bad:
+    fail:
+      code: "no_mood"
+      message: "the mood was {{ steps.ask.value }}"
+"#;
 
 const GREET: &str = r#"
 api_version: "1"
@@ -553,4 +570,63 @@ steps:
             "a capability-free harness grants nothing: {cap:?}"
         );
     }
+}
+
+/// The run's terminal outcome is reported as a context fact: a parent
+/// harvesting a child's report holds only the context, so the outcome the
+/// machine also keeps for `outcome()` must reach the fact plane — for a
+/// return, a fail and a cancel alike.
+#[test]
+fn the_terminal_outcome_is_reported_as_a_context_fact() {
+    // A completed run: the fact carries the return value.
+    let (mut m, mut ctx, mut state) = start(GREET, serde_json::json!({ "name": "Ada" }));
+    let _ = m.step_effect().expect("predict emitted its turn");
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        turn("harness.greet", "Hello Ada"),
+    );
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Completed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
+    let expected = m.outcome().expect("outcome");
+    assert_eq!(
+        ctx.fact(OUTCOME_FACT).cloned(),
+        Some(expected),
+        "a completed run's return value is the outcome fact"
+    );
+
+    // A failed run: the fact carries the code and message.
+    let (mut m, mut ctx, mut state) = start(FAILING, serde_json::json!({}));
+    let _ = m.step_effect().expect("predict emitted its turn");
+    let _ = drive(&mut m, &mut ctx, &mut state, turn("harness.moody", "grim"));
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Failed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Failed);
+    let expected = m.outcome().expect("outcome");
+    assert_eq!(
+        ctx.fact(OUTCOME_FACT).cloned(),
+        Some(expected),
+        "a failed run's code and message are the outcome fact"
+    );
+
+    // A cancelled run: the fact says so.
+    let (mut m, mut ctx, mut state) = start(GREET, serde_json::json!({}));
+    let _ = m.step_effect().expect("predict emitted its turn");
+    let _ = drive(&mut m, &mut ctx, &mut state, Event::UserCancelled);
+    assert_eq!(state, sven_harness_runtime::HarnessState::Cancelled);
+    assert_eq!(
+        ctx.fact(OUTCOME_FACT).cloned(),
+        m.outcome(),
+        "a cancelled run's outcome is the outcome fact"
+    );
 }

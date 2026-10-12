@@ -18,7 +18,7 @@ use sven_vocab::verify::VerifierSpec;
 
 use crate::machine::{harness_thread, store_as_of, then_of, HarnessMachine};
 use crate::run::{
-    AgentLoop, ChildRun, HarnessRunState, Inflight, ParallelJoin, RetryFrame, Waiting,
+    AgentLoop, ChildRun, HarnessRunState, Inflight, ParallelJoin, RetryFrame, Waiting, OUTCOME_FACT,
 };
 use crate::state::HarnessState;
 
@@ -178,6 +178,7 @@ impl HarnessMachine {
             PlanPrimitive::Return { ref value } => {
                 let outcome = run.resolve_value(value);
                 run.store(ctx);
+                ctx.set_fact(OUTCOME_FACT, outcome.clone());
                 self.outcome_cache = Some(outcome);
                 Reaction::Transition {
                     target: HarnessState::Completed,
@@ -498,11 +499,14 @@ impl HarnessMachine {
         run.retry = None;
         run.agent = None;
         run.child = None;
+        run.join = None;
         run.store(ctx);
-        self.outcome_cache = Some(serde_json::json!({
+        let outcome = serde_json::json!({
             "code": code,
             "message": message,
-        }));
+        });
+        ctx.set_fact(OUTCOME_FACT, outcome.clone());
+        self.outcome_cache = Some(outcome);
         Reaction::Transition {
             target: HarnessState::Failed,
             effects: vec![Effect::PersistAudit],
@@ -516,11 +520,14 @@ impl HarnessMachine {
         run.awaiting = None;
         run.inflight = None;
         run.child = None;
+        run.join = None;
         run.store(ctx);
-        self.outcome_cache = Some(serde_json::json!({
+        let outcome = serde_json::json!({
             "code": "cancelled",
             "message": "the user cancelled the run",
-        }));
+        });
+        ctx.set_fact(OUTCOME_FACT, outcome.clone());
+        self.outcome_cache = Some(outcome);
         Reaction::Transition {
             target: HarnessState::Cancelled,
             effects: vec![Effect::PersistAudit],
