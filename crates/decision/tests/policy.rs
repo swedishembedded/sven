@@ -13,7 +13,7 @@
 use std::time::Duration;
 
 use sven_decision::policy::{
-    evaluate, evaluate_error, AbstainReason, AllowedShape, Cost, DecisionPolicy, FallbackAction,
+    agree, estimate_input_tokens, evaluate, evaluate_error, AbstainReason, AllowedShape, Cost, DecisionPolicy, FallbackAction,
     Impact, PolicyDecl, Selected, Thresholds, Verdict,
 };
 use sven_decision::{
@@ -314,4 +314,43 @@ fn a_verdict_carries_no_grant_of_any_kind() {
     };
     assert_eq!(keys(&accept), ["advisory_only", "policy", "selected"]);
     assert!(keys(&abstain).is_empty() || !keys(&abstain).iter().any(|k| k.contains("grant")));
+}
+
+#[test]
+fn two_orders_agree_only_on_the_same_winner() {
+    let q = choice(&["a", "b"]);
+    let wins = |winner: &str, loser: &str, p: f32| {
+        evaluate(
+            &policy(0.6, 0.2),
+            &q,
+            &result_of(dist(&[(winner, p), (loser, 1.0 - p)])),
+        )
+    };
+    let Verdict::Accept(both) = agree(&wins("a", "b", 0.95), &wins("a", "b", 0.8)) else {
+        panic!("agreed")
+    };
+    let Selected::Candidate { margin, .. } = both.selected else {
+        panic!("a candidate")
+    };
+    assert!((margin - 0.6).abs() < 1e-5, "the weaker evidence stands: {margin}");
+
+    assert_eq!(
+        abstained(agree(&wins("a", "b", 0.9), &wins("b", "a", 0.9))),
+        AbstainReason::OrderSensitive {
+            first: "a".into(),
+            second: "b".into()
+        }
+    );
+    let tie = wins("a", "b", 0.5);
+    assert!(matches!(
+        abstained(agree(&wins("a", "b", 0.9), &tie)),
+        AbstainReason::LowConfidence { .. }
+    ));
+}
+
+#[test]
+fn the_token_estimate_is_pessimistic() {
+    assert_eq!(estimate_input_tokens(""), 0);
+    assert_eq!(estimate_input_tokens("abcd"), 2);
+    assert_eq!(estimate_input_tokens("abc"), 1);
 }

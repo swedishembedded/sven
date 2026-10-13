@@ -181,6 +181,18 @@ pub enum Selected {
     Proposition { holds: bool, probability: f32 },
 }
 
+impl Selected {
+    /// What was selected, as a string for traces: the option id, or whether
+    /// the proposition holds.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Candidate { id, .. } => id.clone(),
+            Self::Proposition { holds, .. } => holds.to_string(),
+        }
+    }
+}
+
 /// An accepted answer and the evidence for it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Accepted {
@@ -212,6 +224,10 @@ pub enum AbstainReason {
     ShapeNotAllowed { detail: String },
     /// The provider failed.
     ProviderFailed { class: ErrorClass },
+    /// The winner changed when the options were asked about in another order.
+    OrderSensitive { first: String, second: String },
+    /// The question does not fit the input budget, even trimmed.
+    InputTooLarge { tokens: u32, budget: u32 },
 }
 
 /// The outcome of [`evaluate`].
@@ -232,6 +248,45 @@ pub fn evaluate(policy: &DecisionPolicy, question: &Question, result: &DecisionR
             policy: policy.label().to_string(),
         }),
         Err(reason) => Verdict::Abstain(reason),
+    }
+}
+
+/// The tokens `text` costs a decision model: one per three characters,
+/// rounded up. Deliberately pessimistic, because a model that truncates its
+/// input answers about something else.
+#[must_use]
+pub fn estimate_input_tokens(text: &str) -> u32 {
+    u32::try_from(text.chars().count().div_ceil(3)).unwrap_or(u32::MAX)
+}
+
+/// Combines the verdicts on one question asked with its options in two
+/// orders: accepted only when both accept the same option, with the weaker
+/// of the two as the evidence. A winner that depends on the order is a
+/// model reading position, not content.
+#[must_use]
+pub fn agree(first: &Verdict, second: &Verdict) -> Verdict {
+    match (first, second) {
+        (Verdict::Accept(a), Verdict::Accept(b)) => {
+            let (x, y) = (a.selected.describe(), b.selected.describe());
+            if x != y {
+                return Verdict::Abstain(AbstainReason::OrderSensitive {
+                    first: x,
+                    second: y,
+                });
+            }
+            let weaker = |s: &Selected| match s {
+                Selected::Candidate { margin, .. } => *margin,
+                Selected::Proposition { probability, .. } => *probability,
+            };
+            Verdict::Accept(if weaker(&a.selected) <= weaker(&b.selected) {
+                a.clone()
+            } else {
+                b.clone()
+            })
+        }
+        (Verdict::Abstain(reason), _) | (_, Verdict::Abstain(reason)) => {
+            Verdict::Abstain(reason.clone())
+        }
     }
 }
 
