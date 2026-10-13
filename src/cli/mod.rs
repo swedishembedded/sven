@@ -439,7 +439,7 @@ pub enum Commands {
     ///   sven harness validate DIR...
     ///   sven harness test DIR... [--case NAME] [--no-replay] [--json]
     ///   sven harness run DIR --input '{"k": "v"}' [--case FILE] [--json]
-    ///   sven harness schema [PATH]
+    ///   sven harness schema (optional output PATH)
     ///
     /// Exit codes. run, resume: 0 returned, 1 the plan failed, 2 usage or
     /// invalid harness/input/file, 3 suspended by a bound, 4 cancelled,

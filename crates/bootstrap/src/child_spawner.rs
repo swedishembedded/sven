@@ -8,7 +8,7 @@
 //! independent tasks). For each task it builds a **fully isolated** child
 //! kernel: a fresh [`Context`], a fresh [`TurnExecutor`] (hence a fresh
 //! append-only conversation store), running a one-shot
-//! [`TaskMachine`](sven_machines::TaskMachine). The children run concurrently on
+//! [`TaskMachine`]. The children run concurrently on
 //! their own tokio tasks; when one ends, its structured result is posted back
 //! to the parent as `Event::Internal(SubmachineCompleted { result })` so the
 //! parent can aggregate it (append-only) on the execution thread.
