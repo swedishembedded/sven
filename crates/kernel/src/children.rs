@@ -149,6 +149,12 @@ impl Children {
         self.scope.clone()
     }
 
+    /// Whether any child run is still running: the parent's queue can be
+    /// empty while it waits on one, so the parent is not quiescent.
+    pub(crate) fn any_live(&self) -> bool {
+        !self.live.is_empty()
+    }
+
     /// Drops a completed child from the registry.
     pub(crate) fn note_completion(&mut self, event: &Event) {
         if let Event::Internal(InternalEvent::SubmachineCompleted { machine, .. }) = event {

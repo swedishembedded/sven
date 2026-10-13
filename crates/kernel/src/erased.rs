@@ -386,7 +386,8 @@ where
 
     loop {
         // A capture is served only when no event is pending, no dispatched
-        // tool call is still awaiting its result, and never mid-dispatch.
+        // tool call is still awaiting its result, no child run is still
+        // running, and never mid-dispatch.
         // `biased` is load-bearing, not a fairness preference: an unbiased
         // select would sometimes hand out a snapshot taken while the machine
         // still had queued work, capturing a transient mid-turn state.
@@ -396,6 +397,8 @@ where
         // true "nothing left to do" signal: tool executors spawn their work
         // concurrently, so between dispatching a `CallTool` and receiving its
         // result the queue is empty while the turn is very much still running.
+        // A child run is the same: its completion arrives as an event later,
+        // and until then the parent is waiting, not finished.
         let event = tokio::select! {
             biased;
             () = cancel.cancelled() => break,
@@ -403,7 +406,7 @@ where
                 Some(event) => event,
                 None => break,
             },
-            Some(reply) = capture_rx.recv(), if inflight.is_empty() => {
+            Some(reply) = capture_rx.recv(), if inflight.is_empty() && !children.any_live() => {
                 let _ = reply.send(Snapshot {
                     state: machine.state_label(),
                     context: ctx.clone(),

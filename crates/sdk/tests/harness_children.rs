@@ -277,6 +277,30 @@ async fn cancelling_a_run_stops_its_children() {
     panic!("a child's tool call kept running after the run was cancelled");
 }
 
+#[tokio::test]
+async fn a_run_waiting_on_slow_children_is_stopped_by_its_bound_not_reported_stalled() {
+    // The parent machine has nothing queued while its branches run, but it
+    // is not stuck: the deadline, not a stall verdict, ends it.
+    let engine = builder()
+        .tool(Arc::new(Blocks {
+            started: Arc::new(AtomicUsize::new(0)),
+            dropped: Arc::new(AtomicUsize::new(0)),
+        }))
+        .build()
+        .expect("an engine builds");
+    let harness = engine
+        .load_harness_from_str(BLOCKING_BRANCHES)
+        .expect("loads");
+    let mut run = harness.start(json!({})).expect("starts");
+
+    let outcome = run
+        .execute(RunOptions::new().deadline(Duration::from_millis(500)))
+        .await
+        .expect("an outcome");
+
+    assert_eq!(outcome.conclusion, RunConclusion::Timeout);
+}
+
 const BLOCKING_TOP_LEVEL: &str = r#"
 api_version: "1"
 name: blocking-top-level
