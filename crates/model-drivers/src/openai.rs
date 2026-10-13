@@ -49,6 +49,9 @@ impl sven_model::ModelProvider for OpenAiProvider {
     fn model_name(&self) -> &str {
         self.inner.model_name()
     }
+    fn endpoint_host(&self) -> Option<String> {
+        self.inner.endpoint_host()
+    }
 
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
         self.inner.list_models().await

@@ -83,6 +83,19 @@ pub trait ModelProvider: Send + Sync {
         None
     }
 
+    /// The host (and port) of the server this provider talks to, for naming
+    /// it in errors. `None` when the provider has no network endpoint.
+    fn endpoint_host(&self) -> Option<String> {
+        None
+    }
+
+    /// Whether the server runs on the user's own hardware, per the driver
+    /// registry. A local server can take minutes to answer a long prompt, so
+    /// its stall limits are more generous than a hosted API's.
+    fn is_local(&self) -> bool {
+        crate::registry::get_driver(self.name()).is_some_and(|driver| driver.local)
+    }
+
     /// Maximum output tokens for this provider/model combination.
     ///
     /// Reads from the static catalog; returns `None` if the model is unknown.

@@ -261,6 +261,10 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         &self.model
     }
 
+    fn endpoint_host(&self) -> Option<String> {
+        crate::url_host(&self.chat_url)
+    }
+
     /// Query the actual loaded context window for the configured model.
     ///
     /// Two discovery paths, tried in order:

@@ -203,6 +203,16 @@ fn parse_input_modalities(values: &[String]) -> Option<Vec<sven_model::catalog::
     }
 }
 
+/// The `host[:port]` of `url`, for naming a server in an error.
+pub(crate) fn url_host(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let host = parsed.host_str()?;
+    Some(match parsed.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    })
+}
+
 #[async_trait]
 impl ModelProvider for ConfigBoundedProvider {
     fn name(&self) -> &str {
@@ -211,6 +221,10 @@ impl ModelProvider for ConfigBoundedProvider {
 
     fn model_name(&self) -> &str {
         self.inner.model_name()
+    }
+
+    fn endpoint_host(&self) -> Option<String> {
+        self.inner.endpoint_host()
     }
 
     /// Forwards to the driver. On a local server, a stale probe is refreshed
@@ -742,6 +756,41 @@ mod tests {
     use super::api_key::{key_file_for, read_key_from_json_file};
     use super::*;
     use sven_model::{get_driver, list_drivers};
+
+    #[test]
+    fn url_host_names_the_server_with_its_port() {
+        assert_eq!(
+            url_host("http://127.0.0.1:8788/v1/chat/completions").as_deref(),
+            Some("127.0.0.1:8788")
+        );
+        assert_eq!(
+            url_host("https://api.openai.com/v1").as_deref(),
+            Some("api.openai.com")
+        );
+        assert_eq!(url_host("not a url"), None);
+    }
+
+    #[test]
+    fn a_wrapped_driver_reports_its_server_and_locality() {
+        let local = from_config(&ModelConfig {
+            provider: "ollama".into(),
+            name: "m".into(),
+            ..ModelConfig::default()
+        })
+        .unwrap();
+        assert_eq!(local.endpoint_host().as_deref(), Some("localhost:11434"));
+        assert!(local.is_local());
+
+        let hosted = from_config(&ModelConfig {
+            provider: "openai".into(),
+            name: "m".into(),
+            api_key: Some("k".into()),
+            ..ModelConfig::default()
+        })
+        .unwrap();
+        assert_eq!(hosted.endpoint_host().as_deref(), Some("api.openai.com"));
+        assert!(!hosted.is_local());
+    }
 
     fn minimal_config(provider: &str, model: &str) -> ModelConfig {
         ModelConfig {

@@ -62,6 +62,9 @@ impl sven_model::ModelProvider for GoogleProvider {
     fn model_name(&self) -> &str {
         &self.model
     }
+    fn endpoint_host(&self) -> Option<String> {
+        crate::url_host(&self.base_url)
+    }
 
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
         let mut entries: Vec<ModelCatalogEntry> = static_catalog()

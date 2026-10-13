@@ -136,6 +136,9 @@ impl sven_model::ModelProvider for AnthropicProvider {
     fn model_name(&self) -> &str {
         &self.model
     }
+    fn endpoint_host(&self) -> Option<String> {
+        crate::url_host(&self.base_url)
+    }
 
     /// Anthropic does not expose a public list-models endpoint with full
     /// metadata, so we return the static catalog entries for this provider.
