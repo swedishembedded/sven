@@ -24,6 +24,12 @@ pub const BYTES_PER_TOKEN: usize = 4;
 const ID_HEX_LEN: usize = 16;
 const ID_PREFIX: &str = "c-";
 
+/// Full SHA-256 of `bytes`, as lowercase hex.
+#[must_use]
+pub fn content_digest(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
 /// Address of a chunk: `c-` and the first 16 hex characters of the SHA-256 of
 /// its content. Identical content has the same id; the id never contains a
 /// path separator, so it is safe to use as a file name.
@@ -40,7 +46,7 @@ impl ChunkId {
     /// The id of `content`.
     #[must_use]
     pub fn for_content(content: &[u8]) -> Self {
-        let digest = hex::encode(Sha256::digest(content));
+        let digest = content_digest(content);
         Self(format!("{ID_PREFIX}{}", &digest[..ID_HEX_LEN]))
     }
 
@@ -192,10 +198,18 @@ impl ContextChunk {
     }
 
     /// Fold a second sighting of the same content into this record: the later
-    /// provenance wins (it names the newest file version), the stricter or
-    /// more important flag wins everywhere else.
+    /// provenance wins (it names the newest file version) unless it records no
+    /// version for the same file, in which case the known version is kept; the
+    /// stricter or more important flag wins everywhere else.
     pub(crate) fn merge(&mut self, draft: ChunkDraft) {
+        let kept_version = (draft.provenance.source_version.is_none()
+            && draft.provenance.path == self.provenance.path)
+            .then(|| self.provenance.source_version.take())
+            .flatten();
         self.provenance = draft.provenance;
+        if kept_version.is_some() {
+            self.provenance.source_version = kept_version;
+        }
         self.priority = self.priority.max(draft.priority);
         self.sensitivity = self.sensitivity.max(draft.sensitivity);
         self.lifetime = self.lifetime.max(draft.lifetime);

@@ -10,6 +10,7 @@ sven-tool-registry = { path = "../tool-registry" }
 sven-workspace = { path = "../workspace" }
 sven-vocab  = { path = "../vocab" }
 sven-session-model = { path = "../session-model" }
+sven-chunks = { path = "../chunks" }
 anyhow      = { workspace = true }
 async-trait = { workspace = true }
 futures     = { workspace = true }

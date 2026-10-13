@@ -13,6 +13,7 @@
 //! them from effects; `architecture.toml` forbids `sven-machines` from
 //! reaching this crate at all.
 
+pub mod assembly;
 mod compact;
 pub mod ledger;
 mod ledger_recorder;

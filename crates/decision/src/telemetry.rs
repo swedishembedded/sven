@@ -91,7 +91,7 @@ impl DecisionTelemetry {
         let mut pending = self.pending();
         let taken = std::mem::take(&mut *pending);
         Drained {
-            inference: (taken.inference.calls > 0).then(|| DecisionInference {
+            inference: (taken.inference.calls > 0).then_some(DecisionInference {
                 latency_ms: Some(taken.wall_ms),
                 ..taken.inference
             }),

@@ -304,3 +304,18 @@ fn deduplicated_content_takes_the_latest_source_version_and_the_strictest_flags(
     assert!(chunk.failure);
     assert_eq!(chunk.sensitivity, Sensitivity::Secret);
 }
+
+#[test]
+fn seeing_the_content_again_without_a_version_keeps_the_version_already_known() {
+    let store_dir = tempfile::tempdir().unwrap();
+    let mut store = open(store_dir.path(), 1 << 20);
+    let v = SourceVersion {
+        size: 1,
+        mtime_ns: 7,
+    };
+    store.put("x", file_draft("a.txt", v.clone())).unwrap();
+    let mut late = draft(ChunkKind::File);
+    late.provenance.path = Some("a.txt".into());
+    let chunk = store.put("x", late).unwrap().chunk;
+    assert_eq!(chunk.provenance.source_version, Some(v));
+}

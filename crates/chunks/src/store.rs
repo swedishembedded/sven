@@ -34,9 +34,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
-use sha2::{Digest, Sha256};
 
-use crate::chunk::{ChunkDraft, ChunkId, ContextChunk};
+use crate::chunk::{content_digest, ChunkDraft, ChunkId, ContextChunk};
 use crate::freshness::{Freshness, SourceProbe};
 
 /// Default bound on payload bytes held in memory.
@@ -142,7 +141,7 @@ impl ChunkStore {
             existing.merge(draft);
             (existing.clone(), true)
         } else {
-            let digest = hex::encode(Sha256::digest(content.as_bytes()));
+            let digest = content_digest(content.as_bytes());
             self.write_payload(&digest, content)?;
             (
                 ContextChunk::from_parts(id.clone(), digest, content.len(), draft),
@@ -209,7 +208,7 @@ impl ChunkStore {
         let digest = chunk.content_ref.digest.clone();
         let path = self.payload_path(&digest);
         let bytes = fs::read(&path).with_context(|| format!("read payload of {id}"))?;
-        if hex::encode(Sha256::digest(&bytes)) != digest {
+        if content_digest(&bytes) != digest {
             bail!("payload of {id} does not match its digest");
         }
         let text = String::from_utf8(bytes).map_err(|_| anyhow!("payload of {id} is not UTF-8"))?;

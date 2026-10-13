@@ -73,3 +73,40 @@ Two invariants hold for every kind and are tested:
 break them. A tool result is recognised as a failure by `indicates_failure`:
 an executor error, a non-zero shell exit (exit 1 included), a failing test
 summary or a compiler error line.
+
+## The assembly policy
+
+`sven_turn::assembly::ContextPolicy` is a pure function of the conversation
+about to be sent. Under a token budget it keeps the tool results of the most
+recent rounds in full and demotes older ones, oldest first, only as far as the
+budget requires: first to `long`, then, if the view is still over budget, to
+`short`. It returns the view, a `Demotion` for every result it shrank (chunk
+id, tool, from, to, tokens saved) and the raw text of each, which the caller
+stores so the reference can be expanded.
+
+| setting | default | meaning |
+|---------|--------:|---------|
+| `budget_tokens` | 12,000 | estimated tokens of the whole conversation above which demotion starts; a history within it is returned unchanged |
+| `keep_recent_rounds` | 2 | a round is the tool calls the model made in one response; the results of this many newest rounds are never demoted |
+| `min_demote_tokens` | 64 | a smaller result is not worth a reference |
+
+Only results of `read_file`, `shell`, `grep`, `find_file`, `web_fetch`,
+`web_search`, `read_lints` and `task` have a representation. Results of the
+expansion tool, of the editing tools and of every other tool are always sent
+as they are. A pinned chunk is never demoted, and a result that reports a
+failure is never demoted below `long`.
+
+The form of a result depends only on the result, its call and how far it was
+asked to go, so a result demoted for one request has the same text in the
+next and the provider's prompt cache is invalidated only from the first
+result that changes.
+
+### Advisors
+
+`VisibilityAdvisor` is asked, for each candidate, how far to demote it. The
+default, `DeterministicAdvisor`, returns the policy's own choice. An advisor
+sees the candidate's kind, tool, age, size, whether it failed, how it is shown
+now and the forms it may take; a choice outside those forms, or not smaller
+than the current one, is replaced by the policy's default. An advisor can
+therefore never drop a pinned or failing chunk. No model is called by the
+policy.

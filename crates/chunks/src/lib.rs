@@ -27,8 +27,8 @@ mod represent;
 mod store;
 
 pub use chunk::{
-    ChunkDraft, ChunkId, ChunkIdError, ChunkKind, ContentRef, ContextChunk, Lifetime, Provenance,
-    Sensitivity, BYTES_PER_TOKEN,
+    content_digest, ChunkDraft, ChunkId, ChunkIdError, ChunkKind, ContentRef, ContextChunk,
+    Lifetime, Provenance, Sensitivity, BYTES_PER_TOKEN,
 };
 pub use freshness::{Freshness, FsProbe, ProbeError, SourceProbe, SourceVersion};
 pub use represent::{
