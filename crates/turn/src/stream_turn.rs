@@ -21,7 +21,6 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use futures::StreamExt;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -46,6 +45,7 @@ pub fn to_model_schemas(schemas: Vec<sven_tool_registry::ToolSchema>) -> Vec<Too
 }
 
 use crate::ledger_recorder::LedgerRecorder;
+use crate::stall::{StallLimits, StallWatch};
 use crate::tool_slots::attempt_json_repair;
 use sven_vocab::{ReportedUsage, SessionEvent as AgentEvent};
 
@@ -90,6 +90,9 @@ pub struct TurnLimits {
     /// prefill of a long prompt) can legitimately stay silent for minutes
     /// before its first token.
     pub stream_idle: Duration,
+    /// Limits on a server that connects but produces nothing - see
+    /// [`StallLimits`].
+    pub stall: StallLimits,
     /// Most output tokens one response may ask for, below whatever the model
     /// itself allows. `None` leaves the model's own cap in place.
     pub max_output_tokens: Option<u32>,
@@ -106,6 +109,7 @@ impl From<ThinkingBudget> for TurnLimits {
         Self {
             thinking,
             stream_idle: DEFAULT_STREAM_IDLE_TIMEOUT,
+            stall: StallLimits::default(),
             max_output_tokens: None,
         }
     }
@@ -120,6 +124,13 @@ impl TurnLimits {
         self.stream_idle = secs
             .filter(|&secs| secs > 0)
             .map_or(DEFAULT_STREAM_IDLE_TIMEOUT, Duration::from_secs);
+        self
+    }
+
+    /// Bounds the wait for a server that connects but produces nothing.
+    #[must_use]
+    pub fn with_stall_limits(mut self, stall: StallLimits) -> Self {
+        self.stall = stall;
         self
     }
 
@@ -351,7 +362,10 @@ pub struct StreamedTurn {
 /// built-in default, unchanged from before this parameter existed.
 ///
 /// `limits` bounds the turn - see [`TurnLimits`]. A stream silent for longer
-/// than `limits.stream_idle` fails the turn. When either thinking cap is
+/// than `limits.stream_idle` fails the turn, and so does a server that
+/// produces no real output within `limits.stall` (keepalives do not count);
+/// while it is silent an [`AgentEvent::ModelWaiting`] goes out every few
+/// seconds. When either thinking cap is
 /// exceeded this returns `Err` wrapping an
 /// [`AbortedError`], which callers must route through the same
 /// `UserCancelled`/`Aborted` handling as a user-initiated cancel, not a
@@ -359,8 +373,8 @@ pub struct StreamedTurn {
 ///
 /// # Errors
 ///
-/// Returns an error if the model API call fails, the stream stays idle past
-/// its limit, or the thinking budget is exceeded.
+/// Returns an error if the model API call fails, the server stalls past one
+/// of its limits (see [`StallLimits`]), or the thinking budget is exceeded.
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_turn(
     model: &dyn ModelProvider,
@@ -394,10 +408,13 @@ pub async fn stream_turn(
     };
 
     let mut ledger = LedgerRecorder::start(&req);
-    let mut stream = model
-        .complete(req)
-        .await
-        .context("model completion failed")?;
+    let mut watch = StallWatch::new(model, &limits.stall, limits.stream_idle);
+    let mut stream = watch
+        .connect(
+            async { model.complete(req).await.context("model completion failed") },
+            tx,
+        )
+        .await?;
 
     let mut full_text = String::new();
     let mut thinking_buf = String::new();
@@ -409,19 +426,9 @@ pub async fn stream_turn(
     let mut completed: Vec<ToolCall> = Vec::new();
     let mut completed_indices: Vec<u32> = Vec::new();
     let mut unparsed_arguments: HashMap<String, String> = HashMap::new();
-    let chunk_timeout = limits.stream_idle;
 
     loop {
-        let maybe_event = tokio::time::timeout(chunk_timeout, stream.next())
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "model stream idle for >{} s - stale connection",
-                    chunk_timeout.as_secs()
-                )
-            })?;
-
-        let event = match maybe_event {
+        let event = match watch.next_event(&mut stream, tx).await? {
             None => break,
             Some(e) => e?,
         };

@@ -23,3 +23,5 @@ uuid        = { workspace = true }
 [dev-dependencies]
 # Paused time, so the idle-timeout test does not wait in real time.
 tokio       = { workspace = true, features = ["test-util"] }
+sven-model-mock = { path = "../model-mock" }
+sven-model-drivers = { path = "../model-drivers" }

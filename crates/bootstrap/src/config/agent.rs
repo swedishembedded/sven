@@ -14,7 +14,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sven_config::Schema;
 use sven_executors::CompactionConfig;
-use sven_turn::{CompactionStrategy, ThinkingBudget, TurnLimits};
+use sven_turn::{CompactionStrategy, StallLimits, ThinkingBudget, TurnLimits};
 use sven_vocab::AgentMode;
 
 fn default_agent_mode() -> AgentMode {
@@ -134,6 +134,30 @@ pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_idle_timeout_secs: Option<u64>,
 
+    /// Longest wait, in seconds, for a model server's response headers after
+    /// the request is sent. `None` (the default) is 120s for a hosted API
+    /// and 600s for a server on the user's own hardware (`brain`, `ollama`,
+    /// `vllm`, `lmstudio`, `sven`), which may still be prefilling a long
+    /// prompt. `0` is the default too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_byte_timeout_secs: Option<u64>,
+
+    /// Longest wait, in seconds from the request, for the model's first real
+    /// output (text, reasoning or a tool-call chunk). Keepalives do not
+    /// count, so a server that holds the connection open and produces
+    /// nothing is cut off. `None` (the default) is 300s for a hosted API and
+    /// 900s for a local server; never shorter than the first-byte limit.
+    /// The stream-idle limit still applies to a server that sends nothing at
+    /// all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_token_timeout_secs: Option<u64>,
+
+    /// Longest silence, in seconds, of real output once the model has started
+    /// producing it, however many keepalives arrive in between. `None` (the
+    /// default) is 600s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_progress_timeout_secs: Option<u64>,
+
     /// Wall-clock budget, in seconds, of every child agent run this session
     /// starts: a parallel SDLC task, a `task` sub-agent. The child is stopped
     /// when it runs out, and never outlives its parent. 0 = no limit.
@@ -159,6 +183,9 @@ impl AgentConfig {
             "max_thinking_tokens",
             "thinking_timeout_secs",
             "stream_idle_timeout_secs",
+            "first_byte_timeout_secs",
+            "first_token_timeout_secs",
+            "no_progress_timeout_secs",
             "child_run_timeout_secs",
         ])
     }
@@ -179,6 +206,11 @@ impl AgentConfig {
             thinking_timeout_secs: self.thinking_timeout_secs,
         })
         .with_stream_idle_secs(self.stream_idle_timeout_secs)
+        .with_stall_limits(StallLimits::from_secs(
+            self.first_byte_timeout_secs,
+            self.first_token_timeout_secs,
+            self.no_progress_timeout_secs,
+        ))
     }
 
     /// When and how a session compacts its history.
@@ -210,6 +242,9 @@ impl Default for AgentConfig {
             max_thinking_tokens: None,
             thinking_timeout_secs: None,
             stream_idle_timeout_secs: None,
+            first_byte_timeout_secs: None,
+            first_token_timeout_secs: None,
+            no_progress_timeout_secs: None,
         }
     }
 }
@@ -255,6 +290,18 @@ mod tests {
         assert_eq!(limits.thinking.max_thinking_tokens, Some(4096));
         assert_eq!(limits.thinking.thinking_timeout_secs, Some(90));
         assert_eq!(limits.stream_idle, Duration::from_secs(7));
+    }
+
+    #[test]
+    fn the_stall_keys_reach_the_turn_limits() {
+        let a: AgentConfig = serde_yaml::from_str(
+            "first_byte_timeout_secs: 30\nfirst_token_timeout_secs: 90\nno_progress_timeout_secs: 45\n",
+        )
+        .unwrap();
+        assert_eq!(
+            a.turn_limits().stall,
+            StallLimits::from_secs(Some(30), Some(90), Some(45))
+        );
     }
 
     #[test]

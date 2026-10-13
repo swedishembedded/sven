@@ -452,6 +452,9 @@ Controls the agent's autonomy and defaults.
 | `max_thinking_tokens` | 10% of context window | Estimated reasoning-token cap per turn; see [Thinking-loop watchdog](#thinking-loop-watchdog) |
 | `thinking_timeout_secs` | `600` | Seconds a model may reason with no forward progress before the turn aborts |
 | `stream_idle_timeout_secs` | `300` | Seconds a streamed response may stay silent before the connection is declared stale and the turn fails; raise it for slow local prefill |
+| `first_byte_timeout_secs` | `120`; `600` for a local server | Seconds to wait for the model server's response headers; see [Stalled model servers](#stalled-model-servers) |
+| `first_token_timeout_secs` | `300`; `900` for a local server | Seconds, from the request, to wait for the first real output (text, reasoning or a tool-call chunk); keepalives do not count |
+| `no_progress_timeout_secs` | `600` | Seconds of silence in real output, once it has started, before the turn fails; keepalives do not count |
 | `child_run_timeout_secs` | `3600` | Wall-clock budget of each child agent run (a parallel SDLC task, a `task` sub-agent); the child is stopped when it runs out. `0` = no limit |
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.
@@ -556,6 +559,45 @@ agent:
 
 Both caps can also be adjusted live in a running session with `/think-limit`
 (no args to show the current values).
+
+#### Stalled model servers
+
+A model server can go quiet in ways that look like a working connection. Each
+has its own limit; a turn that hits one fails with an error naming the driver,
+the server's host and the limit, and is handled like any other model failure.
+
+| Server behaviour | Limit | Error starts with |
+|------------------|-------|-------------------|
+| Accepts the connection, never sends response headers | `first_byte_timeout_secs` | `no response headers from <driver> <host> after N s` |
+| Sends headers, then nothing at all | `stream_idle_timeout_secs` | `model stream idle for >N s` |
+| Sends only keepalives (SSE comments, pings), no output yet | `first_token_timeout_secs` | `no model output from <driver> <host> after N s (the server sent only keepalives)` |
+| Produced output, then only keepalives | `no_progress_timeout_secs` | `no model progress from <driver> <host> for N s (the server sent only keepalives)` |
+
+Only real output counts as progress: a text, reasoning or tool-call chunk.
+Keepalives prove the connection is open, so they reset the idle clock, but
+they never satisfy the first-token or no-progress limits. The first-token
+limit is counted from the request and is never shorter than the first-byte
+limit.
+
+The first-byte and first-token defaults are larger for a server on your own
+hardware (`brain`, `ollama`, `vllm`, `lmstudio`, `sven`), which may still be
+prefilling a long prompt. A local server that sends neither data nor
+keepalives while it prefills is still bound by `stream_idle_timeout_secs`;
+raise that too for very long prompts. A value of `0` selects the default.
+
+While no real output arrives, a `ModelWaiting` event is sent every 5 seconds
+with the elapsed time and what the turn is waiting for (connecting, first
+token, or a model gone quiet). The TUI shows it in the status bar, headless
+runs write `[sven:info] waiting for model N s (<phase>)` to stderr, and an ACP
+client receives an empty plan update as a heartbeat. Pressing `Esc` aborts a
+waiting turn at once.
+
+```yaml
+agent:
+  first_byte_timeout_secs: 240
+  first_token_timeout_secs: 900
+  no_progress_timeout_secs: 1200
+```
 
 ---
 

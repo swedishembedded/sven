@@ -1,5 +1,5 @@
 # docs/05-configuration.md and docs/technical/prompt-compaction.md: tuning
-# compaction and the thinking watchdog.
+# compaction and the thinking and stall watchdogs.
 agent:
   compaction_threshold: 0.80
   compaction_overhead_reserve: 0.12
@@ -9,6 +9,9 @@ agent:
   max_thinking_tokens: 20000
   thinking_timeout_secs: 300
   stream_idle_timeout_secs: 600
+  first_byte_timeout_secs: 240
+  first_token_timeout_secs: 900
+  no_progress_timeout_secs: 1200
   child_run_timeout_secs: 900
   max_step_timeout_secs: 120
   max_run_timeout_secs: 3600
