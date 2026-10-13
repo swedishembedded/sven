@@ -383,6 +383,9 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 phase,
             ));
         }
+        notice @ (AgentEvent::ServedModelChanged { .. } | AgentEvent::Warning(_)) => {
+            crate::output::write_notice(&notice);
+        }
         AgentEvent::ToolProgress { message, .. } => {
             write_stderr(&format!("[sven:progress] {message}"));
         }

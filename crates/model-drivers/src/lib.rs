@@ -262,9 +262,20 @@ impl ModelProvider for ConfigBoundedProvider {
         self.inner.list_models().await
     }
 
+    /// Configured cap first, then what the server says it will produce, then
+    /// the catalog's figure.
     fn catalog_max_output_tokens(&self) -> Option<u32> {
         self.max_output_tokens
+            .or_else(|| self.live.as_ref().and_then(|l| l.max_output_tokens()))
             .or_else(|| self.inner.catalog_max_output_tokens())
+    }
+
+    fn take_model_change(&self) -> Option<sven_model::ModelChange> {
+        self.live.as_ref()?.take_change()
+    }
+
+    fn tool_support(&self) -> Option<bool> {
+        self.live.as_ref().and_then(|l| l.tool_support())
     }
 
     fn catalog_context_window(&self) -> Option<u32> {

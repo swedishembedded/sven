@@ -422,8 +422,19 @@ in the file. There are no extra keys for it.
   waits for a refresh.
 - **Hot-swapped adapters are noticed.** A server that reports an
   `adapter: {id, digest}` for a model has it compared on every refresh. A
-  changed digest is logged with the new context window; the next request is
-  budgeted against it. Servers that report none work unchanged.
+  changed digest is logged and reported to the session before its next turn
+  (headless runs print `[sven:info] model changed: <model> adapter <old> ->
+  <new> (context window N)`; the TUI shows it in the status bar; ACP sends it
+  as a thought chunk), and the next request is budgeted against the new
+  context window. The first probe is only a baseline, and several swaps
+  between two turns are reported as one. Servers that report none work
+  unchanged.
+- **The server's output cap and tool support are used.** When neither
+  `max_output_tokens` nor `max_tokens` is set, the output-token limit of a
+  request is the one the server reports. When the server lists capabilities
+  and tool calling is not among them, the first turn that offers tools warns
+  once (`[sven:warn] <model> does not advertise tool calling ...`) and
+  carries on; a server that lists no capabilities is never warned about.
 - **Servers that do not answer cost at most two seconds per probe.** Every
   discovery call is bounded; failure leaves the configuration as written.
 

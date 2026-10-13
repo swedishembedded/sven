@@ -274,3 +274,141 @@ async fn a_configuration_that_selects_a_model_is_not_zero_config() {
     };
     assert_eq!(resolve_unconfigured(&cfg).await.provider, "anthropic");
 }
+
+/// A server whose answer to `GET /models` the test changes between probes.
+struct Swappable(Mutex<ServedModels>);
+
+impl Swappable {
+    fn serving(model: ServedModel) -> Self {
+        Self(Mutex::new(vec![model]))
+    }
+    fn swap(&self, model: ServedModel) {
+        *self.0.lock().unwrap() = vec![model];
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelProvider for Swappable {
+    fn name(&self) -> &str {
+        "swappable"
+    }
+    fn model_name(&self) -> &str {
+        "m"
+    }
+    async fn complete(
+        &self,
+        _req: sven_model::CompletionRequest,
+    ) -> anyhow::Result<sven_model::ResponseStream> {
+        unreachable!("discovery never completes")
+    }
+    async fn discover(&self) -> Option<ServedModels> {
+        Some(self.0.lock().unwrap().clone())
+    }
+}
+
+fn with_adapter(digest: &str) -> ServedModel {
+    ServedModel {
+        adapter: adapter("a", digest),
+        context_length: Some(8192),
+        ..model("m", None)
+    }
+}
+
+#[tokio::test]
+async fn a_swapped_adapter_is_reported_once_and_the_first_probe_is_only_a_baseline() {
+    let server = Swappable::serving(with_adapter("d1"));
+    let live = LiveState::new("m", true);
+
+    live.refresh(&server).await;
+    assert_eq!(live.take_change(), None, "the first answer is a baseline");
+
+    live.refresh(&server).await;
+    assert_eq!(live.take_change(), None, "an unchanged adapter is not news");
+
+    server.swap(with_adapter("d2"));
+    live.refresh(&server).await;
+    assert_eq!(
+        live.take_change(),
+        Some(ModelChange {
+            model: "m".into(),
+            from: adapter("a", "d1"),
+            to: adapter("a", "d2"),
+            context_window: Some(8192),
+        })
+    );
+    assert_eq!(live.take_change(), None, "a change is taken once");
+}
+
+#[tokio::test]
+async fn swaps_before_the_session_looks_coalesce_and_a_swap_back_cancels_out() {
+    let server = Swappable::serving(with_adapter("d1"));
+    let live = LiveState::new("m", true);
+    live.refresh(&server).await;
+
+    for digest in ["d2", "d3"] {
+        server.swap(with_adapter(digest));
+        live.refresh(&server).await;
+    }
+    let change = live.take_change().expect("a change");
+    assert_eq!(
+        (change.from, change.to),
+        (adapter("a", "d1"), adapter("a", "d3"))
+    );
+
+    server.swap(with_adapter("d4"));
+    live.refresh(&server).await;
+    server.swap(with_adapter("d3"));
+    live.refresh(&server).await;
+    assert_eq!(
+        live.take_change(),
+        None,
+        "back where the session last heard of"
+    );
+}
+
+#[tokio::test]
+async fn the_servers_output_cap_and_tool_support_are_remembered_when_it_reports_them() {
+    let server = Swappable::serving(ServedModel {
+        max_output_tokens: Some(2048),
+        tools: Some(false),
+        ..model("m", Some(4096))
+    });
+    let live = LiveState::new("m", true);
+    assert_eq!(
+        (live.max_output_tokens(), live.tool_support()),
+        (None, None)
+    );
+    live.refresh(&server).await;
+    assert_eq!(live.max_output_tokens(), Some(2048));
+    assert_eq!(live.tool_support(), Some(false));
+}
+
+fn bounded(
+    server: Swappable,
+    configured_cap: Option<u32>,
+    live: Arc<LiveState>,
+) -> crate::ConfigBoundedProvider {
+    crate::ConfigBoundedProvider {
+        inner: Arc::new(server),
+        config_context_window: None,
+        max_output_tokens: configured_cap,
+        input_modalities: None,
+        live: Some(live),
+    }
+}
+
+#[tokio::test]
+async fn the_servers_output_cap_applies_unless_the_configuration_sets_one() {
+    let capped = || ServedModel {
+        max_output_tokens: Some(2048),
+        ..model("m", Some(4096))
+    };
+    let live = LiveState::new("m", true);
+    let unset = bounded(Swappable::serving(capped()), None, Arc::clone(&live));
+    live.refresh(&*unset.inner).await;
+    assert_eq!(unset.catalog_max_output_tokens(), Some(2048));
+    assert_eq!(unset.tool_support(), None, "silence is not a no");
+
+    let set = bounded(Swappable::serving(capped()), Some(512), live);
+    assert_eq!(set.catalog_max_output_tokens(), Some(512));
+}

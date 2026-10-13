@@ -320,6 +320,8 @@ TextDelta / TextComplete            // streamed + final assistant text
 ThinkingDelta / ThinkingComplete    // extended thinking
 ToolStarted { call_id, name, args }
 ToolProgress { call_id, message }
+ServedModelChanged { model, from, to, context_window }  // the server swapped the model's adapter (not a switch of model: that is ModelChanged)
+Warning(text)                       // notice that does not stop the run, e.g. the served model lacks tool calling
 ModelWaiting { elapsed_secs, phase }  // model silent: no text/reasoning/tool-call chunk yet (keepalives excluded)
 ToolFinished { call_id, name, output, is_error }
 TokenUsage { input, output, cache_read, cache_write, ... , cost_usd }

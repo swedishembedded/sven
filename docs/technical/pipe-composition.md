@@ -223,7 +223,7 @@ Stderr lines use structured `[sven:tag]` prefixes:
 | `[sven:tokens]` | Token usage for the turn |
 | `[sven:ledger]` | With `--token-ledger`: one JSON object per model request attributing its input tokens to their sources (see [token-ledger.md](token-ledger.md)) |
 | `[sven:info]` | Informational (e.g. history loaded, `waiting for model N s (<phase>)` every 5 s while the model has produced nothing real) |
-| `[sven:warn]` | Non-fatal warning |
+| `[sven:warn]` | Non-fatal warning (e.g. the served model does not advertise tool calling) |
 | `[sven:error]` | Fatal error before exit |
 
 ---

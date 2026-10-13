@@ -53,6 +53,8 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
         | SessionEvent::ThinkingComplete(_)
         | SessionEvent::ToolProgress { .. }
         | SessionEvent::ModelWaiting { .. }
+        | SessionEvent::ServedModelChanged { .. }
+        | SessionEvent::Warning(_)
         | SessionEvent::ContextCompacted { .. }
         | SessionEvent::TokenUsage { .. }
         | SessionEvent::TurnComplete

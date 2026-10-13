@@ -36,8 +36,8 @@ use sven_vocab::AgentMode;
 
 use crate::ledger_output::{ledger_record, LedgerOutput};
 use crate::output::{
-    finalise_stdout, format_token_usage_line, tool_output_snippet, write_progress, write_stderr,
-    write_stdout,
+    finalise_stdout, format_token_usage_line, tool_output_snippet, write_notice, write_progress,
+    write_stderr, write_stdout,
 };
 use crate::runner::{
     EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_NEEDS_HUMAN, EXIT_SUCCESS, EXIT_TIMEOUT,
@@ -240,7 +240,6 @@ impl RuntimeRunner {
         write_progress("[sven:step:start] 1/1");
         let started = Instant::now();
 
-        // Which limit applies is `run_deadline`'s decision.
         // The deadline is enforced per `recv` rather than by racing the whole
         // drive loop in a `select!`: dropping that future on timeout would
         // take `state` - and with it the trajectory accumulated so far - down
@@ -682,6 +681,7 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                 phase,
             ));
         }
+        UiEvent::ServedModelChanged { .. } | UiEvent::Warning(_) => write_notice(&ev),
         UiEvent::ToolProgress { message, .. } => {
             if state.trace >= 1 {
                 write_progress(&format!("[sven:progress] {message}"));

@@ -17,12 +17,12 @@
 //! Every call here is bounded by [`DISCOVERY_TIMEOUT`] and degrades to "not
 //! known" on failure: discovery never fails or delays a turn.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use sven_model::{registry, AdapterRef, ModelProvider, ServedModel, ServedModels};
+use sven_model::{registry, AdapterRef, ModelChange, ModelProvider, ServedModel, ServedModels};
 
 use crate::api_key::resolve_api_key;
 use crate::{build_http_client, ModelConfig};
@@ -153,15 +153,6 @@ pub(crate) fn effective_base_url(cfg: &ModelConfig) -> Option<String> {
 
 // ── Change detection ──────────────────────────────────────────────────────────
 
-/// A served model whose adapter changed between two probes. This is exactly
-/// the payload a `ModelChanged` session event would need.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ModelChange {
-    pub model: String,
-    pub from: Option<AdapterRef>,
-    pub to: Option<AdapterRef>,
-}
-
 /// Compare the adapter seen on the previous probe with the one on this probe.
 pub(crate) fn adapter_change(
     model: &str,
@@ -172,6 +163,7 @@ pub(crate) fn adapter_change(
         model: model.to_string(),
         from: previous.clone(),
         to: current.clone(),
+        context_window: None,
     })
 }
 
@@ -190,6 +182,10 @@ pub(crate) fn is_context_overflow(error_text: &str) -> bool {
 
 // ── Live state of a served model ──────────────────────────────────────────────
 
+const TOOLS_UNKNOWN: u8 = 0;
+const TOOLS_NO: u8 = 1;
+const TOOLS_YES: u8 = 2;
+
 /// What sven currently believes about the model it is bound to, refreshed from
 /// the live server. Shared between the provider and its background refresh.
 pub(crate) struct LiveState {
@@ -198,7 +194,15 @@ pub(crate) struct LiveState {
     refreshable: bool,
     /// Context window the server reported; 0 = unknown.
     context_window: AtomicU32,
-    adapter: Mutex<Option<AdapterRef>>,
+    /// Output cap the server reported; 0 = unknown.
+    max_output_tokens: AtomicU32,
+    /// Tool support the server reported: [`TOOLS_UNKNOWN`], `NO` or `YES`.
+    tools: AtomicU8,
+    /// The adapter seen on the last answering probe; the outer `None` until
+    /// there is one, so the first answer is a baseline and not a change.
+    adapter: Mutex<Option<Option<AdapterRef>>>,
+    /// A change seen and not yet taken by the session.
+    pending_change: Mutex<Option<ModelChange>>,
     last_probe: Mutex<Option<Instant>>,
     in_flight: AtomicBool,
 }
@@ -209,7 +213,10 @@ impl LiveState {
             model: model.to_string(),
             refreshable,
             context_window: AtomicU32::new(0),
+            max_output_tokens: AtomicU32::new(0),
+            tools: AtomicU8::new(TOOLS_UNKNOWN),
             adapter: Mutex::new(None),
+            pending_change: Mutex::new(None),
             last_probe: Mutex::new(None),
             in_flight: AtomicBool::new(false),
         })
@@ -217,6 +224,30 @@ impl LiveState {
 
     pub(crate) fn context_window(&self) -> Option<u32> {
         Some(self.context_window.load(Ordering::Relaxed)).filter(|&n| n > 0)
+    }
+
+    pub(crate) fn max_output_tokens(&self) -> Option<u32> {
+        Some(self.max_output_tokens.load(Ordering::Relaxed)).filter(|&n| n > 0)
+    }
+
+    pub(crate) fn tool_support(&self) -> Option<bool> {
+        match self.tools.load(Ordering::Relaxed) {
+            TOOLS_NO => Some(false),
+            TOOLS_YES => Some(true),
+            _ => None,
+        }
+    }
+
+    /// The adapter change seen since the last call, with the window the
+    /// server reports now. Taking it clears it.
+    pub(crate) fn take_change(&self) -> Option<ModelChange> {
+        let mut change = self
+            .pending_change
+            .lock()
+            .expect("pending change poisoned")
+            .take()?;
+        change.context_window = self.context_window();
+        Some(change)
     }
 
     pub(crate) fn is_refreshable(&self) -> bool {
@@ -256,23 +287,44 @@ impl LiveState {
         if let Some(n) = window.or(entry.and_then(|m| m.context_length)) {
             self.context_window.store(n, Ordering::Relaxed);
         }
-        let change = served.as_ref().and_then(|_| {
-            let current = entry.and_then(|m| m.adapter.clone());
-            let mut known = self.adapter.lock().expect("adapter state poisoned");
-            let change = adapter_change(&self.model, &known, &current);
-            *known = current;
-            change
-        });
-        if let Some(c) = change {
-            tracing::info!(
-                model = %c.model,
-                from = ?c.from,
-                to = ?c.to,
-                context_window = ?self.context_window(),
-                "served adapter changed; context window refreshed"
+        if let Some(m) = entry {
+            self.max_output_tokens
+                .store(m.max_output_tokens.unwrap_or(0), Ordering::Relaxed);
+            self.tools.store(
+                m.tools
+                    .map_or(TOOLS_UNKNOWN, |t| if t { TOOLS_YES } else { TOOLS_NO }),
+                Ordering::Relaxed,
             );
         }
+        if served.is_some() {
+            self.note_adapter(entry.and_then(|m| m.adapter.clone()));
+        }
         served
+    }
+
+    /// Record the adapter an answering probe saw. A difference from the one
+    /// before it is logged and queued for the session; several differences
+    /// before the session looks coalesce into one, and a swap back to the
+    /// adapter the session last heard of cancels out.
+    fn note_adapter(&self, current: Option<AdapterRef>) {
+        let mut known = self.adapter.lock().expect("adapter state poisoned");
+        let Some(previous) = known.replace(current.clone()) else {
+            return;
+        };
+        let Some(mut change) = adapter_change(&self.model, &previous, &current) else {
+            return;
+        };
+        tracing::info!(
+            model = %change.model,
+            from = ?change.from,
+            to = ?change.to,
+            "served adapter changed"
+        );
+        let mut pending = self.pending_change.lock().expect("pending change poisoned");
+        if let Some(earlier) = pending.take() {
+            change.from = earlier.from;
+        }
+        *pending = (change.from != change.to).then_some(change);
     }
 
     /// Refresh in the background when the last probe is older than the TTL.

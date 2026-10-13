@@ -121,6 +121,21 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         // heartbeat so its inactivity timer is reset while the agent waits.
         AgentEvent::ModelWaiting { .. } => Some(SessionUpdate::Plan(Plan::new(vec![]))),
 
+        // Notices about the model server are not answer text: send them as
+        // thought chunks, which a client shows apart from the reply.
+        AgentEvent::ServedModelChanged {
+            model,
+            from,
+            to,
+            context_window,
+        } => Some(thought_notice(&sven_vocab::served_model_changed_text(
+            model,
+            from.as_ref(),
+            to.as_ref(),
+            *context_window,
+        ))),
+        AgentEvent::Warning(text) => Some(thought_notice(&format!("warning: {text}"))),
+
         // A request's token ledger rides on a UsageUpdate: the context
         // meter it carries is the request's prompt size against the window,
         // and the record itself is attached under `_meta`.
@@ -170,6 +185,12 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         // carries the agent's own progress, not the harness around it.
         | AgentEvent::Harness { .. } => None,
     }
+}
+
+fn thought_notice(text: &str) -> SessionUpdate {
+    SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::from(
+        format!("[sven] {text}\n").as_str(),
+    )))
 }
 
 // ─── UiEvent → SessionUpdate bridge (kernel path) ────────────────────────────
@@ -274,6 +295,24 @@ mod tests {
             agent_event_to_session_update(&ev),
             Some(SessionUpdate::Plan(_))
         ));
+    }
+
+    #[test]
+    fn server_notices_map_to_thought_chunks() {
+        for ev in [
+            AgentEvent::Warning("no tools".into()),
+            AgentEvent::ServedModelChanged {
+                model: "m".into(),
+                from: None,
+                to: None,
+                context_window: None,
+            },
+        ] {
+            assert!(matches!(
+                agent_event_to_session_update(&ev),
+                Some(SessionUpdate::AgentThoughtChunk(_))
+            ));
+        }
     }
 
     #[test]

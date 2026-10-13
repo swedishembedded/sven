@@ -90,6 +90,7 @@ use sven_turn::{stream_turn, to_model_schemas, AbortedError, ModelResolver};
 use sven_vocab::{CompactionRecord, TurnRequest};
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
+use crate::notices;
 use crate::thread_store::{refusal_reasons, register_calls, ThreadStore};
 
 /// Executes single-turn `CallLlm { kind: "turn" }` effects.
@@ -132,6 +133,9 @@ pub struct TurnExecutor {
     /// Limits forwarded to every `stream_turn` call (main turn and
     /// compaction turn alike). See [`Self::with_turn_limits`].
     limits: sven_turn::TurnLimits,
+    /// Models already warned about for lacking tool calling, so each is
+    /// mentioned once per session however many turns it serves.
+    warned_without_tools: std::collections::HashSet<String>,
 }
 
 /// Proactive-compaction settings, mirroring the agent settings'
@@ -192,6 +196,7 @@ impl TurnExecutor {
             call_id_to_thread,
             cancel_handle,
             empty_turns: Arc::new(Mutex::new(HashMap::new())),
+            warned_without_tools: std::collections::HashSet::new(),
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
@@ -452,6 +457,14 @@ impl EffectExecutor for TurnExecutor {
             to_model_schemas(self.tools.schemas_offered(&req.tools, &req.all_tools_mode))
         };
 
+        notices::report_served_model_change(model.as_ref(), obs);
+        notices::warn_if_tools_unsupported(
+            &mut self.warned_without_tools,
+            model.as_ref(),
+            !tool_schemas.is_empty(),
+            obs,
+        );
+
         // Observable request shape (debug level → `-v` stderr in headless
         // mode). The e2e suite asserts on `tool_schemas=`/`system_messages=`
         // to pin the --no-tools/--no-system/--bare contract - keep the field
@@ -641,6 +654,7 @@ impl EffectExecutor for TurnExecutor {
         self.cancel_handle.lock().await.take();
         drop(tx);
         let _ = forwarder.await;
+        notices::report_served_model_change(model.as_ref(), obs);
 
         // A deliberate abort (this cancel channel, or stream_turn's own
         // thinking-token/time watchdog) is reported as `UserCancelled` +

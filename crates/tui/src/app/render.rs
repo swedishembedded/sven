@@ -170,7 +170,8 @@ impl App {
                     .agent
                     .current_tool
                     .as_deref()
-                    .or(self.agent.model_waiting.as_deref()),
+                    .or(self.agent.model_waiting.as_deref())
+                    .or(self.agent.notice.as_deref()),
                 ascii,
                 focus: self.ui.focus,
                 spinner_frame: self.agent.spinner_frame,

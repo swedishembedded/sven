@@ -38,6 +38,38 @@ pub fn format_model_waiting_line(elapsed_secs: u64, phase: ModelWaitPhase) -> St
     format!("[sven:info] waiting for model {elapsed_secs} s ({phase})")
 }
 
+/// The stderr line for a notice event, or `None` for any other event:
+/// `[sven:info] model changed: ...` when the model server swapped the adapter,
+/// `[sven:warn] ...` for a warning.
+pub fn notice_line(event: &sven_vocab::SessionEvent) -> Option<String> {
+    use sven_vocab::SessionEvent;
+    match event {
+        SessionEvent::ServedModelChanged {
+            model,
+            from,
+            to,
+            context_window,
+        } => Some(format!(
+            "[sven:info] {}",
+            sven_vocab::served_model_changed_text(
+                model,
+                from.as_ref(),
+                to.as_ref(),
+                *context_window
+            )
+        )),
+        SessionEvent::Warning(text) => Some(format!("[sven:warn] {text}")),
+        _ => None,
+    }
+}
+
+/// Writes [`notice_line`] for `event` to stderr; any other event is ignored.
+pub fn write_notice(event: &sven_vocab::SessionEvent) {
+    if let Some(line) = notice_line(event) {
+        write_progress(&line);
+    }
+}
+
 /// Format a `[sven:tokens]` diagnostic line from a `TokenUsage` event.
 ///
 /// Shared by both the CI runner and the conversation handler to ensure
@@ -112,6 +144,32 @@ pub fn tool_output_snippet(trace: u8, output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notices_have_stable_stderr_lines() {
+        use sven_vocab::{AdapterRef, SessionEvent};
+        let adapter = |digest: &str| {
+            Some(AdapterRef {
+                id: "tuned".into(),
+                digest: digest.into(),
+            })
+        };
+        let swap = SessionEvent::ServedModelChanged {
+            model: "m".into(),
+            from: adapter("d1"),
+            to: None,
+            context_window: Some(8192),
+        };
+        assert_eq!(
+            notice_line(&swap).unwrap(),
+            "[sven:info] model changed: m adapter tuned@d1 -> none (context window 8192)"
+        );
+        assert_eq!(
+            notice_line(&SessionEvent::Warning("no tools".into())).unwrap(),
+            "[sven:warn] no tools"
+        );
+        assert_eq!(notice_line(&SessionEvent::TurnComplete), None);
+    }
 
     #[test]
     fn model_waiting_line_names_the_wait_and_its_phase() {

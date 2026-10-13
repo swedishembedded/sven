@@ -5,6 +5,8 @@ use async_trait::async_trait;
 use futures::Stream;
 use std::pin::Pin;
 
+pub use sven_vocab::AdapterRef;
+
 use crate::{
     catalog::{InputModality, ModelCatalogEntry},
     CompletionRequest, ResponseEvent,
@@ -12,14 +14,15 @@ use crate::{
 
 pub type ResponseStream = Pin<Box<dyn Stream<Item = anyhow::Result<ResponseEvent>> + Send>>;
 
-/// The adapter (fine-tune overlay) a server currently has applied to a model.
-///
-/// `digest` changes whenever the adapter's weights change, so comparing two
-/// probes' digests detects a hot swap even when `id` stays the same.
+/// A change the live server made under a running session: another adapter was
+/// applied (or removed) for the bound model.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdapterRef {
-    pub id: String,
-    pub digest: String,
+pub struct ModelChange {
+    pub model: String,
+    pub from: Option<AdapterRef>,
+    pub to: Option<AdapterRef>,
+    /// The context window the server reports after the change.
+    pub context_window: Option<u32>,
 }
 
 /// One model a server reports it is serving right now.
@@ -80,6 +83,21 @@ pub trait ModelProvider: Send + Sync {
     /// provider has no discovery endpoint or the server did not answer in
     /// time; it never fails a turn. The default implementation returns `None`.
     async fn discover(&self) -> Option<ServedModels> {
+        None
+    }
+
+    /// The change the live server made to the bound model (a different
+    /// adapter applied) since the last call, if a probe saw one. Taking it
+    /// clears it, and several changes between two calls coalesce into one from
+    /// the first adapter seen to the last. The initial probe is a baseline,
+    /// not a change. The default is `None`.
+    fn take_model_change(&self) -> Option<ModelChange> {
+        None
+    }
+
+    /// Whether the served model supports tool calling, when the server said:
+    /// `None` is "not reported", never "no". The default is `None`.
+    fn tool_support(&self) -> Option<bool> {
         None
     }
 

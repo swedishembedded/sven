@@ -42,6 +42,7 @@
 pub mod audit;
 pub mod composite;
 pub mod internal;
+mod notices;
 pub mod thread_store;
 pub mod timer;
 pub mod tool;

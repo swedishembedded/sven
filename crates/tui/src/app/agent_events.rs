@@ -119,6 +119,22 @@ impl App {
                 self.agent.model_waiting =
                     Some(format!("waiting for model {elapsed_secs} s ({phase})"));
             }
+            AgentEvent::ServedModelChanged {
+                model,
+                from,
+                to,
+                context_window,
+            } => {
+                self.agent.notice = Some(sven_vocab::served_model_changed_text(
+                    &model,
+                    from.as_ref(),
+                    to.as_ref(),
+                    context_window,
+                ));
+            }
+            AgentEvent::Warning(text) => {
+                self.agent.notice = Some(format!("warning: {text}"));
+            }
             AgentEvent::TextDelta(delta) => {
                 tracing::debug!(len = delta.len(), "TUI: TextDelta received");
                 self.agent.model_waiting = None;

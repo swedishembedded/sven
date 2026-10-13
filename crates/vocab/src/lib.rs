@@ -25,6 +25,7 @@ use serde_json::Value;
 pub mod harness;
 pub mod ledger;
 pub mod provenance;
+pub mod served;
 pub mod turn;
 pub mod verify;
 pub mod wait;
@@ -35,6 +36,7 @@ pub use ledger::{
     STEP_METRICS_EXTRA_KEY,
 };
 
+pub use served::{describe_adapter, served_model_changed_text, AdapterRef};
 pub use turn::{RefusedCall, TurnRequest, TURN_KIND};
 pub use wait::ModelWaitPhase;
 
@@ -688,6 +690,22 @@ pub enum SessionEvent {
         elapsed_secs: u64,
         phase: ModelWaitPhase,
     },
+    /// The model server now serves a different adapter (or none) for the
+    /// model this session is bound to, seen by a probe between turns.
+    /// `context_window` is the window the server reports after the change.
+    /// Consumers show it as a notice; it is not conversation content, and it
+    /// is not [`SessionEvent::ModelChanged`], which means the session switched
+    /// to another model.
+    ServedModelChanged {
+        model: String,
+        from: Option<AdapterRef>,
+        to: Option<AdapterRef>,
+        context_window: Option<u32>,
+    },
+    /// Something the user should know that does not stop the run, such as a
+    /// capability the served model lacks. Shown as a notice; never
+    /// conversation content, and never a failure (that is `Error`).
+    Warning(String),
     /// The agent has finished processing the current user turn.
     TurnComplete,
     /// The current run was aborted (via Ctrl+C or /abort). `partial_text`

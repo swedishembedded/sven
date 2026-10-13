@@ -143,6 +143,7 @@ The bridge layer in `crates/acp/src/bridge.rs` translates sven's internal `Agent
 | `ModeChanged(mode)`              | `CurrentModeUpdate`             |
 | `Error(msg)`                     | `AgentMessageChunk` (prefixed `[error]`) |
 | `ToolProgress` / `ModelWaiting { ... }` | `Plan` (empty heartbeat; resets the client's inactivity timer) |
+| `ServedModelChanged { ... }` / `Warning(msg)` | `AgentThoughtChunk` (`[sven] ...`; a notice, not answer text) |
 | `TurnComplete` / `Aborted`       | *(no notification; closes prompt response)* |
 
 Events not listed above (e.g. `TokenUsage`, `ContextCompacted`, collab events) are silently dropped; they carry no information that ACP clients currently consume.

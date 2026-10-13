@@ -18,6 +18,9 @@ pub(crate) struct AgentConn {
     /// Status-bar text while the model has produced nothing real yet ("waiting
     /// for model 45 s"). Cleared as soon as output arrives or the turn ends.
     pub model_waiting: Option<String>,
+    /// Latest notice about the model server (an adapter swap, a missing
+    /// capability), shown in the status bar until the next one replaces it.
+    pub notice: Option<String>,
     /// Context window usage for the last turn (0-100 %), relative to the
     /// usable input budget (`sven_model::budget::effective_input_budget`).
     pub context_pct: u8,
@@ -75,6 +78,7 @@ impl AgentConn {
             busy: false,
             current_tool: None,
             model_waiting: None,
+            notice: None,
             context_pct: 0,
             context_tokens: 0,
             total_context_tokens: 0,
