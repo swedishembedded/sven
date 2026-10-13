@@ -210,6 +210,23 @@ pub(crate) fn register_calls(
     proposed
 }
 
+/// Snapshot a thread from the store (non-async; guard is never held across await).
+pub(crate) fn snapshot_thread(store: &Mutex<ThreadStore>, thread_id: &str) -> Vec<Message> {
+    store
+        .lock()
+        .map(|s| s.snapshot(thread_id))
+        .unwrap_or_default()
+}
+
+/// Append a batch of messages to a store thread (non-async).
+pub(crate) fn append_messages(store: &Mutex<ThreadStore>, thread_id: &str, messages: Vec<Message>) {
+    if let Ok(mut s) = store.lock() {
+        for msg in messages {
+            s.append(thread_id, msg);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

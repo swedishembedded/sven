@@ -62,26 +62,8 @@ use std::sync::{Arc, Mutex};
 /// turn is failed outright instead of nudged again. See the module docs.
 const EMPTY_TURN_FAILURE_THRESHOLD: u32 = 2;
 
-// ─── Sync helpers ─────────────────────────────────────────────────────────────
-
-/// Snapshot a thread from the store (non-async; guard is never held across await).
-fn snapshot_thread(store: &Mutex<ThreadStore>, thread_id: &str) -> Vec<Message> {
-    store
-        .lock()
-        .map(|s| s.snapshot(thread_id))
-        .unwrap_or_default()
-}
-
-/// Append a batch of messages to a store thread (non-async).
-fn append_messages(store: &Mutex<ThreadStore>, thread_id: &str, messages: Vec<Message>) {
-    if let Ok(mut s) = store.lock() {
-        for msg in messages {
-            s.append(thread_id, msg);
-        }
-    }
-}
-
 use async_trait::async_trait;
+use sven_decision::telemetry::DecisionTelemetry;
 use sven_hsm::{CompactionStrategyUsed, Effect, Event, ObservationSink, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, EventSink};
 use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
@@ -91,7 +73,9 @@ use sven_vocab::{CompactionRecord, TurnRequest};
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
 use crate::notices;
-use crate::thread_store::{refusal_reasons, register_calls, ThreadStore};
+use crate::thread_store::{
+    append_messages, refusal_reasons, register_calls, snapshot_thread, ThreadStore,
+};
 
 /// Executes single-turn `CallLlm { kind: "turn" }` effects.
 ///
@@ -136,9 +120,8 @@ pub struct TurnExecutor {
     /// Models already warned about for lacking tool calling, so each is
     /// mentioned once per session however many turns it serves.
     warned_without_tools: std::collections::HashSet<String>,
-    /// What decision points did since the last request, charged to the next
-    /// request's ledger record. See [`Self::with_decision_telemetry`].
-    decisions: Option<Arc<sven_decision::telemetry::DecisionTelemetry>>,
+    /// Decision accounting charged to the next request's ledger record.
+    decisions: Option<Arc<DecisionTelemetry>>,
 }
 
 /// Proactive-compaction settings, mirroring the agent settings'
@@ -233,13 +216,9 @@ impl TurnExecutor {
         self
     }
 
-    /// Charges the decision inference and records the decision traces
-    /// gathered in `telemetry` to the ledger of the next model request.
+    /// Charges what `telemetry` gathered to the next request's ledger record.
     #[must_use]
-    pub fn with_decision_telemetry(
-        mut self,
-        telemetry: Arc<sven_decision::telemetry::DecisionTelemetry>,
-    ) -> Self {
+    pub fn with_decision_telemetry(mut self, telemetry: Arc<DecisionTelemetry>) -> Self {
         self.decisions = Some(telemetry);
         self
     }
@@ -634,21 +613,13 @@ impl EffectExecutor for TurnExecutor {
                 } = &mut ev
                 {
                     if let (Some(decisions), Some(breakdown)) = (&decisions, breakdown) {
-                        let drained = decisions.drain();
-                        breakdown.decision = drained.inference;
-                        breakdown.decision_trace = drained.traces;
+                        notices::charge_decisions(decisions, breakdown);
                     }
-                    let (read_total, write_total) = {
-                        let mut totals = cache_totals
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        let entry = totals.entry(totals_thread_id.clone()).or_insert((0, 0));
-                        entry.0 += u64::from(*cache_read);
-                        entry.1 += u64::from(*cache_write);
-                        *entry
-                    };
-                    *cache_read_total = read_total.min(u64::from(u32::MAX)) as u32;
-                    *cache_write_total = write_total.min(u64::from(u32::MAX)) as u32;
+                    (*cache_read_total, *cache_write_total) = notices::add_cache_totals(
+                        &cache_totals,
+                        &totals_thread_id,
+                        (*cache_read, *cache_write),
+                    );
                     *max_tokens = catalog_context_window as usize;
                     *max_output_tokens = catalog_max_output as usize;
                 }
