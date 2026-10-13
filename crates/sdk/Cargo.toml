@@ -48,4 +48,5 @@ futures         = { workspace = true }
 schemars        = { workspace = true }
 sven-hsm        = { path = "../hsm" }
 sven-model-mock = { path = "../model-mock" }
+sven-turn       = { path = "../turn" }
 tempfile        = { workspace = true }

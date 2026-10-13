@@ -451,36 +451,19 @@ impl Tool for EditFileTool {
     }
 
     fn description(&self) -> &str {
-        "Edit a file by applying unified diff hunks.\n\
-         \n\
-         REQUIRED: You MUST include hunk markers (lines starting with @@) in the diff.\n\
-         Without at least one @@ line the tool will fail. Do not send raw replacements.\n\
-         \n\
-         DIFF FORMAT\n\
-         Each hunk starts with @@ (line numbers are optional hints, not required):\n\
-           @@ -OLD_LINE,COUNT +NEW_LINE,COUNT @@\n\
-            context line          (space prefix - unchanged)\n\
-           -removed line          (minus prefix - deleted from file)\n\
-           +added line            (plus prefix - inserted into file)\n\
-            context line\n\
-         \n\
-         Rules:\n\
-         • Every change block MUST begin with an @@ hunk header line.\n\
-         • Include 2-3 unchanged context lines before and after every change.\n\
-         • Context lines must match the file content exactly (indentation\n\
-           differences are corrected automatically).\n\
-         • Multiple @@ hunks in one diff apply changes at separate locations.\n\
-         • Diffs wrapped in ```diff fences are accepted.\n\
-         \n\
+        "Edit a file by applying unified diff hunks. Every change block must begin with an\n\
+         @@ line (line numbers optional); raw replacements fail.\n\
+         Lines: ' ' context, '-' removed, '+' added. Give 2-3 unchanged context lines\n\
+         around each change; they must match the file (indentation differences are\n\
+         corrected). Several hunks edit separate places; ```diff fences are accepted.\n\
+         Re-read the file after an edit before writing new context.\n\
          Example - replace one call and add a log line:\n\
          @@ -12,6 +12,7 @@\n\
           fn process(x: u32) -> u32 {\n\
          -    x * 2\n\
          +    log(x);\n\
          +    x * 2\n\
-          }\n\
-         \n\
-         Re-read the file after any previous edit before writing new context."
+          }"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -489,11 +472,11 @@ impl Tool for EditFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Absolute or relative path to the file to edit"
+                    "description": "File path"
                 },
                 "diff": {
                     "type": "string",
-                    "description": "Unified diff with hunk markers. REQUIRED: must contain at least one line starting with @@ (e.g. @@ -1,3 +1,4 @@). Without @@ hunk markers the call will fail. Each hunk starts with @@; include 2-3 context lines around every change."
+                    "description": "Unified diff; each hunk starts with an @@ line"
                 }
             },
             "required": ["path", "diff"],

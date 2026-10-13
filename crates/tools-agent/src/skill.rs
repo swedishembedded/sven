@@ -42,33 +42,15 @@ fn build_description(skills: &[SkillInfo]) -> String {
                 No skills are currently available."
             .to_string();
     }
-
-    let skill_list: String = skills
-        .iter()
-        .filter(|s| !s.sven_meta.as_ref().is_some_and(|m| m.user_invocable_only))
-        .map(|s| {
-            format!(
-                "  <skill>\n    <command>{}</command>\n    <name>{}</name>\n    <description>{}</description>\n  </skill>",
-                s.command,
-                s.name,
-                s.description.trim()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    format!(
-        "Load or list agent skills.\n\
-         action: load | list\n\n\
-         load: Load the full instructions for a named skill into the conversation context.\n\
-         Call this when the user's request matches a skill description.\n\
-         Returns the skill's SKILL.md body, the absolute base directory, \
-         and a listing of bundled files.\n\
-         Pass the <command> value (e.g. \"sven\" or \"sven/plan\") as the `name` argument.\n\n\
-         list: List available skills, optionally filtered by a regex against command/name/description.\n\
-         Leave `regex` empty to list all skills.\n\n\
-         <available_skills>\n{skill_list}\n</available_skills>"
-    )
+    // The skills themselves are listed once, in the system prompt's
+    // `<available_skills>` block; repeating them here would charge for the
+    // list twice on every request.
+    "Load or list agent skills. action: load | list\n\
+     load: returns a skill's SKILL.md body, its base directory and bundled files. Use it \
+     when the request matches an entry of <available_skills> in the system prompt; \
+     pass the entry's <command> as `name`.\n\
+     list: skills whose command, name or description matches the `regex` (empty lists all)."
+        .to_string()
 }
 
 /// Return the direct children of `parent` in the skill hierarchy.
@@ -147,17 +129,15 @@ impl Tool for SkillTool {
                 "action": {
                     "type": "string",
                     "enum": ["load", "list"],
-                    "description": "Which skill action to perform"
+                    "description": "load or list"
                 },
                 "name": {
                     "type": "string",
-                    "description": "[action=load] The command of the skill to load \
-                                    (e.g. \"sven\" or \"sven/plan\")"
+                    "description": "[load] The skill's command, e.g. \"sven/plan\""
                 },
                 "regex": {
                     "type": "string",
-                    "description": "[action=list] Optional regex to filter skills by command, \
-                                    name, or description. Leave empty to list all skills."
+                    "description": "[list] Filter; empty lists all"
                 }
             },
             "required": ["action"],
@@ -619,35 +599,16 @@ mod tests {
 
     // ── description tests ────────────────────────────────────────────────────
 
+    /// The system prompt already lists the skills; repeating them in the tool
+    /// definition would charge for the list twice on every request.
     #[test]
-    fn description_lists_non_user_invocable_skills() {
-        let mut skill = make_skill("helper", "Help skill.", "body");
-        skill.sven_meta = Some(SvenSkillMeta {
-            user_invocable_only: false,
-            ..Default::default()
-        });
-        let tool = make_tool(vec![skill]);
-        assert!(tool.description().contains("helper"));
-    }
-
-    #[test]
-    fn description_omits_user_invocable_only_skills() {
-        let mut skill = make_skill("private", "Private skill.", "body");
-        skill.sven_meta = Some(SvenSkillMeta {
-            user_invocable_only: true,
-            ..Default::default()
-        });
-        let tool = make_tool(vec![skill]);
-        assert!(!tool.description().contains("private"));
-    }
-
-    #[test]
-    fn description_includes_command_field() {
+    fn description_points_at_the_system_prompt_instead_of_listing_skills() {
         let tool = make_tool(vec![make_skill("sven/plan", "Plan phase.", "body")]);
         let desc = tool.description();
         assert!(
-            desc.contains("<command>sven/plan</command>"),
-            "description lists command path"
+            !desc.contains("sven/plan") && !desc.contains("Plan phase."),
+            "{desc}"
         );
+        assert!(desc.contains("<available_skills>"), "{desc}");
     }
 }

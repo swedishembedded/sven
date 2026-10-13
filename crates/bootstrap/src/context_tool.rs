@@ -57,6 +57,13 @@ impl ContextTool {
             reduce,
         }
     }
+
+    /// Opens only paths `scope` allows, as the file tools do.
+    #[must_use]
+    pub fn with_scope(mut self, scope: sven_tool_api::PathScope) -> Self {
+        self.open = self.open.with_scope(scope);
+        self
+    }
 }
 
 #[async_trait]

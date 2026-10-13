@@ -26,15 +26,11 @@ const MAX_BYTES: usize = 20_000;
 macro_rules! description {
     ($images:literal) => {
         concat!(
-            "Read a file, 200 lines from the start unless 'offset' says otherwise.\n",
-            "Lines come back as L{n}:content, 1-indexed; strip the L{n}: prefix before\n",
-            "reusing a line as text.\n",
-            "Binary files are returned as Intel HEX, where limit/offset count HEX lines of\n",
-            "16 bytes each.",
+            "Read a file as L{n}:content lines (1-indexed; strip the L{n}: prefix before\n",
+            "reusing a line). Binary files come back as Intel HEX, 16 bytes per line, and\n",
+            "offset/limit then count HEX lines.",
             $images,
-            "\nWhen more lines remain, the reply names the next offset to pass.\n",
-            "Read the region you need rather than a whole large file - 'offset' and 'limit'\n",
-            "cost one call each, a full file costs the context it fills."
+            "\nA reply that stops early names the next offset. Read only the region you need."
         )
     };
 }
@@ -80,18 +76,18 @@ impl Tool for ReadFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file to read"
+                    "description": "File path"
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "1-indexed line number to start reading from"
+                    "description": "First line, 1-indexed (default 1)"
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of lines to return"
+                    "description": "Maximum lines (default 200)"
                 }
             },
-            "required": ["path", "offset", "limit"],
+            "required": ["path"],
             "additionalProperties": false
         })
     }

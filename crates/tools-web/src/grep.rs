@@ -64,14 +64,10 @@ impl Tool for GrepTool {
     }
 
     fn description(&self) -> &str {
-        "Search file contents by regex, built on ripgrep.\n\
-         pattern: a full regex - escape literal braces as \\{\\}.\n\
-         include: glob filter, e.g. '*.rs' or '**/*.{ts,tsx}'.\n\
-         whole_project: true also skips .git/ target/ node_modules/ dist/ __pycache__/ *.lock\n\
-         case_sensitive defaults true; limit 100 matches; context_lines 0.\n\
-         output_mode: content (default: file:line:col:text) | files_with_matches | count.\n\
-         Start with files_with_matches when locating something - it returns one line per\n\
-         file instead of one per match, which is the difference between a list and a wall."
+        "Search file contents by regex (ripgrep). Escape literal braces as \\{\\}.\n\
+         include is a file-name glob such as '*.rs' or '**/*.{ts,tsx}'.\n\
+         To locate something start with output_mode=files_with_matches: one line per\n\
+         file instead of one per match."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -80,39 +76,39 @@ impl Tool for GrepTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Regular expression pattern to search for"
+                    "description": "Regular expression"
                 },
                 "path": {
                     "type": "string",
-                    "description": "File or directory to search in (default: current directory)"
+                    "description": "File or directory (default: cwd)"
                 },
                 "include": {
                     "type": "string",
-                    "description": "Glob pattern to filter files, e.g. '*.rs' or '*.{ts,tsx}'"
+                    "description": "File-name glob filter"
                 },
                 "whole_project": {
                     "type": "boolean",
-                    "description": "Exclude build artifacts (.git, target, node_modules, dist, __pycache__, *.lock). Default false."
+                    "description": "Skip .git, target, node_modules, dist, __pycache__ and *.lock (default false)"
                 },
                 "case_sensitive": {
                     "type": "boolean",
-                    "description": "Case-sensitive search (default true)"
+                    "description": "Case-sensitive (default true)"
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of matches to return (default 100)"
+                    "description": "Maximum matches (default 100)"
                 },
                 "output_mode": {
                     "type": "string",
                     "enum": ["content", "files_with_matches", "count"],
-                    "description": "Output format: content (default), files_with_matches, or count"
+                    "description": "content (default) prints file:line:col:text"
                 },
                 "context_lines": {
                     "type": "integer",
-                    "description": "Lines of context before and after each match (default 0)"
+                    "description": "Lines around each match, content mode (default 0)"
                 }
             },
-            "required": ["pattern", "path", "include", "case_sensitive", "limit", "output_mode", "context_lines"],
+            "required": ["pattern"],
             "additionalProperties": false
         })
     }

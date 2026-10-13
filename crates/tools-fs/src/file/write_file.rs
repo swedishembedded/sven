@@ -39,13 +39,10 @@ impl Tool for WriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write a whole file. Overwrites by default; append=true extends instead.\n\
-         Missing parent directories are created.\n\
-         This replaces the entire contents, so it is the wrong call for changing part of\n\
-         an existing file - that rewrite costs the whole file in tokens and loses anything\n\
-         not restated.\n\
-         Create files the user asked for. Do not add README, docs or config files\n\
-         alongside them uninvited."
+        "Write a whole file, creating missing parent directories. Overwrites unless\n\
+         append=true. It replaces everything, so it is the wrong call for changing part of\n\
+         a file.\n\
+         Create only the files the user asked for, not README, docs or config alongside."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -54,18 +51,18 @@ impl Tool for WriteTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Absolute or relative path to the file"
+                    "description": "File path"
                 },
                 "text": {
                     "type": "string",
-                    "description": "Text content to write to the file"
+                    "description": "Content to write"
                 },
                 "append": {
                     "type": "boolean",
-                    "description": "If true, append to existing content instead of overwriting (default false)"
+                    "description": "Append instead of overwriting (default false)"
                 }
             },
-            "required": ["path", "text", "append"],
+            "required": ["path", "text"],
             "additionalProperties": false
         })
     }

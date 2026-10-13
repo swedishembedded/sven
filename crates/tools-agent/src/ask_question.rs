@@ -87,12 +87,11 @@ impl Tool for AskQuestionTool {
     }
 
     fn description(&self) -> &str {
-        "Present structured multiple-choice questions to the user and collect responses.\n\
-         Each question: prompt, options (≥2). allow_multiple: false by default.\n\
-         Do NOT include 'Other' in options - it is always appended automatically.\n\
-         When no user is available it says so at once; then decide yourself and\n\
-         state the assumption you made.\n\
-         Use for decisions requiring explicit choice; for yes/no just ask directly in text."
+        "Ask the user 1-3 multiple-choice questions and wait for the answers. Each has a\n\
+         prompt and 2+ options; 'Other' is always appended, so do not add it.\n\
+         When no user is available it says so at once; then decide yourself and state\n\
+         the assumption you made.\n\
+         Use it for decisions needing an explicit choice; ask yes/no questions in text."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -106,24 +105,23 @@ impl Tool for AskQuestionTool {
                         "properties": {
                             "prompt": {
                                 "type": "string",
-                                "description": "The question to ask"
+                                "description": "The question"
                             },
                             "options": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "List of choices. Do NOT add 'Other' - it is appended automatically.",
+                                "description": "Choices, without 'Other'",
                                 "minItems": 2
                             },
                             "allow_multiple": {
                                 "type": "boolean",
-                                "description": "Whether multiple options can be selected (default: false)",
+                                "description": "Allow several answers",
                                 "default": false
                             }
                         },
                         "required": ["prompt", "options"],
                         "additionalProperties": false
                     },
-                    "description": "List of 1-3 questions",
                     "minItems": 1,
                     "maxItems": 3
                 }

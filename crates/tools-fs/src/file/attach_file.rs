@@ -30,19 +30,18 @@ use sven_tool_api::{ApprovalPolicy, PathScope, Tool, ToolCall, ToolOutput};
 macro_rules! description {
     ($fallback:literal) => {
         concat!(
-            "Attach an image or audio file to the conversation so the model can perceive it.\n",
-            "Images are sent as image content; audio is sent as audio when the model supports it, ",
-            $fallback,
-            "\nSupports images (png/jpg/gif/webp/bmp/tiff) and audio (wav; mp3/flac/ogg/m4a are ",
-            "recognised but need an external decoder)."
+            "Attach an image or audio file so the model can perceive it. Images: ",
+            "png/jpg/gif/webp/bmp/tiff. Audio: wav (mp3/flac/ogg/m4a need an external ",
+            "decoder), sent as audio when the model accepts it, ",
+            $fallback
         )
     };
 }
 
 #[cfg(all(unix, feature = "asr"))]
-const DESCRIPTION: &str = description!("otherwise transcribed to text automatically.");
+const DESCRIPTION: &str = description!("otherwise transcribed to text.");
 #[cfg(not(all(unix, feature = "asr")))]
-const DESCRIPTION: &str = description!("and refused otherwise.");
+const DESCRIPTION: &str = description!("otherwise refused.");
 
 pub struct AttachFileTool {
     /// The live model, when one is available.
@@ -132,19 +131,18 @@ impl Tool for AttachFileTool {
             "path": {
                 "type": "string",
                 "description":
-                    "Path to an image (png/jpg/gif/webp/bmp/tiff) or audio \
-                     (wav/mp3/flac/ogg/m4a) file"
+                    "Image or audio file"
             },
             "note": {
                 "type": "string",
-                "description": "Optional note recorded alongside the attachment"
+                "description": "Note recorded with the attachment"
             }
         });
         if cfg!(all(unix, feature = "asr")) {
             properties["force_transcribe"] = json!({
                 "type": "boolean",
                 "description":
-                    "Audio only: transcribe to text even when the model accepts audio natively",
+                    "Audio: transcribe to text even when the model accepts audio",
                 "default": false
             });
         }

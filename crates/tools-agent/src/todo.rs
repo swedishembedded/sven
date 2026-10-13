@@ -36,16 +36,12 @@ impl Tool for TodoTool {
     }
 
     fn description(&self) -> &str {
-        "Read or manage the session todo list.\n\
-         Actions:\n\
-         - `read`   (default) - return the current list; no other fields needed.\n\
-         - `add`    - append new items; `todos` array required (id, content, status).\n\
-         - `update` - change status of existing items by id; `todos` array of {id, status} required.\n\
-         - `set`    - replace the entire list; `todos` array required (empty list clears all).\n\
-         At most one item may be `in_progress` at a time (enforced on add/set).\n\
-         Mark items `completed` immediately after finishing. Update silently - never announce changes.\n\
-         Use for: complex multi-step tasks (3+ steps). Skip for: trivial/single tasks.\n\
-         statuses: pending | in_progress | completed | cancelled"
+        "Session todo list. action: read (default) | add | update | set.\n\
+         add appends the `todos` items; update sets the status of existing items by id\n\
+         (a different content replaces their text); set replaces the whole list (an empty list clears it).\n\
+         At most one item may be in_progress. Mark items completed as soon as they are\n\
+         done, and update silently without announcing it.\n\
+         Use for tasks of 3+ steps; skip it for trivial ones."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -55,11 +51,11 @@ impl Tool for TodoTool {
                 "action": {
                     "type": "string",
                     "enum": ["read", "add", "update", "set"],
-                    "description": "Operation: read (default), add, update, or set."
+                    "description": "Operation (default read)"
                 },
                 "todos": {
                     "type": "array",
-                    "description": "Items for add/update/set. Every item needs `id`, `content` and `status`; for `update` the `content` may be omitted (it leaves the text unchanged).",
+                    "description": "Items for add, update and set",
                     "items": {
                         "type": "object",
                         "properties": {

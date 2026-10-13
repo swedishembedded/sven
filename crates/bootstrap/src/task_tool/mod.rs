@@ -419,20 +419,17 @@ impl Tool for TaskTool {
     }
 
     fn description(&self) -> &str {
-        "Run a focused sub-agent to completion and return its final answer, or inspect\n\
-         a finished one's output. The 'action' parameter lists what it can do.\n\
-         'prompt' is required for spawning (action=spawn, the default); 'handle' is\n\
-         required for inspecting an existing buffer (action=status|read|grep).\n\
-         Spawning blocks until the sub-agent finishes; several may run at once by\n\
-         issuing several calls.\n\
-         'mode' takes a built-in role (research/plan/agent) or the name of a discovered\n\
-         subagent persona, whose own instructions then become the sub-agent's system\n\
-         prompt and whose readonly flag picks its tools.\n\
-         Worth it when the work is open-ended search over unfamiliar ground and only the\n\
-         conclusion matters - it keeps what was read out of this conversation. Not worth\n\
-         it for a single command or a file you could read yourself: the sub-agent pays\n\
-         the full system prompt again to do it.\n\
-         Sub-agents get the standard tools and cannot spawn further sub-agents."
+        "Run a focused sub-agent to completion and return its final answer (action=spawn,\n\
+         the default; 'prompt' required), or inspect a finished one's output\n\
+         (action=status|read|grep; 'handle' required).\n\
+         Spawning blocks until the sub-agent finishes; issue several calls to run several\n\
+         at once. 'mode' is research, plan, agent or the name of a discovered subagent\n\
+         persona, whose instructions become the sub-agent's system prompt and whose\n\
+         readonly flag picks its tools.\n\
+         Worth it for open-ended search over unfamiliar ground when only the conclusion\n\
+         matters. Not worth it for a single command or a file you could read yourself:\n\
+         the sub-agent pays for the full system prompt again. Sub-agents get the\n\
+         standard tools and cannot spawn further sub-agents."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -445,52 +442,52 @@ impl Tool for TaskTool {
                 "action": {
                     "type": "string",
                     "enum": ["spawn", "status", "read", "grep"],
-                    "description": "spawn (default): launch sub-agent; status/read/grep: inspect existing buffer"
+                    "description": "spawn (default), or inspect a buffer"
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "[action=spawn] Complete, self-contained task description for the sub-agent"
+                    "description": "[spawn] Complete, self-contained task"
                 },
                 "description": {
                     "type": "string",
-                    "description": "[action=spawn] Short human-readable label (shown in TUI)"
+                    "description": "[spawn] Short label shown in the TUI"
                 },
                 "mode": {
                     "type": "string",
                     "enum": mode_enum,
-                    "description": "[action=spawn] Operating mode, or the name of a discovered subagent persona (default: agent)"
+                    "description": "[spawn] Default agent"
                 },
                 "workdir": {
                     "type": "string",
-                    "description": "[action=spawn] Working directory (defaults to current)"
+                    "description": "[spawn] Working directory (default: cwd)"
                 },
                 "model": {
                     "type": "string",
-                    "description": "[action=spawn] Model override (e.g. 'fast')"
+                    "description": "[spawn] Model override"
                 },
                 "handle": {
                     "type": "string",
-                    "description": "[action=status|read|grep] Buffer handle from a previous spawn"
+                    "description": "[status|read|grep] Buffer handle from a spawn"
                 },
                 "start_line": {
                     "type": "integer",
-                    "description": "[action=read] First line to read (1-indexed)"
+                    "description": "[read] First line, 1-indexed"
                 },
                 "end_line": {
                     "type": "integer",
-                    "description": "[action=read] Last line to read (inclusive)"
+                    "description": "[read] Last line, inclusive"
                 },
                 "pattern": {
                     "type": "string",
-                    "description": "[action=grep] Regex pattern to search for in the buffer"
+                    "description": "[grep] Regex"
                 },
                 "context_lines": {
                     "type": "integer",
-                    "description": "[action=grep] Lines of context before/after each match (default 2)"
+                    "description": "[grep] Context lines (default 2)"
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "[action=grep] Max matches (default 50)"
+                    "description": "[grep] Maximum matches (default 50)"
                 }
             },
             // What `execute` refuses a call without: spawn needs `prompt`,

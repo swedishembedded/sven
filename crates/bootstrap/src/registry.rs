@@ -473,13 +473,16 @@ fn register_base_tools(
     if include_full {
         // Compound context tool: open|read|grep|query|reduce
         let context_store = Arc::new(Mutex::new(ContextStore::new()));
-        reg.register(ContextTool::new(
-            context_store,
-            model,
-            &cfg.tools.context,
-            cfg.agent.turn_limits(),
-            Some(tool_event_tx),
-        ));
+        reg.register(
+            ContextTool::new(
+                context_store,
+                model,
+                &cfg.tools.context,
+                cfg.agent.turn_limits(),
+                Some(tool_event_tx),
+            )
+            .with_scope(paths.clone()),
+        );
 
         // Compound GDB tool: start_server|connect|command|interrupt|wait_stopped|status|stop
         // GDB tools use Unix signal APIs and are only available on Unix platforms.

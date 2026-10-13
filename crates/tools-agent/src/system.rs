@@ -261,15 +261,11 @@ impl Tool for SystemTool {
     }
 
     fn description(&self) -> &str {
-        "Agent system controls: mode/model switching and MCP server management.\n\
-         action: switch_mode | switch_model | add_mcp_server | remove_mcp_server\n\n\
-         switch_mode: Switch operating mode (research, plan, agent) within the\n\
-         modes this session may use.\n\n\
-         switch_model: Switch the active LLM (e.g. \"claude-opus\", \"gpt4o\").\n\n\
-         add_mcp_server: Add an external MCP server. Writes to the nearest config file.\n\
-           - stdio: provide command + args (e.g. npx -y @modelcontextprotocol/server-github)\n\
-           - http: provide url (e.g. https://mcp.example.com/v1)\n\n\
-         remove_mcp_server: Remove an MCP server by name from the nearest config file."
+        "Session controls. action:\n\
+         switch_mode - research, plan or agent, within the modes this session may use.\n\
+         switch_model - fuzzy model name, e.g. \"claude-opus\".\n\
+         add_mcp_server - stdio: command + args; http: url. Written to the nearest config file.\n\
+         remove_mcp_server - by name, from the nearest config file."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -279,38 +275,38 @@ impl Tool for SystemTool {
                 "action": {
                     "type": "string",
                     "enum": ["switch_mode", "switch_model", "add_mcp_server", "remove_mcp_server"],
-                    "description": "Which system action to perform"
+                    "description": "Operation"
                 },
                 "mode": {
                     "type": "string",
                     "enum": ["research", "plan", "agent"],
-                    "description": "[switch_mode] Target operating mode"
+                    "description": "[switch_mode] Target mode"
                 },
                 "model": {
                     "type": "string",
-                    "description": "[switch_model] Fuzzy search string (e.g. 'claude-opus')"
+                    "description": "[switch_model] Fuzzy model name"
                 },
                 "name": {
                     "type": "string",
-                    "description": "[add/remove_mcp_server] Server name used as tool prefix"
+                    "description": "[add/remove_mcp_server] Server name (the tool prefix)"
                 },
                 "command": {
                     "type": "string",
-                    "description": "[add_mcp_server stdio] Executable to run"
+                    "description": "[add_mcp_server stdio] Executable"
                 },
                 "args": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "[add_mcp_server stdio] Arguments to the command"
+                    "description": "[add_mcp_server stdio] Arguments"
                 },
                 "url": {
                     "type": "string",
-                    "description": "[add_mcp_server http] HTTP URL of the MCP server"
+                    "description": "[add_mcp_server http] Server URL"
                 },
                 "env": {
                     "type": "object",
                     "additionalProperties": {"type": "string"},
-                    "description": "[add_mcp_server] Environment variables for stdio transport"
+                    "description": "[add_mcp_server stdio] Environment variables"
                 }
             },
             "required": ["action"],

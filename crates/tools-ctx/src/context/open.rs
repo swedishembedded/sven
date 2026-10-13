@@ -14,16 +14,30 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
+use sven_tool_api::PathScope;
 
 use super::store::ContextStore;
 
 pub struct ContextOpenTool {
     pub(crate) store: Arc<Mutex<ContextStore>>,
+    /// Where `path` resolves, and whether it may leave there.
+    scope: PathScope,
 }
 
 impl ContextOpenTool {
     pub fn new(store: Arc<Mutex<ContextStore>>) -> Self {
-        Self { store }
+        Self {
+            store,
+            scope: PathScope::default(),
+        }
+    }
+
+    /// Resolves `path` through `scope`: a confined scope refuses a path
+    /// outside its root, as the file tools do.
+    #[must_use]
+    pub fn with_scope(mut self, scope: PathScope) -> Self {
+        self.scope = scope;
+        self
     }
 }
 
@@ -111,7 +125,11 @@ impl Tool for ContextOpenTool {
 
         debug!(path = %path_str, "context_open tool");
 
-        let path = std::path::Path::new(&path_str);
+        let path = match self.scope.resolve_for(call, &path_str) {
+            Ok(path) => path,
+            Err(refused) => return refused,
+        };
+        let path = path.as_path();
 
         let result = {
             let mut store = self.store.lock().await;
@@ -187,6 +205,49 @@ mod tests {
         let out = tool.execute(&call(json!({}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("missing required parameter 'path'"));
+    }
+
+    #[tokio::test]
+    async fn a_confined_scope_refuses_a_path_outside_its_root() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "hidden\n").unwrap();
+        let tool = ContextOpenTool::new(make_store())
+            .with_scope(PathScope::confined(root.path()).unwrap());
+
+        for target in [
+            outside.path().join("secret.txt"),
+            outside.path().to_path_buf(),
+        ] {
+            let out = tool
+                .execute(&call(json!({"path": target.to_str().unwrap()})))
+                .await;
+            assert!(out.is_error, "{}", out.content);
+            assert!(!out.content.contains("handle=ctx_"), "{}", out.content);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_directory_walk_does_not_follow_a_link_out_of_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("inside.txt"), "kept\n").unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "hidden\n").unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("escape")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            root.path().join("secret-link.txt"),
+        )
+        .unwrap();
+
+        let tool = ContextOpenTool::new(make_store())
+            .with_scope(PathScope::confined(root.path()).unwrap());
+        let out = tool
+            .execute(&call(json!({"path": root.path().to_str().unwrap()})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("Files: 1,"), "{}", out.content);
     }
 
     #[tokio::test]

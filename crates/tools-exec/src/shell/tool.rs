@@ -72,13 +72,10 @@ impl Tool for ShellTool {
 
     fn description(&self) -> &str {
         "Run a shell command; returns stdout + stderr.\n\
-         'description' is required: one short line naming what the command does, shown\n\
-         to the user in place of the raw command.\n\
-         Runs via bash on Unix/macOS, cmd.exe on Windows. Non-interactive only - a\n\
-         command needing a TTY will hang.\n\
-         Output is capped at ~20 KB, keeping the first and last 100 lines with a marker\n\
-         between, so errors at the end survive. Narrow big output at the source\n\
-         (`tail -200`, `grep -E 'error:|warning:'`) rather than paying for the cap."
+         bash on Unix, cmd.exe on Windows. Non-interactive only: a command needing a\n\
+         TTY hangs.\n\
+         Output over ~20 KB keeps its first and last 100 lines, so filter big output at\n\
+         the source (`tail -200`, `grep -E 'error:|warning:'`)."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -87,19 +84,19 @@ impl Tool for ShellTool {
             "properties": {
                 "description": {
                     "type": "string",
-                    "description": "Short human-readable description of what this command does (shown to user in UI)"
+                    "description": "One short line naming what the command does, shown to the user"
                 },
                 "shell_command": {
                     "type": "string",
-                    "description": "The complete bash one liner shell command to execute."
+                    "description": "The command line to run"
                 },
                 "workdir": {
                     "type": "string",
-                    "description": "Working directory (optional, defaults to cwd)"
+                    "description": "Working directory (default: cwd)"
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Execution timeout in seconds (optional)"
+                    "description": "Seconds before the command is killed (default 30, max 3600)"
                 }
             },
             "required": ["shell_command"],

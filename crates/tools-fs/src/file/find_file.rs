@@ -210,15 +210,11 @@ impl Tool for FindFileTool {
     }
 
     fn description(&self) -> &str {
-        "Find files by filename glob, recursively, under a root directory.\n\
-         Returns paths relative to 'root', 40 at a time by default; the reply says when\n\
-         more matched, and 'max_results' raises the cap.\n\
-         'root' defaults to the working directory, so an unset root lists from where the\n\
-         session is, not from the filesystem root.\n\
-         Skips .git/, target/, node_modules/, .cargo/registry/.\n\
-         Patterns: '*.rs' matches that filename anywhere below root; a pattern containing\n\
-         '/' matches the whole relative path, so 'src/**/*.rs' and '**/parser/**' work.\n\
-         Matches on names only - it never opens a file."
+        "Find files by name glob under a root, recursively; names only, no file is opened.\n\
+         A pattern with '/' matches the whole path relative to root ('src/**/*.rs');\n\
+         one without matches the filename anywhere below it ('*.rs').\n\
+         Skips .git, target, node_modules, .cargo. Returns paths relative to root, 40 by\n\
+         default; the reply says when more matched."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -227,23 +223,23 @@ impl Tool for FindFileTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Filename glob. Omit to list everything. Examples: '*.rs', 'src/**/*.c', '*lint*'"
+                    "description": "Glob, e.g. '*.rs' or '*lint*'. Omit to list everything"
                 },
                 "root": {
                     "type": "string",
-                    "description": "Directory to search from. Omit for the working directory."
+                    "description": "Directory to search (default: cwd)"
                 },
                 "case_insensitive": {
                     "type": "boolean",
-                    "description": "Match filenames case-insensitively (default: false)"
+                    "description": "Ignore case (default false)"
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "Maximum number of results to return (default: 200)"
+                    "description": "Maximum results (default 40)"
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Hard timeout in seconds (default: 10)"
+                    "description": "Seconds before the search stops (default 10)"
                 }
             },
             "required": [],

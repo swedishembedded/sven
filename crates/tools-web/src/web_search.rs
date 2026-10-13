@@ -29,10 +29,8 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Real-time web search. Requires BRAVE_API_KEY env var. count: 1-10 (default 5).\n\
-         Include the current year in queries for recent info (e.g., 'React docs 2026').\n\
-         Knowledge cutoff: early 2025 - use this for anything that may have changed since.\n\
-         ALWAYS cite sources after answering:\n\
+        "Web search through Brave (needs BRAVE_API_KEY). Put the current year in queries\n\
+         for recent topics. Cite the sources you used after answering:\n\
          Sources:\n\
          - [Title](URL)"
     }
@@ -47,10 +45,10 @@ impl Tool for WebSearchTool {
                 },
                 "count": {
                     "type": "integer",
-                    "description": "Number of results to return (default 5, max 10)"
+                    "description": "Results, 1-10 (default 5)"
                 }
             },
-            "required": ["query", "count"],
+            "required": ["query"],
             "additionalProperties": false
         })
     }

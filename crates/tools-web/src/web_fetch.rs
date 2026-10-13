@@ -47,10 +47,8 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch a URL and return content as readable text (HTML → markdown). Read-only.\n\
-         Valid http/https only. No auth, no binary, no localhost/private IPs.\n\
-         max_chars: defaults to the configured tools.web.fetch_max_chars.\n\
-         Fetches webpages; a URL serving anything else comes back as-is or errors."
+        "Fetch an http(s) web page and return it as readable text (HTML becomes markdown).\n\
+         Read-only; no authentication."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -59,14 +57,14 @@ impl Tool for WebFetchTool {
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The URL to fetch (http or https)"
+                    "description": "http or https URL"
                 },
                 "max_chars": {
                     "type": "integer",
-                    "description": "Maximum characters to return (default 50000)"
+                    "description": "Truncate to this many characters (default 20000, tools.web.fetch_max_chars)"
                 }
             },
-            "required": ["url", "max_chars"],
+            "required": ["url"],
             "additionalProperties": false
         })
     }

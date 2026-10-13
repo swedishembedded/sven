@@ -102,13 +102,13 @@ impl Tool for MemoryTool {
     }
 
     fn description(&self) -> &str {
-        "Persistent memory and project knowledge access.\n\
-         action: set | get | delete | list | search_knowledge | list_knowledge\n\n\
-         KV memory (set/get/delete/list) persists across sessions in ~/.config/sven/memory.json.\n\
-         At session start: call action=list to check stored project context.\n\
-         Store: project conventions, toolchain quirks, recurring solutions.\n\n\
-         Knowledge (search_knowledge/list_knowledge) searches .sven/knowledge/ docs.\n\
-         Use search_knowledge before modifying a subsystem to retrieve architecture notes."
+        "Persistent notes and project knowledge.\n\
+         action: set | get | delete | list | search_knowledge | list_knowledge\n\
+         set/get/delete/list keep key-value notes across sessions (memory.json in\n\
+         sven's config directory): call list at session start; store conventions,\n\
+         toolchain quirks, recurring fixes.\n\
+         search_knowledge / list_knowledge read .sven/knowledge/: search before\n\
+         changing a subsystem."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -118,19 +118,19 @@ impl Tool for MemoryTool {
                 "action": {
                     "type": "string",
                     "enum": ["set", "get", "delete", "list", "search_knowledge", "list_knowledge"],
-                    "description": "Which memory operation to perform"
+                    "description": "Operation"
                 },
                 "key": {
                     "type": "string",
-                    "description": "[action=set|get|delete] Memory key"
+                    "description": "[set|get|delete] Key"
                 },
                 "value": {
                     "type": "string",
-                    "description": "[action=set] Value to store"
+                    "description": "[set] Value"
                 },
                 "query": {
                     "type": "string",
-                    "description": "[action=search_knowledge] Keyword or phrase to search for"
+                    "description": "[search_knowledge] Keywords"
                 }
             },
             "required": ["action"],

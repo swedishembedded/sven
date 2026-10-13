@@ -774,7 +774,7 @@ fn wildcard_matches(pattern: &str, name: &str) -> bool {
     dp[pat.len()][txt.len()]
 }
 
-/// Recursively walk `dir` and build [`FileEntry`] items for each text file.
+/// Recursively walk `dir` (never following links out of it) and build [`FileEntry`] items for each text file.
 fn collect_files(
     dir: &Path,
     recursive: bool,
@@ -787,7 +787,7 @@ fn collect_files(
 
     for entry in entries.flatten() {
         let path = entry.path();
-        let meta = match entry.metadata() {
+        let meta = match fs::symlink_metadata(&path) {
             Ok(m) => m,
             Err(_) => continue,
         };
