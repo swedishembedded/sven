@@ -97,8 +97,9 @@ boundary of what is proved is stated as carefully as what is proved inside it
    termination (Section 3).
 2. The *effect boundary*: an architectural rule that transitions are pure
    functions returning typed effects, formalised as a labelled transition
-   system with a permission gate, with a machine-checked delivery obligation
-   - every effect a machine can wait on is answered exactly once (Section 4).
+   system with a permission gate, with a model-checked delivery obligation
+   - every effect a machine can wait on is answered, never silently dropped
+   (Section 4).
 3. A composition and scaling methodology: in-state activity loops,
    submachine composition with exactly-once completion, context-resident
    durable state, and dual restore semantics (snapshot and replay)
@@ -344,7 +345,7 @@ capability travels *inside* the effect value, the check is structural.
 allowed effect, performs it on its own task, and posts result *events*
 back into the kernel's queue. Executing the world and deciding the world
 are thus in different crates, on different tasks, connected only by the
-queue - Figure 1 shows the seam, Figure 4 the life of one effect.
+queue - Figure 1 shows the seam, Figure 4 the life of one tool call.
 
 ![The layered architecture: many surfaces, one kernel, one seam.](img/fig1-architecture.png)
 
@@ -367,20 +368,35 @@ is waiting on; otherwise the machine rests in a healthy-looking state label
 waiting for a reply nobody will ever post: no error, no timeout, no retry.
 
 **Obligation (delivery).** *Every effect that a machine may block on
-receives exactly one terminal answer event: allowed effects receive the
-executor's result; refused effects receive a synthesized failure event;
-approval-gated effects receive the approval flow's outcome.*
+receives a terminal answer event: allowed effects receive the executor's
+result; refused effects receive a synthesized failure event; an
+approval-gated tool call receives an approval-request event, and the
+approval flow's outcome re-enters the queue as events.*
 
-This is a liveness property over an environment (the executor) the kernel
-does not control, which is precisely the shape of claim a test cannot
-establish and a model checker can - Section 6.3 reports it as
-*NoSilentStall*, checked over all interleavings of refusals, deliveries and
-answers, together with the *priced trade-off* the all-or-nothing batch
-validation makes: a dispatch whose batch contains one refused effect runs
-none of them, so an innocent sibling effect is dropped by design. The
-implementation answers the refusal so no machine stalls, and keeps the
-indivisible batch; the model checker prices both that choice and its
-per-effect alternative.
+The gate applies this obligation at two granularities, and the difference
+matters. *Tool calls are judged one at a time:* an allowed call is handed to
+its executor, a forbidden call is answered with a `ToolFailed` event the
+machine handles like any other tool result, and an approval-gated call is
+answered with an approval-request event; a refused call does not affect an
+allowed call emitted in the same dispatch. *Every other effect of a
+dispatch is judged as one batch:* if any of them is forbidden, or needs an
+approval (which only a tool call can obtain), none of them runs, the
+refusal is audited, and each refused effect a machine may wait on is
+answered with its failure event (`LlmFailed` for a model call,
+`HumanRejected` for an approval request nobody was asked, `EffectFailed`
+otherwise). Effects nothing waits on - persisting the audit trail,
+cancelling a timer, re-entering an internal event - carry no obligation
+and are answered by nothing.
+
+The non-tool batch is kept indivisible on purpose: a dispatch that wanted to
+roll back *and* ask the model what to do next does neither rather than half
+of it. The price is that an allowed non-tool effect is dropped when a
+non-tool sibling is refused. Both halves are model checked (Section 6.3):
+the obligation as *NoSilentStall* over all interleavings of refusals,
+deliveries and answers, and the batch decision as a *priced trade-off*
+against its per-effect alternative. The obligation is a liveness property
+over an environment (the executor) the kernel does not control, which is
+the shape of claim a test cannot establish and a model checker can.
 
 ## The active object runtime
 
@@ -395,7 +411,7 @@ yet re-entered the queue, so *quiescence* (an empty queue) is distinguishable
 from *waiting* (an empty queue plus work outstanding) - the distinction a
 capture-and-verify harness lives or dies by.
 
-![The life of one effect: propose, gate, execute, answer.](img/fig4-effect.png)
+![The life of one tool call: propose, gate, execute, answer.](img/fig4-effect.png)
 
 # Scaling: composition and methodology
 
@@ -558,14 +574,18 @@ owed. It is the only model of the runtime side (the impure half), and it is
 run in four configurations: the design as shipped, the per-effect gating
 alternative, the unanswered refusal (rejected design, must fail), and the
 all-or-nothing batch (priced trade-off, must fail on the sibling-drop
-property).
+property). Its abstraction of the tool path is coarse: a refused tool call
+is always answered, and no batch pairs an allowed tool call with a refused
+one. The per-call independence of tool calls (Section 4.3) therefore rests
+on the structure of the kernel's effect loop, which classifies each call
+separately, not on the model; we found no test that exercises it either.
 
 ![The validation taxonomy and what the models found.](img/fig5-validation.png)
 
 ## Results
 
-The full suite was run on 2026-10-12 with TLC (tla2tools v1.7.4, 8 worker
-threads): **16 configurations, all landing on their expected outcome -
+The full suite was last run on 2026-10-13 with TLC (tla2tools v1.7.4, 4 worker
+threads, OpenJDK 21): **16 configurations, all landing on their expected outcome -
 6 pass, 8 rejected-design configurations failing on their named property,
 1 tracked gap, 1 priced trade-off.** The suite's exit status asserts each
 expectation, not merely that TLC terminated.
@@ -584,8 +604,8 @@ named property:
    superstate where no dispatch ever rests - entry actions never fired,
    and the machine answered nothing. Fix: restore refuses composites,
    with the error naming the states that live under the offending one.
-3. **The refusal stall.** A batch of effects refused wholesale left the
-   machine waiting on answers nobody would post. Fix: every refused
+3. **The refusal stall.** A batch of non-tool effects refused wholesale
+   left the machine waiting on answers nobody would post. Fix: every refused
    effect a machine may wait on is answered with a synthesized failure
    event, making the refusal an ordinary event the machine can act on.
 

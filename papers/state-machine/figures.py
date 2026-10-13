@@ -192,12 +192,12 @@ def fig_dispatch():
 # 4. The effect lifecycle -----------------------------------------------------
 def fig_effect():
     fig = plt.figure(figsize=(12, 6.6))
-    title(fig, "The life of one effect",
-          "the machine proposes; the permission gate disposes; the executor acts; the result returns as an event")
+    title(fig, "The life of one tool call",
+          "the machine proposes; the permission gate disposes, call by call; the executor acts; the result returns as an event")
     ax = fig.add_axes([0.02, 0.05, 0.96, 0.80]); ax.axis("off"); ax.set_xlim(0, 12); ax.set_ylim(0, 6.6)
 
     box(ax, 0.3, 5.3, 3.6, 1.1, "Pure transition",
-        "returns a Reaction: state change\n+ zero or more typed Effects\n(no I/O has happened yet)", NAVY, fs_head=10)
+        "returns a Reaction: state change\n+ typed Effects, here a CallTool\n(no I/O has happened yet)", NAVY, fs_head=10)
     box(ax, 4.35, 5.3, 3.4, 1.1, "Permission gate",
         "per-state policy + already-approved\nset → one of three dispositions\n(one choke point, every effect)", SLATE, fs_head=10)
     box(ax, 8.1, 5.3, 3.6, 1.1, "Executor",
@@ -224,7 +224,7 @@ def fig_effect():
     arrow(ax, 6.05, 3.18, 6.05, 2.48, NAVY)
     arrow(ax, 10.05, 3.18, 8.5, 2.48, AMBER)
     arrow(ax, 6.0, 1.48, 6.0, 1.12, NAVY)
-    foot(fig, "A refused effect is still an answer owed: the delivery obligation is machine-checked (EffectDelivery.tla), not a code comment.")
+    foot(fig, "Non-tool effects pass the same gate as one all-or-nothing batch (Section 4.3); a refused one is answered with its own failure event.")
     save(fig, "fig4-effect")
 
 
@@ -232,7 +232,7 @@ def fig_effect():
 def fig_validation():
     fig = plt.figure(figsize=(12, 6.2))
     title(fig, "A suite in which everything passes checks nothing",
-          "16 TLC configurations on 2026-10-12: 6 must pass, 8 must fail on a named property, 1 tracked gap, 1 priced trade-off")
+          "16 TLC configurations on 2026-10-13: 6 must pass, 8 must fail on a named property, 1 tracked gap, 1 priced trade-off")
     ax = fig.add_axes([0.02, 0.05, 0.96, 0.80]); ax.axis("off"); ax.set_xlim(0, 12); ax.set_ylim(0, 6.2)
 
     box(ax, 0.3, 4.5, 5.5, 1.4, "Pass (6 configurations)",
@@ -243,7 +243,7 @@ def fig_validation():
     box(ax, 0.3, 2.6, 5.5, 1.4, "Tracked gap (1)",
         "a property the code does not satisfy today, kept in\nthe suite and reported separately: Submachine's\norphaned child - closing it is a semantic decision", AMBER, fs_head=10)
     box(ax, 6.2, 2.6, 5.5, 1.4, "Priced trade-off (1)",
-        "a property given up on purpose: the all-or-nothing\nbatch drops an allowed effect when a sibling is refused\n- the sibling configuration shows the price", SLATE, fs_head=10)
+        "a property given up on purpose: the all-or-nothing\nnon-tool batch drops an allowed effect when a sibling\nis refused - the sibling configuration shows the price", SLATE, fs_head=10)
 
     box(ax, 0.3, 0.6, 11.4, 1.5, "What the models found",
         "the unbounded Init drill (a machine whose initial transitions cycle hung the agent silently - now guarded),\nresume-into-composite (a snapshot could place the machine where no dispatch ever rests it - now refused),\nthe refusal stall (an unanswered refused batch left the machine waiting forever - now answered)", NAVY, fs_head=10)
