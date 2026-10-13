@@ -33,8 +33,9 @@ sven --file step1.md | sven --file step2.md
 ## Output Format
 
 By default, headless runs write **conversation-format markdown** to stdout.
-This is the same format used by `--conversation` history files and is always
-pipeable back into another sven instance.
+This is the same format sven reads back as conversation history (see
+[Conversation Mode](#conversation-mode)) and is always pipeable back into
+another sven instance.
 
 ```markdown
 ## User
@@ -348,7 +349,7 @@ sven --file workflow.md --output-trace trace.json
 
 # Works with any run mode
 sven --headless "analyze the code" --output-trace analysis-trace.json
-sven --file conversation.md --conversation --output-trace continued-trace.json
+sven --file conversation.md --output-trace continued-trace.json
 ```
 
 The trace file is a single pretty-printed JSON document (an ATIF `Trajectory`
@@ -425,7 +426,7 @@ sven --file plan.md --output-format json | jq '.steps[].agent_response'
 
 # Full replayable conversation
 sven --file plan.md > conversation.md
-sven --file conversation.md --conversation  # continue where you left off
+sven --file conversation.md  # answer the trailing ## User section
 ```
 
 ---
@@ -574,21 +575,25 @@ Workflow is valid.
 
 ## Conversation Mode
 
-Resume and continue a conversation interactively:
+A file or stdin that holds `## User` / `## Sven` sections is recognised as a
+conversation; no flag is needed. Continue one like this:
 
 ```bash
 # Run a workflow and save output as a conversation
 sven --file workflow.md > my-conversation.md
 
-# Load it as a conversation and ask a follow-up
-echo "## User\n\nExplain step 2 in more detail." >> my-conversation.md
-sven --file my-conversation.md --conversation
+# Add a follow-up and run it
+printf '\n## User\nExplain step 2 in more detail.\n' >> my-conversation.md
+sven --file my-conversation.md
 ```
 
-With `--conversation`, sven:
+sven:
 1. Parses all previous `## User` / `## Sven` exchanges as history
 2. Executes the trailing `## User` section (if any pending)
-3. Appends the new response to the same file
+3. Writes the new exchange to stdout; the file is not modified
+
+For a session that continues across runs without moving text between files,
+use `--trace session.json` (see [Trace Output](#atif-trace-output)).
 
 ---
 

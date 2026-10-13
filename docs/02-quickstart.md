@@ -180,20 +180,27 @@ Describe the overall structure of this project.
 Run sven on it:
 
 ```sh
-sven --file work.md --conversation
+sven --file work.md
 ```
 
-sven reads the `## User` section, executes it, then appends the response as a
-new `## Sven` section. The file now contains both your message and the answer.
-Open it in any text editor to read, edit, and continue:
+sven reads the `## User` section, executes it, and writes the exchange - your
+message and the answer as a new `## Sven` section - to stdout. The file itself
+is not changed. Redirect the output to keep the answer, add a follow-up, and
+run it again:
 
 ```sh
+sven --file work.md > work.answered.md
+
 # Append a follow-up question
-printf '\n## User\nWhich files have the most technical debt?\n' >> work.md
+printf '\n## User\nWhich files have the most technical debt?\n' >> work.answered.md
 
 # Run again - sven loads the history and answers only the new question
-sven --file work.md --conversation
+sven --file work.answered.md
 ```
+
+A file with `## User` / `## Sven` sections is recognised as a conversation; no
+flag is needed. To keep one session across runs without juggling files, use
+`--trace session.json`.
 
 ---
 

@@ -325,7 +325,7 @@ Stop the debugging session.
 ```
 
 ```sh
-sven --file firmware-debug.md --conversation
+sven --file firmware-debug.md
 ```
 
 ---
