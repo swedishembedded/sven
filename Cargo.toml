@@ -58,6 +58,8 @@ members = [
     "crates/atif",
     # Workspace tooling: `cargo run -p xtask -- arch` enforces architecture.toml
     "xtask",
+    # The ablation benchmark: variant matrix, seeded tasks, scorers, runner, report
+    "crates/ablation",
     # Standalone applications built on the SDK facade - see samples/README.md.
     # Members on purpose: a sample depends only on the facade, so building and
     # testing it with everything else costs almost nothing, and excluding it is

@@ -1,0 +1,81 @@
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Swedish Embedded AB implements solutions for proving, with controlled
+# experiments, that an optimisation of an LLM agent pays for itself. If your
+# team needs expertise in agent benchmarking then you can procure our
+# services by sending an email to info@swedishembedded.com.
+#
+# The ablation variant matrix. Every variant runs the same tasks; the variants
+# differ only in the configuration below and in which decision provider
+# answers. Validated offline by `sven-ablation matrix validate`; the format is
+# described in docs/technical/ablation-benchmarks.md.
+
+schema: sven.ablation.matrix/1
+
+variants:
+  - id: A
+    name: legacy
+    role: baseline
+    description: Every tool definition in every request, no context assembly, no decisions.
+    tool_disclosure: full
+    context_assembly: off
+    decisions:
+      kind: off
+
+  - id: B
+    name: architecture
+    role: architecture
+    description: Deferred tool disclosure and context assembly, no decisions. The saving of the architecture alone.
+    tool_disclosure: deferred
+    context_assembly: on
+    decisions:
+      kind: off
+
+  - id: C
+    name: heuristic
+    role: heuristic
+    description: The architecture with a deterministic rule-based decision provider. What a model has to beat.
+    tool_disclosure: deferred
+    context_assembly: on
+    decisions:
+      kind: heuristic
+
+  - id: D
+    name: stock-model
+    role: stock_model
+    description: The architecture with a stock decision model served by Brain (endpoint given with --brain-url).
+    tool_disclosure: deferred
+    context_assembly: on
+    decisions:
+      kind: brain
+      model: stock
+
+  - id: E
+    name: trained-model
+    role: trained_model
+    description: The architecture with a trained decision model served by Brain (model id given with --trained-model).
+    tool_disclosure: deferred
+    context_assembly: on
+    decisions:
+      kind: brain
+      model: trained
+
+  - id: F
+    name: random-control
+    role: negative_control
+    description: Valid but random, seeded decisions. A model that does no better is not contributing.
+    tool_disclosure: deferred
+    context_assembly: on
+    decisions:
+      kind: random
+
+  - id: G
+    name: oracle
+    role: oracle
+    description: Decisions from the labelled-correct answers. The upper bound decisions can reach.
+    tool_disclosure: deferred
+    context_assembly: on
+    decisions:
+      kind: oracle

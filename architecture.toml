@@ -112,6 +112,10 @@ sven-sdk-macros = "foundation"
 # tooling (not part of the production dependency graph; zero sven deps)
 xtask = "foundation"
 
+# ablation benchmark tooling: nothing depends on it; it drives the sven binary
+# and reads the same vocabulary the product writes.
+sven-ablation = "composite"
+
 # samples: standalone applications under samples/, on the topmost tier because
 # nothing in this repository may depend on one. The tier does NOT enforce the
 # rule that matters for a sample -- that it depends on `sven-sdk` and nothing
