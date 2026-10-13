@@ -469,6 +469,14 @@ pub struct ModelConfig {
     /// ```
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_modalities: Option<Vec<String>>,
+
+    /// The model to use instead when this one was auto-detected as a local
+    /// brain and brain does not answer (see [`settle`]). Set only by
+    /// detection, when a cloud key offers an alternative; never read from or
+    /// written to a configuration file, so an explicit `model:` section is
+    /// never second-guessed.
+    #[serde(skip)]
+    pub detection_fallback: Option<Box<ModelConfig>>,
 }
 
 impl Default for ModelConfig {
@@ -507,6 +515,7 @@ impl Default for ModelConfig {
             driver_options: serde_json::Value::Null,
             mock_responses_file: None,
             input_modalities: None,
+            detection_fallback: None,
         }
     }
 }
@@ -594,9 +603,17 @@ pub fn model_reference(model: &ModelConfig, providers: &Providers) -> String {
 /// nor a brain keys file) sees no change at all. Everything here is a sync,
 /// network-free check (env var / file existence); whether brain is actually
 /// reachable is verified when the provider is constructed
-/// ([`crate::from_config_probed`]), which fails loudly if it is not.
+/// ([`crate::from_config_probed`]): a brain that does not answer yields to
+/// the cloud choice recorded in [`ModelConfig::detection_fallback`], and with
+/// no such choice fails loudly.
 fn detect_model(model: &mut ModelConfig) {
+    let cloud = detect_cloud_model(model);
     if brain_is_locally_detectable() {
+        // The cloud choice, when a key offers one, is kept in reserve: the
+        // brain hint is only a file or variable, and a stale one must not
+        // strand a user whose cloud provider works. Probed at build time by
+        // `from_config_probed`.
+        let reserve = cloud.then(|| Box::new(model.clone()));
         model.provider = "brain".into();
         // Empty is a deliberate sentinel, not an oversight: the actual
         // resident model is whatever brain is currently serving, and that
@@ -607,7 +624,21 @@ fn detect_model(model: &mut ModelConfig) {
         // user who wants a specific resident model names it via `--model` or
         // an explicit `model:` block, which bypasses this detection entirely.
         model.name = String::new();
-    } else if std::env::var("OPENROUTER_API_KEY").is_ok() {
+        model.detection_fallback = reserve;
+    }
+    // With neither brain nor a key the defaults remain (openrouter/auto).
+    // `from_config_probed` then looks for a local server on the default
+    // ports and uses the model it serves; failing that, `from_config()`
+    // produces a clear missing-key error when actually invoked.
+}
+
+/// Applies the cloud provider an API key in the environment implies:
+/// OpenRouter, then Anthropic, then OpenAI. Returns whether a key chose one.
+///
+/// The model names are deliberate: a hosted provider lists hundreds of
+/// models, so no served model can stand in for the choice a key implies.
+fn detect_cloud_model(model: &mut ModelConfig) -> bool {
+    if std::env::var("OPENROUTER_API_KEY").is_ok() {
         // Keep the defaults: provider="openrouter", name="openrouter/auto".
     } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
         model.provider = "anthropic".into();
@@ -615,15 +646,10 @@ fn detect_model(model: &mut ModelConfig) {
     } else if std::env::var("OPENAI_API_KEY").is_ok() {
         model.provider = "openai".into();
         model.name = "gpt-5.2".into();
+    } else {
+        return false;
     }
-    // If no key is available the defaults remain (openrouter/auto).
-    // `from_config_probed` then looks for a local server on the default
-    // ports and uses the model it serves; failing that, `from_config()`
-    // produces a clear missing-key error when actually invoked.
-    //
-    // The cloud model names above are deliberate: a hosted provider lists
-    // hundreds of models, so no served model can stand in for the choice a
-    // key implies.
+    true
 }
 
 /// Is a locally running `brain` model server detectable without any network
@@ -632,8 +658,9 @@ fn detect_model(model: &mut ModelConfig) {
 /// Deliberately sync and cheap (env var reads + one `fs::metadata` stat). This
 /// is a HINT, not proof brain is actually reachable - a stale leftover keys
 /// file with brain no longer running is harmless: constructing the provider
-/// turns an unreachable brain into a loud, actionable error rather than a
-/// silent hang, same as any other misconfigured provider.
+/// falls back to the cloud choice when a key offers one, and otherwise turns
+/// an unreachable brain into a loud, actionable error rather than a silent
+/// hang, same as any other misconfigured provider.
 ///
 /// Set `SVEN_DISABLE_BRAIN_AUTODETECT=1` to opt out entirely (e.g. CI
 /// environments that happen to have a stale brain keys file lying around but

@@ -644,6 +644,9 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
 /// serving (see [`ModelProvider::discover`]), so no model name has to be
 /// written down for a local server.
 ///
+/// 0. A brain that was only *detected* (see `ModelConfig::detection_fallback`)
+///    and does not answer is replaced by the cloud model a key in the
+///    environment implies, so a stale brain keys file strands no one.
 /// 1. Nothing configured (the built-in default with no key for it anywhere):
 ///    the first of the default local endpoints that answers (brain, ollama,
 ///    vllm, lmstudio, probed together within one second) is used, with the
@@ -665,6 +668,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
 /// Every probe is bounded (about two seconds each) and best-effort; an
 /// unreachable server never fails or delays the build beyond that.
 pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
+    let cfg = &discovery::resolve_detected_brain(cfg).await;
     let cfg = &discovery::resolve_unconfigured(cfg).await;
     let cfg = &discovery::resolve_empty_model_name(cfg).await;
     let (inner, config_context_window, max_output_tokens) = build_inner(cfg)?;

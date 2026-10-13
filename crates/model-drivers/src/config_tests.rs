@@ -356,3 +356,24 @@ fn each_schema_names_exactly_its_types_fields() {
     assert!(reported(&ModelParams::schema(), &params_keys).is_empty());
     assert_eq!(params_keys.len(), 13);
 }
+
+#[test]
+fn detected_brain_keeps_the_cloud_choice_in_reserve() {
+    let m = detected_with(&[
+        ("BRAIN_API_KEY", "sk-brain"),
+        ("ANTHROPIC_API_KEY", "sk-ant"),
+    ]);
+    assert_eq!(m.provider, "brain");
+    let reserve = m.detection_fallback.expect("a cloud key is a fallback");
+    assert_eq!(
+        (reserve.provider.as_str(), reserve.name.as_str()),
+        ("anthropic", "claude-sonnet-4-6")
+    );
+}
+
+#[test]
+fn detected_brain_without_a_cloud_key_has_no_fallback() {
+    let m = detected_with(&[("BRAIN_API_KEY", "sk-brain")]);
+    assert_eq!(m.provider, "brain");
+    assert!(m.detection_fallback.is_none());
+}

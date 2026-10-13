@@ -185,3 +185,54 @@ async fn an_unreachable_server_neither_fails_nor_blocks_the_build() {
     assert_eq!(provider.model_name(), "");
     assert!(started.elapsed() < Duration::from_secs(5));
 }
+
+/// The configuration brain's local auto-detection produces when a cloud key
+/// is also present: brain first, with the cloud choice held in reserve.
+fn detected_brain(base_url: String, fallback: ModelConfig) -> ModelConfig {
+    ModelConfig {
+        provider: "brain".into(),
+        name: String::new(),
+        base_url: Some(base_url),
+        api_key: Some("sk-brain-test".into()),
+        detection_fallback: Some(Box::new(fallback)),
+        ..ModelConfig::default()
+    }
+}
+
+fn cloud_choice() -> ModelConfig {
+    ModelConfig {
+        provider: "ollama".into(),
+        name: "cloud-choice".into(),
+        base_url: Some("http://127.0.0.1:9/v1".into()),
+        ..ModelConfig::default()
+    }
+}
+
+#[tokio::test]
+async fn a_detected_brain_that_does_not_answer_yields_to_the_cloud_choice() {
+    let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dead_url = format!("http://{}/v1", closed.local_addr().unwrap());
+    drop(closed);
+    let provider = from_config_probed(&detected_brain(dead_url, cloud_choice()))
+        .await
+        .unwrap();
+    assert_eq!(provider.model_name(), "cloud-choice");
+}
+
+#[tokio::test]
+async fn a_detected_brain_that_serves_no_model_yields_to_the_cloud_choice() {
+    let server = Server::start(list(vec![])).await;
+    let provider = from_config_probed(&detected_brain(server.base_url.clone(), cloud_choice()))
+        .await
+        .unwrap();
+    assert_eq!(provider.model_name(), "cloud-choice");
+}
+
+#[tokio::test]
+async fn a_detected_brain_that_answers_is_kept_over_the_cloud_choice() {
+    let server = Server::start(list(vec![serde_json::json!({"id": "resident"})])).await;
+    let provider = from_config_probed(&detected_brain(server.base_url.clone(), cloud_choice()))
+        .await
+        .unwrap();
+    assert_eq!(provider.model_name(), "resident");
+}

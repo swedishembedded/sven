@@ -49,7 +49,10 @@ priority order:
    `BRAIN_API_KEYS_FILE`, or brain's default api-keys file
    (`$XDG_RUNTIME_DIR/brain/api-keys.json`, falling back to the state dir).
    The model name is resolved by asking brain's `/v1/models` for its
-   resident model (the first chat-capable one when it serves several). Set
+   resident model (the first chat-capable one when it serves several). When
+   brain does not answer (a stale keys file, brain stopped) or serves no
+   model, and a cloud key from 2-4 is set, that cloud provider is used
+   instead; with no cloud key sven reports that brain is unreachable. Set
    `SVEN_DISABLE_BRAIN_AUTODETECT=1` to opt out (e.g. a CI machine with a
    stale keys file).
 2. **OpenRouter** — when `OPENROUTER_API_KEY` is set.

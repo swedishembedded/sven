@@ -393,6 +393,35 @@ pub(crate) async fn resolve_empty_model_name(cfg: &ModelConfig) -> ModelConfig {
     }
 }
 
+/// Settle a brain that configuration loading merely *detected* (a keys file
+/// or `BRAIN_API_KEY`, no network check): when it answers with at least one
+/// model it is kept, otherwise the cloud choice held in
+/// [`ModelConfig::detection_fallback`] replaces it. A configuration without a
+/// fallback - everything an operator wrote down - is returned unchanged.
+pub(crate) async fn resolve_detected_brain(cfg: &ModelConfig) -> ModelConfig {
+    let Some(fallback) = cfg.detection_fallback.as_deref() else {
+        return cfg.clone();
+    };
+    let kept = ModelConfig {
+        detection_fallback: None,
+        ..cfg.clone()
+    };
+    let Some(base) = effective_base_url(&kept) else {
+        return kept;
+    };
+    let req = models_request(&base, resolve_api_key(&kept).as_deref());
+    let served = fetch_served_models(req, DISCOVERY_TIMEOUT).await;
+    if served.is_some_and(|models| !models.is_empty()) {
+        return kept;
+    }
+    tracing::warn!(
+        "brain was detected locally but serves no model at {base}; using {}/{} instead",
+        fallback.provider,
+        fallback.name
+    );
+    fallback.clone()
+}
+
 /// A local endpoint that answered a zero-config probe.
 #[derive(Debug)]
 pub(crate) struct LocalEndpoint {
