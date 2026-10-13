@@ -522,8 +522,9 @@ the states on the active chain, and (iii) the small kernel that sequences
 it all. None of these grows with the number of machines, surfaces or years
 of change; the engine stays a few hundred lines (the implementation this
 paper draws on: 503 lines of dispatch, 81 lines of machine trait, 213 lines
-of effect vocabulary, 623 lines of runtime, measured at the time of
-writing), and each machine is understood in isolation from all others.
+of effect vocabulary; the runtime crate is 1,742 lines in seven files,
+the largest a 640-line `lib.rs` holding the typed consumer loop and the
+effect gate; measured on 2026-10-13), and each machine is understood in isolation from all others.
 Comprehensibility is bounded by the size of the kernel and the depth of one
 hierarchy, not by the size of the system.
 
@@ -618,15 +619,18 @@ named property:
 ## Rust-side evidence
 
 The model checker's verdicts are complemented by the ordinary test suite.
-At the time of writing, the kernel and machine layers carry 222 passing
-tests (62 in the pure kernel crate, 18 in the runtime crate, 142 in the
-machines crate; one hardware-gated test skipped outside its environment),
-including: a restorability test that fails the suite if a machine does not
-enumerate its states (the precondition of Section 5.3's snapshot restore);
-purity tests that re-dispatch a recorded event stream and assert the
-re-emitted effects are equal (the determinism proposition, checked where
-it matters - on the transition functions themselves); and per-machine
-transition tables exercised event by event. The layering itself is
+On 2026-10-13 the kernel and machine layers carried 222 passing tests
+(62 in the pure engine crate `sven-hsm`, 18 in the runtime crate
+`sven-kernel`, 142 in the machines crate `sven-machines`; none ignored,
+plus one documentation example marked not to run), including: a
+restorability test that fails the suite if a machine does not enumerate
+its states (the precondition of Section 5.3's snapshot restore); replay
+tests that re-dispatch a recorded event stream and assert that the replay
+reaches the same state and the same audit trail (in the engine) and
+derives the same tool-call, approval and question identifiers (in the
+machines) - the determinism proposition, checked on the transition
+functions themselves; and per-machine transition tables exercised event by
+event. The layering itself is
 mechanically enforced: a tier manifest fails the build on an illegal
 dependency edge, an unused declared dependency, or a file grown past a
 ratchet.
