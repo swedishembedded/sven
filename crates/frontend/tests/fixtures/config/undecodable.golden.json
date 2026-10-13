@@ -13,6 +13,32 @@
       "system_prompt": null,
       "tool_result_token_cap": 4000
     },
+    "decision": {
+      "brain": {
+        "cache_entries": 256,
+        "max_concurrent_requests": 2,
+        "url": "http://127.0.0.1:8788"
+      },
+      "enabled": false,
+      "features": {
+        "cache_routing": true,
+        "context_selection": true,
+        "delegation": true,
+        "model_routing": false,
+        "permission_advisory": false,
+        "skill_selection": true,
+        "tool_routing": true
+      },
+      "mode": "auto",
+      "model": "auto",
+      "policy": {
+        "minimum_model_quality": "validated",
+        "mode": "apply"
+      },
+      "provider": "brain",
+      "timeout_ms": 500,
+      "warn_if_unavailable": true
+    },
     "mcp_servers": {},
     "model": {
       "api_key": null,

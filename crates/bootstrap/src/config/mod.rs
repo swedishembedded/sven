@@ -27,6 +27,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use sven_config::{ConfigDocument, Schema};
+use sven_decision::config::DecisionConfig;
 use sven_mcp_client::{mcp_servers_schema, McpServers};
 use sven_model_drivers::{providers_schema, ModelConfig, Providers};
 
@@ -62,6 +63,9 @@ pub struct Config {
     /// When sven adds an MCP server via the `system` tool, it writes to the
     /// nearest `.sven/config.yaml` (the last override layer).
     pub mcp_servers: McpServers,
+    /// The decision model that advises the harness; off unless the file
+    /// enables it. See `docs/technical/decisions.md`.
+    pub decision: DecisionConfig,
 }
 
 impl Config {
@@ -74,6 +78,7 @@ impl Config {
             ("tools", ToolsConfig::schema()),
             ("providers", providers_schema()),
             ("mcp_servers", mcp_servers_schema()),
+            ("decision", DecisionConfig::schema()),
         ])
     }
 

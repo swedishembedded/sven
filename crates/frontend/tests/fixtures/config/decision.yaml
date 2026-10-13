@@ -1,0 +1,17 @@
+# A decision model that advises tool search, served by a local Brain.
+decision:
+  enabled: true
+  mode: auto
+  model: auto
+  timeout_ms: 800
+  brain:
+    url: http://127.0.0.1:8788
+    api_key: ${DECISION_FIXTURE_KEY:-fixture-key}
+  features:
+    tool_routing: true
+    cache_routing: false
+  policy:
+    mode: shadow
+    max_decision_input_tokens: 400
+    minimum_model_quality: validated
+  misspelt_key: true

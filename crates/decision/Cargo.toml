@@ -6,6 +6,7 @@ description = "The decision runtime: typed questions a harness asks a small non-
 license     = "Apache-2.0"
 
 [dependencies]
+sven-config = { path = "../config" }
 async-trait = { workspace = true }
 lru         = { workspace = true }
 reqwest     = { workspace = true }

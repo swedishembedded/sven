@@ -25,6 +25,7 @@
 mod batch;
 pub mod brain;
 mod cache;
+pub mod config;
 mod directory;
 mod error;
 mod mock;

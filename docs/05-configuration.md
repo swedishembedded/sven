@@ -807,6 +807,60 @@ tools:
 
 ---
 
+### `decision`
+
+A small decision model that advises the harness. It is off unless the file
+turns it on, and while it is off nothing is contacted. The model only advises:
+every answer passes a per-decision-point policy first, and an answer the policy
+does not accept changes nothing. How it works, the policy table and the wire:
+[docs/technical/decisions.md](technical/decisions.md).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Decisions are off, whatever `mode` says, unless this is `true`. |
+| `mode` | `auto` | `auto` uses a decision model when one is usable and otherwise behaves exactly as without decisions. `required` refuses to start optimised execution without a suitable model, with the reason and the remedy. `off` never contacts anything. |
+| `provider` | `brain` | Where decisions come from. Only `brain` exists. |
+| `model` | `auto` | `auto` leaves the choice to the provider; otherwise a stable model id. |
+| `timeout_ms` | `500` | The deadline of one decision, 1 to 600000. It covers finding the model, waiting for a free slot and the call, so a first call that has to load the model may exceed it and fall back. |
+| `warn_if_unavailable` | `true` | Tell the user once per session that decisions are unavailable and why. |
+
+#### `decision.brain`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `url` | `http://127.0.0.1:8788` | The server's base URL, with or without `/v1`. The default is where `brain serve --openai` listens. |
+| `api_key` | none | Bearer token, when the server was started with a key. `${VAR}` is expanded when the file is loaded. |
+| `max_concurrent_requests` | `2` | Most decisions in flight at once. |
+| `cache_entries` | `256` | Most decisions the per-process cache holds. |
+
+#### `decision.features`
+
+| Key | Default | Acted on by |
+|-----|---------|-------------|
+| `tool_routing` | `true` | Re-ranks ambiguous `tools search` results. |
+| `context_selection`, `skill_selection`, `delegation`, `cache_routing` | `true` | Nothing yet: the flag is read, no decision point asks. |
+| `model_routing`, `permission_advisory` | `false` | Nothing yet. A permission decision is advisory-only and never grants. |
+
+#### `decision.policy`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mode` | `apply` | `apply` lets an accepted verdict change behaviour. `shadow` asks and records every decision in the trajectory but always behaves as without decisions. |
+| `max_decision_input_tokens` | the served model's limit | Most tokens of state one decision sends. Unset, the limit the model reports in its manifest (512 for Laya), or 256 when it reports none; set, the smaller of the two. |
+| `minimum_model_quality` | `validated` | `validated` refuses a model with no recorded validation. `any` accepts any model that can answer. |
+
+```yaml
+decision:
+  enabled: true
+  mode: auto
+  brain:
+    url: http://127.0.0.1:8788
+  policy:
+    minimum_model_quality: validated
+```
+
+---
+
 ### `mcp_servers`
 
 MCP (Model Context Protocol) servers extend sven with additional tools, prompts,

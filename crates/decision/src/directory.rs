@@ -9,6 +9,8 @@
 //! What a decision provider reports about the models it can serve, and how a
 //! configured model is turned into one that is ready to use.
 
+use serde::{Deserialize, Serialize};
+
 use crate::{DecisionError, QuestionKind};
 
 /// Whether a model can be served right now.
@@ -63,7 +65,8 @@ pub struct Selection {
 }
 
 /// How good a model must be to be used.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MinimumQuality {
     /// Any model that can answer.
     #[default]
@@ -124,8 +127,8 @@ pub fn resolve_model(
         }),
         ModelState::Ready if quality == MinimumQuality::Validated && !model.validated => {
             Err(DecisionError::UnsupportedCapability(format!(
-                "decision model '{id}' has no recorded validation and the minimum model \
-                 quality is validated"
+                "decision model '{id}' has no recorded validation; set \
+                 decision.policy.minimum_model_quality: any to accept it"
             )))
         }
         ModelState::Ready => Ok(model.clone()),
@@ -142,7 +145,8 @@ fn nothing_selected(models: &[ModelInfo], selection: Option<&Selection>) -> Deci
         .collect();
     if !unvalidated.is_empty() {
         return DecisionError::UnsupportedCapability(format!(
-            "no installed decision model has a recorded validation ({} installed without one)",
+            "no installed decision model has a recorded validation ({} installed without \
+             one); set decision.policy.minimum_model_quality: any to accept one",
             unvalidated.join(", ")
         ));
     }
