@@ -17,13 +17,13 @@ use serde_json::json;
 
 use sven_bootstrap::tool_discovery::index_section;
 use sven_bootstrap::{BuiltinTools, Config, Disclosure, RuntimeBuilder};
-use sven_tool_registry::{Tool, ToolCall, ToolRegistry, DISCOVERY_TOOL};
+use sven_tool_registry::{ToolCall, ToolRegistry, DISCOVERY_TOOL};
 use sven_vocab::AgentMode;
 
 /// A coding session's registry under `disclosure`.
 async fn registry(disclosure: Disclosure) -> Arc<ToolRegistry> {
     // Skills, personas and memory come from the home directory.
-    let home = tempfile::tempdir().expect("a home directory").into_path();
+    let home = tempfile::tempdir().expect("a home directory").keep();
     std::env::set_var("HOME", &home);
     std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
     let mut config = Config::default();

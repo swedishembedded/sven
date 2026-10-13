@@ -18,7 +18,7 @@ use sven_bootstrap::{BuiltinTools, Config, RuntimeBuilder};
 #[tokio::test]
 async fn every_registered_tool_states_a_summary_that_fits_a_line() {
     // Skills, personas and memory come from the home directory.
-    let home = tempfile::tempdir().expect("a home directory").into_path();
+    let home = tempfile::tempdir().expect("a home directory").keep();
     std::env::set_var("HOME", &home);
     std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
     let mut config = Config::default();

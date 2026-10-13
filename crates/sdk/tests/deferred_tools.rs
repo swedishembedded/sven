@@ -44,7 +44,7 @@ fn config(deferred: bool) -> Config {
 fn engine(deferred: bool, scripts: Vec<Vec<ResponseEvent>>) -> (Engine, Arc<ScriptedMockProvider>) {
     // Skills, personas and memory come from the home directory; an empty one
     // keeps the tool set independent of who runs the test.
-    let home = tempfile::tempdir().expect("a home directory").into_path();
+    let home = tempfile::tempdir().expect("a home directory").keep();
     std::env::set_var("HOME", &home);
     std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
     let provider = Arc::new(ScriptedMockProvider::new(scripts));

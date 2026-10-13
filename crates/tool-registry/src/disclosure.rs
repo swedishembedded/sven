@@ -127,6 +127,9 @@ fn is_core(tool: &dyn Tool) -> bool {
     !tool.is_mcp() && CORE_TOOLS.contains(&tool.name())
 }
 
+/// The registry's tools by name.
+pub(crate) type ToolTable = RwLock<HashMap<String, Arc<dyn Tool>>>;
+
 /// The most call ids [`ToolRegistry::hold_back`] remembers; the oldest is
 /// forgotten first. A call is taken back within one dispatch, so the bound is
 /// only ever reached by calls that never ran (refused or rejected).
@@ -270,10 +273,7 @@ impl ToolRegistry {
     }
 }
 
-fn tools_in_mode(
-    tools: &RwLock<HashMap<String, Arc<dyn Tool>>>,
-    mode: AgentMode,
-) -> Vec<Arc<dyn Tool>> {
+fn tools_in_mode(tools: &ToolTable, mode: AgentMode) -> Vec<Arc<dyn Tool>> {
     tools.read().map_or_else(
         |_| Vec::new(),
         |tools| {
@@ -295,11 +295,11 @@ fn tools_in_mode(
 /// answers as if no tool were registered.
 #[derive(Clone)]
 pub struct ToolCatalog {
-    tools: Weak<RwLock<HashMap<String, Arc<dyn Tool>>>>,
+    tools: Weak<ToolTable>,
 }
 
 impl ToolCatalog {
-    fn table(&self) -> Option<Arc<RwLock<HashMap<String, Arc<dyn Tool>>>>> {
+    fn table(&self) -> Option<Arc<ToolTable>> {
         self.tools.upgrade()
     }
 
