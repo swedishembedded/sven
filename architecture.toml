@@ -59,6 +59,7 @@ sven-tool-api = "kernel"
 
 # services
 sven-session-store = "services"
+sven-chunks = "services"
 sven-tool-registry = "services"
 sven-mcp-client = "services"
 sven-kernel     = "services"

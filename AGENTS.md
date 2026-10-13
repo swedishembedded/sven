@@ -266,7 +266,10 @@ Sven` codec) · `sven-tool-api` (`Tool` trait + `ToolDisplay`)
 
 ### services
 `sven-session-store` (ATIF trajectory-backed session store, legacy YAML chat
-import, `sven migrate-sessions`) · `sven-tool-registry`
+import, `sven migrate-sessions`) · `sven-chunks`
+(addressable context: content-addressed raw evidence with provenance, bounded
+resident payloads that spill to disk, staleness against the source file,
+deterministic representations at four visibilities) · `sven-tool-registry`
 (`ToolRegistry`, `ApprovalPolicy`, fs_root jail) · `sven-mcp-client` (MCP
 client: stdio + Streamable HTTP, OAuth; the `mcp_servers:` section,
 `McpServerConfig`) · `sven-kernel` (`ErasedRuntime`,

@@ -16,6 +16,9 @@ members = [
     "crates/image",
     "crates/sven-audio",
     "crates/session-store",
+    # Addressable context: content-addressed evidence with provenance and
+    # deterministic representations
+    "crates/chunks",
     "crates/session-model",
     "crates/tool-api",
     "crates/tool-registry",
@@ -141,6 +144,7 @@ name = "sven"
 path = "src/main.rs"
 
 [dependencies]
+sven-decision    = { path = "crates/decision" }
 sven-frontend    = { path = "crates/frontend" }
 sven-model       = { path = "crates/model" }
 sven-model-drivers = { path = "crates/model-drivers" }
