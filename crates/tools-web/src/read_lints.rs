@@ -18,6 +18,10 @@ impl Tool for ReadLintsTool {
         "read_lints"
     }
 
+    fn summary(&self) -> &str {
+        "Get linter diagnostics for files or directories."
+    }
+
     fn description(&self) -> &str {
         "Get linter diagnostics for files or directories. No paths → whole workspace.\n\
          workdir: set to project root for correct relative path resolution.\n\

@@ -33,6 +33,10 @@ impl Tool for ContextOpenTool {
         "context_open"
     }
 
+    fn summary(&self) -> &str {
+        "Open a file or directory as a memory-mapped context too large for the prompt."
+    }
+
     fn description(&self) -> &str {
         "Open a file or directory as a memory-mapped context for efficient analysis of content \
          too large to fit in your context window. Returns a handle and structural metadata - \

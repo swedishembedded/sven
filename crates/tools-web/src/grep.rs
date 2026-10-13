@@ -59,6 +59,10 @@ impl Tool for GrepTool {
         "grep"
     }
 
+    fn summary(&self) -> &str {
+        "Search file contents by regular expression (ripgrep)."
+    }
+
     fn description(&self) -> &str {
         "Search file contents by regex, built on ripgrep.\n\
          pattern: a full regex - escape literal braces as \\{\\}.\n\

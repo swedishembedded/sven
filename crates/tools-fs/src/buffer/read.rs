@@ -32,6 +32,10 @@ impl Tool for BufReadTool {
         "buf_read"
     }
 
+    fn summary(&self) -> &str {
+        "Read a line range from a streaming output buffer."
+    }
+
     fn description(&self) -> &str {
         "Read a specific line range from a streaming output buffer created by the `task` or \
          `shell` tool.  Returns lines formatted as `L{n}:{content}` - the same format as \

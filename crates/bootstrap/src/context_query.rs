@@ -214,6 +214,10 @@ impl Tool for ContextQueryTool {
         "context_query"
     }
 
+    fn summary(&self) -> &str {
+        "Dispatch analysis of a large context to sub-agents, one chunk each."
+    }
+
     fn description(&self) -> &str {
         "Dispatch analysis to sub-agents over chunks of a memory-mapped context. Each sub-agent \
          receives one chunk of content plus your prompt, processes it independently, and returns \
@@ -525,6 +529,10 @@ impl ContextReduceTool {
 impl Tool for ContextReduceTool {
     fn name(&self) -> &str {
         "context_reduce"
+    }
+
+    fn summary(&self) -> &str {
+        "Combine the results of a context analysis into one answer with a sub-agent."
     }
 
     fn description(&self) -> &str {

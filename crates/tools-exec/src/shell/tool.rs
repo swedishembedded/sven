@@ -66,6 +66,10 @@ impl Tool for ShellTool {
         "shell"
     }
 
+    fn summary(&self) -> &str {
+        "Run a shell command and return its output: build, test, git, file and process work."
+    }
+
     fn description(&self) -> &str {
         "Run a shell command; returns stdout + stderr.\n\
          'description' is required: one short line naming what the command does, shown\n\

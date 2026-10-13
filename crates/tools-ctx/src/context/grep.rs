@@ -33,6 +33,10 @@ impl Tool for ContextGrepTool {
         "context_grep"
     }
 
+    fn summary(&self) -> &str {
+        "Search a memory-mapped context with a regular expression."
+    }
+
     fn description(&self) -> &str {
         "Search a memory-mapped context handle with regex. Returns matching lines with positions. \
          This is a cheap pre-filter - use it to narrow down before reading or dispatching \

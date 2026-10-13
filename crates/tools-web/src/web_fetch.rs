@@ -42,6 +42,10 @@ impl Tool for WebFetchTool {
         "web_fetch"
     }
 
+    fn summary(&self) -> &str {
+        "Fetch a web page by URL and return it as readable text."
+    }
+
     fn description(&self) -> &str {
         "Fetch a URL and return content as readable text (HTML → markdown). Read-only.\n\
          Valid http/https only. No auth, no binary, no localhost/private IPs.\n\

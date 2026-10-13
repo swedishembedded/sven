@@ -34,6 +34,10 @@ impl Tool for WriteTool {
         "write_file"
     }
 
+    fn summary(&self) -> &str {
+        "Create or overwrite a file, or append to it."
+    }
+
     fn description(&self) -> &str {
         "Write a whole file. Overwrites by default; append=true extends instead.\n\
          Missing parent directories are created.\n\

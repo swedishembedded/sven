@@ -82,6 +82,10 @@ impl Tool for AndroidTool {
         "android"
     }
 
+    fn summary(&self) -> &str {
+        "Control an attached Android device over ADB: screenshot, tap, type, launch apps."
+    }
+
     fn description(&self) -> &str {
         "Control one attached Android device over ADB. Required field: 'action'.\n\
          Actions:\n\

@@ -82,6 +82,10 @@ impl Tool for AskQuestionTool {
         "ask_question"
     }
 
+    fn summary(&self) -> &str {
+        "Ask the user multiple-choice questions and wait for the answers."
+    }
+
     fn description(&self) -> &str {
         "Present structured multiple-choice questions to the user and collect responses.\n\
          Each question: prompt, options (≥2). allow_multiple: false by default.\n\

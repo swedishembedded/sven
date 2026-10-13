@@ -132,6 +132,10 @@ impl Tool for SkillTool {
         "skill"
     }
 
+    fn summary(&self) -> &str {
+        "Load or list agent skills, task-specific instructions bundled with the project."
+    }
+
     fn description(&self) -> &str {
         &self.description
     }

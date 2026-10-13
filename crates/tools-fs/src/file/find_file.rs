@@ -205,6 +205,10 @@ impl Tool for FindFileTool {
         "find_file"
     }
 
+    fn summary(&self) -> &str {
+        "Find files by name glob under a directory, names only."
+    }
+
     fn description(&self) -> &str {
         "Find files by filename glob, recursively, under a root directory.\n\
          Returns paths relative to 'root', 40 at a time by default; the reply says when\n\

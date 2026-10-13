@@ -69,6 +69,10 @@ impl Tool for SemanticMemoryTool {
         "semantic_memory"
     }
 
+    fn summary(&self) -> &str {
+        "Store and recall facts and notes by meaning in persistent semantic memory."
+    }
+
     fn description(&self) -> &str {
         "Persistent semantic memory: store and recall facts, notes, contacts, and action items.\n\
          Actions: remember | recall | forget | list | get\n\

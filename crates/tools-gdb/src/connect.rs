@@ -39,6 +39,10 @@ impl Tool for GdbConnectTool {
         "gdb_connect"
     }
 
+    fn summary(&self) -> &str {
+        "Connect gdb-multiarch to a running GDB server."
+    }
+
     fn description(&self) -> &str {
         "Spawn gdb-multiarch and connect it to a running GDB server. \
          If gdb_start_server was called previously the port is inferred automatically. \

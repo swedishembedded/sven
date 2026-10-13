@@ -446,6 +446,10 @@ impl Tool for EditFileTool {
         "edit_file"
     }
 
+    fn summary(&self) -> &str {
+        "Edit an existing file by applying unified diff hunks."
+    }
+
     fn description(&self) -> &str {
         "Edit a file by applying unified diff hunks.\n\
          \n\

@@ -29,6 +29,8 @@ pub struct McpTool {
     original_name: String,
     /// Description (truncated to 500 chars for prompt budget management).
     description: String,
+    /// The description's first sentence, for the index of tools not loaded.
+    summary: String,
     /// Canonical JSON Schema of the tool's input.
     schema: Value,
     /// Reference to the multi-server manager for execution.
@@ -53,17 +55,20 @@ impl McpTool {
 
         // Truncate description to keep the tools prompt compact.
         let desc = description.unwrap_or_default();
-        let desc = if desc.len() > 500 {
-            format!("{}...", &desc[..497])
+        let desc = if desc.chars().count() > 500 {
+            let head: String = desc.chars().take(497).collect();
+            format!("{head}...")
         } else {
             desc
         };
+        let summary = sven_tool_api::one_line_summary(&desc, sven_tool_api::SUMMARY_MAX_CHARS);
 
         Self {
             qualified_name: qualified,
             server_name: server,
             original_name: original,
             description: desc,
+            summary,
             schema,
             manager,
         }
@@ -86,6 +91,10 @@ impl Tool for McpTool {
 
     fn description(&self) -> &str {
         &self.description
+    }
+
+    fn summary(&self) -> &str {
+        &self.summary
     }
 
     fn parameters_schema(&self) -> Value {

@@ -65,6 +65,10 @@ impl Tool for ContextTool {
         "context"
     }
 
+    fn summary(&self) -> &str {
+        "Analyse content too large for the prompt through a memory-mapped context: open, read, grep."
+    }
+
     fn description(&self) -> &str {
         "Memory-mapped analysis for content too large for the context window.\n\
          action: open | read | grep | query | reduce\n\n\

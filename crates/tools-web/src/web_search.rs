@@ -24,6 +24,10 @@ impl Tool for WebSearchTool {
         "web_search"
     }
 
+    fn summary(&self) -> &str {
+        "Search the web and return result titles, links and snippets."
+    }
+
     fn description(&self) -> &str {
         "Real-time web search. Requires BRAVE_API_KEY env var. count: 1-10 (default 5).\n\
          Include the current year in queries for recent info (e.g., 'React docs 2026').\n\

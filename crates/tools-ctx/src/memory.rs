@@ -97,6 +97,10 @@ impl Tool for MemoryTool {
         "memory"
     }
 
+    fn summary(&self) -> &str {
+        "Save and recall persistent notes and project knowledge by key."
+    }
+
     fn description(&self) -> &str {
         "Persistent memory and project knowledge access.\n\
          action: set | get | delete | list | search_knowledge | list_knowledge\n\n\

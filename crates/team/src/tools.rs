@@ -68,6 +68,10 @@ impl Tool for CreateTaskTool {
         "create_task"
     }
 
+    fn summary(&self) -> &str {
+        "Create a task in the team's shared task list."
+    }
+
     /// Writes the shared task list.
     fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
         sven_tool_api::ToolCapability::WriteFile
@@ -183,6 +187,10 @@ impl Tool for ClaimTaskTool {
         "claim_task"
     }
 
+    fn summary(&self) -> &str {
+        "Claim a pending task from the team's shared task list."
+    }
+
     /// Writes the shared task list.
     fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
         sven_tool_api::ToolCapability::WriteFile
@@ -267,6 +275,10 @@ impl Tool for CompleteTaskTool {
         "complete_task"
     }
 
+    fn summary(&self) -> &str {
+        "Mark a task completed with a summary of the work."
+    }
+
     /// Writes the shared task list.
     fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
         sven_tool_api::ToolCapability::WriteFile
@@ -342,6 +354,10 @@ pub struct ListTasksTool {
 impl Tool for ListTasksTool {
     fn name(&self) -> &str {
         "list_tasks"
+    }
+
+    fn summary(&self) -> &str {
+        "Show the team's shared task list with each task's status."
     }
 
     /// Reads the shared task list.
@@ -493,6 +509,10 @@ impl Tool for AssignTaskTool {
         "assign_task"
     }
 
+    fn summary(&self) -> &str {
+        "Assign a pending task to a specific teammate."
+    }
+
     /// Writes the shared task list.
     fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
         sven_tool_api::ToolCapability::WriteFile
@@ -578,6 +598,10 @@ pub struct UpdateTaskTool {
 impl Tool for UpdateTaskTool {
     fn name(&self) -> &str {
         "update_task"
+    }
+
+    fn summary(&self) -> &str {
+        "Update the description of an existing task."
     }
 
     /// Writes the shared task list.

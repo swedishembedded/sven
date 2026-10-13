@@ -28,6 +28,10 @@ impl Tool for ListKnowledgeTool {
         "list_knowledge"
     }
 
+    fn summary(&self) -> &str {
+        "List the project's knowledge documents."
+    }
+
     fn description(&self) -> &str {
         "List all project knowledge documents in `.sven/knowledge/`.\n\
          Returns: subsystem name, covered file patterns, last-updated date, filename.\n\

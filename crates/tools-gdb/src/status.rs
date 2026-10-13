@@ -35,6 +35,10 @@ impl Tool for GdbStatusTool {
         "gdb_status"
     }
 
+    fn summary(&self) -> &str {
+        "Report the state of the GDB session without interrupting the target."
+    }
+
     fn description(&self) -> &str {
         "Return the current state of the GDB debugging session without interrupting the target. \
          Reports: whether a GDB server is running, whether gdb-multiarch is connected, \

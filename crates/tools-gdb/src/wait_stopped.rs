@@ -41,6 +41,10 @@ impl Tool for GdbWaitStoppedTool {
         "gdb_wait_stopped"
     }
 
+    fn summary(&self) -> &str {
+        "Wait for the debug target to halt and report where it stopped."
+    }
+
     fn description(&self) -> &str {
         "Wait for the target to halt and return where it stopped. \
          Call this after gdb_command('continue'), gdb_command('step'), \

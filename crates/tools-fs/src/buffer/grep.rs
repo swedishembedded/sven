@@ -32,6 +32,10 @@ impl Tool for BufGrepTool {
         "buf_grep"
     }
 
+    fn summary(&self) -> &str {
+        "Search a streaming output buffer with a regular expression."
+    }
+
     fn description(&self) -> &str {
         "Search a streaming output buffer for lines matching a regex pattern.  Works the same \
          as `context_grep` but operates on a buffer created by `task` or `shell`.\n\n\

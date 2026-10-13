@@ -33,6 +33,10 @@ impl Tool for ContextReadTool {
         "context_read"
     }
 
+    fn summary(&self) -> &str {
+        "Read a line range from a memory-mapped context."
+    }
+
     fn description(&self) -> &str {
         "Read a specific line range from a memory-mapped context handle. Only the requested range \
          is returned - your context window stays efficient.\n\n\

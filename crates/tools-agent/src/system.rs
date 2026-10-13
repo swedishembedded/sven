@@ -256,6 +256,10 @@ impl Tool for SystemTool {
         "system"
     }
 
+    fn summary(&self) -> &str {
+        "Session controls: switch the agent mode or the model, manage MCP servers."
+    }
+
     fn description(&self) -> &str {
         "Agent system controls: mode/model switching and MCP server management.\n\
          action: switch_mode | switch_model | add_mcp_server | remove_mcp_server\n\n\

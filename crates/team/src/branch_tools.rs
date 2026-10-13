@@ -29,6 +29,10 @@ impl Tool for MergeTeammateBranchTool {
         "merge_teammate_branch"
     }
 
+    fn summary(&self) -> &str {
+        "Merge a teammate's Git branch into the current branch."
+    }
+
     /// Runs `git merge` in the repository.
     fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
         sven_tool_api::ToolCapability::GitOperation
@@ -125,6 +129,10 @@ pub struct ReadTeammateLogTool {
 impl Tool for ReadTeammateLogTool {
     fn name(&self) -> &str {
         "read_teammate_log"
+    }
+
+    fn summary(&self) -> &str {
+        "Read the last lines of a spawned teammate's log file."
     }
 
     /// Reads a teammate's log.

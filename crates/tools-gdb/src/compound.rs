@@ -126,6 +126,10 @@ impl Tool for GdbTool {
         "gdb"
     }
 
+    fn summary(&self) -> &str {
+        "Debug embedded targets with GDB: start a server, connect, run commands, inspect state."
+    }
+
     fn description(&self) -> &str {
         "GDB debugging session control for embedded targets.\n\
          action: start_server | connect | command | interrupt | wait_stopped | status | stop\n\n\

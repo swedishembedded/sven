@@ -414,6 +414,10 @@ impl Tool for TaskTool {
         "task"
     }
 
+    fn summary(&self) -> &str {
+        "Delegate a focused sub-task to a sub-agent and get its final answer."
+    }
+
     fn description(&self) -> &str {
         "Run a focused sub-agent to completion and return its final answer, or inspect\n\
          a finished one's output. The 'action' parameter lists what it can do.\n\

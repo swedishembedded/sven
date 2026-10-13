@@ -31,6 +31,10 @@ impl Tool for TodoTool {
         "todo"
     }
 
+    fn summary(&self) -> &str {
+        "Keep a todo list for a multi-step task: read, add, update or replace items."
+    }
+
     fn description(&self) -> &str {
         "Read or manage the session todo list.\n\
          Actions:\n\

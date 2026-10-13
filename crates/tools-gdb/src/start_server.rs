@@ -94,6 +94,10 @@ impl Tool for GdbStartServerTool {
         "gdb_start_server"
     }
 
+    fn summary(&self) -> &str {
+        "Start a GDB debug server (JLink, OpenOCD, pyocd) in the background."
+    }
+
     fn description(&self) -> &str {
         "Start a GDB debug server in the background (e.g., JLinkGDBServer, OpenOCD, pyocd). \
          Provide the target device name via `target` (e.g. 'STM32F407VG') or a full `command`. \

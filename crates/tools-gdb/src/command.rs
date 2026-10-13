@@ -37,6 +37,10 @@ impl Tool for GdbCommandTool {
         "gdb_command"
     }
 
+    fn summary(&self) -> &str {
+        "Run a GDB command in the active debugging session."
+    }
+
     fn description(&self) -> &str {
         "Run a GDB command in the active debugging session and return its output. \
          Examples: 'continue', 'break main', 'info registers', 'x/10x 0x20000000', \

@@ -32,6 +32,10 @@ impl Tool for BufStatusTool {
         "buf_status"
     }
 
+    fn summary(&self) -> &str {
+        "Show the status, size and elapsed time of a streaming output buffer."
+    }
+
     fn description(&self) -> &str {
         "Return the current status, line count, byte count, and elapsed time for a streaming \
          output buffer created by `task` or `shell`.\n\n\

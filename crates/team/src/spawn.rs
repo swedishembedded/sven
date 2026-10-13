@@ -41,6 +41,10 @@ impl Tool for CreateTeamTool {
         "create_team"
     }
 
+    fn summary(&self) -> &str {
+        "Create an agent team and become its lead."
+    }
+
     /// Writes the team directory and its config.
     fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
         sven_tool_api::ToolCapability::WriteFile
@@ -193,6 +197,10 @@ impl Tool for ListTeamTool {
         "list_team"
     }
 
+    fn summary(&self) -> &str {
+        "Show team members with their role, status and active task."
+    }
+
     /// Reads the team config.
     fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
         sven_tool_api::ToolCapability::ReadFile
@@ -333,6 +341,10 @@ impl Tool for CleanupTeamTool {
         "cleanup_team"
     }
 
+    fn summary(&self) -> &str {
+        "Clean up team resources once all work is done (team lead only)."
+    }
+
     /// Removes the team directory.
     fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
         sven_tool_api::ToolCapability::DeleteFile
@@ -432,6 +444,10 @@ pub struct LoadTeamTool {
 impl Tool for LoadTeamTool {
     fn name(&self) -> &str {
         "load_team"
+    }
+
+    fn summary(&self) -> &str {
+        "Restore an existing team from disk after a restart."
     }
 
     /// Writes the team config from a definition.
@@ -539,6 +555,10 @@ pub struct RegisterTeammateTool {
 impl Tool for RegisterTeammateTool {
     fn name(&self) -> &str {
         "register_teammate"
+    }
+
+    fn summary(&self) -> &str {
+        "Register an already-running sven process as a teammate."
     }
 
     /// Writes the member into the team config.
@@ -680,6 +700,10 @@ pub struct SpawnTeammateTool {
 impl Tool for SpawnTeammateTool {
     fn name(&self) -> &str {
         "spawn_teammate"
+    }
+
+    fn summary(&self) -> &str {
+        "Spawn a new sven agent as a teammate in the current team."
     }
 
     /// Starts a teammate process.
@@ -919,6 +943,10 @@ pub struct ShutdownTeammateTool {
 impl Tool for ShutdownTeammateTool {
     fn name(&self) -> &str {
         "shutdown_teammate"
+    }
+
+    fn summary(&self) -> &str {
+        "Ask a teammate to shut down gracefully (team lead only)."
     }
 
     /// Marks the member closed in the team config.

@@ -15,6 +15,18 @@ use crate::policy::ApprovalPolicy;
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
+    /// One line, at most [`crate::summary::SUMMARY_MAX_CHARS`] characters, saying what the
+    /// tool is for.
+    ///
+    /// What the model reads about a tool whose full definition it has not
+    /// loaded (see `sven_tool_registry::ToolDescriptor`), and what a search
+    /// for the tool matches. Every tool states one; the default is empty only
+    /// so that a tool written before summaries existed still compiles, and
+    /// the registry then falls back to the first sentence of
+    /// [`Self::description`].
+    fn summary(&self) -> &str {
+        ""
+    }
     /// JSON Schema for parameters
     fn parameters_schema(&self) -> Value;
     /// Approval level a permission requester in front of the registry

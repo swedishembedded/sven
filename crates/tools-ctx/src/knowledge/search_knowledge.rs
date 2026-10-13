@@ -35,6 +35,10 @@ impl Tool for SearchKnowledgeTool {
         "search_knowledge"
     }
 
+    fn summary(&self) -> &str {
+        "Search the project's knowledge documents by keyword."
+    }
+
     fn description(&self) -> &str {
         "Search project knowledge documents with a keyword query.\n\
          Returns: matching excerpts (with context lines) sorted by relevance.\n\

@@ -50,6 +50,10 @@ impl Tool for GdbInterruptTool {
         "gdb_interrupt"
     }
 
+    fn summary(&self) -> &str {
+        "Interrupt the running debug target."
+    }
+
     fn description(&self) -> &str {
         "Interrupt the currently running target (equivalent to pressing Ctrl+C in a GDB prompt). \
          Sends the GDB 'interrupt' command and waits for the target to halt. \

@@ -34,6 +34,10 @@ impl Tool for GdbStopTool {
         "gdb_stop"
     }
 
+    fn summary(&self) -> &str {
+        "Stop the GDB session and the debug server behind it."
+    }
+
     fn description(&self) -> &str {
         "Stop the active GDB debugging session: disconnect gdb-multiarch and kill the \
          GDB server process (JLinkGDBServer, OpenOCD, etc.). \

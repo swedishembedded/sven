@@ -119,6 +119,10 @@ impl Tool for AttachFileTool {
         "attach_file"
     }
 
+    fn summary(&self) -> &str {
+        "Attach an image or audio file to the conversation so the model can see or hear it."
+    }
+
     fn description(&self) -> &str {
         DESCRIPTION
     }

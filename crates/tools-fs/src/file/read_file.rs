@@ -66,6 +66,10 @@ impl Tool for ReadFileTool {
         "read_file"
     }
 
+    fn summary(&self) -> &str {
+        "Read a file's contents or a line range of it; images are read as images."
+    }
+
     fn description(&self) -> &str {
         DESCRIPTION
     }
