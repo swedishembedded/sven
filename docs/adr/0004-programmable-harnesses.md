@@ -137,13 +137,13 @@ a new one.
 - `ModeRegistry` grows policy metadata; every mode registration gains an
   explicit policy and the silent fallback dies. Existing modes keep their
   current policies exactly.
-- `sven-vocab` grows harness session events (`HarnessStarted`,
-  `StepStarted`, `StepCompleted`, `BranchSelected`, `ChildStarted`,
-  `ChildCompleted`, `VerificationCompleted`, `RetryScheduled`,
-  `BudgetExhausted`, `HarnessCompleted`, `HarnessFailed`), each rendered by
-  every frontend per the one-event-vocabulary rule.
-- `Event::VerificationComplete` gains a correlation id before concurrent
-  verifiers are allowed.
+- `sven-vocab` grows `HarnessEvent` (`Started`, `StepStarted`,
+  `StepCompleted`, `RetryScheduled`, `BranchSelected`, `ChildStarted`,
+  `ChildCompleted`, `FanOut`, `Joined`, `Verified`, `BudgetExhausted`,
+  `Failed`, `Completed`), carried by `SessionEvent::Harness`. The headless
+  runner renders it and ACP does not forward it (see "As built").
+- `Event::VerificationComplete` was expected to gain a correlation id before
+  concurrent verifiers were allowed. It did not: see "As built".
 - Every harness run is checkpoint-interruptible at step boundaries and resumable
   in a fresh process, which the SDK exposes as `Engine::load_harness` →
   `HarnessRun`.
@@ -159,3 +159,89 @@ primitives composed with delegation and WASM transforms — the correct next
 step is then a *typed* extension to the `StepSpec` enum plus its full-stack
 checklist, never an interpreter escape hatch that bypasses the kernel's
 effect, permission or audit planes.
+
+## Addendum: as built
+
+The design above shipped as described; this records what the implementation
+settled, what it added beyond the text, and the decisions taken on the way.
+The user guide is [docs/12-harnesses.md](../12-harnesses.md) and the reference
+[docs/technical/harnesses.md](../technical/harnesses.md).
+
+**Syntax.** A step is `id: { primitive: { ..., then: next } }`: exactly one
+primitive key, its successor named by `then` (`branch` has `when_true` and
+`when_false`, `retry` a `body` and `on_exhausted`, `parallel` a `join`). The
+JSON Schema (`harness-document.schema.json`, printed by `sven harness
+schema`) is lenient about unknown fields like serde, and stricter in a few
+places; a test holds its primitive set to `PRIMITIVES`. Conditions have no
+ordering comparison or arithmetic, so a threshold is a helper's business.
+
+**Helpers are WASM only, carried in a bundle.** A bundle is the document plus
+its helpers (`abi`, `language: wasm`, base64 content) under one digest.
+Python and other process-isolated helpers are out of scope: they would need a
+new spawn and sandbox executor and a host interpreter, and duplicate the WASM
+path. Revisit if a requirement cannot be met by a fuel- and memory-capped
+module.
+
+**No correlation id on `VerificationComplete`.** Each parallel branch and
+each delegated child is its own runtime (`spawn_child_run`) with its own
+event sink and executor, and one machine has at most one verification in
+flight, so a completion reaches exactly the machine that asked. The
+`parallel_verifications_each_settle_their_own_branch` test proves the
+routing. Revisit if a single machine ever holds two verifications in flight.
+(The real defect was different: a child's executor had no verifier slot, so
+any `verify` in a branch or child failed; it now has one, jailed to the
+session's verify root.)
+
+**Replay is over the recorded machine input log, not the trace.** A trace
+holds no step values, so it cannot drive a machine. A `HarnessRecording`
+is the events the machine was dispatched (user kickoff, model answers, tool
+results, child verdicts, approvals), pinned to the plan and bundle digests;
+`Harness::replay` re-dispatches them into a fresh machine, or into the
+checkpoint a resumed run started from, and executes no effect. Approval ids
+are derived from the call id so that a replay reproduces them. A checkpoint is
+serializable JSON, which is what lets `sven harness resume` work across
+processes.
+
+**Authorization of a harness session** is the declared capabilities, bounded
+by four rules the first implementation lacked:
+- Host approval applies. A machine supplied to the builder used to skip the
+  host's narrowing and the approval mode, so under manual approval a harness
+  wrote without asking. It is now bounded like a registered machine, and
+  `HarnessMachine` implements the approval flow (`RequestHumanApproval`,
+  `HumanApproved`, `HumanRejected`), one call at a time.
+- A child's policy is its inherited contract narrowed by its own declaration
+  (`ChildRunContract::narrow`), not the inherited contract as is.
+- Capability reconciliation: a harness derives a call's capability from the
+  tool's name, so in harness sessions and harness children the tool executor
+  also checks it against the capability the registry knows the tool to have
+  and refuses a mismatch. It is not applied when a `tool_executor_override`
+  replaces the tool slot, whose executor the override owns.
+- An `agent` step offers its `tools` list on every turn, including the first
+  (omitted means the session's agent-mode tools), and the list is an
+  allowlist: a proposed call outside it is never run and the model is told
+  why. Fixing this also fixed an older defect, an agent loop that never
+  continued after a tool settled.
+
+**Children.** `parallel` requires `SpawnChild`, as the kernel already did at
+run time, and the validator now says so offline. Harness children carry their
+depth in the spawn descriptor, can verify, delegate and fan out in turn, and
+are bounded by `max_delegate_depth` for the whole chain. A run waiting on live
+child runs is not quiescent, so a deadline or cancellation is honoured rather
+than reported as a stall, and a run's tool calls are bound to its cancel
+scope and end with it.
+
+**Retry.** Every attempt of a body is a step start; exhaustion continues at
+`on_exhausted`; the frame ends when its body completes.
+
+**Tooling.** `sven-harness-testkit` (surface tier) runs case manifests on
+fresh engines with mock models and fixture tools and checks each run by
+replaying it; `sven harness` is its command line; eight samples
+(`samples/harnesses`) and an SDK-only runner exercise it. Harness events are
+rendered by the headless runner and ignored by ACP.
+
+**Models are strictly opt-in.** Nothing here pulls, starts or loads a model.
+A live model needs both `SVEN_HARNESS_LOCAL_MODEL=1` and
+`SVEN_HARNESS_LOCAL_ENDPOINT` (or `--model-endpoint`) naming a server the
+caller already runs; without them a live case is skipped and `--model` is
+refused. `make harness/test/local` is the only target that can reach one, and
+it refuses to start without both.

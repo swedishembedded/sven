@@ -128,6 +128,7 @@ Fan-out](technical/parallel-submachines.md)**.
 - **[Examples](06-examples.md)** - real-world use cases
 - **[Troubleshooting](07-troubleshooting.md)** - common issues and fixes
 - **[Teams and Tasks](11-teams-and-tasks.md)** - form a team of agents, break work into tasks, and orchestrate parallel workstreams
+- **[Harnesses](12-harnesses.md)** - write an agent as a YAML program and validate, run, replay and test it offline
 - **[HSM Architecture](technical/hsm-architecture.md)** - full technical reference for the hierarchical state machine kernel
 - **[Deliberation Engine](technical/deliberation-engine.md)** - how each SDLC phase runs a scoped LLM↔tool loop and returns a decision that drives the machine
 - **[Parallel Submachine Fan-out](technical/parallel-submachines.md)** - how sven runs plan tasks concurrently in isolated child kernels

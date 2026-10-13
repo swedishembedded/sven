@@ -337,12 +337,14 @@ mcp_servers:
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
 | [Large-Content Analysis](docs/10-large-content.md) | RLM context tools for files larger than the context window |
 | [Teams and Tasks](docs/11-teams-and-tasks.md) | Declarative agent teams, task board, git worktree isolation |
+| [Harnesses](docs/12-harnesses.md) | Agent programs in YAML: validate, run, replay and test them offline |
 | [Semantic Memory](docs/17-memory.md) | SQLite + FTS5 "second brain" knowledge store |
 | [Providers](docs/providers.md) | Model provider configuration |
 | **Technical** | |
 | [HSM Architecture](docs/technical/hsm-architecture.md) | Hierarchical state machine kernel: events, effects, permissions, audit/replay, runtime, dispatch, ModeRegistry |
 | [Deliberation Engine](docs/technical/deliberation-engine.md) | SDLC mode: per-state LLM↔tool loops, append-only threads, structured decisions, phases, and human gates |
 | [Parallel Submachine Fan-out](docs/technical/parallel-submachines.md) | Concurrent child kernels: ChildSpawner, TaskMachine, isolated contexts, Execution fan-out |
+| [Harnesses](docs/technical/harnesses.md) | Harness language, runtime states, authorization, checkpoint/recording/replay, SDK API |
 | [ACP](docs/technical/acp.md) | Agent Client Protocol reference |
 | [Skill system](docs/technical/skill-system.md) | Skill discovery, loading, and frontmatter reference |
 

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `sven harness validate | inspect | schema | run | resume | replay | test | compare`: programmable harnesses from the command line, offline. Runs use mock models and fixture tools, read no configuration and start no model; exit codes 0-5 are listed on `sven harness --help`. `run` writes `--trace` (JSONL), `--record`, `--trajectory` and `--checkpoint-out` files on request and prints `[sven:harness]` progress lines on stderr. A real model (`--model`) needs `SVEN_HARNESS_LOCAL_MODEL=1` and an endpoint (`SVEN_HARNESS_LOCAL_ENDPOINT` or `--model-endpoint`); `--toolset` accepts only `none`.
+- `sven-harness-testkit` (surface tier): case manifests (`cases/*.yaml`) with sequenced, rule-driven, file and failing model fixtures, fixture tools (`ok`, `error`, `block`, workspace writes), expectations (status, output, failure, step counts, tools invoked, forbidden capabilities, token bounds) and a `resume` phase; `run_case`, `run_suite`, `compare`, `validate`, `inspect`, `io_schema`; every case is replay-checked; a leaked fixture call fails the case; a live model is built only under `OptIn`.
+- `samples/harnesses`: eight harnesses with their cases (`01-decision` to `08-local-qwen`, the last opt-in and never run by default) and `sample-harnesses-sdk-runner`, which runs the cases through `sven-sdk` alone.
+- `make harness/test` (every harness suite, mock models only, including a 1000-run concurrent stress test) and the opt-in `make harness/test/local`.
+- `sven-harness-spec`: `DOCUMENT_SCHEMA`, a JSON Schema for harness documents (`sven harness schema`), and `PRIMITIVES`, the twelve primitive names; a test holds the schema to them.
+- `sven-sdk`: `HarnessRun::with_recording` / `recording` and `Harness::replay` (offline replay of the machine's recorded input log, with `HarnessRecording` and `HarnessReplay`), `HarnessRun::trajectory` (ATIF, with the harness trace under `extra.harness`), `HarnessOutcome::step_counts` and `HarnessReplay::step_counts`; `HarnessCheckpoint` is `Serialize` and `Deserialize`; `TraceRecord`, `HarnessEvent` and `harness_plan::*` are re-exported.
+- `sven-executors`: `ToolExecutor::with_capability_reconciliation`; `EffectExecutor::bind_cancel`, by which an executor stops the work it started on a run's behalf when the run ends. `sven-bootstrap`: `SdlcChildSpawner::with_verify_root`. `sven-harness-runtime`: `HarnessRunData::{with_delegate_depth, delegate_depth}`, `harness_thread`, `HeldCall`, `HeldGate`.
+- Documentation: [docs/12-harnesses.md](docs/12-harnesses.md), [docs/technical/harnesses.md](docs/technical/harnesses.md), the "Add a harness primitive" row of AGENTS.md and the "As built" addendum of ADR 0004.
+
+### Fixed
+- A harness session under `--approval manual` (or `ApprovalPolicy::Manual`) ran its writes without asking: a machine supplied to the builder skipped the host's approval mode and read-only narrowing. It is now bounded like a registered machine, and `HarnessMachine` implements the approval flow (`RequestHumanApproval`, `HumanApproved`, `HumanRejected`), one held call at a time.
+- A harness child could exceed its own document: its policy is now the inherited contract narrowed by its own declared capabilities.
+- A tool whose name implied a lower capability than the tool really has no longer runs under the lower one: harness sessions and harness children reconcile each call against the registry. Not applied when a `tool_executor_override` replaces the tool slot.
+- An `agent` step's first turn offered no tools, an omitted `tools` list behaved as none, and a proposed call outside a declared list was run. The first turn now offers the list (or the agent-mode tools), the list is an enforced allowlist, refused calls are reported to the model, and a turn of only refused calls continues at once. An agent loop that never continued after a tool settled is fixed with it.
+- A `verify` step in a `parallel` branch or a delegated child failed with "no verify executor is configured"; children now verify against the session's verify root.
+- A harness child could not delegate or fan out, and its depth was never passed down; children now carry their depth and `max_delegate_depth` bounds the whole chain.
+- A `parallel` step without the `SpawnChild` capability compiled and failed at run time; `validate` now rejects it.
+- A `retry` body's every attempt is a step start and counted as such, exhaustion continues at `on_exhausted`, and the retry frame ends with its body.
+- A run waiting on live child runs was judged quiescent, so a deadline or cancellation could surface as a stall; a run's tool calls, now bound to its cancel scope, also end with the run.
+
+### Changed
+- `parallel` requires `SpawnChild` in the harness's `capabilities`. A harness that uses `parallel` without declaring it no longer validates.
+- **sven-harness-runtime**: `AgentLoop` gains the public fields `open` and `refused` (a struct literal needs them or `..Default::default()`); `HarnessRunData` carries the delegate depth its run sits at (default 1, set with `with_delegate_depth`). `SdlcChildSpawner` is `Clone`.
+- An `agent` step's `tools` list is an allowlist. A harness that listed fewer tools than its model proposed now has the other calls refused.
+
 ## [3.0.0] - 2026-10-01
 
 ### Migrating from 2.0.0

@@ -518,6 +518,19 @@ user's configuration file. An embedded agent should not silently inherit
 whatever happens to be on the host's disk; a caller that wants the file loads it
 with `sven_sdk::config::load` and passes it to `EngineBuilder::config`.
 
+## Harnesses
+
+A harness is an agent program written in YAML (steps for model calls, tools,
+verification, branching, retry, parallel fan-out and delegation).
+`Engine::load_harness` compiles one offline, `Harness::start` returns a
+`HarnessRun` whose `execute` reaches a verdict or a bound, and a stopped run
+leaves a serializable `HarnessCheckpoint` that `Harness::resume` continues. A
+run can also be recorded (`with_recording`), replayed offline
+(`Harness::replay`), exported as a trajectory and counted per step. The
+language, the authorization model and the full API are in
+[harnesses.md](harnesses.md); the command line is `sven harness`
+([docs/12-harnesses.md](../12-harnesses.md)).
+
 ## Examples
 
 `crates/sdk/examples/` holds runnable programs, one concept each:

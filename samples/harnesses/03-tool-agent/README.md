@@ -21,8 +21,8 @@ capability was exercised); `tool-error-is-reported` (a failing tool goes back
 to the model, not to the run's verdict).
 
 A fixture tool must be honest: its declared `capability` has to equal the one
-its name implies (`read_*` is `ReadFile`, `write_*` is `WriteFile`), or the
-case errors.
+its name implies (`read_*` is `ReadFile`, `write_*` is `WriteFile`), or its
+calls are refused and the case fails with the tool never invoked.
 
 ## Run it
 

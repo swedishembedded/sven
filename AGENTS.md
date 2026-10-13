@@ -153,6 +153,8 @@ one.
 | `make check/clippy` | clippy only |
 | `make check/doc` | `cargo doc`, broken intra-doc links are errors |
 | `make fmt` | Format |
+| `make harness/test` | Every harness suite (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
+| `make harness/test/local` | OPT-IN: the `08-local-qwen` sample against a model you already serve (`SVEN_HARNESS_LOCAL_MODEL=1`, `SVEN_HARNESS_LOCAL_ENDPOINT`); never part of `make test` or `make check` |
 | `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |
 | `make tests/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour) |
 | `make formal` | TLA+ models of the HSM kernel (needs a JRE; see `formal/README.md`) |
@@ -206,6 +208,10 @@ knows no section itself) · `sven-hsm`
 decoding, resampling, audio data-URL helpers) · `sven-workspace`
 (project/skill/agent/knowledge discovery) · `atif` (ATIF v1.7 trajectory
 format) · `sven-tui-nvim` (embedded Neovim client, ratatui-rendered)
+
+Harness language crates: `sven-harness-spec` (document, validator, compiler
+to a content-hashed plan, JSON Schema) and `sven-harness-transform` (the
+sandboxed WASM helper runtime of `transform` steps).
 
 ### kernel
 `sven-model` (`ModelProvider` trait, request/response vocab, driver metadata
@@ -274,6 +280,10 @@ session task and `SessionEvent` consumption)
 ### surface
 `sven-ci` (headless runner: `RuntimeRunner` + workflow orchestration) ·
 `sven-mcp` (MCP server) · `sven-tui` (ratatui TUI)
+
+`sven-harness-testkit` (offline case manifests, fixture models and tools,
+runner and comparer for harnesses; mock models unless explicitly opted in -
+behind `sven harness`, see [docs/12-harnesses.md](docs/12-harnesses.md)).
 
 ### composite
 `sven-acp` (ACP server for IDEs)
@@ -384,6 +394,31 @@ and `sven-tool-registry` the registry; neither holds a concrete tool.
 5. `bootstrap/src/runtime_builder.rs` - any child-spawner wiring.
 6. Config: `sven_vocab::AgentMode` if it's user-selectable.
 
+### Add a harness primitive
+A new primitive is a variant added to the closed `StepSpec` enum (ADR 0004);
+it is a deliberate act across the whole stack, never an interpreter escape
+hatch:
+1. **Typed schema** - the variant and its step struct in
+   `harness-spec/src/spec.rs`, its name in `PRIMITIVES`, and its shape in
+   `harness-spec/schema/harness-document.schema.json` (the
+   `document_schema` test holds the three together).
+2. **Static validator** - `harness-spec/src/validate.rs`: references, the
+   capability it exercises (`required_capability`), the limits it needs.
+   Plan form in `plan.rs`.
+3. **Runtime behaviour** - `harness-runtime/src/exec.rs` (or a new module
+   beside it; `exec.rs` and `machine.rs` are near the file-size ratchet).
+4. **Authorization** - the capability it needs in the plan's permission
+   policy, and for child-starting primitives the depth and contract rules
+   (`bootstrap/src/child_spawner.rs`).
+5. **Structured tracing** - a `TraceRecord`, its `HarnessEvent` in
+   `vocab/src/harness.rs` and `harness_event`; renderers per "Add a new
+   `SessionEvent` variant".
+6. **Unit and integration tests** - `harness-spec/tests`,
+   `harness-runtime/tests`, `sdk/tests/harness_*.rs`.
+7. **A runnable sample with cases** in `samples/harnesses/`, run by the
+   testkit's `samples` test; document it in
+   `docs/technical/harnesses.md` and `docs/12-harnesses.md`.
+
 ### Add a new model provider / driver
 1. `model/src/registry.rs` - the `DRIVERS` table (env var, base URL,
    `requires_api_key`) - pure metadata, stays in `sven-model` even though the
@@ -492,6 +527,9 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
   suspending and resuming a session; snapshot vs. replay.
 - [docs/technical/sdk.md](docs/technical/sdk.md) - the public framework
   surface: engines, agents, and suspended agent state.
+- [docs/technical/harnesses.md](docs/technical/harnesses.md) and
+  [docs/12-harnesses.md](docs/12-harnesses.md) - YAML agent harnesses: the
+  language, runtime, authorization, replay and the `sven harness` CLI.
 - `architecture.toml` - authoritative crate tiers, dependency legality, file-size
   ratchet. `.claude/skills/programming/rust/architecture.md` - the layering
   method this workspace follows, generalized for reuse elsewhere.
