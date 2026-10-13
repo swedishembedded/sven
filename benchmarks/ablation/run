@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Swedish Embedded AB implements solutions for proving, with controlled
+# experiments, that an optimisation of an LLM agent pays for itself. If your
+# team needs expertise in agent benchmarking then you can procure our
+# services by sending an email to info@swedishembedded.com.
+#
+# Ablation benchmark: every suite under every variant of the matrix for
+# several seeds, raw records and a report in an output directory outside the
+# repository. Scripted runs: the model is a fixed script, so the numbers say
+# what the harness does with a given model behaviour, never whether a model
+# succeeds (docs/technical/ablation-benchmarks.md).
+#
+# Usage: benchmarks/ablation/run --out DIR [OPTIONS]
+#   --out DIR              raw records (DIR/runs) and the report (DIR/report)
+#   --sven-bin PATH        the sven binary to measure (default: release, else debug build)
+#   --suites a,b           suites to run (default: all)
+#   --variants A,B         variants to run (default: all of the matrix)
+#   --seeds N              seeds to run (default 5)
+#   --brain-url URL        a Brain server, for the variants served by a model
+#   --stock-model ID       model of the stock variant (default: auto)
+#   --trained-model ID     model of the trained variant
+#   --fallback-probe       also run each decision variant with its provider unreachable
+#   --model NAME           run with a real model instead of the script (records trajectories,
+#                          no scripted verdict; never run by default)
+# Every option is passed to `sven-ablation run`; see `sven-ablation run --help`.
+
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "${here}/../.." && pwd)"
+
+out=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    case "${args[i]}" in
+        --out) out="${args[i + 1]:-}" ;;
+        --out=*) out="${args[i]#--out=}" ;;
+        -h|--help) sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
+    esac
+done
+[[ -n "${out}" ]] || { echo "--out DIR is required" >&2; exit 2; }
+
+if [[ -x "${repo}/target/release/sven-ablation" ]]; then
+    ablation="${repo}/target/release/sven-ablation"
+else
+    ablation="${repo}/target/debug/sven-ablation"
+fi
+[[ -x "${ablation}" ]] || { echo "sven-ablation not found: ${ablation} (run 'cargo build -p sven-ablation')" >&2; exit 1; }
+
+status=0
+"${ablation}" run --sven-repo "${repo}" --matrix "${here}/matrix.yaml" "$@" || status=$?
+# A failed run still has records worth reporting; a usage error has none.
+if [[ -d "${out}/runs" ]]; then
+    "${ablation}" report --runs "${out}" --out "${out}/report"
+    echo "report: ${out}/report/report.md"
+fi
+exit "${status}"

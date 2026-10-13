@@ -96,3 +96,83 @@ reports an error rather than skipping it.
 | ACP | sent as a `UsageUpdate` whose `used` is the request's prompt size and whose `_meta.sven_ledger` is the record; a parent session folds a subagent's into the subagent's trajectory |
 | TUI | none: the TUI shows context use from the provider's counters and rebuilds its saved trajectory from the chat, which carries no per-request data |
 | SDK | the field is on `SessionEvent::TokenUsage`, which `Agent::events` forwards unchanged |
+
+## Baseline
+
+`make benchmark/ledger` replays fixed scenarios headless against the `mock` model
+provider and writes, outside the repository, each scenario's trajectory,
+`sven ledger` table and JSON, and a `report.json` / `report.txt` that names the
+exact sven commit (and whether the working tree had uncommitted changes).
+`OUT=DIR` chooses the directory; the default is `$TMPDIR/sven-ledger-bench`,
+and an existing directory is only replaced if it is a previous result.
+`benchmarks/ledger/run.sh --bin PATH` measures a binary other than the one
+`make build` produces.
+
+The scenarios run with an empty home directory, so that skills, agents,
+knowledge and configuration of whoever runs them do not enter the request.
+A request quotes the working directory in its project-context section, so
+compare runs made with the same `--out`.
+
+| scenario | what it exercises |
+|----------|-------------------|
+| `minimal` | one prompt with the default tool set: the fixed cost of a request |
+| `tool_heavy` | four user turns that fan out into shell, file reads, a search and a write, one of them re-reading a file |
+| `noisy_output` | one shell command that prints 3,000 log lines |
+| `long_history` | a 60-turn conversation replayed ahead of one more question |
+
+Estimated input tokens, summed over the requests of each scenario (`bytes_div_4`;
+the mock provider's own usage numbers are synthetic, so the baseline does not
+compare against them):
+
+| scenario | requests | system | tool schemas | user + assistant | tool calls + results | total |
+|----------|---------:|-------:|-------------:|-----------------:|---------------------:|------:|
+| `minimal` | 1 | 1,370 | 4,253 | 5 | 0 | 5,628 |
+| `tool_heavy` | 7 | 9,597 | 29,771 | 268 | 45,668 | 85,304 |
+| `noisy_output` | 2 | 2,742 | 8,506 | 10 | 2,689 | 13,947 |
+| `long_history` | 1 | 1,371 | 4,253 | 3,307 | 0 | 8,931 |
+
+In `tool_heavy` the replayed tool results are 53% of everything sent and the
+schemas 35%: each request pays again for every earlier result and for all
+fifteen schemas. In `noisy_output`, 3,000 lines reach the model as about 2,600
+tokens because the shell tool elides the middle of a long output.
+
+### What a request costs before the user says anything
+
+Measured by the `minimal` scenario in each mode, in estimated tokens
+(`bytes_div_4`):
+
+| mode | system (stable) | project context | tool schemas | tools | total |
+|------|----------------:|----------------:|-------------:|------:|------:|
+| `agent` | 1,291 | 79 | 4,253 | 15 | 5,628 |
+| `plan` | 1,334 | 79 | 4,253 | 15 | 5,671 |
+| `chat` | 1,190 | 79 | 4,253 | 15 | 5,527 |
+| `research` | 1,217 | 79 | 3,227 | 11 | 4,528 |
+
+### Tokens per tool schema
+
+The default tool set of a headless `agent`, `plan` or `chat` run (a build with
+the default features, no MCP servers, no skills discovered), by estimated
+tokens of the schema the model is sent (name, description, parameters):
+
+| tool | tokens | tool | tokens |
+|------|-------:|------|-------:|
+| `task` | 591 | `shell` | 252 |
+| `grep` | 399 | `memory` | 247 |
+| `system` | 395 | `read_file` | 219 |
+| `edit_file` | 385 | `attach_file` | 196 |
+| `semantic_memory` | 342 | `write_file` | 193 |
+| `todo` | 324 | `web_fetch` | 140 |
+| `find_file` | 296 | `skill` | 137 |
+| | | `web_search` | 137 |
+
+That is 4,253 tokens for 15 tools, 284 on average, with the largest schema
+(`task`) four times the smallest. `research` mode offers 11 of them.
+
+Two of these figures grow with what is installed rather than with sven. The
+`skill` tool's description lists every discovered skill, and the `Skills`
+system section lists them again, so skill metadata is paid for twice on every
+request. MCP tools add their own schemas, charged to their own names.
+
+These replace the earlier planning figures of about 350 tokens per tool and
+about 1,400 system tokens, which were taken on a 19-tool chat session; the
+ledger measures what the headless runner actually sends.

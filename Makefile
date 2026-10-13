@@ -350,6 +350,10 @@ benchmark/report:
 	@python3 benchmarks/report.py target/benchmark > target/benchmark/report.md
 	@cat target/benchmark/report.md
 
+## benchmark/ledger - token-ledger baseline: replay fixed scenarios against the mock provider and write per-scenario ledger summaries plus a report naming the sven commit; OUT=DIR chooses where (default: outside the repository)
+benchmark/ledger: build
+	@bash benchmarks/ledger/run.sh $(if $(OUT),--out $(OUT),)
+
 # ---------------------------------------------------------------------------
 ##@ Documentation
 ## The user guide and the papers.
@@ -632,4 +636,4 @@ generate/config/golden:
         release release/tag release/publish release/patch release/minor release/major \
         _require-cargo-release \
         site site/build site/publish site/serve \
-        benchmark benchmark/build benchmark/terminal-bench benchmark/report
+        benchmark benchmark/build benchmark/terminal-bench benchmark/report benchmark/ledger

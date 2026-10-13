@@ -36,6 +36,14 @@ Measured on this tree against a `mock` provider in a minimal `chat` session
 `gdb` 1,950 · `assimilate_fact` 1,896 · `system` 1,552 · `edit_file` 1,533 ·
 `grep` 1,468 · `shell` 1,392.
 
+Re-measured with the token ledger ([docs/technical/token-ledger.md](../../docs/technical/token-ledger.md))
+on the default headless tool set — 15 tools, because `context`, `gdb` and
+`assimilate_fact` above are not in it: 1,291 system tokens and 4,253 schema
+tokens, **284 per tool**, the heaviest `task` 591 · `grep` 399 · `system` 395 ·
+`edit_file` 385 · `semantic_memory` 342 (estimator: 4 bytes per token). The
+per-tool cost depends on which tools a build offers; the ledger reports it for
+the build in hand.
+
 Brain advertises **66 actions across 44 models** (`brain caps --json`). Exposing
 them one-tool-per-action would cost roughly **+23,000 tokens** and put sven at
 85 tools — far inside the measured degradation band, where published results

@@ -1,0 +1,92 @@
+# Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Scripted model replies for the token-ledger baseline (see run.sh). Rules are
+# matched against the last user message; paths are relative to the scenario's
+# scratch directory, which run.sh makes the working directory.
+
+responses:
+
+  # -- tool_heavy: four user turns, each fanning out into tool calls
+
+  - match_type: contains
+    pattern: "ledger-bench survey"
+    tool_calls:
+      - id: tc-survey-1
+        tool: shell
+        args:
+          shell_command: "ls -R src docs"
+      - id: tc-survey-2
+        tool: read_file
+        args:
+          path: src/module_a.txt
+      - id: tc-survey-3
+        tool: read_file
+        args:
+          path: src/module_b.txt
+      - id: tc-survey-4
+        tool: grep
+        args:
+          pattern: "marker"
+          path: src
+    after_tool_reply: "Surveyed the sources."
+
+  - match_type: contains
+    pattern: "ledger-bench reread"
+    tool_calls:
+      - id: tc-reread-1
+        tool: read_file
+        args:
+          path: src/module_a.txt
+      - id: tc-reread-2
+        tool: read_file
+        args:
+          path: src/module_a.txt
+    after_tool_reply: "Read module A again."
+
+  - match_type: contains
+    pattern: "ledger-bench edit"
+    tool_calls:
+      - id: tc-edit-1
+        tool: write_file
+        args:
+          path: notes.txt
+          text: "survey notes written by the baseline fixture"
+          append: false
+      - id: tc-edit-2
+        tool: shell
+        args:
+          shell_command: "wc -l src/module_a.txt src/module_b.txt notes.txt"
+    after_tool_reply: "Wrote the notes."
+
+  - match_type: contains
+    pattern: "ledger-bench summarize"
+    reply: "Summary: two modules surveyed, one re-read, notes written."
+
+  # -- noisy_output: one command that prints 3000 log lines
+
+  - match_type: contains
+    pattern: "ledger-bench noisy"
+    tool_calls:
+      - id: tc-noisy
+        tool: shell
+        args:
+          shell_command: |
+            awk 'BEGIN { for (i = 1; i <= 3000; i++) printf "2026-10-13T08:00:%02d INFO worker-%d processed batch %d of 3000 in %d ms status=ok retries=0 queue_depth=%d\n", i % 60, i % 8, i, i % 97, i % 13 }'
+    after_tool_reply: "The command printed a long counter."
+
+  # -- long_history: the answer to the final question of a 60-turn history
+
+  - match_type: contains
+    pattern: "ledger-bench long history"
+    reply: "Answered from the history."
+
+  # -- minimal: the default request, no tool calls
+
+  - match_type: contains
+    pattern: "ledger-bench minimal"
+    reply: "pong"
+
+  - match_type: default
+    reply: "unmatched ledger-bench prompt"
