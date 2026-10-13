@@ -33,7 +33,7 @@ for p in "${packages[@]}"; do
 done
 
 # Run clippy only on those packages
-exec env CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" cargo clippy \
+exec cargo clippy \
     "${cli_args[@]}" \
     --all-targets \
     --fix \

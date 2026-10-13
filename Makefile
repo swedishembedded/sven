@@ -5,10 +5,8 @@ CARGO   ?= cargo
 # and perform a full rebuild every time you switch.
 #
 # Rule: never override this with a different directory between invocations.
-# The ?= lets the caller / CI override it; the default is the conventional
-# writable home.  If the system CARGO_HOME is read-only (a root-owned rustup
-# install, for example) set the variable before calling make:
-#   CARGO_HOME=~/.cargo make build/debug
+# This pins cargo's default (~/.cargo) so make, git hooks, CI and agent shells
+# agree even when the caller's environment sets something else.
 CARGO_HOME = $(HOME)/.cargo
 export CARGO_HOME
 
@@ -105,7 +103,7 @@ MODEL               ?= openrouter/openrouter/free
 benchmark/build:
 	@if ! rustup target list --installed | grep -q "$(MUSL_TARGET)"; then \
 	    echo "Adding Rust target $(MUSL_TARGET)..."; \
-	    sudo -E env PATH=$$PATH rustup target add $(MUSL_TARGET); \
+	    rustup target add $(MUSL_TARGET); \
 	fi
 	@if ! command -v musl-gcc >/dev/null 2>&1; then \
 	    echo "musl-gcc not found. Installing musl-tools..."; \
