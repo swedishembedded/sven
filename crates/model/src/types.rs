@@ -234,11 +234,22 @@ pub enum ToolContentPart {
 /// estimates from the base64 payload size: assume 16-bit 16 kHz mono PCM
 /// (32 000 bytes/s) and roughly 50 tokens per second of audio, with a
 /// 100-token floor so short clips are never counted as free.
-fn audio_approx_tokens(audio_url: &str) -> usize {
+pub fn audio_approx_tokens(audio_url: &str) -> usize {
     let b64_len = audio_url.split_once(',').map(|(_, d)| d.len()).unwrap_or(0);
     let bytes = b64_len / 4 * 3;
     let seconds = bytes as f64 / 32_000.0;
     ((seconds * 50.0).round() as usize).max(100)
+}
+
+/// Approximate token cost of an image part, from OpenAI's published
+/// estimates: a fixed 85 tokens for `detail = "low"`, otherwise a
+/// conservative 765 (the typical auto/high cost of a 512x512 region).
+pub fn image_approx_tokens(detail: Option<&str>) -> usize {
+    if detail == Some("low") {
+        85
+    } else {
+        765
+    }
 }
 
 pub fn parse_data_url_parts(url: &str) -> Result<(String, String), &'static str> {
@@ -393,14 +404,7 @@ impl Message {
                     ContentPart::Text { text } => text.len(),
                     ContentPart::Audio { audio_url, .. } => audio_approx_tokens(audio_url) * 4,
                     ContentPart::Image { detail, .. } => {
-                        // "low" → fixed 85 tokens regardless of image size.
-                        // auto / high / None → ~765 tokens (conservative upper bound).
-                        let tokens = if detail.as_deref() == Some("low") {
-                            85
-                        } else {
-                            765
-                        };
-                        tokens * 4
+                        image_approx_tokens(detail.as_deref()) * 4
                     }
                 })
                 .sum(),
@@ -413,7 +417,7 @@ impl Message {
                     .iter()
                     .map(|p| match p {
                         ToolContentPart::Text { text } => text.len(),
-                        ToolContentPart::Image { .. } => 765 * 4,
+                        ToolContentPart::Image { .. } => image_approx_tokens(None) * 4,
                         ToolContentPart::Audio { audio_url } => audio_approx_tokens(audio_url) * 4,
                     })
                     .sum(),

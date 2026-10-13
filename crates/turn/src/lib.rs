@@ -14,6 +14,7 @@
 //! reaching this crate at all.
 
 mod compact;
+pub mod ledger;
 mod tool_slots;
 
 pub mod prompts;
