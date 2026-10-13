@@ -261,11 +261,7 @@ GATE_TARGETS := $(addprefix check/gates/,$(GATE_NAMES))
 check/gates: $(GATE_TARGETS)
 
 ## check/gates/<gate> - run scripts/gates/check-<gate>.sh alone (one target per script)
-##   no-machine-paths: no absolute machine path in any tracked or new file.
-##   no-brain-dependency: sven builds with no brain checkout, declared or resolved.
-##   repo-scope: no tracked file names a project outside sven's scope (AGENTS.md).
-##   samples: a sample depends on the SDK facade only; package name matches path.
-##   make-targets: make targets are a documented tree (see "Make targets" in AGENTS.md).
+##   Each script's header says what it enforces.
 $(GATE_TARGETS): check/gates/%: scripts/gates/check-%.sh
 	bash $<
 

@@ -106,8 +106,12 @@ def shape(name):
 
 
 def doc_for(target, entries):
+    """The doc entry for a target: its own line, else the first family line."""
     for e in entries:
-        if shape(e["name"]).match(target):
+        if e["name"] == target:
+            return e
+    for e in entries:
+        if "<" in e["name"] and shape(e["name"]).match(target):
             return e
     return None
 
@@ -133,8 +137,7 @@ def full_help():
             depth = e["name"].count("/") + 1
             count = None
             if "<" in e["name"]:
-                rx = shape(e["name"])
-                count = sum(1 for t in public if rx.match(t))
+                count = sum(1 for t in public if doc_for(t, entries) is e)
             for out in line_for(e["name"], e["text"], 2 * depth, count):
                 print(out)
 
