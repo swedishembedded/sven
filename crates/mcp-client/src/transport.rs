@@ -385,15 +385,30 @@ impl HttpTransport {
         Ok(())
     }
 
+    /// Sends `req` and returns its result. The configured timeout bounds the
+    /// whole exchange - connecting, the response headers and the body - so a
+    /// server that answers and then goes quiet cannot hold the call open.
     pub async fn send_request(&self, req: &JsonRpcRequest) -> Result<Value> {
+        tokio::time::timeout(self.timeout, self.exchange(req))
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "MCP HTTP request {} timed out after {:?} - raise timeout_secs for a slow server",
+                    req.method,
+                    self.timeout
+                )
+            })?
+    }
+
+    async fn exchange(&self, req: &JsonRpcRequest) -> Result<Value> {
         let body = serde_json::to_string(req)?;
 
         trace!(method = %req.method, id = req.id, "MCP → HTTP server");
 
         let http_req = self.build_request(body).await?;
-        let resp = tokio::time::timeout(self.timeout, http_req.send())
+        let resp = http_req
+            .send()
             .await
-            .map_err(|_| anyhow!("MCP HTTP request timed out: {}", req.method))?
             .with_context(|| format!("MCP HTTP request failed: {}", req.method))?;
 
         let status = resp.status();

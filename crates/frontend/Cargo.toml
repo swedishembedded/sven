@@ -15,6 +15,7 @@ sven-session-model = { path = "../session-model" }
 sven-tool-api    = { path = "../tool-api" }
 sven-tool-registry = { path = "../tool-registry" }
 sven-tools-agent = { path = "../tools-agent" }
+sven-turn        = { path = "../turn" }
 sven-machines        = { path = "../machines" }
 sven-vocab       = { path = "../vocab" }
 sven-hsm         = { path = "../hsm" }

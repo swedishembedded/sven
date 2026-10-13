@@ -29,7 +29,6 @@ const HEAD_LINES: usize = 100;
 /// so preserving the tail is at least as important as preserving the head.
 const TAIL_LINES: usize = 100;
 
-/// Built-in tool that runs a shell command.
 /// Ceiling on a model-supplied `timeout_secs`.
 ///
 /// The argument comes straight from the model, so without a bound a single
@@ -38,6 +37,7 @@ const TAIL_LINES: usize = 100;
 /// test run.
 pub(crate) const MAX_TIMEOUT_SECS: u64 = 3600;
 
+/// Built-in tool that runs a shell command.
 pub struct ShellTool {
     pub timeout_secs: u64,
     /// Where a command starts when it names no `workdir` (the root, when
@@ -173,10 +173,10 @@ impl Tool for ShellTool {
         // This is the primary defence against terminal-mode corruption (raw
         // mode being disabled, mouse-reporting strings appearing as text, etc.)
         //
-        // `kill_on_drop(true)` ensures that when the timeout fires and the
-        // tokio future is dropped, tokio sends SIGKILL to the child before
-        // releasing the process handle, preventing zombie processes from
-        // continuing to run and potentially interacting with the terminal.
+        // `kill_on_drop(true)` kills the shell itself when the child handle is
+        // dropped; `kill_group::KillOnDrop` below kills the rest of its
+        // process group, so a command's own children do not outlive a
+        // timeout and keep touching the terminal or the workspace.
         cmd.stdin(Stdio::null());
         cmd.kill_on_drop(true);
         // setsid() in pre_exec creates a new session for the child, detaching
@@ -184,7 +184,9 @@ impl Tool for ShellTool {
         // open /dev/tty directly (bypassing our stdin/stdout/stderr redirects)
         // and send escape sequences (e.g. DisableMouseCapture) that corrupt the
         // TUI state.  With setsid() the child has no controlling terminal, so
-        // open("/dev/tty") fails with ENXIO.
+        // open("/dev/tty") fails with ENXIO. The new session is also a new
+        // process group whose id is the shell's pid, which is what lets a
+        // timeout kill the whole group.
         #[cfg(unix)]
         unsafe {
             cmd.pre_exec(|| {
@@ -196,8 +198,25 @@ impl Tool for ShellTool {
             cmd.current_dir(wd);
         }
 
-        let result =
-            tokio::time::timeout(std::time::Duration::from_secs(timeout), cmd.output()).await;
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => return ToolOutput::err(&call.id, format!("spawn error: {e}")),
+        };
+        // Until the command finishes by itself, whatever ends this call early
+        // (the timeout, or the future being dropped by a cancel) takes the
+        // command's whole process group with it, not only the shell.
+        #[cfg(unix)]
+        let mut group = kill_group::KillOnDrop::new(child.id());
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout),
+            child.wait_with_output(),
+        )
+        .await;
+        #[cfg(unix)]
+        if result.is_ok() {
+            group.disarm();
+        }
 
         match result {
             Ok(Ok(output)) => {
@@ -240,6 +259,39 @@ impl Tool for ShellTool {
             }
             Ok(Err(e)) => ToolOutput::err(&call.id, format!("spawn error: {e}")),
             Err(_) => ToolOutput::err(&call.id, format!("timeout after {timeout}s")),
+        }
+    }
+}
+
+#[cfg(unix)]
+mod kill_group {
+    /// Sends SIGKILL to a process group when dropped, unless disarmed.
+    ///
+    /// The group is the one `setsid()` made for the command, so its id is the
+    /// command's pid. It is only killed while the command has not finished by
+    /// itself: a command that completed normally may leave background
+    /// processes it deliberately started.
+    pub(super) struct KillOnDrop(Option<libc::pid_t>);
+
+    impl KillOnDrop {
+        pub(super) fn new(pid: Option<u32>) -> Self {
+            Self(pid.and_then(|pid| libc::pid_t::try_from(pid).ok()))
+        }
+
+        pub(super) fn disarm(&mut self) {
+            self.0 = None;
+        }
+    }
+
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            if let Some(pgid) = self.0 {
+                // SAFETY: kill(2) with a negative pid signals a process group
+                // and touches no memory.
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
+            }
         }
     }
 }
@@ -476,6 +528,52 @@ mod tests {
             .await;
         assert!(out.is_error);
         assert!(out.content.contains("timeout"));
+    }
+
+    /// Whether process `pid` is gone; an exited but unreaped process counts.
+    #[cfg(target_os = "linux")]
+    fn process_is_gone(pid: u32) -> bool {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Err(_) => true,
+            Ok(stat) => stat
+                .rsplit(')')
+                .next()
+                .is_some_and(|rest| rest.trim_start().starts_with('Z')),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_timed_out_command_leaves_none_of_its_processes_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("child.pid");
+        // The shell stays alive after starting `sleep`, so the sleep is a
+        // grandchild that only a group kill reaches.
+        let command = format!("sleep 300 & echo $! > {}; wait", pid_file.display());
+        let out = ShellTool::default()
+            .execute(&call(
+                "1",
+                json!({ "shell_command": command, "timeout_secs": 1 }),
+            ))
+            .await;
+        assert!(
+            out.is_error && out.content.contains("timeout"),
+            "{}",
+            out.content
+        );
+
+        let pid: u32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        for _ in 0..50 {
+            if process_is_gone(pid) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!("process {pid} outlived the timed-out command");
     }
 
     // ── Head+tail truncation ──────────────────────────────────────────────────

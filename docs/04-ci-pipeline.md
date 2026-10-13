@@ -157,7 +157,7 @@ Supported frontmatter fields:
 | `mode` | string | Default agent mode for all steps |
 | `model` | string | Model override (e.g. `anthropic/claude-opus-4-5`) |
 | `step_timeout_secs` | integer | Per-step timeout (0 = no limit) |
-| `run_timeout_secs` | integer | Total run timeout (0 = no limit) |
+| `run_timeout_secs` | integer | Total run timeout (0 = no limit; default `agent.max_run_timeout_secs`) |
 | `vars` | map | Template variables (`{{key}}` substitution) |
 
 ### Per-Step Configuration
@@ -432,7 +432,7 @@ sven --file conversation.md --conversation  # continue where you left off
 
 ## Timeouts
 
-Configure timeouts at multiple levels (CLI > frontmatter > config file):
+Configure timeouts at multiple levels (CLI > config file):
 
 ```bash
 # Per-step: abort any step that runs longer than 5 minutes
@@ -452,6 +452,23 @@ agent:
   max_step_timeout_secs: 300
   max_run_timeout_secs: 1800
 ```
+
+**A headless run is always bounded.** With no limit given, the run limit is
+`agent.max_run_timeout_secs`, which defaults to four hours: generous for real
+work, finite so that a job whose model server, tool, or approval or question
+handler never answers still ends, with exit code `124`, instead of holding a CI
+runner until the platform's own limit. The run limit covers every wait in the
+run - a model that goes quiet, a tool that never returns, a gate nobody
+answers - and it also ends a step in progress, not only the gaps between
+steps. `--run-timeout 0` (or `max_run_timeout_secs: 0`) removes the limit; do
+that only where something else bounds the job. A single-prompt run takes
+`--step-timeout` as its limit when `--run-timeout` is not given.
+
+Shorter limits apply inside a run: the model-server stall limits
+(`agent.first_byte_timeout_secs` and friends, see
+[Stalled model servers](05-configuration.md#stalled-model-servers)), the
+per-command `tools.timeout_secs`, and each MCP server's `timeout_secs`. A
+timed-out shell command is killed together with every process it started.
 
 ---
 
@@ -703,7 +720,7 @@ agent:
   default_mode: agent
   max_tool_rounds: 200
   max_step_timeout_secs: 0    # 0 = no limit
-  max_run_timeout_secs: 0     # 0 = no limit
+  max_run_timeout_secs: 14400 # 0 = no limit
 
 model:
   provider: anthropic
@@ -727,8 +744,8 @@ Frontmatter takes precedence over config file.
 | `--trace PATH` | - | Combined `--load-trace PATH --output-trace PATH` |
 | `--artifacts-dir DIR` | - | Save per-step artifacts to directory |
 | `--var KEY=VALUE` | - | Template variable (repeatable) |
-| `--step-timeout SECS` | 0 (none) | Per-step wall-clock timeout |
-| `--run-timeout SECS` | 0 (none) | Total run wall-clock timeout |
+| `--step-timeout SECS` | `agent.max_step_timeout_secs` (none) | Per-step wall-clock timeout; `0` = no limit |
+| `--run-timeout SECS` | `agent.max_run_timeout_secs` (4 hours) | Total run wall-clock timeout; `0` = no limit |
 | `--system-prompt-file PATH` | - | Replace default system prompt from file |
 | `--append-system-prompt TEXT` | - | Append text to default system prompt |
 | `--no-system` | off | Suppress Sven's built-in system prompt; zero system tokens unless `--system-prompt-file`/`--append-system-prompt` still supply text |

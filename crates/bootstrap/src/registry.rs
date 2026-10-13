@@ -477,6 +477,7 @@ fn register_base_tools(
             context_store,
             model,
             &cfg.tools.context,
+            cfg.agent.turn_limits(),
             Some(tool_event_tx),
         ));
 

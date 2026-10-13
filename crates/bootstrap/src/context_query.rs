@@ -23,20 +23,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::StreamExt;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
 
 use serde::{Deserialize, Serialize};
 use sven_config::Schema;
-use sven_model::{CompletionRequest, Message, ModelProvider, ResponseEvent};
+use sven_model::{CompletionRequest, Message, ModelProvider};
 use sven_tool_api::{
     events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{OutputCategory, Tool, ToolCall, ToolOutput},
 };
 use sven_tools_ctx::{ContextStore, SubQueryRunner};
+use sven_turn::TurnLimits;
 use sven_vocab::AgentMode;
 
 // ─── Configuration ────────────────────────────────────────────────────────────
@@ -96,8 +96,11 @@ pub struct ModelSubQueryRunner {
     /// Soft cap on the prompt sent to each sub-query.  When the caller's
     /// prompt exceeds this limit it is truncated with a notice.
     max_chars: usize,
-    /// Per-call timeout.  Zero means no timeout.
+    /// Whole-call timeout.  Zero means no total timeout; the stall limits
+    /// below always apply.
     timeout: Option<Duration>,
+    /// First-byte, first-token and idle limits of each sub-query.
+    limits: TurnLimits,
 }
 
 impl ModelSubQueryRunner {
@@ -111,7 +114,16 @@ impl ModelSubQueryRunner {
             provider,
             max_chars,
             timeout,
+            limits: TurnLimits::default(),
         }
+    }
+
+    /// Bounds each sub-query by `limits` (the agent's stall configuration)
+    /// instead of the defaults.
+    #[must_use]
+    pub fn with_limits(mut self, limits: TurnLimits) -> Self {
+        self.limits = limits;
+        self
     }
 
     async fn query_inner(&self, system: &str, prompt: &str) -> Result<String, String> {
@@ -139,27 +151,9 @@ impl ModelSubQueryRunner {
             response_format: None,
         };
 
-        let mut stream = self
-            .provider
-            .complete(req)
+        sven_turn::complete_text(self.provider.as_ref(), req, self.limits)
             .await
-            .map_err(|e| format!("sub-query provider error: {e}"))?;
-
-        let mut text = String::new();
-        while let Some(event) = stream.next().await {
-            match event {
-                Ok(ResponseEvent::TextDelta(delta)) => text.push_str(&delta),
-                // Break on Done or Usage - both signal the end of the response.
-                // Usage often arrives last on OpenAI-compatible providers that
-                // omit an explicit Done frame.
-                Ok(ResponseEvent::Done) | Ok(ResponseEvent::Usage { .. }) => break,
-                Ok(ResponseEvent::Error(e)) => return Err(format!("sub-query stream error: {e}")),
-                Ok(_) => {}
-                Err(e) => return Err(format!("sub-query stream error: {e}")),
-            }
-        }
-
-        Ok(text)
+            .map_err(|e| format!("sub-query failed: {e:#}"))
     }
 }
 
@@ -735,18 +729,25 @@ async fn tree_reduce_inner(
 /// to the agent loop and then to the UI spinner.  Pass `None` in headless/test
 /// contexts where no UI is attached.
 ///
+/// `limits` are the stall limits of each sub-query (first byte, first token,
+/// stream idle), normally `agent.turn_limits()`.
+///
 /// Returns `(ContextQueryTool, ContextReduceTool)`.
 pub fn build_context_query_tools(
     store: Arc<Mutex<ContextStore>>,
     provider: Arc<dyn ModelProvider>,
     cfg: &ContextConfig,
+    limits: TurnLimits,
     progress_tx: Option<mpsc::Sender<ToolEvent>>,
 ) -> (ContextQueryTool, ContextReduceTool) {
-    let runner: Arc<dyn SubQueryRunner> = Arc::new(ModelSubQueryRunner::new(
-        provider,
-        cfg.sub_query_max_chars,
-        cfg.sub_query_timeout_secs,
-    ));
+    let runner: Arc<dyn SubQueryRunner> = Arc::new(
+        ModelSubQueryRunner::new(
+            provider,
+            cfg.sub_query_max_chars,
+            cfg.sub_query_timeout_secs,
+        )
+        .with_limits(limits),
+    );
 
     let query_tool = ContextQueryTool::new(
         store.clone(),

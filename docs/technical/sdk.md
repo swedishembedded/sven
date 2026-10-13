@@ -178,7 +178,11 @@ let engine = Engine::builder()
 ```
 
 The run waits for the reply, bounded by its cancel token and deadline; a
-gate dropped without a reply leaves the turn waiting. An approved call runs
+gate dropped without a reply leaves the turn waiting. The SDK sets no deadline
+of its own - an embedding application states the bound it wants with
+`RunOptions::deadline` (the headless runner, by contrast, applies
+`agent.max_run_timeout_secs`, four hours by default), so an application whose
+handler can stay silent should always give its calls one. An approved call runs
 exactly as the model proposed it.
 A refused call is answered in the conversation with the reason, so the next
 request is valid for every provider and the model learns why.

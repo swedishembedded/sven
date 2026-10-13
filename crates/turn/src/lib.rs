@@ -16,6 +16,7 @@
 mod compact;
 pub mod ledger;
 mod ledger_recorder;
+mod oneshot;
 mod tool_slots;
 
 pub mod prompts;
@@ -27,6 +28,7 @@ pub use compact::{
     compact_session, compact_session_with_strategy, emergency_compact, finish_compaction,
     prepare_compaction, smart_truncate, CompactionPlan, CompactionStrategy,
 };
+pub use oneshot::complete_text;
 pub use prompts::{system_prompt, CollabEvent};
 pub use runtime_context::AgentRuntimeContext;
 pub use stall::{StallLimits, NOTICE_INTERVAL};

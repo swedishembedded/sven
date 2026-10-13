@@ -10,7 +10,6 @@
 
 use std::sync::Arc;
 
-use futures::StreamExt;
 use sven_bootstrap::Config;
 use sven_bootstrap::{McpManager, RuntimeContext};
 use sven_model_drivers::ModelConfig;
@@ -19,9 +18,10 @@ use sven_vocab::{AgentMode, ApprovalMode};
 use crate::controller::{Gates, ProviderFactory, SessionController, SessionOptions, SessionSpec};
 use sven_machines::AgentEvent;
 use sven_mcp_client::McpEvent;
-use sven_model::{CompletionRequest, Message, ResponseEvent};
+use sven_model::{CompletionRequest, Message};
 use sven_session_store::make_title;
 use sven_tools_agent::QuestionRequest;
+use sven_turn::TurnLimits;
 use sven_workspace::{SharedAgents, SharedSkills};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
@@ -62,7 +62,11 @@ pub enum AgentRequest {
 }
 
 /// Lightweight helper to generate a title from a given model configuration.
-async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Option<String> {
+async fn generate_title_with_config(
+    cfg: &ModelConfig,
+    user_text: &str,
+    limits: TurnLimits,
+) -> Option<String> {
     const TITLE_MAX_TOKENS: u32 = 50;
 
     let title_model = match sven_model_drivers::from_config(cfg) {
@@ -89,30 +93,13 @@ async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Optio
         response_format: None,
     };
 
-    match title_model.complete(req).await {
-        Ok(mut stream) => {
-            let mut text = String::new();
-            while let Some(ev) = stream.next().await {
-                match ev {
-                    Ok(ResponseEvent::TextDelta(d)) => text.push_str(&d),
-                    Ok(ResponseEvent::Done | ResponseEvent::MaxTokens) => break,
-                    Ok(ResponseEvent::ThinkingDelta(_)) => (),
-                    Err(e) => {
-                        warn!(error = %e, "title generation stream error");
-                        return None;
-                    }
-                    _ => {}
-                }
-            }
-            let t = text.trim().trim_matches('"').trim();
-            if t.is_empty() {
-                None
-            } else {
-                Some(t.to_string())
-            }
+    match sven_turn::complete_text(title_model.as_ref(), req, limits).await {
+        Ok(text) => {
+            let title = text.trim().trim_matches('"').trim();
+            (!title.is_empty()).then(|| title.to_string())
         }
         Err(e) => {
-            warn!(error = %e, "title generation request failed");
+            warn!(error = %e, "title generation failed");
             None
         }
     }
@@ -200,6 +187,7 @@ pub(crate) async fn run_kernel_session_task(
         shared_skills,
         shared_agents,
     );
+    let title_limits = config.agent.turn_limits();
     let mut options = SessionOptions::new(config, runtime, tx.clone());
     options.approval = approval;
     options.gates = Gates::Modal(question_tx);
@@ -275,18 +263,19 @@ pub(crate) async fn run_kernel_session_task(
             AgentRequest::GenerateTitle { user_text } => {
                 let cfg = session.spec().model.clone();
                 let event_tx = tx.clone();
+                let limits = title_limits;
                 tokio::spawn(async move {
                     let openrouter_title = {
                         let mut free_cfg = cfg.clone();
                         free_cfg.provider = "openrouter".to_string();
                         free_cfg.name = "openrouter/free".to_string();
                         free_cfg.base_url = None;
-                        generate_title_with_config(&free_cfg, &user_text).await
+                        generate_title_with_config(&free_cfg, &user_text, limits).await
                     };
                     let title = if openrouter_title.is_some() {
                         openrouter_title
                     } else {
-                        generate_title_with_config(&cfg, &user_text).await
+                        generate_title_with_config(&cfg, &user_text, limits).await
                     };
                     let final_title = title.unwrap_or_else(|| make_title(&user_text));
                     let _ = event_tx.send(AgentEvent::TitleGenerated(final_title)).await;

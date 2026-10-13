@@ -202,7 +202,11 @@ impl Tool for GdbConnectTool {
             .arg(format!("target extended-remote {target_addr}"))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            // A client that never becomes ready (gdb stuck connecting to an
+            // unresponsive target ignores a closed stdin) must not outlive
+            // the call that gave up on it.
+            .kill_on_drop(true);
         // Detach from the controlling terminal so gdb cannot open /dev/tty
         // and corrupt TUI state.
         #[cfg(unix)]

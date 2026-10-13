@@ -451,10 +451,12 @@ Controls the agent's autonomy and defaults.
 | `system_prompt` | - | System prompt override (leave unset to use built-in) |
 | `max_thinking_tokens` | 10% of context window | Estimated reasoning-token cap per turn; see [Thinking-loop watchdog](#thinking-loop-watchdog) |
 | `thinking_timeout_secs` | `600` | Seconds a model may reason with no forward progress before the turn aborts |
-| `stream_idle_timeout_secs` | `300` | Seconds a streamed response may stay silent before the connection is declared stale and the turn fails; raise it for slow local prefill |
+| `stream_idle_timeout_secs` | `300`; `1200` for a local server | Seconds a streamed response may stay silent before the connection is declared stale and the turn fails |
 | `first_byte_timeout_secs` | `120`; `600` for a local server | Seconds to wait for the model server's response headers; see [Stalled model servers](#stalled-model-servers) |
 | `first_token_timeout_secs` | `300`; `900` for a local server | Seconds, from the request, to wait for the first real output (text, reasoning or a tool-call chunk); keepalives do not count |
 | `no_progress_timeout_secs` | `600` | Seconds of silence in real output, once it has started, before the turn fails; keepalives do not count |
+| `max_step_timeout_secs` | `0` | Wall-clock limit of one headless workflow step; `0` = no limit. `--step-timeout` overrides it |
+| `max_run_timeout_secs` | `14400` (4 hours) | Wall-clock limit of a whole headless run, covering every wait in it: model, tools, approvals and questions. The run ends with exit code `124`. `0` = no limit. `--run-timeout` overrides it; see [CI pipeline](04-ci-pipeline.md#timeouts) |
 | `child_run_timeout_secs` | `3600` | Wall-clock budget of each child agent run (a parallel SDLC task, a `task` sub-agent); the child is stopped when it runs out. `0` = no limit |
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.
@@ -581,9 +583,14 @@ limit.
 
 The first-byte and first-token defaults are larger for a server on your own
 hardware (`brain`, `ollama`, `vllm`, `lmstudio`, `sven`), which may still be
-prefilling a long prompt. A local server that sends neither data nor
-keepalives while it prefills is still bound by `stream_idle_timeout_secs`;
-raise that too for very long prompts. A value of `0` selects the default.
+prefilling a long prompt, and so is the stream-idle default (`1200` seconds
+instead of `300`): a local server that sends neither data nor keepalives while
+it prefills is cut off by the first-token limit before the idle one. A value
+of `0` selects the default.
+
+One-shot completions that are not part of a turn - the chat title and the
+`context` tool's sub-queries - obey the same first-byte, first-token and idle
+limits, so a quiet server cannot hang them either.
 
 While no real output arrives, a `ModelWaiting` event is sent every 5 seconds
 with the elapsed time and what the turn is waiting for (connecting, first
@@ -770,7 +777,7 @@ and resources. Each server is identified by its key in the map (e.g. `atlassian`
 | `enabled` | Whether the server is active (default: `true`) |
 | `env` | Environment variables for stdio servers |
 | `oauth` | OAuth 2.0 config for HTTP servers that require authentication |
-| `timeout_secs` | Request timeout (default: 30) |
+| `timeout_secs` | Longest a single call to the server may take, in seconds (default: `30`, also for `0`). It bounds the whole call - connecting, the response and, for HTTP, the response body - so a tool that needs longer needs a larger value. A call that exceeds it fails with an error naming the method |
 
 **HTTP transport:**
 

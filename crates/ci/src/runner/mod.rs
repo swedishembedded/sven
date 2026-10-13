@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod attachment;
+mod deadline;
 mod event;
 mod helpers;
 pub mod runtime_runner;
@@ -557,21 +558,18 @@ impl CiRunner {
 
         // Resolve timeouts (CLI > config)
         // Frontmatter no longer carries timeout fields (removed in redesign).
-        let run_timeout_secs = opts.run_timeout_secs.or_else(|| {
-            if self.config.agent.max_run_timeout_secs > 0 {
-                Some(self.config.agent.max_run_timeout_secs)
-            } else {
-                None
-            }
-        });
+        // An explicit `0` (CLI or config) opts out of the limit; the configured
+        // default is finite so an unattended run cannot hang forever.
+        let run_timeout_secs = opts
+            .run_timeout_secs
+            .unwrap_or(self.config.agent.max_run_timeout_secs);
+        let run_timeout_secs = (run_timeout_secs > 0).then_some(run_timeout_secs);
 
-        let global_step_timeout_secs = opts.step_timeout_secs.or_else(|| {
-            if self.config.agent.max_step_timeout_secs > 0 {
-                Some(self.config.agent.max_step_timeout_secs)
-            } else {
-                None
-            }
-        });
+        let global_step_timeout_secs = opts
+            .step_timeout_secs
+            .unwrap_or(self.config.agent.max_step_timeout_secs);
+        let global_step_timeout_secs =
+            (global_step_timeout_secs > 0).then_some(global_step_timeout_secs);
 
         // Resolve mode from CLI (frontmatter no longer carries a top-level mode)
         let initial_mode = opts.mode;
@@ -848,7 +846,19 @@ impl CiRunner {
             }
 
             // Resolve step timeout
-            let step_timeout_secs = step.options.timeout_secs.or(global_step_timeout_secs);
+            // A step also ends when the total run limit does, not only
+            // between steps.
+            let run_remaining_secs =
+                run_timeout_secs.map(|t| t.saturating_sub(run_start.elapsed().as_secs()).max(1));
+            let step_timeout_secs = step
+                .options
+                .timeout_secs
+                .or(global_step_timeout_secs)
+                .filter(|&t| t > 0);
+            let step_timeout_secs = match (step_timeout_secs, run_remaining_secs) {
+                (Some(step), Some(run)) => Some(step.min(run)),
+                (step, run) => step.or(run),
+            };
 
             if let Some(l) = step.label.as_deref() {
                 write_progress(&format!(

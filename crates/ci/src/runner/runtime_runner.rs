@@ -16,7 +16,7 @@
 //! 5. Returns exit code 0 when the turn completes, non-zero on error/timeout.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Context as _;
 use atif::Trajectory;
@@ -76,11 +76,11 @@ pub struct RuntimeRunnerOptions {
     pub history: Vec<Message>,
     /// Project root (used for checkpoint path, audit log, etc.).
     pub project_root: Option<std::path::PathBuf>,
-    /// Per-run timeout in seconds. `None` means unlimited. When unset, the
-    /// per-step timeout (if any) is used as the effective bound.
+    /// Per-run timeout in seconds (`0` = unlimited). When unset, the per-step
+    /// timeout and then `agent.max_run_timeout_secs` bound the run.
     pub timeout_secs: Option<u64>,
-    /// Per-step timeout in seconds. For a single-turn kernel run this acts as
-    /// a fallback bound when no per-run timeout is supplied.
+    /// Per-step timeout in seconds (`0` = unlimited); for a single-turn kernel
+    /// run, the fallback bound when no per-run timeout is supplied.
     pub step_timeout_secs: Option<u64>,
     /// Cumulative token budget for the run. When the running total of input +
     /// output tokens reaches this value the run stops with
@@ -240,16 +240,16 @@ impl RuntimeRunner {
         write_progress("[sven:step:start] 1/1");
         let started = Instant::now();
 
-        // A per-run timeout takes precedence; otherwise fall back to the
-        // per-step timeout (for a single-turn kernel run the two coincide).
+        // Which limit applies is `run_deadline`'s decision.
         // The deadline is enforced per `recv` rather than by racing the whole
         // drive loop in a `select!`: dropping that future on timeout would
         // take `state` - and with it the trajectory accumulated so far - down
         // with it, leaving a timed-out run with no record at all.
-        let deadline = opts
-            .timeout_secs
-            .or(opts.step_timeout_secs)
-            .map(|t| started + Duration::from_secs(t));
+        let deadline = super::deadline::run_deadline(
+            started,
+            opts.timeout_secs.or(opts.step_timeout_secs),
+            self.config.agent.max_run_timeout_secs,
+        );
 
         // `TurnExecutor` emits `UiEvent::TurnComplete` whenever a turn
         // produces neither tool calls nor an empty response - a heuristic

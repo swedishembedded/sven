@@ -74,6 +74,11 @@ impl RunOptions {
     }
 
     /// Stops the run once `after` has elapsed ([`RunConclusion::Timeout`]).
+    ///
+    /// The SDK sets no deadline by default, so a gate handler that never
+    /// replies holds a run without one; a model server that goes quiet is
+    /// ended by the stall limits (`agent.first_byte_timeout_secs` and
+    /// friends) whether or not a deadline is set.
     #[must_use]
     pub fn deadline(mut self, after: Duration) -> Self {
         self.deadline = Some(after);

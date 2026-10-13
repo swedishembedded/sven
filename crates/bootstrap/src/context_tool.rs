@@ -25,6 +25,7 @@ use sven_tool_api::{
     tool::{Tool, ToolCall, ToolOutput},
 };
 use sven_tools_ctx::{ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore};
+use sven_turn::TurnLimits;
 use sven_vocab::AgentMode;
 
 use crate::context_query::{build_context_query_tools, ContextQueryTool, ContextReduceTool};
@@ -43,9 +44,11 @@ impl ContextTool {
         store: Arc<Mutex<ContextStore>>,
         model: Arc<dyn ModelProvider>,
         cfg: &ContextConfig,
+        limits: TurnLimits,
         progress_tx: Option<mpsc::Sender<ToolEvent>>,
     ) -> Self {
-        let (query, reduce) = build_context_query_tools(store.clone(), model, cfg, progress_tx);
+        let (query, reduce) =
+            build_context_query_tools(store.clone(), model, cfg, limits, progress_tx);
         Self {
             open: ContextOpenTool::new(store.clone()),
             read: ContextReadTool::new(store.clone()),
@@ -293,7 +296,13 @@ mod tests {
 
         let store = Arc::new(Mutex::new(ContextStore::new()));
         let provider: Arc<dyn ModelProvider> = Arc::new(MockProvider);
-        ContextTool::new(store, provider, &ContextConfig::default(), None)
+        ContextTool::new(
+            store,
+            provider,
+            &ContextConfig::default(),
+            sven_turn::TurnLimits::default(),
+            None,
+        )
     }
 
     #[tokio::test]

@@ -7,7 +7,7 @@
       "compaction_strategy": "structured",
       "compaction_threshold": 0.8500000238418579,
       "default_mode": "agent",
-      "max_run_timeout_secs": 0,
+      "max_run_timeout_secs": 14400,
       "max_step_timeout_secs": 0,
       "max_tool_rounds": 200,
       "system_prompt": null,

@@ -47,6 +47,11 @@ const DEFAULT_FIRST_TOKEN: Duration = Duration::from_secs(300);
 const DEFAULT_FIRST_TOKEN_LOCAL: Duration = Duration::from_secs(900);
 /// Longest silence of real output once the model has started producing it.
 const DEFAULT_NO_PROGRESS: Duration = Duration::from_secs(600);
+/// Longest silence between two stream chunks from a hosted API.
+const DEFAULT_IDLE: Duration = Duration::from_secs(300);
+/// The same for a server on the user's own hardware: a long prefill sends
+/// nothing, so the silence is allowed to outlast the local first-token limit.
+const DEFAULT_IDLE_LOCAL: Duration = Duration::from_secs(1200);
 /// How often [`AgentEvent::ModelWaiting`] is sent while nothing real arrives.
 pub const NOTICE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -81,7 +86,7 @@ impl StallLimits {
         }
     }
 
-    fn resolve(&self, local: bool, idle: Duration) -> Resolved {
+    fn resolve(&self, local: bool, idle: Option<Duration>) -> Resolved {
         let first_byte = self.first_byte.unwrap_or(if local {
             DEFAULT_FIRST_BYTE_LOCAL
         } else {
@@ -99,7 +104,11 @@ impl StallLimits {
             first_byte,
             first_token,
             no_progress: self.no_progress.unwrap_or(DEFAULT_NO_PROGRESS),
-            idle,
+            idle: idle.unwrap_or(if local {
+                DEFAULT_IDLE_LOCAL
+            } else {
+                DEFAULT_IDLE
+            }),
         }
     }
 }
@@ -145,7 +154,11 @@ pub(crate) struct StallWatch {
 }
 
 impl StallWatch {
-    pub(crate) fn new(model: &dyn ModelProvider, limits: &StallLimits, idle: Duration) -> Self {
+    pub(crate) fn new(
+        model: &dyn ModelProvider,
+        limits: &StallLimits,
+        idle: Option<Duration>,
+    ) -> Self {
         let now = Instant::now();
         let server = match model.endpoint_host() {
             Some(host) => format!("{} {host}", model.name()),
@@ -298,7 +311,7 @@ impl StallWatch {
 mod tests {
     use super::*;
 
-    const IDLE: Duration = Duration::from_secs(300);
+    const IDLE: Option<Duration> = Some(Duration::from_secs(300));
 
     #[test]
     fn defaults_are_larger_for_a_local_server() {
@@ -308,6 +321,19 @@ mod tests {
         assert_eq!(local.first_byte, Duration::from_secs(600));
         assert!(local.first_token > hosted.first_token);
         assert_eq!(hosted.no_progress, local.no_progress);
+    }
+
+    #[test]
+    fn the_idle_default_is_larger_for_a_local_server_and_a_configured_one_wins() {
+        let hosted = StallLimits::default().resolve(false, None);
+        let local = StallLimits::default().resolve(true, None);
+        assert_eq!(hosted.idle, Duration::from_secs(300));
+        assert!(
+            local.idle > local.first_token,
+            "a silent local prefill must reach the first-token limit before the idle one"
+        );
+        let configured = StallLimits::default().resolve(true, Some(Duration::from_secs(7)));
+        assert_eq!(configured.idle, Duration::from_secs(7));
     }
 
     #[test]

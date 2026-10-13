@@ -324,7 +324,7 @@ let context_store = Arc::new(Mutex::new(ContextStore::new()));
 reg.register(ContextOpenTool::new(context_store.clone()));
 reg.register(ContextReadTool::new(context_store.clone()));
 reg.register(ContextGrepTool::new(context_store.clone()));
-let (ctx_query, ctx_reduce) = build_context_query_tools(context_store, model, cfg);
+let (ctx_query, ctx_reduce) = build_context_query_tools(context_store, model, cfg, limits, None);
 reg.register(ctx_query);
 reg.register(ctx_reduce);
 ```

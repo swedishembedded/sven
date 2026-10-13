@@ -76,20 +76,17 @@ impl std::error::Error for AbortedError {}
 pub type ModelResolver =
     std::sync::Arc<dyn Fn(&str) -> anyhow::Result<std::sync::Arc<dyn ModelProvider>> + Send + Sync>;
 
-/// Longest silence between two stream chunks before the connection is
-/// declared stale, when no stream idle limit is configured (`agent.stream_idle_timeout_secs`).
-const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
-
 /// Limits on one streamed model turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TurnLimits {
     /// Bounds a runaway reasoning loop - see [`ThinkingBudget`].
     pub thinking: ThinkingBudget,
     /// Longest silence between two stream chunks before the connection is
-    /// declared stale and the turn fails. A slow but live provider (CPU
-    /// prefill of a long prompt) can legitimately stay silent for minutes
+    /// declared stale and the turn fails. `None` takes the default, which is
+    /// larger for a local server (see [`ModelProvider::is_local`]) because a
+    /// CPU prefill of a long prompt can legitimately stay silent for minutes
     /// before its first token.
-    pub stream_idle: Duration,
+    pub stream_idle: Option<Duration>,
     /// Limits on a server that connects but produces nothing - see
     /// [`StallLimits`].
     pub stall: StallLimits,
@@ -108,7 +105,7 @@ impl From<ThinkingBudget> for TurnLimits {
     fn from(thinking: ThinkingBudget) -> Self {
         Self {
             thinking,
-            stream_idle: DEFAULT_STREAM_IDLE_TIMEOUT,
+            stream_idle: None,
             stall: StallLimits::default(),
             max_output_tokens: None,
         }
@@ -117,13 +114,11 @@ impl From<ThinkingBudget> for TurnLimits {
 
 impl TurnLimits {
     /// The longest silence between two stream chunks, in seconds, before the
-    /// connection is declared stale. `None` or `0` is the default
-    /// ([`DEFAULT_STREAM_IDLE_TIMEOUT`]).
+    /// connection is declared stale. `None` or `0` selects the default for
+    /// the provider's locality.
     #[must_use]
     pub fn with_stream_idle_secs(mut self, secs: Option<u64>) -> Self {
-        self.stream_idle = secs
-            .filter(|&secs| secs > 0)
-            .map_or(DEFAULT_STREAM_IDLE_TIMEOUT, Duration::from_secs);
+        self.stream_idle = secs.filter(|&secs| secs > 0).map(Duration::from_secs);
         self
     }
 

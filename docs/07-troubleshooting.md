@@ -269,7 +269,8 @@ sven --file workflow.md -v 2>&1 | grep "Project Context"
 
 ### Workflow hangs and never finishes
 
-Add timeouts to prevent indefinite runs:
+A headless run ends after `agent.max_run_timeout_secs` (four hours by default)
+even if nothing else bounds it. Lower the limits to fail sooner:
 
 ```bash
 sven --file workflow.md --step-timeout 300 --run-timeout 1800

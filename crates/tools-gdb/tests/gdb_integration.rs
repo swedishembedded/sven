@@ -621,6 +621,73 @@ mod gdb_integration {
 
     // ── Error recovery tests ──────────────────────────────────────────────────
 
+    /// Whether process `pid` is gone; an exited but unreaped process counts.
+    #[cfg(target_os = "linux")]
+    fn process_is_gone(pid: u32) -> bool {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Err(_) => true,
+            Ok(stat) => stat
+                .rsplit(')')
+                .next()
+                .is_some_and(|rest| rest.trim_start().starts_with('Z')),
+        }
+    }
+
+    /// A gdb client that never becomes ready must not outlive the connect
+    /// call that gave up on it.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_client_that_never_becomes_ready_is_killed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let pids = dir.path().join("pids");
+        // First run is the reachability probe and reports success; the second
+        // is the long-lived client, which stays silent forever.
+        let fake_gdb = dir.path().join("fake-gdb");
+        std::fs::write(
+            &fake_gdb,
+            format!(
+                "#!/bin/sh\necho $$ >> {pids}\n\
+                 [ \"$(wc -l < {pids})\" = 1 ] && echo '^done'\n\
+                 exec sleep 300\n",
+                pids = pids.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_gdb, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let t = GdbConnectTool::new(
+            make_state(),
+            GdbConfig {
+                connect_timeout_secs: 1,
+                ..fast_cfg()
+            },
+        );
+        let out = t
+            .execute(&call(
+                "gdb_connect",
+                json!({ "gdb_path": fake_gdb.display().to_string() }),
+            ))
+            .await;
+        assert!(out.is_error, "{}", out.content);
+
+        let recorded = std::fs::read_to_string(&pids).unwrap();
+        let client: u32 = recorded
+            .lines()
+            .nth(1)
+            .expect("client was spawned")
+            .parse()
+            .unwrap();
+        for _ in 0..50 {
+            if process_is_gone(client) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!("gdb client {client} outlived the failed connect");
+    }
+
     #[tokio::test]
     async fn state_clears_after_stop() {
         let state = make_state();

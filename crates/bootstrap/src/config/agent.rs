@@ -17,6 +17,13 @@ use sven_executors::CompactionConfig;
 use sven_turn::{CompactionStrategy, StallLimits, ThinkingBudget, TurnLimits};
 use sven_vocab::AgentMode;
 
+/// Default total wall-clock bound of a headless run, in seconds.
+pub const DEFAULT_MAX_RUN_TIMEOUT_SECS: u64 = 4 * 60 * 60;
+
+fn default_max_run_timeout_secs() -> u64 {
+    DEFAULT_MAX_RUN_TIMEOUT_SECS
+}
+
 fn default_agent_mode() -> AgentMode {
     AgentMode::Agent
 }
@@ -103,8 +110,11 @@ pub struct AgentConfig {
     #[serde(default)]
     pub max_step_timeout_secs: u64,
 
-    /// Total run wall-clock timeout in seconds (0 = no limit).
-    #[serde(default)]
+    /// Total run wall-clock timeout in seconds. The default
+    /// (`DEFAULT_MAX_RUN_TIMEOUT_SECS`, four hours) is generous but finite,
+    /// so an unattended run whose model, tool or approval handler never
+    /// answers still ends; `0` = no limit. `--run-timeout` overrides it.
+    #[serde(default = "default_max_run_timeout_secs")]
     pub max_run_timeout_secs: u64,
 
     /// Cap on estimated thinking/reasoning tokens for a single turn, guarding
@@ -237,7 +247,7 @@ impl Default for AgentConfig {
             compaction_overhead_reserve: default_compaction_overhead_reserve(),
             system_prompt: None,
             max_step_timeout_secs: 0,
-            max_run_timeout_secs: 0,
+            max_run_timeout_secs: DEFAULT_MAX_RUN_TIMEOUT_SECS,
             child_run_timeout_secs: default_child_run_timeout_secs(),
             max_thinking_tokens: None,
             thinking_timeout_secs: None,
@@ -289,7 +299,7 @@ mod tests {
         let limits = a.turn_limits();
         assert_eq!(limits.thinking.max_thinking_tokens, Some(4096));
         assert_eq!(limits.thinking.thinking_timeout_secs, Some(90));
-        assert_eq!(limits.stream_idle, Duration::from_secs(7));
+        assert_eq!(limits.stream_idle, Some(Duration::from_secs(7)));
     }
 
     #[test]
