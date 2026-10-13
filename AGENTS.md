@@ -92,6 +92,12 @@ CHANGELOG.md is history and exempt.
   extra guard, never the only path: a gate reachable only from a
   manually-installed hook enforces nothing on a fresh clone, so everything is
   in `make check` too.
+- **Env reads are phased out: add a flag, not a variable.** Settings come in
+  as CLI flags (and the config file), never as new `std::env::var`, `env!` or
+  clap `env = "..."` reads. `make check/gates/env-reads` is a ratchet over
+  `scripts/gates/env-reads.allow`: a read not listed fails, and so does a
+  listed read that is gone (delete the line). Never add an entry to bless a
+  new read.
 - **Before any sweeping/cross-cutting change, read "Making cross-cutting
   changes" below** - it is the canonical map of every place each kind of
   change must touch.
@@ -181,11 +187,11 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
 | `make test` | Unit + integration tests (whole workspace) |
 | `make check` | rustfmt + text gates + `xtask arch` + clippy, `-D warnings` + rustdoc links |
 | `make check/fmt` | `cargo fmt --all -- --check`, checked not applied |
-| `make check/gates` | text gates: no machine paths, no brain dependency, repo scope, sample layering, make target naming (one generated `check/gates/<gate>` per `scripts/gates/check-<gate>.sh`) |
+| `make check/gates` | text gates: no machine paths, no brain dependency, repo scope, sample layering, make target naming, no new environment reads (one generated `check/gates/<gate>` per `scripts/gates/check-<gate>.sh`) |
 | `make check/arch` | architecture ratchet only |
 | `make check/clippy` | clippy only |
 | `make check/doc` | `cargo doc`, broken intra-doc links are errors |
-| `make test/gates` | Bats self-tests of the text gates (make-targets) on scratch trees; no build needed, part of `make test` |
+| `make test/gates` | Bats self-tests of the text gates (env-reads, make-targets) on scratch trees; no build needed, part of `make test` |
 | `make fmt` | Format |
 | `make test/harness` | Every harness suite (one `test/harness/<suite>` each) (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
 | `make test/harness/local-model` | OPT-IN: the `live-local` case of the `ticket-routing` sample against a model you already serve (`ENDPOINT=<url>`, optional `MODEL=<spec>`; refuses without ENDPOINT); never part of `make test` or `make check` |

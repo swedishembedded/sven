@@ -64,6 +64,15 @@ repos:
         files: '(^|/)Makefile$'
         pass_filenames: false
 
+      # Environment reads only shrink: a new one needs a CLI flag instead.
+      # Also run by `make check/gates/env-reads`.
+      - id: env-reads
+        name: no new environment reads
+        entry: bash scripts/gates/check-env-reads.sh
+        language: system
+        files: '(\.rs$|^scripts/gates/env-reads\.allow$)'
+        pass_filenames: false
+
       # Replace common non-ASCII punctuation (em/en dashes, curly quotes,
       # ellipsis, non-breaking spaces) with plain ASCII equivalents so the
       # repository stays pure ASCII in all text and markdown files.
