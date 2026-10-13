@@ -14,9 +14,11 @@
 //! the same way in every run, on every machine, whatever order the tools were
 //! registered in. Nothing here calls a model. A ranker backed by a model can
 //! stand in for it, or re-order its shortlist, without the discovery tool
-//! changing.
+//! changing, which is why [`ToolRanker::rank`] is async.
 
 use std::collections::{BTreeMap, BTreeSet};
+
+use async_trait::async_trait;
 
 use crate::descriptor::ToolDescriptor;
 
@@ -30,11 +32,12 @@ pub struct RankedTool {
 }
 
 /// Orders candidate tools by how well they answer a query.
+#[async_trait]
 pub trait ToolRanker: Send + Sync {
     /// The candidates that match `query`, best first. A candidate that does
     /// not match at all is left out. Candidates of equal score are ordered by
     /// name, so the result never depends on the order of `candidates`.
-    fn rank(&self, query: &str, candidates: &[ToolDescriptor]) -> Vec<RankedTool>;
+    async fn rank(&self, query: &str, candidates: &[ToolDescriptor]) -> Vec<RankedTool>;
 }
 
 /// Okapi BM25 over the tokens of each tool's name, summary and category.
@@ -140,8 +143,18 @@ fn document(tool: &ToolDescriptor) -> Document<'_> {
     }
 }
 
+#[async_trait]
 impl ToolRanker for Bm25Ranker {
-    fn rank(&self, query: &str, candidates: &[ToolDescriptor]) -> Vec<RankedTool> {
+    async fn rank(&self, query: &str, candidates: &[ToolDescriptor]) -> Vec<RankedTool> {
+        self.rank_now(query, candidates)
+    }
+}
+
+impl Bm25Ranker {
+    /// [`ToolRanker::rank`] without the `await`, for a caller that has no use
+    /// for a model: the nearest name to a misspelling is always BM25.
+    #[must_use]
+    pub fn rank_now(&self, query: &str, candidates: &[ToolDescriptor]) -> Vec<RankedTool> {
         let wanted: BTreeSet<String> = tokens(query).into_iter().collect();
         if wanted.is_empty() || candidates.is_empty() {
             return Vec::new();

@@ -25,6 +25,7 @@ pub mod config;
 pub mod context;
 pub mod context_query;
 pub mod context_tool;
+pub mod decision_ranker;
 pub mod kernel_bridge;
 mod mode_policy;
 pub mod modes;

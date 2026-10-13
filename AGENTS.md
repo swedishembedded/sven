@@ -434,6 +434,22 @@ as it leaves a dispatch; never keep it in a machine, an executor or a tool.
 `TurnExecutor` and the SDK's `take_offered_tools` both go through `offer`, so a
 record of a turn and the turn cannot disagree.
 
+### Add a decision point
+A decision model only advises; see [docs/technical/decisions.md](docs/technical/decisions.md).
+1. Declare its `DecisionPolicy` (`sven-decision::policy`): the one question
+   shape, input budget, thresholds, impact (anything but `routine` is
+   advisory-only by construction) and fallback. Thresholds belong to the
+   decision point, never to a shared constant.
+2. Ask through `decide_batched` (questions about one state travel in one
+   call), judge with `evaluate` (and `agree` when options are asked in two
+   orders), and on abstention or failure return exactly the legacy result.
+3. Record `DecisionTelemetry::record_call` and `record_trace` for every ask,
+   and report a failure with `DecisionRuntime::diagnose` (once per session).
+4. Gate it on a `decision.features.*` flag (`Feature`, `sven-decision::config`)
+   and document the key in `docs/05-configuration.md`.
+5. Test it with `MockDecisionProvider`: an abstention, a failure and a
+   promotion must each be proven.
+
 ### Add a `ToolCapability` (permission bucket)
 1. `hsm/src/permissions.rs` - the `ToolCapability` enum, `ALL`,
    `is_read_only` (what manual approval asks about), and the classify path.

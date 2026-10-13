@@ -247,3 +247,17 @@ async fn the_models_listing_shows_state_validation_and_the_remedy() {
         assert!(text.contains(needle), "{needle}\n{text}");
     }
 }
+
+#[test]
+fn a_section_that_is_off_is_not_checked() {
+    let broken = DecisionConfig {
+        timeout_ms: 0,
+        ..DecisionConfig::default()
+    };
+    assert!(DecisionRuntime::new(broken.clone()).is_ok());
+    let enabled = DecisionConfig {
+        enabled: true,
+        ..broken
+    };
+    assert!(DecisionRuntime::new(enabled).is_err());
+}

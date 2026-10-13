@@ -490,6 +490,15 @@ impl RuntimeBuilder {
             self.approval_mode,
         )?;
 
+        // ── Decisions ─────────────────────────────────────────────────────────
+        // Off contacts nothing; `required` refuses to start without a suitable
+        // model, before anything that depends on one is assembled.
+        let decision = Arc::new(
+            sven_decision::DecisionRuntime::new(self.config.decision.clone())
+                .map_err(|e| anyhow::anyhow!("invalid decision configuration: {e}"))?,
+        );
+        decision.require_ready().await.map_err(anyhow::Error::msg)?;
+
         // ── Initialise model provider ─────────────────────────────────────────
         let model_cfg = self
             .model_cfg_override
@@ -626,6 +635,7 @@ impl RuntimeBuilder {
             model: model_cfg.clone(),
             ..(*self.config).clone()
         };
+        let decision_notices = tool_event_tx.clone();
         let mut tool_registry = match tool_profile {
             Some(profile) => build_tool_registry_with_integrations(
                 &registry_config,
@@ -662,7 +672,8 @@ impl RuntimeBuilder {
         if self.config.tools.disclosure.mode == sven_tool_registry::Disclosure::Deferred
             && !runtime.no_tools
         {
-            crate::tool_discovery::enable(&mut tool_registry, Arc::clone(&mode_lock));
+            let ranker = crate::decision_ranker::for_session(&decision, decision_notices);
+            crate::tool_discovery::enable(&mut tool_registry, Arc::clone(&mode_lock), ranker);
         }
 
         // Last, so a disabled name is gone whoever registered it.
@@ -782,6 +793,7 @@ impl RuntimeBuilder {
                 call_id_to_thread: Arc::clone(&call_id_to_thread),
                 cancel_handle,
                 no_tools: runtime.no_tools,
+                decision_telemetry: Arc::clone(decision.telemetry()),
                 project_root: self.runtime_ctx.project_root.clone(),
                 audit_trail: audit_trail.clone(),
                 #[cfg(feature = "memory")]

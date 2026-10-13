@@ -59,16 +59,17 @@ fn permuted(tools: &[ToolDescriptor], seed: u64) -> Vec<ToolDescriptor> {
     out
 }
 
-fn top(query: &str, tools: &[ToolDescriptor]) -> Vec<String> {
+async fn top(query: &str, tools: &[ToolDescriptor]) -> Vec<String> {
     Bm25Ranker
         .rank(query, tools)
+        .await
         .into_iter()
         .map(|r| r.name)
         .collect()
 }
 
-#[test]
-fn paraphrased_queries_find_the_tool_that_was_meant() {
+#[tokio::test]
+async fn paraphrased_queries_find_the_tool_that_was_meant() {
     let tools = hundred_tools();
     for (query, wanted) in [
         ("remove a ticket for good", "delete_ticket"),
@@ -82,7 +83,7 @@ fn paraphrased_queries_find_the_tool_that_was_meant() {
         ("change fields of the user", "update_user"),
         ("move a log out of the active workspace", "archive_log"),
     ] {
-        let ranked = top(query, &tools);
+        let ranked = top(query, &tools).await;
         assert_eq!(
             ranked.first().map(String::as_str),
             Some(wanted),
@@ -92,8 +93,8 @@ fn paraphrased_queries_find_the_tool_that_was_meant() {
     }
 }
 
-#[test]
-fn the_ranking_does_not_depend_on_the_order_the_tools_arrive_in() {
+#[tokio::test]
+async fn the_ranking_does_not_depend_on_the_order_the_tools_arrive_in() {
     let tools = hundred_tools();
     for query in [
         "delete a ticket",
@@ -101,11 +102,11 @@ fn the_ranking_does_not_depend_on_the_order_the_tools_arrive_in() {
         "user",
         "find an order by text",
     ] {
-        let reference = Bm25Ranker.rank(query, &tools);
+        let reference = Bm25Ranker.rank(query, &tools).await;
         assert!(!reference.is_empty(), "{query:?} matched nothing");
         for seed in 1..=8 {
             assert_eq!(
-                Bm25Ranker.rank(query, &permuted(&tools, seed)),
+                Bm25Ranker.rank(query, &permuted(&tools, seed)).await,
                 reference,
                 "{query:?} ranked differently for permutation {seed}"
             );
@@ -113,20 +114,20 @@ fn the_ranking_does_not_depend_on_the_order_the_tools_arrive_in() {
     }
 }
 
-#[test]
-fn equal_scores_are_ordered_by_name() {
+#[tokio::test]
+async fn equal_scores_are_ordered_by_name() {
     let tools = hundred_tools();
     // Every `read_*` summary has the same shape, so only the object word can
     // separate them: asking for the verb alone leaves them tied.
-    let ranked = top("get one by id", &tools);
+    let ranked = top("get one by id", &tools).await;
     let reads: Vec<&String> = ranked.iter().filter(|n| n.starts_with("read_")).collect();
     let mut sorted = reads.clone();
     sorted.sort();
     assert_eq!(reads, sorted);
 }
 
-#[test]
-fn a_query_that_matches_nothing_returns_nothing() {
-    assert!(top("zzz qqq", &hundred_tools()).is_empty());
-    assert!(top("the of and", &hundred_tools()).is_empty());
+#[tokio::test]
+async fn a_query_that_matches_nothing_returns_nothing() {
+    assert!(top("zzz qqq", &hundred_tools()).await.is_empty());
+    assert!(top("the of and", &hundred_tools()).await.is_empty());
 }

@@ -91,6 +91,8 @@ pub(crate) struct ExecutorParts {
     pub call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
     pub cancel_handle: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
     pub no_tools: bool,
+    /// Where the turn executor accounts for the session's decision calls.
+    pub decision_telemetry: Arc<sven_decision::DecisionTelemetry>,
     /// Root of the filesystem every effect shares; also where verification
     /// runs.
     pub project_root: Option<PathBuf>,
@@ -136,7 +138,8 @@ pub(crate) fn compose(
     )
     .with_no_tools(parts.no_tools)
     .with_compaction_config(parts.config.agent.compaction())
-    .with_turn_limits(parts.config.agent.turn_limits());
+    .with_turn_limits(parts.config.agent.turn_limits())
+    .with_decision_telemetry(parts.decision_telemetry);
     let user_executor = UserExecutor::new(parts.gates.questions, parts.gates.approvals)
         .with_approval_mode(parts.gates.approval_mode)
         .with_preapproval(crate::mode_policy::preapproval(&parts.config.tools));

@@ -10,11 +10,11 @@ sven-tool-api  = { path = "../tool-api" }
 sven-hsm       = { path = "../hsm" }
 sven-workspace = { path = "../workspace" }
 sven-vocab     = { path = "../vocab" }
+async-trait    = { workspace = true }
 regex          = { workspace = true }
 serde          = { workspace = true }
 
 [dev-dependencies]
 tempfile   = { workspace = true }
 tokio      = { workspace = true }
-async-trait = { workspace = true }
 serde_json = { workspace = true }

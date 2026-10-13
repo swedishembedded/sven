@@ -169,8 +169,11 @@ Okapi BM25 over the stemmed tokens of the name (counted three times), the
 summary and the category, with common words dropped. It is a pure function:
 the same query over the same tools answers identically in every run, whatever
 order the tools were registered in (ties are ordered by name). It calls no
-model. A decision model can stand in for it, or re-rank its shortlist, behind
-the same trait.
+model. `rank` is async so that a ranker backed by a model fits behind the same
+trait: with `decision.features.tool_routing` a decision model breaks BM25's
+ties (see [decisions](decisions.md#tool-search-re-ranking)), and in every other
+case the result is BM25's, exactly. The nearest-name suggestion for a
+misspelled `load` is always BM25.
 
 ## The model router
 

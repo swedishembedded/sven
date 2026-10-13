@@ -35,7 +35,11 @@ impl DecisionRuntime {
     ///
     /// The first value of the section that is out of range.
     pub fn new(config: DecisionConfig) -> Result<Self, String> {
-        config.validate()?;
+        // A section that is off is not looked at: a typo in it must not stop
+        // sessions that never use it.
+        if config.effective_mode() != DecisionMode::Off {
+            config.validate()?;
+        }
         let provider = match config.effective_mode() {
             DecisionMode::Off => None,
             DecisionMode::Auto | DecisionMode::Required => {

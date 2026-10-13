@@ -103,7 +103,7 @@ impl ToolDiscoveryTool {
             .unwrap_or(DEFAULT_SEARCH_RESULTS)
             .clamp(1, MAX_SEARCH_RESULTS);
         let pool = self.candidates(category).await;
-        let ranked = self.ranker.rank(query, &pool);
+        let ranked = self.ranker.rank(query, &pool).await;
         if ranked.is_empty() {
             return ToolOutput::ok(
                 &call.id,
@@ -205,7 +205,7 @@ impl ToolDiscoveryTool {
 
     /// `name` is not a tool: say so, and name the nearest one if there is one.
     fn unknown(&self, name: &str, pool: &[ToolDescriptor]) -> String {
-        match self.ranker.rank(name, pool).first() {
+        match Bm25Ranker.rank_now(name, pool).first() {
             Some(nearest) => format!("{name} (not a tool; did you mean {}?)", nearest.name),
             None => format!("{name} (not a tool)"),
         }
@@ -384,8 +384,17 @@ fn problems(unknown: &[String], not_loadable: &[String]) -> Option<String> {
 /// Call after the last tool is registered or removed it will list; the tool
 /// reads the registry live, so later changes (MCP servers connecting) show up
 /// in `search` and `list`.
-pub fn enable(registry: &mut ToolRegistry, mode: Arc<Mutex<AgentMode>>) {
-    let tool = ToolDiscoveryTool::new(registry, mode);
+///
+/// `ranker` replaces [`Bm25Ranker`] for `search` when given.
+pub fn enable(
+    registry: &mut ToolRegistry,
+    mode: Arc<Mutex<AgentMode>>,
+    ranker: Option<Arc<dyn ToolRanker>>,
+) {
+    let mut tool = ToolDiscoveryTool::new(registry, mode);
+    if let Some(ranker) = ranker {
+        tool = tool.with_ranker(ranker);
+    }
     registry.register(tool);
     registry.set_disclosure(Disclosure::Deferred);
 }

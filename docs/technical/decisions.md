@@ -186,6 +186,33 @@ provider even when decisions are off, and exits non-zero when decisions are
 unavailable. `sven decisions models [--json]` lists the models the provider
 knows without loading any.
 
+## Tool search re-ranking
+
+The first decision point. `tools` `search` ranks the deferred tools with BM25;
+with `decision.enabled` and `decision.features.tool_routing` (both on, and a
+usable model) `DecisionRanker` lets the model break ties:
+
+1. BM25 ranks every deferred tool that matches. If its best two are not within
+   10% of each other, that is the answer and nobody is asked.
+2. Otherwise the best 32 matches are the pool. If the pool is larger than one
+   request holds (8 options) and spans several categories, the model first
+   picks the category and the pool narrows to it.
+3. The best 8 of the pool are the shortlist; the model picks the tool that fits.
+   Each option carries the tool's summary; the task is the query, cut to fit the
+   input budget (`decision.policy.max_decision_input_tokens` within what the
+   served model reports). Options that do not fit are dropped weakest first.
+4. Each question is asked with the options in two orders (name ascending and
+   descending) in **one** batched call. The answer is accepted only if both
+   orders pick the same tool and the policy accepts it.
+5. An accepted tool moves to the front. Everything else keeps BM25's order, so
+   a re-rank never removes a tool, and `list` and `help` are untouched.
+
+An abstention, a provider failure and `policy.mode: shadow` all return BM25's
+ranking exactly; shadow mode still asks and traces. The policy of both
+questions: a choice of at most 8 options, routine impact, a wrong answer costs
+little either way, winner probability at least 0.55 and a lead of at least 0.15,
+fall back to the legacy behaviour.
+
 ## Tracing
 
 Every decision is accounted for. The session's `DecisionTelemetry` collects,
