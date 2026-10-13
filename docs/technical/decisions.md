@@ -73,6 +73,82 @@ offered), `truncated`, `unsupported_question`, `missing_answer`,
 `shape_not_allowed`, `provider_failed`. `evaluate_error` turns a failed call
 into the last of these.
 
+## The Brain transport
+
+`sven_decision::brain::BrainProvider` is the one `DecisionProvider` that
+reaches a model over a wire: a Brain server, which serves the model. Sven
+depends on no Brain crate; it speaks HTTP and nothing else, and everything
+that knows the shape of the JSON is in `crates/decision/src/brain/wire.rs`.
+The recorded exchanges the contract tests pin are in
+`crates/decision/tests/fixtures/brain/`.
+
+The base URL defaults to `http://127.0.0.1:8788`, where `brain serve
+--openai` listens; a trailing `/v1` or `/` is accepted. A key, when the server
+was started with one, is sent as `Authorization: Bearer`.
+
+Calls are `POST /v1/run` with `{model, action, params}`:
+
+| call | model | params | loads the model? |
+|------|-------|--------|------------------|
+| `models` | `brain/decision` | none | no |
+| `select` | `brain/decision` | `{"model": "auto"}` | no |
+| `decide` | the chosen model id | `state`, `state_format: "text"`, `questions` (a JSON document, as a string), `deadline_ms` | yes, on first use |
+
+```json
+{"model": "convaiinnovations/laya", "action": "decide",
+ "params": {"state": "The user asks to rename a function.", "state_format": "text",
+            "deadline_ms": 500,
+            "questions": "[{\"id\":\"tool\",\"type\":\"choice\",\"instruction\":\"Which tool?\",\"options\":[{\"id\":\"edit_file\",\"description\":\"Edit a file in place.\"},{\"id\":\"grep\"}]}]"}}
+```
+
+```json
+{"outputs": {"model": "convaiinnovations/laya", "latency_ms": 41.2, "max_input_tokens": 512,
+             "flags": {"state_truncated": false, "unsupported_question_types": []},
+             "answers": [{"id": "tool", "type": "choice", "confidence": 0.91,
+                          "ranked": [{"id": "edit_file", "index": 0, "probability": 0.98},
+                                     {"id": "grep", "index": 1, "probability": 0.02}],
+                          "state": {"tokens": 31, "kept": 31, "truncated": false}}]},
+ "blobs": {}}
+```
+
+A proposition is a `noul` question on the wire (candidates `true` and
+`false`). `models` answers one record per model with `state` (`ready`,
+`not-installed`, `incompatible`), `validated` and a `manifest` carrying
+`weights_sha256`, `max_input_tokens` and `question_types`; a model that is not
+installed carries the provider's own remedy in `hint`.
+
+**Failures.** The error body's `code` decides, the HTTP status otherwise:
+
+| provider | decision error |
+|----------|----------------|
+| connection refused, DNS, 401/403, 429/503 | `unreachable` |
+| `not_installed`, `model_not_found` | `model_not_installed` |
+| `failed_to_load`, an `incompatible` model | `failed_to_load` |
+| `unsupported_capability`, no `/v1/run` route | `unsupported_capability` |
+| `invalid_request` | `invalid_request` |
+| `timeout`, 504, no answer within the deadline | `timeout` |
+| `backend_failure`, a body that is not a decision, any other status | `invalid_response` |
+
+**Behaviour.**
+
+- The request's deadline bounds the whole decision: resolving the model,
+  waiting for a slot and the call.
+- At most `max_concurrent_requests` decisions are in flight (default 2); the
+  rest wait inside their own deadline.
+- `auto` is the provider's choice. The adapter asks `select` once, keeps the
+  answer until the model is reported gone, and every result names the model
+  that answered. A configured id is looked up in `models`.
+- `MinimumQuality::Validated` refuses a model with no recorded validation as
+  `unsupported_capability`, before any decision is sent.
+- Decisions of a model that declares `weights_sha256` are cached per process,
+  keyed by model id, checkpoint and the normalised request (the deadline is not
+  part of it), in an LRU of at most `cache_entries` decisions (default 256). A
+  model that declares no checkpoint is never cached.
+- `readiness` (`select` and `models`) and `models` never load the model.
+- `decide_batched(provider, requests)` sends the independent requests that
+  share a state as one call (at most 64 questions per call) and gives each
+  asker only its own answers.
+
 ## Testing with the mock provider
 
 `MockDecisionProvider` answers from a queue: `push_result` scripts an answer,

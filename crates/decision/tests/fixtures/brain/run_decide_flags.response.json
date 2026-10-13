@@ -1,0 +1,17 @@
+{
+  "outputs": {
+    "model": "convaiinnovations/laya",
+    "backend": "laya",
+    "latency_ms": 12.5,
+    "max_input_tokens": 512,
+    "flags": {"state_truncated": true, "unsupported_question_types": ["noul"]},
+    "answers": [
+      {"id": "tool", "type": "choice", "selected": "grep", "selected_index": 1, "confidence": 0.6,
+       "ranked": [{"id": "grep", "index": 1, "probability": 0.6}, {"id": "edit_file", "index": 0, "probability": 0.4}],
+       "state": {"tokens": 900, "kept": 512, "truncated": true}},
+      {"id": "urgent", "type": "noul", "unsupported": true, "reason": "model 'convaiinnovations/laya' does not support noul questions"},
+      {"id": "anger", "type": "score", "unsupported": true, "reason": "not supported"}
+    ]
+  },
+  "blobs": {}
+}

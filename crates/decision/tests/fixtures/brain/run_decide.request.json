@@ -1,0 +1,15 @@
+{
+  "model": "convaiinnovations/laya",
+  "action": "decide",
+  "params": {
+    "state": "The user asks to rename a function across the repository.",
+    "state_format": "text",
+    "deadline_ms": 500,
+    "questions": [
+      {"id": "tool", "type": "choice", "instruction": "Which tool fits the request?",
+       "options": [{"id": "edit_file", "description": "Edit a file in place."}, {"id": "grep"}]},
+      {"id": "urgent", "type": "noul", "instruction": "is this urgent"},
+      {"id": "anger", "type": "score", "instruction": "how upset", "options": ["calm", "annoyed", "furious"]}
+    ]
+  }
+}

@@ -19,10 +19,13 @@
 //!   distribution of every question and never only its winner.
 //! * [`DecisionProvider`]: the async seam a model provider implements.
 //! * [`DecisionError`]: how a provider fails, in distinct named classes.
+//! * [`brain::BrainProvider`]: the HTTP adapter to a Brain server.
 //! * [`MockDecisionProvider`]: a scripted provider for tests.
 
 mod batch;
+pub mod brain;
 mod cache;
+mod directory;
 mod error;
 mod mock;
 pub mod policy;
@@ -32,6 +35,7 @@ mod result;
 
 pub use batch::{decide_batched, Batched};
 pub use cache::{CacheKey, DecisionCache};
+pub use directory::{resolve_model, MinimumQuality, ModelInfo, ModelState, Selection, AUTO};
 pub use error::{DecisionError, ErrorClass};
 pub use mock::MockDecisionProvider;
 pub use provider::DecisionProvider;

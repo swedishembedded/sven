@@ -1,0 +1,23 @@
+{
+  "outputs": {
+    "model": "convaiinnovations/laya",
+    "backend": "laya",
+    "latency_ms": 41.2,
+    "max_input_tokens": 512,
+    "flags": {"state_truncated": false, "unsupported_question_types": []},
+    "answers": [
+      {"id": "tool", "type": "choice", "selected": "edit_file", "selected_index": 0, "confidence": 0.91,
+       "ranked": [{"id": "edit_file", "index": 0, "probability": 0.98}, {"id": "grep", "index": 1, "probability": 0.02}],
+       "state": {"tokens": 31, "kept": 31, "truncated": false}},
+      {"id": "urgent", "type": "noul", "noul": 0.22,
+       "ranked": [{"id": "false", "index": 0, "probability": 0.78}, {"id": "true", "index": 1, "probability": 0.22}],
+       "state": {"tokens": 31, "kept": 31, "truncated": false}},
+      {"id": "anger", "type": "score", "score": 1.3, "confidence": 0.4, "legend": ["calm", "annoyed", "furious"],
+       "ranked": [{"id": "1", "index": 1, "label": "annoyed", "probability": 0.7},
+                  {"id": "2", "index": 2, "label": "furious", "probability": 0.2},
+                  {"id": "0", "index": 0, "label": "calm", "probability": 0.1}],
+       "state": {"tokens": 31, "kept": 31, "truncated": false}}
+    ]
+  },
+  "blobs": {}
+}

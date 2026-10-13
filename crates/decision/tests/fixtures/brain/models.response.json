@@ -1,0 +1,24 @@
+{
+  "outputs": {
+    "models": [
+      {"id": "convaiinnovations/laya", "state": "ready", "configured": false, "backend": "laya", "validated": true,
+       "manifest": {"schema": 1, "capability": "decide", "architecture": "laya",
+                    "weights_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                    "tokenizer_sha256": null,
+                    "lineage": {"base": "convaiinnovations/laya", "trained_on": null, "recipe": null},
+                    "max_input_tokens": 512, "question_types": ["choice", "score", "noul"],
+                    "validation": {"status": "validated", "profile": "ticket-routing", "evidence": null}}},
+      {"id": "acme/triage", "state": "ready", "configured": true, "backend": "decide", "validated": false,
+       "manifest": {"schema": 1, "capability": "decide", "architecture": "decide",
+                    "weights_sha256": null, "tokenizer_sha256": null,
+                    "lineage": {"base": null, "trained_on": null, "recipe": null},
+                    "max_input_tokens": null, "question_types": ["choice"],
+                    "validation": {"status": "unvalidated"}}},
+      {"id": "acme/gone", "state": "not-installed", "configured": true, "backend": null, "validated": false,
+       "missing": ["the model directory"], "hint": "run `brain pull acme/gone`"},
+      {"id": "acme/broken", "state": "incompatible", "configured": false, "backend": null, "validated": false,
+       "reason": "config.json carries no option head"}
+    ]
+  },
+  "blobs": {}
+}
