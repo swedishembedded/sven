@@ -69,4 +69,8 @@ pub enum ToolEvent {
     /// The TUI / agent loop should disconnect the server and unregister its
     /// tools from the `ToolRegistry`.
     McpServerRemoved(String),
+    /// Something the user should know that does not stop the call, such as a
+    /// capability that is unavailable and the fallback in use. Reaches every
+    /// surface as a warning.
+    Notice(String),
 }

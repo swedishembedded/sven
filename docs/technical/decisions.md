@@ -149,6 +149,43 @@ installed carries the provider's own remedy in `hint`.
   share a state as one call (at most 64 questions per call) and gives each
   asker only its own answers.
 
+## When decisions are unavailable
+
+`decision.mode` ([configuration](../05-configuration.md#decision)) decides
+what an unavailable model means:
+
+- `off` (or `decision.enabled: false`, the default): nothing is contacted.
+- `auto`: a decision that cannot be answered falls back to the behaviour
+  that existed before decisions (for `tools search`, plain BM25 ranking),
+  never to a new heuristic. The session says so **once**, as a warning that
+  every surface already renders (a `ToolEvent::Notice`, forwarded as
+  `SessionEvent::Warning`: the `[sven:warn]` line in headless runs, a notice in
+  the TUI, a thought notice over ACP), however many decisions fail afterwards.
+  `decision.warn_if_unavailable: false` silences it.
+- `required`: before the session starts, readiness is checked (a query that
+  loads no model) and a missing model is a startup error with the same text.
+
+The message names the state and the remedy:
+
+| state | remedy named |
+|-------|--------------|
+| provider unreachable | start the provider, correct `decision.brain.url`, or set `decision.enabled: false` |
+| model not installed | the provider's own `brain pull <id>` for the id it reported; never an id the provider did not report; otherwise `sven decisions models` |
+| model failed to load | check the model on the provider, or name another in `decision.model` |
+| model not usable (for example not validated) | `decision.policy.minimum_model_quality: any` to accept an unvalidated model |
+| timeout | raise `decision.timeout_ms` (a first decision may be loading the model) |
+
+Nothing is ever downloaded automatically.
+
+`sven doctor decisions [--json]` reports the selected model, readiness, the
+question types it supports, its input limit and the budget one decision sends
+(the configured cap within that limit), its validation status, a latency
+profile from three tiny decisions (the first may include loading the model),
+and every decision point with whether it is active and why not. It contacts the
+provider even when decisions are off, and exits non-zero when decisions are
+unavailable. `sven decisions models [--json]` lists the models the provider
+knows without loading any.
+
 ## Testing with the mock provider
 
 `MockDecisionProvider` answers from a queue: `push_result` scripts an answer,

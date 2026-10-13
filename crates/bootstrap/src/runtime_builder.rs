@@ -971,6 +971,7 @@ fn spawn_tool_event_forwarder(mut rx: mpsc::Receiver<ToolEvent>, obs: Observatio
                     handle_id,
                     update,
                 },
+                ToolEvent::Notice(text) => UiEvent::Warning(text),
                 // No `UiEvent` counterpart — see the doc comment above.
                 ToolEvent::McpServerAdded(_) | ToolEvent::McpServerRemoved(_) => continue,
             };
@@ -987,6 +988,21 @@ mod tests {
     use sven_kernel::EventSink;
 
     use super::*;
+
+    #[tokio::test]
+    async fn a_tool_notice_reaches_every_surface_as_a_warning() {
+        let obs = ObservationSink::new(8);
+        let mut seen = obs.subscribe();
+        let (tx, rx) = mpsc::channel(4);
+        spawn_tool_event_forwarder(rx, obs);
+        tx.send(ToolEvent::Notice("decisions unavailable".into()))
+            .await
+            .unwrap();
+        match seen.recv().await.unwrap() {
+            sven_vocab::SessionEvent::Warning(text) => assert_eq!(text, "decisions unavailable"),
+            other => panic!("expected a warning, got {other:?}"),
+        }
+    }
 
     /// Forwards every effect it receives to a channel so the test can assert
     /// the kernel routed effects to the injected executor.

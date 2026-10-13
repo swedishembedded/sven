@@ -7,13 +7,14 @@ mod run;
 use std::sync::Arc;
 
 use clap::Parser;
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, DecisionsCommands, DoctorCommands};
 
 use run::agent::run_agent_command;
 use run::agent_dispatch::run_agent_dispatch_command;
 use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
 use run::harness::run_harness_command;
+use run::decisions::{run_decisions_models, run_doctor_decisions};
 use run::index::run_index_command;
 use run::ledger::run_ledger_command;
 use run::logging::init_logging;
@@ -69,6 +70,18 @@ async fn main() -> anyhow::Result<()> {
             Commands::Tool { command } => {
                 let config = Settings::load(cli.config.as_deref())?.runtime;
                 return run_tool_command(command, &config).await;
+            }
+            Commands::Doctor {
+                command: DoctorCommands::Decisions { json },
+            } => {
+                let config = Settings::load(cli.config.as_deref())?.runtime;
+                return run_doctor_decisions(&config, *json).await;
+            }
+            Commands::Decisions {
+                command: DecisionsCommands::Models { json },
+            } => {
+                let config = Settings::load(cli.config.as_deref())?.runtime;
+                return run_decisions_models(&config, *json).await;
             }
             Commands::Agent { command } => {
                 let mut config = Settings::load(cli.config.as_deref())?.runtime;

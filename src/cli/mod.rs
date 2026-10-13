@@ -8,6 +8,7 @@
 //! for each of these groups — this module only declares the clap grammar.
 
 mod agent;
+mod decisions;
 mod harness;
 mod index;
 #[cfg(feature = "memory")]
@@ -22,6 +23,7 @@ mod tool;
 // than duplicated here.
 pub use agent::AgentCommands;
 pub use harness::{HarnessCommands, HarnessRunArgs, LiveModelArgs, ToolsetArg};
+pub use decisions::{DecisionsCommands, DoctorCommands};
 pub use index::IndexCommands;
 #[cfg(feature = "memory")]
 pub use questions::QuestionsCommands;
@@ -341,6 +343,22 @@ pub enum Commands {
     Tool {
         #[command(subcommand)]
         command: ToolCommands,
+    },
+
+    /// Find out why something does not work.
+    ///
+    ///   sven doctor decisions    - the decision model: readiness, limits, latency
+    Doctor {
+        #[command(subcommand)]
+        command: DoctorCommands,
+    },
+
+    /// The decision model that advises the harness.
+    ///
+    ///   sven decisions models    - the models the provider knows
+    Decisions {
+        #[command(subcommand)]
+        command: DecisionsCommands,
     },
 
     /// Run an agent one step at a time, keeping its state in a file.

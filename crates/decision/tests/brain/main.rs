@@ -12,5 +12,6 @@
 //! loading them.
 
 mod contract;
+mod diagnostics;
 mod support;
 mod transport;

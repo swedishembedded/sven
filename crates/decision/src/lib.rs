@@ -27,12 +27,14 @@ pub mod brain;
 mod cache;
 pub mod config;
 mod directory;
+pub mod doctor;
 mod error;
 mod mock;
 pub mod policy;
 mod provider;
 mod question;
 mod result;
+mod runtime;
 
 pub use batch::{decide_batched, Batched};
 pub use cache::{CacheKey, DecisionCache};
@@ -45,3 +47,4 @@ pub use question::{
     MAX_QUESTIONS, MAX_SCORE_LEVELS, MAX_STATE_BYTES, MIN_SCORE_LEVELS,
 };
 pub use result::{Answer, Candidate, DecisionResult, Distribution, ModelIdentity, QuestionAnswer};
+pub use runtime::{unavailable_text, DecisionRuntime};

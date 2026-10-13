@@ -228,3 +228,49 @@ async fn serve(
     );
     let _ = stream.write_all(response.as_bytes()).await;
 }
+
+/// A decision answered for whatever questions were asked: every choice puts
+/// its first option on top.
+pub fn echo_decide(received: &Received) -> Reply {
+    let questions: Vec<Value> = received.body["params"]["questions"]
+        .as_str()
+        .and_then(|q| serde_json::from_str(q).ok())
+        .unwrap_or_default();
+    let answers: Vec<Value> = questions
+        .iter()
+        .map(|q| {
+            let options: Vec<String> = q["options"]
+                .as_array()
+                .map(|o| {
+                    o.iter()
+                        .map(|o| o["id"].as_str().or(o.as_str()).unwrap_or_default().to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let ranked: Vec<Value> = options
+                .iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    serde_json::json!({"id": id, "index": i, "probability": if i == 0 { 0.9 } else { 0.1 / options.len() as f64 }})
+                })
+                .collect();
+            serde_json::json!({"id": q["id"], "type": q["type"], "ranked": ranked,
+                "state": {"tokens": 5, "kept": 5, "truncated": false}})
+        })
+        .collect();
+    Reply::ok(
+        &serde_json::json!({"outputs": {"model": received.model(), "latency_ms": 3.0,
+            "max_input_tokens": 512, "flags": {"state_truncated": false, "unsupported_question_types": []},
+            "answers": answers}, "blobs": {}})
+        .to_string(),
+    )
+}
+
+/// The recorded directory with decisions answered by [`echo_decide`].
+pub fn recorded_with_echo(received: &Received) -> Reply {
+    if received.action() == "decide" {
+        echo_decide(received)
+    } else {
+        recorded_reply(received)
+    }
+}

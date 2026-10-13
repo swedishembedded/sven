@@ -9,6 +9,7 @@ pub(crate) mod agent;
 pub(crate) mod agent_dispatch;
 pub(crate) mod chats;
 pub(crate) mod ci;
+pub(crate) mod decisions;
 pub(crate) mod harness;
 pub(crate) mod index;
 pub(crate) mod ledger;
