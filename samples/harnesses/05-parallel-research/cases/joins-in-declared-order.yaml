@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The model is stateless (`rules`), because which branch asks first is not
+# defined. The join still lists the branches in declared order.
+input: { topic: "tide tables" }
+model:
+  rules:
+    - { match_type: contains, pattern: "history:", reply: "Tide tables date from antiquity." }
+    - { match_type: contains, pattern: "sources:", reply: "Two almanacs agree." }
+tools:
+  search_slow:
+    capability: ReadFile
+    responses:
+      - ok: "almanac A; almanac B"
+expect:
+  status: completed
+  output: { history: "Tide tables date from antiquity.", sources: "Two almanacs agree." }
+  tools_invoked: [search_slow]

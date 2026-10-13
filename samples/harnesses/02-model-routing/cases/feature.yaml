@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Anything that is not a bug waits in the backlog, whatever its label.
+input: { ticket: "Please add dark mode" }
+model:
+  sequence:
+    - text: '{"label": "feature"}'
+expect:
+  status: completed
+  output: { queue: backlog, label: feature }
+  steps: { ask: 1 }

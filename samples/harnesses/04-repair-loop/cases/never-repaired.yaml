@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Three failed attempts spend the retry; the verification never runs.
+input: {}
+tools:
+  write_patch:
+    capability: WriteFile
+    responses:
+      - error: "patch does not apply"
+      - error: "patch does not apply"
+      - error: "patch does not apply"
+expect:
+  status: failed
+  failure: { code: unrepaired, message_contains: fixed.txt }
+  steps: { patch: 3, check: 0, unrepaired: 1 }
+  tools_invoked: [write_patch, write_patch, write_patch]

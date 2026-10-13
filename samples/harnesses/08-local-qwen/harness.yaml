@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# One schema-constrained turn for a real local model. Nothing in the default
+# test paths runs it: its only case names a `live` model and is skipped unless
+# the caller opts in (see README.md).
+api_version: "1"
+name: local-qwen
+description: "Label the sentiment of a sentence with a local model."
+inputs: { text: string }
+outputs: { sentiment: string }
+schemas:
+  sentiment: { type: object, required: [sentiment], properties: { sentiment: { type: string, enum: [positive, negative, neutral] } } }
+limits: { max_steps: 10, max_model_turns: 2 }
+entry: classify
+steps:
+  classify: { retry: { attempts: 2, body: ask, then: answer, on_exhausted: unlabelled } }
+  ask:      { predict: { prompt: "Label the sentiment of this sentence as positive, negative or neutral. Answer with JSON only: {{ inputs.text }}", schema: sentiment, store_as: label, then: answer } }
+  answer:   { return: { value: { sentiment: "{{ facts.label.sentiment }}" } } }
+  unlabelled: { fail: { code: unlabelled, message: "the model gave no usable label" } }

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Two unusable answers spend the retry; the plan's own `fail` ends the run
+# with its code, and nothing is routed.
+input: { ticket: "???" }
+model:
+  sequence:
+    - text: 'nope'
+    - text: 'still nope'
+expect:
+  status: failed
+  failure: { code: unroutable, message_contains: "valid route" }
+  steps: { ask: 2, unroutable: 1, route: 0 }

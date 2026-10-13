@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The other side of the branch, through the same helper.
+input: { customer: globex, urgent: false }
+expect:
+  status: completed
+  output: { queue: standard, customer: globex }
+  steps: { prep: 1, express: 0, standard: 1 }

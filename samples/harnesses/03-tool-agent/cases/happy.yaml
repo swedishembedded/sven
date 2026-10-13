@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The agent reads the notes through its one tool, then answers from them.
+input: { question: "When is the deploy window?" }
+model:
+  sequence:
+    - tool_calls: [ { id: c1, name: read_notes, args: { path: notes.md } } ]
+    - text: "The deploy window is Friday."
+tools:
+  read_notes:
+    capability: ReadFile
+    responses:
+      - ok: "deploy window: friday"
+expect:
+  status: completed
+  output: { answer: "The deploy window is Friday." }
+  tools_invoked: [read_notes]
+  forbidden_capabilities: [WriteFile, ExecuteShell]

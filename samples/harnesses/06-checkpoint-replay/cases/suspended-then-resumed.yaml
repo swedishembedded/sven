@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Phase one: the read blocks and the 300 ms deadline suspends the run. Phase
+# two resumes the checkpoint with a tool that answers. Both phases are
+# replay-checked offline, so each must be reproducible from its recording.
+input: {}
+tools:
+  read_report:
+    capability: ReadFile
+    responses:
+      - block: true
+bounds: { deadline_ms: 300 }
+expect:
+  status: suspended
+  steps: { call: 1 }
+resume:
+  tools:
+    read_report:
+      capability: ReadFile
+      responses:
+        - ok: "all green"
+  expect:
+    status: completed
+    output: { report: "all green" }
+    steps: { call: 2 }
+    tools_invoked: [read_report]

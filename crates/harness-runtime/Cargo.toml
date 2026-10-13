@@ -29,3 +29,4 @@ transform = ["dep:sven-harness-transform", "dep:base64"]
 sven-harness-transform = { path = "../harness-transform", features = ["test-util"] }
 sven-harness-spec = { path = "../harness-spec" }
 base64           = { workspace = true }
+serde_yaml       = { workspace = true }

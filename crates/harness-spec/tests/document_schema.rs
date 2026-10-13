@@ -176,16 +176,18 @@ fn every_test_and_sample_document_validates() {
         "expected many inline documents, saw {checked}"
     );
 
-    // Sample harness directories: the main document and its children. Zero
-    // samples exist until the samples land; a sample that exists must pass.
+    // Sample harness directories: the main document and its children; a
+    // sample that exists must pass.
     let samples = manifest.join("../../samples/harnesses");
     if let Ok(entries) = std::fs::read_dir(&samples) {
         for entry in entries {
             let dir = entry.expect("dir entry").path();
-            let main = dir.join("harness.yaml");
             let mut files = yaml_files_in(&dir.join("children"));
-            if main.is_file() {
-                files.push(main);
+            // `document.yaml` is the source a bundle sample is composed from.
+            for main in ["harness.yaml", "document.yaml"] {
+                if dir.join(main).is_file() {
+                    files.push(dir.join(main));
+                }
             }
             for file in files {
                 let text = std::fs::read_to_string(&file).expect("sample is readable");

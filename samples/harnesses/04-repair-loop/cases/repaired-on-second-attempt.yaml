@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The first attempt fails, the second writes the file, the verification passes.
+input: {}
+tools:
+  write_patch:
+    capability: WriteFile
+    responses:
+      - error: "patch does not apply"
+      - ok: "patched"
+        write: { path: fixed.txt, content: "fixed" }
+expect:
+  status: completed
+  output: { status: repaired, check: passed }
+  steps: { fix: 1, patch: 2, check: 1, repaired: 1 }
+  tools_invoked: [write_patch, write_patch]

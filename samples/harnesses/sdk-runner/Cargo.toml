@@ -1,0 +1,26 @@
+[package]
+# Package names under samples/ are derived from the path:
+# `samples/harnesses/sdk-runner` -> `sample-harnesses-sdk-runner`. The
+# Makefile's `samples/%/{build,run}` rules depend on that mapping;
+# `make check/samples` enforces it.
+name = "sample-harnesses-sdk-runner"
+version.workspace = true
+edition = "2021"
+license = "Apache-2.0"
+description = "Sample: run a harness directory's cases through the public SDK alone, with no test kit"
+publish = false
+
+[dependencies]
+# The ONLY sven dependency a sample may have is the SDK facade - see
+# samples/README.md rule 1, enforced by `make check/samples`.
+sven-sdk    = { path = "../../../crates/sdk" }
+anyhow      = { workspace = true }
+async-trait = { workspace = true }
+futures     = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+serde_yaml  = { workspace = true }
+tokio       = { workspace = true }
+
+[dev-dependencies]
+tempfile    = { workspace = true }

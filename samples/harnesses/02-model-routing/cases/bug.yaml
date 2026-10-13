@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# A bug report goes to the bugs queue after exactly one model turn.
+input: { ticket: "The app crashes on start" }
+model:
+  sequence:
+    - text: '{"label": "bug"}'
+      usage: { input: 20, output: 6 }
+expect:
+  status: completed
+  output: { queue: bugs, label: bug }
+  steps: { classify: 1, ask: 1 }
+  max_output_tokens: 100

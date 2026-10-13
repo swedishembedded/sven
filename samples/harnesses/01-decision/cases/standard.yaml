@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Neither vip nor a paid plan: the default tier.
+input: { plan: free, vip: false }
+expect:
+  status: completed
+  output: { tier: standard, discount: 0 }
+  steps: { top: 1, middle: 1, standard: 1, finish: 1 }
+  max_steps: 4

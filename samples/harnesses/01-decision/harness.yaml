@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Pure branching: no model, no tool, no capability. The run is a walk over
+# assign and branch steps, so the same input always takes the same path.
+api_version: "1"
+name: decision
+description: "Pick a discount tier from a plan and a vip flag with branches alone."
+inputs: { plan: string, vip: boolean }
+outputs: { tier: string, discount: number }
+entry: top
+steps:
+  top:      { branch: { on: { all: [inputs.vip, { eq: inputs.plan, value: enterprise }] }, when_true: gold, when_false: middle } }
+  middle:   { branch: { on: { any: [inputs.vip, { eq: inputs.plan, value: pro }] }, when_true: silver, when_false: standard } }
+  gold:     { assign: { set: { tier: gold, discount: 20 }, then: finish } }
+  silver:   { assign: { set: { tier: silver, discount: 10 }, then: finish } }
+  standard: { assign: { set: { tier: standard, discount: 0 }, then: finish } }
+  finish:   { return: { value: { tier: "{{ facts.tier }}", discount: "{{ facts.discount }}" } } }

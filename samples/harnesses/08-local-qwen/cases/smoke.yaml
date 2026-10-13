@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Opt-in only. The loose expectation is deliberate: a real model may phrase
+# its label differently from run to run, so the case checks the shape of the
+# answer, not a particular verdict.
+input: { text: "The new release is wonderful." }
+model:
+  live: { model: "ollama/qwen3:8b" }
+expect:
+  status: completed
+  max_steps: 6

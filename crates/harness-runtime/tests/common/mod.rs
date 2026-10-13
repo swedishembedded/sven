@@ -6,6 +6,9 @@
 //! at the kernel boundary, entry handlers followed by hand (no executor in
 //! a unit test), no I/O anywhere.
 
+#[cfg(feature = "transform")]
+pub mod echo_helper;
+
 use sven_harness_runtime::{HarnessMachine, HarnessRunData};
 use sven_hsm::{Context, Effect, Event, Machine, Reaction};
 
