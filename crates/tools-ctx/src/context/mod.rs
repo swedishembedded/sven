@@ -16,12 +16,14 @@
 //! The [`SubQueryRunner`] trait defined here lets this crate hold a
 //! reference to the runner without a direct dependency on `sven-model`.
 
+pub mod expand;
 pub mod grep;
 pub mod open;
 pub mod query_runner;
 pub mod read;
 pub mod store;
 
+pub use expand::ChunkExpander;
 pub use grep::ContextGrepTool;
 pub use open::ContextOpenTool;
 pub use query_runner::SubQueryRunner;

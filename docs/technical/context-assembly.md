@@ -110,3 +110,43 @@ now and the forms it may take; a choice outside those forms, or not smaller
 than the current one, is replaced by the policy's default. An advisor can
 therefore never drop a pinned or failing chunk. No model is called by the
 policy.
+
+## Expansion
+
+`context` with `action=expand` returns the raw text behind a reference:
+
+| argument | meaning |
+|----------|---------|
+| `chunk` | the chunk id (`c-` and 16 hex digits) shown in the reference |
+| `first_line`, `last_line` | optional 1-based inclusive range; either alone means from the start or to the end |
+
+The result is one header line, then the text verbatim:
+
+```
+[chunk c-0123456789abcdef | file | lines 10-20 of 300 | source unchanged since it was read]
+```
+
+The header says which chunk and lines these are and, for a chunk read from a
+file, whether the file is as it was: `source unchanged since it was read`,
+`STALE: the file changed after it was read; ...`, `STALE: the file no longer
+exists; ...`, or `source version was not recorded, it may have changed`. A
+stale chunk is still returned, because it is evidence of what the file
+contained, but it is never presented as current. An id that is not a chunk id
+(`../x`, a wrong length) and an id the session has not recorded are errors; a
+range outside the chunk is an error.
+
+`expand` is an action of the existing `context` tool, not a tool of its own.
+It exists only when addressable context is on: without it the tool's
+definition, actions and modes are exactly what they were, and with it the tool
+is offered in `plan` and `research` as well as `agent`, so a reference is never
+a dead end. Its permission is that of a file read.
+
+### Recovery events
+
+Every expansion is a recovery event. The token ledger counts them over the
+history each request carries (`context_recovery` in the record, see
+[token-ledger.md](token-ledger.md)): the number of expansions, how many hit a
+stale chunk, and the bytes and estimated tokens they brought back. `sven
+ledger` prints a line for them when there are any, and the trajectory holds
+the calls themselves. A demotion that hid what the model needed shows up as
+expansions of the chunk it hid.

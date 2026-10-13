@@ -37,4 +37,4 @@ pub use represent::{
     allowed_visibilities, indicates_failure, render, tokens_of, RenderRequest, Rendered,
     Visibility, EXPAND_ACTION, EXPAND_TOOL_NAME,
 };
-pub use store::{ChunkStore, PutOutcome, StoreLimits};
+pub use store::{ChunkStore, PutOutcome, SharedChunkStore, StoreLimits};

@@ -32,11 +32,16 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::chunk::{content_digest, ChunkDraft, ChunkId, ContextChunk};
 use crate::freshness::{Freshness, SourceProbe};
+
+/// A store shared by the executors that record into it and the tool that
+/// reads from it. Every operation is short, synchronous file I/O.
+pub type SharedChunkStore = Arc<Mutex<ChunkStore>>;
 
 /// Default bound on payload bytes held in memory.
 pub const DEFAULT_MAX_RESIDENT_BYTES: usize = 16 << 20;

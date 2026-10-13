@@ -6,6 +6,7 @@ description = "Context/reference tools: the memory-mapped RLM context store (con
 license     = "Apache-2.0"
 
 [dependencies]
+sven-chunks    = { path = "../chunks" }
 sven-tool-api  = { path = "../tool-api" }
 sven-config    = { path = "../config" }
 sven-hsm       = { path = "../hsm" }

@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
+sven-chunks        = { path = "../chunks" }
 sven-config        = { path = "../config" }
 sven-decision      = { path = "../decision" }
 sven-model         = { path = "../model" }

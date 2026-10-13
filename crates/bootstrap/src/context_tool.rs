@@ -24,7 +24,9 @@ use sven_tool_api::{
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
 };
-use sven_tools_ctx::{ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore};
+use sven_tools_ctx::{
+    ChunkExpander, ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore,
+};
 use sven_turn::TurnLimits;
 use sven_vocab::AgentMode;
 
@@ -37,7 +39,17 @@ pub struct ContextTool {
     grep: ContextGrepTool,
     query: ContextQueryTool,
     reduce: ContextReduceTool,
+    /// Present when demoted tool results can be expanded (see
+    /// [`Self::with_expansion`]).
+    expand: Option<ChunkExpander>,
 }
+
+/// Modes that offer the tool without expansion.
+const BASE_MODES: &[AgentMode] = &[AgentMode::Agent];
+/// With expansion the tool is offered wherever a result can be demoted, so a
+/// reference is never a dead end. Its other actions stay under the permission
+/// policy of each mode.
+const EXPANDING_MODES: &[AgentMode] = &[AgentMode::Research, AgentMode::Plan, AgentMode::Agent];
 
 impl ContextTool {
     pub fn new(
@@ -55,7 +67,17 @@ impl ContextTool {
             grep: ContextGrepTool::new(store),
             query,
             reduce,
+            expand: None,
         }
+    }
+
+    /// Enables `action=expand`, which returns the raw text behind a reference
+    /// in a demoted tool result. Until then the tool's definition, modes and
+    /// actions are exactly what they are without addressable context.
+    #[must_use]
+    pub fn with_expansion(mut self, expander: ChunkExpander) -> Self {
+        self.expand = Some(expander);
+        self
     }
 
     /// Opens only paths `scope` allows, as the file tools do.
@@ -77,6 +99,19 @@ impl Tool for ContextTool {
     }
 
     fn description(&self) -> &str {
+        if self.expand.is_some() {
+            return "Memory-mapped analysis for content too large for the context window.\n\
+         action: open | read | grep | query | reduce | expand\n\n\
+         Workflow: open → grep (locate) → read (inspect) → query (map) → reduce (synthesize)\n\
+         - open: load a file or directory into a handle; content stays OUT of context\n\
+         - read: random-access line range from a handle (use after grep to narrow)\n\
+         - grep: regex search over a handle; cheap pre-filter before read or query\n\
+         - query: dispatch analysis prompt to sub-agents over chunks; returns new handle\n\
+         - reduce: synthesize/aggregate a results handle into a final answer\n\
+         - expand: return the raw text of a chunk (c-...) that an earlier tool result showed \
+         in a shorter form; optional first_line/last_line. Says when the source file changed.\n\n\
+         Use for: files >500 lines, build logs, large codebases, binary analysis.";
+        }
         "Memory-mapped analysis for content too large for the context window.\n\
          action: open | read | grep | query | reduce\n\n\
          Workflow: open → grep (locate) → read (inspect) → query (map) → reduce (synthesize)\n\
@@ -89,7 +124,7 @@ impl Tool for ContextTool {
     }
 
     fn parameters_schema(&self) -> Value {
-        json!({
+        let mut schema = json!({
             "type": "object",
             "properties": {
                 "action": {
@@ -157,7 +192,38 @@ impl Tool for ContextTool {
             },
             "required": ["action"],
             "additionalProperties": false
-        })
+        });
+        if self.expand.is_some() {
+            schema["properties"]["action"]["enum"]
+                .as_array_mut()
+                .expect("action is an enum")
+                .push(json!("expand"));
+            let properties = schema["properties"]
+                .as_object_mut()
+                .expect("properties is an object");
+            properties.insert(
+                "chunk".into(),
+                json!({
+                    "type": "string",
+                    "description": "[action=expand] Chunk id (c-...) shown in a shortened tool result"
+                }),
+            );
+            properties.insert(
+                "first_line".into(),
+                json!({
+                    "type": "integer",
+                    "description": "[action=expand] First line of the chunk to return (1-indexed, default 1)"
+                }),
+            );
+            properties.insert(
+                "last_line".into(),
+                json!({
+                    "type": "integer",
+                    "description": "[action=expand] Last line of the chunk to return (inclusive, default the end)"
+                }),
+            );
+        }
+        schema
     }
 
     fn default_policy(&self) -> ApprovalPolicy {
@@ -180,13 +246,18 @@ impl Tool for ContextTool {
                 ("grep", ReadFile),
                 ("query", NetworkAccess),
                 ("reduce", NetworkAccess),
+                ("expand", ReadFile),
             ],
             NetworkAccess,
         )
     }
 
     fn modes(&self) -> &[AgentMode] {
-        &[AgentMode::Agent]
+        if self.expand.is_some() {
+            EXPANDING_MODES
+        } else {
+            BASE_MODES
+        }
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
@@ -194,6 +265,10 @@ impl Tool for ContextTool {
             Some(a) => a.to_string(),
             None => return ToolOutput::err(&call.id, "missing required parameter 'action'"),
         };
+
+        if let (Some(expander), "expand") = (&self.expand, action.as_str()) {
+            return expander.expand(call);
+        }
 
         match action.as_str() {
             "open" => {
@@ -338,5 +413,83 @@ mod tests {
         let out = t.execute(&call(json!({"action": "open"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("path"));
+    }
+
+    fn expanding_tool() -> (ContextTool, String, tempfile::TempDir) {
+        use sven_chunks::{
+            ChunkDraft, ChunkKind, ChunkStore, FsProbe, Lifetime, Provenance, Sensitivity,
+            SourceProbe, StoreLimits,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut chunks = ChunkStore::open(dir.path(), StoreLimits::default()).unwrap();
+        let id = chunks
+            .put(
+                "alpha\nbeta\n",
+                ChunkDraft {
+                    kind: ChunkKind::CommandOutput,
+                    provenance: Provenance {
+                        source_tool: "shell".into(),
+                        args_digest: String::new(),
+                        path: None,
+                        source_version: None,
+                        turn: 1,
+                    },
+                    priority: 0,
+                    sensitivity: Sensitivity::Internal,
+                    lifetime: Lifetime::Session,
+                    pinned: false,
+                    failure: false,
+                },
+            )
+            .unwrap()
+            .chunk
+            .id
+            .to_string();
+        let probe: Arc<dyn SourceProbe + Send + Sync> = Arc::new(FsProbe::new(dir.path()).unwrap());
+        let expander =
+            sven_tools_ctx::ChunkExpander::new(Arc::new(std::sync::Mutex::new(chunks)), probe);
+        (make_tool().with_expansion(expander), id, dir)
+    }
+
+    #[test]
+    fn expansion_is_not_advertised_unless_it_is_enabled() {
+        let t = make_tool();
+        let schema = t.parameters_schema();
+        assert!(!schema.to_string().contains("expand"));
+        assert!(schema["properties"].get("chunk").is_none());
+        assert!(!t.description().contains("expand"));
+        assert_eq!(t.modes(), &[AgentMode::Agent]);
+    }
+
+    #[tokio::test]
+    async fn expand_is_an_unknown_action_when_it_is_not_enabled() {
+        let out = make_tool()
+            .execute(&call(
+                json!({"action": "expand", "chunk": "c-0123456789abcdef"}),
+            ))
+            .await;
+        assert!(out.is_error);
+        assert!(out.content.contains("unknown action"));
+    }
+
+    #[tokio::test]
+    async fn an_enabled_expansion_returns_the_chunk_and_is_read_only() {
+        let (t, id, _dir) = expanding_tool();
+        let schema = t.parameters_schema();
+        assert!(schema["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("expand")));
+        assert!(schema["properties"].get("chunk").is_some());
+        assert!(t.modes().contains(&AgentMode::Plan) && t.modes().contains(&AgentMode::Research));
+        assert_eq!(
+            t.call_capability(&json!({"action": "expand"})),
+            sven_tool_api::ToolCapability::ReadFile
+        );
+        let out = t
+            .execute(&call(json!({"action": "expand", "chunk": id})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.ends_with("\nalpha\nbeta\n"));
     }
 }
