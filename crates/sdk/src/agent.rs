@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sven_machines::machines::loop_core::MAX_ROUNDS_REACHED_FACT;
+use sven_machines::machines::loop_core::{LoopState, LOOP_STATE_KEY, MAX_ROUNDS_REACHED_FACT};
 
 use crate::engine::Engine;
 use crate::error::CallError;
@@ -72,7 +72,8 @@ impl Agent {
     /// Each context compaction is a `System` step carrying
     /// `extra.context_management`, ahead of the conversation that survived
     /// it; the steps before a compaction are not in the history and so not in
-    /// the document.
+    /// the document. `tool_definitions` are the schemas the last step's model
+    /// requests carried, not every tool the engine has registered.
     ///
     /// Built from the conversation the kernel holds, so it is complete even
     /// when progress events were dropped, and a resumed agent exports the
@@ -382,6 +383,31 @@ impl Agent {
         }
     }
 
+    /// Records the tools the model was offered, resolved exactly as the turn
+    /// executor resolves them: the machine's named tools, else everything the
+    /// registry has for the machine's mode. A kernel that never started a tool
+    /// loop offered nothing new, so the previous record stands.
+    fn take_offered_tools(&mut self, handle: &sven_bootstrap::RuntimeHandle, no_tools: bool) {
+        let Some(snapshot) = &self.state.kernel else {
+            return;
+        };
+        if snapshot.context.fact(LOOP_STATE_KEY).is_none() {
+            return;
+        }
+        let looping = LoopState::load(&snapshot.context);
+        let schemas = if no_tools {
+            Vec::new()
+        } else {
+            handle
+                .tool_registry()
+                .schemas_offered(&looping.tools, &looping.all_tools_mode)
+        };
+        self.state.tools = schemas
+            .iter()
+            .map(|s| atif::function_tool(&s.name, &s.description, &s.parameters))
+            .collect();
+    }
+
     /// Builds a session, posts what starts the run, and folds the result
     /// back in.
     async fn run(
@@ -480,14 +506,6 @@ impl Agent {
             Some(provider) => provider.model_name().to_string(),
             None => self.engine.config().model.name.clone(),
         });
-        self.state.tools = bundle
-            .handle
-            .tool_registry()
-            .schemas()
-            .iter()
-            .map(|s| atif::function_tool(&s.name, &s.description, &s.parameters))
-            .collect();
-
         match human {
             Some(responder) => tokio::spawn(bundle.channels.forward_to(responder)),
             None => tokio::spawn(bundle.channels.answer_unattended()),
@@ -601,6 +619,7 @@ impl Agent {
             None => bundle.runtime.capture().await,
         };
         self.take_history(&bundle.handle, seeded);
+        self.take_offered_tools(&bundle.handle, options.no_tools);
 
         // Report the failure only after the kernel state above is stored, so a
         // caller that retries or inspects the agent resumes from where the

@@ -384,6 +384,22 @@ pub enum AgentMode {
     Sdlc,
 }
 
+impl AgentMode {
+    /// The mode whose [`Display`](std::fmt::Display) form is `name`.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        [
+            Self::Research,
+            Self::Plan,
+            Self::Agent,
+            Self::Chat,
+            Self::Sdlc,
+        ]
+        .into_iter()
+        .find(|mode| mode.to_string() == name)
+    }
+}
+
 impl std::fmt::Display for AgentMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

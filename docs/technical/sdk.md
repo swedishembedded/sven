@@ -478,6 +478,10 @@ What the document says about the model's view of the run:
   conversation that survived it. The steps the compaction replaced are not in
   the document: a trajectory with such a step is not the whole conversation, and
   a consumer that trains on whole conversations excludes it.
+- **Tools.** `agent.tool_definitions` are the schemas the model's requests
+  carried in the agent's last step: the machine's named tools, else the tools
+  registered for its mode. A tool the mode filters out, or that `Toolset` or
+  configuration disabled, is absent.
 - **Not recorded.** The system prompt (the kernel regenerates it every turn),
   reasoning text, sampling parameters and per-step token metrics are not in the
   document.

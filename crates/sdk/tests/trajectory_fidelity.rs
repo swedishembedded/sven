@@ -13,10 +13,15 @@
 //! you can procure our services by sending an email to
 //! info@swedishembedded.com.
 
+mod common;
+
 use std::sync::{Arc, Mutex};
 
+use common::Strict;
 use sven_model::{CompletionRequest, ModelProvider, ResponseEvent, ResponseStream};
+use sven_model_mock::ScriptedMockProvider;
 use sven_sdk::config::Config;
+use sven_sdk::tool::{ApprovalPolicy, Tool, ToolCall, ToolCapability, ToolOutput};
 use sven_sdk::{Agent, Engine};
 
 /// Answers "ok" to everything, including the summarisation request a
@@ -107,4 +112,70 @@ async fn a_compaction_is_marked_in_the_trajectory_and_the_history_is_the_compact
         serde_json::from_str(&serde_json::to_string(agent.state()).unwrap()).unwrap();
     let resumed = engine.resume(state).expect("resumes");
     assert_eq!(compaction_markers(&resumed), compaction_markers(&agent));
+}
+
+struct Echo {
+    name: &'static str,
+    modes: &'static [sven_vocab::AgentMode],
+}
+
+#[async_trait::async_trait]
+impl Tool for Echo {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "Echoes."
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
+    }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+    fn modes(&self) -> &[sven_vocab::AgentMode] {
+        self.modes
+    }
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        ToolOutput::ok(&call.id, "echo")
+    }
+}
+
+fn scripted_engine(scripts: Vec<Vec<ResponseEvent>>, tools: Vec<Arc<dyn Tool>>) -> Engine {
+    let mut builder =
+        Engine::builder().model_provider(Arc::new(Strict(ScriptedMockProvider::new(scripts))));
+    for tool in tools {
+        builder = builder.tool(tool);
+    }
+    builder.build().expect("an engine builds")
+}
+
+#[tokio::test]
+async fn the_trajectory_lists_the_tools_offered_in_the_agents_mode() {
+    use sven_vocab::AgentMode;
+    let engine = scripted_engine(
+        vec![vec![
+            ResponseEvent::TextDelta("hi".into()),
+            ResponseEvent::Done,
+        ]],
+        vec![
+            Arc::new(Echo {
+                name: "offered",
+                modes: &[AgentMode::Agent],
+            }),
+            Arc::new(Echo {
+                name: "research_only",
+                modes: &[AgentMode::Research],
+            }),
+        ],
+    );
+    let mut agent = engine.agent("agent");
+    agent.send("hello").await.expect("an outcome");
+
+    let offered = serde_json::to_string(&agent.trajectory().agent.tool_definitions).unwrap();
+    assert!(offered.contains("\"offered\""), "{offered}");
+    assert!(!offered.contains("research_only"), "{offered}");
 }

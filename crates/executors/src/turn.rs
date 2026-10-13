@@ -448,15 +448,8 @@ impl EffectExecutor for TurnExecutor {
         // the model never sees a single tool definition.
         let tool_schemas = if self.no_tools {
             vec![]
-        } else if !req.tools.is_empty() {
-            to_model_schemas(self.tools.schemas_for_names(&req.tools))
-        } else if !req.all_tools_mode.is_empty() {
-            let mode_val = serde_json::Value::String(req.all_tools_mode.clone());
-            let mode = serde_json::from_value::<sven_vocab::AgentMode>(mode_val)
-                .unwrap_or(sven_vocab::AgentMode::Agent);
-            to_model_schemas(self.tools.schemas_for_mode(mode))
         } else {
-            vec![]
+            to_model_schemas(self.tools.schemas_offered(&req.tools, &req.all_tools_mode))
         };
 
         // Observable request shape (debug level → `-v` stderr in headless

@@ -177,6 +177,22 @@ impl ToolRegistry {
         self.schemas_filtered(|t| t.modes().contains(&mode))
     }
 
+    /// The schemas a model turn is offered: the machine's named tools when it
+    /// names any, else every tool available in `all_tools_mode` (an
+    /// [`AgentMode`] name; an unknown name falls back to `agent`), else none.
+    ///
+    /// The one place this precedence lives, so what a turn sends and what a
+    /// record of the turn says it was offered cannot disagree.
+    pub fn schemas_offered(&self, names: &[String], all_tools_mode: &str) -> Vec<ToolSchema> {
+        if !names.is_empty() {
+            return self.schemas_for_names(names);
+        }
+        if all_tools_mode.is_empty() {
+            return Vec::new();
+        }
+        self.schemas_for_mode(AgentMode::from_name(all_tools_mode).unwrap_or(AgentMode::Agent))
+    }
+
     /// Produce schemas only for the named subset of tools.
     ///
     /// Used by the SDLC deliberation engine to give each state a *state-scoped*
