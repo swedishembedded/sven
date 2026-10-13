@@ -81,9 +81,10 @@ is shown carrying a real workload. The contribution is the methodology and
 its mathematical foundation, not the product; product behaviour appears only
 as evidence.
 
-Three commitments bound the scope. Every quantitative claim in this paper is
-reproducible from the repository (Section 6). The paper stays at the level of
-method and mathematics: implementation recipes are cited, not reproduced.
+Three commitments bound the scope. Every quantitative claim in this paper
+is reproducible from the repository by the commands of Section 6.6. The
+paper stays at the level of method and mathematics: implementation recipes
+are cited, not reproduced.
 And the paper claims validation, not verification of the whole system: the
 boundary of what is proved is stated as carefully as what is proved inside it
 (Section 7).
@@ -659,6 +660,33 @@ themselves mathematical". A kernel whose properties are finitary does not
 need the heavier machinery; pretending otherwise is how formal methods
 acquires its reputation for cost.
 
+## Reproducing the evidence
+
+Every number in this paper comes from the commands below, run from the
+repository root. The measurements reported were taken on 2026-10-13 on a
+tree whose engine, runtime, machines and models were last changed by
+commits `32d70bc3` (code) and `8ba82c8f` (model comments only).
+
+```sh
+make formal                    # TLA+ suite (Section 6.3): 16 configurations
+cargo test -p sven-hsm         # 62 tests
+cargo test -p sven-kernel      # 18 tests
+cargo test -p sven-machines    # 142 tests
+grep -rE '^\s*#\[(tokio::)?test' crates/hsm crates/kernel crates/machines \
+    --include='*.rs' | wc -l   # 222, the same census without building
+wc -l crates/hsm/src/dispatch.rs crates/hsm/src/machine.rs \
+      crates/hsm/src/effect.rs crates/kernel/src/*.rs   # Section 5.4
+python3 papers/state-machine/figures.py papers/state-machine/img  # matplotlib
+make papers/state-machine/pdf  # this document
+```
+
+`make formal` needs a Java runtime (11 or newer) and fetches the TLA+
+tools at release v1.7.4, verified against a pinned SHA-256; it asserts
+each configuration's expected outcome and exits non-zero otherwise. The
+repository pins no Rust toolchain; the measurements used rustc 1.98.1,
+OpenJDK 21.0.12.1 (4 TLC workers; the whole suite took 23 s), matplotlib
+3.11.2 and pandoc 3.7.0.2.
+
 # Discussion and limitations
 
 **What is proved, what is checked, what is merely tested.** The
@@ -688,7 +716,7 @@ evaluated by its own validation machinery; the paper therefore claims
 soundness of the argument and reproducibility of the evidence, not
 external validity across domains. The measured numbers are snapshots at
 the time of writing and are reproducible from the repository by the
-commands of Section 6; no claim here rests on a measurement the repository
+commands of Section 6.6; no claim here rests on a measurement the repository
 cannot regenerate.
 
 # Conclusion
