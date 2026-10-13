@@ -1913,12 +1913,13 @@ mod tests {
             "the liveness signal must carry no content: {:?}",
             events[0]
         );
-        assert!(buf.is_empty(), "the blank line after the comment is consumed");
+        assert!(
+            buf.is_empty(),
+            "the blank line after the comment is consumed"
+        );
 
         // A real delta after the keepalives is unaffected.
-        buf.extend_from_slice(
-            b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n",
-        );
+        buf.extend_from_slice(b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n");
         let events = drain_complete_sse_lines_bytes(&mut buf);
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], Ok(ResponseEvent::TextDelta(t)) if t == "hi"));
