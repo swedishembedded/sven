@@ -32,6 +32,7 @@ mod events;
 mod exec;
 mod machine;
 mod registry;
+mod retry;
 mod run;
 mod state;
 

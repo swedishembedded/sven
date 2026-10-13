@@ -336,3 +336,58 @@ steps:
         "the retry records the attempt it is about to make: {trace:?}"
     );
 }
+
+#[test]
+fn a_retried_tool_body_starts_again_as_a_step() {
+    let yaml = r#"
+api_version: "1"
+name: flaky
+entry: attempt
+limits: { max_steps: 100, max_tool_calls: 10 }
+steps:
+  attempt:
+    retry: { attempts: 2, body: probe, then: ok, on_exhausted: give_up }
+  probe:
+    tool: { name: read_file, args: { path: "flaky-probe" }, then: ok }
+  ok:
+    return: { value: "made it" }
+  give_up:
+    fail: { code: "unreachable", message: "the probe never succeeded" }
+"#;
+    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
+    let _ = m.step_effect().expect("the body step emitted its call");
+    let steps_before = sven_harness_runtime::HarnessRunState::load(&ctx)
+        .counts
+        .steps;
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::ToolFailed {
+            call_id: step_call_id("flaky", "probe-1"),
+            error: "file missing".into(),
+        },
+    );
+    let trace = m.trace(&ctx);
+    let started: Vec<u64> = trace
+        .iter()
+        .filter_map(|r| match r {
+            TraceRecord::StepStarted { step, attempt, .. } if step.as_str() == "probe" => {
+                Some(*attempt)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        started,
+        [1, 2],
+        "every attempt of the body is a step start, as for any other body: {trace:?}"
+    );
+    assert_eq!(
+        sven_harness_runtime::HarnessRunState::load(&ctx)
+            .counts
+            .steps,
+        steps_before + 1,
+        "the re-entry counts against the step budget"
+    );
+}

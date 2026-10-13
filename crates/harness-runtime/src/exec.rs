@@ -56,6 +56,35 @@ fn transform_failure_code(err: &sven_harness_transform::TransformError) -> &'sta
 }
 
 impl HarnessMachine {
+    /// Counts a step start against the step budget and records it. The
+    /// retry frame's body re-entries carry which attempt they are: the
+    /// frame's spent count, counted from 1. `Some` is the failure when the
+    /// budget is spent.
+    pub(super) fn begin_step(
+        &mut self,
+        run: &mut HarnessRunState,
+        step: &PlanStep,
+        ctx: &mut Context,
+    ) -> Option<Reaction<HarnessState>> {
+        run.counts.steps += 1;
+        if run.counts.steps > run.step_budget(self.run.plan()) {
+            return Some(self.fail_now(
+                run,
+                "step_budget",
+                "the run exceeded its step budget",
+                ctx,
+            ));
+        }
+        run.trace.push(TraceRecord::StepStarted {
+            step: step.id.clone(),
+            primitive: primitive_word(&step.primitive).to_string(),
+            attempt: run.retry.as_ref().map_or(1, RetryFrame::attempt),
+        });
+        None
+    }
+}
+
+impl HarnessMachine {
     /// Executes the step the walk points at: the one place a primitive is
     /// interpreted. Pure primitives resolve inline and point the walk at
     /// their successor (as a new advance signal); side-effecting
@@ -75,23 +104,9 @@ impl HarnessMachine {
                 ctx,
             );
         };
-        run.counts.steps += 1;
-        if run.counts.steps > run.step_budget(self.run.plan()) {
-            return self.fail_now(run, "step_budget", "the run exceeded its step budget", ctx);
+        if let Some(spent) = self.begin_step(run, &step, ctx) {
+            return spent;
         }
-        // The walk's progress record: a consumer watching the run sees each
-        // step begin, and the retry frame's body re-entries carry which
-        // attempt they are. The body's attempt is the frame's spent count,
-        // counted from 1.
-        let attempt = run
-            .retry
-            .as_ref()
-            .map_or(1, |frame| frame.attempts - frame.left + 1);
-        run.trace.push(TraceRecord::StepStarted {
-            step: step_id.clone(),
-            primitive: primitive_word(&step.primitive).to_string(),
-            attempt,
-        });
         match step.primitive.clone() {
             PlanPrimitive::Assign { set, then } => {
                 for (name, raw) in set {
@@ -535,6 +550,15 @@ impl HarnessMachine {
         run.store_step_value(step_id, value, store_as.as_deref());
         run.awaiting = None;
         run.inflight = None;
+        // The body succeeded: the retry is over, and the steps after it are
+        // not attempts of it (nor does a later failure re-run the body).
+        if run
+            .retry
+            .as_ref()
+            .is_some_and(|frame| frame.body == step_id)
+        {
+            run.retry = None;
+        }
         let then = self
             .run
             .plan()
@@ -577,102 +601,12 @@ impl HarnessMachine {
         self.step_failed(run, "invalid_answer", "answer is not valid JSON", ctx)
     }
 
-    fn step_failed(
-        &mut self,
-        run: &mut HarnessRunState,
-        code: &str,
-        error: &str,
-        ctx: &mut Context,
-    ) -> Reaction<HarnessState> {
-        let Some(frame) = run.retry.clone() else {
-            return self.fail_now(run, code, error, ctx);
-        };
-        if frame.left <= 1 {
-            run.retry = None;
-            run.awaiting = None;
-            run.inflight = None;
-            run.child = None;
-            return self.walk_to(run, &frame.step, ctx);
-        }
-        let mut frame = frame;
-        frame.left -= 1;
-        let body = frame.body.clone();
-        let attempt = frame.attempt();
-        let remaining = frame.left - 1;
-        run.retry = Some(frame);
-        run.trace.push(TraceRecord::RetryAttempt {
-            step: body.clone(),
-            attempt,
-            remaining,
-        });
-        run.awaiting = None;
-        run.inflight = None;
-        run.child = None;
-        run.current = body.clone();
-        let Some(step) = self.run.plan().step(&body).cloned() else {
-            return self.fail_now(
-                run,
-                "unknown_step",
-                &format!("retry body `{body}` does not exist"),
-                ctx,
-            );
-        };
-        self.run_body(run, &step, ctx)
-    }
-
-    /// Re-runs a retry body's side-effecting primitive: the body is always
-    /// a step with a side effect (a frame only exists when one failed).
-    fn run_body(
-        &mut self,
-        run: &mut HarnessRunState,
-        step: &PlanStep,
-        ctx: &mut Context,
-    ) -> Reaction<HarnessState> {
-        match &step.primitive {
-            PlanPrimitive::Tool {
-                ref name, ref args, ..
-            } => {
-                run.counts.tool_calls += 1;
-                if run.exceeds_tool_budget(self.run.plan()) {
-                    return self.fail_now(
-                        run,
-                        "tool_call_budget",
-                        "the run exceeded its tool-call budget",
-                        ctx,
-                    );
-                }
-                let call_id = self.call_id_for(step, run);
-                let effect = Effect::CallTool {
-                    call_id,
-                    name: name.clone(),
-                    capability: capability_for_tool_name(name),
-                    args: run.resolve_value(args),
-                };
-                self.cache_effect(effect.clone());
-                self.park(run, step, Waiting::Tool);
-                run.inflight = Some(Inflight {
-                    step: step.id.clone(),
-                    call_id: Some(call_id),
-                });
-                run.store(ctx);
-                Reaction::Transition {
-                    target: HarnessState::WaitingForTool,
-                    effects: vec![effect],
-                    rationale: format!("retry re-entered body step `{}`", step.id),
-                }
-            }
-            // A pure body cannot fail a side effect; treat reaching here as
-            // the walk simply moving on.
-            _ => self.walk_to(run, &step.id, ctx),
-        }
-    }
-
     /// The walk moves to `step` and keeps going: pure steps run inline (one
     /// dispatch executes a whole pure chain), a side-effecting step parks
     /// the run (the returned reaction transitions to its waiting state
     /// carrying the effect). This is the loop that makes a chain advance
     /// without an external tick.
-    fn walk_to(
+    pub(super) fn walk_to(
         &mut self,
         run: &mut HarnessRunState,
         step: &str,

@@ -638,3 +638,110 @@ fn the_terminal_outcome_is_reported_as_a_context_fact() {
         "a cancelled run's outcome is the outcome fact"
     );
 }
+
+#[test]
+fn an_exhausted_retry_follows_on_exhausted() {
+    let yaml = r#"
+api_version: "1"
+name: flaky
+entry: attempt
+limits: { max_steps: 100, max_tool_calls: 10 }
+steps:
+  attempt:
+    retry: { attempts: 2, body: probe, then: ok, on_exhausted: give_up }
+  probe:
+    tool: { name: read_file, args: { path: "flaky-probe" }, then: ok }
+  ok:
+    return: { value: "made it" }
+  give_up:
+    fail: { code: "gave_up", message: "the probe never succeeded" }
+"#;
+    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
+    let call = |n: u64| sven_harness_runtime::step_call_id("flaky", &format!("probe-{n}"));
+    let _ = m.step_effect().expect("attempt 1 emitted its call");
+    for attempt in 1..=2 {
+        let _ = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            Event::ToolFailed {
+                call_id: call(attempt),
+                error: "file missing".into(),
+            },
+        );
+    }
+    for _ in 0..4 {
+        if state == sven_harness_runtime::HarnessState::Failed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Failed);
+    assert_eq!(
+        m.outcome().expect("a failed run has an outcome")["code"],
+        "gave_up",
+        "spent attempts continue at `on_exhausted`, not back into the retry"
+    );
+}
+
+#[test]
+fn a_retry_ends_when_its_body_succeeds() {
+    let yaml = r#"
+api_version: "1"
+name: flaky
+entry: attempt
+limits: { max_steps: 100, max_tool_calls: 10 }
+steps:
+  attempt:
+    retry: { attempts: 3, body: probe, then: ok, on_exhausted: give_up }
+  probe:
+    tool: { name: read_file, args: { path: "flaky-probe" }, then: ok }
+  ok:
+    return: { value: "made it" }
+  give_up:
+    fail: { code: "gave_up", message: "never" }
+"#;
+    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
+    let _ = m.step_effect().expect("the body emitted its call");
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::ToolFailed {
+            call_id: sven_harness_runtime::step_call_id("flaky", "probe-1"),
+            error: "file missing".into(),
+        },
+    );
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::ToolSucceeded {
+            call_id: sven_harness_runtime::step_call_id("flaky", "probe-2"),
+            observation: serde_json::json!("fine"),
+        },
+    );
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Completed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
+    let after = m
+        .trace(&ctx)
+        .into_iter()
+        .find_map(|r| match r {
+            sven_harness_runtime::TraceRecord::StepStarted { step, attempt, .. }
+                if step == "ok" =>
+            {
+                Some(attempt)
+            }
+            _ => None,
+        })
+        .expect("the step after the retry started");
+    assert_eq!(
+        after, 1,
+        "no retry frame outlives its body: the next step is not a retry attempt"
+    );
+}
