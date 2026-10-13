@@ -40,8 +40,14 @@ pub use spec::{
     AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec,
     DelegateTarget, FailStepSpec, HarnessSpec, IOType, InputValue, LimitsSpec, ParallelStepSpec,
     PredictStepSpec, RetryStepSpec, ReturnStepSpec, StepId, StepSpec, ToolStepSpec,
-    TransformStepSpec, VerifyStepSpec, SUPPORTED_API_VERSION,
+    TransformStepSpec, VerifyStepSpec, PRIMITIVES, SUPPORTED_API_VERSION,
 };
+
+/// The JSON Schema (draft 2020-12) of a harness document, for editors and
+/// `sven harness schema`. It names exactly [`PRIMITIVES`] and accepts every
+/// document the typed parser accepts; semantic rules (references, bounds,
+/// capabilities) remain the compiler's.
+pub const DOCUMENT_SCHEMA: &str = include_str!("../schema/harness-document.schema.json");
 
 /// Converts a [`serde_yaml::Value`] to a [`serde_json::Value`]. The harness
 /// language uses the JSON-representable subset of YAML; tagged values,

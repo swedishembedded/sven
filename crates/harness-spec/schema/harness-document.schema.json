@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://swedishembedded.com/sven/schema/harness-document.schema.json",
+  "$comment": "Copyright (c) 2026 Martin Schroder <info@swedishembedded.com>. SPDX-License-Identifier: Apache-2.0. Swedish Embedded AB implements editor-checkable, data-defined agent harnesses for its clients. If your team needs expertise in declarative agent workflow languages then you can procure our services by sending an email to info@swedishembedded.com. Strictness: the compiler's typed parser ignores unknown fields, so this schema does not forbid them either; it does require every step to hold exactly one known primitive key. The set of primitive keys is held to sven_harness_spec::PRIMITIVES by a test.",
+  "title": "sven harness document",
+  "description": "A sven agent-harness program: a map of steps, each exactly one primitive, compiled ahead of run time into a content-hashed plan.",
+  "type": "object",
+  "required": ["api_version", "name", "entry", "steps"],
+  "properties": {
+    "api_version": {
+      "const": "1",
+      "description": "The language version. Only \"1\" compiles."
+    },
+    "name": {
+      "type": "string",
+      "description": "The harness's name, carried into the plan for tracing."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human documentation for the harness."
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Typed inputs, by name.",
+      "additionalProperties": { "$ref": "#/$defs/io_value" }
+    },
+    "outputs": {
+      "type": "object",
+      "description": "Typed outputs, by name. A return step's value must match.",
+      "additionalProperties": { "$ref": "#/$defs/io_value" }
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "Capabilities the harness needs. A primitive that exercises an undeclared capability fails to compile.",
+      "items": { "$ref": "#/$defs/capability" }
+    },
+    "limits": { "$ref": "#/$defs/limits" },
+    "schemas": {
+      "type": "object",
+      "description": "Named JSON Schemas; a predict step's schema names one of these.",
+      "additionalProperties": { "type": "object" }
+    },
+    "entry": {
+      "type": "string",
+      "description": "The step where execution starts."
+    },
+    "steps": {
+      "type": "object",
+      "description": "The steps, by id.",
+      "propertyNames": { "minLength": 1 },
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "capability": {
+      "enum": [
+        "ReadFile",
+        "WriteFile",
+        "DeleteFile",
+        "ExecuteShell",
+        "NetworkAccess",
+        "GitOperation",
+        "RunVerifier",
+        "ControlDevice",
+        "SpawnChild"
+      ]
+    },
+    "io_type": {
+      "enum": ["string", "number", "boolean", "json"]
+    },
+    "io_value": {
+      "description": "A type name (shorthand) or {type, description}.",
+      "oneOf": [
+        { "$ref": "#/$defs/io_type" },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "$ref": "#/$defs/io_type" },
+            "description": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "limits": {
+      "type": "object",
+      "description": "Upper bounds the runtime enforces. Required whenever the steps can run away (model, tool, verify, retry, parallel, delegate).",
+      "properties": {
+        "max_steps": { "$ref": "#/$defs/count" },
+        "max_model_turns": { "$ref": "#/$defs/count" },
+        "max_tool_calls": { "$ref": "#/$defs/count" },
+        "max_delegate_depth": { "$ref": "#/$defs/count" },
+        "max_parallel": { "$ref": "#/$defs/count" },
+        "max_helper_fuel": { "$ref": "#/$defs/count" },
+        "max_helper_pages": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+      }
+    },
+    "step_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The id of a step in this document."
+    },
+    "template": {
+      "type": "string",
+      "description": "A string with {{ path }} interpolations over inputs, facts, steps and env."
+    },
+    "condition": {
+      "description": "A branch condition: a path, a !negated path, a single {{ path }} hole, or an all/any/not/eq/ne object.",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "anyOf": [
+            { "required": ["all"], "properties": { "all": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/condition" } } } },
+            { "required": ["any"], "properties": { "any": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/condition" } } } },
+            { "required": ["not"], "properties": { "not": { "$ref": "#/$defs/condition" } } },
+            { "required": ["eq", "value"], "properties": { "eq": { "type": "string", "minLength": 1 } } },
+            { "required": ["ne", "value"], "properties": { "ne": { "type": "string", "minLength": 1 } } }
+          ]
+        }
+      ]
+    },
+    "step": {
+      "description": "One step: a map holding exactly one primitive key.",
+      "oneOf": [
+        { "type": "object", "required": ["predict"], "maxProperties": 1, "properties": { "predict": { "$ref": "#/$defs/predict" } } },
+        { "type": "object", "required": ["agent"], "maxProperties": 1, "properties": { "agent": { "$ref": "#/$defs/agent" } } },
+        { "type": "object", "required": ["tool"], "maxProperties": 1, "properties": { "tool": { "$ref": "#/$defs/tool" } } },
+        { "type": "object", "required": ["verify"], "maxProperties": 1, "properties": { "verify": { "$ref": "#/$defs/verify" } } },
+        { "type": "object", "required": ["assign"], "maxProperties": 1, "properties": { "assign": { "$ref": "#/$defs/assign" } } },
+        { "type": "object", "required": ["branch"], "maxProperties": 1, "properties": { "branch": { "$ref": "#/$defs/branch" } } },
+        { "type": "object", "required": ["retry"], "maxProperties": 1, "properties": { "retry": { "$ref": "#/$defs/retry" } } },
+        { "type": "object", "required": ["parallel"], "maxProperties": 1, "properties": { "parallel": { "$ref": "#/$defs/parallel" } } },
+        { "type": "object", "required": ["delegate"], "maxProperties": 1, "properties": { "delegate": { "$ref": "#/$defs/delegate" } } },
+        { "type": "object", "required": ["transform"], "maxProperties": 1, "properties": { "transform": { "$ref": "#/$defs/transform" } } },
+        { "type": "object", "required": ["return"], "maxProperties": 1, "properties": { "return": { "$ref": "#/$defs/return" } } },
+        { "type": "object", "required": ["fail"], "maxProperties": 1, "properties": { "fail": { "$ref": "#/$defs/fail" } } }
+      ]
+    },
+    "predict": {
+      "type": "object",
+      "description": "One constrained model turn.",
+      "required": ["prompt", "then"],
+      "properties": {
+        "prompt": { "$ref": "#/$defs/template" },
+        "schema": { "type": "string", "description": "Name of a schema in the top-level schemas map." },
+        "store_as": { "type": "string" },
+        "then": { "$ref": "#/$defs/step_id" }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "description": "A model turn with a tool loop. An explicit tools list is also a name allowlist.",
+      "required": ["prompt", "then"],
+      "properties": {
+        "prompt": { "$ref": "#/$defs/template" },
+        "tools": { "type": "array", "items": { "type": "string" } },
+        "store_as": { "type": "string" },
+        "then": { "$ref": "#/$defs/step_id" }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "description": "One tool call; args may hold templates.",
+      "required": ["name", "then"],
+      "properties": {
+        "name": { "type": "string" },
+        "args": {},
+        "store_as": { "type": "string" },
+        "then": { "$ref": "#/$defs/step_id" }
+      }
+    },
+    "verify": {
+      "type": "object",
+      "description": "One declarative verification; spec is the kernel's verifier vocabulary.",
+      "required": ["spec", "then"],
+      "properties": {
+        "spec": {},
+        "store_as": { "type": "string" },
+        "then": { "$ref": "#/$defs/step_id" }
+      }
+    },
+    "assign": {
+      "type": "object",
+      "description": "Store values into run facts.",
+      "required": ["set", "then"],
+      "properties": {
+        "set": { "type": "object" },
+        "then": { "$ref": "#/$defs/step_id" }
+      }
+    },
+    "branch": {
+      "type": "object",
+      "description": "Choose between two successors on a condition.",
+      "required": ["on", "when_true", "when_false"],
+      "properties": {
+        "on": { "$ref": "#/$defs/condition" },
+        "when_true": { "$ref": "#/$defs/step_id" },
+        "when_false": { "$ref": "#/$defs/step_id" }
+      }
+    },
+    "retry": {
+      "type": "object",
+      "description": "Run a body step with a bounded attempt count.",
+      "required": ["attempts", "body", "then", "on_exhausted"],
+      "properties": {
+        "attempts": { "type": "integer", "minimum": 1 },
+        "body": { "$ref": "#/$defs/step_id" },
+        "then": { "$ref": "#/$defs/step_id" },
+        "on_exhausted": { "$ref": "#/$defs/step_id" }
+      }
+    },
+    "parallel": {
+      "type": "object",
+      "description": "Run several child steps concurrently and join. Needs the SpawnChild capability.",
+      "required": ["branches", "join"],
+      "properties": {
+        "branches": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step_id" } },
+        "join": { "$ref": "#/$defs/step_id" }
+      }
+    },
+    "delegate": {
+      "type": "object",
+      "description": "Start a child run: another harness or a registered machine.",
+      "required": ["target", "then"],
+      "properties": {
+        "target": { "type": "string" },
+        "as_kind": { "enum": ["harness", "machine"], "description": "Defaults to harness." },
+        "input": {},
+        "store_as": { "type": "string" },
+        "then": { "$ref": "#/$defs/step_id" }
+      }
+    },
+    "transform": {
+      "type": "object",
+      "description": "Run a sandboxed bundle helper over a value.",
+      "required": ["helper", "then"],
+      "properties": {
+        "helper": { "type": "string" },
+        "input": {},
+        "store_as": { "type": "string" },
+        "then": { "$ref": "#/$defs/step_id" }
+      }
+    },
+    "return": {
+      "type": "object",
+      "description": "Finish successfully with a value that satisfies the declared outputs.",
+      "properties": {
+        "value": {}
+      }
+    },
+    "fail": {
+      "type": "object",
+      "description": "Finish with an explicit failure.",
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "$ref": "#/$defs/template" }
+      }
+    }
+  }
+}

@@ -19,6 +19,25 @@ use serde::{Deserialize, Serialize};
 /// reinterpreted.
 pub const SUPPORTED_API_VERSION: &str = "1";
 
+/// The primitive keys a step may be written under: the closed set of the
+/// language, in the order the specification documents them. The JSON Schema
+/// (`schema/harness-document.schema.json`) must name exactly these; a test
+/// holds the two together.
+pub const PRIMITIVES: [&str; 12] = [
+    "predict",
+    "agent",
+    "tool",
+    "verify",
+    "assign",
+    "branch",
+    "retry",
+    "parallel",
+    "delegate",
+    "transform",
+    "return",
+    "fail",
+];
+
 /// A step identifier: the map key of a step. Unique by construction (map
 /// keys), non-empty, and referenced by name from other steps.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -549,8 +568,8 @@ impl TryFrom<serde_json::Value> for StepSpec {
                 .map(|f| Self::Fail(Box::new(f)))
                 .map_err(|e| format!("bad `fail` step: {e}")),
             other => Err(format!(
-                "unknown step primitive `{other}` (known: predict, agent, tool, verify, \
-                 assign, branch, retry, parallel, delegate, transform, return, fail)"
+                "unknown step primitive `{other}` (known: {})",
+                PRIMITIVES.join(", ")
             )),
         }
     }
