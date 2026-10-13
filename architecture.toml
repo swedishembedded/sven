@@ -123,6 +123,26 @@ sample-harnesses-sdk-runner = "sample"
 
 # ── Forbidden reachability. Checked transitively over normal dependencies. ─
 [[forbidden]]
+from = "sven-decision"
+to   = "sven-hsm"
+why  = "A decision only advises. A verdict names an option the caller offered and never a permission, so the crate cannot link the types that define permissions, approvals and tool capabilities."
+
+[[forbidden]]
+from = "sven-decision"
+to   = "sven-tool-api"
+why  = "A decision only advises. A verdict names an option the caller offered and never a permission, so the crate cannot link the types that define permissions, approvals and tool capabilities."
+
+[[forbidden]]
+from = "sven-decision"
+to   = "sven-tool-registry"
+why  = "A decision only advises. A verdict names an option the caller offered and never a permission, so the crate cannot link the types that define permissions, approvals and tool capabilities."
+
+[[forbidden]]
+from = "sven-decision"
+to   = "sven-kernel"
+why  = "A decision only advises. A verdict names an option the caller offered and never a permission, so the crate cannot link the types that define permissions, approvals and tool capabilities."
+
+[[forbidden]]
 from = "sven-machines"
 to   = "sven-model"
 why  = "Machines are pure transition functions: they emit typed effects and never perform I/O. The only way to keep that true is for no model, tool, turn or executor code to be linkable from them at all."

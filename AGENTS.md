@@ -602,6 +602,9 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
 - [docs/technical/tool-definitions.md](docs/technical/tool-definitions.md) -
   the size of the tool definitions every request carries, how it is measured
   and the ceiling that pins it.
+- [docs/technical/decisions.md](docs/technical/decisions.md) -
+  the decision runtime: typed questions for a small decision model, policy,
+  failure classes and the mock provider; the model only advises.
 - `architecture.toml` - authoritative crate tiers, dependency legality, file-size
   ratchet. `.claude/skills/programming/rust/architecture.md` - the layering
   method this workspace follows, generalized for reuse elsewhere.

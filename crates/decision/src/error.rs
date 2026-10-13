@@ -10,6 +10,7 @@
 
 use std::time::Duration;
 
+use serde::Serialize;
 use thiserror::Error;
 
 /// Why a decision could not be obtained. Every variant is a distinct class a
@@ -43,7 +44,8 @@ pub enum DecisionError {
 }
 
 /// The class of a [`DecisionError`], without its detail.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ErrorClass {
     Unreachable,
     ModelNotInstalled,
