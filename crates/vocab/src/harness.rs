@@ -4,7 +4,7 @@
 //! Structured harness lifecycle events.
 //!
 //! [`HarnessEvent`] is one harness run's progress as typed payloads, carried
-//! on the unified [`SessionEvent`] stream next to the model and tool events
+//! on the unified [`SessionEvent`](crate::SessionEvent) stream next to the model and tool events
 //! rather than in a second log. It answers the questions a run's aftermath
 //! poses - why did the harness take that branch, which step cost the extra
 //! model call, did the retry change anything - from the same records the run
@@ -21,7 +21,7 @@ use serde_json::Value;
 /// One harness run's lifecycle, as the run itself records it.
 ///
 /// The run-scoped fields (plan and bundle digests, the inputs) travel with
-/// [`SessionEvent::Harness`] together with the run id that links the run's
+/// [`SessionEvent::Harness`](crate::SessionEvent::Harness) together with the run id that links the run's
 /// events across a suspend and a resume; each variant carries what belongs
 /// to that one event.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

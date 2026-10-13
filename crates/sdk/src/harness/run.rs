@@ -43,8 +43,8 @@ const HARNESS_MODE: &str = "agent";
 /// One execution of a harness: an independent kernel session, run to a
 /// terminal outcome or a bound.
 ///
-/// A run executes once; the way to run again is a new [`Harness::start`],
-/// and the way to continue a stopped run is [`Harness::resume`]. Runs are
+/// A run executes once; the way to run again is a new [`super::Harness::start`],
+/// and the way to continue a stopped run is [`super::Harness::resume`]. Runs are
 /// independent: many can be in flight through one engine at once.
 pub struct HarnessRun {
     engine: Engine,
@@ -169,7 +169,7 @@ impl HarnessRun {
     /// The checkpoint of a run that a bound stopped, after
     /// [`Self::execute`].
     ///
-    /// [`Harness::resume`] continues it under the same program.
+    /// [`super::Harness::resume`] continues it under the same program.
     #[must_use]
     pub fn checkpoint(&self) -> Option<HarnessCheckpoint> {
         self.checkpoint.clone()
