@@ -52,6 +52,7 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
         | SessionEvent::ThinkingDelta(_)
         | SessionEvent::ThinkingComplete(_)
         | SessionEvent::ToolProgress { .. }
+        | SessionEvent::ModelWaiting { .. }
         | SessionEvent::ContextCompacted { .. }
         | SessionEvent::TokenUsage { .. }
         | SessionEvent::TurnComplete

@@ -320,6 +320,7 @@ TextDelta / TextComplete            // streamed + final assistant text
 ThinkingDelta / ThinkingComplete    // extended thinking
 ToolStarted { call_id, name, args }
 ToolProgress { call_id, message }
+ModelWaiting { elapsed_secs, phase }  // model silent: no text/reasoning/tool-call chunk yet (keepalives excluded)
 ToolFinished { call_id, name, output, is_error }
 TokenUsage { input, output, cache_read, cache_write, ... , cost_usd }
 ContextCompacted { tokens_before, tokens_after, strategy, turn }

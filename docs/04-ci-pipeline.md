@@ -501,6 +501,20 @@ prefixes that are easy to scrape with grep or awk:
 ...
 ```
 
+While the model has produced nothing real (no text, reasoning or tool-call
+chunk; keepalives do not count), sven writes a line every 5 seconds so a long
+wait does not look like a hang:
+
+```
+[sven:info] waiting for model 45 s (awaiting first token)
+```
+
+The phase is `connecting` (no response headers yet), `awaiting first token`, or
+`idle` (the model produced output and went quiet). A server that stays silent
+past its limit fails the step; see
+[Stalled model servers](05-configuration.md#stalled-model-servers) for the
+limits and how to raise them.
+
 Filter progress from a CI log:
 
 ```bash

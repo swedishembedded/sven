@@ -112,8 +112,16 @@ impl App {
         // currently focused chat (self.chat) unless this event came from that
         // session - which is guaranteed here.
         match event {
+            AgentEvent::ModelWaiting {
+                elapsed_secs,
+                phase,
+            } => {
+                self.agent.model_waiting =
+                    Some(format!("waiting for model {elapsed_secs} s ({phase})"));
+            }
             AgentEvent::TextDelta(delta) => {
                 tracing::debug!(len = delta.len(), "TUI: TextDelta received");
+                self.agent.model_waiting = None;
                 self.chat.streaming_is_thinking = false;
                 // Approximate token count: ~4 chars per token.
                 self.agent.streaming_tokens = self
@@ -151,6 +159,7 @@ impl App {
                 }
             }
             AgentEvent::ToolCallStarted(tc) => {
+                self.agent.model_waiting = None;
                 self.chat.tool_args.insert(tc.id.clone(), tc.name.clone());
                 self.agent.current_tool = Some(tc.name.clone());
                 // Record start time for elapsed-time display.
@@ -340,6 +349,7 @@ impl App {
 
                 self.agent.busy = false;
                 self.agent.current_tool = None;
+                self.agent.model_waiting = None;
                 self.chat.tool_streaming_content.clear();
 
                 // Safety drain: if TextComplete was dropped (e.g. the broadcast
@@ -427,6 +437,7 @@ impl App {
                 }
                 self.agent.busy = false;
                 self.agent.current_tool = None;
+                self.agent.model_waiting = None;
                 // Preserve the final context size from this partial turn.
                 self.agent.total_context_tokens = self.agent.context_tokens;
                 self.agent.total_output_tokens += self.agent.output_tokens;
@@ -502,6 +513,7 @@ impl App {
                 self.rerender_chat().await;
                 self.agent.busy = false;
                 self.agent.current_tool = None;
+                self.agent.model_waiting = None;
             }
             AgentEvent::TodoUpdate(todos) => {
                 self.chat.segments.push(ChatSegment::TodoUpdate(todos));
@@ -514,6 +526,7 @@ impl App {
                 }
             }
             AgentEvent::ThinkingDelta(delta) => {
+                self.agent.model_waiting = None;
                 self.chat.streaming_is_thinking = true;
                 self.agent.spinner_frame = self.agent.spinner_frame.wrapping_add(1);
                 self.chat.streaming_buffer.push_str(&delta);

@@ -673,6 +673,15 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                 },
             });
         }
+        UiEvent::ModelWaiting {
+            elapsed_secs,
+            phase,
+        } => {
+            write_progress(&crate::output::format_model_waiting_line(
+                elapsed_secs,
+                phase,
+            ));
+        }
         UiEvent::ToolProgress { message, .. } => {
             if state.trace >= 1 {
                 write_progress(&format!("[sven:progress] {message}"));

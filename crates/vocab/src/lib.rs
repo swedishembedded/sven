@@ -27,6 +27,7 @@ pub mod ledger;
 pub mod provenance;
 pub mod turn;
 pub mod verify;
+pub mod wait;
 
 pub use harness::HarnessEvent;
 pub use ledger::{
@@ -35,6 +36,7 @@ pub use ledger::{
 };
 
 pub use turn::{RefusedCall, TurnRequest, TURN_KIND};
+pub use wait::ModelWaitPhase;
 
 use provenance::FactSource;
 
@@ -674,6 +676,17 @@ pub enum SessionEvent {
         /// ledger existed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         breakdown: Option<Box<RequestBreakdown>>,
+    },
+    /// The model has produced nothing real (no text, reasoning or tool-call
+    /// chunk; keepalives do not count) for a while. Sent every few seconds
+    /// until output arrives or the turn is aborted, so a surface can show
+    /// "waiting for model" instead of looking hung. `elapsed_secs` counts
+    /// from the request, or from the last real output once the model has
+    /// started. Consumers update a status line; it is not conversation
+    /// content.
+    ModelWaiting {
+        elapsed_secs: u64,
+        phase: ModelWaitPhase,
     },
     /// The agent has finished processing the current user turn.
     TurnComplete,

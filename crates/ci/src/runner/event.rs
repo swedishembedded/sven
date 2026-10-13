@@ -374,6 +374,15 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             assembler.push_thinking(&content);
             stream_new_steps(assembler, s.emitted_steps, output_format);
         }
+        AgentEvent::ModelWaiting {
+            elapsed_secs,
+            phase,
+        } => {
+            write_stderr(&crate::output::format_model_waiting_line(
+                elapsed_secs,
+                phase,
+            ));
+        }
         AgentEvent::ToolProgress { message, .. } => {
             write_stderr(&format!("[sven:progress] {message}"));
         }

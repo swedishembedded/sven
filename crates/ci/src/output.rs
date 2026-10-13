@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::io::Write;
 
+use sven_vocab::ModelWaitPhase;
+
 /// Write clean output to stdout - suitable for piping to the next agent.
 pub fn write_stdout(text: &str) {
     print!("{text}");
@@ -27,6 +29,13 @@ pub fn write_stderr(msg: &str) {
 /// simple pattern matching without interfering with stdout conversation output.
 pub fn write_progress(msg: &str) {
     eprintln!("{msg}");
+}
+
+/// Format the `[sven:info]` line for a model that has produced nothing real
+/// for `elapsed_secs`, so a headless run says what it is waiting for instead
+/// of looking hung.
+pub fn format_model_waiting_line(elapsed_secs: u64, phase: ModelWaitPhase) -> String {
+    format!("[sven:info] waiting for model {elapsed_secs} s ({phase})")
 }
 
 /// Format a `[sven:tokens]` diagnostic line from a `TokenUsage` event.
@@ -103,6 +112,14 @@ pub fn tool_output_snippet(trace: u8, output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_waiting_line_names_the_wait_and_its_phase() {
+        assert_eq!(
+            format_model_waiting_line(45, ModelWaitPhase::AwaitingFirstToken),
+            "[sven:info] waiting for model 45 s (awaiting first token)"
+        );
+    }
 
     #[test]
     fn finalise_adds_newline_when_missing() {

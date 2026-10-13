@@ -116,6 +116,11 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         // visible change in the subagent chat view.
         AgentEvent::ToolProgress { .. } => Some(SessionUpdate::Plan(Plan::new(vec![]))),
 
+        // A model that has produced nothing yet is, for the client, the same
+        // as a tool that is still running: forward the same empty Plan
+        // heartbeat so its inactivity timer is reset while the agent waits.
+        AgentEvent::ModelWaiting { .. } => Some(SessionUpdate::Plan(Plan::new(vec![]))),
+
         // A request's token ledger rides on a UsageUpdate: the context
         // meter it carries is the request's prompt size against the window,
         // and the record itself is attached under `_meta`.
@@ -256,6 +261,18 @@ mod tests {
         assert!(matches!(
             agent_event_to_session_update(&ev),
             Some(SessionUpdate::AgentMessageChunk(_))
+        ));
+    }
+
+    #[test]
+    fn model_waiting_maps_to_a_heartbeat_plan() {
+        let ev = AgentEvent::ModelWaiting {
+            elapsed_secs: 30,
+            phase: sven_vocab::ModelWaitPhase::AwaitingFirstToken,
+        };
+        assert!(matches!(
+            agent_event_to_session_update(&ev),
+            Some(SessionUpdate::Plan(_))
         ));
     }
 

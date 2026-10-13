@@ -166,7 +166,11 @@ impl App {
                     .total_cost_including_children(&self.sessions.active_id),
                 cache_hit_pct: self.agent.cache_hit_pct,
                 agent_busy: self.agent.busy,
-                current_tool: self.agent.current_tool.as_deref(),
+                current_tool: self
+                    .agent
+                    .current_tool
+                    .as_deref()
+                    .or(self.agent.model_waiting.as_deref()),
                 ascii,
                 focus: self.ui.focus,
                 spinner_frame: self.agent.spinner_frame,
