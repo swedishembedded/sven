@@ -62,7 +62,7 @@ valid for a request prefix that did not change.
 
 Every form below `full` states the chunk id, the lines, bytes and tokens of
 the whole, the number of lines omitted, and the call that returns the raw
-text: `context_expand {"chunk":"c-..."}`.
+text: `context {"action":"expand","chunk":"c-..."}`.
 
 Two invariants hold for every kind and are tested:
 

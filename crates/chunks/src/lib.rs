@@ -22,6 +22,7 @@
 //! Chunk text is untrusted evidence. Nothing here interprets it.
 
 mod chunk;
+mod expand;
 mod freshness;
 mod represent;
 mod store;
@@ -30,9 +31,10 @@ pub use chunk::{
     content_digest, ChunkDraft, ChunkId, ChunkIdError, ChunkKind, ContentRef, ContextChunk,
     Lifetime, Provenance, Sensitivity, BYTES_PER_TOKEN,
 };
+pub use expand::{expansion_is_stale, render_expansion, ExpansionRequest, LineRange};
 pub use freshness::{Freshness, FsProbe, ProbeError, SourceProbe, SourceVersion};
 pub use represent::{
     allowed_visibilities, indicates_failure, render, tokens_of, RenderRequest, Rendered,
-    Visibility, EXPAND_TOOL_NAME,
+    Visibility, EXPAND_ACTION, EXPAND_TOOL_NAME,
 };
 pub use store::{ChunkStore, PutOutcome, StoreLimits};

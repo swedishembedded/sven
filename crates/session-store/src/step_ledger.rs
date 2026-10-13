@@ -20,8 +20,8 @@ use anyhow::{Context, Result};
 use atif::{StepMetrics, TraceStep, Trajectory};
 use serde_json::{Map, Value};
 use sven_vocab::{
-    DecisionTraceRecord, LedgerSummary, RequestBreakdown, ToolActivity, STEP_DECISIONS_EXTRA_KEY,
-    STEP_METRICS_EXTRA_KEY,
+    ContextRecovery, DecisionTraceRecord, LedgerSummary, RequestBreakdown, ToolActivity,
+    STEP_DECISIONS_EXTRA_KEY, STEP_METRICS_EXTRA_KEY,
 };
 
 /// Add one request's record to a step's metrics, creating them if needed.
@@ -106,6 +106,18 @@ pub fn requests_in_step(step: &TraceStep) -> Result<Vec<RequestBreakdown>> {
         .collect()
 }
 
+/// The larger of two snapshots of the same session's expansion counters.
+/// Every figure only grows as the history grows, so the request with the most
+/// expansions carries the largest of each.
+fn largest_recovery(a: ContextRecovery, b: ContextRecovery) -> ContextRecovery {
+    ContextRecovery {
+        expansions: a.expansions.max(b.expansions),
+        stale_expansions: a.stale_expansions.max(b.stale_expansions),
+        expanded_bytes: a.expanded_bytes.max(b.expanded_bytes),
+        expanded_tokens: a.expanded_tokens.max(b.expanded_tokens),
+    }
+}
+
 /// Sum the ledger of `trajectory` and of every subagent trajectory embedded
 /// in it, at any depth.
 ///
@@ -121,6 +133,7 @@ pub fn summarize(trajectory: &Trajectory) -> Result<LedgerSummary> {
         ..LedgerSummary::default()
     };
     let mut activity = ToolActivity::default();
+    let mut recovery = ContextRecovery::default();
     for step in &trajectory.steps {
         for request in requests_in_step(step)? {
             summary.add_request(&request);
@@ -128,9 +141,11 @@ pub fn summarize(trajectory: &Trajectory) -> Result<LedgerSummary> {
             activity.duplicate_calls = activity
                 .duplicate_calls
                 .max(request.tool_activity.duplicate_calls);
+            recovery = largest_recovery(recovery, request.context_recovery);
         }
     }
     summary.add_tool_activity(activity);
+    summary.add_context_recovery(recovery);
     for child in trajectory.subagent_trajectories.iter().flatten() {
         summary.merge(&summarize(child)?);
     }
@@ -253,6 +268,31 @@ mod tests {
         assert_eq!(traces[0].selected.as_deref(), Some("edit_file"));
         assert_eq!(traces[1].abstain_reason.as_deref(), Some("near_tie"));
         assert_eq!(requests_in_step(&step).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_trajectory_contributes_the_largest_expansion_snapshot_not_their_sum() {
+        let at = |expansions: u32, tokens: u64| {
+            let mut r = request(1, 1, 0, 0);
+            r.context_recovery = ContextRecovery {
+                expansions,
+                stale_expansions: expansions.saturating_sub(1),
+                expanded_bytes: tokens * 4,
+                expanded_tokens: tokens,
+            };
+            r
+        };
+        let t = trajectory(&[at(1, 10), at(3, 50), at(3, 50)]);
+        let s = summarize(&t).unwrap();
+        assert_eq!(
+            (
+                s.expansions,
+                s.stale_expansions,
+                s.expanded_bytes,
+                s.expanded_tokens
+            ),
+            (3, 2, 200, 50)
+        );
     }
 
     #[test]

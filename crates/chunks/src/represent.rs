@@ -31,8 +31,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::chunk::{ChunkId, ChunkKind, BYTES_PER_TOKEN};
 
-/// Name of the tool that returns a chunk's raw text.
-pub const EXPAND_TOOL_NAME: &str = "context_expand";
+/// Name of the tool whose [`EXPAND_ACTION`] returns a chunk's raw text.
+pub const EXPAND_TOOL_NAME: &str = "context";
+
+/// The action of [`EXPAND_TOOL_NAME`] that returns a chunk.
+pub const EXPAND_ACTION: &str = "expand";
 
 const LINE_CAP: usize = 240;
 const SHORT_HEAD: usize = 3;
@@ -156,7 +159,7 @@ fn exit_status(raw: &str) -> Option<i32> {
 }
 
 fn expand_hint(id: &ChunkId) -> String {
-    format!("{EXPAND_TOOL_NAME} {{\"chunk\":\"{id}\"}}")
+    format!("{EXPAND_TOOL_NAME} {{\"action\":\"{EXPAND_ACTION}\",\"chunk\":\"{id}\"}}")
 }
 
 fn line_count(raw: &str) -> usize {
@@ -173,7 +176,7 @@ fn describe(request: &RenderRequest<'_>) -> String {
     )
 }
 
-fn kind_name(kind: ChunkKind) -> String {
+pub(crate) fn kind_name(kind: ChunkKind) -> String {
     serde_json::to_value(kind)
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))

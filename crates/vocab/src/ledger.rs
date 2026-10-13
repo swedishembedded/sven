@@ -103,6 +103,36 @@ pub struct ToolActivity {
     pub errors: Option<u32>,
 }
 
+/// Expansions of demoted context visible at a request boundary.
+///
+/// When a tool result is shown in a smaller form the model can ask for the raw
+/// text again; every such request is a recovery event. Like [`ToolActivity`]
+/// the figures are counted over the history sent with *this* request, so they
+/// grow through a session and a trajectory takes the largest snapshot.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextRecovery {
+    /// Expansions requested.
+    #[serde(default)]
+    pub expansions: u32,
+    /// Expansions of a chunk whose source file had changed.
+    #[serde(default)]
+    pub stale_expansions: u32,
+    /// Bytes the expansions returned.
+    #[serde(default)]
+    pub expanded_bytes: u64,
+    /// Estimated tokens the expansions returned.
+    #[serde(default)]
+    pub expanded_tokens: u64,
+}
+
+impl ContextRecovery {
+    /// Whether nothing was expanded.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Cost of the decision-model inference made on behalf of a request (for
 /// example a small model that re-ranks tool search results before the main
 /// model sees them): everything asked since the previous request.
@@ -205,6 +235,9 @@ pub struct RequestBreakdown {
     /// Tool-execution counters at this request.
     #[serde(default)]
     pub tool_activity: ToolActivity,
+    /// Expansions of demoted context at this request; absent when none.
+    #[serde(default, skip_serializing_if = "ContextRecovery::is_empty")]
+    pub context_recovery: ContextRecovery,
     /// Decision-model inference cost, see [`DecisionInference`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<DecisionInference>,
@@ -306,6 +339,18 @@ pub struct LedgerSummary {
     /// Duplicate tool calls, summed over trajectories.
     #[serde(default)]
     pub duplicate_tool_calls: u64,
+    /// Expansions of demoted context, summed over trajectories.
+    #[serde(default)]
+    pub expansions: u64,
+    /// Of those, expansions of a chunk whose source file had changed.
+    #[serde(default)]
+    pub stale_expansions: u64,
+    /// Bytes returned by expansions.
+    #[serde(default)]
+    pub expanded_bytes: u64,
+    /// Estimated tokens returned by expansions.
+    #[serde(default)]
+    pub expanded_tokens: u64,
     /// Wall time of the requests that recorded one.
     #[serde(default)]
     pub wall_ms: u64,
@@ -349,6 +394,14 @@ impl LedgerSummary {
         self.duplicate_tool_calls += u64::from(activity.duplicate_calls);
     }
 
+    /// Fold the expansion counters of one trajectory into the summary.
+    pub fn add_context_recovery(&mut self, recovery: ContextRecovery) {
+        self.expansions += u64::from(recovery.expansions);
+        self.stale_expansions += u64::from(recovery.stale_expansions);
+        self.expanded_bytes += recovery.expanded_bytes;
+        self.expanded_tokens += recovery.expanded_tokens;
+    }
+
     /// Fold another summary into this one.
     pub fn merge(&mut self, other: &Self) {
         let named = |into: &mut BTreeMap<String, u64>, from: &BTreeMap<String, u64>| {
@@ -377,6 +430,10 @@ impl LedgerSummary {
         self.cache_write += other.cache_write;
         self.tool_calls += other.tool_calls;
         self.duplicate_tool_calls += other.duplicate_tool_calls;
+        self.expansions += other.expansions;
+        self.stale_expansions += other.stale_expansions;
+        self.expanded_bytes += other.expanded_bytes;
+        self.expanded_tokens += other.expanded_tokens;
         self.wall_ms += other.wall_ms;
     }
 
@@ -443,6 +500,13 @@ impl LedgerSummary {
             "tool calls: {}   duplicate: {}",
             self.tool_calls, self.duplicate_tool_calls
         );
+        if self.expansions > 0 {
+            let _ = writeln!(
+                out,
+                "expansions: {}   stale: {}   re-expanded: {} bytes, ~{} tokens",
+                self.expansions, self.stale_expansions, self.expanded_bytes, self.expanded_tokens
+            );
+        }
         out
     }
 }
@@ -474,6 +538,37 @@ mod tests {
             });
         }
         b
+    }
+
+    #[test]
+    fn a_record_without_recovery_reads_and_writes_without_it() {
+        let b: RequestBreakdown = serde_json::from_str(r#"{"estimator":"x"}"#).unwrap();
+        assert!(b.context_recovery.is_empty());
+        assert!(!serde_json::to_string(&b)
+            .unwrap()
+            .contains("context_recovery"));
+    }
+
+    #[test]
+    fn summaries_add_expansions_and_the_table_names_them() {
+        let mut a = LedgerSummary::default();
+        a.add_context_recovery(ContextRecovery {
+            expansions: 2,
+            stale_expansions: 1,
+            expanded_bytes: 800,
+            expanded_tokens: 200,
+        });
+        let mut b = LedgerSummary::default();
+        b.merge(&a);
+        b.merge(&a);
+        assert_eq!(
+            (b.expansions, b.stale_expansions, b.expanded_tokens),
+            (4, 2, 400)
+        );
+        assert!(b.render_table().contains("expansions: 4   stale: 2"));
+        assert!(!LedgerSummary::default()
+            .render_table()
+            .contains("expansions"));
     }
 
     #[test]

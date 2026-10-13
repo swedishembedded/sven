@@ -24,11 +24,12 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use sven_chunks::{expansion_is_stale, EXPAND_ACTION, EXPAND_TOOL_NAME};
 use sven_model::{
     audio_approx_tokens, image_approx_tokens, CompletionRequest, ContentPart, Message,
     MessageContent, Role, ToolContentPart, ToolResultContent, ToolSchema,
 };
-use sven_vocab::{RequestBreakdown, ToolActivity};
+use sven_vocab::{ContextRecovery, RequestBreakdown, ToolActivity};
 
 /// Bytes of UTF-8 text per token.
 ///
@@ -109,6 +110,7 @@ pub fn estimate_request(request: &CompletionRequest) -> RequestBreakdown {
         add_message(&mut b, message, &tool_names);
     }
     b.tool_activity = tool_activity(&request.messages);
+    b.context_recovery = context_recovery(&request.messages);
 
     b.estimated_total = b.attributed_total();
     b
@@ -224,6 +226,59 @@ fn tool_result_tokens(content: &ToolResultContent) -> (u32, u32) {
             (text, media)
         }
     }
+}
+
+/// Expansions of demoted context in the history: calls of the expansion
+/// action, and the size of what came back for them.
+fn context_recovery(messages: &[Message]) -> ContextRecovery {
+    let mut expansion_calls = HashSet::new();
+    let mut recovery = ContextRecovery::default();
+    for message in messages {
+        match &message.content {
+            MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            } if function.name == EXPAND_TOOL_NAME && is_expand_action(&function.arguments) => {
+                expansion_calls.insert(tool_call_id.as_str());
+                recovery.expansions += 1;
+            }
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } if expansion_calls.contains(tool_call_id.as_str()) => {
+                let text = tool_result_text(content);
+                recovery.expanded_bytes += text.len() as u64;
+                recovery.expanded_tokens += u64::from(text_tokens(&text));
+                if expansion_is_stale(&text) {
+                    recovery.stale_expansions += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    recovery
+}
+
+/// The text of a tool result; images and audio carry none.
+fn tool_result_text(content: &ToolResultContent) -> String {
+    match content {
+        ToolResultContent::Text(text) => text.clone(),
+        ToolResultContent::Parts(parts) => parts
+            .iter()
+            .filter_map(|p| match p {
+                ToolContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+fn is_expand_action(arguments: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(arguments)
+        .ok()
+        .and_then(|v| v.get("action")?.as_str().map(|a| a == EXPAND_ACTION))
+        .unwrap_or(false)
 }
 
 fn tool_activity(messages: &[Message]) -> ToolActivity {
