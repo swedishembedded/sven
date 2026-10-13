@@ -21,22 +21,23 @@ mod request;
 mod stream;
 
 pub(crate) use request::build_openai_messages;
-pub(crate) use stream::drain_complete_sse_lines_bytes;
+use stream::decode_events;
 
 #[cfg(test)]
-pub(crate) use stream::drain_complete_sse_lines;
-#[cfg(test)]
 use stream::parse_sse_chunk_test as parse_sse_chunk;
+#[cfg(test)]
+pub(crate) use stream::{drain_complete_sse_lines, drain_complete_sse_lines_bytes};
+#[cfg(test)]
+use sven_model::ResponseEvent;
 
 use anyhow::{bail, Context};
 use async_trait::async_trait;
-use futures::StreamExt;
 use serde_json::{json, Value};
 use tracing::debug;
 
 use sven_model::{
     catalog::{self, static_catalog, InputModality, ModelCatalogEntry},
-    CompletionRequest, ResponseEvent, ResponseStream,
+    CompletionRequest, ResponseStream,
 };
 /// How to send the API key in HTTP requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,16 +218,12 @@ impl OpenAICompatProvider {
             return None;
         }
         let body: serde_json::Value = resp.json().await.ok()?;
-        // OpenAI-shaped list envelope: {"object":"list","data":[{"id":...,...}]}.
-        // OpenRouter and brain both put `context_length` directly on the
-        // entry; real OpenAI has no such field on any entry, so this simply
-        // finds nothing for hosted providers - identical to today's `None`.
-        body["data"]
-            .as_array()?
-            .iter()
-            .find(|m| m["id"].as_str() == Some(self.model.as_str()))?["context_length"]
-            .as_u64()
-            .map(|v| v as u32)
+        // Real OpenAI reports no context size on any entry, so hosted
+        // OpenAI finds nothing here - identical to `None`.
+        crate::discovery::parse_served_models(&body)?
+            .into_iter()
+            .find(|m| m.id == self.model)?
+            .context_length
     }
 }
 
@@ -661,26 +658,10 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             bail!("{} error {status}: {text}", self.driver_name);
         }
 
-        let byte_stream = resp.bytes_stream();
-        // SSE events can be split across multiple TCP packets.  Maintain a
-        // raw-byte line buffer across chunks; emit events only for complete
-        // lines.  Using Vec<u8> (rather than String) avoids silently
-        // corrupting multi-byte UTF-8 sequences that span chunk boundaries:
-        // '\n' (0x0A) never appears inside a multi-byte UTF-8 sequence so
-        // splitting on it is always safe, and we only decode to String once
-        // a complete line has been accumulated.
-        let event_stream = byte_stream
-            .scan(Vec::<u8>::new(), |buf, chunk| {
-                let events: Vec<anyhow::Result<ResponseEvent>> = match chunk {
-                    Ok(b) => {
-                        buf.extend_from_slice(&b);
-                        drain_complete_sse_lines_bytes(buf)
-                    }
-                    Err(e) => vec![Err(anyhow::anyhow!(e))],
-                };
-                std::future::ready(Some(events))
-            })
-            .flat_map(futures::stream::iter);
+        // SSE events can be split across TCP packets, and a body that ends
+        // before the generation did is an error, not a short answer; both
+        // are the decoder's job (see `stream::SseDecoder`).
+        let event_stream = decode_events(resp.bytes_stream());
 
         Ok(Box::pin(event_stream))
     }

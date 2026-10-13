@@ -244,6 +244,36 @@ model:
 
 ---
 
+### Any OpenAI-compatible hosted endpoint
+
+A metered or self-run service that speaks the OpenAI chat-completions dialect
+works through the `openai` provider with a `base_url` and a key read from the
+environment. No model-specific configuration is needed:
+
+```yaml
+model:
+  provider: openai
+  name: <model id as listed by the endpoint's /v1/models>
+  base_url: https://api.example.com/v1
+  api_key_env: EXAMPLE_API_KEY
+```
+
+What sven relies on from the endpoint:
+
+- `POST {base_url}/chat/completions` with `stream: true`: SSE `data:` frames
+  ending in a finish reason or `data: [DONE]`. Tool calls may arrive as
+  several calls in one `delta.tool_calls` array and interleaved across frames
+  by `index`. A stream that ends without a finish reason or `[DONE]`, or whose
+  `finish_reason` is `content_filter`/`error` (or null with a
+  `native_finish_reason`), is a failed turn, never a short answer.
+- `GET {base_url}/models` (optional): the entry matching `name` supplies the
+  context window through `context_length`, `max_model_len` or
+  `context_window`. Without one, the catalog or configured value stands.
+- A `usage` object, in its own frame or on the last choice frame, feeds token
+  accounting.
+
+---
+
 ### Portkey
 
 AI gateway with observability, caching, and routing.

@@ -3,33 +3,54 @@
 // SPDX-License-Identifier: Apache-2.0
 //! SSE stream parsing for OpenAI-compatible chat completion responses.
 
+use std::collections::VecDeque;
+
 use anyhow::bail;
+use futures::{Stream, StreamExt};
 use serde_json::Value;
 
 use sven_model::ResponseEvent;
 
-/// Parse a single complete SSE `data:` line into a [`ResponseEvent`].
+/// The events one SSE `data:` frame carries.
 ///
-/// Returns `None` for empty lines, comment lines, or unparseable data.
-pub(super) fn parse_sse_data_line(line: &str) -> Option<anyhow::Result<ResponseEvent>> {
-    let data = line.strip_prefix("data: ")?.trim();
+/// A frame is not one event: a delta may hold text *and* several tool-call
+/// fragments, and the last frame may carry content, a finish reason and usage
+/// together. `terminal` is true when the frame ends the generation (a finish
+/// reason was given, or `[DONE]` arrived).
+pub(super) struct Frame {
+    pub(super) events: Vec<ResponseEvent>,
+    pub(super) terminal: bool,
+}
+
+/// Parse a single complete SSE line into the events it carries.
+///
+/// Returns `None` for blank lines, comments and non-`data` fields. A `data`
+/// payload that is not JSON is an error: dropping it would silently lose
+/// whatever it carried, including tool-call arguments.
+pub(super) fn parse_sse_data_line(line: &str) -> Option<anyhow::Result<Frame>> {
+    // `data:` may be followed by one optional space (SSE grammar).
+    let data = line.strip_prefix("data:")?.trim();
     if data.is_empty() {
         return None;
     }
     if data == "[DONE]" {
-        return Some(Ok(ResponseEvent::Done));
+        return Some(Ok(Frame {
+            events: vec![ResponseEvent::Done],
+            terminal: true,
+        }));
     }
-    let v: Value = serde_json::from_str(data).ok()?;
-    Some(parse_sse_chunk(&v))
+    Some(match serde_json::from_str::<Value>(data) {
+        Ok(v) => parse_sse_chunk(&v),
+        Err(e) => Err(anyhow::anyhow!("malformed stream frame ({e}): {data}")),
+    })
 }
 
-/// Drain all complete `\n`-terminated SSE lines from a raw-byte buffer.
+/// Drain all complete `\n`-terminated SSE lines from a raw-byte buffer,
+/// recording in `finished` whether a terminal frame was seen.
 ///
 /// Any trailing incomplete line is left in `buf`.  Because `\n` (0x0A) never
 /// appears inside a multi-byte UTF-8 continuation byte, every slice ending at
-/// a `\n` position is guaranteed to be complete UTF-8.  This is the canonical
-/// implementation; `drain_complete_sse_lines` (the `&mut String` variant below)
-/// delegates here so that tests can continue to use the simpler `String` API.
+/// a `\n` position is guaranteed to be complete UTF-8.
 ///
 /// A chunk that completes at least one SSE line but yields no parseable event
 /// (comment keepalives - `: ping` - blank lines, unknown non-`data` fields)
@@ -39,9 +60,7 @@ pub(super) fn parse_sse_data_line(line: &str) -> Option<anyhow::Result<ResponseE
 /// to an empty `TextDelta` for exactly this reason.  An empty `TextDelta` is
 /// a no-op downstream (`stream_turn`'s non-empty guard skips it) beyond that
 /// watchdog reset.
-pub(crate) fn drain_complete_sse_lines_bytes(
-    buf: &mut Vec<u8>,
-) -> Vec<anyhow::Result<ResponseEvent>> {
+fn drain_lines(buf: &mut Vec<u8>, finished: &mut bool) -> Vec<anyhow::Result<ResponseEvent>> {
     let mut events = Vec::new();
     let mut completed_line = false;
     while let Some(nl_pos) = buf.iter().position(|&b| b == b'\n') {
@@ -51,8 +70,13 @@ pub(crate) fn drain_complete_sse_lines_bytes(
             .trim_end_matches(['\r', '\n'])
             .to_string();
         completed_line = true;
-        if let Some(ev) = parse_sse_data_line(&line) {
-            events.push(ev);
+        match parse_sse_data_line(&line) {
+            Some(Ok(frame)) => {
+                *finished |= frame.terminal;
+                events.extend(frame.events.into_iter().map(Ok));
+            }
+            Some(Err(e)) => events.push(Err(e)),
+            None => {}
         }
     }
     if events.is_empty() && completed_line {
@@ -61,13 +85,18 @@ pub(crate) fn drain_complete_sse_lines_bytes(
     events
 }
 
+/// Test-facing form of [`drain_lines`] for callers that do not track
+/// completion.
+#[cfg(test)]
+pub(crate) fn drain_complete_sse_lines_bytes(
+    buf: &mut Vec<u8>,
+) -> Vec<anyhow::Result<ResponseEvent>> {
+    drain_lines(buf, &mut false)
+}
+
 /// Drain all complete `\n`-terminated SSE lines from `buf`.
 ///
-/// Any trailing incomplete line (bytes not yet terminated by `\n`) is left
-/// in `buf` so it can be extended by the next TCP chunk.  This is necessary
-/// because a single SSE event may be split across multiple TCP packets.
-///
-/// Used by tests only; production code calls `drain_complete_sse_lines_bytes`.
+/// Used by tests only; production code goes through [`decode_events`].
 #[cfg(test)]
 pub(crate) fn drain_complete_sse_lines(buf: &mut String) -> Vec<anyhow::Result<ResponseEvent>> {
     let mut byte_buf = std::mem::take(buf).into_bytes();
@@ -76,12 +105,100 @@ pub(crate) fn drain_complete_sse_lines(buf: &mut String) -> Vec<anyhow::Result<R
     events
 }
 
-#[cfg(test)]
-pub(super) fn parse_sse_chunk_test(v: &Value) -> anyhow::Result<ResponseEvent> {
-    parse_sse_chunk(v)
+/// Incremental SSE decoder: raw response bytes in, [`ResponseEvent`]s out.
+///
+/// Keeps a raw-byte line buffer across chunks (an event may be split across
+/// TCP packets, and a multi-byte UTF-8 sequence across chunk boundaries) and
+/// remembers whether the generation reached a terminal frame, so the end of
+/// the byte stream can be told apart from an interrupted connection.
+#[derive(Default)]
+struct SseDecoder {
+    buf: Vec<u8>,
+    finished: bool,
 }
 
-fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
+impl SseDecoder {
+    fn push(&mut self, bytes: &[u8]) -> Vec<anyhow::Result<ResponseEvent>> {
+        self.buf.extend_from_slice(bytes);
+        drain_lines(&mut self.buf, &mut self.finished)
+    }
+
+    /// The byte stream ended cleanly. Flush an unterminated last line, then
+    /// fail if the generation never finished: a server that closes the
+    /// connection before a finish reason or `[DONE]` has cut the answer
+    /// short, and handing that on as a complete turn would execute truncated
+    /// tool calls.
+    fn end(&mut self) -> Vec<anyhow::Result<ResponseEvent>> {
+        let mut out = Vec::new();
+        if !self.buf.is_empty() {
+            self.buf.push(b'\n');
+            out = drain_lines(&mut self.buf, &mut self.finished);
+        }
+        if !self.finished {
+            out.push(Err(anyhow::anyhow!(
+                "stream ended before the response finished (connection closed without a finish reason or [DONE])"
+            )));
+        }
+        out
+    }
+}
+
+/// Decode a response body into events, failing on a body that ends before
+/// the generation did and on transport errors.
+pub(crate) fn decode_events<B, E>(
+    body: impl Stream<Item = Result<B, E>> + Unpin + Send + 'static,
+) -> impl Stream<Item = anyhow::Result<ResponseEvent>> + Send
+where
+    B: AsRef<[u8]>,
+    E: Into<anyhow::Error>,
+{
+    struct State<S> {
+        body: S,
+        decoder: SseDecoder,
+        ready: VecDeque<anyhow::Result<ResponseEvent>>,
+        closed: bool,
+    }
+    futures::stream::unfold(
+        State {
+            body,
+            decoder: SseDecoder::default(),
+            ready: VecDeque::new(),
+            closed: false,
+        },
+        |mut st| async move {
+            loop {
+                if let Some(ev) = st.ready.pop_front() {
+                    return Some((ev, st));
+                }
+                if st.closed {
+                    return None;
+                }
+                match st.body.next().await {
+                    Some(Ok(bytes)) => st.ready.extend(st.decoder.push(bytes.as_ref())),
+                    Some(Err(e)) => {
+                        st.ready.push_back(Err(e.into()));
+                        st.closed = true;
+                    }
+                    None => {
+                        st.ready.extend(st.decoder.end());
+                        st.closed = true;
+                    }
+                }
+            }
+        },
+    )
+}
+
+#[cfg(test)]
+pub(super) fn parse_sse_chunk_test(v: &Value) -> anyhow::Result<ResponseEvent> {
+    Ok(parse_sse_chunk(v)?
+        .events
+        .into_iter()
+        .next()
+        .expect("a frame always carries at least one event"))
+}
+
+fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
     // Error frame - some OpenAI-compatible servers admit a streaming request
     // with `HTTP 200` + SSE headers, then discover mid-stream that it can't
     // actually be served (context too large, model overloaded, etc.) and
@@ -101,7 +218,12 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
         }
     }
 
-    // Usage-only chunk (emitted when stream_options.include_usage = true)
+    let mut events = Vec::new();
+    let mut terminal = false;
+
+    // Usage (emitted when stream_options.include_usage = true). Usually a
+    // frame of its own with `choices: []`, but some servers attach it to the
+    // last content frame, so it is read alongside the choice, never instead.
     if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
         // OpenAI/OpenRouter reports cached tokens in
         // prompt_tokens_details.cached_tokens.  DeepSeek V3 uses the root-level
@@ -137,28 +259,26 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
             .get("cost")
             .and_then(|v| v.as_f64())
             .or_else(|| usage.get("total_cost").and_then(|v| v.as_f64()));
-        return Ok(ResponseEvent::Usage {
+        events.push(ResponseEvent::Usage {
             input_tokens: fresh_input,
             output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
             cache_read_tokens,
             cache_write_tokens,
             cost_usd,
         });
-    }
-
-    // llama.cpp performance metrics (top-level `timings` object)
-    // These arrive in the final SSE chunk with finish_reason=stop and provide
-    // cache hit counts and generation speed that are incredibly useful for CI
-    // debugging.  We convert them into a Usage event so the CI runner can emit
-    // them as `[sven:tokens]` trace output.
-    if let Some(timings) = v.get("timings") {
+    } else if let Some(timings) = v.get("timings") {
+        // llama.cpp performance metrics (top-level `timings` object)
+        // These arrive in the final SSE chunk with finish_reason=stop and provide
+        // cache hit counts and generation speed that are incredibly useful for CI
+        // debugging.  We convert them into a Usage event so the CI runner can emit
+        // them as `[sven:tokens]` trace output.
         let cache_n = timings["cache_n"].as_u64().unwrap_or(0) as u32;
         let prompt_n = timings["prompt_n"].as_u64().unwrap_or(0) as u32;
         let predicted_n = timings["predicted_n"].as_u64().unwrap_or(0) as u32;
 
         // llama.cpp reports cache hits and fresh tokens separately.
         // `prompt_n` is the fresh-only count; `cache_n` goes into cache_read_tokens.
-        return Ok(ResponseEvent::Usage {
+        events.push(ResponseEvent::Usage {
             input_tokens: prompt_n,
             output_tokens: predicted_n,
             cache_read_tokens: cache_n,
@@ -167,53 +287,20 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
         });
     }
 
-    // A frame that is none of the recognised shapes above (usage, timings,
-    // error) and carries no `choices[0]` either is not a shape this parser
-    // understands.  Bailing here - rather than silently falling through to
-    // an empty `TextDelta` - is what makes the error-frame check above
-    // actually matter: without it, any error frame that later changes shape
-    // (or any other server's non-standard error encoding) would still
-    // degrade to a silent "success".
+    // A frame with no `choices[0]` is only valid when it carried usage.
+    // Bailing otherwise - rather than silently falling through to an empty
+    // `TextDelta` - is what makes the error-frame check above actually
+    // matter: any error frame that later changes shape (or any other
+    // server's non-standard error encoding) would still degrade to a silent
+    // "success".
     let Some(choice) = v["choices"].get(0).filter(|c| !c.is_null()) else {
-        bail!("unrecognised stream frame (no usage/timings/error/choices): {v}");
+        if events.is_empty() {
+            bail!("unrecognised stream frame (no usage/timings/error/choices): {v}");
+        }
+        return Ok(Frame { events, terminal });
     };
 
-    // finish_reason=length means the model hit its output-token limit.
-    // Emit MaxTokens so the agent knows any pending tool-call arguments
-    // are truncated.  The [DONE] sentinel that follows will emit Done.
-    // finish_reason=content_filter/error means the provider stopped the
-    // generation itself; surface that as a hard failure rather than letting
-    // it look like a normal (if truncated) completion.
-    match choice["finish_reason"].as_str() {
-        Some("length") => return Ok(ResponseEvent::MaxTokens),
-        Some("content_filter") => bail!("stream stopped: content_filter"),
-        Some("error") => bail!("stream stopped: error"),
-        _ => {}
-    }
-
     let delta = &choice["delta"];
-
-    // Tool call delta - OpenAI may send multiple parallel tool calls in one
-    // chunk, each identified by an "index" field.  We only emit the first
-    // element here because each SSE chunk carries exactly one tool-call delta
-    // in practice; the index routes accumulation in the agent.
-    if let Some(tool_calls) = delta.get("tool_calls") {
-        if let Some(tc) = tool_calls.get(0) {
-            let index = tc["index"].as_u64().unwrap_or(0) as u32;
-            let id = tc["id"].as_str().unwrap_or("").to_string();
-            let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
-            let args = tc["function"]["arguments"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            return Ok(ResponseEvent::ToolCall {
-                index,
-                id,
-                name,
-                arguments: args,
-            });
-        }
-    }
 
     // Thinking delta - two common field names for chain-of-thought reasoning:
     //   • `reasoning_content` - llama.cpp, Qwen3, DeepSeek-R1, xAI Grok-3-mini
@@ -224,16 +311,72 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
         .get("reasoning_content")
         .and_then(|c| c.as_str())
         .or_else(|| delta.get("reasoning").and_then(|c| c.as_str()));
-    if let Some(thinking) = thinking_text {
-        if !thinking.is_empty() {
-            return Ok(ResponseEvent::ThinkingDelta(thinking.to_string()));
+    if let Some(thinking) = thinking_text.filter(|t| !t.is_empty()) {
+        events.push(ResponseEvent::ThinkingDelta(thinking.to_string()));
+    }
+
+    if let Some(text) = delta
+        .get("content")
+        .and_then(|c| c.as_str())
+        .filter(|t| !t.is_empty())
+    {
+        events.push(ResponseEvent::TextDelta(text.to_string()));
+    }
+
+    // Tool-call deltas. One delta may carry several parallel calls, each
+    // identified by its `index`; the agent routes fragments to slots by that
+    // index, so every element is emitted. A server that omits `index` (it is
+    // required by the schema but not always sent) is assumed to list the
+    // calls in order.
+    if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+        for (position, tc) in tool_calls.iter().enumerate() {
+            events.push(ResponseEvent::ToolCall {
+                index: tc["index"].as_u64().unwrap_or(position as u64) as u32,
+                id: tc["id"].as_str().unwrap_or("").to_string(),
+                name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
+                arguments: tool_call_arguments(&tc["function"]["arguments"]),
+            });
         }
     }
 
-    // Text delta
-    if let Some(text) = delta.get("content").and_then(|c| c.as_str()) {
-        return Ok(ResponseEvent::TextDelta(text.to_string()));
+    // finish_reason=length means the model hit its output-token limit.
+    // Emit MaxTokens so the agent knows any pending tool-call arguments
+    // are truncated.  The [DONE] sentinel that follows will emit Done.
+    // finish_reason=content_filter/error means the provider stopped the
+    // generation itself; surface that as a hard failure rather than letting
+    // it look like a normal (if truncated) completion.
+    match choice["finish_reason"].as_str() {
+        Some("length") => {
+            events.push(ResponseEvent::MaxTokens);
+            terminal = true;
+        }
+        Some("content_filter") => bail!("stream stopped: content_filter"),
+        Some("error") => bail!("stream stopped: error"),
+        Some(_) => terminal = true,
+        None => {
+            // A server whose stop reason has no OpenAI name reports no
+            // `finish_reason` and puts the real one in
+            // `native_finish_reason`. That generation did not complete
+            // normally.
+            if let Some(native) = choice["native_finish_reason"].as_str() {
+                bail!("stream stopped: {native}");
+            }
+        }
     }
 
-    Ok(ResponseEvent::TextDelta(String::new()))
+    if events.is_empty() {
+        events.push(ResponseEvent::TextDelta(String::new()));
+    }
+    Ok(Frame { events, terminal })
+}
+
+/// A tool call's `arguments` as JSON text. The schema says string; a few
+/// servers send the parsed object instead, which is re-serialised so every
+/// downstream consumer sees one shape.
+fn tool_call_arguments(arguments: &Value) -> String {
+    match arguments {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
 }

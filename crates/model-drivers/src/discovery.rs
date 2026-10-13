@@ -72,10 +72,12 @@ fn parse_served_model(entry: &Value) -> Option<ServedModel> {
     });
     Some(ServedModel {
         id,
-        // vLLM reports `max_model_len`; brain and OpenRouter `context_length`.
+        // vLLM reports `max_model_len`, Groq-style hosts `context_window`;
+        // brain and OpenRouter `context_length`.
         context_length: entry
             .get("context_length")
             .or_else(|| entry.get("max_model_len"))
+            .or_else(|| entry.get("context_window"))
             .and_then(token_count),
         max_output_tokens: entry.get("max_output_tokens").and_then(token_count),
         tools,
