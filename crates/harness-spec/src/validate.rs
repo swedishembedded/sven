@@ -14,8 +14,8 @@
 //!    `fail`) — a cycle with no exit is an unbounded cycle and is rejected.
 //!    Bounded cycles (through `retry`, whose attempts bound them) are fine.
 //! 4. Capabilities: primitives that exercise a capability (`tool` and
-//!    `agent` → ExecuteShell, `verify` → RunVerifier, `delegate` →
-//!    SpawnChild) require the harness to declare it.
+//!    `agent` -> ExecuteShell, `verify` -> RunVerifier, `delegate` and
+//!    `parallel` -> SpawnChild) require the harness to declare it.
 //! 5. Limits: a harness whose steps can run away (model, tool, verify,
 //!    retry, parallel, delegate) must declare `limits` with the relevant
 //!    bounds.
@@ -355,12 +355,11 @@ fn required_capability(step: &StepSpec) -> Option<&'static str> {
         StepSpec::Tool(t) => vec![t.name.as_str()],
         StepSpec::Agent(a) => a.tools.iter().flatten().map(|t| t.as_str()).collect(),
         StepSpec::Verify(_) => return Some("RunVerifier"),
-        StepSpec::Delegate(_) => return Some("SpawnChild"),
+        StepSpec::Delegate(_) | StepSpec::Parallel(_) => return Some("SpawnChild"),
         StepSpec::Predict(_)
         | StepSpec::Assign(_)
         | StepSpec::Branch(_)
         | StepSpec::Retry(_)
-        | StepSpec::Parallel(_)
         | StepSpec::Transform(_)
         | StepSpec::Return(_)
         | StepSpec::Fail(_) => return None,

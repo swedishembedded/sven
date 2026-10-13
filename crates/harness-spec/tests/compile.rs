@@ -495,6 +495,7 @@ fn a_parallel_fan_out_beyond_max_parallel_fails_to_compile() {
 api_version: "1"
 name: wide
 entry: split
+capabilities: [SpawnChild]
 limits: { max_steps: 10, max_parallel: 1 }
 steps:
   split:
@@ -518,6 +519,7 @@ fn a_parallel_fan_out_within_max_parallel_compiles() {
 api_version: "1"
 name: narrow
 entry: split
+capabilities: [SpawnChild]
 limits: { max_steps: 10, max_parallel: 2 }
 steps:
   split:
@@ -532,4 +534,30 @@ steps:
     return: { value: {} }
 "#;
     let _ = doc(yaml).expect("fan-out within max_parallel compiles");
+}
+
+#[test]
+fn a_parallel_step_requires_spawn_child_declared() {
+    let body = r#"
+api_version: "1"
+name: fan
+entry: split
+limits: { max_steps: 10, max_parallel: 2 }
+steps:
+  split:
+    parallel:
+      branches: [a, b]
+      join: merge
+  a:
+    return: { value: "a" }
+  b:
+    return: { value: "b" }
+  merge:
+    return: { value: {} }
+"#;
+    let err = doc(body).expect_err("a fan-out spawns children, so it must declare SpawnChild");
+    assert!(err.to_string().contains("SpawnChild"), "{err}");
+
+    let declared = body.replace("entry: split", "entry: split\ncapabilities: [SpawnChild]");
+    let _ = doc(&declared).expect("declaring SpawnChild admits the fan-out");
 }

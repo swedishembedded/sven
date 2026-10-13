@@ -37,15 +37,12 @@
 use serde_json::Value;
 use sven_harness_spec::{HarnessPlan, PlanPrimitive, PlanStep, Template};
 use sven_hsm::{
-    Context, Effect, Event, InternalEvent, Machine, MachineId, ProposedToolCall, Reaction,
-    ToolCallId, ToolCapability,
+    Context, Effect, Event, InternalEvent, Machine, MachineId, Reaction, ToolCallId, ToolCapability,
 };
 use sven_vocab::verify::VerifierVerdict;
 use sven_vocab::TurnRequest;
 
-use crate::run::{
-    step_call_id, AgentLoop, HarnessRunData, HarnessRunState, Inflight, TraceRecord, Waiting,
-};
+use crate::run::{step_call_id, HarnessRunData, HarnessRunState, Inflight, TraceRecord, Waiting};
 use crate::state::{superstate_of, HarnessState};
 
 /// The machine's internal advance signal: the kernel's executor re-enters
@@ -56,7 +53,7 @@ pub(super) const ADVANCE_SIGNAL: &str = "harness.advance";
 
 /// The thread every harness model turn runs in: the plan's own
 /// conversation, separate from any host session thread.
-pub(super) fn harness_thread(plan: &HarnessPlan) -> String {
+pub fn harness_thread(plan: &HarnessPlan) -> String {
     format!("harness.{}", plan.name)
 }
 
@@ -218,27 +215,6 @@ impl HarnessMachine {
         }
     }
 
-    /// The agent loop's continuation turn: the next model round after the
-    /// proposed tools settled.
-    pub(super) fn continuation_effect(&self, state: &HarnessRunState) -> Option<Effect> {
-        let agent = state.agent.as_ref()?;
-        let request = TurnRequest {
-            thread: agent.thread.clone(),
-            instruction: String::new(),
-            tools: agent.tools.clone(),
-            all_tools_mode: String::new(),
-            schema: Value::Null,
-            schema_name: String::new(),
-            model: None,
-            dynamic_suffix: None,
-            max_tool_rounds: Some(0),
-            refused_calls: Vec::new(),
-        };
-        Some(Effect::CallLlm {
-            request: request.to_value(),
-        })
-    }
-
     /// Parks the run on `step`: records what is in flight so the
     /// completion events can be matched.
     pub(super) fn park(&mut self, state: &mut HarnessRunState, step: &PlanStep, waiting: Waiting) {
@@ -342,6 +318,7 @@ impl HarnessMachine {
         }
         let mut state = self.run_state(ctx);
         state.start(self.run.plan(), self.run.inputs(), self.run.bundle_digest());
+        state.delegate_depth = self.run.delegate_depth();
         state.store(ctx);
         Reaction::Transition {
             target: HarnessState::Advancing,
@@ -408,12 +385,16 @@ impl HarnessMachine {
             Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                 self.side_effect_failed(&mut run, error, ctx)
             }
+            Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
+                self.on_agent_tool_settled(&mut run, *call_id, ctx)
+            }
             _ => Reaction::Ignored,
         }
     }
 
-    /// A tool call's result is in flight (a `tool` step, or an agent
-    /// loop's proposed calls). Nothing in flight: a tick advances.
+    /// A `tool` step's call result is in flight. Nothing in flight: a tick
+    /// advances. (An agent loop's tool results arrive in
+    /// [`HarnessState::WaitingForModel`].)
     fn on_tool(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
         if matches!(event, Event::UserCancelled) {
             return self.cancel(ctx);
@@ -425,44 +406,6 @@ impl HarnessMachine {
         let Some(inflight) = run.inflight.clone() else {
             return Reaction::Ignored;
         };
-        // An agent loop's proposed call: settle it and re-open the loop's
-        // model wait (the next turn arrives as LlmTurnComplete).
-        if run
-            .agent
-            .as_ref()
-            .is_some_and(|agent| agent.step == inflight.step && !agent.pending.is_empty())
-        {
-            return match event {
-                Event::ToolSucceeded { call_id: done, .. }
-                | Event::ToolFailed { call_id: done, .. } => {
-                    let mut agent = run.agent.clone().expect("checked above");
-                    agent.pending.retain(|id| id != done);
-                    run.agent = Some(agent);
-                    if run
-                        .agent
-                        .as_ref()
-                        .is_some_and(|agent| agent.pending.is_empty())
-                    {
-                        run.awaiting = Some(Waiting::Model);
-                        run.inflight = Some(Inflight {
-                            step: inflight.step,
-                            call_id: None,
-                        });
-                        run.store(ctx);
-                        let effect = self.continuation_effect(&run);
-                        self.cache_effect_opt(effect.clone());
-                        return Reaction::Transition {
-                            target: HarnessState::WaitingForModel,
-                            effects: effect.into_iter().collect(),
-                            rationale: "agent loop continues after its tools settled".into(),
-                        };
-                    }
-                    run.store(ctx);
-                    Reaction::handled()
-                }
-                _ => Reaction::Ignored,
-            };
-        }
         match event {
             Event::ToolSucceeded {
                 call_id: done,
@@ -618,68 +561,8 @@ impl HarnessMachine {
             _ => Reaction::Ignored,
         }
     }
-
-    // ── agent loop ──────────────────────────────────────────────────────
-
-    /// One turn of an agent step's model↔tool loop: tool proposals run as
-    /// `CallTool` effects (the loop stays in [`HarnessState::WaitingForModel`]
-    /// and receives the results there, via the tool-settling arm), a
-    /// text-only turn is the loop's final answer.
-    fn on_agent_turn(
-        &mut self,
-        run: &mut HarnessRunState,
-        mut agent: AgentLoop,
-        text: &str,
-        tool_calls: &[ProposedToolCall],
-        ctx: &mut Context,
-    ) -> Reaction<HarnessState> {
-        agent.rounds += 1;
-        if let Some(budget) = self
-            .run
-            .plan()
-            .limits
-            .as_ref()
-            .and_then(|l| l.max_model_turns)
-        {
-            if agent.rounds > budget {
-                return self.fail_now(
-                    run,
-                    "model_turn_budget",
-                    "agent loop exceeded its model-turn budget",
-                    ctx,
-                );
-            }
-        }
-        if !tool_calls.is_empty() {
-            let effects: Vec<Effect> = tool_calls
-                .iter()
-                .map(|call| Effect::CallTool {
-                    call_id: call.call_id,
-                    name: call.name.clone(),
-                    capability: call.capability,
-                    args: call.args.clone(),
-                })
-                .collect();
-            agent.pending = tool_calls.iter().map(|call| call.call_id).collect();
-            run.agent = Some(agent);
-            // Still Waiting::Model: the loop's tool results arrive in the
-            // same state through the tool-settling arm.
-            run.awaiting = Some(Waiting::Model);
-            run.inflight = Some(Inflight {
-                step: run.agent.as_ref().expect("just set").step.clone(),
-                call_id: None,
-            });
-            run.counts.tool_calls += tool_calls.len() as u64;
-            run.store(ctx);
-            return Reaction::Handled(effects);
-        }
-        run.agent = None;
-        run.awaiting = None;
-        run.inflight = None;
-        let step = agent.step.clone();
-        self.complete_step(run, &step, Value::String(text.to_string()), ctx)
-    }
 }
+
 /// A verdict's stored form: the word a template can address.
 pub(super) fn verdict_text(verdict: &VerifierVerdict) -> String {
     match verdict {

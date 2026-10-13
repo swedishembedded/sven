@@ -85,6 +85,8 @@ pub struct HarnessRunData {
     /// pins it, and a resume that offers a different bundle is refused —
     /// a changed helper is a changed program.
     bundle_digest: Option<String>,
+    /// Where this run sits in a delegation chain (a top-level run is 1).
+    delegate_depth: u64,
 }
 
 impl HarnessRunData {
@@ -101,6 +103,7 @@ impl HarnessRunData {
             inputs,
             helpers: BTreeMap::new(),
             bundle_digest: None,
+            delegate_depth: 1,
         })
     }
 
@@ -125,6 +128,7 @@ impl HarnessRunData {
             inputs,
             helpers: BTreeMap::new(),
             bundle_digest: None,
+            delegate_depth: 1,
         }
     }
 
@@ -144,6 +148,7 @@ impl HarnessRunData {
             inputs,
             helpers: bundle.helpers.clone(),
             bundle_digest: Some(compiled.digest),
+            delegate_depth: 1,
         })
     }
 
@@ -153,6 +158,21 @@ impl HarnessRunData {
     pub fn with_helpers(mut self, helpers: BTreeMap<String, Helper>) -> Self {
         self.helpers = helpers;
         self
+    }
+
+    /// Starts the run at `depth` of its delegation chain: how a child
+    /// spawner tells a delegated child how many ancestors it has, so the
+    /// plan's `max_delegate_depth` bounds the whole chain.
+    #[must_use]
+    pub fn with_delegate_depth(mut self, depth: u64) -> Self {
+        self.delegate_depth = depth;
+        self
+    }
+
+    /// This run's depth in its delegation chain (a top-level run is 1).
+    #[must_use]
+    pub fn delegate_depth(&self) -> u64 {
+        self.delegate_depth
     }
 
     /// The helper named `name`, if the run carries one.
@@ -234,6 +254,15 @@ pub struct AgentLoop {
     pub pending: Vec<ToolCallId>,
     /// Model turns spent in this loop so far.
     pub rounds: u64,
+    /// `true` when the step declared no tool list: the session's agent-mode
+    /// tools are open to it and `tools` is empty. `false` when `tools` is
+    /// an explicit allowlist, which is also enforced on proposed calls.
+    #[serde(default)]
+    pub open: bool,
+    /// Proposed calls refused before they ran (call id to reason), drained
+    /// into the next turn so the model reads why they did not run.
+    #[serde(default)]
+    pub refused: BTreeMap<String, String>,
 }
 
 /// The active retry frame: which retry step is in play, its body, and how

@@ -311,8 +311,10 @@ pub struct PredictStepSpec {
 pub struct AgentStepSpec {
     /// The instruction for the agent.
     pub prompt: String,
-    /// The tools the agent may call in this step. Empty/omitted = every tool
-    /// the harness's capabilities admit.
+    /// The tools the agent may call in this step. Omitted = the session's
+    /// agent-mode tools, gated by the declared capabilities; an explicit
+    /// list is also a name allowlist (a proposed call outside it is
+    /// refused before it runs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<String>>,
     /// Where to store the agent's final text.

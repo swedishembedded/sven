@@ -11,6 +11,8 @@
 //! the walk, so one dispatch runs a whole pure chain and everything that
 //! happens between two pieces of I/O.
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 use sven_harness_spec::{DelegateTarget, PlanPrimitive, PlanStep};
 use sven_hsm::{capability_for_tool_name, Context, Effect, Event, Reaction};
@@ -167,8 +169,10 @@ impl HarnessMachine {
                     tools: tools.clone().unwrap_or_default(),
                     pending: Vec::new(),
                     rounds: 0,
+                    open: tools.is_none(),
+                    refused: BTreeMap::new(),
                 });
-                let effect = self.turn_effect(run, prompt, None);
+                let effect = self.agent_turn_effect(run, prompt, tools);
                 self.cache_effect(effect.clone());
                 self.park(run, &step, Waiting::Model);
                 run.store(ctx);
@@ -298,6 +302,7 @@ impl HarnessMachine {
                         "harness": name,
                         "entry": branch,
                         "input": run.inputs,
+                        "depth": depth,
                     });
                     effects.push(Effect::InstantiateSubmachine {
                         machine,
@@ -362,6 +367,7 @@ impl HarnessMachine {
                     descriptor.insert("harness".into(), Value::String(target.clone()));
                 }
                 descriptor.insert("input".into(), run.resolve_value(input));
+                descriptor.insert("depth".into(), Value::from(depth));
                 let effect = Effect::InstantiateSubmachine {
                     machine,
                     descriptor: Value::Object(descriptor),

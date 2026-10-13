@@ -24,6 +24,7 @@
 //! workflow languages then you can procure our services by sending an email
 //! to info@swedishembedded.com.
 
+mod agent_loop;
 mod checkpoint;
 mod error;
 mod events;
@@ -35,7 +36,7 @@ mod state;
 
 pub use error::HarnessRunError;
 pub use events::harness_event;
-pub use machine::HarnessMachine;
+pub use machine::{harness_thread, HarnessMachine};
 pub use registry::HarnessRegistry;
 pub use run::{
     step_call_id, AgentLoop, ChildRun, Counts, HarnessRunData, HarnessRunState, Inflight,
