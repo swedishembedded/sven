@@ -15,6 +15,7 @@ use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
 use run::harness::run_harness_command;
 use run::index::run_index_command;
+use run::ledger::run_ledger_command;
 use run::logging::init_logging;
 use run::models::{list_models_cmd, list_providers_cmd};
 #[cfg(feature = "memory")]
@@ -99,6 +100,9 @@ async fn main() -> anyhow::Result<()> {
             Commands::Chats { limit } => {
                 print_chats(*limit);
                 return Ok(());
+            }
+            Commands::Ledger { file, json } => {
+                return run_ledger_command(file, *json);
             }
             Commands::MigrateSessions { dry_run } => {
                 return run_migrate_sessions_command(*dry_run);

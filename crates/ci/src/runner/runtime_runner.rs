@@ -34,6 +34,7 @@ use sven_session_store::{
 use sven_tool_api::ToolCall;
 use sven_vocab::AgentMode;
 
+use crate::ledger_output::{ledger_record, LedgerOutput};
 use crate::output::{
     finalise_stdout, format_token_usage_line, tool_output_snippet, write_progress, write_stderr,
     write_stdout,
@@ -98,6 +99,9 @@ pub struct RuntimeRunnerOptions {
     pub no_tools: bool,
     /// Verbosity level (0 = minimal, 1 = verbose, 2+ = trace).
     pub trace_level: u8,
+    /// Print one `[sven:ledger]` JSON line to stderr per model request
+    /// (`--token-ledger`). The ledger is recorded in the trajectory either way.
+    pub token_ledger: bool,
 }
 
 impl RuntimeRunner {
@@ -221,6 +225,7 @@ impl RuntimeRunner {
             latest_cache_read_total: 0,
             latest_cache_write_total: 0,
             assembler,
+            ledger: LedgerOutput::new(opts.token_ledger),
             outcome: OutcomeFold::default(),
         };
 
@@ -413,6 +418,9 @@ struct CiOutState {
     /// (see [`super::event::handle_event`]) so both backends produce
     /// interchangeable documents.
     assembler: StepAssembler,
+    /// Where each request's token ledger goes (trajectory, and stderr when
+    /// `--token-ledger` is on).
+    ledger: LedgerOutput,
     /// Outcome tally for the reward stamped on that trajectory. Reward-only:
     /// the exit code is still decided by `had_error` and the budget/timeout
     /// paths alone.
@@ -596,6 +604,10 @@ fn print_total_usage(state: &CiOutState) {
 fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
     // Fold into the reward tally before dispatching, so no arm can forget it.
     state.outcome.observe(&ev);
+    if let Some(request) = ledger_record(&ev) {
+        state.ledger.record(request, &mut state.assembler);
+        return None;
+    }
     match ev {
         UiEvent::TextDelta(d) => {
             if !state.sven_header_emitted {
@@ -901,6 +913,7 @@ mod tests {
             no_system: false,
             no_tools: false,
             trace_level: 0,
+            token_ledger: false,
         };
         assert!(format!("{opts:?}").contains("agent"));
     }
@@ -988,8 +1001,45 @@ mod tests {
             latest_cache_read_total: 0,
             latest_cache_write_total: 0,
             assembler: StepAssembler::new(),
+            ledger: LedgerOutput::default(),
             outcome: OutcomeFold::default(),
         }
+    }
+
+    #[test]
+    fn a_request_ledger_record_lands_in_the_trajectory_without_touching_the_token_totals() {
+        let mut st = state(0);
+        st.assembler.push_message(&Message::user("hi"));
+        st.assembler.push_message(&Message::assistant("hello"));
+        let record = UiEvent::TokenUsage {
+            input: 0,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            cache_read_total: 0,
+            cache_write_total: 0,
+            max_tokens: 0,
+            max_output_tokens: 0,
+            cost_usd: None,
+            breakdown: Some(Box::new(sven_vocab::RequestBreakdown {
+                user: 2,
+                estimated_total: 2,
+                ..Default::default()
+            })),
+        };
+        assert_eq!(handle_ui_event(record, &mut st), None);
+        assert_eq!(
+            (st.total_input, st.total_output, st.run_total_tokens),
+            (0, 0, 0)
+        );
+        let steps = st.assembler.finish();
+        let agent = steps.last().expect("an agent step");
+        assert_eq!(
+            sven_session_store::step_ledger::requests_in_step(agent)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -1110,6 +1160,7 @@ mod tests {
             max_tokens: 0,
             max_output_tokens: 0,
             cost_usd: None,
+            breakdown: None,
         }
     }
 
@@ -1148,6 +1199,7 @@ mod tests {
             max_tokens: 0,
             max_output_tokens: 0,
             cost_usd: None,
+            breakdown: None,
         }
     }
 

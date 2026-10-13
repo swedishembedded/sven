@@ -40,6 +40,7 @@ use sven_vocab::AgentMode;
 use sven_workspace::resolve_auto_log_path;
 
 use crate::kernel_agent::KernelAgent;
+use crate::ledger_output::LedgerOutput;
 
 use crate::output::{write_progress, write_stderr, write_stdout};
 use crate::template::apply_template;
@@ -173,6 +174,9 @@ pub struct CiOptions {
     /// Unlike the `attach_file` tool this needs no tool call, so it works with
     /// models that have no tool-calling support at all.
     pub attachments: Vec<PathBuf>,
+    /// Print one `[sven:ledger]` JSON line to stderr per model request
+    /// (`--token-ledger`). The ledger is recorded in the trajectory either way.
+    pub token_ledger: bool,
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -692,6 +696,7 @@ impl CiRunner {
         // Spans the whole run (not per-step), like `subagent_children` below,
         // because the reward scores the session as a whole.
         let mut outcome_fold = OutcomeFold::default();
+        let mut ledger = LedgerOutput::new(opts.token_ledger);
         let max_tokens_budget = opts.max_tokens_budget;
 
         // In-progress `task`-tool subagents (keyed by ACP `handle_id`) and
@@ -1031,6 +1036,7 @@ impl CiRunner {
                                 budget_exhausted: &mut budget_exhausted,
                                 subagent_children: &mut subagent_children,
                                 completed_subagents: &mut completed_subagents,
+                                ledger: &mut ledger,
                                 outcome: &mut outcome_fold,
                             });
 
@@ -1114,6 +1120,7 @@ impl CiRunner {
                                     budget_exhausted: &mut budget_exhausted,
                                     subagent_children: &mut subagent_children,
                                     completed_subagents: &mut completed_subagents,
+                                    ledger: &mut ledger,
                                     outcome: &mut outcome_fold,
                                 });
                                 if budget_exhausted {

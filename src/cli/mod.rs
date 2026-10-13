@@ -258,6 +258,15 @@ pub struct Cli {
     #[arg(long, value_name = "TOKENS")]
     pub max_tokens: Option<u64>,
 
+    /// Print one `[sven:ledger]` line to stderr per model request: a JSON
+    /// object attributing the request's input tokens to their sources
+    /// (system prompt, each tool schema, user and assistant turns, tool
+    /// calls and results, media) and reconciling the estimate with the
+    /// tokens the provider reported. The ledger is also saved in the
+    /// trajectory; `sven ledger FILE` summarizes it.
+    #[arg(long)]
+    pub token_ledger: bool,
+
     /// Increase verbosity (-v = debug, -vv = trace)
     #[arg(long, short = 'v', action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -378,6 +387,24 @@ pub enum Commands {
         /// Maximum number of conversations to show (default: 20)
         #[arg(long, short = 'n', default_value = "20")]
         limit: usize,
+    },
+    /// Summarize the token ledger of a saved trajectory.
+    ///
+    /// A run made with `--token-ledger` (or any run, since the ledger is
+    /// always saved in the trajectory) records, for every model request, how
+    /// many input tokens went to each source. This sums them over the whole
+    /// trajectory, subagents included, and prints a table, or with `--json`
+    /// one JSON object.
+    ///
+    ///   sven --token-ledger --output-trace run.json 'fix the bug'
+    ///   sven ledger run.json
+    Ledger {
+        /// The trajectory file (as written by `--output-trace`)
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Print the summary as JSON instead of a table
+        #[arg(long)]
+        json: bool,
     },
     /// One-shot bulk migration of legacy `.yaml` chat files to the ATIF
     /// `.json` trajectory format.

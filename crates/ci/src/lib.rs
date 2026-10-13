@@ -4,6 +4,7 @@
 pub mod context;
 pub mod index;
 mod kernel_agent;
+mod ledger_output;
 mod output;
 pub mod pipe;
 mod runner;

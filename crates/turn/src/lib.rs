@@ -15,6 +15,7 @@
 
 mod compact;
 pub mod ledger;
+mod ledger_recorder;
 mod tool_slots;
 
 pub mod prompts;

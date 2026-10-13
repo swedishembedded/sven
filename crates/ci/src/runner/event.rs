@@ -15,6 +15,7 @@ use sven_session_store::trace_session::{self, StepAssembler};
 use sven_session_store::OutcomeFold;
 use sven_tool_api::events::SubagentUpdate;
 
+use crate::ledger_output::{ledger_record, LedgerOutput};
 use crate::output::{format_token_usage_line, tool_output_snippet, write_stderr, write_stdout};
 
 use super::OutputFormat;
@@ -75,6 +76,21 @@ pub(super) struct SubagentChildState {
     thinking_buf: String,
 }
 
+impl SubagentChildState {
+    /// Fold the buffered thinking and text into the child's assembler.
+    fn flush_buffered(&mut self) {
+        if !self.thinking_buf.is_empty() {
+            self.assembler.push_thinking(&self.thinking_buf);
+            self.thinking_buf.clear();
+        }
+        if !self.text_buf.is_empty() {
+            self.assembler
+                .push_message(&Message::assistant(&self.text_buf));
+            self.text_buf.clear();
+        }
+    }
+}
+
 /// Per-step mutable state threaded through the event handler.
 pub(super) struct StepState<'a> {
     pub response_text: &'a mut String,
@@ -125,6 +141,9 @@ pub(super) struct StepState<'a> {
     /// on every flush, so a mid-run crash still yields a valid partial
     /// document with whatever subagents completed so far.
     pub completed_subagents: &'a mut Vec<Trajectory>,
+    /// Where each request's token ledger goes: the trajectory, and stderr
+    /// when `--token-ledger` is on.
+    pub ledger: &'a mut LedgerOutput,
     /// Outcome tally for this run's reward stamp. Reward-only: it deliberately
     /// does **not** feed the exit-code verdict (`failed`, `any_tool_errors`,
     /// `consecutive_tool_errors` still own that), so scoring can be retuned
@@ -138,6 +157,10 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
     // Fold every event into the reward tally first — one insertion point that
     // no future arm can forget.
     s.outcome.observe(&event);
+    if let Some(request) = ledger_record(&event) {
+        s.ledger.record(request, &mut *s.assembler);
+        return;
+    }
     let response_text = &mut *s.response_text;
     let tools_used = &mut *s.tools_used;
     let failed = &mut *s.failed;
@@ -304,6 +327,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             max_tokens,
             max_output_tokens,
             cost_usd: _,
+            breakdown: _,
         } => {
             *s.session_input_total += input;
             *s.session_output_total += output;
@@ -477,16 +501,7 @@ fn handle_subagent_update(
             // for the turn so far — mirrors the parent's own
             // thinking-then-tool-call ordering (see `StepAssembler::push_thinking`'s
             // doc comment).
-            if !child.thinking_buf.is_empty() {
-                child.assembler.push_thinking(&child.thinking_buf);
-                child.thinking_buf.clear();
-            }
-            if !child.text_buf.is_empty() {
-                child
-                    .assembler
-                    .push_message(&Message::assistant(&child.text_buf));
-                child.text_buf.clear();
-            }
+            child.flush_buffered();
             write_stderr(&format!(
                 "[sven:subagent:tool:call] handle_id=\"{handle_id}\" id=\"{id}\" name=\"{name}\" args={}",
                 serde_json::to_string(&args).unwrap_or_default()
@@ -499,6 +514,15 @@ fn handle_subagent_update(
                     function: FunctionCall { name, arguments },
                 },
             });
+        }
+        SubagentUpdate::RequestLedger(request) => {
+            let Some(child) = subagent_children.get_mut(&handle_id) else {
+                return;
+            };
+            // The record closes its request: the request's own thinking and
+            // text belong to the step the record is attached to.
+            child.flush_buffered();
+            child.assembler.push_request_ledger(&request);
         }
         SubagentUpdate::ToolCallFinished {
             id,

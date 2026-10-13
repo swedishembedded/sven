@@ -533,6 +533,10 @@ pub enum SubagentUpdate {
     Failed { reason: String },
     /// Token usage / cost from the subagent (when API reports it, e.g. OpenRouter).
     TokenUsage { cost_usd: f64 },
+    /// Where one of the subagent's model requests spent its input tokens
+    /// (the token ledger; see [`ledger`]). Sent after the request's content,
+    /// like the parent's closing `TokenUsage`.
+    RequestLedger(Box<RequestBreakdown>),
     /// The tokens the subagent's turn used, reported once it finishes, so
     /// whoever pays for the parent pays for the subagent too.
     TokensUsed {
@@ -662,6 +666,14 @@ pub enum SessionEvent {
         max_output_tokens: usize,
         /// Cost in USD when reported by the API (e.g. OpenRouter).
         cost_usd: Option<f64>,
+        /// Where this request's input tokens went, reconciled with what the
+        /// provider reported (see [`ledger`]). Sent once per request, as the
+        /// last event of the response, on a `TokenUsage` whose counters are
+        /// all zero; consumers that only track counters ignore it. `None`
+        /// on every other `TokenUsage`, and on events recorded before the
+        /// ledger existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        breakdown: Option<Box<RequestBreakdown>>,
     },
     /// The agent has finished processing the current user turn.
     TurnComplete,

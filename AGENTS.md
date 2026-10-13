@@ -573,6 +573,9 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
 - [docs/technical/harnesses.md](docs/technical/harnesses.md) and
   [docs/12-harnesses.md](docs/12-harnesses.md) - YAML agent harnesses: the
   language, runtime, authorization, replay and the `sven harness` CLI.
+- [docs/technical/token-ledger.md](docs/technical/token-ledger.md) - the
+  per-request token ledger: where a request's input tokens come from, the
+  `--token-ledger` line, `sven ledger`, and the baseline scenarios.
 - `architecture.toml` - authoritative crate tiers, dependency legality, file-size
   ratchet. `.claude/skills/programming/rust/architecture.md` - the layering
   method this workspace follows, generalized for reuse elsewhere.

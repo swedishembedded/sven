@@ -708,6 +708,10 @@ fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdate) {
         SubagentUpdate::TokenUsage { .. } | SubagentUpdate::TokensUsed { .. } => {
             // Cost is tracked in SessionEntry.total_cost_usd, not in chat.
         }
+        SubagentUpdate::RequestLedger(_) => {
+            // The token ledger belongs to the saved trajectory (`sven ledger`),
+            // which the TUI rebuilds from the chat; it has no chat segment.
+        }
     }
 }
 

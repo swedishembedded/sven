@@ -45,8 +45,9 @@ pub fn to_model_schemas(schemas: Vec<sven_tool_registry::ToolSchema>) -> Vec<Too
         .collect()
 }
 
+use crate::ledger_recorder::LedgerRecorder;
 use crate::tool_slots::attempt_json_repair;
-use sven_vocab::SessionEvent as AgentEvent;
+use sven_vocab::{ReportedUsage, SessionEvent as AgentEvent};
 
 /// Marker error distinguishing a deliberate abort - a user cancel (Esc,
 /// Ctrl+C, `/abort`, ACP `cancel()`) or the thinking-token/time watchdog -
@@ -392,6 +393,7 @@ pub async fn stream_turn(
         response_format,
     };
 
+    let mut ledger = LedgerRecorder::start(&req);
     let mut stream = model
         .complete(req)
         .await
@@ -503,6 +505,12 @@ pub async fn stream_turn(
                 cache_write_tokens,
                 cost_usd,
             } => {
+                ledger.note_usage(ReportedUsage {
+                    input: input_tokens,
+                    output: output_tokens,
+                    cache_read: cache_read_tokens,
+                    cache_write: cache_write_tokens,
+                });
                 let _ = tx
                     .send(AgentEvent::TokenUsage {
                         input: input_tokens,
@@ -514,6 +522,7 @@ pub async fn stream_turn(
                         max_tokens: 0,
                         max_output_tokens: 0,
                         cost_usd,
+                        breakdown: None,
                     })
                     .await;
             }
@@ -591,6 +600,9 @@ pub async fn stream_turn(
     if !full_text.is_empty() {
         let _ = tx.send(AgentEvent::TextComplete(full_text.clone())).await;
     }
+    // Last, so a consumer that folds events into turn-shaped steps has the
+    // response's content in hand when the request's ledger record arrives.
+    let _ = tx.send(ledger.into_event()).await;
 
     Ok(StreamedTurn {
         text: full_text,

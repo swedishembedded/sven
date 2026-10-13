@@ -8,14 +8,14 @@
 //! unit-tested trivially.
 
 use agent_client_protocol::{
-    ContentBlock, ContentChunk, Cost, CurrentModeUpdate, Plan, PlanEntry, PlanEntryPriority,
+    ContentBlock, ContentChunk, Cost, CurrentModeUpdate, Meta, Plan, PlanEntry, PlanEntryPriority,
     PlanEntryStatus, SessionModeId, SessionUpdate, ToolCall as AcpToolCall, ToolCallStatus,
     ToolKind, UsageUpdate,
 };
 use sven_hsm::UiEvent;
 use sven_machines::AgentEvent;
 use sven_tool_api::events::{TodoItem, TodoStatus};
-use sven_vocab::AgentMode;
+use sven_vocab::{AgentMode, STEP_METRICS_EXTRA_KEY};
 
 // ─── Mode mapping ─────────────────────────────────────────────────────────────
 
@@ -116,6 +116,27 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         // visible change in the subagent chat view.
         AgentEvent::ToolProgress { .. } => Some(SessionUpdate::Plan(Plan::new(vec![]))),
 
+        // A request's token ledger rides on a UsageUpdate: the context
+        // meter it carries is the request's prompt size against the window,
+        // and the record itself is attached under `_meta`.
+        AgentEvent::TokenUsage {
+            breakdown: Some(request),
+            max_tokens,
+            ..
+        } => {
+            let prompt = request
+                .reported
+                .map_or(request.estimated_total, |r| r.logical_prompt());
+            let mut meta = Meta::new();
+            meta.insert(
+                STEP_METRICS_EXTRA_KEY.to_string(),
+                serde_json::to_value(request).expect("a breakdown always serializes"),
+            );
+            Some(SessionUpdate::UsageUpdate(
+                UsageUpdate::new(u64::from(prompt), *max_tokens as u64).meta(meta),
+            ))
+        }
+
         // When the API reports cost (e.g. OpenRouter), forward to parent via UsageUpdate.
         AgentEvent::TokenUsage {
             cost_usd: Some(c), ..
@@ -193,6 +214,40 @@ mod tests {
             let id = sven_mode_to_acp_mode_id(mode);
             assert_eq!(acp_mode_id_to_sven_mode(&id), mode);
         }
+    }
+
+    #[test]
+    fn a_request_ledger_rides_a_usage_update_with_the_record_under_meta() {
+        let request = sven_vocab::RequestBreakdown {
+            user: 40,
+            estimated_total: 40,
+            ..Default::default()
+        };
+        let ev = AgentEvent::TokenUsage {
+            input: 0,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            cache_read_total: 0,
+            cache_write_total: 0,
+            max_tokens: 1000,
+            max_output_tokens: 0,
+            cost_usd: None,
+            breakdown: Some(Box::new(request.clone())),
+        };
+        let Some(SessionUpdate::UsageUpdate(update)) = agent_event_to_session_update(&ev) else {
+            panic!("expected a UsageUpdate");
+        };
+        assert_eq!((update.used, update.size), (40, 1000));
+        let record = update
+            .meta
+            .as_ref()
+            .and_then(|m| m.get(STEP_METRICS_EXTRA_KEY))
+            .expect("the record is attached under _meta");
+        assert_eq!(
+            serde_json::from_value::<sven_vocab::RequestBreakdown>(record.clone()).unwrap(),
+            request
+        );
     }
 
     #[test]

@@ -275,6 +275,7 @@ pub(crate) async fn run_ci(
                 no_system: cli.no_system || cli.bare,
                 no_tools: cli.no_tools || cli.bare,
                 trace_level: cli.verbose,
+                token_ledger: cli.token_ledger,
             })
             .await;
         std::process::exit(code);
@@ -327,6 +328,7 @@ pub(crate) async fn run_ci(
         regen_system_prompt: cli.regen_system_prompt,
         max_tokens_budget: cli.max_tokens,
         attachments: cli.attach,
+        token_ledger: cli.token_ledger,
     };
 
     CiRunner::new(config).run(opts).await

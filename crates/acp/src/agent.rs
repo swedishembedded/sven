@@ -713,6 +713,7 @@ mod tests {
             max_tokens: 0,
             max_output_tokens: 0,
             cost_usd: None,
+            breakdown: None,
         }
     }
 

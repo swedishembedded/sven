@@ -11,6 +11,7 @@ pub(crate) mod chats;
 pub(crate) mod ci;
 pub(crate) mod harness;
 pub(crate) mod index;
+pub(crate) mod ledger;
 pub(crate) mod logging;
 pub(crate) mod models;
 pub(crate) mod oauth;

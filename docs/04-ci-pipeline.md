@@ -394,6 +394,26 @@ consumer must skip such a trajectory rather than defaulting it. This is what
 makes the mid-run flushes safe: a still-running session is written unstamped,
 so only concluded runs are ever trained on.
 
+### Token ledger
+
+Every model request is accounted for: which sources its input tokens came
+from, reconciled with what the provider reported. The ledger is saved in the
+trajectory of every run; `--token-ledger` also prints it as it happens.
+
+```bash
+# One JSON line per model request on stderr, next to the usual [sven:tokens]
+sven --token-ledger --output-trace run.json 'fix the failing test'
+
+# Summarize a saved trajectory, subagents included
+sven ledger run.json          # short table
+sven ledger run.json --json   # one JSON object
+```
+
+The `[sven:ledger]` line is additional output: `[sven:tokens]` is unchanged
+and appears with or without the flag. See
+**[docs/technical/token-ledger.md](technical/token-ledger.md)** for the record
+format and the estimator.
+
 ### Redirect by format
 
 ```bash

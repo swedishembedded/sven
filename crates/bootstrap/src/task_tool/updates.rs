@@ -9,6 +9,7 @@ use serde_json::Value;
 use tracing::debug;
 
 use sven_tool_api::events::SubagentUpdate;
+use sven_vocab::STEP_METRICS_EXTRA_KEY;
 
 /// Convert one ACP [`SessionUpdate`] into zero or more [`SubagentUpdate`]s and
 /// an optional text chunk to append to `final_text`.
@@ -106,6 +107,16 @@ pub(super) fn session_update_to_subagent_updates(
             updates.push(SubagentUpdate::TextDelta(mode_text));
         }
         SessionUpdate::UsageUpdate(usage) => {
+            if let Some(record) = usage
+                .meta
+                .as_ref()
+                .and_then(|m| m.get(STEP_METRICS_EXTRA_KEY))
+            {
+                match serde_json::from_value(record.clone()) {
+                    Ok(request) => updates.push(SubagentUpdate::RequestLedger(Box::new(request))),
+                    Err(e) => debug!("task: dropping unreadable token ledger record: {e}"),
+                }
+            }
             if let Some(ref cost) = usage.cost {
                 updates.push(SubagentUpdate::TokenUsage {
                     cost_usd: cost.amount,

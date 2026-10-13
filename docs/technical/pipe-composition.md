@@ -221,6 +221,7 @@ Stderr lines use structured `[sven:tag]` prefixes:
 | `[sven:tool:call]` | Tool invocation |
 | `[sven:tool:result]` | Tool result (success or error) |
 | `[sven:tokens]` | Token usage for the turn |
+| `[sven:ledger]` | With `--token-ledger`: one JSON object per model request attributing its input tokens to their sources (see [token-ledger.md](token-ledger.md)) |
 | `[sven:info]` | Informational (e.g. history loaded) |
 | `[sven:warn]` | Non-fatal warning |
 | `[sven:error]` | Fatal error before exit |

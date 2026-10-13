@@ -445,15 +445,14 @@ impl SessionEntry {
                 cost_usd,
                 ..
             } => {
-                if *max_tokens > 0 {
-                    // Same formula the request gate actually enforces (see
-                    // sven_model::budget) rather than a locally
-                    // reimplemented, driftable copy of it.
+                // An event without prompt tokens must not reset the meter.
+                let prompt = *input + *cache_read + *cache_write;
+                if *max_tokens > 0 && prompt > 0 {
+                    // The formula the request gate enforces (sven_model::budget).
                     if let Some(input_budget) = sven_model::budget::effective_input_budget(
                         Some(*max_tokens as u32),
                         (*max_output_tokens > 0).then_some(*max_output_tokens as u32),
                     ) {
-                        let prompt = *input + *cache_read + *cache_write;
                         self.context_pct =
                             ((prompt as f64 / input_budget as f64) * 100.0).clamp(0.0, 100.0) as u8;
                     }
