@@ -693,7 +693,7 @@ tree whose engine, runtime, machines and models were last changed by
 commits `32d70bc3` (code) and `8ba82c8f` (model comments only).
 
 ```sh
-make formal                    # TLA+ suite (Section 6.3): 16 configurations
+make test/formal                    # TLA+ suite (Section 6.3): 16 configurations
 cargo test -p sven-hsm         # 62 tests
 cargo test -p sven-kernel      # 18 tests
 cargo test -p sven-machines    # 142 tests
@@ -705,7 +705,7 @@ python3 papers/state-machine/figures.py papers/state-machine/img  # matplotlib
 make papers/state-machine/pdf  # this document
 ```
 
-`make formal` needs a Java runtime (11 or newer) and fetches the TLA+
+`make test/formal` needs a Java runtime (11 or newer) and fetches the TLA+
 tools at release v1.7.4, verified against a pinned SHA-256; it asserts
 each configuration's expected outcome and exits non-zero otherwise. The
 repository pins no Rust toolchain; the measurements used rustc 1.98.1,

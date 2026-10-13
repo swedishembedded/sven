@@ -47,7 +47,7 @@ repos:
         pass_filenames: false
 
       # No tracked file names a project outside sven's scope (AGENTS.md,
-      # Repository scope). Also run by `make check/gates/scope`.
+      # Repository scope). Also run by `make check/gates/repo-scope`.
       - id: repo-scope
         name: no out-of-scope project names
         entry: bash scripts/gates/check-repo-scope.sh
@@ -56,7 +56,7 @@ repos:
         pass_filenames: true
 
       # Make target names form a tree and are documented (`make help`). Also
-      # run by `make check/gates/targets`.
+      # run by `make check/gates/make-targets`.
       - id: make-targets
         name: make targets are a documented tree
         entry: bash scripts/gates/check-make-targets.sh

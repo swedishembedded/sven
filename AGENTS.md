@@ -30,8 +30,8 @@ Everything in this repository serves one of those two.
 **Naming other projects.** A tracked file names another project only when
 sven depends on it. brain may be named in its one role here - a model
 provider sven talks to at runtime - and never as a build dependency (see
-`check/gates/deps`). A project built on sven is never named: describe the need
-generically ("an embedding application"). `make check/gates/scope` enforces this;
+`check/gates/no-brain-dependency`). A project built on sven is never named: describe the need
+generically ("an embedding application"). `make check/gates/repo-scope` enforces this;
 CHANGELOG.md is history and exempt.
 
 ## For AI Agents Working on This Codebase
@@ -79,7 +79,7 @@ CHANGELOG.md is history and exempt.
   `make test/e2e/basic` (bats E2E; needs `bats-core`).
 - **The kernel's load-bearing claims are model-checked**, not only tested:
   `formal/tla/` holds TLA+ models of `sven-hsm`'s dispatch algorithm, its
-  submachine host and `sven-kernel`'s effect gate, run by `make formal`.
+  submachine host and `sven-kernel`'s effect gate, run by `make test/formal`.
   Several configurations are *expected to fail* - they pin down designs the
   engine rejected, a tracked gap and a priced trade-off - so read
   `formal/README.md` before changing `dispatch.rs`, `submachine.rs` or
@@ -139,6 +139,39 @@ If you find a documented feature that does not work, either fix the feature
 or fix the page, in that commit. Leaving it for later is what produced that
 one.
 
+## Make targets
+
+HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>`:
+
+- The concept comes first (a noun: `build`, `test`, `check`, `docs`, `package`,
+  `release`, `site`, `samples`, `hooks`), the verb or variant comes last, and
+  there are as many levels as the thing needs, usually two or three. A test or
+  sample hierarchy with subdirectories gets one segment per directory level:
+  `test/e2e/basic/cli`, `samples/study/svf/run`. Never put the verb or area
+  second (`test/harness`, not `harness/test`).
+- Names are lowercase `[a-z0-9-]` segments joined by `/`. Private helper
+  targets start with `_`.
+- Every prefix is itself a target, so `make <TAB>` descends one level at a time.
+  An area target is the default action for its area (`build`, `test`, `check`,
+  `docs`, `benchmark`, `papers`: it runs its default set, named in its doc line)
+  or, where no default is safe or sensible (`release`, `site`, `package`,
+  `hooks`, `samples`, `test/crate`), it only lists its children and does
+  nothing else. An umbrella of anything that tags, pushes or uploads never
+  acts.
+- A set that follows from the tree is generated, never hand-listed: explicit
+  targets from a static pattern rule over a computed list (never `%` pattern
+  rules, which bash completion cannot see). Here: `check/gates/<gate>`,
+  `test/e2e/<suite>[/<test>]`, `test/crate/<package>`, `build/crate/<package>`,
+  `samples/<category>/<name>/{build,run}`, `papers/<name>/pdf`. Adding a
+  directory adds a target.
+- A bare single-segment target is allowed only for an area, or for the leaves
+  `all`, `clean`, `fmt` and `help` (one action each).
+- Every target has a `## name - description` line (a generated family has one
+  line with a `<placeholder>`), and sits under a `##@ Section` line; `make help`
+  is generated from them. `scripts/gates/check-make-targets.sh`
+  (`make check/gates/make-targets`, also a pre-commit hook) enforces the
+  machine-checkable part.
+
 ## Essential Commands
 
 | Command | Purpose |
@@ -148,17 +181,18 @@ one.
 | `make test` | Unit + integration tests (whole workspace) |
 | `make check` | rustfmt + text gates + `xtask arch` + clippy, `-D warnings` + rustdoc links |
 | `make check/fmt` | `cargo fmt --all -- --check`, checked not applied |
-| `make check/gates` | text gates: no machine paths, no brain dependency, repo scope, sample layering, make target naming (`check/gates/{paths,deps,scope,samples,targets}`) |
+| `make check/gates` | text gates: no machine paths, no brain dependency, repo scope, sample layering, make target naming (one generated `check/gates/<gate>` per `scripts/gates/check-<gate>.sh`) |
 | `make check/arch` | architecture ratchet only |
 | `make check/clippy` | clippy only |
 | `make check/doc` | `cargo doc`, broken intra-doc links are errors |
 | `make fmt` | Format |
-| `make test/harness` | Every harness suite (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
+| `make test/harness` | Every harness suite (one `test/harness/<suite>` each) (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
 | `make test/harness/local-model` | OPT-IN: the `08-local-qwen` sample against a model you already serve (`SVEN_HARNESS_LOCAL_MODEL=1`, `SVEN_HARNESS_LOCAL_ENDPOINT`); never part of `make test` or `make check` |
-| `make help` | Every target as a tree; names are concept first (`test/harness`, `check/gates/paths`), so `make <TAB>` descends level by level (`check/gates/targets` enforces it) |
+| `make help` | Every target as a tree; names are concept first (`test/harness`, `check/gates/no-machine-paths`), so `make <TAB>` descends level by level (`check/gates/make-targets` enforces it) |
 | `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |
-| `make test/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour) |
-| `make formal` | TLA+ models of the HSM kernel (needs a JRE; see `formal/README.md`) |
+| `make test/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour); one `test/e2e/basic/<test>` per bats file |
+| `make test/crate/<package>`, `make build/crate/<package>` | One workspace package, on demand (`make test/crate` lists them) |
+| `make test/formal` | TLA+ models of the HSM kernel (needs a JRE; see `formal/README.md`) |
 | `make docs` | Single-file user guide → `target/docs/sven-user-guide.md` |
 
 ## Binaries and cargo features

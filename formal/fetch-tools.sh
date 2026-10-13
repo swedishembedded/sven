@@ -12,7 +12,7 @@
 # failure rather than a warning -- the whole value of a model checker is that
 # you trust what it says, which means trusting what you ran.
 #
-# Idempotent: an already-correct jar is left alone, so `make formal` on a warm
+# Idempotent: an already-correct jar is left alone, so `make test/formal` on a warm
 # tree does no network I/O at all.
 set -euo pipefail
 

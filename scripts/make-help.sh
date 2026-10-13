@@ -7,56 +7,166 @@
 # system design and repository tooling then you can procure our services by
 # sending an email to info@swedishembedded.com.
 #
-# Prints the Makefile's `## name - description` doc lines as a tree.
+# The single reader of the Makefile's self-documentation. Everything that
+# needs the target tree (`make help`, the list-only umbrellas, the naming gate
+# scripts/gates/check-make-targets.sh) goes through here, so there is one
+# parser to keep right.
 #
-#   scripts/make-help.sh            every target, grouped by its first segment
-#   scripts/make-help.sh release    only the children of `release/`
+#   make-help.sh            every target, by section, as a tree
+#   make-help.sh <prefix>   the children of <prefix>/ (a list-only umbrella)
+#   make-help.sh --targets  public targets: static .PHONY, not `_`/`.` prefixed
+#   make-help.sh --defined  every target that has a rule (no pattern rules)
+#   make-help.sh --docs     one `name<TAB>section` line per doc line
 #
-# The second form is what an umbrella of a dangerous area (release, site,
-# package, hooks) runs instead of an action: `make release` lists what could
-# be done and does nothing. Lines that continue a description start with `##`
-# and two or more spaces. The doc-line grammar is enforced by
-# scripts/gates/check-make-targets.sh.
+# Makefile grammar (checked by check-make-targets.sh):
+#
+#   ##@ Section title       opens a section; `## ` lines straight after it are
+#                           its free text
+#   ## name - description   documents a target; `##` plus two or more spaces
+#                           continues the description
+#   ## test/crate/<package> - ...
+#                           documents a generated family: `<x>` stands for one
+#                           path segment, and help shows how many targets the
+#                           line stands for
+#
+# Targets are read from `make -pRrq`, so generated ones (static pattern rules
+# over a computed list) are real names, which is also why tab completion sees
+# them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export LC_ALL=C
 
-prefix=${1:-}
+python3 - "$@" <<'PY'
+import os
+import re
+import subprocess
+import sys
 
-awk -v prefix="$prefix" '
-function flush() {
-    if (name != "") printf "%s\t%s\n", name, text
-    name = ""
-}
-/^## [^ ]+ - / {
-    flush()
-    name = $2
-    text = $0
-    sub(/^## [^ ]+ - /, "", text)
-    next
-}
-/^##  +[^ ]/ && name != "" {
-    cont = $0
-    sub(/^## +/, "", cont)
-    text = text "\001" cont
-    next
-}
-{ flush() }
-END { flush() }
-' Makefile | sort -t "$(printf '\t')" -k1,1 | awk -F '\t' -v prefix="$prefix" '
-BEGIN { shown = 0 }
-{
-    name = $1
-    if (prefix != "" && index(name, prefix "/") != 1) next
-    n = split(name, seg, "/")
-    area = seg[1]
-    if (prefix == "" && shown && area != last) print ""
-    last = area; shown = 1
-    indent = (prefix == "") ? 2 * n : 2
-    pad = 36 - indent
-    split($2, line, "\001")
-    printf "%*s%-*s - %s\n", indent, "", pad, name, line[1]
-    for (i = 2; i in line; i++) printf "%*s%s\n", 36 + 3, "", line[i]
-}
-END { if (!shown && prefix != "") exit 1 }
-'
+MAKEFILE = "Makefile"
+DOC = re.compile(r"^## (\S+) - (.*)$")
+CONT = re.compile(r"^##\s{2,}(\S.*)$")
+SECTION = re.compile(r"^##@\s+(\S.*)$")
+
+
+def make_database():
+    env = {k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS")}
+    out = subprocess.run(
+        [os.environ.get("MAKE", "make"), "--no-print-directory", "-pRrq", ".DEFAULT"],
+        capture_output=True, text=True, env=env, check=False,
+    )
+    return out.stdout.splitlines()
+
+
+def targets():
+    """(defined, public): rule targets, and the static .PHONY subset of them."""
+    defined, phony = set(), set()
+    for line in make_database():
+        if line.startswith(".PHONY:"):
+            phony.update(line.split()[1:])
+            continue
+        m = re.match(r"^([^#\s.%][^:=%]*):(?!=)", line)
+        if m:
+            defined.add(m.group(1).strip())
+    public = {t for t in defined & phony if not t.startswith(("_", ".")) and "%" not in t}
+    return defined, public
+
+
+def docs():
+    """Doc entries in file order: dict(name, text[], section index)."""
+    entries, sections = [], []
+    current, last = None, None
+    for raw in open(MAKEFILE, encoding="utf-8"):
+        line = raw.rstrip("\n")
+        m = SECTION.match(line)
+        if m:
+            sections.append({"title": m.group(1), "text": []})
+            current, last = len(sections) - 1, "section"
+            continue
+        m = DOC.match(line)
+        if m:
+            entries.append({"name": m.group(1), "text": [m.group(2)], "section": current})
+            last = "doc"
+            continue
+        m = CONT.match(line)
+        if m and last == "doc":
+            entries[-1]["text"].append(m.group(1))
+            continue
+        if line.startswith("## ") and last == "section":
+            sections[-1]["text"].append(line[3:])
+            continue
+        last = None
+    return entries, sections
+
+
+def shape(name):
+    """Regex for a doc name: `<x>` is one path segment."""
+    parts = re.split(r"(<[^>]+>)", name)
+    body = "".join("[^/]+" if p.startswith("<") else re.escape(p) for p in parts)
+    return re.compile("^" + body + "$")
+
+
+def doc_for(target, entries):
+    for e in entries:
+        if shape(e["name"]).match(target):
+            return e
+    return None
+
+
+def line_for(name, text, indent, count=None):
+    suffix = f" ({count} target{'' if count == 1 else 's'})" if count else ""
+    first = f"{' ' * indent}{name:<{max(1, 36 - indent)}} - {text[0]}{suffix}"
+    rest = [f"{' ' * 39}{t}" for t in text[1:]]
+    return [first] + rest
+
+
+def full_help():
+    entries, sections = docs()
+    _, public = targets()
+    for si, sec in enumerate(sections):
+        if si:
+            print()
+        print(sec["title"])
+        for t in sec["text"]:
+            print(f"  {t}")
+        mine = sorted((e for e in entries if e["section"] == si), key=lambda e: e["name"])
+        for e in mine:
+            depth = e["name"].count("/") + 1
+            count = None
+            if "<" in e["name"]:
+                rx = shape(e["name"])
+                count = sum(1 for t in public if rx.match(t))
+            for out in line_for(e["name"], e["text"], 2 * depth, count):
+                print(out)
+
+
+def children(prefix):
+    entries, _ = docs()
+    _, public = targets()
+    depth = prefix.count("/") + 2
+    kids = sorted(t for t in public if t.startswith(prefix + "/") and t.count("/") + 1 == depth)
+    if not kids:
+        sys.exit(f"make-help: no targets under {prefix}/")
+    for kid in kids:
+        e = doc_for(kid, entries)
+        for out in line_for(kid, e["text"] if e else ["(undocumented)"], 2):
+            print(out)
+
+
+def main(argv):
+    if not argv:
+        full_help()
+    elif argv[0] == "--targets":
+        print("\n".join(sorted(targets()[1])))
+    elif argv[0] == "--defined":
+        print("\n".join(sorted(targets()[0])))
+    elif argv[0] == "--docs":
+        entries, sections = docs()
+        for e in entries:
+            sec = sections[e["section"]]["title"] if e["section"] is not None else ""
+            print(f"{e['name']}\t{sec}")
+    else:
+        children(argv[0].rstrip("/"))
+
+
+main(sys.argv[1:])
+PY

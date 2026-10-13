@@ -18,14 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation: [docs/12-harnesses.md](docs/12-harnesses.md), [docs/technical/harnesses.md](docs/technical/harnesses.md), the "Add a harness primitive" row of AGENTS.md and the "As built" addendum of ADR 0004.
 
 ### Changed (BREAKING, build)
-- Make targets form a tree, concept first and then kind and variant, so `make <TAB>` lists the concepts and `make test/<TAB>` the kinds of test. `make help` prints the tree. There are no aliases for the old names. `scripts/gates/check-make-targets.sh` (`make check/gates/targets`, also a pre-commit hook) enforces the naming, that every prefix is itself a target, and that every target has a `## name - text` doc line. Old -> new:
-  - `release` -> `build/release` (the bare `release` is now a listing of the `release/*` targets and does nothing); `release/build` -> `release/dist`
+- Make targets form a tree: `make <concept>/<subconcept>/.../<action>`, concept first, one segment per directory level, every prefix a target, so `make <TAB>` lists the concepts and each level narrows the one before. The rule is in AGENTS.md ("Make targets"). `make help` prints the tree by `##@` section. There are no aliases for the old names. `scripts/gates/check-make-targets.sh` (`make check/gates/make-targets`, also a pre-commit hook) enforces the naming, that every prefix is a target, that every target is documented and sits in a section, and that bare single-segment names are only areas or `all`/`clean`/`fmt`/`help`.
+- Sets that follow from the tree are generated as explicit targets: `check/gates/<gate>` (one per `scripts/gates/check-<gate>.sh`), `test/e2e/<suite>` and `test/e2e/<suite>/<test>` (per bats file), `test/crate/<package>` and `build/crate/<package>` (per workspace package, on demand, not part of `test`/`build`), `samples/<category>/<name>` and its `build`/`run`, `papers/<name>` and `papers/<name>/pdf`. The harness suites are `test/harness/{spec,transform,runtime,sdk,testkit,samples,cli}`; `test/harness` runs them all.
+- Old -> new:
+  - `release` -> `build/release` (the bare `release` now only lists the `release/*` targets); `release/build` -> `package/dist`
   - `tests/e2e` -> `test/e2e`; `tests/e2e/basic` -> `test/e2e/basic`
   - `harness/test` -> `test/harness`; `harness/test/local` -> `test/harness/local-model`
-  - `check/paths`, `check/deps`, `check/scope`, `check/samples` -> `check/gates/paths`, `check/gates/deps`, `check/gates/scope`, `check/gates/samples`
-  - `deb` -> `package/deb`; `deb/debug` -> `package/deb/debug`; `deb/release` -> `package/deb/release`
+  - `formal` -> `test/formal`
+  - `check/paths` -> `check/gates/no-machine-paths`; `check/deps` -> `check/gates/no-brain-dependency`; `check/scope` -> `check/gates/repo-scope`; `check/samples` -> `check/gates/samples`
+  - `deb`, `deb/debug`, `deb/release` -> `package/deb`, `package/deb/debug`, `package/deb/release`
   - `docs-pdf` -> `docs/pdf`; `samples/list` -> `samples`
-  - New area targets: `package`, `hooks`, `site` (list their children, do nothing), `papers` (runs `papers/pdf`), `papers/<name>` (that paper's PDF)
+  - New: `package`, `hooks`, `site`, `papers`, `test/crate`, `build/crate`, and the generated families above
 
 ### Fixed
 - A harness session under `--approval manual` (or `ApprovalPolicy::Manual`) ran its writes without asking: a machine supplied to the builder skipped the host's approval mode and read-only narrowing. It is now bounded like a registered machine, and `HarnessMachine` implements the approval flow (`RequestHumanApproval`, `HumanApproved`, `HumanRejected`), one held call at a time.

@@ -3,7 +3,7 @@
 Machine-checked models of the parts of sven whose correctness argument is
 otherwise only a comment and a handful of example transitions.
 
-Run them with `make formal`. It is not part of `make check`: the models need a
+Run them with `make test/formal`. It is not part of `make check`: the models need a
 JRE and a 2 MB download, and `check` is the inner loop.
 
 ## What this is for

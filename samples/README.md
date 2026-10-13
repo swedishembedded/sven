@@ -37,7 +37,7 @@ from outside it - that is what makes it an application rather than a test.
 
 ## Build and run are separate, and run does not call cargo
 
-`make samples/<path>/build` compiles; `make samples/<path>/run` executes the
+`make samples/<category>/<name>/build` compiles; `make samples/<category>/<name>/run` executes the
 binary that is already there. A sample is an ordinary executable once built -
 copying it to a machine with no Rust toolchain is the whole distribution story,
 and a `run` that shelled out to `cargo run` would quietly make the toolchain a

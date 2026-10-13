@@ -22,7 +22,7 @@ sven/
 │   ├── fixtures/               # Shared test fixtures (mock_responses.yaml, plan.md, ...)
 │   └── *.rs                    # Workspace-level integration tests
 ├── docs/                       # User-facing markdown docs + technical/ + adr/
-├── formal/                     # TLA+ models of the HSM kernel (`make formal`)
+├── formal/                     # TLA+ models of the HSM kernel (`make test/formal`)
 ├── benchmarks/                 # Terminal-Bench harness (`make benchmark`)
 ├── site/                       # Project website (`make site/build`)
 ├── scripts/
@@ -106,13 +106,13 @@ Run `make help` for the full list.
 | `test/e2e` | Alias for `test/e2e/basic` |
 | `test/harness` | Every harness suite, mock models only |
 | `check` | `check/fmt`, `check/gates`, `check/arch`, `check/features`, `check/clippy`, `check/doc` |
-| `check/gates` | `check/gates/paths`, `deps`, `scope`, `samples`, `targets` (make target naming) |
+| `check/gates` | one `check/gates/<gate>` per `scripts/gates/check-<gate>.sh` (generated) |
 | `fmt` | `cargo fmt --all` |
 | `package/deb` | Build Debian package (`package` lists) |
 | `docs` / `docs/pdf` | Build user-guide markdown / PDF |
-| `formal` | Machine-check the TLA+ models |
+| `test/formal` | Machine-check the TLA+ models |
 | `release/patch\|minor\|major` | Bump version via cargo-release |
-| `release/dist` | Build release artifacts into `dist/` (`release` only lists) |
+| `package/dist` | Build release artifacts into `dist/` (`package` lists) |
 | `release/tag` | Create + push annotated git tag |
 | `release/publish` | Upload `dist/` to GitHub Release via `gh` |
 

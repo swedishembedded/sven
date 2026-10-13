@@ -25,27 +25,29 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build build/debug build/release \
-        test test/features test/e2e test/e2e/basic test/harness test/harness/local-model \
-        check check/fmt check/features check/clippy check/doc check/arch \
-        check/gates check/gates/paths check/gates/deps check/gates/scope check/gates/samples check/gates/targets \
-        fmt formal clean help \
-        package package/deb package/deb/debug package/deb/release \
-        docs docs/pdf \
-        samples hooks hooks/install \
-        release release/dist release/tag release/publish release/patch release/minor release/major \
-        _require-cargo-release \
-        site site/build site/publish site/serve \
-        benchmark benchmark/build benchmark/terminal-bench benchmark/report \
-        papers papers/pdf
+# Every workspace package (root, crates, xtask, samples): one sed over the
+# manifests, so adding a crate adds its build/crate/<package> and
+# test/crate/<package> targets. The first `name =` after [package] is the
+# package name.
+CRATE_PACKAGES := $(shell sed -sn '/^\[package\]/,/^name *=/s/^name *= *"\(.*\)"/\1/p' Cargo.toml crates/*/Cargo.toml samples/*/*/Cargo.toml xtask/Cargo.toml)
 
-# Target names form a tree: the concept first (build, test, check, ...), then
-# the kind, then the variant, so `make <TAB>` lists concepts and each level
-# narrows the one before. scripts/gates/check-make-targets.sh (check/gates/targets)
-# enforces the naming; `make help` prints the tree from the `## name - text`
-# lines. An area target is either the default action for its area (build, test,
-# check, docs, benchmark, papers) or, where no default is safe (release, site,
-# package, hooks, samples), only lists its children and does nothing else.
+# MAKE TARGETS (rule: AGENTS.md, "Make targets"). A target is
+# `make <concept>/<subconcept>/.../<action>`: concept first, verb last, one
+# segment per directory level of a test or sample hierarchy, and every prefix
+# is itself a target so `make <TAB>` descends one level at a time. Where a set
+# follows from the tree (gates, e2e suites, crates, samples, papers) it is
+# GENERATED as explicit targets by static pattern rules over a computed list -
+# never `%` pattern rules, which bash completion cannot see - so adding a
+# directory adds a target and nobody maintains a list. `make help` prints the
+# tree from the ##@ section and ## doc lines; scripts/gates/check-make-targets.sh
+# (check/gates/make-targets) enforces the naming. An area target is either the
+# default action for its area (build, test, check, docs, benchmark, papers) or,
+# where no default is safe or sensible (release, site, package, hooks, samples,
+# test/crate, build/crate), only lists its children and does nothing else.
+
+# ---------------------------------------------------------------------------
+##@ Build and package
+## Debug and release builds, one crate on demand, and the packages made from them.
 
 ## all - alias for build
 all: build
@@ -61,8 +63,51 @@ build/debug:
 build/release:
 	$(CARGO) build --release $(CARGO_FLAGS)
 
+## build/crate - lists the per-package build targets; builds nothing
+build/crate:
+	@bash scripts/make-help.sh build/crate
+
+## build/crate/<package> - debug-build one workspace package (not part of `make build`)
+BUILD_CRATE_TARGETS := $(addprefix build/crate/,$(CRATE_PACKAGES))
+$(BUILD_CRATE_TARGETS): build/crate/%:
+	$(CARGO) build -p $* $(CARGO_FLAGS)
+
+## package - lists the package targets; builds nothing
+package:
+	@bash scripts/make-help.sh package
+
+## package/dist - build release artifacts for the current platform into dist/
+package/dist:
+	@bash scripts/release-build.sh --out-dir $(DIST)
+
+## package/deb - default: package/deb/release (output in target/debian/)
+package/deb: package/deb/release
+
+## package/deb/debug - build debug Debian package (no optimizations, fast build)
+package/deb/debug: build
+	@bash scripts/build-deb.sh --binary target/debug/sven --out-dir $(DEB_OUT)
+
+## package/deb/release - build fully optimised release Debian package
+package/deb/release: build/release
+	@if command -v cargo-deb >/dev/null 2>&1; then \
+		echo "Using cargo-deb..."; \
+		mkdir -p target/completions; \
+		target/release/sven completions bash > target/completions/sven.bash; \
+		target/release/sven completions zsh  > target/completions/_sven; \
+		target/release/sven completions fish > target/completions/sven.fish; \
+		$(CARGO) deb --output $(DEB_OUT) $(CARGO_FLAGS); \
+	else \
+		echo "cargo-deb not found, using scripts/build-deb.sh..."; \
+		bash scripts/build-deb.sh --out-dir $(DEB_OUT); \
+	fi
+
+# ---------------------------------------------------------------------------
+##@ Verify
+## Tests, static checks, formal models and benchmarks. Only `test`, `check` and
+## `benchmark` run their default set; the other areas are opt-in.
+
 ## test - default: workspace unit + integration tests, then test/features
-##        (test/e2e, test/harness and test/harness/local-model are separate)
+##   (test/e2e, test/harness, test/crate and test/formal are separate)
 # --workspace is required: the root Cargo.toml defines both a [workspace] and
 # its own [package] (the `sven` binary), so plain `cargo test` here tests
 # ONLY that root package - every other crate's own unit tests (sven-core,
@@ -80,33 +125,149 @@ test/features:
 		$(CARGO) test -q -p $$p --no-default-features $(CARGO_FLAGS) || exit 1; \
 	done
 
-# Harness suites run capped (HARNESS_JOBS build jobs, 4 test threads) so they
-# stay light on a shared machine.
-HARNESS_JOBS ?= 4
+## test/crate - lists the per-package test targets; tests nothing
+test/crate:
+	@bash scripts/make-help.sh test/crate
 
-## test/harness - every harness suite (mock models only; not part of `make test`)
-test/harness:
-	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-harness-spec -- --test-threads=4
-	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-harness-transform -- --test-threads=4
-	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-harness-runtime --features transform -- --test-threads=4
-	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-sdk --test harness_run --test harness_replay --test harness_authz --test harness_children --test harness_stress -- --test-threads=4
-	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-harness-testkit -- --test-threads=4
-	$(CARGO) test --jobs $(HARNESS_JOBS) -p sample-harnesses-sdk-runner -- --test-threads=4
-	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven --test harness_cli -- --test-threads=4
+## test/crate/<package> - run one workspace package's tests (not part of `make test`)
+TEST_CRATE_TARGETS := $(addprefix test/crate/,$(CRATE_PACKAGES))
+$(TEST_CRATE_TARGETS): test/crate/%:
+	$(CARGO) test -p $* $(CARGO_FLAGS)
+
+# End-to-end suites: tests/e2e/<suite>/<NN_name>.bats becomes
+# test/e2e/<suite> (the whole directory) and test/e2e/<suite>/<name>.
+E2E_SUITES := $(sort $(patsubst tests/e2e/%/,%,$(dir $(wildcard tests/e2e/*/*.bats))))
+E2E_SUITE_TARGETS := $(addprefix test/e2e/,$(E2E_SUITES))
+E2E_TEST_TARGETS := $(shell ls tests/e2e/*/*.bats 2>/dev/null | sed -E 's|^tests/e2e/([^/]+)/[0-9]+_(.*)\.bats$$|test/e2e/\1/\2|; s|_|-|g')
+
+## test/e2e - default: every end-to-end suite (requires bats-core)
+test/e2e: $(E2E_SUITE_TARGETS)
+
+## test/e2e/<suite> - run one end-to-end suite (requires bats-core), e.g. test/e2e/basic
+##   The basic suite uses the mock model; hardware-gated tests in 07 self-skip
+##   without SVEN_TEST_JLINK=1.
+$(E2E_SUITE_TARGETS): test/e2e/%: build
+	bats tests/e2e/$*/
+
+## test/e2e/<suite>/<test> - run one bats file of a suite, e.g. test/e2e/basic/cli
+$(E2E_TEST_TARGETS): test/e2e/%: build
+	bats tests/e2e/$(dir $*)[0-9]*_$(subst -,_,$(notdir $*)).bats
+
+# Harness suites run capped (HARNESS_JOBS build jobs, 4 test threads) so they
+# stay light on a shared machine. Each suite's cargo invocation differs, so
+# they are written out rather than generated.
+HARNESS_JOBS ?= 4
+HARNESS_TEST = $(CARGO) test --jobs $(HARNESS_JOBS)
+HARNESS_TARGETS := test/harness/spec test/harness/transform test/harness/runtime \
+                   test/harness/sdk test/harness/testkit test/harness/samples test/harness/cli
+
+## test/harness - default: every harness suite below, on mock models only (opt-in: not part of `make test`)
+test/harness: $(HARNESS_TARGETS)
+
+## test/harness/spec - harness document language: sven-harness-spec
+test/harness/spec:
+	$(HARNESS_TEST) -p sven-harness-spec -- --test-threads=4
+
+## test/harness/transform - harness transforms: sven-harness-transform
+test/harness/transform:
+	$(HARNESS_TEST) -p sven-harness-transform -- --test-threads=4
+
+## test/harness/runtime - harness runtime: sven-harness-runtime
+test/harness/runtime:
+	$(HARNESS_TEST) -p sven-harness-runtime --features transform -- --test-threads=4
+
+## test/harness/sdk - harness through the SDK: run, replay, authz, children and the 1000-run stress test
+test/harness/sdk:
+	$(HARNESS_TEST) -p sven-sdk --test harness_run --test harness_replay --test harness_authz --test harness_children --test harness_stress -- --test-threads=4
+
+## test/harness/testkit - harness test kit: sven-harness-testkit
+test/harness/testkit:
+	$(HARNESS_TEST) -p sven-harness-testkit -- --test-threads=4
+
+## test/harness/samples - the SDK runner sample over the harness samples
+test/harness/samples:
+	$(HARNESS_TEST) -p sample-harnesses-sdk-runner -- --test-threads=4
+
+## test/harness/cli - the `sven harness` command line
+test/harness/cli:
+	$(HARNESS_TEST) -p sven --test harness_cli -- --test-threads=4
 
 ## test/harness/local-model - OPT-IN: samples/harnesses/08-local-qwen against an already-running endpoint
 ##   Needs SVEN_HARNESS_LOCAL_MODEL=1 and SVEN_HARNESS_LOCAL_ENDPOINT; nothing is pulled or started.
+##   Not part of test/harness.
 test/harness/local-model:
 	@test "$$SVEN_HARNESS_LOCAL_MODEL" = 1 && test -n "$$SVEN_HARNESS_LOCAL_ENDPOINT" || { echo "test/harness/local-model: set SVEN_HARNESS_LOCAL_MODEL=1 and SVEN_HARNESS_LOCAL_ENDPOINT to a model you are already serving; nothing is pulled or started"; exit 2; }
-	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-harness-testkit --test local_model -- --ignored --test-threads=1
+	$(HARNESS_TEST) -p sven-harness-testkit --test local_model -- --ignored --test-threads=1
 
-## test/e2e - default: every end-to-end suite (requires bats-core), i.e. test/e2e/basic
-test/e2e: test/e2e/basic
+## test/formal - machine-check the TLA+ models of the HSM kernel (needs a JRE; not part of `make test`)
+# Not part of `make check`: the models need a JRE and a pinned 2 MB download,
+# and `check` is the inner loop. Several of them are EXPECTED to fail -- they
+# pin down designs the engine rejected -- so the runner compares each model
+# against the outcome the suite declares for it rather than against TLC's exit
+# code. See formal/README.md.
+test/formal:
+	bash formal/run-tla.sh
 
-## test/e2e/basic - run all basic end-to-end tests (requires bats-core)
-##   All tests use the mock model; hardware-gated tests in 07 self-skip without SVEN_TEST_JLINK=1.
-test/e2e/basic: build
-	bats tests/e2e/basic/
+## check - default: check/fmt, check/gates, check/arch, check/features, check/clippy, check/doc
+# In that order on purpose: a rustfmt drift, a baked-in machine path or an
+# illegal crate edge should fail in seconds, not after a full workspace lint.
+# Every gate below is reachable from HERE, not only from an installed git
+# hook -- a check that lives only in `make hooks/install` enforces nothing on a
+# fresh clone that never ran it.
+check: check/fmt check/gates check/arch check/features check/clippy check/doc
+
+## check/fmt - rustfmt shape, checked not applied (`make fmt` fixes it)
+# First, because it is the cheapest thing that can fail and the least
+# interesting to argue about. Briefly a script with an exception list, while
+# a concurrent change held the last few unformatted files; that list reached
+# zero and the script went with it.
+check/fmt:
+	$(CARGO) fmt --all -- --check
+
+## check/features - the feature-off configurations build and lint clean: the
+##   minimal assemblies (sven-bootstrap and sven-sdk without default features)
+##   and the crates with feature-gated transports and media. The workspace
+##   build unifies every feature on, so nothing else would ever compile them.
+##   One package per run: features unify across the packages of a run.
+FEATURE_OFF_PACKAGES = sven-model-drivers sven-tools-fs sven-tools-gdb sven-bootstrap sven-sdk
+check/features:
+	@for p in $(FEATURE_OFF_PACKAGES); do \
+		echo "clippy -p $$p --no-default-features"; \
+		$(CARGO) clippy -q -p $$p --no-default-features --all-targets -- -D warnings || exit 1; \
+	done
+
+## check/clippy - lint the workspace, warnings are errors
+check/clippy:
+	$(CARGO) clippy --workspace --all-targets $(CARGO_FLAGS) -- -D warnings
+
+## check/doc - rustdoc builds for the workspace with every intra-doc link
+##   resolving (rustdoc stops documenting a crate at its first broken link, so
+##   an unchecked one hides every later one)
+check/doc:
+	RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" $(CARGO) doc --no-deps --workspace $(CARGO_FLAGS)
+
+## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
+##   and the `minimal` cargo feature profile's forbidden-crate list)
+check/arch:
+	$(CARGO) run -q -p xtask -- arch
+	$(CARGO) run -q -p xtask -- arch --profile minimal
+
+# Text gates: scripts/gates/check-<gate>.sh is the target check/gates/<gate>.
+# A gate that needs flags would be an explicit override of its generated rule.
+GATE_NAMES := $(patsubst scripts/gates/check-%.sh,%,$(wildcard scripts/gates/check-*.sh))
+GATE_TARGETS := $(addprefix check/gates/,$(GATE_NAMES))
+
+## check/gates - default: every text gate below. Together they cost well under a second.
+check/gates: $(GATE_TARGETS)
+
+## check/gates/<gate> - run scripts/gates/check-<gate>.sh alone (one target per script)
+##   no-machine-paths: no absolute machine path in any tracked or new file.
+##   no-brain-dependency: sven builds with no brain checkout, declared or resolved.
+##   repo-scope: no tracked file names a project outside sven's scope (AGENTS.md).
+##   samples: a sample depends on the SDK facade only; package name matches path.
+##   make-targets: make targets are a documented tree (see "Make targets" in AGENTS.md).
+$(GATE_TARGETS): check/gates/%: scripts/gates/check-%.sh
+	bash $<
 
 # ── Benchmark targets ─────────────────────────────────────────────────────────
 # Run sven against Terminal-Bench 2.0 via Harbor and generate a Markdown report.
@@ -183,31 +344,9 @@ benchmark/report:
 	@python3 benchmarks/report.py target/benchmark > target/benchmark/report.md
 	@cat target/benchmark/report.md
 
-# ── Debian package targets ─────────────────────────────────────────────────────
-## package - lists the package targets; builds nothing
-package:
-	@bash scripts/make-help.sh package
-
-## package/deb - default: package/deb/release (output in target/debian/)
-package/deb: package/deb/release
-
-## package/deb/debug - build debug Debian package (no optimizations, fast build)
-package/deb/debug: build
-	@bash scripts/build-deb.sh --binary target/debug/sven --out-dir $(DEB_OUT)
-
-## package/deb/release - build fully optimised release Debian package
-package/deb/release: build/release
-	@if command -v cargo-deb >/dev/null 2>&1; then \
-		echo "Using cargo-deb..."; \
-		mkdir -p target/completions; \
-		target/release/sven completions bash > target/completions/sven.bash; \
-		target/release/sven completions zsh  > target/completions/_sven; \
-		target/release/sven completions fish > target/completions/sven.fish; \
-		$(CARGO) deb --output $(DEB_OUT) $(CARGO_FLAGS); \
-	else \
-		echo "cargo-deb not found, using scripts/build-deb.sh..."; \
-		bash scripts/build-deb.sh --out-dir $(DEB_OUT); \
-	fi
+# ---------------------------------------------------------------------------
+##@ Documentation
+## The user guide and the papers.
 
 ## docs - default: build the single-file markdown user guide (target/docs/sven-user-guide.md)
 docs:
@@ -252,183 +391,17 @@ papers/pdf: $(PAPER_TARGETS)
 $(PAPER_DIRS): %: %/pdf
 
 ## papers/<name>/pdf - build one paper's PDF
-.PHONY: $(PAPER_DIRS) $(PAPER_TARGETS)
-
 $(PAPER_TARGETS): papers/%/pdf:
 	$(MAKE) -C papers/$*
 
-## fmt - format all code
-fmt:
-	$(CARGO) fmt --all
+# ---------------------------------------------------------------------------
+##@ Release and site
+## Everything here changes something outside the working tree (tags, GitHub,
+## the production site). The `release` and `site` areas only list their targets.
 
-## formal - machine-check the TLA+ models of the HSM kernel (needs a JRE)
-# Not part of `make check`: the models need a JRE and a pinned 2 MB download,
-# and `check` is the inner loop. Several of them are EXPECTED to fail -- they
-# pin down designs the engine rejected -- so the runner compares each model
-# against the outcome the suite declares for it rather than against TLC's exit
-# code. See formal/README.md.
-formal:
-	bash formal/run-tla.sh
-
-## check - default: check/fmt, check/gates, check/arch, check/features, check/clippy, check/doc
-# In that order on purpose: a rustfmt drift, a baked-in machine path or an
-# illegal crate edge should fail in seconds, not after a full workspace lint.
-# Every gate below is reachable from HERE, not only from an installed git
-# hook -- a check that lives only in `make hooks/install` enforces nothing on a
-# fresh clone that never ran it.
-check: check/fmt check/gates check/arch check/features check/clippy check/doc
-
-## check/fmt - rustfmt shape, checked not applied (`make fmt` fixes it)
-# First, because it is the cheapest thing that can fail and the least
-# interesting to argue about. Briefly a script with an exception list, while
-# a concurrent change held the last few unformatted files; that list reached
-# zero and the script went with it.
-check/fmt:
-	$(CARGO) fmt --all -- --check
-
-## check/features - the feature-off configurations build and lint clean: the
-##   minimal assemblies (sven-bootstrap and sven-sdk without default features)
-##   and the crates with feature-gated transports and media. The workspace
-##   build unifies every feature on, so nothing else would ever compile them.
-##   One package per run: features unify across the packages of a run.
-FEATURE_OFF_PACKAGES = sven-model-drivers sven-tools-fs sven-tools-gdb sven-bootstrap sven-sdk
-check/features:
-	@for p in $(FEATURE_OFF_PACKAGES); do \
-		echo "clippy -p $$p --no-default-features"; \
-		$(CARGO) clippy -q -p $$p --no-default-features --all-targets -- -D warnings || exit 1; \
-	done
-
-## check/clippy - lint the workspace, warnings are errors
-check/clippy:
-	$(CARGO) clippy --workspace --all-targets $(CARGO_FLAGS) -- -D warnings
-
-## check/doc - rustdoc builds for the workspace with every intra-doc link
-##   resolving (rustdoc stops documenting a crate at its first broken link, so
-##   an unchecked one hides every later one)
-check/doc:
-	RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" $(CARGO) doc --no-deps --workspace $(CARGO_FLAGS)
-
-## check/gates - default: every text gate (check/gates/paths, deps, scope,
-##   samples, targets). Together they cost well under a second.
-check/gates: check/gates/paths check/gates/deps check/gates/scope check/gates/samples check/gates/targets
-
-## check/gates/paths - no baked-in absolute machine path in any tracked (or new,
-##   not-yet-tracked) file
-check/gates/paths:
-	bash scripts/gates/check-no-machine-paths.sh
-
-## check/gates/deps - sven must stay buildable with no brain checkout: no brain-*
-##   dependency, declared or transitively resolved
-check/gates/deps:
-	bash scripts/gates/check-no-brain-dependency.sh
-
-## check/gates/scope - no tracked file names a project outside sven's scope (see
-##   the Repository scope section of AGENTS.md)
-check/gates/scope:
-	bash scripts/gates/check-repo-scope.sh
-
-## check/gates/samples - a sample depends on the SDK facade and nothing else, and
-##   its package name matches its path (see samples/README.md)
-check/gates/samples:
-	bash scripts/gates/check-samples.sh
-
-## check/gates/targets - make targets are named as a tree, reachable by tab
-##   completion level by level, and documented
-check/gates/targets:
-	bash scripts/gates/check-make-targets.sh
-
-# A sample is a standalone APPLICATION built on the public `sven-sdk` facade,
-# living in samples/<category>/<name>/. Unlike sibling repos, samples here ARE
-# built and tested with the workspace: one depends only on the SDK, so it costs
-# almost nothing, and excluding it is how a sample rots into something that no
-# longer compiles against the framework it demonstrates.
-#
-#   make samples
-#   make samples/study/svf/build
-#   make samples/study/svf/run ARGS="--errata real"
-#
-# `build` and `run` are separate and `run` does NOT invoke cargo: a built sample
-# is an ordinary binary, and a `run` that shelled out to cargo would make the
-# toolchain a runtime dependency of every demonstration. The cost is that `run`
-# cannot notice a stale binary, so it prints what it executes and when that file
-# was built.
-SAMPLE_PROFILE ?= release
-SAMPLE_CARGO_FLAGS = $(if $(filter release,$(SAMPLE_PROFILE)),--release,)
-ARGS ?=
-
-# samples/<a>/<b> -> package `sample-<a>-<b>`. check/gates/samples enforces it.
-sample_pkg = sample-$(subst /,-,$(1))
-
-## samples - lists the samples and how to build and run them; builds nothing
-samples:
-	@echo "Samples (make samples/<path>/{build,run}):"
-	@find samples -mindepth 3 -maxdepth 3 -name Cargo.toml 2>/dev/null \
-		| sed -E 's|^samples/(.*)/Cargo\.toml$$|\1|' | sort | while read -r s; do \
-			printf '  %-28s %s\n' "$$s" \
-				"$$(sed -n 's/^description = "\(.*\)"/\1/p' "samples/$$s/Cargo.toml" | head -1)"; \
-		done
-
-## samples/<path>/build - build one sample, e.g. samples/study/svf/build
-samples/%/build:
-	$(CARGO) build $(SAMPLE_CARGO_FLAGS) -p $(call sample_pkg,$*)
-
-## samples/<path>/run - run a built sample; ARGS="..." is passed through
-samples/%/run:
-	@bin="target/$(SAMPLE_PROFILE)/$(call sample_pkg,$*)"; \
-	if [ ! -x "$$bin" ]; then \
-		echo "error: $$bin does not exist - run 'make samples/$*/build' first"; exit 1; \
-	fi; \
-	echo "running $$bin (built $$(date -r "$$bin" '+%Y-%m-%d %H:%M:%S'))"; \
-	exec "$$bin" $(ARGS)
-
-## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet,
-##   and the `minimal` cargo feature profile's forbidden-crate list)
-check/arch:
-	$(CARGO) run -q -p xtask -- arch
-	$(CARGO) run -q -p xtask -- arch --profile minimal
-
-## hooks - lists the hook targets; installs nothing
-hooks:
-	@bash scripts/make-help.sh hooks
-
-## hooks/install - install this repo's git pre-commit hooks (one-time per clone;
-##   writes outside version control, so it is never automatic).
-##   Prefers the `pre-commit` framework, since .pre-commit-config.yaml
-##   carries the same gates plus rustfmt/clippy/ASCII hygiene; falls
-##   back to scripts/hooks/pre-commit, which needs only bash and git.
-##   Refuses to clobber a hook it did not write.
-hooks/install:
-	@if [ -e .git/hooks/pre-commit ] && ! grep -q 'scripts/gates/check-no-machine-paths.sh' .git/hooks/pre-commit \
-	   && ! grep -q 'pre-commit' .git/hooks/pre-commit; then \
-	    echo "error: .git/hooks/pre-commit exists and was not installed by this repo."; \
-	    echo "       Inspect it, then remove it and re-run 'make hooks/install'."; \
-	    exit 1; \
-	fi
-	@if command -v pre-commit >/dev/null 2>&1; then \
-	    pre-commit install; \
-	    echo "installed: .git/hooks/pre-commit (pre-commit framework, .pre-commit-config.yaml)"; \
-	else \
-	    install -m 755 scripts/hooks/pre-commit .git/hooks/pre-commit; \
-	    echo "installed: .git/hooks/pre-commit (standalone; 'pip install pre-commit' for the full set)"; \
-	fi
-
-## clean - remove build artefacts
-clean:
-	$(CARGO) clean
-	rm -rf target/debian target/debian-staging target/completions target/docs target/benchmark $(DIST)
-
-## help - show every target as a tree, grouped by concept
-help:
-	@bash scripts/make-help.sh
-
-# ── Release targets ───────────────────────────────────────────────────────────
-## release - lists the release targets; does nothing (build/release is the optimised build)
+## release - lists the release targets; does nothing (package/dist builds the artifacts, build/release the binary)
 release:
 	@bash scripts/make-help.sh release
-
-## release/dist - build release artifacts for current platform into dist/
-release/dist:
-	@bash scripts/release-build.sh --out-dir $(DIST)
 
 ## release/tag - create an annotated git tag for current version and push
 release/tag:
@@ -453,7 +426,7 @@ release/tag:
 release/publish:
 	@if [ -z "$$(ls $(DIST)/sven-* 2>/dev/null)" ]; then \
 	    echo "error: no artifacts found in $(DIST)/"; \
-	    echo "       Run 'make release/dist' first."; \
+	    echo "       Run 'make package/dist' first."; \
 	    exit 1; \
 	fi
 	@if ! command -v gh >/dev/null 2>&1; then \
@@ -486,7 +459,6 @@ release/major: _require-cargo-release test test/e2e/basic
 	@cargo release major -p sven --execute --no-confirm
 	@git push origin main --follow-tags
 
-# ── Site targets ─────────────────────────────────────────────────────────────
 ## site - lists the site targets; does nothing (site/publish uploads to production)
 site:
 	@bash scripts/make-help.sh site
@@ -509,3 +481,121 @@ _require-cargo-release:
 	    echo "cargo-release not found - installing..."; \
 	    cargo install cargo-release --locked; \
 	fi
+
+# ---------------------------------------------------------------------------
+##@ Samples and tooling
+## Standalone sample applications, git hooks, formatting and housekeeping.
+
+# A sample is a standalone APPLICATION built on the public `sven-sdk` facade,
+# living in samples/<category>/<name>/. Unlike sibling repos, samples here ARE
+# built and tested with the workspace: one depends only on the SDK, so it costs
+# almost nothing, and excluding it is how a sample rots into something that no
+# longer compiles against the framework it demonstrates.
+#
+#   make samples
+#   make samples/study/svf/build
+#   make samples/study/svf/run ARGS="--errata real"
+#
+# `build` and `run` are separate and `run` does NOT invoke cargo: a built sample
+# is an ordinary binary, and a `run` that shelled out to cargo would make the
+# toolchain a runtime dependency of every demonstration. The cost is that `run`
+# cannot notice a stale binary, so it prints what it executes and when that file
+# was built.
+SAMPLE_PROFILE ?= release
+SAMPLE_CARGO_FLAGS = $(if $(filter release,$(SAMPLE_PROFILE)),--release,)
+ARGS ?=
+
+# samples/<a>/<b> -> package `sample-<a>-<b>`. check/gates/samples enforces it.
+sample_pkg = sample-$(subst /,-,$(1))
+
+## samples - lists the samples and how to build and run them; builds nothing
+samples:
+	@echo "Samples (make samples/<path>/{build,run}):"
+	@find samples -mindepth 3 -maxdepth 3 -name Cargo.toml 2>/dev/null \
+		| sed -E 's|^samples/(.*)/Cargo\.toml$$|\1|' | sort | while read -r s; do \
+			printf '  %-28s %s\n' "$$s" \
+				"$$(sed -n 's/^description = "\(.*\)"/\1/p' "samples/$$s/Cargo.toml" | head -1)"; \
+		done
+
+SAMPLE_PATHS := $(patsubst samples/%/Cargo.toml,%,$(wildcard samples/*/*/Cargo.toml))
+SAMPLE_CATEGORIES := $(sort $(patsubst %/,%,$(dir $(SAMPLE_PATHS))))
+SAMPLE_CATEGORY_TARGETS := $(addprefix samples/,$(SAMPLE_CATEGORIES))
+SAMPLE_NAME_TARGETS := $(addprefix samples/,$(SAMPLE_PATHS))
+SAMPLE_BUILD_TARGETS := $(addsuffix /build,$(SAMPLE_NAME_TARGETS))
+SAMPLE_RUN_TARGETS := $(addsuffix /run,$(SAMPLE_NAME_TARGETS))
+
+## samples/<category> - lists the samples of a category; builds nothing
+$(SAMPLE_CATEGORY_TARGETS):
+	@bash scripts/make-help.sh $@
+
+## samples/<category>/<name> - lists a sample's actions (build, run); does nothing
+$(SAMPLE_NAME_TARGETS):
+	@bash scripts/make-help.sh $@
+
+## samples/<category>/<name>/build - build one sample, e.g. samples/study/svf/build
+$(SAMPLE_BUILD_TARGETS): samples/%/build:
+	$(CARGO) build $(SAMPLE_CARGO_FLAGS) -p $(call sample_pkg,$*)
+
+## samples/<category>/<name>/run - run a built sample; ARGS="..." is passed through
+$(SAMPLE_RUN_TARGETS): samples/%/run:
+	@bin="target/$(SAMPLE_PROFILE)/$(call sample_pkg,$*)"; \
+	if [ ! -x "$$bin" ]; then \
+		echo "error: $$bin does not exist - run 'make samples/$*/build' first"; exit 1; \
+	fi; \
+	echo "running $$bin (built $$(date -r "$$bin" '+%Y-%m-%d %H:%M:%S'))"; \
+	exec "$$bin" $(ARGS)
+
+## hooks - lists the hook targets; installs nothing
+hooks:
+	@bash scripts/make-help.sh hooks
+
+## hooks/install - install this repo's git pre-commit hooks (one-time per clone;
+##   writes outside version control, so it is never automatic).
+##   Prefers the `pre-commit` framework, since .pre-commit-config.yaml
+##   carries the same gates plus rustfmt/clippy/ASCII hygiene; falls
+##   back to scripts/hooks/pre-commit, which needs only bash and git.
+##   Refuses to clobber a hook it did not write.
+hooks/install:
+	@if [ -e .git/hooks/pre-commit ] && ! grep -q 'scripts/gates/check-no-machine-paths.sh' .git/hooks/pre-commit \
+	   && ! grep -q 'pre-commit' .git/hooks/pre-commit; then \
+	    echo "error: .git/hooks/pre-commit exists and was not installed by this repo."; \
+	    echo "       Inspect it, then remove it and re-run 'make hooks/install'."; \
+	    exit 1; \
+	fi
+	@if command -v pre-commit >/dev/null 2>&1; then \
+	    pre-commit install; \
+	    echo "installed: .git/hooks/pre-commit (pre-commit framework, .pre-commit-config.yaml)"; \
+	else \
+	    install -m 755 scripts/hooks/pre-commit .git/hooks/pre-commit; \
+	    echo "installed: .git/hooks/pre-commit (standalone; 'pip install pre-commit' for the full set)"; \
+	fi
+
+## fmt - format all code (the bare leaf: one action; `check/fmt` is its checking twin)
+fmt:
+	$(CARGO) fmt --all
+
+## clean - remove build artefacts
+clean:
+	$(CARGO) clean
+	rm -rf target/debian target/debian-staging target/completions target/docs target/benchmark $(DIST)
+
+## help - show every target as a tree, grouped by section
+help:
+	@bash scripts/make-help.sh
+
+# Declared last so every generated list above is already defined.
+.PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
+        test test/features test/e2e $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
+        test/harness test/harness/local-model $(HARNESS_TARGETS) \
+        test/crate $(TEST_CRATE_TARGETS) test/formal \
+        check check/fmt check/features check/clippy check/doc check/arch \
+        check/gates $(GATE_TARGETS) \
+        fmt clean help \
+        package package/dist package/deb package/deb/debug package/deb/release \
+        docs docs/pdf papers papers/pdf $(PAPER_DIRS) $(PAPER_TARGETS) \
+        samples hooks hooks/install $(SAMPLE_CATEGORY_TARGETS) $(SAMPLE_NAME_TARGETS) \
+        $(SAMPLE_BUILD_TARGETS) $(SAMPLE_RUN_TARGETS) \
+        release release/tag release/publish release/patch release/minor release/major \
+        _require-cargo-release \
+        site site/build site/publish site/serve \
+        benchmark benchmark/build benchmark/terminal-bench benchmark/report
