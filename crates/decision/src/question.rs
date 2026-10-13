@@ -114,6 +114,18 @@ impl Question {
         }
     }
 
+    /// The same question under another id.
+    #[must_use]
+    pub fn renamed(&self, id: String) -> Self {
+        let mut question = self.clone();
+        match &mut question {
+            Self::Choice(q) => q.id = id,
+            Self::Score(q) => q.id = id,
+            Self::Probability(q) => q.id = id,
+        }
+        question
+    }
+
     fn validate(&self) -> Result<(), String> {
         let id = self.id();
         match self {

@@ -21,6 +21,8 @@
 //! * [`DecisionError`]: how a provider fails, in distinct named classes.
 //! * [`MockDecisionProvider`]: a scripted provider for tests.
 
+mod batch;
+mod cache;
 mod error;
 mod mock;
 pub mod policy;
@@ -28,6 +30,8 @@ mod provider;
 mod question;
 mod result;
 
+pub use batch::{decide_batched, Batched};
+pub use cache::{CacheKey, DecisionCache};
 pub use error::{DecisionError, ErrorClass};
 pub use mock::MockDecisionProvider;
 pub use provider::DecisionProvider;
