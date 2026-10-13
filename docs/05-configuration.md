@@ -50,7 +50,9 @@ editing the file; `sven show-config` prints what was actually loaded.
 **The model is chosen for you when the file names none.** With no `model:`
 section, sven picks a locally served brain model if one is detectable, then
 OpenRouter, Anthropic or OpenAI according to which API key is set
-(`SVEN_DISABLE_BRAIN_AUTODETECT=1` turns the brain check off). A
+(`SVEN_DISABLE_BRAIN_AUTODETECT=1` turns the brain check off). With no key
+for any of them, sven looks for a local server (see
+[Local model discovery](#local-model-discovery)). A
 `model.provider` that names an entry of `providers:` is expanded into that
 entry's endpoint, key and the model's own overrides when the file is loaded.
 
@@ -387,6 +389,49 @@ model:
   name: llama3
   base_url: http://localhost:11434/v1
 ```
+
+#### Local model discovery
+
+For a server on your own machine or network, sven asks the server what it is
+serving (`GET <base_url>/models`) instead of relying on a model name written
+in the file. There are no extra keys for it.
+
+- **An empty `name` is filled in.** On a local OpenAI-compatible server
+  (`brain`, `ollama`, `vllm`, `lmstudio`, `sven`, or any `base_url` on
+  `localhost`, a loopback address or a private network address) an empty
+  `model.name` resolves to the model the server serves. With several models,
+  the first one that reports a context length is used (the first listed when
+  none do), and an info line `N models served, using <id>` is logged. A
+  hosted provider is never asked, and a `name` you set is always sent as-is.
+- **Nothing configured: the default local ports are probed.** When no
+  `model:` section exists and no key is available for brain, OpenRouter,
+  Anthropic or OpenAI, sven probes `brain` (8788), `ollama` (11434), `vllm`
+  (8000) and `lmstudio` (1234) on localhost together, waiting at most one
+  second, and uses the first in that order that serves a model. It logs
+  `using <driver> at <url>, model <id>`. If none answers, you get the usual
+  missing-key error. Cloud setups are unchanged: a key in the environment
+  still selects its provider and that provider's default model, because a
+  hosted account lists hundreds of models and no served model can stand in
+  for that choice.
+- **The context window follows the server.** At session start sven reads the
+  window the server loaded the model with (`/props`, else `context_length` or
+  vLLM's `max_model_len` from `/models`) and uses the smaller of that and
+  `max_tokens`. On a local server the reading is refreshed in the background
+  when it is older than 45 seconds at the start of a turn, and immediately
+  when the server rejects a request as too large for its context. A turn never
+  waits for a refresh.
+- **Hot-swapped adapters are noticed.** A server that reports an
+  `adapter: {id, digest}` for a model has it compared on every refresh. A
+  changed digest is logged with the new context window; the next request is
+  budgeted against it. Servers that report none work unchanged.
+- **Servers that do not answer cost at most two seconds per probe.** Every
+  discovery call is bounded; failure leaves the configuration as written.
+
+Optional fields a server may add to each `/models` entry, all ignored when
+absent: `context_length` (or `max_model_len`), `max_output_tokens`,
+`capabilities` (a list; tool calling is recognised from `tools`, `tool_use`,
+`tool_calls` or `function_calling`) and `adapter`. The bundled catalog is used
+only for what a server leaves out.
 
 ---
 

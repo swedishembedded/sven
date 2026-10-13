@@ -291,6 +291,16 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         self.probe_context_window_via_models_list().await
     }
 
+    /// What the server itself reports serving, from `GET {models_url}`.
+    async fn discover(&self) -> Option<sven_model::ServedModels> {
+        let url = self.models_url.as_deref()?;
+        crate::discovery::fetch_served_models(
+            self.authed(self.client.get(url)),
+            crate::discovery::DISCOVERY_TIMEOUT,
+        )
+        .await
+    }
+
     /// List models via `GET /models`, enriched with metadata.
     ///
     /// For OpenRouter, uses the rich metadata fields the API returns

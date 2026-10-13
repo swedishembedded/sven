@@ -603,9 +603,9 @@ fn detect_model(model: &mut ModelConfig) {
         // requires a network call to discover - this runs while the
         // configuration loads, which is sync and must stay that way.
         // `from_config_probed` resolves the sentinel by asking brain's
-        // `/v1/models` when it has exactly one chat-capable entry; a user
-        // who wants a specific resident model names it via `--model` or an
-        // explicit `model:` block, which bypasses this detection entirely.
+        // `/v1/models` (the only model, else the first chat-capable one); a
+        // user who wants a specific resident model names it via `--model` or
+        // an explicit `model:` block, which bypasses this detection entirely.
         model.name = String::new();
     } else if std::env::var("OPENROUTER_API_KEY").is_ok() {
         // Keep the defaults: provider="openrouter", name="openrouter/auto".
@@ -616,8 +616,14 @@ fn detect_model(model: &mut ModelConfig) {
         model.provider = "openai".into();
         model.name = "gpt-5.2".into();
     }
-    // If no key is available the defaults remain (openrouter/auto), and
-    // from_config() will produce a clear error when actually invoked.
+    // If no key is available the defaults remain (openrouter/auto).
+    // `from_config_probed` then looks for a local server on the default
+    // ports and uses the model it serves; failing that, `from_config()`
+    // produces a clear missing-key error when actually invoked.
+    //
+    // The cloud model names above are deliberate: a hosted provider lists
+    // hundreds of models, so no served model can stand in for the choice a
+    // key implies.
 }
 
 /// Is a locally running `brain` model server detectable without any network

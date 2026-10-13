@@ -360,6 +360,13 @@ HTTP client and connection pool per turn. It is also the seam a metering or
 gateway wrapper hangs off: wrap the provider once and no agent can reach the
 model unwrapped.
 
+A provider built with `from_config_probed` also holds what its local server
+reports serving: the model's context window and applied adapter. Shared, it is
+probed once and refreshed on a short TTL for every agent at the same time, so
+a hot-swapped adapter is seen by all of them. Per-turn providers each probe at
+the start of their session instead. See
+[Local model discovery](../05-configuration.md#local-model-discovery).
+
 Agents on one engine share those resources and **nothing else**. Histories are
 per-instance; one agent cannot see another's conversation.
 

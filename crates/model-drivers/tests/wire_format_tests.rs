@@ -1675,9 +1675,9 @@ async fn from_config_probed_resolves_empty_brain_name_from_single_chat_model() {
 }
 
 #[tokio::test]
-async fn from_config_probed_leaves_empty_brain_name_unresolved_when_ambiguous() {
-    // Two chat-capable entries (both carry context_length) - no single
-    // unambiguous answer, so the name must stay empty rather than guessing.
+async fn from_config_probed_picks_the_first_chat_model_when_brain_serves_several() {
+    // Two chat-capable entries (both carry context_length): the first listed
+    // is used, deterministically, rather than failing with model_not_found.
     let models_body = serde_json::json!({
         "object": "list",
         "data": [
@@ -1687,12 +1687,9 @@ async fn from_config_probed_leaves_empty_brain_name_unresolved_when_ambiguous() 
     })
     .to_string();
     let port = mock_server_sequence(vec![
+        (200, models_body.clone()),
+        (404, "{}".to_string()), // /props for the resolved provider
         (200, models_body),
-        (404, "{}".to_string()), // /props for the (still-empty-named) provider
-        (
-            200,
-            serde_json::json!({"object": "list", "data": []}).to_string(),
-        ),
     ])
     .await;
 
@@ -1704,11 +1701,8 @@ async fn from_config_probed_leaves_empty_brain_name_unresolved_when_ambiguous() 
         ..ModelConfig::default()
     };
     let provider = from_config_probed(&cfg).await.unwrap();
-    assert_eq!(
-        provider.model_name(),
-        "",
-        "an ambiguous model list must not be guessed at"
-    );
+    assert_eq!(provider.model_name(), "Qwen/Qwen3-0.6B");
+    assert_eq!(provider.catalog_context_window(), Some(2048));
 }
 
 #[tokio::test]

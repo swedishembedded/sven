@@ -23,6 +23,7 @@ mod aws;
 mod cohere;
 pub mod config;
 pub mod dbus;
+mod discovery;
 mod google;
 mod openai;
 pub(crate) mod openai_compat;
@@ -39,6 +40,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use openai_compat::{AuthStyle, OpenAICompatProvider};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 use sven_model::{catalog, registry, ModelProvider};
 use sven_model_mock::{MockProvider, YamlMockProvider};
@@ -146,10 +148,10 @@ fn transform_openrouter_options(cfg: &ModelConfig) -> serde_json::Value {
 /// rather than (potentially absent) static catalog metadata.  All other
 /// trait methods are forwarded directly to the inner provider.
 struct ConfigBoundedProvider {
-    inner: Box<dyn ModelProvider>,
+    inner: Arc<dyn ModelProvider>,
     /// Total context window from `cfg.max_tokens` (when `max_output_tokens` is
     /// also set, `max_tokens` is interpreted as the pure total context limit).
-    context_window: Option<u32>,
+    config_context_window: Option<u32>,
     /// Resolved output token cap: `cfg.max_output_tokens` if set, else
     /// `cfg.max_tokens` for backward compatibility.
     max_output_tokens: Option<u32>,
@@ -159,6 +161,21 @@ struct ConfigBoundedProvider {
     /// a config declaration is authoritative when present.  `None` means "no
     /// declaration" and the inner driver's answer is used instead.
     input_modalities: Option<Vec<sven_model::catalog::InputModality>>,
+    /// What the live server last reported; `None` when the provider was built
+    /// without probing ([`from_config`]).
+    live: Option<Arc<discovery::LiveState>>,
+}
+
+impl ConfigBoundedProvider {
+    /// The context window in force: the smaller of the configured and the
+    /// server-reported one. A probe only ever narrows a hand-written number.
+    fn effective_context_window(&self) -> Option<u32> {
+        let probed = self.live.as_ref().and_then(|l| l.context_window());
+        match (self.config_context_window, probed) {
+            (Some(c), Some(p)) => Some(c.min(p)),
+            (c, p) => c.or(p),
+        }
+    }
 }
 
 /// Parse the config's `input_modalities` strings into [`InputModality`] values.
@@ -196,12 +213,35 @@ impl ModelProvider for ConfigBoundedProvider {
         self.inner.model_name()
     }
 
+    /// Forwards to the driver. On a local server, a stale probe is refreshed
+    /// in the background (the turn does not wait for it), and a request the
+    /// server rejects as too large for its context window re-probes before
+    /// the error is returned, so the caller's retry sees the new window.
     async fn complete(
         &self,
         req: sven_model::CompletionRequest,
     ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>>>
     {
-        self.inner.complete(req).await
+        let Some(live) = self.live.as_ref().filter(|l| l.is_refreshable()) else {
+            return self.inner.complete(req).await;
+        };
+        live.refresh_if_stale(&self.inner);
+        let result = self.inner.complete(req).await;
+        if let Err(e) = &result {
+            if discovery::is_context_overflow(&format!("{e:#}")) {
+                live.refresh(&*self.inner).await;
+            }
+        }
+        result
+    }
+
+    /// Re-probes the live server now, updating the context window and the
+    /// reported adapter, and returns what it serves.
+    async fn discover(&self) -> Option<sven_model::ServedModels> {
+        match self.live.as_ref().filter(|l| l.is_refreshable()) {
+            Some(live) => live.refresh(&*self.inner).await,
+            None => self.inner.discover().await,
+        }
     }
 
     async fn list_models(&self) -> anyhow::Result<Vec<sven_model::ModelCatalogEntry>> {
@@ -214,7 +254,7 @@ impl ModelProvider for ConfigBoundedProvider {
     }
 
     fn catalog_context_window(&self) -> Option<u32> {
-        self.context_window
+        self.effective_context_window()
             .or_else(|| self.inner.catalog_context_window())
     }
 
@@ -229,7 +269,7 @@ impl ModelProvider for ConfigBoundedProvider {
     }
 
     fn config_context_window(&self) -> Option<u32> {
-        self.context_window
+        self.effective_context_window()
     }
 
     fn config_max_output_tokens(&self) -> Option<u32> {
@@ -564,112 +604,60 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
 pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
     let (inner, context_window, max_output_tokens) = build_inner(cfg)?;
     Ok(Box::new(ConfigBoundedProvider {
-        inner,
-        context_window,
+        inner: Arc::from(inner),
+        config_context_window: context_window,
         max_output_tokens,
         input_modalities: cfg
             .input_modalities
             .as_deref()
             .and_then(parse_input_modalities),
+        live: None,
     }))
 }
 
-/// Like [`from_config`], but additionally probes the live provider for its
-/// actual context window (see [`ModelProvider::probe_context_window`]) and
-/// clamps the exposed `catalog_context_window()` to `min(config, probed)`
-/// when the probe succeeds — never widens it, only narrows a hand-written
-/// number down to what the server can actually serve.
+/// Like [`from_config`], but additionally asks the live server what it is
+/// serving (see [`ModelProvider::discover`]), so no model name has to be
+/// written down for a local server.
 ///
-/// This is what stops a config `max_tokens` from exceeding a live server's
-/// real capacity (e.g. brain's per-model capacity, discovered via
-/// `/v1/models`'s `context_length` — see
-/// `openai_compat::probe_context_window_via_models_list`). When the probe
-/// fails (hosted providers, an unreachable/non-conforming server) or the
-/// config has no `max_tokens` at all, the probed value is used as-is;
-/// when neither is present the result is identical to `from_config`.
+/// 1. Nothing configured (the built-in default with no key for it anywhere):
+///    the first of the default local endpoints that answers (brain, ollama,
+///    vllm, lmstudio, probed together within one second) is used, with the
+///    model it serves.
+/// 2. An EMPTY model name on a local OpenAI-compatible server (the sentinel
+///    the configuration loader writes when it detects brain) resolves to the
+///    served model: the only one, or else the first chat-capable one with an
+///    info line. A named model is never replaced, and hosted providers are
+///    never asked.
+/// 3. The exposed `catalog_context_window()` is clamped to
+///    `min(config, probed)` - never widened, only narrowed to what the server
+///    can actually serve. With no probe answer the config value (or none) is
+///    kept, identical to `from_config`.
 ///
-/// Also resolves an EMPTY `cfg.name` for `provider: "brain"` (the sentinel
-/// `sven-config`'s loader writes when it auto-detects brain without knowing
-/// which resident model it's serving — loader.rs is sync/network-free and
-/// genuinely cannot know) by asking brain's own `/v1/models`. Only resolves
-/// when the answer is unambiguous (exactly one chat-capable entry, i.e.
-/// exactly one entry advertising `context_length` — see the paired brain
-/// commit populating that truthfully); otherwise `cfg.name` stays empty and
-/// the eventual request fails with brain's own `model_not_found`, which
-/// Part 1's fail-loudly fix now surfaces clearly instead of silently.
+/// On a local server the answer is kept fresh: a stale probe is refreshed in
+/// the background on the next turn, and a context-length-exceeded error
+/// re-probes before it is returned. A changed adapter digest is logged.
 ///
-/// Does one to two extra network round-trips before returning;
-/// `probe_context_window` and the model-list fetch are both short-timeout
-/// (5s) best-effort calls, never a hard failure.
+/// Every probe is bounded (about two seconds each) and best-effort; an
+/// unreachable server never fails or delays the build beyond that.
 pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
-    let cfg = &resolve_empty_brain_model_name(cfg).await;
-    let (inner, config_ctx, max_output_tokens) = build_inner(cfg)?;
-    let probed = inner.probe_context_window().await;
-    let context_window = match (config_ctx, probed) {
-        (Some(c), Some(p)) => Some(c.min(p)),
-        (Some(c), None) => Some(c),
-        (None, ctx) => ctx,
-    };
+    let cfg = &discovery::resolve_unconfigured(cfg).await;
+    let cfg = &discovery::resolve_empty_model_name(cfg).await;
+    let (inner, config_context_window, max_output_tokens) = build_inner(cfg)?;
+    let inner: Arc<dyn ModelProvider> = Arc::from(inner);
+    let local =
+        discovery::effective_base_url(cfg).is_some_and(|u| discovery::is_local_endpoint(&u));
+    let live = discovery::LiveState::new(&cfg.name, local);
+    live.refresh(&*inner).await;
     Ok(Box::new(ConfigBoundedProvider {
         inner,
-        context_window,
+        config_context_window,
         max_output_tokens,
         input_modalities: cfg
             .input_modalities
             .as_deref()
             .and_then(parse_input_modalities),
+        live: Some(live),
     }))
-}
-
-/// See [`from_config_probed`]'s doc comment. Returns `cfg` unchanged unless
-/// `provider == "brain"`, `name` is empty, and exactly one chat-capable
-/// model (one `/v1/models` entry with `context_length` present) is found.
-async fn resolve_empty_brain_model_name(cfg: &ModelConfig) -> ModelConfig {
-    if cfg.provider != "brain" || !cfg.name.is_empty() {
-        return cfg.clone();
-    }
-    let Some(meta) = registry::get_driver("brain") else {
-        return cfg.clone();
-    };
-    let base = cfg
-        .base_url
-        .clone()
-        .or_else(|| meta.default_base_url.map(str::to_string));
-    let Some(base) = base else {
-        return cfg.clone();
-    };
-    let key = resolve_api_key(cfg);
-    let client = build_http_client();
-    let mut req = client
-        .get(format!("{}/models", base.trim_end_matches('/')))
-        .timeout(Duration::from_secs(5));
-    if let Some(k) = &key {
-        req = req.bearer_auth(k);
-    }
-    let Ok(resp) = req.send().await else {
-        return cfg.clone();
-    };
-    if !resp.status().is_success() {
-        return cfg.clone();
-    }
-    let Ok(body) = resp.json::<serde_json::Value>().await else {
-        return cfg.clone();
-    };
-    let Some(entries) = body["data"].as_array() else {
-        return cfg.clone();
-    };
-    let chat_capable: Vec<&str> = entries
-        .iter()
-        .filter(|m| m.get("context_length").is_some())
-        .filter_map(|m| m["id"].as_str())
-        .collect();
-    match chat_capable.as_slice() {
-        [only] => ModelConfig {
-            name: (*only).to_string(),
-            ..cfg.clone()
-        },
-        _ => cfg.clone(),
-    }
 }
 
 /// Spawn a background tokio task to refresh the OpenRouter model catalog cache.

@@ -49,11 +49,16 @@ priority order:
    `BRAIN_API_KEYS_FILE`, or brain's default api-keys file
    (`$XDG_RUNTIME_DIR/brain/api-keys.json`, falling back to the state dir).
    The model name is resolved by asking brain's `/v1/models` for its
-   resident model. Set `SVEN_DISABLE_BRAIN_AUTODETECT=1` to opt out (e.g. a
-   CI machine with a stale keys file).
+   resident model (the first chat-capable one when it serves several). Set
+   `SVEN_DISABLE_BRAIN_AUTODETECT=1` to opt out (e.g. a CI machine with a
+   stale keys file).
 2. **OpenRouter** — when `OPENROUTER_API_KEY` is set.
 3. **Anthropic** — when `ANTHROPIC_API_KEY` is set.
 4. **OpenAI** — when `OPENAI_API_KEY` is set.
+5. **A local server** — when none of the above applies, `brain` (8788),
+   `ollama` (11434), `vllm` (8000) and `lmstudio` (1234) are probed on
+   localhost for one second and the first that serves a model is used. See
+   [Local model discovery](05-configuration.md#local-model-discovery).
 
 Any explicit model configuration always wins over auto-detection.
 
