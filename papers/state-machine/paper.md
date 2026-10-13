@@ -165,56 +165,70 @@ A *hierarchical state machine* is a finite directed tree of states. Let
 $S$ be a finite set of states and
 $\pi : S \to S$ the *superstate* function, required to satisfy:
 
-$$\pi(r) = r \quad \text{for a unique root } r, \qquad \pi^{k}(s) = r \ \text{for some } k < |S|, \ \forall s \in S.$$
+$$\pi(r) = r \ \text{for a unique root } r, \qquad \forall s \in S\ \exists k \in \{0, \dots, |S|-1\} : \pi^{k}(s) = r,$$
 
-That is, $\pi$ is well-founded: iterating it from any state reaches the
-unique root, which is its own parent (a fixpoint). The *ancestors* of $s$
-are $\pi(s), \pi^2(s), \dots$; a state $c$ is a *composite* state if some
+with $\pi^0$ the identity. That is, $\pi$ is well-founded: iterating it
+from any state reaches the unique root, which is its own parent (a
+fixpoint) and the only one. The *ancestors* of $s$ are
+$A(s) = \{\pi^k(s) : k \geq 1\} \setminus \{s\}$, which contains $r$ for
+every $s \neq r$ and is empty for $r$; we write $s \preceq u$ when
+$u \in \{s\} \cup A(s)$. A state $c$ is a *composite* state if some
 $s' \neq c$ has $\pi(s') = c$, and a *leaf* otherwise.
 
 **Definition (configuration).** The configuration of a machine whose active
 leaf is $s$ is the set
 
-$$\kappa(s) \;=\; \{\, s,\ \pi(s),\ \pi^2(s),\ \dots,\ r \,\},$$
+$$\kappa(s) \;=\; \{s\} \cup A(s) \;=\; \{\, s,\ \pi(s),\ \pi^2(s),\ \dots,\ r \,\},$$
 
 the active leaf together with its ancestor chain. Between dispatches, a
 well-run machine is *in* exactly these states: the leaf is where it rests,
 each ancestor is the composite whose behavioural context it enjoys.
 
 This definition is the whole content of the invariant the implementation
-must preserve, and the invariant the model checker proves for every
-reachable configuration: nothing in the engine computes $\kappa$; the
+must preserve, and the invariant the model checker establishes for every
+reachable configuration of its model hierarchy (Section 6.2): nothing in the engine computes $\kappa$; the
 algorithm has to earn it on every path.
 
 ## Events, reactions and behavioural inheritance
 
-Let $\Sigma$ be the event vocabulary. A *handler* is a partial function
+Let $\Sigma$ be the event vocabulary. A *handler* is a function
 
-$$h : S \times \Sigma \rightharpoonup R,$$
+$$h : S \times \Sigma \to R,$$
 
 where the set $R$ of reactions is a labelled union:
 
 $$R \;=\; \{\,\mathsf{Transition}(t, a)\,\} \;\cup\; \{\,\mathsf{Handled}(a)\,\} \;\cup\; \{\,\mathsf{Ignored}\,\} \;\cup\; \{\,\mathsf{Super}(p)\,\},$$
 
 with $t \in S$ a target state, $a$ a finite list of *effects* (Section 4)
-and $p \in S$ a parent to defer to. The $\mathsf{Super}$ reaction is the
-mechanism of *behavioural inheritance*: the effective handler for $(s, e)$
-is the first defined handler along the ancestor chain,
+and $p \in S$ a parent to defer to. A handler that does not deal with an
+event returns $\mathsf{Super}(\pi(s))$; the engine follows the parent the
+reaction names, so we assume throughout that $h(s, e) = \mathsf{Super}(p)$
+implies $p = \pi(s)$. The $\mathsf{Super}$ reaction is the mechanism of
+*behavioural inheritance*: the effective handler for $(s, e)$ is the first
+handler along the ancestor chain that does not defer,
 
-$$h^{*}(s, e) \;=\; h(s_{0}, e) \quad \text{where } s_{0} \text{ is the first of } s, \pi(s), \pi^2(s), \dots \text{ with } h(s_i, e) \neq \mathsf{Super}.$$
+$$h^{*}(s, e) \;=\; h\big(\pi^{j}(s), e\big), \qquad j \;=\; \min\,\{\, i \geq 0 : h(\pi^{i}(s), e) \notin \mathsf{Super}(\cdot) \,\}.$$
 
-Well-foundedness of $\pi$ guarantees the chain terminates at the root, so
-$h^*$ is total given a root handler that returns anything but
-$\mathsf{Super}$. This is the formal content of the rule that every event
-must be resolved: a state either consumes the event, ignores it explicitly,
-transitions, or defers upward - nothing falls off the top undefined (a
-property the model checker names *EveryEventResolves*).
+**Assumption (root resolves).** $h(r, e) \notin \mathsf{Super}(\cdot)$ for
+every $e \in \Sigma$.
+
+Under this assumption the set in the minimum contains $k$ with
+$\pi^k(s) = r$, so $j \leq k < |S|$ and $h^*$ is well defined. This is the
+formal content of the rule that every event must be resolved: a state
+either consumes the event, ignores it explicitly, transitions, or defers
+upward - nothing falls off the top undefined. The implementation does not
+enforce the assumption in its types: a root returning $\mathsf{Super}$ of
+itself trips a debug assertion, and in a release build the phase-1 walk
+would not terminate. The model checker does not check it either: its
+resolution function reads a deferral at the root as $\mathsf{Ignored}$, so
+its property *EveryEventResolves* holds by construction of the model and
+covers the assumption only as a modelling choice.
 
 ## Least common ancestor and transition semantics
 
 **Definition (LCA).** For $s, t \in S$, the least common ancestor is
 
-$$\mathrm{lca}(s, t) \;=\; \min\nolimits_{\preceq}\, \big(\{ \pi^k(s) \} \cap \{ \pi^m(t) \}\big),$$
+$$\mathrm{lca}(s, t) \;=\; \min\nolimits_{\preceq}\, \big(\kappa(s) \cap \kappa(t)\big),$$
 
 the deepest state that is an ancestor of both (or the root, which is an
 ancestor of everything). It is computed by walking one ancestor set into a
@@ -245,31 +259,39 @@ The active leaf is then $t$ (or the leaf the drill lands on). Note what the
 definition does *not* exit: everything at or above $\ell$, shared by source
 and target, survives the transition untouched.
 
-**Theorem 1 (configuration preservation).** *If the machine is in a valid
-configuration $\kappa(x)$ before a dispatch, it is in a valid configuration
-$\kappa(x')$ after it.*
+**Theorem 1 (configuration preservation).** *Assume every initial
+transition targets a proper descendant of its state (the machine trait's
+contract). If the machine is in a valid configuration $\kappa(x)$ before a
+dispatch, it is in a valid configuration $\kappa(x')$ after it.*
 
 *Proof sketch.* Phase 1 of the dispatch (handler resolution) performs no
-lifecycle actions, so $\kappa$ is untouched. Phase 2 removes exactly the
-states strictly below $\ell$ from $\kappa(x)$ - each exit pops one state off
-the ancestor chain and stops at $\ell$ - leaving
-$\kappa(x) \cap \kappa(\ell)$'s ancestors, which is $\kappa(\ell)$ minus
-$\ell$'s exclusive part. Entries then add exactly the path from below
-$\ell$ to $t$, which is $\kappa(t) \setminus \kappa(\ell)$, and the drill
-only extends the chain downward (each initial transition enters a
-descendant, adding to the chain without disturbing the prefix). The
-resulting set is $\kappa(x')$ for the new leaf $x'$. The case $s = t$
-(self-transition) forces $\ell = \pi(s)$, so the leaf is removed and
-re-added exactly once. $\square$
+lifecycle actions, so $\kappa$ is untouched. The resolving state $s$ lies on
+$x$'s chain, so $x \preceq s \preceq \ell$ and $\kappa(\ell) \subseteq
+\kappa(x)$; likewise $t \preceq \ell$ and $\kappa(\ell) \subseteq \kappa(t)$.
+The exits remove exactly the states of $x$'s chain strictly below $\ell$,
+one per step, leaving
+$\kappa(x) \setminus \big(\kappa(x) \setminus \kappa(\ell)\big) = \kappa(\ell)$.
+The entries then add exactly the path from below $\ell$ down to $t$, giving
+$\kappa(\ell) \cup \big(\kappa(t) \setminus \kappa(\ell)\big) = \kappa(t)$.
+Each drill step from $y$ to a proper descendant $c$ adds
+$\kappa(c) \setminus \kappa(y)$ and yields $\kappa(c)$. The resulting set is
+$\kappa(x')$ for the final leaf $x'$. For a self-transition, $\ell = \pi(s)$,
+so $s$ is exited and re-entered exactly once; the one exception is a
+self-transition of the root, where $\ell = \pi(r) = r$ and the root is
+neither exited nor re-entered. $\square$
 
-The full proof, including the four corner cases (external transition to a
-peer, to an ancestor, to a descendant, and self-transition), is exactly what
-the model checker checks exhaustively over all reachable configurations;
+The model checker explores every reachable configuration of a ten-state
+model hierarchy (Section 6.2) whose transitions cover a peer transition
+under a shared composite, transitions across subtrees, an inherited
+transition handled at a composite, a transition into a composite and a
+self-transition. The hierarchy contains no transition to an ancestor or to
+a descendant of its source; those cases rest on the argument above alone.
 Section 6 returns to the division of labour between the pen-and-paper
 argument and the machine-checked one.
 
 **Theorem 2 (termination).** *Phase 1 terminates because $\pi$ is
-well-founded. The exit walk terminates for the same reason. The drill
+well-founded and, by the root-resolves assumption, the walk stops at the
+root at the latest. The exit walk terminates for the same reason. The drill
 terminates provided each initial transition names a state not previously
 entered in the same drill; the implementation enforces this with a
 visited-set guard, turning a malformed machine (cycling initial
@@ -278,7 +300,7 @@ agent.* $\square$
 
 The drill guard is not decoration: Section 6.3 records that the model
 checker found its absence - a machine whose initial transitions name each
-other span the drill forever, inside the single consumer task, with no
+other spun the drill forever, inside the single consumer task, with no
 error and no way back.
 
 ## Run-to-completion and determinism
@@ -575,7 +597,10 @@ the occupied set is exactly the active leaf and its ancestors, each entered
 and exited once - plus companion properties: every event resolves (nothing
 falls off the top undefined), transitions under a shared ancestor leave
 that ancestor undisturbed, self-transitions restart their state, a machine
-never rests where it cannot run, and dispatch terminates.
+never rests where it cannot run, and dispatch terminates. It is checked
+on one concrete machine: a ten-state, seven-event hierarchy taken from the
+engine's own integration tests minus one leaf, so its verdicts are
+exhaustive for that hierarchy, not for every hierarchy.
 
 *The submachine host* models Section 5.2: a child that finishes is dropped
 and announced exactly once, no event reaches a finished child, and the
