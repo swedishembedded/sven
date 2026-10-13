@@ -13,6 +13,7 @@ serde_json    = { workspace = true }
 serde_yaml    = { workspace = true }
 sven-model    = { path = "../model" }
 sven-session-model = { path = "../session-model" }
+sven-vocab    = { path = "../vocab" }
 atif          = { path = "../atif" }
 dirs          = { workspace = true }
 chrono        = { workspace = true }
@@ -21,6 +22,3 @@ libc          = { workspace = true }
 
 [dev-dependencies]
 tempfile      = { workspace = true }
-# Only the reward contract test needs `SessionEvent` directly; the crate itself
-# reaches it through `sven-session-model`.
-sven-vocab    = { path = "../vocab" }

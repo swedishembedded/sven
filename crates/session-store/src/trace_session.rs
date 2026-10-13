@@ -30,12 +30,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use atif::{
     AgentProfile, ContentSegment, ContextManagement, FinalMetrics, MessageBody, ObservationEntry,
-    StepObservation, StepOrigin, SubagentRef, ToolInvocation, TraceStep, Trajectory,
+    StepMetrics, StepObservation, StepOrigin, SubagentRef, ToolInvocation, TraceStep, Trajectory,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
+use sven_vocab::RequestBreakdown;
 
 use crate::chat_document;
 use crate::chat_document::{json_str_to_yaml, TurnRecord};
@@ -212,40 +213,7 @@ pub fn new_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-// ── Context-compaction structured details (extra.sven on a System step) ────
-
-/// Structured details for a context-compaction event, preserved at
-/// `step.extra.sven` alongside the Section VII `context_management`
-/// convention object (which only carries `type`/`boundary`, not the
-/// numeric before/after token counts or sven's strategy/turn fields).
-///
-/// Note: this reuses the `"sven"` extra-object key name at the *step*
-/// level, distinct in scope from [`SvenSessionMeta::EXTRA_KEY`] at the
-/// *trajectory root* level — both follow the same "namespace sven's bits
-/// under `extra.sven`" convention, just at different nesting depths.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ContextCompactionDetails {
-    /// Approximate token count before compaction.
-    pub tokens_before: usize,
-    /// Approximate token count after compaction.
-    pub tokens_after: usize,
-    /// Which compaction strategy was used (structured/narrative/emergency).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub strategy: Option<String>,
-    /// Agentic loop round in which compaction fired (0 = pre-submit).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn: Option<u32>,
-}
-
-impl ContextCompactionDetails {
-    /// Extract compaction details from a step's `extra.sven` object, if
-    /// present and well-formed.
-    pub fn from_step_extra(extra: &Value) -> Option<Self> {
-        extra
-            .get("sven")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-    }
-}
+pub use crate::compaction_details::ContextCompactionDetails;
 
 // ── Turn assembly: streaming builder ────────────────────────────────────────
 
@@ -258,6 +226,7 @@ struct PendingAgentStep {
     message_text: Option<String>,
     tool_calls: Vec<ToolInvocation>,
     observation_results: Vec<ObservationEntry>,
+    metrics: Option<StepMetrics>,
 }
 
 /// Streaming assembler that folds a flat stream of conversation events
@@ -479,6 +448,12 @@ impl StepAssembler {
         self.pending_or_new().observation_results.push(entry);
     }
 
+    /// Record one model request's token ledger on the agent step being
+    /// assembled (see [`crate::step_ledger`]).
+    pub fn push_request_ledger(&mut self, request: &RequestBreakdown) {
+        crate::step_ledger::record_request(&mut self.pending_or_new().metrics, request);
+    }
+
     /// Flush any still-open agent step and return the complete, ordered
     /// list of assembled steps.
     pub fn finish(mut self) -> Vec<TraceStep> {
@@ -508,6 +483,7 @@ impl StepAssembler {
             MessageBody::text(pending.message_text.clone().unwrap_or_default()),
         );
         step.reasoning_content = pending.reasoning_content.clone();
+        step.metrics = pending.metrics.clone();
         step.tool_calls = if pending.tool_calls.is_empty() {
             None
         } else {

@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 pub mod chat_document;
+mod compaction_details;
 pub mod conversation;
 pub mod frontmatter;
 mod markdown;
 mod queue;
 pub mod reward;
 pub mod session_resolve;
+pub mod step_ledger;
 pub mod title;
 pub mod trace_session;
 
