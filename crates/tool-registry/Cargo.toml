@@ -11,6 +11,7 @@ sven-hsm       = { path = "../hsm" }
 sven-workspace = { path = "../workspace" }
 sven-vocab     = { path = "../vocab" }
 regex          = { workspace = true }
+serde          = { workspace = true }
 
 [dev-dependencies]
 tempfile   = { workspace = true }

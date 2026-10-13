@@ -407,9 +407,11 @@ impl Agent {
         let schemas = if no_tools {
             Vec::new()
         } else {
-            handle
-                .tool_registry()
-                .schemas_offered(&looping.tools, &looping.all_tools_mode)
+            handle.tool_registry().schemas_offered(
+                &looping.tools,
+                &looping.all_tools_mode,
+                &snapshot.context.active_tools,
+            )
         };
         self.state.tools = schemas
             .iter()

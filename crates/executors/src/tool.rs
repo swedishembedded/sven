@@ -34,7 +34,7 @@ use sven_kernel::{CancelScope, EffectExecutor, EventSink};
 const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(600);
 use crate::thread_store::ThreadStore;
 use sven_model::Message;
-use sven_tool_registry::{ToolCall, ToolOutput, ToolRegistry};
+use sven_tool_registry::{ToolCall, ToolOutput, ToolRegistry, DISCOVERY_TOOL};
 
 /// Executes [`Effect::CallTool`] using the injected [`ToolRegistry`].
 pub struct ToolExecutor {
@@ -236,6 +236,21 @@ impl EffectExecutor for ToolExecutor {
             }
         }
 
+        // Passed the gate, so it was permitted and audited as the tool it
+        // names; what is left is that the model has not loaded the tool.
+        if self.registry.take_held_back(call_id) {
+            let _ = sink
+                .emit(Event::ToolFailed {
+                    call_id,
+                    error: format!(
+                        "tool '{name}' is not loaded, so it was not run. Call `{DISCOVERY_TOOL}` \
+                         with action=load and names=[\"{name}\"], then call it again."
+                    ),
+                })
+                .await;
+            return;
+        }
+
         let registry = Arc::clone(&self.registry);
         let call_id_to_thread = Arc::clone(&self.call_id_to_thread);
         let store = Arc::clone(&self.store);
@@ -391,6 +406,12 @@ impl EffectExecutor for ToolExecutor {
                     })
                     .await;
             } else {
+                // Before the result, so the continuation turn the result
+                // triggers already offers what the call loaded.
+                let activated = registry.activations(&tool_call);
+                if !activated.is_empty() {
+                    let _ = sink.emit(Event::ToolsActivated { names: activated }).await;
+                }
                 let observation = serde_json::Value::String(output.content);
                 let _ = sink
                     .emit(Event::ToolSucceeded {

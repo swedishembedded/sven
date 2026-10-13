@@ -70,6 +70,16 @@ pub trait Tool: Send + Sync {
     fn call_capability(&self, _args: &Value) -> ToolCapability {
         self.kernel_capability()
     }
+    /// The tools a successful call with `args` asks to have offered to the
+    /// model in full from now on, in the order asked. Only the discovery tool
+    /// has any; every other tool returns none.
+    ///
+    /// The executor posts them to the kernel after the call succeeds, and the
+    /// kernel records them as session state. The call itself must not depend
+    /// on this having been applied.
+    fn activated_tools(&self, _args: &Value) -> Vec<String> {
+        Vec::new()
+    }
     /// Execute the tool.  Errors should be wrapped in [`ToolOutput::err`].
     async fn execute(&self, call: &ToolCall) -> ToolOutput;
 }

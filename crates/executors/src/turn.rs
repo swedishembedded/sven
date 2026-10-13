@@ -85,7 +85,7 @@ use async_trait::async_trait;
 use sven_hsm::{CompactionStrategyUsed, Effect, Event, ObservationSink, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, EventSink};
 use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
-use sven_tool_registry::ToolRegistry;
+use sven_tool_registry::{ToolOffer, ToolRegistry};
 use sven_turn::{stream_turn, to_model_schemas, AbortedError, ModelResolver};
 use sven_vocab::{CompactionRecord, TurnRequest};
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
@@ -451,10 +451,15 @@ impl EffectExecutor for TurnExecutor {
         // Resolve tool schemas: named list takes priority; fall back to all-mode.
         // `--no-tools` overrides whatever the requesting machine asked for -
         // the model never sees a single tool definition.
-        let tool_schemas = if self.no_tools {
-            vec![]
+        let (tool_schemas, withheld_tools) = if self.no_tools {
+            (vec![], Vec::new())
         } else {
-            to_model_schemas(self.tools.schemas_offered(&req.tools, &req.all_tools_mode))
+            let offered = self.tools.offer(&ToolOffer {
+                names: &req.tools,
+                all_tools_mode: &req.all_tools_mode,
+                active: &req.active_tools,
+            });
+            (to_model_schemas(offered.schemas), offered.withheld)
         };
 
         notices::report_served_model_change(model.as_ref(), obs);
@@ -760,6 +765,13 @@ impl EffectExecutor for TurnExecutor {
             &tool_calls,
             &self.tools,
         );
+
+        // A call to a tool the model was never given the definition of is
+        // still proposed, gated and audited like any other; the tool executor
+        // then answers it with an instruction to load the tool.
+        for call in proposed.iter().filter(|c| withheld_tools.contains(&c.name)) {
+            self.tools.hold_back(call.call_id);
+        }
 
         let has_tool_calls = !proposed.is_empty();
         let _ = sink

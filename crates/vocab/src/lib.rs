@@ -350,7 +350,7 @@ pub enum OutputCategory {
 
 /// A tool schema - mirrors `sven_model::ToolSchema` but keeps this crate
 /// independent from the model-provider crate.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ToolSchema {
     pub name: String,
     pub description: String,

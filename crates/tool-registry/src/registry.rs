@@ -74,7 +74,13 @@ impl SharedToolDisplays {
 /// The tools map is behind `RwLock` so MCP tools can be replaced at runtime when
 /// servers connect/disconnect or tools are reloaded.
 pub struct ToolRegistry {
-    tools: RwLock<HashMap<String, Arc<dyn Tool>>>,
+    pub(crate) tools: Arc<RwLock<HashMap<String, Arc<dyn Tool>>>>,
+    /// How much of each tool's definition a model request carries; see
+    /// [`crate::Disclosure`].
+    pub(crate) disclosure: crate::Disclosure,
+    /// Calls the model made to tools it had not loaded; see
+    /// [`ToolRegistry::hold_back`].
+    pub(crate) held_back: std::sync::Mutex<crate::disclosure::HeldBack>,
     /// Shared so the TUI can hold a clone for chat rendering without owning the registry.
     display_registry: Arc<RwLock<ToolDisplayRegistry>>,
     /// Optional permission requester wired up by the ACP server layer.
@@ -87,7 +93,9 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
-            tools: RwLock::new(HashMap::new()),
+            tools: Arc::new(RwLock::new(HashMap::new())),
+            disclosure: crate::Disclosure::default(),
+            held_back: std::sync::Mutex::default(),
             display_registry: Arc::new(RwLock::new(ToolDisplayRegistry::new())),
             permission_requester: None,
         }
@@ -175,22 +183,6 @@ impl ToolRegistry {
     /// Produce schemas only for tools available in the given mode.
     pub fn schemas_for_mode(&self, mode: AgentMode) -> Vec<ToolSchema> {
         self.schemas_filtered(|t| t.modes().contains(&mode))
-    }
-
-    /// The schemas a model turn is offered: the machine's named tools when it
-    /// names any, else every tool available in `all_tools_mode` (an
-    /// [`AgentMode`] name; an unknown name falls back to `agent`), else none.
-    ///
-    /// The one place this precedence lives, so what a turn sends and what a
-    /// record of the turn says it was offered cannot disagree.
-    pub fn schemas_offered(&self, names: &[String], all_tools_mode: &str) -> Vec<ToolSchema> {
-        if !names.is_empty() {
-            return self.schemas_for_names(names);
-        }
-        if all_tools_mode.is_empty() {
-            return Vec::new();
-        }
-        self.schemas_for_mode(AgentMode::from_name(all_tools_mode).unwrap_or(AgentMode::Agent))
     }
 
     /// Produce schemas only for the named subset of tools.
@@ -331,12 +323,7 @@ impl ToolRegistry {
             if !predicate(t) {
                 continue;
             }
-            let schema = ToolSchema {
-                name: t.name().to_string(),
-                description: t.description().to_string(),
-                parameters: t.parameters_schema(),
-                is_mcp: t.is_mcp(),
-            };
+            let schema = crate::disclosure::schema_of(t.as_ref(), t.is_mcp());
             if t.is_mcp() {
                 mcp.push(schema);
             } else {
