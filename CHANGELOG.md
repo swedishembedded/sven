@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New: `package`, `hooks`, `site`, `papers`, `test/crate`, `build/crate`, and the generated families above
 
 ### Fixed
+- **sven-sdk**: `Agent::trajectory()` marks each context compaction as a `System` step with `extra.context_management`; after a compaction the agent's history is now the compacted conversation the kernel holds (it used to keep the uncompacted event-folded history whenever the compacted thread was no longer than the seed).
 - A harness session under `--approval manual` (or `ApprovalPolicy::Manual`) ran its writes without asking: a machine supplied to the builder skipped the host's approval mode and read-only narrowing. It is now bounded like a registered machine, and `HarnessMachine` implements the approval flow (`RequestHumanApproval`, `HumanApproved`, `HumanRejected`), one held call at a time.
 - A harness child could exceed its own document: its policy is now the inherited contract narrowed by its own declared capabilities.
 - A tool whose name implied a lower capability than the tool really has no longer runs under the lower one: harness sessions and harness children reconcile each call against the registry. Not applied when a `tool_executor_override` replaces the tool slot.

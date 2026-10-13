@@ -81,47 +81,16 @@ fn append_messages(store: &Mutex<ThreadStore>, thread_id: &str, messages: Vec<Me
     }
 }
 
-/// Register call_id → (thread, original_id) in the registry (non-async).
-///
-/// The `original_id` is the raw tool_call_id string returned by the LLM (e.g.
-/// `"call_HyZJn1bTtqVbmzzS3W4VM4xb"` for OpenAI).  It is preserved so that
-/// `ToolExecutor` can append tool results with the *same* id that appears in the
-/// assistant message — the API rejects mismatches.
-fn register_calls(
-    registry: &Mutex<HashMap<ToolCallId, (String, String)>>,
-    thread_id: &str,
-    calls: &[sven_tool_api::ToolCall],
-    tools: &ToolRegistry,
-) -> Vec<ProposedToolCall> {
-    let mut proposed = Vec::with_capacity(calls.len());
-    if let Ok(mut reg) = registry.lock() {
-        for tc in calls {
-            let capability = tools.capability_of_call(tc);
-            let call_id = ToolCallId::from_str_lossy(&tc.id);
-            reg.insert(call_id, (thread_id.to_string(), tc.id.clone()));
-            proposed.push(ProposedToolCall {
-                call_id,
-                name: tc.name.clone(),
-                args: tc.args.clone(),
-                capability,
-            });
-        }
-    }
-    proposed
-}
-
 use async_trait::async_trait;
-use sven_hsm::{
-    CompactionStrategyUsed, Effect, Event, ObservationSink, ProposedToolCall, ToolCallId, UiEvent,
-};
+use sven_hsm::{CompactionStrategyUsed, Effect, Event, ObservationSink, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, EventSink};
 use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
 use sven_tool_registry::ToolRegistry;
 use sven_turn::{stream_turn, to_model_schemas, AbortedError, ModelResolver};
-use sven_vocab::TurnRequest;
+use sven_vocab::{CompactionRecord, TurnRequest};
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
-use crate::thread_store::{refusal_reasons, ThreadStore};
+use crate::thread_store::{refusal_reasons, register_calls, ThreadStore};
 
 /// Executes single-turn `CallLlm { kind: "turn" }` effects.
 ///
@@ -366,6 +335,13 @@ impl TurnExecutor {
         let tokens_after: usize = final_messages.iter().map(Message::approx_tokens).sum();
         if let Ok(mut store) = self.store.lock() {
             store.replace_thread(thread_id, final_messages.clone());
+            store.record_compaction(CompactionRecord {
+                thread: thread_id.to_string(),
+                tokens_before,
+                tokens_after,
+                strategy: strategy_used.clone(),
+                turn: 0,
+            });
         }
         obs.emit(UiEvent::ContextCompacted {
             tokens_before,

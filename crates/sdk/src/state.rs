@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use sven_hsm::Snapshot;
 use sven_model::Message;
+use sven_vocab::CompactionRecord;
 
 /// A suspended agent: everything needed to resume it, and nothing that cannot
 /// outlive the process that made it.
@@ -37,6 +38,12 @@ pub struct AgentState {
     /// The tools the last step offered the model, as ATIF tool definitions.
     #[serde(default)]
     pub(crate) tools: Vec<serde_json::Value>,
+    /// Every compaction that replaced the front of `history`, oldest first.
+    ///
+    /// The history holds only what survived them, so this is the only trace
+    /// that the conversation was once longer.
+    #[serde(default)]
+    pub(crate) compactions: Vec<CompactionRecord>,
 }
 
 impl AgentState {
@@ -50,6 +57,7 @@ impl AgentState {
             kernel: None,
             model: None,
             tools: Vec::new(),
+            compactions: Vec::new(),
         }
     }
 

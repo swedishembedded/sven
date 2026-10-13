@@ -469,6 +469,19 @@ kernel holds, so it is complete even when progress events were dropped, and a
 resumed agent exports the same document. It carries no reward: whether the
 work was right is for a verifier to decide.
 
+What the document says about the model's view of the run:
+
+- **Compaction.** When the conversation outgrows the model's context the
+  kernel replaces its front with a summary. Each compaction is a `System` step
+  with `extra.context_management` (`type: "compaction"`, `boundary:
+  "replace"`) and the token counts under `extra.sven`, placed ahead of the
+  conversation that survived it. The steps the compaction replaced are not in
+  the document: a trajectory with such a step is not the whole conversation, and
+  a consumer that trains on whole conversations excludes it.
+- **Not recorded.** The system prompt (the kernel regenerates it every turn),
+  reasoning text, sampling parameters and per-step token metrics are not in the
+  document.
+
 ```rust
 let trajectory = agent.trajectory();
 sven_sdk::atif::persist::write_trajectory_atomic(&path, &trajectory, None)?;

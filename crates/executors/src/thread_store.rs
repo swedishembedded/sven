@@ -14,9 +14,11 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use sven_hsm::ToolCallId;
+use sven_hsm::{ProposedToolCall, ToolCallId};
+use sven_tool_registry::ToolRegistry;
 
 use sven_model::{Message, MessageContent};
+use sven_vocab::CompactionRecord;
 
 /// Stable string identifier for a conversation thread (e.g. `"intake"`).
 pub type ThreadId = String;
@@ -29,6 +31,8 @@ pub type ThreadId = String;
 #[derive(Debug, Default)]
 pub struct ThreadStore {
     threads: HashMap<ThreadId, Vec<Message>>,
+    /// Every compaction applied to any thread, oldest first.
+    compactions: Vec<CompactionRecord>,
 }
 
 impl ThreadStore {
@@ -120,6 +124,18 @@ impl ThreadStore {
         open.len()
     }
 
+    /// Notes that a thread was compacted. Call alongside
+    /// [`replace_thread`](Self::replace_thread) with the compacted history.
+    pub fn record_compaction(&mut self, record: CompactionRecord) {
+        self.compactions.push(record);
+    }
+
+    /// Every compaction recorded so far, oldest first.
+    #[must_use]
+    pub fn compactions(&self) -> &[CompactionRecord] {
+        &self.compactions
+    }
+
     /// Number of turns currently stored in a thread.
     #[must_use]
     pub fn len(&self, id: &str) -> usize {
@@ -144,6 +160,35 @@ pub(crate) fn refusal_reasons(
             Some((model_id.clone(), refusal.reason.clone()))
         })
         .collect()
+}
+
+/// Register call_id → (thread, original_id) in the registry (non-async).
+///
+/// The `original_id` is the raw tool_call_id string returned by the LLM (e.g.
+/// `"call_HyZJn1bTtqVbmzzS3W4VM4xb"` for OpenAI).  It is preserved so that
+/// `ToolExecutor` can append tool results with the *same* id that appears in the
+/// assistant message — the API rejects mismatches.
+pub(crate) fn register_calls(
+    registry: &Mutex<HashMap<ToolCallId, (String, String)>>,
+    thread_id: &str,
+    calls: &[sven_tool_api::ToolCall],
+    tools: &ToolRegistry,
+) -> Vec<ProposedToolCall> {
+    let mut proposed = Vec::with_capacity(calls.len());
+    if let Ok(mut reg) = registry.lock() {
+        for tc in calls {
+            let capability = tools.capability_of_call(tc);
+            let call_id = ToolCallId::from_str_lossy(&tc.id);
+            reg.insert(call_id, (thread_id.to_string(), tc.id.clone()));
+            proposed.push(ProposedToolCall {
+                call_id,
+                name: tc.name.clone(),
+                args: tc.args.clone(),
+                capability,
+            });
+        }
+    }
+    proposed
 }
 
 #[cfg(test)]

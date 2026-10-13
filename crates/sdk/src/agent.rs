@@ -69,6 +69,11 @@ impl Agent {
     /// What the agent did, as an ATIF trajectory: every message, every tool
     /// call with its result, the model and the tools it was offered.
     ///
+    /// Each context compaction is a `System` step carrying
+    /// `extra.context_management`, ahead of the conversation that survived
+    /// it; the steps before a compaction are not in the history and so not in
+    /// the document.
+    ///
     /// Built from the conversation the kernel holds, so it is complete even
     /// when progress events were dropped, and a resumed agent exports the
     /// same document. Carries no reward: whether the work was right is for a
@@ -81,7 +86,21 @@ impl Agent {
             agent.tool_definitions = Some(self.state.tools.clone());
         }
         let mut trajectory = atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
-        trajectory.steps = sven_session_store::messages_to_steps(&self.state.history);
+        // The history holds only what survived each compaction, so the
+        // markers lead it: everything after them replaced what came before.
+        let mut assembler = sven_session_store::StepAssembler::new();
+        for compaction in &self.state.compactions {
+            assembler.push_context_compacted(
+                compaction.tokens_before,
+                compaction.tokens_after,
+                Some(&compaction.strategy.to_string()),
+                Some(compaction.turn),
+            );
+        }
+        for message in &self.state.history {
+            assembler.push_message(message);
+        }
+        trajectory.steps = assembler.finish();
         trajectory
     }
 
@@ -333,22 +352,33 @@ impl Agent {
     ///
     /// A machine that keeps its conversation on threads of its own (`sdlc`
     /// runs one per phase) leaves the primary thread at its seed; its folded
-    /// history is kept.
+    /// history is kept. Compactions of the primary thread are recorded so the
+    /// trajectory can say the history is not the whole conversation.
     fn take_history(&mut self, handle: &sven_bootstrap::RuntimeHandle, seeded: usize) {
         let thread = sven_machines::mode::primary_thread(&self.state.mode);
-        let Ok(store) = handle
-            .conversation_store()
-            .lock()
-            .map(|s| s.snapshot(thread))
-        else {
+        let shared = handle.conversation_store();
+        let Ok(store) = shared.lock() else {
             return;
         };
         let held: Vec<Message> = store
+            .snapshot(thread)
             .into_iter()
             .filter(|m| m.role != sven_model::Role::System)
             .collect();
-        if held.len() > seeded {
+        let compactions: Vec<_> = store
+            .compactions()
+            .iter()
+            .filter(|c| c.thread == thread)
+            .cloned()
+            .collect();
+        drop(store);
+
+        // A compaction shrinks the thread, possibly below what the turn was
+        // seeded with, so growth alone cannot tell a thread the machine used
+        // from one it left at its seed.
+        if held.len() > seeded || (!compactions.is_empty() && !held.is_empty()) {
             self.state.history = held;
+            self.state.compactions.extend(compactions);
         }
     }
 

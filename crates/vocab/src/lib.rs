@@ -418,6 +418,21 @@ impl std::fmt::Display for CompactionStrategyUsed {
     }
 }
 
+/// One context compaction, as the conversation store remembers it.
+///
+/// The same facts as [`SessionEvent::ContextCompacted`], kept where a lagging
+/// or dropped event stream cannot lose them.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CompactionRecord {
+    /// The conversation thread that was compacted.
+    pub thread: String,
+    pub tokens_before: usize,
+    pub tokens_after: usize,
+    pub strategy: CompactionStrategyUsed,
+    /// Agentic loop round in which compaction fired (0 = pre-submit).
+    pub turn: u32,
+}
+
 /// Information about a connected peer (node proxy / list_peers).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PeerInfo {
