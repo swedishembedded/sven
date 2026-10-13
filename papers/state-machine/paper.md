@@ -354,8 +354,9 @@ what a reviewer should check first. First, *the machine is testable without
 the world*: a test drives dispatches directly against an in-memory context
 and asserts on returned effects. Second, *the system is auditable by
 construction*: every dispatch appends exactly one audit record (from-state,
-to-state, event, effects, rationale, principal) to an append-only,
-hash-chained trail, before the next event is taken.
+to-state, event, effect kinds, rationale, principal) to the context's
+append-only trail before the next event is taken, and an audit executor
+persists that trail as a hash-chained log.
 
 ## The delivery obligation
 
@@ -404,12 +405,17 @@ The whole runtime is a single consumer task draining one bounded queue:
 take an event, dispatch it, gate and execute the resulting effects, publish
 status, repeat - the loop of Figure 4. Because exactly one task calls
 dispatch, RTC holds without locks; because the queue is bounded, backpressure
-is explicit; because cancellation is a scope that stops the loop and
-cancels every child run it started, shutdown is not a special case. An
-in-flight registry records tool calls and approvals whose answers have not
-yet re-entered the queue, so *quiescence* (an empty queue) is distinguishable
-from *waiting* (an empty queue plus work outstanding) - the distinction a
-capture-and-verify harness lives or dies by.
+is explicit; because cancellation is a scope that stops the loop and is
+handed to the executors and to every child run, so that tool calls and
+child runs started on the run's behalf end with it, shutdown is not a
+special case. An in-flight registry records dispatched tool calls and
+pending approval requests whose answers have not yet re-entered the queue,
+and the runtime also tracks its live child runs, so *quiescence* (an empty
+queue and nothing outstanding) is distinguishable from *waiting* (an empty
+queue while an answer is still owed) - the distinction a capture-and-verify
+harness lives or dies by. A question parked for a person
+(`RequestHumanAnswer`) is deliberately not outstanding: parking exists so
+that a run can stop and later resume when the answer arrives.
 
 ![The life of one tool call: propose, gate, execute, answer.](img/fig4-effect.png)
 
