@@ -30,8 +30,8 @@ Everything in this repository serves one of those two.
 **Naming other projects.** A tracked file names another project only when
 sven depends on it. brain may be named in its one role here - a model
 provider sven talks to at runtime - and never as a build dependency (see
-`check/deps`). A project built on sven is never named: describe the need
-generically ("an embedding application"). `make check/scope` enforces this;
+`check/gates/deps`). A project built on sven is never named: describe the need
+generically ("an embedding application"). `make check/gates/scope` enforces this;
 CHANGELOG.md is history and exempt.
 
 ## For AI Agents Working on This Codebase
@@ -76,7 +76,7 @@ CHANGELOG.md is history and exempt.
   was deleted - see `docs/adr/0001-delete-graph-dsl.md`.)
 - **Tests**: `make test` (unit/integration), `make check` (rustfmt + text
   gates + `xtask arch` + clippy `-D warnings`, zero-warning policy),
-  `make tests/e2e/basic` (bats E2E; needs `bats-core`).
+  `make test/e2e/basic` (bats E2E; needs `bats-core`).
 - **The kernel's load-bearing claims are model-checked**, not only tested:
   `formal/tla/` holds TLA+ models of `sven-hsm`'s dispatch algorithm, its
   submachine host and `sven-kernel`'s effect gate, run by `make formal`.
@@ -144,19 +144,20 @@ one.
 | Command | Purpose |
 |---------|---------|
 | `make build` | Debug build (all binaries) |
-| `make release` | Optimised release build |
+| `make build/release` | Optimised release build |
 | `make test` | Unit + integration tests (whole workspace) |
 | `make check` | rustfmt + text gates + `xtask arch` + clippy, `-D warnings` + rustdoc links |
 | `make check/fmt` | `cargo fmt --all -- --check`, checked not applied |
-| `make check/gates` | text gates: no machine paths, no brain dependency |
+| `make check/gates` | text gates: no machine paths, no brain dependency, repo scope, sample layering, make target naming (`check/gates/{paths,deps,scope,samples,targets}`) |
 | `make check/arch` | architecture ratchet only |
 | `make check/clippy` | clippy only |
 | `make check/doc` | `cargo doc`, broken intra-doc links are errors |
 | `make fmt` | Format |
-| `make harness/test` | Every harness suite (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
-| `make harness/test/local` | OPT-IN: the `08-local-qwen` sample against a model you already serve (`SVEN_HARNESS_LOCAL_MODEL=1`, `SVEN_HARNESS_LOCAL_ENDPOINT`); never part of `make test` or `make check` |
+| `make test/harness` | Every harness suite (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
+| `make test/harness/local-model` | OPT-IN: the `08-local-qwen` sample against a model you already serve (`SVEN_HARNESS_LOCAL_MODEL=1`, `SVEN_HARNESS_LOCAL_ENDPOINT`); never part of `make test` or `make check` |
+| `make help` | Every target as a tree; names are concept first (`test/harness`, `check/gates/paths`), so `make <TAB>` descends level by level (`check/gates/targets` enforces it) |
 | `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |
-| `make tests/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour) |
+| `make test/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour) |
 | `make formal` | TLA+ models of the HSM kernel (needs a JRE; see `formal/README.md`) |
 | `make docs` | Single-file user guide → `target/docs/sven-user-guide.md` |
 

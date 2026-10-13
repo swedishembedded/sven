@@ -281,8 +281,8 @@ suite must not depend on one.
   `--model-endpoint`). Sven never starts or downloads the model.
 - Without the opt-in, `run --model SPEC` is refused (exit 2) and a case that
   names `live` is reported as `SKIP`, never failed.
-- `make test`, `make check` and `make harness/test` never reach a live model.
-  `make harness/test/local` runs [08-local-qwen](../samples/harnesses/08-local-qwen/)
+- `make test`, `make check` and `make test/harness` never reach a live model.
+  `make test/harness/local-model` runs [08-local-qwen](../samples/harnesses/08-local-qwen/)
   against your endpoint and refuses to start without the two variables.
 
 ## Authorization in one paragraph

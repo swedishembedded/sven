@@ -11,11 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sven harness validate | inspect | schema | run | resume | replay | test | compare`: programmable harnesses from the command line, offline. Runs use mock models and fixture tools, read no configuration and start no model; exit codes 0-5 are listed on `sven harness --help`. `run` writes `--trace` (JSONL), `--record`, `--trajectory` and `--checkpoint-out` files on request and prints `[sven:harness]` progress lines on stderr. A real model (`--model`) needs `SVEN_HARNESS_LOCAL_MODEL=1` and an endpoint (`SVEN_HARNESS_LOCAL_ENDPOINT` or `--model-endpoint`); `--toolset` accepts only `none`.
 - `sven-harness-testkit` (surface tier): case manifests (`cases/*.yaml`) with sequenced, rule-driven, file and failing model fixtures, fixture tools (`ok`, `error`, `block`, workspace writes), expectations (status, output, failure, step counts, tools invoked, forbidden capabilities, token bounds) and a `resume` phase; `run_case`, `run_suite`, `compare`, `validate`, `inspect`, `io_schema`; every case is replay-checked; a leaked fixture call fails the case; a live model is built only under `OptIn`.
 - `samples/harnesses`: eight harnesses with their cases (`01-decision` to `08-local-qwen`, the last opt-in and never run by default) and `sample-harnesses-sdk-runner`, which runs the cases through `sven-sdk` alone.
-- `make harness/test` (every harness suite, mock models only, including a 1000-run concurrent stress test) and the opt-in `make harness/test/local`.
+- `make test/harness` (every harness suite, mock models only, including a 1000-run concurrent stress test) and the opt-in `make test/harness/local-model`.
 - `sven-harness-spec`: `DOCUMENT_SCHEMA`, a JSON Schema for harness documents (`sven harness schema`), and `PRIMITIVES`, the twelve primitive names; a test holds the schema to them.
 - `sven-sdk`: `HarnessRun::with_recording` / `recording` and `Harness::replay` (offline replay of the machine's recorded input log, with `HarnessRecording` and `HarnessReplay`), `HarnessRun::trajectory` (ATIF, with the harness trace under `extra.harness`), `HarnessOutcome::step_counts` and `HarnessReplay::step_counts`; `HarnessCheckpoint` is `Serialize` and `Deserialize`; `TraceRecord`, `HarnessEvent` and `harness_plan::*` are re-exported.
 - `sven-executors`: `ToolExecutor::with_capability_reconciliation`; `EffectExecutor::bind_cancel`, by which an executor stops the work it started on a run's behalf when the run ends. `sven-bootstrap`: `SdlcChildSpawner::with_verify_root`. `sven-harness-runtime`: `HarnessRunData::{with_delegate_depth, delegate_depth}`, `harness_thread`, `HeldCall`, `HeldGate`.
 - Documentation: [docs/12-harnesses.md](docs/12-harnesses.md), [docs/technical/harnesses.md](docs/technical/harnesses.md), the "Add a harness primitive" row of AGENTS.md and the "As built" addendum of ADR 0004.
+
+### Changed (BREAKING, build)
+- Make targets form a tree, concept first and then kind and variant, so `make <TAB>` lists the concepts and `make test/<TAB>` the kinds of test. `make help` prints the tree. There are no aliases for the old names. `scripts/gates/check-make-targets.sh` (`make check/gates/targets`, also a pre-commit hook) enforces the naming, that every prefix is itself a target, and that every target has a `## name - text` doc line. Old -> new:
+  - `release` -> `build/release` (the bare `release` is now a listing of the `release/*` targets and does nothing); `release/build` -> `release/dist`
+  - `tests/e2e` -> `test/e2e`; `tests/e2e/basic` -> `test/e2e/basic`
+  - `harness/test` -> `test/harness`; `harness/test/local` -> `test/harness/local-model`
+  - `check/paths`, `check/deps`, `check/scope`, `check/samples` -> `check/gates/paths`, `check/gates/deps`, `check/gates/scope`, `check/gates/samples`
+  - `deb` -> `package/deb`; `deb/debug` -> `package/deb/debug`; `deb/release` -> `package/deb/release`
+  - `docs-pdf` -> `docs/pdf`; `samples/list` -> `samples`
+  - New area targets: `package`, `hooks`, `site` (list their children, do nothing), `papers` (runs `papers/pdf`), `papers/<name>` (that paper's PDF)
 
 ### Fixed
 - A harness session under `--approval manual` (or `ApprovalPolicy::Manual`) ran its writes without asking: a machine supplied to the builder skipped the host's approval mode and read-only narrowing. It is now bounded like a registered machine, and `HarnessMachine` implements the approval flow (`RequestHumanApproval`, `HumanApproved`, `HumanRejected`), one held call at a time.

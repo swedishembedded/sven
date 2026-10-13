@@ -55,7 +55,7 @@ A recent stable toolchain (1.75 or later) is recommended.
 ```sh
 git clone https://github.com/swedishembedded/sven.git
 cd sven
-make release
+make build/release
 ```
 
 The optimised binary is produced at `target/release/sven`.

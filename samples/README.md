@@ -19,10 +19,10 @@ it is enough to build something that is *not* the CLI on.
    `sven-bootstrap`, not `sven-kernel`, not `sven-machines`. If a sample needs
    something the facade does not publish, that is a finding about the facade -
    fix the facade or change the sample, never reach past it. `make
-   check/samples` enforces this.
+   check/gates/samples` enforces this.
 2. **The package name is derived from the path.** `samples/study/svf` is
    package `sample-study-svf`. The `samples/%/build` and `samples/%/run` rules
-   depend on that mapping, and `make check/samples` enforces it too.
+   depend on that mapping, and `make check/gates/samples` enforces it too.
 
 Rule 1 is about *this* workspace: a sample may depend on whatever it needs
 from outside it - that is what makes it an application rather than a test.
@@ -64,7 +64,7 @@ check` (clippy `--workspace --all-targets`) are what actually cover samples.
 `samples/harnesses/` is the exception to "every sample is a directory with a
 `Cargo.toml`". Its numbered entries (`01-decision` .. `08-local-qwen`) are
 programmable harnesses: a YAML document, the cases that state what it must do,
-and nothing to compile. They are not workspace members and `make check/samples`
+and nothing to compile. They are not workspace members and `make check/gates/samples`
 has nothing to say about them; they are judged by the harness test kit, which
 the repository's own test (`cargo test -p sven-harness-testkit --test samples`)
 and `sven harness test` both run, on mock models and fixture tools only. The
@@ -81,4 +81,4 @@ cases through `sven-sdk` alone, and refuses the rest with a pointer to
 
 1. Create `samples/<category>/<name>/` with the three files above.
 2. Add the path to the workspace `members` list in the root `Cargo.toml`.
-3. Run `make check/samples`.
+3. Run `make check/gates/samples`.

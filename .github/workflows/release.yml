@@ -43,7 +43,7 @@ jobs:
           sudo apt-get install -y bats
 
       - name: Run basic e2e tests
-        run: make tests/e2e/basic
+        run: make test/e2e/basic
 
   # ── Linux x86_64 ─────────────────────────────────────────────────────────────
   build-linux-x86_64:
@@ -56,7 +56,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Release build
-        run: make release
+        run: make build/release
 
       - name: Generate shell completions
         run: |

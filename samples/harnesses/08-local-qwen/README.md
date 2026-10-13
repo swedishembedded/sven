@@ -24,7 +24,7 @@ you actually run - and it is **never** part of any default path.
 ```sh
 sven harness validate samples/harnesses/08-local-qwen          # offline, always safe
 SVEN_HARNESS_LOCAL_MODEL=1 SVEN_HARNESS_LOCAL_ENDPOINT=http://localhost:11434 \
-    sven harness test samples/harnesses/08-local-qwen          # or: make harness/test/local
+    sven harness test samples/harnesses/08-local-qwen          # or: make test/harness/local-model
 ```
 
 ## Expected

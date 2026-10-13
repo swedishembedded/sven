@@ -47,13 +47,22 @@ repos:
         pass_filenames: false
 
       # No tracked file names a project outside sven's scope (AGENTS.md,
-      # Repository scope). Also run by `make check/scope`.
+      # Repository scope). Also run by `make check/gates/scope`.
       - id: repo-scope
         name: no out-of-scope project names
         entry: bash scripts/gates/check-repo-scope.sh
         language: system
         types: [text]
         pass_filenames: true
+
+      # Make target names form a tree and are documented (`make help`). Also
+      # run by `make check/gates/targets`.
+      - id: make-targets
+        name: make targets are a documented tree
+        entry: bash scripts/gates/check-make-targets.sh
+        language: system
+        files: '(^|/)Makefile$'
+        pass_filenames: false
 
       # Replace common non-ASCII punctuation (em/en dashes, curly quotes,
       # ellipsis, non-breaking spaces) with plain ASCII equivalents so the

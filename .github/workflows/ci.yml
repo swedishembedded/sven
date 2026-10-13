@@ -50,7 +50,7 @@ jobs:
           sudo apt-get install -y bats
 
       - name: Run basic e2e tests
-        run: make tests/e2e/basic
+        run: make test/e2e/basic
 
   # Quick smoke-test: make sure we can actually build a release binary.
   # This catches linker / feature-flag issues before a real release.
@@ -63,7 +63,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Release build
-        run: make release
+        run: make build/release
 
   # Portability target: a headless-only build with no
   # TUI and no GDB tools - proves the

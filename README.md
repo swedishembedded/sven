@@ -40,7 +40,7 @@ workflow files.
 
 ```sh
 # Build and run
-make release && ./target/release/sven
+make build/release && ./target/release/sven
 
 # Pipe a one-shot task
 echo "Summarise the project" | sven
@@ -352,22 +352,22 @@ Build the full user guide locally:
 
 ```sh
 make docs        # → target/docs/sven-user-guide.md
-make docs-pdf    # → target/docs/sven-user-guide.pdf (requires pandoc)
+make docs/pdf    # -> target/docs/sven-user-guide.pdf (requires pandoc)
 ```
 
 ## Building
 
 ```sh
 make build      # debug build
-make release    # optimised release build
-make deb        # Debian package
+make build/release  # optimised release build
+make package/deb     # Debian package
 ```
 
 Requires a recent stable Rust toolchain. No other system dependencies.
 
 ```sh
 make test           # unit and integration tests
-make tests/e2e      # end-to-end tests (requires bats-core)
+make test/e2e       # end-to-end tests (requires bats-core)
 make check          # clippy lints
 ```
 

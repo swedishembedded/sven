@@ -9,7 +9,7 @@
 //! built-in OpenAI/Anthropic/OpenRouter providers the docs name live in
 //! `sven-model-drivers`, which the facade did not publish. An application
 //! that wanted the compiled-in providers had to reach past the facade
-//! (which `make check/samples` refuses for a sample) or rebuild every
+//! (which `make check/gates/samples` refuses for a sample) or rebuild every
 //! driver on top of the trait. Re-exporting the factory here
 //! is what the docs already promised: the seam is public, and so are the
 //! built-ins that hang off it.

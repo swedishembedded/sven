@@ -1,7 +1,7 @@
 [package]
 # Package names under samples/ are derived from the path:
 # `samples/study/svf` -> `sample-study-svf`. The Makefile's
-# `samples/%/{build,run}` rules depend on that mapping; `make check/samples`
+# `samples/%/{build,run}` rules depend on that mapping; `make check/gates/samples`
 # enforces it.
 name = "sample-study-svf"
 version.workspace = true
@@ -12,7 +12,7 @@ publish = false
 
 [dependencies]
 # The ONLY sven dependency a sample may have is the SDK facade - see
-# samples/README.md rule 1, enforced by `make check/samples`.
+# samples/README.md rule 1, enforced by `make check/gates/samples`.
 sven-sdk   = { path = "../../../crates/sdk" }
 anyhow     = { workspace = true }
 serde_json = { workspace = true }

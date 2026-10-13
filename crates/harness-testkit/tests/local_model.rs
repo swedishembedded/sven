@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Opt-in spec: the local-model sample passes against a model the caller is
 //! already serving. Ignored by default - `make test`, `make check` and
-//! `make harness/test` never reach it. Run it with `make harness/test/local`
+//! `make test/harness` never reach it. Run it with `make test/harness/local-model`
 //! after setting `SVEN_HARNESS_LOCAL_MODEL=1` and
 //! `SVEN_HARNESS_LOCAL_ENDPOINT`; nothing here pulls or starts a model.
 //!
@@ -17,14 +17,14 @@ use std::path::Path;
 use sven_harness_testkit::{run_suite, HarnessDir, OptIn, RunnerOptions};
 
 #[tokio::test]
-#[ignore = "needs a model you already serve: see make harness/test/local"]
+#[ignore = "needs a model you already serve: see make test/harness/local-model"]
 async fn the_local_qwen_sample_passes_against_a_served_model() {
     let opt_in = OptIn::from_env();
     assert!(
         opt_in.is_live_ready(),
         "this test talks to a real model and stays off by default: serve one \
          yourself, then set SVEN_HARNESS_LOCAL_MODEL=1 and \
-         SVEN_HARNESS_LOCAL_ENDPOINT=<url> (or run `make harness/test/local`)"
+         SVEN_HARNESS_LOCAL_ENDPOINT=<url> (or run `make test/harness/local-model`)"
     );
 
     let sample =

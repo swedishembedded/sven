@@ -114,7 +114,7 @@ xtask = "foundation"
 # nothing in this repository may depend on one. The tier does NOT enforce the
 # rule that matters for a sample -- that it depends on `sven-sdk` and nothing
 # else -- because a tier only bounds a crate from below, and every crate in the
-# workspace is below this one. `make check/samples` is what enforces that, by
+# workspace is below this one. `make check/gates/samples` is what enforces that, by
 # reading the manifest. Both gates run in `make check`.
 sample-study-svf = "sample"
 sample-agent-task = "sample"

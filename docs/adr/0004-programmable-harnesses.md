@@ -243,5 +243,5 @@ rendered by the headless runner and ignored by ACP.
 A live model needs both `SVEN_HARNESS_LOCAL_MODEL=1` and
 `SVEN_HARNESS_LOCAL_ENDPOINT` (or `--model-endpoint`) naming a server the
 caller already runs; without them a live case is skipped and `--model` is
-refused. `make harness/test/local` is the only target that can reach one, and
+refused. `make test/harness/local-model` is the only target that can reach one, and
 it refuses to start without both.

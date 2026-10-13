@@ -30,6 +30,7 @@ sven/
 │   ├── release-build.sh        # local multi-platform artifact builder
 │   ├── build-deb.sh            # manual .deb packager (cross-compile use)
 │   ├── gates/                  # checks run by `make check/gates`
+│   ├── make-help.sh            # `make help`: the target tree from the `## name - text` lines
 │   └── hooks/                  # git hooks (`make hooks/install`)
 ├── .github/
 │   └── workflows/
@@ -99,17 +100,19 @@ Run `make help` for the full list.
 
 | Target | Description |
 |--------|-------------|
-| `build` / `release` | Debug / release build |
+| `build` / `build/release` | Debug / release build |
 | `test` | `cargo test --workspace` |
-| `tests/e2e/basic` | Build + run all bats tests in `tests/e2e/basic/` |
-| `tests/e2e` | Alias → `tests/e2e/basic` |
+| `test/e2e/basic` | Build + run all bats tests in `tests/e2e/basic/` |
+| `test/e2e` | Alias for `test/e2e/basic` |
+| `test/harness` | Every harness suite, mock models only |
 | `check` | `check/fmt`, `check/gates`, `check/arch`, `check/features`, `check/clippy`, `check/doc` |
+| `check/gates` | `check/gates/paths`, `deps`, `scope`, `samples`, `targets` (make target naming) |
 | `fmt` | `cargo fmt --all` |
-| `deb` | Build Debian package |
-| `docs` / `docs-pdf` | Build user-guide markdown / PDF |
+| `package/deb` | Build Debian package (`package` lists) |
+| `docs` / `docs/pdf` | Build user-guide markdown / PDF |
 | `formal` | Machine-check the TLA+ models |
 | `release/patch\|minor\|major` | Bump version via cargo-release |
-| `release/build` | Build release artifacts into `dist/` |
+| `release/dist` | Build release artifacts into `dist/` (`release` only lists) |
 | `release/tag` | Create + push annotated git tag |
 | `release/publish` | Upload `dist/` to GitHub Release via `gh` |
 
@@ -118,8 +121,8 @@ Run `make help` for the full list.
 ```
 Push / PR  →  ci.yml
   ├── check            (cargo fmt --check, make check, make test)
-  ├── e2e-basic        (make tests/e2e/basic)
-  ├── build-smoke      (make release)
+  ├── e2e-basic        (make test/e2e/basic)
+  ├── build-smoke      (make build/release)
   ├── minimal-profile  (xtask arch --profile minimal)
   ├── check-macos      (continue-on-error)
   └── check-windows    (continue-on-error)

@@ -80,7 +80,7 @@ const TAB_CONTENT: Record<TabId, TabContent> = {
       },
       {
         label: 'Clone and build',
-        code: 'git clone https://github.com/swedishembedded/sven.git\ncd sven\nmake release',
+        code: 'git clone https://github.com/swedishembedded/sven.git\ncd sven\nmake build/release',
       },
       {
         label: 'Install binary',

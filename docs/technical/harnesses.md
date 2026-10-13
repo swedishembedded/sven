@@ -298,7 +298,7 @@ the user's configuration. A live model is built only under `OptIn` (both
 
 Samples are data directories; the SDK-only crate
 `samples/harnesses/sdk-runner` shows the same cases run with `sven-sdk` alone.
-`make harness/test` runs every harness suite on mock models, including a
+`make test/harness` runs every harness suite on mock models, including a
 thousand-run concurrent stress test (`SVEN_HARNESS_STRESS_RUNS`).
 
 ## Not in scope

@@ -84,7 +84,7 @@ class SvenInstalledAgent(BaseInstalledAgent):
         if not host_bin.exists():
             raise FileNotFoundError(
                 f"sven binary not found at {host_bin}. "
-                "Run 'make release' first."
+                "Run 'make build/release' first."
             )
         # Upload binary before the base setup() renders and executes the
         # install template, so /installed-agent/sven exists when the script runs.

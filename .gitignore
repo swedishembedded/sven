@@ -10,7 +10,7 @@ Cargo.lock
 # Python cache
 __pycache__
 
-# Generated shell completions (produced by `make deb` / `make release`)
+# Generated shell completions (produced by `make package/deb` / `make build/release`)
 /target/completions/
 
 # Debian packaging artefacts
