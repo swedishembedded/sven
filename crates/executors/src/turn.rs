@@ -136,6 +136,9 @@ pub struct TurnExecutor {
     /// Models already warned about for lacking tool calling, so each is
     /// mentioned once per session however many turns it serves.
     warned_without_tools: std::collections::HashSet<String>,
+    /// What decision points did since the last request, charged to the next
+    /// request's ledger record. See [`Self::with_decision_telemetry`].
+    decisions: Option<Arc<sven_decision::telemetry::DecisionTelemetry>>,
 }
 
 /// Proactive-compaction settings, mirroring the agent settings'
@@ -197,6 +200,7 @@ impl TurnExecutor {
             cancel_handle,
             empty_turns: Arc::new(Mutex::new(HashMap::new())),
             warned_without_tools: std::collections::HashSet::new(),
+            decisions: None,
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
@@ -226,6 +230,17 @@ impl TurnExecutor {
     #[must_use]
     pub fn with_turn_limits(mut self, limits: sven_turn::TurnLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Charges the decision inference and records the decision traces
+    /// gathered in `telemetry` to the ledger of the next model request.
+    #[must_use]
+    pub fn with_decision_telemetry(
+        mut self,
+        telemetry: Arc<sven_decision::telemetry::DecisionTelemetry>,
+    ) -> Self {
+        self.decisions = Some(telemetry);
         self
     }
 
@@ -590,6 +605,7 @@ impl EffectExecutor for TurnExecutor {
         let totals_thread_id = thread_id.clone();
         let catalog_context_window = context_window.unwrap_or(0);
         let catalog_max_output = configured_max_output.unwrap_or(0);
+        let decisions = self.decisions.clone();
         // Teed copy of the assistant text streamed so far. `stream_turn`'s
         // own return value is unreachable on cancellation (its future is
         // dropped mid-poll by the `select!` below), so this is the only
@@ -613,9 +629,15 @@ impl EffectExecutor for TurnExecutor {
                     cache_write_total,
                     max_tokens,
                     max_output_tokens,
+                    breakdown,
                     ..
                 } = &mut ev
                 {
+                    if let (Some(decisions), Some(breakdown)) = (&decisions, breakdown) {
+                        let drained = decisions.drain();
+                        breakdown.decision = drained.inference;
+                        breakdown.decision_trace = drained.traces;
+                    }
                     let (read_total, write_total) = {
                         let mut totals = cache_totals
                             .lock()

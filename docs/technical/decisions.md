@@ -186,6 +186,18 @@ provider even when decisions are off, and exits non-zero when decisions are
 unavailable. `sven decisions models [--json]` lists the models the provider
 knows without loading any.
 
+## Tracing
+
+Every decision is accounted for. The session's `DecisionTelemetry` collects,
+between two model requests, the inference calls made and the verdict of every
+decision point; the turn executor drains it as the next request's ledger record
+is built. The cost lands in that record's `decision` field and the verdicts in
+the step's `sven_decisions` extra, next to `sven_ledger`
+([token ledger](token-ledger.md)). `trace_record` builds the record from a
+verdict: acceptance or abstention, the selected option or the reason
+(`low_confidence`, `near_tie`, `order_sensitive`, `provider_failed:<class>`, ...),
+and a digest of the inputs rather than the inputs themselves.
+
 ## Testing with the mock provider
 
 `MockDecisionProvider` answers from a queue: `push_result` scripts an answer,

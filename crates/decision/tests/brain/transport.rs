@@ -13,7 +13,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sven_decision::brain::{BrainProvider, BrainSettings, MinimumQuality, ModelState};
-use sven_decision::{DecisionProvider, DecisionRequest, ErrorClass, Question, QuestionKind};
+use sven_decision::{
+    DecisionProvider, DecisionRequest, DecisionResult, ErrorClass, Question, QuestionKind,
+};
 
 use crate::contract::{provider, recorded_request};
 use crate::support::{self, closed, silent, FakeBrain, Reply};
@@ -304,7 +306,8 @@ async fn an_identical_decision_of_a_versioned_model_is_asked_once() {
     let p = provider(&brain.url, LAYA);
     let first = p.decide(&recorded_request()).await.unwrap();
     let second = p.decide(&recorded_request()).await.unwrap();
-    assert_eq!(first, second);
+    assert!(!first.cached && second.cached, "a hit says it ran no inference");
+    assert_eq!(first, DecisionResult { cached: false, ..second });
     assert_eq!(brain.calls_of("decide"), 1);
 
     let changed = DecisionRequest {

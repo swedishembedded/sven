@@ -41,6 +41,11 @@ use serde::{Deserialize, Serialize};
 /// per model request the step covers, in request order.
 pub const STEP_METRICS_EXTRA_KEY: &str = "sven_ledger";
 
+/// Key under which a step's [`DecisionTraceRecord`]s are stored in ATIF
+/// `StepMetrics.extra`, beside [`STEP_METRICS_EXTRA_KEY`]: every acceptance and
+/// abstention of a decision point, in the order they happened.
+pub const STEP_DECISIONS_EXTRA_KEY: &str = "sven_decisions";
+
 /// Provider-reported usage of one request, summed over every usage report the
 /// provider streamed for it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,12 +103,9 @@ pub struct ToolActivity {
     pub errors: Option<u32>,
 }
 
-/// Cost of a decision-model inference made on behalf of a request (for
-/// example a small model that routes or filters before the main model runs).
-///
-/// Reserved: no producer exists yet, so [`RequestBreakdown::decision`] is
-/// always `None`. The fields are fixed now so that a producer and the
-/// summaries agree on them from its first record.
+/// Cost of the decision-model inference made on behalf of a request (for
+/// example a small model that re-ranks tool search results before the main
+/// model sees them): everything asked since the previous request.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecisionInference {
     /// Decision-model inference calls made for the request.
@@ -121,6 +123,35 @@ pub struct DecisionInference {
     /// Number of items scored in one batch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<u32>,
+}
+
+/// What one decision point did with a decision model's answer: accepted it,
+/// or abstained and why. Recorded for every decision, so a tool that was
+/// picked or a chunk that was left out can be explained from the trajectory.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionTraceRecord {
+    /// The decision point's policy label.
+    pub policy: String,
+    /// SHA-256 of the state and questions that were asked, hex. Identifies
+    /// the inputs without storing them.
+    pub inputs_digest: String,
+    /// `accept` or `abstain`.
+    pub verdict: String,
+    /// What was accepted: the chosen option, for an `accept`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<String>,
+    /// Why the policy abstained, for an `abstain`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abstain_reason: Option<String>,
+    /// The model that answered, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    /// An accepted answer could only advise.
+    #[serde(default)]
+    pub advisory_only: bool,
+    /// Whether the verdict changed behaviour (false in shadow mode).
+    #[serde(default)]
+    pub applied: bool,
 }
 
 /// Where the input tokens of one model request went.
@@ -174,9 +205,14 @@ pub struct RequestBreakdown {
     /// Tool-execution counters at this request.
     #[serde(default)]
     pub tool_activity: ToolActivity,
-    /// Decision-model inference cost; reserved, see [`DecisionInference`].
+    /// Decision-model inference cost, see [`DecisionInference`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<DecisionInference>,
+    /// What the decision points did since the previous request. Carried by
+    /// the event; a trajectory stores them under [`STEP_DECISIONS_EXTRA_KEY`]
+    /// rather than inside the ledger record.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision_trace: Vec<DecisionTraceRecord>,
     /// Wall time from sending the request to the end of the response.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wall_ms: Option<u64>,

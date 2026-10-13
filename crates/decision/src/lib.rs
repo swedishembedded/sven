@@ -35,6 +35,7 @@ mod provider;
 mod question;
 mod result;
 mod runtime;
+pub mod telemetry;
 
 pub use batch::{decide_batched, Batched};
 pub use cache::{CacheKey, DecisionCache};

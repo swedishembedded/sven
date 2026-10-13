@@ -167,6 +167,10 @@ pub struct DecisionResult {
     pub max_input_tokens: Option<u32>,
     /// Some state was cut to fit the model's context.
     pub state_truncated: bool,
+    /// The answer came from the provider's cache of identical decisions; no
+    /// inference ran for this call.
+    #[serde(default)]
+    pub cached: bool,
     /// Question kinds the model declined.
     pub unsupported_kinds: Vec<QuestionKind>,
     /// One per question, in request order.
@@ -185,6 +189,7 @@ impl DecisionResult {
             latency: Duration::ZERO,
             max_input_tokens: None,
             state_truncated: false,
+            cached: false,
             unsupported_kinds: Vec::new(),
             answers: answers
                 .into_iter()

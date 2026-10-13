@@ -19,7 +19,10 @@
 use anyhow::{Context, Result};
 use atif::{StepMetrics, TraceStep, Trajectory};
 use serde_json::{Map, Value};
-use sven_vocab::{LedgerSummary, RequestBreakdown, ToolActivity, STEP_METRICS_EXTRA_KEY};
+use sven_vocab::{
+    DecisionTraceRecord, LedgerSummary, RequestBreakdown, ToolActivity, STEP_DECISIONS_EXTRA_KEY,
+    STEP_METRICS_EXTRA_KEY,
+};
 
 /// Add one request's record to a step's metrics, creating them if needed.
 pub fn record_request(metrics: &mut Option<StepMetrics>, request: &RequestBreakdown) {
@@ -36,12 +39,48 @@ pub fn record_request(metrics: &mut Option<StepMetrics>, request: &RequestBreakd
     let Some(object) = extra.as_object_mut() else {
         return;
     };
+    // The decision traces live beside the ledger record, not inside it: the
+    // ledger stays the token account it always was.
+    let mut ledger_record = request.clone();
+    let traces = std::mem::take(&mut ledger_record.decision_trace);
     let records = object
         .entry(STEP_METRICS_EXTRA_KEY)
         .or_insert_with(|| Value::Array(Vec::new()));
     if let Some(records) = records.as_array_mut() {
-        records.push(serde_json::to_value(request).expect("a breakdown always serializes"));
+        records.push(serde_json::to_value(&ledger_record).expect("a breakdown always serializes"));
     }
+    if !traces.is_empty() {
+        let stored = object
+            .entry(STEP_DECISIONS_EXTRA_KEY)
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(stored) = stored.as_array_mut() {
+            stored.extend(
+                traces
+                    .iter()
+                    .map(|t| serde_json::to_value(t).expect("a trace record always serializes")),
+            );
+        }
+    }
+}
+
+/// The decision traces recorded in one step, in the order they happened.
+///
+/// # Errors
+///
+/// Fails when a record is present but is not a [`DecisionTraceRecord`].
+pub fn decisions_in_step(step: &TraceStep) -> Result<Vec<DecisionTraceRecord>> {
+    step.metrics
+        .as_ref()
+        .and_then(|m| m.extra.as_ref())
+        .and_then(|extra| extra.get(STEP_DECISIONS_EXTRA_KEY))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|record| {
+            serde_json::from_value(record.clone())
+                .with_context(|| format!("step {}: unreadable decision record", step.step_id))
+        })
+        .collect()
 }
 
 /// The requests recorded in one step, in order. A step without ledger
@@ -174,6 +213,46 @@ mod tests {
         assert_eq!(s.user, 25);
         assert_eq!(s.input, 57);
         assert_eq!((s.tool_calls, s.duplicate_tool_calls), (3 + 2 + 5, 1 + 2));
+    }
+
+    #[test]
+    fn decision_traces_are_stored_beside_the_ledger_and_not_inside_it() {
+        let mut r = request(10, 20, 1, 0);
+        r.decision_trace = vec![
+            DecisionTraceRecord {
+                policy: "tool_routing".into(),
+                inputs_digest: "ab12".into(),
+                verdict: "accept".into(),
+                selected: Some("edit_file".into()),
+                applied: true,
+                ..DecisionTraceRecord::default()
+            },
+            DecisionTraceRecord {
+                policy: "tool_routing".into(),
+                inputs_digest: "cd34".into(),
+                verdict: "abstain".into(),
+                abstain_reason: Some("near_tie".into()),
+                ..DecisionTraceRecord::default()
+            },
+        ];
+        let mut metrics = None;
+        record_request(&mut metrics, &r);
+        record_request(&mut metrics, &request(1, 1, 0, 0));
+        let step = TraceStep {
+            metrics,
+            ..TraceStep::new(1, StepOrigin::Agent, "reply")
+        };
+        let extra = step.metrics.as_ref().unwrap().extra.as_ref().unwrap();
+        assert!(extra[STEP_METRICS_EXTRA_KEY][0]
+            .get("decision_trace")
+            .is_none());
+        assert_eq!(extra[STEP_DECISIONS_EXTRA_KEY].as_array().unwrap().len(), 2);
+
+        let traces = decisions_in_step(&step).unwrap();
+        assert_eq!(traces.len(), 2);
+        assert_eq!(traces[0].selected.as_deref(), Some("edit_file"));
+        assert_eq!(traces[1].abstain_reason.as_deref(), Some("near_tie"));
+        assert_eq!(requests_in_step(&step).unwrap().len(), 2);
     }
 
     #[test]

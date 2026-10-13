@@ -40,7 +40,7 @@ records read each other.
 | `reported` | what the provider reported for the request, summed over its usage reports: `input`, `output`, `cache_read`, `cache_write`; absent when it reported nothing |
 | `residual` | `reported` logical prompt minus `estimated_total`; positive means the estimator undercounts; absent exactly when `reported` is |
 | `tool_activity` | `calls` and `duplicate_calls` over the tool calls in the history sent with this request; `retries` and `errors` are reserved and absent |
-| `decision` | reserved for decision-model inference (`calls`, `latency_ms`, `model_id`, `load_time_ms`, `batch_size`); never populated today |
+| `decision` | the decision-model inference the request's context was shaped by, since the previous request: `calls` (cache hits are not calls), `latency_ms` (wall time waited), `model_id`, `batch_size` (the most questions one call carried); `load_time_ms` stays empty because the provider does not report it. Absent when no decision ran. See [decisions](decisions.md) |
 | `wall_ms` | time from sending the request to the end of its response |
 
 Three notions of prompt size are kept apart. The **logical prompt** is
@@ -84,6 +84,15 @@ up as a positive residual rather than as a hidden correction.
   trajectory embedded in it (`sven_session_store::step_ledger::summarize`) and
   prints a table, or with `--json` a `sven_vocab::LedgerSummary`. A trajectory
   recorded before the ledger existed is reported as holding none, not as zeros.
+
+The decision traces of a step are saved beside the ledger, under
+`metrics.extra.sven_decisions` (an array in the order the decisions happened):
+for each acceptance or abstention, the policy label, a SHA-256 of the state and
+questions asked (`inputs_digest`), `verdict` (`accept` or `abstain`), what was
+`selected` or why it abstained (`abstain_reason`), the `model_id`, whether the
+answer was `advisory_only`, and whether it was `applied` (false in shadow
+mode). A tool that was promoted, or one that was not, can be explained from the
+trajectory alone. A ledger record in the trajectory never contains them.
 
 A saved record is never rewritten: a reader that meets an unreadable record
 reports an error rather than skipping it.

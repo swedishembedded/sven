@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use crate::brain::BrainProvider;
 use crate::config::{DecisionConfig, DecisionMode, Feature, PolicyMode};
+use crate::telemetry::DecisionTelemetry;
 use crate::DecisionError;
 
 /// The decision state of a session. Built from the configuration; contacts
@@ -24,6 +25,7 @@ pub struct DecisionRuntime {
     config: DecisionConfig,
     provider: Option<Arc<BrainProvider>>,
     diagnosed: AtomicBool,
+    telemetry: Arc<DecisionTelemetry>,
 }
 
 impl DecisionRuntime {
@@ -44,6 +46,7 @@ impl DecisionRuntime {
             config,
             provider,
             diagnosed: AtomicBool::new(false),
+            telemetry: Arc::default(),
         })
     }
 
@@ -54,6 +57,7 @@ impl DecisionRuntime {
             config: DecisionConfig::default(),
             provider: None,
             diagnosed: AtomicBool::new(false),
+            telemetry: Arc::default(),
         }
     }
 
@@ -80,6 +84,12 @@ impl DecisionRuntime {
     #[must_use]
     pub fn shadow(&self) -> bool {
         self.config.policy.mode == PolicyMode::Shadow
+    }
+
+    /// The session's account of what decisions cost and became of.
+    #[must_use]
+    pub fn telemetry(&self) -> &Arc<DecisionTelemetry> {
+        &self.telemetry
     }
 
     /// How long one decision may take.

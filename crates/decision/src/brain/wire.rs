@@ -215,6 +215,7 @@ pub(super) fn decode_decide(
             .and_then(|f| f.get("state_truncated"))
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        cached: false,
         unsupported_kinds: flags
             .and_then(|f| f.get("unsupported_question_types"))
             .and_then(Value::as_array)
