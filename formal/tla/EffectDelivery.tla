@@ -154,23 +154,21 @@ TypeOK ==
 \* The machine is never left waiting for an answer that no longer exists: it
 \* has an event in hand, or an effect still running that will produce one.
 \*
-\* TODAY'S KERNEL DOES NOT SATISFY THIS. `EffectDeliveryAsShipped.cfg` keeps
-\* it failing rather than leaving it implied. Closing it is real work rather
-\* than a missing `if`: the machine has to be TOLD, which means a refusal
-\* event in `sven_vocab::SessionEvent` that every machine can act on, and a
-\* decision about what a machine that ignores it should then do. A refusal
-\* that only reaches the audit trail and the observation plane reaches nobody
-\* who can do anything about it.
+\* The kernel once did not satisfy this: a refused non-tool batch reached only
+\* the audit trail and the observation plane, which reach nobody who can act
+\* on it. It does now - each refused effect a machine may wait on is answered
+\* with `sven_kernel::failure_event` - so `EffectDeliveryAsShipped.cfg` must
+\* pass, and `EffectDeliveryUnanswered.cfg` pins the old design failing.
 NoSilentStall ==
     ~(pc = "ran" /\ waiting /\ ~inbox /\ "await" \notin executed)
 
 \* An effect the policy allows runs, even when another effect of the same
 \* dispatch was refused.
 \*
-\* The kernel deliberately does not satisfy this for non-tool effects, and the
-\* comment in `run_effects` says why: it treats the batch as one indivisible
-\* intent, so a dispatch that wanted to roll back AND ask the model what to do
-\* next does neither rather than half of it. The cost is what
+\* The kernel deliberately does not satisfy this for non-tool effects, because
+\* `run_effects` treats their batch as one indivisible intent, so a dispatch
+\* that wanted to roll back AND ask the model what to do next does neither
+\* rather than half of it. The cost is what
 \* `EffectDeliveryPerEffect.cfg` measures: per-effect gating -- what the tool
 \* path already does -- keeps the innocent effect alive.
 InnocentEffectSurvivesARefusal ==
