@@ -30,6 +30,7 @@ mod mode_policy;
 pub mod modes;
 pub mod registry;
 pub mod runtime_builder;
+mod session_executor;
 pub mod session_handles;
 pub mod supervisor;
 pub mod task_tool;

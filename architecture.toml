@@ -315,7 +315,7 @@ path = "crates/tui/src/app/chat_ops.rs"
 lines = 1164
 [[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
-lines = 1025
+lines = 985
 [[allow.large_file]]
 path = "crates/mcp-client/src/manager.rs"
 lines = 1016

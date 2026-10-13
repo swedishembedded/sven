@@ -22,16 +22,12 @@
 //! let question = channels.question_rx.recv().await;
 //! ```
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::Config;
+use sven_executors::user::{ApprovalRequest, UserQuestion};
 use sven_executors::ThreadStore;
-use sven_executors::{
-    user::{ApprovalRequest, UserQuestion},
-    CompositeExecutorBuilder, ToolExecutor, TurnExecutor,
-};
 use sven_hsm::{Context, ObservationSink, Principal, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, ErasedRuntime};
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
@@ -46,6 +42,7 @@ use tracing::{info, warn};
 
 use crate::context::{BuiltinTools, RuntimeContext, ToolSetProfile};
 use crate::registry::{build_tool_registry_with_integrations, IntegrationProviders};
+use crate::session_executor::{self, ExecutorParts, UserGates};
 use crate::task_tool::ChildApprover;
 
 /// Builds the executor installed in the composite's **tool slot** (`CallTool`),
@@ -743,14 +740,6 @@ impl RuntimeBuilder {
         #[cfg(feature = "memory")]
         let parked_tx = crate::session_handles::spawn_parked_question_ledger();
 
-        // ── Audit log path ────────────────────────────────────────────────────
-        let audit_log_path: PathBuf = self
-            .runtime_ctx
-            .project_root
-            .as_ref()
-            .map(|r| r.join(".sven").join("audit.jsonl"))
-            .unwrap_or_else(|| PathBuf::from(".sven/audit.jsonl"));
-
         // Shared mirror of the kernel's audit trail: the runtime syncs it
         // around every dispatch and then executes `PersistAudit` itself, so
         // the AuditExecutor flushes the full hash-chained records after each
@@ -765,104 +754,46 @@ impl RuntimeBuilder {
         // per-tenant views can be filtered out of the log.
         let audit_trail = sven_hsm::AuditTrailHandle::new();
 
-        // ── Verifier root ─────────────────────────────────────────────────────
-        let verify_root: PathBuf = self
-            .runtime_ctx
-            .project_root
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("."));
-
         // ── Assemble executor ─────────────────────────────────────────────────
         let cancel_handle = self
             .cancel_handle
             .clone()
             .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(None)));
 
-        // Parallel-execution fan-out: in SDLC mode install a child spawner so
-        // the kernel can service `Effect::InstantiateSubmachine` by running each
-        // decomposed task as an isolated concurrent child kernel. A session
-        // with registered harness documents installs it too: a harness's
-        // `delegate` and `parallel` steps emit the same effect and their
-        // children resolve through the session's registry.
-        let is_sdlc = self.mode.as_str() == "sdlc";
-        let child_spawner: Option<Arc<dyn sven_kernel::ChildSpawner>> =
-            if is_sdlc || !self.harnesses.is_empty() {
-                Some(Arc::new(
-                    crate::child_spawner::SdlcChildSpawner::new(
-                        model.clone(),
-                        Arc::clone(&self.config),
-                        Arc::clone(&tool_registry),
-                    )
-                    .with_harnesses(Arc::clone(&self.harnesses))
-                    .with_gates(
-                        question_tx.clone(),
-                        approval_tx.clone(),
-                        self.approval_mode,
-                    ),
-                ))
-            } else {
-                None
-            };
-
-        // ── TurnExecutor (kernel-native single-turn LLM+tools loop) ──────────
-        // All modes now use TurnExecutor for kind="turn" effects.
-        // Clone the Arcs so ToolExecutor can share the same backing store and
-        // call-id registry — tool results must be appended under the exact thread
-        // and with the original LLM-assigned call id before the continuation call.
-        let turn_executor = TurnExecutor::new(
-            model.clone(),
-            None,
-            Arc::clone(&tool_registry),
-            Arc::clone(&conv_store),
-            Arc::clone(&call_id_to_thread),
-            cancel_handle.clone(),
-        )
-        .with_no_tools(runtime.no_tools)
-        .with_compaction_config(self.config.agent.compaction())
-        .with_turn_limits(self.config.agent.turn_limits());
-
-        // A caller-supplied executor (see `with_effect_executor`) replaces the
-        // default composite wholesale; otherwise wire the default composite,
-        // substituting only the tool slot when a tool-executor override is set
-        // (see `with_tool_executor_override`).
-        let executor: Box<dyn EffectExecutor> = match self.effect_executor {
-            Some(custom) => custom,
-            None => {
-                let user_executor = sven_executors::UserExecutor::new(question_tx, approval_tx)
-                    .with_approval_mode(self.approval_mode)
-                    .with_preapproval(crate::mode_policy::preapproval(&self.config.tools));
-                #[cfg(feature = "memory")]
-                let user_executor = user_executor.with_parked_questions(parked_tx);
-                let base = CompositeExecutorBuilder::default()
-                    .with_user_slot(Box::new(user_executor))
-                    .with_timers(Arc::new(sven_kernel::SystemClock::new()))
-                    .with_audit_trail(audit_log_path, audit_trail.clone())
-                    .with_turn(turn_executor)
-                    // Same root every other effect that touches the
-                    // filesystem uses; only the verified-task machine's
-                    // `Verifying` state ever emits `Effect::Verify` (see its
-                    // `permission_policy`), so wiring it here unconditionally
-                    // is harmless for every other mode.
-                    .with_verify(verify_root);
-                let composed = match self.tool_executor_override.take() {
-                    Some(factory) => base.with_tool_slot(factory(
-                        Arc::clone(&conv_store),
-                        Arc::clone(&call_id_to_thread),
-                    )),
-                    None => base.with_tool_executor(
-                        ToolExecutor::with_shared_store(
-                            tool_registry,
-                            Default::default(),
-                            Arc::clone(&call_id_to_thread),
-                            Arc::clone(&conv_store),
-                        )
-                        .with_no_tools(runtime.no_tools)
-                        .with_tool_result_token_cap(self.config.agent.tool_result_token_cap),
-                    ),
-                };
-                Box::new(composed.build())
-            }
+        let gates = UserGates {
+            questions: question_tx,
+            approvals: approval_tx,
+            approval_mode: self.approval_mode,
         };
+        let child_spawner = session_executor::child_spawner(
+            &self.mode,
+            &self.harnesses,
+            &model,
+            &self.config,
+            &tool_registry,
+            &gates,
+        );
+
+        // The default composite wires every effect kind; a caller-supplied
+        // executor (see `with_effect_executor`) replaces it wholesale.
+        let executor = session_executor::compose(
+            self.effect_executor,
+            ExecutorParts {
+                gates,
+                model: model.clone(),
+                config: Arc::clone(&self.config),
+                tool_registry,
+                conv_store: Arc::clone(&conv_store),
+                call_id_to_thread: Arc::clone(&call_id_to_thread),
+                cancel_handle,
+                no_tools: runtime.no_tools,
+                project_root: self.runtime_ctx.project_root.clone(),
+                audit_trail: audit_trail.clone(),
+                #[cfg(feature = "memory")]
+                parked_tx,
+                tool_executor_override: self.tool_executor_override.take(),
+            },
+        );
 
         // ── Spawn runtime ─────────────────────────────────────────────────────
         // Seed the parallel-execution flag so the SDLC machine only fans out
