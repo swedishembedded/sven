@@ -78,3 +78,10 @@ fails the suite rather than failing in production.
 
 **A machine must keep durable state in `Context`, not in its own fields.** A
 field is not captured by a snapshot and will silently revert on resume.
+
+Session state the kernel itself owns is in `Context` for the same reason. The
+tools the model has loaded under deferred tool disclosure are
+`Context::active_tools`: an ordered, append-only list that a snapshot restores
+and a replay of the recorded `Event::ToolsActivated` events rebuilds, so a
+resumed agent is offered the same tool definitions in the same order as the
+one that was suspended (see [tool-disclosure.md](tool-disclosure.md)).

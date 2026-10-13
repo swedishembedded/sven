@@ -203,6 +203,7 @@ impl HarnessMachine {
             instruction: instruction.as_str().unwrap_or_default().to_string(),
             tools: Vec::new(),
             all_tools_mode: String::new(),
+            active_tools: Vec::new(),
             schema,
             schema_name: name,
             model: None,

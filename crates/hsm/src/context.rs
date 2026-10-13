@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::audit::{AuditRecord, ToolAuditRecord};
+use crate::effect::Effect;
 use crate::ids::{ApprovalId, QuestionId, ToolCallId};
 use crate::permissions::ToolCapability;
 
@@ -137,6 +138,16 @@ pub struct Context {
     /// Approved calls, consulted by the permission gate.
     #[serde(default)]
     pub permissions: PermissionState,
+    /// Tools whose full definitions the model asked for, in the order it
+    /// asked.
+    ///
+    /// Session state, so a snapshot restores it and a replay rebuilds it.
+    /// The set only grows and never reorders: a provider reuses its cached
+    /// prefix only while the tool list it saw is a prefix of the new one.
+    /// Grown by [`crate::event::Event::ToolsActivated`]; copied onto every model request a
+    /// machine emits (see [`Context::stamp_active_tools`]).
+    #[serde(default)]
+    pub active_tools: Vec<String>,
     /// Append-only audit trail of every dispatch (the event-sourcing spine).
     pub audit: Vec<AuditRecord>,
     /// Per-tool-call audit records (start, denied, approval-required, result).
@@ -231,6 +242,38 @@ impl Context {
     #[must_use]
     pub fn is_call_approved(&self, call_id: ToolCallId) -> bool {
         self.permissions.approved_calls.contains(&call_id)
+    }
+
+    /// Adds `names` to [`Context::active_tools`], after the tools already
+    /// there. A name already present keeps its place. Returns how many were
+    /// new.
+    pub fn activate_tools(&mut self, names: &[String]) -> usize {
+        let before = self.active_tools.len();
+        for name in names {
+            if !self.active_tools.contains(name) {
+                self.active_tools.push(name.clone());
+            }
+        }
+        self.active_tools.len() - before
+    }
+
+    /// Copies [`Context::active_tools`] onto `effect` when it is a model
+    /// turn request, so whoever executes the request knows which deferred
+    /// tools to offer without reaching into the context. Any other effect is
+    /// left as it is.
+    pub fn stamp_active_tools(&self, effect: &mut Effect) {
+        let Effect::CallLlm { request } = effect else {
+            return;
+        };
+        if !sven_vocab::TurnRequest::is_turn(request) {
+            return;
+        }
+        if let Some(object) = request.as_object_mut() {
+            object.insert(
+                sven_vocab::turn::ACTIVE_TOOLS_KEY.to_string(),
+                Value::from(self.active_tools.clone()),
+            );
+        }
     }
 
     /// Increments and returns the retry counter under `key`.

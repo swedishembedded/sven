@@ -11,6 +11,10 @@ use serde_json::Value;
 /// The JSON `kind` tag that selects the single-turn streaming engine.
 pub const TURN_KIND: &str = "turn";
 
+/// The key under which a turn request carries the session's loaded tools; the
+/// serialised name of [`TurnRequest::active_tools`].
+pub const ACTIVE_TOOLS_KEY: &str = "active_tools";
+
 /// A request for the HSM to run a **single streaming turn**: stream the model
 /// against a conversation thread, collect proposed tool calls, and post
 /// `sven_hsm::Event::LlmTurnComplete` back to the machine.
@@ -46,6 +50,15 @@ pub struct TurnRequest {
     /// name (e.g. `"agent"`, `"code"`) via `ToolRegistry::schemas_for_mode`.
     #[serde(default)]
     pub all_tools_mode: String,
+    /// Tools the session has loaded, in load order, on top of whatever the
+    /// request's `tools` or `all_tools_mode` selects.
+    ///
+    /// Not set by machines: the kernel copies the session's loaded-tool set
+    /// onto every turn request as it leaves a transition (see
+    /// `Context::active_tools`), so a machine neither tracks nor forgets it.
+    /// Meaningful only when tools are disclosed on demand.
+    #[serde(default)]
+    pub active_tools: Vec<String>,
     /// Optional JSON Schema for structured output (name under `schema_name`).
     #[serde(default)]
     pub schema: Value,

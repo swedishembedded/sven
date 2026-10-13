@@ -132,6 +132,21 @@ pub enum Event {
         error: String,
     },
 
+    /// A tool call asked for tools to be offered to the model in full from
+    /// now on (the discovery tool's `load`).
+    ///
+    /// Posted by the tool executor just before the call's own
+    /// `ToolSucceeded`, so the continuation turn that follows sees the new
+    /// set. The kernel applies it to [`crate::Context::active_tools`] ahead
+    /// of the machine; a machine has nothing to do for it. Recording it as an
+    /// event is what lets a replay rebuild the set. It grants nothing: a
+    /// loaded tool is called, gated and audited like any other.
+    ToolsActivated {
+        /// The tools to add, in the order they were asked for. Names already
+        /// loaded are ignored.
+        names: Vec<String>,
+    },
+
     /// The permission gate requires approval before a tool call can proceed.
     ///
     /// Emitted by `run_effects` when a `CallTool` effect classifies as
@@ -328,6 +343,7 @@ impl Event {
             Event::DeliberationComplete { .. } => EventKind::DeliberationComplete,
             Event::ToolSucceeded { .. } => EventKind::ToolSucceeded,
             Event::ToolFailed { .. } => EventKind::ToolFailed,
+            Event::ToolsActivated { .. } => EventKind::ToolsActivated,
             Event::ToolApprovalRequired { .. } => EventKind::ToolApprovalRequired,
             Event::HumanApproved { .. } => EventKind::HumanApproved,
             Event::HumanRejected { .. } => EventKind::HumanRejected,
@@ -378,6 +394,8 @@ pub enum EventKind {
     ToolSucceeded,
     /// See [`Event::ToolFailed`].
     ToolFailed,
+    /// See [`Event::ToolsActivated`].
+    ToolsActivated,
     /// See [`Event::ToolApprovalRequired`].
     ToolApprovalRequired,
     /// See [`Event::HumanApproved`].

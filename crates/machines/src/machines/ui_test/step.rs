@@ -130,6 +130,7 @@ pub fn compile_step_effect(step_text: &str, known_vars: &[String]) -> Effect {
             instruction,
             tools: vec![],
             all_tools_mode: String::new(),
+            active_tools: Vec::new(),
             schema: step_schema(),
             schema_name: "ui_test_step".to_string(),
             model: None,

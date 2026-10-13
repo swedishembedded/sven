@@ -257,6 +257,12 @@ impl<M: Machine> Hsm<M> {
         let event_kind = event.kind();
         let active = self.state;
 
+        // Session state the kernel owns, applied before any machine sees the
+        // event so a machine that reacts to it already reads the new value.
+        if let Event::ToolsActivated { names } = event {
+            ctx.activate_tools(names);
+        }
+
         // --- Phase 1: walk the Super chain to find the handling state. ---
         let mut source = active;
         let mut reaction = self.machine.dispatch_state(source, event, ctx);
@@ -333,6 +339,10 @@ impl<M: Machine> Hsm<M> {
         // attributed to the session principal when one is set.
         outcome.audit.stamp_principal(ctx.principal.as_ref());
         ctx.audit.push(outcome.audit.clone());
+        outcome
+            .effects
+            .iter_mut()
+            .for_each(|effect| ctx.stamp_active_tools(effect));
         outcome
     }
 
