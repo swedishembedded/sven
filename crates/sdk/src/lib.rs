@@ -58,7 +58,10 @@ pub use agent::Agent;
 pub use atif;
 pub use engine::{ApprovalPolicy, Engine, EngineBuilder, Toolset};
 pub use error::CallError;
-pub use harness::{Harness, HarnessCheckpoint, HarnessFailure, HarnessOutcome, HarnessRun};
+pub use harness::{
+    Harness, HarnessCheckpoint, HarnessFailure, HarnessOutcome, HarnessRecording, HarnessReplay,
+    HarnessRun,
+};
 pub use method::{Method, Strategy};
 pub use run::{CancelToken, Question, RunConclusion, RunOptions, RunOutcome, Usage};
 /// The schema derive a [`Method`]'s return type needs (`#[derive(JsonSchema)]`),
@@ -66,7 +69,16 @@ pub use run::{CancelToken, Question, RunConclusion, RunOptions, RunOutcome, Usag
 pub use schemars;
 pub use state::AgentState;
 pub use sven_bootstrap::session_handles::HumanGate;
+pub use sven_harness_runtime::TraceRecord;
+pub use sven_vocab::HarnessEvent;
 pub use transcript::{ToolCallRecord, Turn};
+
+/// The compiled form of a harness: what [`Harness::plan`] returns, so a
+/// caller can name its steps, limits and declared types without depending
+/// on a crate behind the facade.
+pub mod harness_plan {
+    pub use sven_harness_spec::{HarnessPlan, IOType, PlanLimits, PlanPrimitive, PlanStep};
+}
 
 /// Sven's configuration - which model, which provider, which limits.
 ///

@@ -31,6 +31,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sven_harness_runtime::{HarnessMachine, HarnessRegistry};
 use sven_harness_spec::{HarnessBundle, HarnessPlan};
@@ -39,8 +40,12 @@ use sven_hsm::Snapshot;
 use crate::engine::Engine;
 use crate::error::CallError;
 
+mod outcome;
+mod record;
 mod run;
+mod trajectory;
 
+pub use record::{HarnessRecording, HarnessReplay};
 pub use run::{HarnessFailure, HarnessOutcome, HarnessRun};
 
 impl Engine {
@@ -154,7 +159,10 @@ pub struct Harness {
 
 /// A suspended harness run: the kernel snapshot, pinned to the plan (and,
 /// for a bundle run, the bundle) it was taken under.
-#[derive(Clone)]
+///
+/// Serializes to JSON, so a host can store a checkpoint and resume it in
+/// another process.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HarnessCheckpoint {
     pub(crate) snapshot: Snapshot,
     /// The digest of the plan the run ran under.

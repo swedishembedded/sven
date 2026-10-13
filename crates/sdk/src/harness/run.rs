@@ -19,6 +19,8 @@ use sven_hsm::{Context, EffectKind, Event, Snapshot};
 use sven_vocab::{HarnessEvent, SessionEvent};
 use tokio::sync::broadcast;
 
+use super::record::{start_checkpoint, Recorder};
+use super::trajectory::Evidence;
 use super::HarnessCheckpoint;
 use crate::agent::ask_through;
 use crate::engine::Engine;
@@ -46,26 +48,30 @@ const HARNESS_MODE: &str = "agent";
 /// independent: many can be in flight through one engine at once.
 pub struct HarnessRun {
     engine: Engine,
-    plan: Arc<HarnessPlan>,
+    pub(super) plan: Arc<HarnessPlan>,
     /// A fresh run's inputs (unset for a resumed one - the restored run
     /// state carries them).
-    inputs: Value,
+    pub(super) inputs: Value,
     /// The bundle a fresh run builds from, when the harness carries
     /// helpers: the helpers travel with the run and the run pins the
     /// bundle's digest.
     bundle: Option<Arc<HarnessBundle>>,
     /// The pinned bundle digest (unset for a document-only harness and a
     /// resumed run, whose snapshot state carries its own).
-    bundle_digest: Option<String>,
+    pub(super) bundle_digest: Option<String>,
     /// The id this run's events are published under.
-    run_id: String,
+    pub(super) run_id: String,
     /// The machine a resume starts from, with its policy and snapshot.
     restored: Option<RestoredMachine>,
     events: broadcast::Sender<SessionEvent>,
     trace_tx: broadcast::Sender<TraceRecord>,
     /// The checkpoint of a run stopped by a bound, after [`Self::execute`].
     checkpoint: Option<HarnessCheckpoint>,
-    executed: bool,
+    pub(super) executed: bool,
+    /// The input log, when recording is on (see `record.rs`).
+    pub(super) recorder: Option<Recorder>,
+    /// What the trajectory is built from, after [`Self::execute`].
+    pub(super) evidence: Option<Evidence>,
 }
 
 struct RestoredMachine {
@@ -135,6 +141,8 @@ impl HarnessRun {
             trace_tx: broadcast::channel(256).0,
             checkpoint: None,
             executed: false,
+            recorder: None,
+            evidence: None,
         }
     }
 
@@ -250,7 +258,14 @@ impl HarnessRun {
         // The machine and the policy it answers for. A fresh run's policy is
         // the plan's declared capabilities; a resumed run's comes with the
         // machine.
-        let (machine, policy) = match resumed {
+        let start = self
+            .recorder
+            .as_ref()
+            .zip(resumed.as_ref())
+            .map(|(_, restored)| {
+                start_checkpoint(&self.plan.digest, &self.run_id, &restored.snapshot)
+            });
+        let (mut machine, policy) = match resumed {
             Some(restored) => {
                 builder = builder.with_kernel_snapshot(restored.snapshot.clone());
                 (restored.machine, restored.policy)
@@ -272,6 +287,9 @@ impl HarnessRun {
                 )
             }
         };
+        if let Some(recorder) = self.recorder.as_mut() {
+            machine = recorder.attach(machine, start);
+        }
         builder = builder.with_machine(machine, policy);
 
         let session = builder
@@ -468,13 +486,22 @@ impl HarnessRun {
                 run_id: self.run_id.clone(),
             });
         }
-        Ok(HarnessOutcome {
+        let outcome = HarnessOutcome {
             conclusion: stopped.unwrap_or(RunConclusion::Success),
             result,
             usage,
             trace: run_state.trace,
             steps: run_state.counts.steps,
-        })
+        };
+        let bundle = run_state.bundle_digest.as_deref();
+        self.evidence = Some(Evidence::capture(
+            &self.engine,
+            &self.plan,
+            &session.handle,
+            &outcome,
+            bundle,
+        ));
+        Ok(outcome)
     }
 }
 
@@ -558,7 +585,10 @@ fn publish_trace(
 /// The verdict a finished run reported, read off its terminal state and
 /// its outcome fact. `None` when the run has no verdict: a bound stopped
 /// it first.
-fn outcome_of(state_label: &str, outcome: Option<&Value>) -> Option<Result<Value, HarnessFailure>> {
+pub(super) fn outcome_of(
+    state_label: &str,
+    outcome: Option<&Value>,
+) -> Option<Result<Value, HarnessFailure>> {
     match state_label {
         "Completed" => Some(Ok(outcome.cloned().unwrap_or(Value::Null))),
         "Failed" => {
