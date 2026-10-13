@@ -61,8 +61,8 @@ configurations is no longer a mathematical object, no statement of the form
 "the system can never be in a state where X" can be made, let alone checked.
 
 The folklore remedy is a state machine, and the literature is mature:
-statecharts introduced hierarchy to tame state explosion, and production
-frameworks have refined the implementation technique for four decades. Yet
+statecharts introduced hierarchy to tame state explosion [1], and production
+frameworks have refined the implementation technique ever since [2]. Yet
 large-scale *applications* of hierarchical state machines remain rare outside
 embedded systems, and the practice of scaling them - adding machines, modes,
 submachines, surfaces and years of change without decay - is nowhere
@@ -114,39 +114,43 @@ boundary of what is proved is stated as carefully as what is proved inside it
 
 # Background and related work
 
-**Statecharts and hierarchical state machines.** Harel's statecharts
+**Statecharts and hierarchical state machines.** Harel's statecharts [1]
 extended finite state machines with hierarchy (AND/OR decomposition),
 history and orthogonal regions, and became the basis of UML state machine
-diagrams. Samek's treatment codifies the implementation technique - the
-function-handler HSM, behavioural inheritance and the LCA exit/entry
-discipline - that production embedded systems still use, and states the
-run-to-completion rules this paper formalises. The present paper inherits
+diagrams [4]. Samek's treatment [2] codifies the implementation
+technique - the function-handler HSM, behavioural inheritance and the LCA
+exit/entry discipline - that production embedded systems still use, and
+states the run-to-completion rules this paper formalises. The present paper inherits
 that theory; its contribution is the methodology of applying it at
 application scale, in a language with algebraic data types, and under
 mechanical validation.
 
-**The active object model.** The actor model introduced encapsulated
+**The active object model.** The actor model [6] introduced encapsulated
 concurrent entities communicating only by messages. The active object model
 used here is the deterministic, real-time refinement of that idea: one
 thread of control per machine, a private event queue, and run-to-completion
-dispatch, as codified in the Quantum Platform framework literature. The
-kernel in this paper is a tokio realization of the same model: a single
-consumer task draining one queue (Section 4.4).
+dispatch, as codified in the Quantum Platform framework literature [2].
+Erlang/OTP's `gen_statem` behaviour [9] offers the same per-process,
+one-event-at-a-time discipline in an actor language. The kernel in this
+paper is a tokio realization of the same model: a single consumer task
+draining one queue (Section 4.4).
 
 **Typed effects and purity boundaries.** Separating decision from effect has
-precursors in capability-based security, in the effect systems of functional
-programming, and in the "functional core, imperative shell" idiom. The
+precursors in capability-based security [7], in the effect systems of
+functional programming, and in the "functional core, imperative shell" idiom. The
 design here makes the separation structural rather than conventional:
 transitions *cannot* perform I/O because the pure core has no dependency
 edge to any transport, and the permission gate is the single place the
 kernel passes between proposing and doing.
 
-**Formal validation.** Lamport's TLA+ and its TLC model checker specify and
-check systems as state machines with invariants; the checking literature
-establishes what exhaustive finite-state exploration can and cannot show.
-Proof assistants (Coq, Isabelle, Lean) carry heavier machinery for theorems
-about unbounded data. The methodology in Section 6 takes a position about
-which weight class a control-flow kernel belongs in, and supports it with
+**Formal validation.** Lamport's TLA+ and its TLC model checker [3]
+specify and check systems as state machines with invariants, in line with
+Lamport's broader view of computation as state machines described in
+ordinary mathematics [8]; the model-checking literature [5] establishes
+what exhaustive finite-state exploration can and cannot show. Proof
+assistants such as Isabelle/HOL [10] and Lean [11] carry heavier machinery
+for theorems about unbounded data. The methodology in Section 6 takes a
+position about which weight class a control-flow kernel belongs in, and supports it with
 the observation that the kernel's properties are finitary.
 
 # The mathematical framework
@@ -744,18 +748,23 @@ always deserved.
    for Embedded Systems.* 2nd ed., Newnes, 2008.
 3. L. Lamport. *Specifying Systems: The TLA+ Language and Tools for
    Hardware and Software Engineers.* Addison-Wesley, 2002.
-4. Object Management Group. "OMG Unified Modeling Language (OMG UML),
-   Version 2.5.1." 2017.
+4. Object Management Group. *Unified Modeling Language (UML), Version
+   2.5.1.* OMG document formal/17-12-05, Object Management Group, December
+   2017. https://www.omg.org/spec/UML/2.5.1
 5. C. Baier and J.-P. Katoen. *Principles of Model Checking.* MIT Press,
    2008.
 6. C. Hewitt, P. Bishop and R. Steiger. "A Universal Modular ACTOR
    Formalism for Artificial Intelligence." *IJCAI*, 1973.
-7. J. D. Dennis and E. C. Van Horn. "Programming Semantics for
+7. J. B. Dennis and E. C. Van Horn. "Programming Semantics for
    Multiprogrammed Computations." *Communications of the ACM* 9(3), 1966,
    143-155.
-8. L. Lamport. "Computation and State Machines." *SCIENCE of Computer
-   Programming* 78(3), 2008 (a tutorial sketch of TLA's view of
-   computation as state machines).
-9. Erlang/OTP documentation. "gen_statem." Ericsson AB. (The behaviour
-   module for state machines in Erlang/OTP; the actor-language analogue of
-   the active object model.)
+8. L. Lamport. "Computation and State Machines." Unpublished note,
+   Microsoft Research, April 2008.
+   https://www.microsoft.com/en-us/research/publication/computation-state-machines/
+9. Erlang/OTP documentation. "gen_statem behaviour." Ericsson AB.
+   Experimental since Erlang/OTP 19.0, stable since 20.0. Accessed
+   2026-10-13. https://www.erlang.org/doc/apps/stdlib/gen_statem.html
+10. T. Nipkow, L. C. Paulson and M. Wenzel. *Isabelle/HOL: A Proof
+    Assistant for Higher-Order Logic.* LNCS 2283, Springer, 2002.
+11. L. de Moura and S. Ullrich. "The Lean 4 Theorem Prover and Programming
+    Language." *CADE-28*, LNAI 12699, Springer, 2021, 625-635.
