@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Spec: nothing in the testkit reaches a real model unless the caller opts in
-//! explicitly with a local-model flag AND an endpoint. Without both, a case
-//! that names a live model is skipped, a case without a model gets a model
-//! that only fails, and no shipped sample may ask for a live model except the
-//! one that exists for that purpose.
+//! explicitly with an endpoint (`--model-endpoint`) on the command line.
+//! Without it a case that names a live model is skipped, a case without a
+//! model gets a model that only fails, and no shipped sample may ask for a
+//! live model except the one case that exists for that purpose.
 //!
 //! Swedish Embedded AB implements offline verification for programmable agent
 //! harnesses for its clients. If your team needs expertise in keeping
@@ -39,7 +39,7 @@ fn skipped_reason(status: &CaseStatus) -> &str {
 async fn a_live_case_is_skipped_without_the_opt_in() {
     let (_tmp, dir) = harness_dir(&[("harness.yaml", ROUTING), ("cases/live.yaml", LIVE_CASE)]);
     let report = run_case(&dir, &dir.cases[0], &RunnerOptions::default()).await;
-    assert!(skipped_reason(&report.status).contains("SVEN_HARNESS_LOCAL_MODEL"));
+    assert!(skipped_reason(&report.status).contains("--model-endpoint"));
     assert!(report.run.is_none(), "a skipped case never runs");
 
     let suite = run_suite(&dir, &RunnerOptions::default()).await;
@@ -49,25 +49,18 @@ async fn a_live_case_is_skipped_without_the_opt_in() {
 #[tokio::test]
 async fn a_live_model_needs_an_explicit_endpoint() {
     let (_tmp, dir) = harness_dir(&[("harness.yaml", ROUTING), ("cases/live.yaml", LIVE_CASE)]);
-    let flag_only = RunnerOptions {
-        opt_in: OptIn {
-            local_model: true,
-            endpoint: None,
-        },
-        ..RunnerOptions::default()
-    };
-    let report = run_case(&dir, &dir.cases[0], &flag_only).await;
-    assert!(skipped_reason(&report.status).contains("SVEN_HARNESS_LOCAL_ENDPOINT"));
-
-    let endpoint_only = RunnerOptions {
-        opt_in: OptIn {
-            local_model: false,
-            endpoint: Some("http://127.0.0.1:9".into()),
-        },
-        ..RunnerOptions::default()
-    };
-    let report = run_case(&dir, &dir.cases[0], &endpoint_only).await;
-    assert!(skipped_reason(&report.status).contains("SVEN_HARNESS_LOCAL_MODEL"));
+    for blank in ["", "   "] {
+        let options = RunnerOptions {
+            opt_in: OptIn::live(Some("ollama/qwen3:8b"), blank),
+            ..RunnerOptions::default()
+        };
+        let report = run_case(&dir, &dir.cases[0], &options).await;
+        assert!(
+            skipped_reason(&report.status).contains("--model-endpoint"),
+            "{:?}",
+            report.status
+        );
+    }
 }
 
 #[tokio::test]
@@ -81,31 +74,19 @@ async fn run_once_refuses_a_live_model_without_the_opt_in() {
     let error = run_once(&dir, request)
         .await
         .expect_err("no opt-in, no live model");
-    assert!(error.to_string().contains("opt"), "{error}");
+    assert!(error.to_string().contains("--model-endpoint"), "{error}");
 }
 
 #[test]
-fn the_opt_in_is_read_from_exactly_two_variables() {
-    assert_eq!(
-        OptIn::none(),
-        OptIn {
-            local_model: false,
-            endpoint: None
-        }
-    );
-    let read = |flag: Option<&str>, endpoint: Option<&str>| OptIn::from_vars(flag, endpoint);
-    assert!(read(Some("1"), Some("http://localhost:11434")).is_live_ready());
-    assert!(!read(Some("0"), Some("http://localhost:11434")).is_live_ready());
+fn the_opt_in_is_constructed_only_from_an_explicit_endpoint() {
+    assert!(!OptIn::none().is_live_ready());
+    assert!(!OptIn::default().is_live_ready());
+    assert!(OptIn::live(Some("ollama/qwen3:8b"), "http://localhost:11434").is_live_ready());
+    assert!(OptIn::live(None, "http://localhost:11434").is_live_ready());
     assert!(
-        !read(Some("true"), Some("http://localhost:11434")).is_live_ready(),
-        "only `1` opts in"
-    );
-    assert!(!read(Some("1"), None).is_live_ready());
-    assert!(
-        !read(Some("1"), Some("  ")).is_live_ready(),
+        !OptIn::live(Some("ollama/qwen3:8b"), "  ").is_live_ready(),
         "a blank endpoint is none"
     );
-    assert!(!read(None, None).is_live_ready());
 }
 
 #[tokio::test]
@@ -158,6 +139,11 @@ steps:
                 path.display()
             );
         }
+        assert!(
+            !text.contains("env::var"),
+            "{} reads the environment: the live opt-in is command-line flags only",
+            path.display()
+        );
     }
 }
 

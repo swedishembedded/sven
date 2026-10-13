@@ -80,14 +80,28 @@ pub(crate) async fn run_harness_command(command: &HarnessCommands) -> i32 {
             case,
             no_replay,
             json,
-        } => suites::test(dirs, case.as_deref(), !*no_replay, *json).await,
+            live,
+        } => {
+            suites::test(
+                dirs,
+                case.as_deref(),
+                !*no_replay,
+                *json,
+                request::live_opt_in(live),
+            )
+            .await
+        }
         HarnessCommands::Compare {
             dir_a,
             dir_b,
             cases,
             fail_on_regression,
             json,
-        } => suites::compare(dir_a, dir_b, cases, *fail_on_regression, *json).await,
+            live,
+        } => {
+            let opt_in = request::live_opt_in(live);
+            suites::compare(dir_a, dir_b, cases, *fail_on_regression, *json, opt_in).await
+        }
     };
     outcome.unwrap_or_else(|failure| {
         eprintln!("error: {}", failure.message);

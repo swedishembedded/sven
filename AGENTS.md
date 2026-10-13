@@ -144,7 +144,7 @@ one.
 HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>`:
 
 - The concept comes first (a noun: `build`, `test`, `check`, `docs`, `package`,
-  `release`, `site`, `samples`, `hooks`), the verb or variant comes last, and
+  `release`, `site`, `samples`, `hooks`, `generate`), the verb or variant comes last, and
   there are as many levels as the thing needs, usually two or three. A test or
   sample hierarchy with subdirectories gets one segment per directory level:
   `test/e2e/basic/cli`, `samples/study/svf/run`. Never put the verb or area
@@ -155,7 +155,7 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
   An area target is the default action for its area (`build`, `test`, `check`,
   `docs`, `benchmark`, `papers`: it runs its default set, named in its doc line)
   or, where no default is safe or sensible (`release`, `site`, `package`,
-  `hooks`, `samples`, `test/crate`), it only lists its children and does
+  `hooks`, `samples`, `generate`, `test/crate`), it only lists its children and does
   nothing else. An umbrella of anything that tags, pushes or uploads never
   acts.
 - A set that follows from the tree is generated, never hand-listed: explicit
@@ -187,7 +187,8 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
 | `make check/doc` | `cargo doc`, broken intra-doc links are errors |
 | `make fmt` | Format |
 | `make test/harness` | Every harness suite (one `test/harness/<suite>` each) (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
-| `make test/harness/local-model` | OPT-IN: the `08-local-qwen` sample against a model you already serve (`SVEN_HARNESS_LOCAL_MODEL=1`, `SVEN_HARNESS_LOCAL_ENDPOINT`); never part of `make test` or `make check` |
+| `make test/harness/local-model` | OPT-IN: the `08-local-qwen` sample against a model you already serve (`ENDPOINT=<url>`, optional `MODEL=<spec>`; refuses without ENDPOINT); never part of `make test` or `make check` |
+| `make generate/harness/sample-bundle`, `make generate/config/golden` | Rewrite committed derived files (`generate/<area>/<file>`); the matching tests only check them |
 | `make help` | Every target as a tree; names are concept first (`test/harness`, `check/gates/no-machine-paths`), so `make <TAB>` descends level by level (`check/gates/make-targets` enforces it) |
 | `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |
 | `make test/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour); one `test/e2e/basic/<test>` per bats file |
@@ -517,8 +518,8 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
 2. Layering and `${VAR}` expansion are `sven-config`'s (`document.rs`); touch
    it only to change how files are found or merged.
 3. A fixture and its golden record in `crates/frontend/tests/fixtures/config/`
-   if the file format changes (`SVEN_BLESS_GOLDEN=1 cargo test -p sven-frontend
-   --test config_golden`, then review the diff); document the key in
+   if the file format changes (`make generate/config/golden`, then review the
+   diff); document the key in
    `docs/05-configuration.md`.
 
 ### Golden rules

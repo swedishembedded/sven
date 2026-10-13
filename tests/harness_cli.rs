@@ -37,8 +37,6 @@ fn sven(cwd: &Path) -> Command {
         .env("HOME", cwd)
         .env("XDG_CONFIG_HOME", cwd)
         .env_remove("SVEN_MODEL")
-        .env_remove("SVEN_HARNESS_LOCAL_MODEL")
-        .env_remove("SVEN_HARNESS_LOCAL_ENDPOINT")
         .arg("harness");
     cmd
 }
@@ -462,7 +460,7 @@ fn run_without_a_model_source_fails_a_model_step_cleanly() {
 }
 
 #[test]
-fn a_real_model_is_refused_without_the_explicit_opt_in() {
+fn a_real_model_is_refused_without_an_endpoint() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let out = run(sven(tmp.path())
         .arg("run")
@@ -475,14 +473,22 @@ fn a_real_model_is_refused_without_the_explicit_opt_in() {
         ]));
     assert_eq!(code(&out), 2);
     assert!(
-        stderr(&out).contains("SVEN_HARNESS_LOCAL_MODEL"),
+        stderr(&out).contains("--model-endpoint"),
         "{}",
         stderr(&out)
     );
+}
 
-    // The flag alone is not enough: an endpoint must be named too.
+#[test]
+fn the_live_opt_in_is_flags_only_and_the_old_variables_change_nothing() {
+    // The retired variable names are assembled so that no source line in the
+    // tree spells them: the removal is then provable with a plain grep.
+    let retired = |tail: &str| format!("SVEN_{}_{tail}", "HARNESS");
+    let tmp = tempfile::tempdir().expect("tempdir");
+
     let out = run(sven(tmp.path())
-        .env("SVEN_HARNESS_LOCAL_MODEL", "1")
+        .env(retired("LOCAL_MODEL"), "1")
+        .env(retired("LOCAL_ENDPOINT"), "http://127.0.0.1:9")
         .arg("run")
         .arg(sample("02-model-routing"))
         .args([
@@ -491,8 +497,39 @@ fn a_real_model_is_refused_without_the_explicit_opt_in() {
             "--model",
             "ollama/qwen3:8b",
         ]));
-    assert_eq!(code(&out), 2);
-    assert!(stderr(&out).contains("endpoint"), "{}", stderr(&out));
+    assert_eq!(code(&out), 2, "the environment must not supply an endpoint");
+    assert!(
+        stderr(&out).contains("--model-endpoint"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = run(sven(tmp.path())
+        .env(retired("LOCAL_MODEL"), "1")
+        .env(retired("LOCAL_ENDPOINT"), "http://127.0.0.1:9")
+        .arg("test")
+        .arg(sample("08-local-qwen"))
+        .arg("--json"));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let suites = stdout_json(&out);
+    assert_eq!(suites[0]["skipped"], 1, "{suites}");
+    assert_eq!(suites[0]["passed"], 0, "{suites}");
+}
+
+#[test]
+fn test_and_compare_take_the_live_flags_and_the_model_needs_its_endpoint() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    for sub in ["test", "compare"] {
+        let out = run(sven(tmp.path()).arg(sub).arg("--help"));
+        let help = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(help.contains("--model-endpoint"), "{sub}: {help}");
+        assert!(help.contains("--model "), "{sub}: {help}");
+    }
+    let out = run(sven(tmp.path())
+        .arg("test")
+        .arg(sample("08-local-qwen"))
+        .args(["--model", "ollama/qwen3:8b"]));
+    assert_eq!(code(&out), 2, "--model alone is a usage error");
 }
 
 fn copy_dir(from: &Path, to: &Path) {

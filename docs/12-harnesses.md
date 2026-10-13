@@ -276,14 +276,16 @@ suite must not depend on one.
 
 - Every default path uses mock models (`sequence`, `rules`, `fail`) and
   fixture tools. A run with no model source has a model that fails every call.
-- A **live** model needs both halves: `SVEN_HARNESS_LOCAL_MODEL=1` and the
-  URL of a server you already run, as `SVEN_HARNESS_LOCAL_ENDPOINT` (or
-  `--model-endpoint`). Sven never starts or downloads the model.
-- Without the opt-in, `run --model SPEC` is refused (exit 2) and a case that
-  names `live` is reported as `SKIP`, never failed.
+- A **live** model needs the URL of a server you already run, given as
+  `--model-endpoint URL` (with `--model SPEC` to choose the model) on
+  `run`, `resume`, `test` or `compare`. No environment variable opts in. Sven
+  never starts or downloads the model.
+- Without `--model-endpoint`, `run --model SPEC` is refused (exit 2) and a
+  case that names `live` is reported as `SKIP`, never failed.
 - `make test`, `make check` and `make test/harness` never reach a live model.
   `make test/harness/local-model` runs [08-local-qwen](../samples/harnesses/08-local-qwen/)
-  against your endpoint and refuses to start without the two variables.
+  against `ENDPOINT=<url>` (optional `MODEL=<spec>`) and refuses to start
+  without it.
 
 ## Authorization in one paragraph
 

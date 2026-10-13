@@ -240,8 +240,8 @@ replaying it; `sven harness` is its command line; eight samples
 rendered by the headless runner and ignored by ACP.
 
 **Models are strictly opt-in.** Nothing here pulls, starts or loads a model.
-A live model needs both `SVEN_HARNESS_LOCAL_MODEL=1` and
-`SVEN_HARNESS_LOCAL_ENDPOINT` (or `--model-endpoint`) naming a server the
-caller already runs; without them a live case is skipped and `--model` is
-refused. `make test/harness/local-model` is the only target that can reach one, and
-it refuses to start without both.
+A live model needs `--model-endpoint <url>` on the command line, naming a
+server the caller already runs (with `--model <spec>` to choose the model);
+no environment variable opts in. Without the endpoint a live case is skipped
+and `--model` is refused. `make test/harness/local-model` is the only target
+that can reach one, and it refuses to start without `ENDPOINT=<url>`.

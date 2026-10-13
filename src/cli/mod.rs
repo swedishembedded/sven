@@ -21,7 +21,7 @@ mod tool;
 // shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
 // than duplicated here.
 pub use agent::AgentCommands;
-pub use harness::{HarnessCommands, HarnessRunArgs, ToolsetArg};
+pub use harness::{HarnessCommands, HarnessRunArgs, LiveModelArgs, ToolsetArg};
 pub use index::IndexCommands;
 #[cfg(feature = "memory")]
 pub use questions::QuestionsCommands;
@@ -438,6 +438,7 @@ pub enum Commands {
     ///
     ///   sven harness validate DIR...
     ///   sven harness test DIR... [--case NAME] [--no-replay] [--json]
+    ///                     [--model SPEC --model-endpoint URL]
     ///   sven harness run DIR --input '{"k": "v"}' [--case FILE] [--json]
     ///   sven harness schema (optional output PATH)
     ///

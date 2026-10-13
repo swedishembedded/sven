@@ -30,3 +30,9 @@ sven-harness-transform = { path = "../harness-transform", features = ["test-util
 sven-harness-spec = { path = "../harness-spec" }
 base64           = { workspace = true }
 serde_yaml       = { workspace = true }
+
+# A plain binary, so `--bless` is a real command-line flag (see the file).
+[[test]]
+name              = "sample_bundle"
+harness           = false
+required-features = ["transform"]

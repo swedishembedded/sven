@@ -16,21 +16,25 @@ use serde::de::DeserializeOwned;
 use sven_harness_testkit::{CaseManifest, ModelFixture, OptIn, RunRequest, ToolFixture, Workspace};
 
 use super::{usage, Failure};
-use crate::cli::{HarnessRunArgs, ToolsetArg};
+use crate::cli::{HarnessRunArgs, LiveModelArgs, ToolsetArg};
 
 /// What a run uses when nothing names a model: every model call fails with
 /// this message.
 const NO_MODEL: &str = "no model source: pass --model-fixture or --model";
 
-/// The opt-in a live model needs, from the environment and `--model-endpoint`.
+/// The opt-in a live model needs: `--model-endpoint`, and nothing else.
+fn opt_in_from(model: Option<&str>, endpoint: Option<&str>) -> OptIn {
+    endpoint.map_or_else(OptIn::none, |endpoint| OptIn::live(model, endpoint))
+}
+
+/// The opt-in of `run` and `resume`.
 pub(super) fn opt_in(args: &HarnessRunArgs) -> OptIn {
-    OptIn::from_vars(
-        std::env::var("SVEN_HARNESS_LOCAL_MODEL").ok().as_deref(),
-        args.model_endpoint
-            .clone()
-            .or_else(|| std::env::var("SVEN_HARNESS_LOCAL_ENDPOINT").ok())
-            .as_deref(),
-    )
+    opt_in_from(args.model.as_deref(), args.model_endpoint.as_deref())
+}
+
+/// The opt-in of `test` and `compare`.
+pub(super) fn live_opt_in(args: &LiveModelArgs) -> OptIn {
+    opt_in_from(args.model.as_deref(), args.model_endpoint.as_deref())
 }
 
 /// Whether a request's model is the default one that only fails.

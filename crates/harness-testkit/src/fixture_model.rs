@@ -142,16 +142,17 @@ impl TryFrom<RawModel> for ModelFixture {
     }
 }
 
-/// The explicit permission to use a real, already-running local model.
+/// The explicit permission to use a real, already-running model.
 ///
-/// Both halves are required: a flag that says "yes, I mean it" and the
-/// endpoint to reach. The testkit never starts, pulls or discovers a model.
+/// It is built only by [`OptIn::live`], from values the caller names on a
+/// command line: nothing here reads the environment, and the default is no
+/// opt-in. The testkit never starts, pulls or discovers a model.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OptIn {
-    /// `SVEN_HARNESS_LOCAL_MODEL=1`.
-    pub local_model: bool,
-    /// `SVEN_HARNESS_LOCAL_ENDPOINT`: the base URL of the running server.
-    pub endpoint: Option<String>,
+    /// Overrides the model a live case names (`provider/name`).
+    model: Option<String>,
+    /// The base URL of the running server.
+    endpoint: Option<String>,
 }
 
 impl OptIn {
@@ -161,32 +162,25 @@ impl OptIn {
         Self::default()
     }
 
-    /// Reads `SVEN_HARNESS_LOCAL_MODEL` and `SVEN_HARNESS_LOCAL_ENDPOINT`.
+    /// Opts in to the server at `endpoint`, optionally replacing the model
+    /// spec a live case names. A blank endpoint is no endpoint, so the
+    /// result is not live-ready.
     #[must_use]
-    pub fn from_env() -> Self {
-        Self::from_vars(
-            std::env::var("SVEN_HARNESS_LOCAL_MODEL").ok().as_deref(),
-            std::env::var("SVEN_HARNESS_LOCAL_ENDPOINT").ok().as_deref(),
-        )
-    }
-
-    /// As [`Self::from_env`], from the two values. Only the exact flag `1`
-    /// opts in; a blank endpoint is no endpoint.
-    #[must_use]
-    pub fn from_vars(flag: Option<&str>, endpoint: Option<&str>) -> Self {
+    pub fn live(model: Option<&str>, endpoint: &str) -> Self {
+        let endpoint = endpoint.trim();
         Self {
-            local_model: flag == Some("1"),
-            endpoint: endpoint
+            model: model
                 .map(str::trim)
-                .filter(|e| !e.is_empty())
+                .filter(|m| !m.is_empty())
                 .map(str::to_string),
+            endpoint: (!endpoint.is_empty()).then(|| endpoint.to_string()),
         }
     }
 
     /// Whether a live model may be built.
     #[must_use]
     pub fn is_live_ready(&self) -> bool {
-        self.local_model && self.endpoint.is_some()
+        self.endpoint.is_some()
     }
 }
 
@@ -245,20 +239,14 @@ impl ModelFixture {
     ///
     /// # Errors
     ///
-    /// A message naming the variable that is missing.
+    /// A message naming the flag that is missing.
     pub fn live_gate(&self, opt_in: &OptIn) -> Result<(), String> {
         if !matches!(self, Self::Live { .. }) {
             return Ok(());
         }
-        if !opt_in.local_model {
+        if !opt_in.is_live_ready() {
             return Err(
-                "a live model needs the explicit opt-in: set SVEN_HARNESS_LOCAL_MODEL=1"
-                    .to_string(),
-            );
-        }
-        if opt_in.endpoint.is_none() {
-            return Err(
-                "a live model needs an explicit endpoint: set SVEN_HARNESS_LOCAL_ENDPOINT to a server you are already running"
+                "a live model needs an explicit endpoint: pass --model-endpoint <url> of a server you are already running"
                     .to_string(),
             );
         }
@@ -329,6 +317,7 @@ pub(crate) fn build(
         )))),
         ModelFixture::Live { model } => {
             let endpoint = opt_in.endpoint.clone().unwrap_or_default();
+            let model = opt_in.model.as_ref().unwrap_or(model);
             let (provider, name) = model.split_once('/').unwrap_or(("ollama", model.as_str()));
             let mut config = sven_sdk::config::Config::default();
             config.model.provider = provider.to_string();

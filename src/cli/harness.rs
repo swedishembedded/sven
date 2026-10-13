@@ -59,10 +59,11 @@ pub enum HarnessCommands {
     /// (one per trace record, derived from the run's trace) unless --quiet.
     /// --json prints one JSON document on stdout and nothing else.
     ///
-    /// A real model needs the explicit opt-in: SVEN_HARNESS_LOCAL_MODEL=1 and
-    /// an endpoint of a server you already run (SVEN_HARNESS_LOCAL_ENDPOINT
-    /// or --model-endpoint). Without it `--model` is refused (exit 2). sven
-    /// never starts or pulls a model and reads no configuration here.
+    /// A real model needs the explicit opt-in on the command line:
+    /// `--model <spec>` and `--model-endpoint <url>` of a server you already
+    /// run. `--model` without the endpoint is refused (exit 2). sven never
+    /// starts or pulls a model and reads no configuration or environment
+    /// here.
     Run {
         /// A harness file or directory.
         path: PathBuf,
@@ -101,7 +102,8 @@ pub enum HarnessCommands {
     },
 
     /// Run the cases of harness directories on mock models and fixture
-    /// tools. Cases naming a live model are skipped without the opt-in.
+    /// tools. Cases naming a live model are skipped unless
+    /// `--model-endpoint` names a server you already run.
     Test {
         /// Harness directories (with `cases/*.yaml`).
         #[arg(required = true, value_name = "DIR")]
@@ -115,6 +117,8 @@ pub enum HarnessCommands {
         /// Print the reports as one JSON array on stdout.
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        live: LiveModelArgs,
     },
 
     /// Run one case set over two harness variants and report the difference.
@@ -132,7 +136,22 @@ pub enum HarnessCommands {
         /// Print the report as JSON on stdout.
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        live: LiveModelArgs,
     },
+}
+
+/// The opt-in for cases that name a live model (`test`, `compare`). Without
+/// `--model-endpoint` those cases are skipped.
+#[derive(Args, Debug)]
+pub struct LiveModelArgs {
+    /// Replace the model spec (`provider/name`) live cases name.
+    #[arg(long, value_name = "SPEC", requires = "model_endpoint")]
+    pub model: Option<String>,
+    /// Base URL of the model server you already run; the only way live
+    /// cases run. sven never starts or pulls a model.
+    #[arg(long, value_name = "URL")]
+    pub model_endpoint: Option<String>,
 }
 
 /// What `run` and `resume` share: where the run's world comes from, its
@@ -160,12 +179,11 @@ pub struct HarnessRunArgs {
     /// empty tempdir, or the case's `workspace` files).
     #[arg(long, value_name = "DIR")]
     pub workspace: Option<PathBuf>,
-    /// A real model, `provider/name`. Honoured only under the explicit
-    /// opt-in described in `sven harness run --help`; otherwise exit 2.
+    /// A real model, `provider/name`. Needs `--model-endpoint`, as described
+    /// in `sven harness run --help`; otherwise exit 2.
     #[arg(long, value_name = "SPEC")]
     pub model: Option<String>,
-    /// Base URL of the model server you already run (instead of
-    /// SVEN_HARNESS_LOCAL_ENDPOINT). Still needs SVEN_HARNESS_LOCAL_MODEL=1.
+    /// Base URL of the model server you already run.
     #[arg(long, value_name = "URL", requires = "model")]
     pub model_endpoint: Option<String>,
     /// Tools besides the fixtures. Only `none` is supported: the offline

@@ -41,7 +41,7 @@ from `document.yaml`, and requires `bundle.yaml` to be byte-equal. After editing
 `document.yaml`, regenerate:
 
 ```sh
-SVEN_BLESS_GOLDEN=1 cargo test -p sven-harness-runtime --features transform --test sample_bundle
+make generate/harness/sample-bundle
 ```
 
 ## Run it

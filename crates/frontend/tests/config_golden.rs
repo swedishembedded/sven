@@ -11,8 +11,10 @@
 //! warning the load logged. A change to how a file is read, defaulted,
 //! expanded or reported shows up here as a diff against that record.
 //!
-//! `SVEN_BLESS_GOLDEN=1 cargo test -p sven-frontend --test config_golden`
-//! rewrites the records; review the diff before keeping it.
+//! `--bless` as a command-line argument (`make generate/config/golden`)
+//! rewrites the records; review the diff before keeping it. This is a
+//! `harness = false` binary so that switch is a real flag; the libtest
+//! arguments `cargo test` forwards are ignored.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -105,11 +107,14 @@ fn isolate_environment(home: &Path) {
     std::env::set_var("SVEN_GOLDEN_MODEL", "openrouter/auto");
 }
 
-#[test]
-fn every_config_fixture_loads_as_recorded() {
+fn main() {
+    let bless = std::env::args().skip(1).any(|arg| arg == "--bless");
+    every_config_fixture_loads_as_recorded(bless);
+}
+
+fn every_config_fixture_loads_as_recorded(bless: bool) {
     let home = tempfile::tempdir().expect("a temporary home");
     isolate_environment(home.path());
-    let bless = std::env::var_os("SVEN_BLESS_GOLDEN").is_some();
 
     let mut mismatched = Vec::new();
     for fixture in fixtures() {

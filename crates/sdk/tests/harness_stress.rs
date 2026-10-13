@@ -6,8 +6,8 @@
 //! or a task, and concurrency changes neither outcome nor trace.
 //!
 //! The load is bounded on purpose: four worker threads, at most sixteen runs
-//! in flight, payloads under a hundred bytes, a mock model only. The count
-//! comes from `SVEN_HARNESS_STRESS_RUNS` (default 1000).
+//! in flight, payloads under a hundred bytes, a mock model only. The count is
+//! fixed: the claim is about a thousand runs, not about a tunable load.
 //!
 //! Swedish Embedded AB implements load-hardened agent runtimes for its
 //! clients. If your team needs expertise in proving that concurrent agent
@@ -28,7 +28,7 @@ use sven_sdk::{
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-const DEFAULT_RUNS: usize = 1000;
+const RUNS: usize = 1000;
 const MAX_IN_FLIGHT: usize = 16;
 const RUN_DEADLINE: Duration = Duration::from_secs(10);
 /// A generous ceiling for the whole test; it catches a hang or a collapse in
@@ -186,17 +186,8 @@ fn records(trace: &[String], kind: &str) -> usize {
     trace.iter().filter(|r| r.starts_with(kind)).count()
 }
 
-fn run_count() -> usize {
-    std::env::var("SVEN_HARNESS_STRESS_RUNS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_RUNS)
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_thousand_concurrent_runs_conclude_identically() {
-    let runs = run_count();
     let provider = Arc::new(YamlMockProvider::load(MODEL_RULES).expect("rules load"));
     let tool = Arc::new(CountHit {
         calls: Arc::new(AtomicUsize::new(0)),
@@ -209,7 +200,7 @@ async fn a_thousand_concurrent_runs_conclude_identically() {
     let started = Instant::now();
     let gate = Arc::new(Semaphore::new(MAX_IN_FLIGHT));
     let mut set = JoinSet::new();
-    for index in 0..runs {
+    for index in 0..RUNS {
         // The permit is taken before the spawn, so no more than
         // MAX_IN_FLIGHT runs (and tasks) exist at once.
         let permit = Arc::clone(&gate).acquire_owned().await.expect("gate open");
@@ -221,18 +212,18 @@ async fn a_thousand_concurrent_runs_conclude_identically() {
             shape
         });
     }
-    let mut shapes = Vec::with_capacity(runs);
+    let mut shapes = Vec::with_capacity(RUNS);
     while let Some(joined) = set.join_next().await {
         shapes.push(joined.expect("a run task does not panic"));
     }
     let wall = started.elapsed();
-    println!("harness stress: {runs} runs in {wall:?} ({MAX_IN_FLIGHT} in flight, 4 workers)");
+    println!("harness stress: {RUNS} runs in {wall:?} ({MAX_IN_FLIGHT} in flight, 4 workers)");
 
     let shapes: Vec<Shape> = shapes
         .into_iter()
         .collect::<Result<_, _>>()
         .unwrap_or_else(|e| panic!("a run failed to conclude: {e}"));
-    assert_eq!(shapes.len(), runs, "every run concluded");
+    assert_eq!(shapes.len(), RUNS, "every run concluded");
 
     let first = &shapes[0];
     assert_eq!(first.conclusion, RunConclusion::Success, "{first:?}");
@@ -253,7 +244,7 @@ async fn a_thousand_concurrent_runs_conclude_identically() {
         started,
         "every child that started completed: {first:?}"
     );
-    assert_eq!(tool.calls.load(Ordering::SeqCst), runs, "one call per run");
+    assert_eq!(tool.calls.load(Ordering::SeqCst), RUNS, "one call per run");
     assert_eq!(tool.in_flight.load(Ordering::SeqCst), 0, "no call leaked");
 
     // Tasks end shortly after their runs return; give them a bounded moment.
@@ -274,6 +265,6 @@ async fn a_thousand_concurrent_runs_conclude_identically() {
     );
     assert!(
         wall < WALL_CLOCK_CEILING,
-        "{runs} runs took {wall:?}, over the {WALL_CLOCK_CEILING:?} ceiling"
+        "{RUNS} runs took {wall:?}, over the {WALL_CLOCK_CEILING:?} ceiling"
     );
 }

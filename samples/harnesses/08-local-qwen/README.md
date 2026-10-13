@@ -14,17 +14,17 @@ you actually run - and it is **never** part of any default path.
   contacted.
 - **You serve the model.** The caller must already be running it. Sven never
   pulls, downloads, starts or loads a model for this sample.
-- **Both halves are needed**: `SVEN_HARNESS_LOCAL_MODEL=1` and
-  `SVEN_HARNESS_LOCAL_ENDPOINT=<url of your server>`. One without the other is
-  a skip.
+- **The opt-in is a command-line flag**: `--model-endpoint <url of your
+  server>` (and `--model <spec>`). No environment variable opts in; without
+  the endpoint the case is a skip.
 - The default suite only validates this sample and checks that it skips.
 
 ## Run it (only when you have a model serving)
 
 ```sh
 sven harness validate samples/harnesses/08-local-qwen          # offline, always safe
-SVEN_HARNESS_LOCAL_MODEL=1 SVEN_HARNESS_LOCAL_ENDPOINT=http://localhost:11434 \
-    sven harness test samples/harnesses/08-local-qwen          # or: make test/harness/local-model
+sven harness test samples/harnesses/08-local-qwen --model ollama/qwen3:8b \
+    --model-endpoint http://localhost:11434                    # or: make test/harness/local-model ENDPOINT=http://localhost:11434
 ```
 
 ## Expected

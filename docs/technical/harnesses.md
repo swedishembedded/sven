@@ -292,14 +292,15 @@ and the registry and nothing else.
 `run_suite` and `compare`, with `RunnerOptions { opt_in, replay_check,
 case_filter }`. Every case runs on a new engine with `Config::default()`, no
 built-in tools, an injected provider and automatic approval; it never reads
-the user's configuration. A live model is built only under `OptIn` (both
-`SVEN_HARNESS_LOCAL_MODEL=1` and an endpoint). The case format is in
+the user's configuration. A live model is built only under `OptIn::live(model, endpoint)`,
+which the command line constructs from `--model` and `--model-endpoint`; the
+testkit reads no environment variable. The case format is in
 [docs/12-harnesses.md](../12-harnesses.md#cases).
 
 Samples are data directories; the SDK-only crate
 `samples/harnesses/sdk-runner` shows the same cases run with `sven-sdk` alone.
 `make test/harness` runs every harness suite on mock models, including a
-thousand-run concurrent stress test (`SVEN_HARNESS_STRESS_RUNS`).
+thousand-run concurrent stress test (a fixed count).
 
 ## Not in scope
 

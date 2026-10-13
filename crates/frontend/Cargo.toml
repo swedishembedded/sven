@@ -44,3 +44,8 @@ tracing-subscriber = { workspace = true }
 tempfile = { workspace = true }
 async-trait = { workspace = true }
 sven-model-mock = { path = "../model-mock" }
+
+# A plain binary, so `--bless` is a real command-line flag (see the file).
+[[test]]
+name    = "config_golden"
+harness = false

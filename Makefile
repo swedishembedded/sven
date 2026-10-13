@@ -192,12 +192,16 @@ test/harness/samples:
 test/harness/cli:
 	$(HARNESS_TEST) -p sven --test harness_cli -- --test-threads=4
 
-## test/harness/local-model - OPT-IN: samples/harnesses/08-local-qwen against an already-running endpoint
-##   Needs SVEN_HARNESS_LOCAL_MODEL=1 and SVEN_HARNESS_LOCAL_ENDPOINT; nothing is pulled or started.
+## test/harness/local-model - OPT-IN: the live-model case of a harness sample against a server you already run
+##   Needs ENDPOINT=<url> (and optionally MODEL=<provider/name>) on the make command
+##   line; refuses with exit 2 without ENDPOINT. Nothing is pulled or started.
 ##   Not part of test/harness.
+MODEL ?= ollama/qwen3:8b
+ENDPOINT ?=
+LOCAL_MODEL_SAMPLE = samples/harnesses/08-local-qwen
 test/harness/local-model:
-	@test "$$SVEN_HARNESS_LOCAL_MODEL" = 1 && test -n "$$SVEN_HARNESS_LOCAL_ENDPOINT" || { echo "test/harness/local-model: set SVEN_HARNESS_LOCAL_MODEL=1 and SVEN_HARNESS_LOCAL_ENDPOINT to a model you are already serving; nothing is pulled or started"; exit 2; }
-	$(HARNESS_TEST) -p sven-harness-testkit --test local_model -- --ignored --test-threads=1
+	@test -n "$(ENDPOINT)" || { echo "test/harness/local-model: pass ENDPOINT=<url> of a model server you are already running (optional MODEL=<provider/name>); nothing is pulled or started"; exit 2; }
+	$(CARGO) run --jobs $(HARNESS_JOBS) -p sven -- harness test $(LOCAL_MODEL_SAMPLE) --case smoke --model $(MODEL) --model-endpoint $(ENDPOINT)
 
 ## test/formal - machine-check the TLA+ models of the HSM kernel (needs a JRE; not part of `make test`)
 # Not part of `make check`: the models need a JRE and a pinned 2 MB download,
@@ -579,10 +583,38 @@ clean:
 help:
 	@bash scripts/make-help.sh
 
+# ---------------------------------------------------------------------------
+##@ Generated files
+## Committed files that are derived from other sources; each rewrites them in place.
+
+## generate - lists the generators; rewrites nothing
+generate:
+	@bash scripts/make-help.sh generate
+
+## generate/harness - lists the harness generators; rewrites nothing
+generate/harness:
+	@bash scripts/make-help.sh generate/harness
+
+## generate/harness/sample-bundle - rewrite the custom-helper sample's bundle.yaml from its document
+##   The harness runtime's sample_bundle test (test/harness/runtime) only checks it.
+generate/harness/sample-bundle:
+	$(HARNESS_TEST) -p sven-harness-runtime --features transform --test sample_bundle -- --bless
+
+## generate/config - lists the configuration generators; rewrites nothing
+generate/config:
+	@bash scripts/make-help.sh generate/config
+
+## generate/config/golden - rewrite the golden records of the configuration fixtures (review the diff)
+##   The frontend's config_golden test (test/crate/sven-frontend) only checks them.
+generate/config/golden:
+	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-frontend --test config_golden -- --bless
+
 # Declared last so every generated list above is already defined.
 .PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
         test test/features test/e2e $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
         test/harness test/harness/local-model $(HARNESS_TARGETS) \
+        generate generate/harness generate/harness/sample-bundle \
+        generate/config generate/config/golden \
         test/crate $(TEST_CRATE_TARGETS) test/formal \
         check check/fmt check/features check/clippy check/doc check/arch \
         check/gates $(GATE_TARGETS) \

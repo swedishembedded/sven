@@ -50,6 +50,7 @@ pub(super) async fn test(
     case: Option<&str>,
     replay: bool,
     json: bool,
+    opt_in: OptIn,
 ) -> Outcome {
     let mut opened = Vec::new();
     let mut named = false;
@@ -65,7 +66,7 @@ pub(super) async fn test(
         return Err(usage(format!("no case named `{wanted}` in any directory")));
     }
     let options = RunnerOptions {
-        opt_in: OptIn::from_env(),
+        opt_in,
         replay_check: replay,
         case_filter: case.map(str::to_string),
     };
@@ -138,9 +139,10 @@ pub(super) async fn compare(
     cases: &Path,
     fail_on_regression: bool,
     json: bool,
+    opt_in: OptIn,
 ) -> Outcome {
     let options = RunnerOptions {
-        opt_in: OptIn::from_env(),
+        opt_in,
         ..RunnerOptions::default()
     };
     let report = compare_variants(dir_a, dir_b, cases, &options)
