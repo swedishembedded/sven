@@ -64,6 +64,7 @@ sven-mcp-client = "services"
 sven-kernel     = "services"
 sven-model-drivers = "services"
 sven-model-mock    = "services"
+sven-decision      = "services"
 
 # domain
 sven-memory        = "domain"

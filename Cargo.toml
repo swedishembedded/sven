@@ -45,6 +45,9 @@ members = [
     "crates/team",
     "crates/memory",
     "crates/executors",
+    # Typed questions for a small decision model, the policy over its answers
+    # and the transport to the model provider
+    "crates/decision",
     # Transport-agnostic operator control protocol + kernel mappings
     "crates/control",
     # ATIF v1.7 trajectory format: the session store's on-disk format, the

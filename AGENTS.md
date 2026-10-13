@@ -277,7 +277,10 @@ sections - `ModelConfig`, `ProviderEntry` - and how an unconfigured model is
 detected; the D-Bus transport - the `dbus`
 provider and the `ActionClient` speech-to-text uses - behind its `dbus`
 feature, off by default) · `sven-model-mock` (`--model mock`
-test/dev providers)
+test/dev providers) · `sven-decision` (the decision runtime: typed questions a
+harness asks a small non-generative decision model, the full ranked
+distribution it answers with, distinct failure classes, a scripted mock
+provider; the decision model only advises)
 
 ### domain (concrete tool implementations + integrations)
 `sven-tools-fs` (file I/O + output-buffer tools; images and audio behind

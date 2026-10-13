@@ -1,0 +1,15 @@
+[package]
+name        = "sven-decision"
+version.workspace = true
+edition     = "2021"
+description = "The decision runtime: typed questions a harness asks a small non-generative decision model, the policy that accepts or abstains from its answer, and the transport to a model provider. Services tier."
+license     = "Apache-2.0"
+
+[dependencies]
+async-trait = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
