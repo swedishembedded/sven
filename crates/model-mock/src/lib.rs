@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The `--model mock` test/dev [`sven_model::ModelProvider`] implementations:
 //! [`MockProvider`] (a fixed echo responder) and [`YamlMockProvider`] (a
-//! YAML-scripted responder used by end-to-end and bats tests).
+//! YAML-scripted responder used by end-to-end and bats tests), plus
+//! [`StallingMockProvider`], which goes quiet on purpose to exercise the
+//! turn watchdogs.
 //!
 //! A crate of its own so that crates which only need the `ModelProvider`
 //! trait + request/response types do not also pull in this test
@@ -16,7 +18,9 @@
 //! dependency of sven-model-drivers.
 
 mod mock;
+mod stalling;
 mod yaml_mock;
 
 pub use mock::{FailingMockProvider, MockProvider, ScriptedMockProvider};
+pub use stalling::{StallMode, StallingMockProvider};
 pub use yaml_mock::YamlMockProvider;
