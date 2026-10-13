@@ -240,7 +240,10 @@ impl BrainProvider {
             request,
         );
         if let Some(hit) = key.as_ref().and_then(|k| self.cache.get(k)) {
-            return Ok(DecisionResult { cached: true, ..hit });
+            return Ok(DecisionResult {
+                cached: true,
+                ..hit
+            });
         }
         let _slot = self
             .permits
