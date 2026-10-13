@@ -403,9 +403,7 @@ impl Message {
                 .map(|p| match p {
                     ContentPart::Text { text } => text.len(),
                     ContentPart::Audio { audio_url, .. } => audio_approx_tokens(audio_url) * 4,
-                    ContentPart::Image { detail, .. } => {
-                        image_approx_tokens(detail.as_deref()) * 4
-                    }
+                    ContentPart::Image { detail, .. } => image_approx_tokens(detail.as_deref()) * 4,
                 })
                 .sum(),
             MessageContent::ToolCall { function, .. } => {
