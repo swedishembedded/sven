@@ -55,6 +55,7 @@ directly; every external notification becomes a typed `Event` first.
 |-------|---------|---------|
 | `ToolSucceeded` | `call_id, observation: Value` | A kernel-dispatched `CallTool` completed successfully |
 | `ToolFailed` | `call_id, error: String` | A kernel-dispatched `CallTool` failed or was denied |
+| `ToolsActivated` | `names` | A tool call loaded tools the model is offered in full from now on; the kernel records them in the context and no machine handles it ([tool-disclosure.md](tool-disclosure.md)) |
 | `ToolApprovalRequired` | `call_id, capability, description` | The permission gate requires human approval before the tool can run |
 
 ### Human gate events

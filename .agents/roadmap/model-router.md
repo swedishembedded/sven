@@ -196,17 +196,29 @@ projection for interoperability:
 
 ### Tool composition (sven)
 
-Tool exposure is decided statically by the kernel, not searched for at
-runtime by the model. The reason is measurable: prompt caching is a pure
-prefix match and the render order is `tools` -> `system` -> `messages`, so
-mutating the tool array mid-session invalidates the system prompt *and* the
-entire conversation history behind it. A varying tool set is a documented
-silent cache invalidator. A sub-agent, by contrast, starts its own short
-prefix and pays nothing.
+Tool exposure is decided by the kernel, and the model may widen it only
+monotonically. The reason is measurable: prompt caching is a pure prefix match
+and the render order is `tools` -> `system` -> `messages`, so a tool array that
+changes anywhere but its end invalidates the system prompt *and* the entire
+conversation history behind it. A varying tool set is a documented silent
+cache invalidator. A sub-agent, by contrast, starts its own short prefix and
+pays nothing.
 
-That makes the **agent**, not the tool, the right unit of disclosure: a
-persona line in the parent's prompt is a ~15-token pointer to a ~500-token
-toolset.
+Two mechanisms follow from that, and the first is built
+([docs/technical/tool-disclosure.md](../../docs/technical/tool-disclosure.md)):
+
+- **Deferred disclosure inside a session.** A request carries the full
+  definitions of the core tools only; every other tool is a one-line
+  `ToolDescriptor` the model can search (`tools` with `action=search`) and
+  load. Loading appends to the tool list and never removes or reorders, so a
+  load costs one cache rewrite and everything after it is a prefix hit.
+  Everything the router adds plugs into this and adds no tool per action: an
+  `ActionProvider`'s manifests become descriptors (name, one line, a category),
+  deferred by default, found by search and loaded on demand. The three router
+  tools below are such descriptors until loaded.
+- **The agent as the unit of disclosure** for a large, domain-specific
+  toolset: a persona line in the parent's prompt is a ~15-token pointer to a
+  ~500-token toolset.
 
 Resolution is one expression:
 
@@ -233,10 +245,13 @@ open bugs where restricted subagents still run forbidden tools; sven's
 `Effect` seam makes that failure mode impossible. Default stays
 inherit-everything: a persona with no `tools:` key behaves exactly as today.
 
-**Core bundle:** `read_file`, `write_file`, `edit_file`, `grep`, `find_file`,
-`shell`, `process`, `buf_read`, `buf_grep`, `todo`, `task`, `skill`,
-`attach_file`. Bundles: `gdb`, `web`, `knowledge` (5.3k chars alone),
-`context`, `system`, `media`.
+**Core bundle:** the always-sent core of deferred disclosure is
+`sven_tool_registry::CORE_TOOLS` (`read_file`, `write_file`, `edit_file`,
+`grep`, `find_file`, `shell`, `todo` and the discovery tool `tools`), chosen
+by what the baseline scenarios call. `process`, `buf_read`, `buf_grep`, `task`,
+`skill` and `attach_file` of the bundle once proposed here are deferred like
+the rest. Bundles: `gdb`, `web`, `knowledge` (5.3k chars alone), `context`,
+`system`, `media`.
 
 **The subprocess gap.** `shell` today takes only `shell_command`,
 `timeout_secs` and `workdir` - it is synchronous, with no background spawn,
@@ -333,9 +348,10 @@ one does.
 
 ### Phase 6 — tool bundles (sven)
 
-The core bundle above becomes the default, everything else becomes an opt-in
-bundle, and `ToolSetProfile` (dead today) is replaced by the composition
-model. This is where the 24,505-char baseline comes down.
+Deferred disclosure (built) already brings the per-request payload down to the
+core set. What this phase still owns is the composition model: bundles named in
+persona frontmatter and by `task(bundles=...)`, resolved as above, replacing
+`ToolSetProfile` (dead today).
 
 Also closes the subprocess gap, which is a prerequisite rather than a nicety:
 today `shell` is synchronous-only, so the agent cannot start long work and

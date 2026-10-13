@@ -315,6 +315,14 @@ sven --bare "hi"
 `--bare` is shorthand for `--no-system --no-tools` together - the smallest
 possible request, useful for fitting very small local/test models.
 
+To keep the tools but stop paying for every definition on every request, use
+`--tool-disclosure deferred` (the default of a program that reads the
+configuration file; `full` restores the complete listing for the process). The
+request then carries the definitions of the core tools only, and the model
+loads any other tool through the `tools` tool before it calls it. The
+`--token-ledger` line shows the difference; see
+[docs/technical/tool-disclosure.md](technical/tool-disclosure.md).
+
 ---
 
 ## Capturing Output
@@ -756,5 +764,6 @@ Frontmatter takes precedence over config file.
 | `--no-system` | off | Suppress Sven's built-in system prompt; zero system tokens unless `--system-prompt-file`/`--append-system-prompt` still supply text |
 | `--no-tools` | off | Send zero tool schemas; refuse any tool call attempted anyway |
 | `--bare` | off | Shorthand for `--no-system --no-tools` |
+| `--tool-disclosure MODE` | `tools.disclosure.mode` (`deferred`) | `full` sends every tool's definition with every request; `deferred` sends the core tools' and the ones the model loaded |
 | `--dry-run` | off | Validate workflow then exit without calling model |
 | `--headless` | auto | Force headless mode (normally auto-detected) |

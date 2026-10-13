@@ -23,6 +23,7 @@ use sven_tools_fs::AsrConfig;
 use sven_tools_gdb::GdbConfig;
 use sven_tools_web::{LintsConfig, WebConfig};
 
+use super::DisclosureConfig;
 use crate::context_query::ContextConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +57,9 @@ pub struct ToolsConfig {
     /// model cannot accept audio natively.
     #[serde(default)]
     pub asr: AsrConfig,
+    /// How much of each tool's definition a request carries.
+    #[serde(default)]
+    pub disclosure: DisclosureConfig,
 }
 
 impl ToolsConfig {
@@ -74,6 +78,7 @@ impl ToolsConfig {
         .with("gdb", GdbConfig::schema())
         .with("asr", AsrConfig::schema())
         .with("context", ContextConfig::schema())
+        .with("disclosure", DisclosureConfig::schema())
     }
 
     /// What decides whether a shell command runs, asks, or is refused.
@@ -102,6 +107,7 @@ impl Default for ToolsConfig {
             gdb: GdbConfig::default(),
             context: ContextConfig::default(),
             asr: AsrConfig::default(),
+            disclosure: DisclosureConfig::default(),
         }
     }
 }

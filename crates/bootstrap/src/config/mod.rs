@@ -20,6 +20,7 @@
 //! email to info@swedishembedded.com.
 
 mod agent;
+mod disclosure;
 mod tools;
 
 use std::path::Path;
@@ -30,6 +31,7 @@ use sven_mcp_client::{mcp_servers_schema, McpServers};
 use sven_model_drivers::{providers_schema, ModelConfig, Providers};
 
 pub use agent::AgentConfig;
+pub use disclosure::DisclosureConfig;
 pub use tools::ToolsConfig;
 
 /// Everything a session is configured by.
@@ -98,8 +100,23 @@ impl Config {
     #[must_use]
     pub fn from_document(document: &ConfigDocument) -> Self {
         let mut config: Self = document.decode();
-        config.settle(document.contains("model"));
+        config.settle_from(document);
         config
+    }
+
+    /// Settles what only the file the configuration was read from can say:
+    /// the active model ([`Self::settle`]), and the defaults of a program
+    /// that reads the file.
+    ///
+    /// Such a program discloses tools on demand unless the file says
+    /// otherwise. `Config::default()` - what an embedding application builds
+    /// in code - stays `full`, so the tools such an application registers are
+    /// in every request as before.
+    pub fn settle_from(&mut self, document: &ConfigDocument) {
+        self.settle(document.contains("model"));
+        if !document.contains_path(&["tools", "disclosure", "mode"]) {
+            self.tools.disclosure.mode = sven_tool_registry::Disclosure::Deferred;
+        }
     }
 
     /// Settles the active model once the file is read: chosen from the
@@ -144,6 +161,26 @@ mod tests {
             ToolsConfig::default().timeout_secs
         );
         assert!(config.providers.is_empty() && config.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn a_file_that_does_not_say_discloses_tools_on_demand_and_a_default_config_does_not() {
+        use sven_tool_registry::Disclosure;
+        assert_eq!(Config::default().tools.disclosure.mode, Disclosure::Full);
+        assert_eq!(
+            Config::from_document(&document("agent: {max_tool_rounds: 7}\n"))
+                .tools
+                .disclosure
+                .mode,
+            Disclosure::Deferred
+        );
+        assert_eq!(
+            Config::from_document(&document("tools: {disclosure: {mode: full}}\n"))
+                .tools
+                .disclosure
+                .mode,
+            Disclosure::Full
+        );
     }
 
     #[test]

@@ -30,6 +30,8 @@ tools:
     max_parallel: 8          # faster on high-core machines with generous rate limits
     default_chunk_lines: 300 # smaller chunks for dense files (e.g. generated C)
     sub_query_max_chars: 80000
+  disclosure:
+    mode: deferred
   asr:
     bus_address: unix:path=/run/brain/bus
     timeout_secs: 60

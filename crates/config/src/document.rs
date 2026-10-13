@@ -123,6 +123,20 @@ impl ConfigDocument {
         self.root.get(key).is_some()
     }
 
+    /// Whether the document sets the key reached by following `path` through
+    /// nested sections, e.g. `["tools", "disclosure", "mode"]`.
+    #[must_use]
+    pub fn contains_path(&self, path: &[&str]) -> bool {
+        let mut at = &self.root;
+        for key in path {
+            match at.get(*key) {
+                Some(next) => at = next,
+                None => return false,
+            }
+        }
+        true
+    }
+
     /// One message for every key `schema` does not recognise, and one for
     /// every section present that it accepts but ignores.
     #[must_use]
@@ -270,6 +284,15 @@ mod tests {
     struct SampleModel {
         provider: String,
         name: String,
+    }
+
+    #[test]
+    fn a_nested_key_is_found_only_where_it_is_set() {
+        let doc = ConfigDocument::from_yaml("tools:\n  disclosure:\n    mode: full\n").unwrap();
+        assert!(doc.contains_path(&["tools", "disclosure", "mode"]));
+        assert!(doc.contains_path(&["tools"]));
+        assert!(!doc.contains_path(&["tools", "disclosure", "other"]));
+        assert!(!doc.contains_path(&["agent", "disclosure"]));
     }
 
     #[test]

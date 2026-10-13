@@ -188,7 +188,10 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let settings = Settings::load(cli.config.as_deref())?;
+    let mut settings = Settings::load(cli.config.as_deref())?;
+    if let Some(disclosure) = cli.tool_disclosure {
+        settings.runtime.tools.disclosure.mode = disclosure.into();
+    }
 
     // ── Teammate mode ─────────────────────────────────────────────────────────
     // When --team-name is set (injected by spawn_teammate), skip the normal CI

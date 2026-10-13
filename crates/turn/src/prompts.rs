@@ -46,6 +46,10 @@ pub struct PromptContext<'a> {
     /// Injected verbatim into the stable system-prompt block.  `None` when all
     /// knowledge documents are current or no `updated:` fields are set.
     pub knowledge_drift_note: Option<&'a str>,
+    /// The `## Deferred Tools` section: how tools that are not in the tool
+    /// list are loaded, and which exist. `None` when every tool is in the
+    /// list. Fixed for the session, so part of the stable prefix.
+    pub tool_index: Option<&'a str>,
 }
 
 impl<'a> Default for PromptContext<'a> {
@@ -60,6 +64,7 @@ impl<'a> Default for PromptContext<'a> {
             agents: Arc::from(Vec::<AgentInfo>::new()),
             knowledge: Arc::from(Vec::<KnowledgeInfo>::new()),
             knowledge_drift_note: None,
+            tool_index: None,
         }
     }
 }
@@ -82,6 +87,7 @@ impl<'a> PromptContext<'a> {
             agents: self.agents.clone(),
             knowledge: self.knowledge.clone(),
             knowledge_drift_note: self.knowledge_drift_note,
+            tool_index: self.tool_index,
         }
     }
 
@@ -623,6 +629,13 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         String::new()
     };
 
+    // Deferred tools - stable for the session, ahead of the skills so the
+    // two lists a model chooses from sit together.
+    let tool_index_section = match ctx.tool_index {
+        Some(index) if !index.trim().is_empty() => format!("\n\n{}", index.trim_end()),
+        _ => String::new(),
+    };
+
     // Skills - stable, injected after project instructions and before CI/git.
     let skills_section = {
         let s = build_skills_section(&ctx.skills);
@@ -671,7 +684,7 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
     format!(
         "{agent_identity}\n\n\
          {mode_instructions}{project_section}{git_section}\
-         {context_file_section}{skills_section}{agents_section}\
+         {context_file_section}{tool_index_section}{skills_section}{agents_section}\
          {knowledge_section}{knowledge_drift_section}{ci_section}\n\n\
          {guidelines_section}\
          {append_section}",

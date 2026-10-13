@@ -67,6 +67,9 @@ pub struct AgentRuntimeContext {
     /// start.  Injected into the system prompt so the agent is immediately
     /// aware of subsystems whose documentation may be stale.
     pub knowledge_drift_note: Option<String>,
+    /// The `## Deferred Tools` system-prompt section, rendered from the tool
+    /// registry once it is built; `None` when every tool is in the tool list.
+    pub tool_index: Option<String>,
     /// Prior conversation messages to pre-load into the session history.
     ///
     /// Used when resuming a stored conversation: the tail of the local
@@ -123,6 +126,7 @@ impl AgentRuntimeContext {
                 agents: self.agents.get(),
                 knowledge: self.knowledge.get(),
                 knowledge_drift_note: self.knowledge_drift_note.as_deref(),
+                tool_index: self.tool_index.as_deref(),
             };
             system_prompt(mode, self.system_prompt_override.as_deref(), ctx)
         };

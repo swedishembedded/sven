@@ -65,6 +65,14 @@ audited like a built-in one: its `kernel_capability` (required) picks the
 permission bucket - the mode decides whether it may run, the approval policy
 whether a call waits for a person (see "A tool of your own").
 
+An engine built from `Config::default()` puts the definition of every tool it
+offers in every request, your own tools included. To send only a few core tools
+and let the model load the rest, set `tools.disclosure.mode` to `deferred` in
+the `Config` you pass (or load the configuration file, which defaults to it);
+tools you register are then deferred like the built-in ones - give each a
+`summary` - and are called, gated and audited as before once the model loads
+them. See [tool-disclosure.md](tool-disclosure.md).
+
 ### Cargo features
 
 What a preset can offer, and which modes an engine can run, is decided when

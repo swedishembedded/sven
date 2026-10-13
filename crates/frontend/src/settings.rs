@@ -100,15 +100,14 @@ impl Settings {
         Ok(Self::from_document(&document))
     }
 
-    /// The settings `document` holds, with the model settled
-    /// ([`Config::settle`]).
+    /// The settings `document` holds, settled ([`Config::settle_from`]).
     ///
     /// A document that cannot be read as settings is ignored whole, runtime
     /// sections and `tui:` alike (see [`ConfigDocument::decode`]).
     #[must_use]
     pub fn from_document(document: &ConfigDocument) -> Self {
         let (mut runtime, TuiSection { tui }): (Config, TuiSection) = document.decode_pair();
-        runtime.settle(document.contains("model"));
+        runtime.settle_from(document);
         Self { runtime, tui }
     }
 }

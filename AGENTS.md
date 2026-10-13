@@ -200,6 +200,7 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
 | `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |
 | `make test/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour); one `test/e2e/basic/<test>` per bats file |
 | `make test/crate/<package>`, `make build/crate/<package>` | One workspace package, on demand (`make test/crate` lists them) |
+| `make test/e2e/basic/deferred` | The same suite with `--tool-disclosure deferred` on every invocation |
 | `make test/formal` | TLA+ models of the HSM kernel (needs a JRE; see `formal/README.md`) |
 | `make docs` | Single-file user guide → `target/docs/sven-user-guide.md` |
 
@@ -400,9 +401,15 @@ Tool implementations live in the domain-tier `sven-tools-*` crates, split by
 concern (see the crate table above). `sven-tool-api` holds the `Tool` trait
 and `sven-tool-registry` the registry; neither holds a concrete tool.
 1. Pick (or create) the right `sven-tools-*` crate for the new tool's concern;
-   implement `Tool` (+ `parameters_schema`, `kernel_capability` - required,
-   the widest effect any call has - `call_capability` when actions differ in
-   effect, `default_policy`, `modes`) and `ToolDisplay`.
+   implement `Tool` (+ `summary` - a line of at most 100 characters, which is
+   all the model knows of the tool until it loads it, and which a test
+   requires of every registered tool -, `parameters_schema`,
+   `kernel_capability` - required, the widest effect any call has -
+   `call_capability` when actions differ in effect, `default_policy`,
+   `modes`) and `ToolDisplay`. A new tool is *deferred* by default; only
+   `sven_tool_registry::CORE_TOOLS` is sent in full with every request, and
+   adding to it needs a measured reason (see
+   [docs/technical/tool-disclosure.md](docs/technical/tool-disclosure.md)).
 2. Register it: `sven-bootstrap`'s tool-registry assembly
    (`crates/bootstrap/src/registry.rs`).
 3. If exposed over MCP: `mcp/src/registry.rs`'s `DEFAULT_TOOL_NAMES` -
@@ -410,6 +417,16 @@ and `sven-tool-registry` the registry; neither holds a concrete tool.
    intentionally excluded), not something to auto-derive from linked crates.
 4. If it needs a new capability: see "Add a `ToolCapability`".
 5. Tests: unit test + a bats case in `tests/e2e/basic/` if it has headless output.
+
+### Change which tool definitions a request carries
+`ToolRegistry::offer` (`tool-registry/src/disclosure.rs`) is the one place
+that decides: the machine's named tools, else the mode's core tools followed by
+the session's loaded tools in load order (deferred disclosure), else every
+tool of the mode (`full`). The loaded set is `Context::active_tools`, grown by
+`Event::ToolsActivated` in `Hsm::dispatch` and copied onto every turn request
+as it leaves a dispatch; never keep it in a machine, an executor or a tool.
+`TurnExecutor` and the SDK's `take_offered_tools` both go through `offer`, so a
+record of a turn and the turn cannot disagree.
 
 ### Add a `ToolCapability` (permission bucket)
 1. `hsm/src/permissions.rs` - the `ToolCapability` enum, `ALL`,
@@ -573,9 +590,15 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
 - [docs/technical/harnesses.md](docs/technical/harnesses.md) and
   [docs/12-harnesses.md](docs/12-harnesses.md) - YAML agent harnesses: the
   language, runtime, authorization, replay and the `sven harness` CLI.
+- [docs/technical/tool-disclosure.md](docs/technical/tool-disclosure.md) -
+  deferred tool disclosure: core tools, the `tools` discovery tool, loading,
+  ordering for the prompt cache, and the measured savings.
 - [docs/technical/token-ledger.md](docs/technical/token-ledger.md) - the
   per-request token ledger: where a request's input tokens come from, the
   `--token-ledger` line, `sven ledger`, and the baseline scenarios.
+- [docs/technical/tool-definitions.md](docs/technical/tool-definitions.md) -
+  the size of the tool definitions every request carries, how it is measured
+  and the ceiling that pins it.
 - `architecture.toml` - authoritative crate tiers, dependency legality, file-size
   ratchet. `.claude/skills/programming/rust/architecture.md` - the layering
   method this workspace follows, generalized for reuse elsewhere.

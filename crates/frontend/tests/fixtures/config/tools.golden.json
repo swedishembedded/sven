@@ -66,6 +66,9 @@
       "disabled": [
         "web_search"
       ],
+      "disclosure": {
+        "mode": "deferred"
+      },
       "gdb": {
         "command_timeout_secs": 30,
         "connect_timeout_secs": 30,

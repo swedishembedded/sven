@@ -65,6 +65,24 @@ pub enum OutputFormatArg {
     Jsonl,
 }
 
+/// The spelling of [`sven_bootstrap::Disclosure`] on the command line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum DisclosureArg {
+    /// Every tool's definition in every request.
+    Full,
+    /// Core and loaded tools in full; the rest by summary until loaded.
+    Deferred,
+}
+
+impl From<DisclosureArg> for sven_bootstrap::Disclosure {
+    fn from(arg: DisclosureArg) -> Self {
+        match arg {
+            DisclosureArg::Full => Self::Full,
+            DisclosureArg::Deferred => Self::Deferred,
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "sven",
@@ -106,6 +124,21 @@ pub struct Cli {
     /// TUI: sven refuses to start it headless, in a pipe, or as a team member.
     #[arg(long, value_enum, default_value = "auto")]
     pub approval: ApprovalMode,
+
+    /// How much of each tool's definition every request carries, overriding
+    /// `tools.disclosure.mode` of the configuration file for this process.
+    ///
+    /// `full` sends every tool's definition. `deferred` sends the core tools'
+    /// and the ones the model has loaded, and describes the rest in a line each:
+    /// the model loads one through the `tools` tool before calling it. A `task`
+    /// sub-agent runs as its own process and reads the configuration file.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "MODE",
+        overrides_with = "tool_disclosure"
+    )]
+    pub tool_disclosure: Option<DisclosureArg>,
 
     /// Model to use, e.g. "gpt-4o" or "anthropic/claude-opus-4-5"
     #[arg(long, short = 'M', env = "SVEN_MODEL")]

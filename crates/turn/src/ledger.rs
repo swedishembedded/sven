@@ -46,7 +46,8 @@ pub const ESTIMATOR: &str = "bytes_div_4";
 /// Headings of system-prompt sections built from the runtime context rather
 /// than from sven's fixed instructions. They match what `prompts` and the
 /// workspace discovery code emit as `## <heading>` lines.
-const RUNTIME_SECTIONS: [&str; 7] = [
+const RUNTIME_SECTIONS: [&str; 8] = [
+    "Deferred Tools",
     "Skills",
     "Subagents",
     "Knowledge Base",

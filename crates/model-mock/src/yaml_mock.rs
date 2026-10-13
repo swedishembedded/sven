@@ -180,25 +180,34 @@ impl sven_model::ModelProvider for YamlMockProvider {
             return Ok(Box::pin(stream::iter(vec![err])));
         }
 
-        let events = if has_tool_results {
-            // Round 2: tool results are in - respond with after_tool_reply or reply
-            let text = rule
-                .and_then(|r| r.after_tool_reply.as_deref().or(r.reply.as_deref()))
-                .unwrap_or("[no after-tool reply configured]");
-            text_events(text, None)
-        } else {
-            match rule {
-                None => text_events("[no mock rule matched]", None),
-                Some(r) if r.tool_calls.is_empty() => {
-                    // Simple text response (optionally preceded by thinking)
-                    let text = r.reply.as_deref().unwrap_or("[no reply configured]");
-                    text_events(text, r.thinking.as_deref())
-                }
-                Some(r) => {
-                    // Emit tool calls
-                    tool_call_events(&r.tool_calls)
-                }
+        // The scripted model follows the instruction a real one is given
+        // under deferred tool disclosure: a tool whose definition is not in
+        // the request is loaded through the `tools` tool before it is called.
+        // With every tool offered this never applies.
+        let called = tools_called_since_last_user(&req);
+        let only_loaded_so_far = !called.is_empty() && called.iter().all(|name| *name == "tools");
+        let events = match rule {
+            Some(r) if has_tool_results && only_loaded_so_far && !r.tool_calls.is_empty() => {
+                // The load has come back: make the scripted calls.
+                tool_call_events(&r.tool_calls)
             }
+            _ if has_tool_results => {
+                // Round 2: tool results are in - respond with after_tool_reply or reply
+                let text = rule
+                    .and_then(|r| r.after_tool_reply.as_deref().or(r.reply.as_deref()))
+                    .unwrap_or("[no after-tool reply configured]");
+                text_events(text, None)
+            }
+            None => text_events("[no mock rule matched]", None),
+            Some(r) if r.tool_calls.is_empty() => {
+                // Simple text response (optionally preceded by thinking)
+                let text = r.reply.as_deref().unwrap_or("[no reply configured]");
+                text_events(text, r.thinking.as_deref())
+            }
+            Some(r) => match unloaded_tools(r, &req) {
+                missing if !missing.is_empty() => load_call_events(&missing),
+                _ => tool_call_events(&r.tool_calls),
+            },
         };
 
         Ok(Box::pin(stream::iter(events)))
@@ -262,6 +271,51 @@ fn text_events(text: &str, thinking: Option<&str>) -> Vec<anyhow::Result<Respons
     }));
     events.push(Ok(ResponseEvent::Done));
     events
+}
+
+/// The tools `rule` calls that the request does not carry a definition of,
+/// when the request carries the discovery tool that could load them. Empty
+/// when every tool is offered, or when nothing could load the missing ones.
+fn unloaded_tools(rule: &ResponseRule, req: &CompletionRequest) -> Vec<String> {
+    const DISCOVERY: &str = "tools";
+    if !req.tools.iter().any(|t| t.name == DISCOVERY) {
+        return Vec::new();
+    }
+    let mut missing: Vec<String> = Vec::new();
+    for call in &rule.tool_calls {
+        let offered = req.tools.iter().any(|t| t.name == call.tool);
+        if !offered && !missing.contains(&call.tool) {
+            missing.push(call.tool.clone());
+        }
+    }
+    missing
+}
+
+/// A single call that loads `names` through the discovery tool.
+fn load_call_events(names: &[String]) -> Vec<anyhow::Result<ResponseEvent>> {
+    let args = serde_json::json!({"action": "load", "names": names});
+    vec![
+        Ok(ResponseEvent::ToolCall {
+            index: 0,
+            id: "mock-load".to_string(),
+            name: "tools".to_string(),
+            arguments: args.to_string(),
+        }),
+        Ok(ResponseEvent::Done),
+    ]
+}
+
+/// The names of the tools called after the last user message.
+fn tools_called_since_last_user(req: &CompletionRequest) -> Vec<&str> {
+    req.messages
+        .iter()
+        .rev()
+        .take_while(|m| m.role != Role::User)
+        .filter_map(|m| match &m.content {
+            sven_model::MessageContent::ToolCall { function, .. } => Some(function.name.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn tool_call_events(tool_calls: &[ToolCallDef]) -> Vec<anyhow::Result<ResponseEvent>> {
@@ -401,6 +455,71 @@ responses:
         );
         // Exactly one item - a stream that fails mid-request has nothing more to say.
         assert!(stream.next().await.is_none());
+    }
+
+    // ── Deferred tool disclosure ──────────────────────────────────────────────
+
+    fn offering(tools: &[&str], mut req: CompletionRequest) -> CompletionRequest {
+        req.tools = tools
+            .iter()
+            .map(|name| sven_model::ToolSchema {
+                name: (*name).to_string(),
+                description: String::new(),
+                parameters: serde_json::json!({"type": "object"}),
+                is_mcp: false,
+            })
+            .collect();
+        req
+    }
+
+    fn calls(events: &[ResponseEvent]) -> Vec<(&str, &str)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                ResponseEvent::ToolCall {
+                    name, arguments, ..
+                } => Some((name.as_str(), arguments.as_str())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_tool_that_is_not_offered_is_loaded_before_it_is_called() {
+        let p = provider();
+        let events = collect(&p, offering(&["tools", "shell"], req("write a file"))).await;
+        let made = calls(&events);
+        assert_eq!(made.len(), 1);
+        assert_eq!(made[0].0, "tools");
+        assert!(made[0].1.contains(r#""names":["fs"]"#), "{made:?}");
+    }
+
+    #[tokio::test]
+    async fn the_scripted_calls_follow_once_the_load_has_come_back() {
+        let p = provider();
+        let mut request = offering(&["tools", "fs"], req("write a file"));
+        request.messages.push(Message {
+            role: Role::Assistant,
+            content: sven_model::MessageContent::ToolCall {
+                tool_call_id: "mock-load".into(),
+                function: sven_model::FunctionCall {
+                    name: "tools".into(),
+                    arguments: "{}".into(),
+                },
+            },
+        });
+        request
+            .messages
+            .push(Message::tool_result("mock-load", "Loaded: fs"));
+        let events = collect(&p, request).await;
+        assert_eq!(calls(&events)[0].0, "fs");
+    }
+
+    #[tokio::test]
+    async fn an_offered_tool_is_called_at_once() {
+        let p = provider();
+        let events = collect(&p, offering(&["tools", "fs"], req("write a file"))).await;
+        assert_eq!(calls(&events)[0].0, "fs");
     }
 
     // ── Tool call sequence ────────────────────────────────────────────────────

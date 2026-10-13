@@ -34,10 +34,11 @@ mod session_executor;
 pub mod session_handles;
 pub mod supervisor;
 pub mod task_tool;
+pub mod tool_discovery;
 #[cfg(feature = "android")]
 pub mod ui_test_dispatch;
 
-pub use config::{AgentConfig, Config, ToolsConfig};
+pub use config::{AgentConfig, Config, DisclosureConfig, ToolsConfig};
 pub use context::{BuiltinTools, Questions, RuntimeContext, ToolSetProfile};
 pub use context_query::{
     build_context_query_tools, ContextConfig, ContextQueryTool, ContextReduceTool,
@@ -55,6 +56,7 @@ pub use runtime_builder::{
 };
 pub use supervisor::{SessionId, SessionSupervisor};
 pub use sven_mcp_client::McpManager;
+pub use sven_tool_registry::Disclosure;
 /// What a session's `ask_question` tool sends a surface that answers it.
 pub use sven_tools_agent::{Question, QuestionRequest};
 pub use task_tool::{ChildApprover, TaskTool};

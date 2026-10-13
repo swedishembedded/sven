@@ -119,6 +119,7 @@ compare runs made with the same `--out`.
 | `tool_heavy` | four user turns that fan out into shell, file reads, a search and a write, one of them re-reading a file |
 | `noisy_output` | one shell command that prints 3,000 log lines |
 | `long_history` | a 60-turn conversation replayed ahead of one more question |
+| `deferred_tool` | one call to a tool outside the core set; under deferred disclosure it is loaded first |
 
 Estimated input tokens, summed over the requests of each scenario (`bytes_div_4`;
 the mock provider's own usage numbers are synthetic, so the baseline does not
@@ -176,3 +177,13 @@ request. MCP tools add their own schemas, charged to their own names.
 These replace the earlier planning figures of about 350 tokens per tool and
 about 1,400 system tokens, which were taken on a 19-tool chat session; the
 ledger measures what the headless runner actually sends.
+
+## Deferred tool disclosure
+
+`--tool-disclosure deferred` (the default for a program that reads the
+configuration file) sends the definitions of the core tools only. In the ledger
+the other tools' `schema:` lines disappear, the `tools` tool appears, and the
+system prompt gains a `Deferred Tools` section (counted in `system_runtime`).
+`make bench/ledger DISCLOSURE=full|deferred` measures either mode, and the
+measured savings are in
+[tool-disclosure.md](tool-disclosure.md#measurements).

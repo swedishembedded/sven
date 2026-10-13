@@ -63,7 +63,7 @@ configure:
 | Section | Read by |
 |---------|---------|
 | `model`, `providers` | the model drivers (`sven-model-drivers`) |
-| `agent`, `tools` (patterns, `disabled`, `timeout_secs`, `context`) | the session assembly (`sven-bootstrap`) |
+| `agent`, `tools` (patterns, `disabled`, `timeout_secs`, `context`, `disclosure`) | the session assembly (`sven-bootstrap`) |
 | `tools.web`, `tools.lints` | the web tools (`sven-tools-web`) |
 | `tools.memory` | the memory tool (`sven-tools-ctx`) |
 | `tools.asr` | `attach_file` (`sven-tools-fs`) |
@@ -283,6 +283,12 @@ tools:
 
   # Timeout for a single tool call, in seconds.
   timeout_secs: 30
+
+  # How much of each tool's definition every request carries: "full" sends all
+  # of them; "deferred" sends the core tools and the ones the model has loaded
+  # through the `tools` tool, and describes the rest in one line each.
+  disclosure:
+    mode: deferred
 
 
 # ── Web tools ──────────────────────────────────────────────────────────────
@@ -643,6 +649,7 @@ Controls what the agent is allowed to do and how.
 | `deny_patterns` | `["rm -rf /*", ...]` | A shell command whose text matches one of these is refused, in every approval mode - by the `shell` tool, `sven mcp serve`, sub-agents and the GDB tool's host commands (the shell side of `shell`, `!`, `pipe` and `\|`, and the server it starts) |
 | `disabled` | `[]` | Tools, by name, a session never offers the model and never runs - built-in, MCP or application-supplied alike |
 | `timeout_secs` | `30` | Per-tool-call timeout in seconds |
+| `disclosure.mode` | `deferred` | How much of each tool's definition a request carries: `full` or `deferred` (below) |
 
 Patterns are globs matched against the whole command text as written: `*`
 matches anything, `?` one character. They are a convenience, not a security
@@ -672,6 +679,29 @@ tools:
     - "dd if=*"
     - "curl * | sh"    # block shell-pipe downloads
 ```
+
+---
+
+### `tools.disclosure`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mode` | `deferred` | `full` sends the definition of every tool the mode offers with every request. `deferred` sends the definitions of the core tools (`read_file`, `write_file`, `edit_file`, `grep`, `find_file`, `shell`, `todo`) and of the tools the model has loaded, plus the `tools` tool; every other tool - including every MCP tool - is listed in the system prompt by a one-line summary until the model loads it. |
+
+```yaml
+tools:
+  disclosure:
+    mode: deferred
+```
+
+A program that reads the configuration file discloses tools on demand unless the
+file says otherwise; a configuration an embedding application builds in code
+(`Config::default()`) is `full`. `--tool-disclosure full|deferred` sets the mode for one process and overrides the
+file. A `task` sub-agent is a separate process and reads the file. Under
+`deferred` the model finds tools with `tools` (`search`, `list`, `help`) and
+loads them with `tools` `load`; a loaded tool is called directly, under its own
+approval rules. How it works, what it saves and what it costs:
+[docs/technical/tool-disclosure.md](technical/tool-disclosure.md).
 
 ---
 

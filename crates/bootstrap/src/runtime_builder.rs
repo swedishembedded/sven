@@ -659,6 +659,12 @@ impl RuntimeBuilder {
             tool_registry.register_arc(tool);
         }
 
+        if self.config.tools.disclosure.mode == sven_tool_registry::Disclosure::Deferred
+            && !runtime.no_tools
+        {
+            crate::tool_discovery::enable(&mut tool_registry, Arc::clone(&mode_lock));
+        }
+
         // Last, so a disabled name is gone whoever registered it.
         for name in &self.config.tools.disabled {
             tool_registry.remove(name);
@@ -704,6 +710,10 @@ impl RuntimeBuilder {
         // contains a system-role message by convention (parsers that seed it
         // strip the system message into `system_prompt_override` instead), so
         // there is no risk of a duplicate.
+        runtime.tool_index = crate::tool_discovery::index_section(
+            &tool_registry,
+            self.agent_mode.unwrap_or(AgentMode::Agent),
+        );
         let seed_thread = sven_machines::mode::primary_thread(&self.mode);
         if let Ok(mut store) = conv_store.lock() {
             let mode = self.agent_mode.unwrap_or(AgentMode::Agent);
