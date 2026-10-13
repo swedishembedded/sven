@@ -516,6 +516,48 @@ mod tests {
         assert!(matches!(err, TransformError::Contract(_)), "{err}");
     }
 
+    /// A helper that grows its memory by `pages` and traps when the grow
+    /// is refused (`memory.grow` answers -1).
+    fn growing_module(pages: i32) -> Vec<u8> {
+        let ops = cat(&[
+            &i32_const(pages),
+            &[MEMORY_GROW, 0],
+            &i32_const(-1),
+            &[I32_EQ],
+            &[IF, EMPTY, 0x00, END],
+            &pack(0, 0),
+        ]);
+        Builder::default()
+            .memory(1)
+            .func(&[ValType::I32, ValType::I32], &[ValType::I64])
+            .0
+            .body(&[], &ops)
+            .export_func("run", 0)
+            .build()
+    }
+
+    #[test]
+    fn a_helper_growing_memory_past_its_page_cap_fails() {
+        // The host places the input in memory of its own, so a helper has
+        // little headroom: with the cap at three pages, one more page of
+        // growth fits (the helper then fails later, on its empty output),
+        // two do not (the grow is refused and the helper traps on it).
+        let limits = Limits {
+            fuel: 100_000,
+            max_pages: 3,
+        };
+        let fits = Transform::compile(&growing_module(1), None, None).unwrap();
+        let err = fits.run(&json!(null), &limits).unwrap_err();
+        assert!(matches!(err, TransformError::Contract(_)), "{err}");
+
+        let too_far = Transform::compile(&growing_module(2), None, None).unwrap();
+        let err = too_far.run(&json!(null), &limits).unwrap_err();
+        assert!(
+            matches!(err, TransformError::Trap(ref m) if m.contains("unreachable")),
+            "{err}"
+        );
+    }
+
     #[test]
     fn an_output_that_is_not_json_is_a_contract_violation() {
         let bytes = const_json_module(b"not json", 100);

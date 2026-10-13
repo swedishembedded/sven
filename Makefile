@@ -26,7 +26,7 @@ DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
 .PHONY: all build build/debug build/release release test test/features tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt \
-        check check/fmt check/features check/clippy check/doc check/gates check/paths check/deps check/samples check/scope check/arch hooks/install docs docs-pdf \
+        check check/fmt check/features check/clippy check/doc check/gates check/paths check/deps check/samples check/scope check/arch harness/test harness/test/local hooks/install docs docs-pdf \
         formal \
         samples/list \
         release/build release/publish release/tag \
@@ -68,6 +68,26 @@ test/features:
 		echo "test -p $$p --no-default-features"; \
 		$(CARGO) test -q -p $$p --no-default-features $(CARGO_FLAGS) || exit 1; \
 	done
+
+# Harness suites run capped (HARNESS_JOBS build jobs, 4 test threads) so they
+# stay light on a shared machine.
+HARNESS_JOBS ?= 4
+
+## harness/test - every harness suite (mock models only; not part of `make test`)
+harness/test:
+	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-harness-spec -- --test-threads=4
+	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-harness-transform -- --test-threads=4
+	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-harness-runtime --features transform -- --test-threads=4
+	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-sdk --test harness_run --test harness_replay --test harness_authz --test harness_children --test harness_stress -- --test-threads=4
+	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-harness-testkit -- --test-threads=4
+	$(CARGO) test --jobs $(HARNESS_JOBS) -p sample-harnesses-sdk-runner -- --test-threads=4
+	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven --test harness_cli -- --test-threads=4
+
+## harness/test/local - OPT-IN: samples/harnesses/08-local-qwen against an already-running endpoint
+## Needs SVEN_HARNESS_LOCAL_MODEL=1 and SVEN_HARNESS_LOCAL_ENDPOINT; nothing is pulled or started.
+harness/test/local:
+	@test "$$SVEN_HARNESS_LOCAL_MODEL" = 1 && test -n "$$SVEN_HARNESS_LOCAL_ENDPOINT" || { echo "harness/test/local: set SVEN_HARNESS_LOCAL_MODEL=1 and SVEN_HARNESS_LOCAL_ENDPOINT to a model you are already serving; nothing is pulled or started"; exit 2; }
+	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-harness-testkit --test local_model -- --ignored --test-threads=1
 
 ## tests/e2e/basic - run all basic end-to-end tests (requires bats-core)
 ## All tests use the mock model; hardware-gated tests in 07 self-skip without SVEN_TEST_JLINK=1.
