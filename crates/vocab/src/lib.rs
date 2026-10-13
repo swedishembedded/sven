@@ -23,11 +23,16 @@
 use serde_json::Value;
 
 pub mod harness;
+pub mod ledger;
 pub mod provenance;
 pub mod turn;
 pub mod verify;
 
 pub use harness::HarnessEvent;
+pub use ledger::{
+    DecisionInference, LedgerSummary, ReportedUsage, RequestBreakdown, ToolActivity,
+    STEP_METRICS_EXTRA_KEY,
+};
 
 pub use turn::{RefusedCall, TurnRequest, TURN_KIND};
 
