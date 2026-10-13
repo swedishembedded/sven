@@ -602,6 +602,9 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
 - [docs/technical/token-ledger.md](docs/technical/token-ledger.md) - the
   per-request token ledger: where a request's input tokens come from, the
   `--token-ledger` line, `sven ledger`, and the baseline scenarios.
+- [docs/technical/context-assembly.md](docs/technical/context-assembly.md) -
+  addressable context: chunks, representations at four visibilities, the
+  assembly policy, expansion as a recovery event and how to measure it.
 - [docs/technical/tool-definitions.md](docs/technical/tool-definitions.md) -
   the size of the tool definitions every request carries, how it is measured
   and the ceiling that pins it.

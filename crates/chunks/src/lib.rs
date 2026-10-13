@@ -23,6 +23,7 @@
 
 mod chunk;
 mod freshness;
+mod represent;
 mod store;
 
 pub use chunk::{
@@ -30,4 +31,8 @@ pub use chunk::{
     Sensitivity, BYTES_PER_TOKEN,
 };
 pub use freshness::{Freshness, FsProbe, ProbeError, SourceProbe, SourceVersion};
+pub use represent::{
+    allowed_visibilities, indicates_failure, render, tokens_of, RenderRequest, Rendered,
+    Visibility, EXPAND_TOOL_NAME,
+};
 pub use store::{ChunkStore, PutOutcome, StoreLimits};
