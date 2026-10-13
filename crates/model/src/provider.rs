@@ -12,6 +12,41 @@ use crate::{
 
 pub type ResponseStream = Pin<Box<dyn Stream<Item = anyhow::Result<ResponseEvent>> + Send>>;
 
+/// The adapter (fine-tune overlay) a server currently has applied to a model.
+///
+/// `digest` changes whenever the adapter's weights change, so comparing two
+/// probes' digests detects a hot swap even when `id` stays the same.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdapterRef {
+    pub id: String,
+    pub digest: String,
+}
+
+/// One model a server reports it is serving right now.
+///
+/// Every field except `id` is optional because servers differ in what they
+/// advertise and older servers advertise nothing beyond the id. `None` always
+/// means "not reported", never "no" - callers fall back to static catalog
+/// metadata for those.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ServedModel {
+    pub id: String,
+    /// Total context window the server loaded this model with, in tokens.
+    pub context_length: Option<u32>,
+    /// Largest completion the server will produce for this model, in tokens.
+    pub max_output_tokens: Option<u32>,
+    /// Whether the model supports tool calling: `Some` only when the server
+    /// advertised a capability list, `None` when it said nothing.
+    pub tools: Option<bool>,
+    /// The raw capability names the server advertised, unfiltered.
+    pub capabilities: Option<Vec<String>>,
+    /// The adapter currently applied to this model, when the server reports one.
+    pub adapter: Option<AdapterRef>,
+}
+
+/// What a server reports it is serving, in the order it reported it.
+pub type ServedModels = Vec<ServedModel>;
+
 #[async_trait]
 pub trait ModelProvider: Send + Sync {
     /// Human-readable provider name for status display.
@@ -35,6 +70,17 @@ pub trait ModelProvider: Send + Sync {
             .filter(|e| e.provider == provider)
             .collect();
         Ok(entries)
+    }
+
+    /// Ask the live server which models it is serving right now.
+    ///
+    /// Unlike [`Self::list_models`], which merges static catalog entries, this
+    /// reports only what the server itself says, so a model loaded or an
+    /// adapter swapped after sven started is visible. Returns `None` when the
+    /// provider has no discovery endpoint or the server did not answer in
+    /// time; it never fails a turn. The default implementation returns `None`.
+    async fn discover(&self) -> Option<ServedModels> {
+        None
     }
 
     /// Maximum output tokens for this provider/model combination.

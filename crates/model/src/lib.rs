@@ -29,6 +29,6 @@ pub mod sanitize;
 mod types;
 
 pub use catalog::{InputModality, ModelCatalogEntry};
-pub use provider::{ModelProvider, ResponseStream};
+pub use provider::{AdapterRef, ModelProvider, ResponseStream, ServedModel, ServedModels};
 pub use registry::{get_driver, list_drivers, DriverMeta};
 pub use types::*;
