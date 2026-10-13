@@ -96,6 +96,7 @@ sven-sdk = "sdk"
 sven-ci  = "surface"
 sven-mcp = "surface"
 sven-tui = "surface"
+sven-harness-testkit = "surface"
 
 # composite
 sven-acp   = "composite"
