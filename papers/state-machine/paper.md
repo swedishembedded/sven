@@ -14,10 +14,10 @@ title: "Practical Application Of State Machine Patterns in Rust"
 author:
   - "Martin Schröder"
   - "Swedish Embedded AB - martin.schroder@swedishembedded.com"
-date: "2026-10-12"
+date: "2026-10-13"
 ---
 
-# Abstract
+# Abstract {.unnumbered}
 
 Event-driven systems outgrow the ad-hoc structures they start in: flags
 multiply, handlers interleave, and the set of states the system can be in
@@ -784,7 +784,7 @@ checker found three defects in the engine and runtime, all since fixed. The most
 open question is external validity: whether the same disciplines hold
 their cost in a second system built by a different team.
 
-# References
+# References {.unnumbered}
 
 1. D. Harel. "Statecharts: A Visual Formalism for Complex Systems."
    *Science of Computer Programming* 8(3), 1987, 231-274.
