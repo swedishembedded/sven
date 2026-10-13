@@ -158,6 +158,10 @@ sven-ci          = { path = "crates/ci" }
 # Without default features for the same reason as sven-bootstrap: the
 # `minimal` build must not get the SDK's presets back through unification.
 sven-sdk         = { path = "crates/sdk", default-features = false }
+# `sven harness`: offline fixtures, runner and comparer for programmable
+# harnesses, and the document JSON Schema (`sven harness schema`).
+sven-harness-testkit = { path = "crates/harness-testkit" }
+sven-harness-spec = { path = "crates/harness-spec" }
 # `sven task run`: Task/VerifiedTaskSeed/ContentDigest to build the seed a
 # freshly-loaded `.task.toml` is posted as. Zero-dependency foundation crate,
 # so this is unconditional (not gated behind `memory`).

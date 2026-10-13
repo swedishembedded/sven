@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+read_report:
+  capability: ReadFile
+  responses:
+    - ok: "all green"

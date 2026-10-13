@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Invalid on purpose: the entry names a step that does not exist.
+api_version: "1"
+name: broken
+entry: nowhere
+steps:
+  here: { return: { value: { ok: true } } }

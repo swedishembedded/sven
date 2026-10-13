@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+input: { plan: pro }
+expect:
+  status: completed
+  output: { tier: paid }
+  steps: { check: 1, grant: 1, reject: 0 }

@@ -8,6 +8,7 @@
 //! for each of these groups — this module only declares the clap grammar.
 
 mod agent;
+mod harness;
 mod index;
 #[cfg(feature = "memory")]
 mod questions;
@@ -20,6 +21,7 @@ mod tool;
 // shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
 // than duplicated here.
 pub use agent::AgentCommands;
+pub use harness::{HarnessCommands, HarnessRunArgs, ToolsetArg};
 pub use index::IndexCommands;
 #[cfg(feature = "memory")]
 pub use questions::QuestionsCommands;
@@ -425,6 +427,32 @@ pub enum Commands {
     Questions {
         #[command(subcommand)]
         command: QuestionsCommands,
+    },
+
+    /// Validate, inspect, run, resume, replay, test and compare programmable
+    /// harnesses, offline.
+    ///
+    /// Nothing here starts or contacts a model unless you opt in explicitly
+    /// (`run --help`); runs use fixture models and tools, and no sven
+    /// configuration is read.
+    ///
+    ///   sven harness validate DIR...
+    ///   sven harness test DIR... [--case NAME] [--no-replay] [--json]
+    ///   sven harness run DIR --input '{"k": "v"}' [--case FILE] [--json]
+    ///   sven harness schema [PATH]
+    ///
+    /// Exit codes. run, resume: 0 returned, 1 the plan failed, 2 usage or
+    /// invalid harness/input/file, 3 suspended by a bound, 4 cancelled,
+    /// 5 infrastructure. validate, inspect: 0 valid, 1 invalid, 2 unreadable
+    /// path. test: 0 passed or skipped, 1 a case failed, 2 usage or invalid
+    /// harness/manifest. compare: 0 produced, 1 regression under
+    /// --fail-on-regression, 2 invalid variant. replay: 0 matched, 1 trace
+    /// mismatch, 2 refused recording.
+    // Verbatim, so `--help` keeps the examples and exit codes apart.
+    #[command(verbatim_doc_comment)]
+    Harness {
+        #[command(subcommand)]
+        command: HarnessCommands,
     },
 
     /// Attempt a task whose completion a declarative verifier checks, not

@@ -13,6 +13,7 @@ use run::agent::run_agent_command;
 use run::agent_dispatch::run_agent_dispatch_command;
 use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
+use run::harness::run_harness_command;
 use run::index::run_index_command;
 use run::logging::init_logging;
 use run::models::{list_models_cmd, list_providers_cmd};
@@ -156,6 +157,14 @@ async fn main() -> anyhow::Result<()> {
             #[cfg(feature = "memory")]
             Commands::Questions { command } => {
                 return run_questions_command(command);
+            }
+            // Offline by construction: no Settings, no config, no model.
+            Commands::Harness { command } => {
+                let code = run_harness_command(command).await;
+                if code != 0 {
+                    std::process::exit(code);
+                }
+                return Ok(());
             }
             Commands::Task { command } => {
                 let config = Settings::load(cli.config.as_deref())?.runtime;

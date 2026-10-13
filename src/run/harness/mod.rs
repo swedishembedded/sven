@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//! `sven harness`: the offline CLI over programmable harnesses.
+//!
+//! Every subcommand is a thin shell over `sven-harness-testkit`, which builds
+//! each run on a fresh engine with an injected provider and
+//! `Config::default()`. Nothing here loads `Settings` or any user
+//! configuration, and a real model is built only under the testkit's explicit
+//! opt-in, so no subcommand can start or contact a model by default.
+//!
+//! Progress lines (`[sven:harness] ...`) are derived from the run's trace
+//! after it ends: the testkit does not expose the live event stream.
+//!
+//! Swedish Embedded AB implements offline verification for programmable agent
+//! harnesses for its clients. If your team needs expertise in testing
+//! autonomous workflows without a live model then you can procure our
+//! services by sending an email to info@swedishembedded.com.
+
+mod exec;
+mod inspect;
+mod replay;
+mod request;
+mod suites;
+
+use sven_harness_testkit::TestkitError;
+
+use crate::cli::HarnessCommands;
+
+/// A command that could not produce its result: the exit code and why.
+pub(super) struct Failure {
+    pub code: i32,
+    pub message: String,
+}
+
+pub(super) type Outcome = Result<i32, Failure>;
+
+/// A usage error or an unusable file or harness: exit 2.
+pub(super) fn usage(message: impl Into<String>) -> Failure {
+    Failure {
+        code: 2,
+        message: message.into(),
+    }
+}
+
+/// Maps a testkit error to its exit code: a run that could not be carried
+/// out is infrastructure (5), everything else is the caller's input (2).
+pub(super) fn kit(error: TestkitError) -> Failure {
+    let code = if matches!(error, TestkitError::Run(_)) {
+        5
+    } else {
+        2
+    };
+    Failure {
+        code,
+        message: error.to_string(),
+    }
+}
+
+/// Runs a `sven harness` subcommand and returns the process exit code.
+pub(crate) async fn run_harness_command(command: &HarnessCommands) -> i32 {
+    let outcome = match command {
+        HarnessCommands::Validate { paths, json } => suites::validate(paths, *json),
+        HarnessCommands::Inspect { path, json } => inspect::inspect(path, *json),
+        HarnessCommands::Schema { path } => inspect::schema(path.as_deref()),
+        HarnessCommands::Run { path, run } => exec::run(path, run).await,
+        HarnessCommands::Resume {
+            path,
+            checkpoint,
+            run,
+        } => exec::resume(path, checkpoint, run).await,
+        HarnessCommands::Replay {
+            path,
+            recording,
+            expect_trace,
+            json,
+        } => replay::replay(path, recording, expect_trace.as_deref(), *json),
+        HarnessCommands::Test {
+            dirs,
+            case,
+            no_replay,
+            json,
+        } => suites::test(dirs, case.as_deref(), !*no_replay, *json).await,
+        HarnessCommands::Compare {
+            dir_a,
+            dir_b,
+            cases,
+            fail_on_regression,
+            json,
+        } => suites::compare(dir_a, dir_b, cases, *fail_on_regression, *json).await,
+    };
+    outcome.unwrap_or_else(|failure| {
+        eprintln!("error: {}", failure.message);
+        failure.code
+    })
+}
+
+/// Prints `value` as pretty JSON on stdout.
+pub(super) fn print_json(value: &impl serde::Serialize) -> Result<(), Failure> {
+    let text = serde_json::to_string_pretty(value).map_err(|e| Failure {
+        code: 5,
+        message: format!("cannot serialize the report: {e}"),
+    })?;
+    println!("{text}");
+    Ok(())
+}

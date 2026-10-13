@@ -48,7 +48,7 @@ and must reach the same verdict and trace.
 ## Running them
 
 ```sh
-sven harness test samples/harnesses/*/           # all samples, offline
+sven harness test samples/harnesses/0*/          # all samples, offline
 cargo test -p sven-harness-testkit --test samples
 ```
 

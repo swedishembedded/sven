@@ -24,9 +24,10 @@ What it shows:
 sven harness validate samples/harnesses/06-checkpoint-replay
 sven harness inspect  samples/harnesses/06-checkpoint-replay
 sven harness test     samples/harnesses/06-checkpoint-replay
-sven harness run      samples/harnesses/06-checkpoint-replay --tool-fixture <tools.yaml> --timeout 1 \
-    --record run.json --checkpoint-out checkpoint.json
-sven harness resume   samples/harnesses/06-checkpoint-replay --checkpoint checkpoint.json --tool-fixture <tools.yaml>
+sven harness run      samples/harnesses/06-checkpoint-replay --tool-fixture blocked.yaml --timeout 1 \
+    --record run.json --checkpoint-out checkpoint.json     # exit 3: suspended
+sven harness resume   samples/harnesses/06-checkpoint-replay --checkpoint checkpoint.json \
+    --tool-fixture answered.yaml                           # exit 0: completed
 sven harness replay   samples/harnesses/06-checkpoint-replay --recording run.json
 ```
 
@@ -37,6 +38,21 @@ tests, together with the other harness samples:
 ```sh
 cargo test -p sven-harness-testkit --test samples
 ```
+
+A tool fixture file is the `tools:` block of a case. `blocked.yaml` is a read
+that never answers, `answered.yaml` one that does:
+
+```yaml
+# blocked.yaml                       # answered.yaml
+read_report:                         read_report:
+  capability: ReadFile                 capability: ReadFile
+  responses: [ { block: true } ]       responses: [ { ok: "all green" } ]
+```
+
+`--timeout 1` suspends the first run after a second, `--checkpoint-out` keeps
+its checkpoint, and `resume` continues it. Add `--trace trace.jsonl` to `run`
+and `--expect-trace trace.jsonl` to `replay` to check that the replay
+reproduces the run's trace.
 
 ## Expected
 
