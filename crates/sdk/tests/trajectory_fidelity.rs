@@ -179,3 +179,41 @@ async fn the_trajectory_lists_the_tools_offered_in_the_agents_mode() {
     assert!(offered.contains("\"offered\""), "{offered}");
     assert!(!offered.contains("research_only"), "{offered}");
 }
+
+#[tokio::test]
+async fn unparseable_tool_arguments_keep_their_raw_text_and_are_flagged() {
+    let engine = scripted_engine(
+        vec![
+            vec![
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: "c1".into(),
+                    name: "echo".into(),
+                    arguments: "this is not json at all".into(),
+                },
+                ResponseEvent::Done,
+            ],
+            vec![ResponseEvent::TextDelta("done".into()), ResponseEvent::Done],
+        ],
+        vec![Arc::new(Echo {
+            name: "echo",
+            modes: &[sven_vocab::AgentMode::Agent],
+        })],
+    );
+    let mut agent = engine.agent("agent");
+    agent.send("go").await.expect("an outcome");
+
+    let json = serde_json::to_value(agent.trajectory()).unwrap();
+    let call = json["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|s| s["tool_calls"].as_array().cloned().unwrap_or_default())
+        .find(|c| c["tool_call_id"] == "c1")
+        .expect("the call is recorded");
+    assert_eq!(
+        call["extra"]["raw_arguments"], "this is not json at all",
+        "{call}"
+    );
+    assert_eq!(call["extra"]["unparsed_arguments"], true, "{call}");
+}

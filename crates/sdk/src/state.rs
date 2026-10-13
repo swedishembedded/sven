@@ -4,8 +4,9 @@
 //! An agent reduced to the bytes needed to bring it back.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use sven_hsm::Snapshot;
-use sven_model::Message;
+use sven_model::{Message, MessageContent};
 use sven_vocab::CompactionRecord;
 
 /// A suspended agent: everything needed to resume it, and nothing that cannot
@@ -44,6 +45,11 @@ pub struct AgentState {
     /// that the conversation was once longer.
     #[serde(default)]
     pub(crate) compactions: Vec<CompactionRecord>,
+    /// The model's raw argument text, by call id, for tool calls whose
+    /// arguments were not valid JSON (the history holds those calls with
+    /// `{}`).
+    #[serde(default)]
+    pub(crate) unparsed_arguments: BTreeMap<String, String>,
 }
 
 impl AgentState {
@@ -58,7 +64,25 @@ impl AgentState {
             model: None,
             tools: Vec::new(),
             compactions: Vec::new(),
+            unparsed_arguments: BTreeMap::new(),
         }
+    }
+
+    /// `message` as the model sent it: a tool call whose arguments were not
+    /// valid JSON carries the raw text again instead of the `{}` the history
+    /// holds, so an exported trajectory can keep and flag it.
+    pub(crate) fn as_sent(&self, message: &Message) -> Message {
+        let mut message = message.clone();
+        if let MessageContent::ToolCall {
+            tool_call_id,
+            function,
+        } = &mut message.content
+        {
+            if let Some(raw) = self.unparsed_arguments.get(tool_call_id) {
+                function.arguments.clone_from(raw);
+            }
+        }
+        message
     }
 
     /// The machine this agent runs.

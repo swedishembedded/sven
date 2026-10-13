@@ -482,6 +482,11 @@ What the document says about the model's view of the run:
   carried in the agent's last step: the machine's named tools, else the tools
   registered for its mode. A tool the mode filters out, or that `Toolset` or
   configuration disabled, is absent.
+- **Malformed tool calls.** A call whose arguments were not valid JSON, even
+  after repair, still runs with `{}` and has `{}` as its `arguments`, but the
+  step's tool call also carries the model's text in `extra.raw_arguments` and
+  `extra.unparsed_arguments: true`. The conversation replayed to the model keeps
+  `{}`; only the exported record has the raw text.
 - **Not recorded.** The system prompt (the kernel regenerates it every turn),
   reasoning text, sampling parameters and per-step token metrics are not in the
   document.

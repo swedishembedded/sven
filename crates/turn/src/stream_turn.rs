@@ -284,7 +284,12 @@ impl AccumSlot {
         })
     }
 
-    fn finalize(self) -> ToolCall {
+    /// Closes the slot into a call, plus the model's raw argument text when it
+    /// could not be parsed as JSON even after repair. The call then carries
+    /// `{}` so it still dispatches exactly as before; the raw text is the only
+    /// record of what the model actually sent.
+    fn finalize(self) -> (ToolCall, Option<String>) {
+        let mut unparsed = None;
         let args = if self.args_buf.is_empty() {
             warn!(
                 tool_name = %self.name,
@@ -302,25 +307,39 @@ impl AccumSlot {
                         args_buf = %self.args_buf,
                         "model sent tool call with invalid JSON; substituting {{}}"
                     );
+                    unparsed = Some(self.args_buf.clone());
                     serde_json::Value::Object(Default::default())
                 })
         };
-        ToolCall {
+        let call = ToolCall {
             id: self.id,
             name: self.name,
             args,
-        }
+        };
+        (call, unparsed)
     }
+}
+
+/// What one streamed model turn produced.
+#[derive(Debug, Default)]
+pub struct StreamedTurn {
+    /// Complete assistant text (empty when the model made only tool calls).
+    pub text: String,
+    /// Every tool call proposed during the turn, JSON-accumulated and
+    /// **not executed**.
+    pub tool_calls: Vec<ToolCall>,
+    /// Raw argument text, by call id, of each call whose arguments were not
+    /// valid JSON and could not be repaired. Such a call is in `tool_calls`
+    /// with `{}` arguments; the text here is what the model really sent.
+    pub unparsed_arguments: HashMap<String, String>,
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /// Stream a single model turn and collect all proposed tool calls (accumulation-only).
 ///
-/// Returns `(text, tool_calls)`:
-/// - `text`: complete assistant text (empty when the model made only tool calls)
-/// - `tool_calls`: all tool calls proposed during this turn (JSON-accumulated,
-///   **not executed**)
+/// Returns the turn's text and proposed tool calls, plus the raw arguments of
+/// any call the model garbled beyond repair (see [`StreamedTurn`]).
 ///
 /// `tx` receives [`AgentEvent`]s for UI bridging while the stream runs.
 ///
@@ -352,7 +371,7 @@ pub async fn stream_turn(
     max_output_tokens_override: Option<u32>,
     limits: impl Into<TurnLimits>,
     tx: &mpsc::Sender<AgentEvent>,
-) -> anyhow::Result<(String, Vec<ToolCall>)> {
+) -> anyhow::Result<StreamedTurn> {
     let limits = limits.into();
     let core_tool_count = tools.iter().filter(|s| !s.is_mcp).count();
     let modalities = model.input_modalities();
@@ -387,6 +406,7 @@ pub async fn stream_turn(
     let mut slots: HashMap<u32, AccumSlot> = HashMap::new();
     let mut completed: Vec<ToolCall> = Vec::new();
     let mut completed_indices: Vec<u32> = Vec::new();
+    let mut unparsed_arguments: HashMap<String, String> = HashMap::new();
     let chunk_timeout = limits.stream_idle;
 
     loop {
@@ -535,7 +555,7 @@ pub async fn stream_turn(
             );
             continue;
         }
-        let mut tc = slot.finalize();
+        let (mut tc, unparsed) = slot.finalize();
         if tc.id.is_empty() {
             tc.id = format!("tc_synthetic_{slot_count}");
             warn!(
@@ -543,6 +563,9 @@ pub async fn stream_turn(
                 tool_call_id = %tc.id,
                 "tool call had empty id; generated synthetic id"
             );
+        }
+        if let Some(raw) = unparsed {
+            unparsed_arguments.insert(tc.id.clone(), raw);
         }
         let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
         completed.push(tc);
@@ -569,7 +592,11 @@ pub async fn stream_turn(
         let _ = tx.send(AgentEvent::TextComplete(full_text.clone())).await;
     }
 
-    Ok((full_text, completed))
+    Ok(StreamedTurn {
+        text: full_text,
+        tool_calls: completed,
+        unparsed_arguments,
+    })
 }
 
 /// Strip `<think>` / `</think>` wrapper tags from accumulated thinking content.
@@ -1206,9 +1233,9 @@ mod max_tokens_tests {
         drop(tx);
         let _ = drain.await;
 
-        let (text, tool_calls) = result.expect("MaxTokens must not fail the turn");
-        assert_eq!(text, "partial ans");
-        assert!(tool_calls.is_empty());
+        let turn = result.expect("MaxTokens must not fail the turn");
+        assert_eq!(turn.text, "partial ans");
+        assert!(turn.tool_calls.is_empty());
     }
 }
 

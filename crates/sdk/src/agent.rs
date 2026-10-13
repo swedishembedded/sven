@@ -73,7 +73,10 @@ impl Agent {
     /// `extra.context_management`, ahead of the conversation that survived
     /// it; the steps before a compaction are not in the history and so not in
     /// the document. `tool_definitions` are the schemas the last step's model
-    /// requests carried, not every tool the engine has registered.
+    /// requests carried, not every tool the engine has registered. A tool call
+    /// whose arguments the model sent as invalid JSON has `{}` arguments and
+    /// `extra.raw_arguments` with the text, flagged by
+    /// `extra.unparsed_arguments`.
     ///
     /// Built from the conversation the kernel holds, so it is complete even
     /// when progress events were dropped, and a resumed agent exports the
@@ -99,7 +102,7 @@ impl Agent {
             );
         }
         for message in &self.state.history {
-            assembler.push_message(message);
+            assembler.push_message(&self.state.as_sent(message));
         }
         trajectory.steps = assembler.finish();
         trajectory
@@ -372,6 +375,12 @@ impl Agent {
             .filter(|c| c.thread == thread)
             .cloned()
             .collect();
+        self.state.unparsed_arguments.extend(
+            store
+                .unparsed_arguments()
+                .iter()
+                .map(|(id, raw)| (id.clone(), raw.clone())),
+        );
         drop(store);
 
         // A compaction shrinks the thread, possibly below what the turn was

@@ -390,7 +390,7 @@ impl TurnExecutor {
         let _ = drain.await;
 
         match result {
-            Ok((text, _tool_calls)) => Some(text),
+            Ok(turn) => Some(turn.text),
             Err(e) => {
                 tracing::warn!(error = %e, "compaction: summarization call failed");
                 None
@@ -669,7 +669,12 @@ impl EffectExecutor for TurnExecutor {
         }
 
         let (text, tool_calls) = match result {
-            Ok(t) => t,
+            Ok(turn) => {
+                if let Ok(mut store) = self.store.lock() {
+                    store.record_unparsed_arguments(turn.unparsed_arguments);
+                }
+                (turn.text, turn.tool_calls)
+            }
             Err(e) => {
                 let msg = format!("{e:#}");
                 obs.emit(UiEvent::Error(msg.clone()));

@@ -11,6 +11,7 @@ pub mod reward;
 pub mod session_resolve;
 pub mod step_ledger;
 pub mod title;
+mod tool_invocation;
 pub mod trace_session;
 
 // Legacy YAML chat support: only the read-only import surface the TUI

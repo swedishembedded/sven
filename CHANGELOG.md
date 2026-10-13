@@ -15,6 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An `agent` step's `tools` list is an allowlist. A harness that listed fewer tools than its model proposed now has the other calls refused.
 - **sven-sdk**: `Agent::trajectory()` marks each context compaction as a `System` step with `extra.context_management`; after a compaction the agent's history is now the compacted conversation the kernel holds (it used to keep the uncompacted event-folded history whenever the compacted thread was no longer than the seed). `agent.tool_definitions` lists the tools the model was offered in the agent's mode rather than every registered tool.
 
+### Fixed
+- **sven-sdk**: `Agent::trajectory()` marks each context compaction as a `System` step with `extra.context_management`; after a compaction the agent's history is now the compacted conversation the kernel holds (it used to keep the uncompacted event-folded history whenever the compacted thread was no longer than the seed). `agent.tool_definitions` lists the tools the model was offered in the agent's mode rather than every registered tool. A tool call with unparseable arguments keeps the model's text in `extra.raw_arguments`, flagged by `extra.unparsed_arguments`, instead of becoming `{}` silently.
+- **sven-turn** (**BREAKING**): `stream_turn` returns a `StreamedTurn { text, tool_calls, unparsed_arguments }` instead of a `(String, Vec<ToolCall>)` tuple.
+- **sven-sdk**: `Agent::trajectory()` marks each context compaction as a `System` step with `extra.context_management`; after a compaction the agent's history is now the compacted conversation the kernel holds (it used to keep the uncompacted event-folded history whenever the compacted thread was no longer than the seed).
+- A harness session under `--approval manual` (or `ApprovalPolicy::Manual`) ran its writes without asking: a machine supplied to the builder skipped the host's approval mode and read-only narrowing. It is now bounded like a registered machine, and `HarnessMachine` implements the approval flow (`RequestHumanApproval`, `HumanApproved`, `HumanRejected`), one held call at a time.
+- A harness child could exceed its own document: its policy is now the inherited contract narrowed by its own declared capabilities.
+- A tool whose name implied a lower capability than the tool really has no longer runs under the lower one: harness sessions and harness children reconcile each call against the registry. Not applied when a `tool_executor_override` replaces the tool slot.
+- An `agent` step's first turn offered no tools, an omitted `tools` list behaved as none, and a proposed call outside a declared list was run. The first turn now offers the list (or the agent-mode tools), the list is an enforced allowlist, refused calls are reported to the model, and a turn of only refused calls continues at once. An agent loop that never continued after a tool settled is fixed with it.
+- A `verify` step in a `parallel` branch or a delegated child failed with "no verify executor is configured"; children now verify against the session's verify root.
+- A harness child could not delegate or fan out, and its depth was never passed down; children now carry their depth and `max_delegate_depth` bounds the whole chain.
+- A `parallel` step without the `SpawnChild` capability compiled and failed at run time; `validate` now rejects it.
+- A `retry` body's every attempt is a step start and counted as such, exhaustion continues at `on_exhausted`, and the retry frame ends with its body.
+- A run waiting on live child runs was judged quiescent, so a deadline or cancellation could surface as a stall; a run's tool calls, now bound to its cancel scope, also end with the run.
+
 ### Added
 - `sven harness validate | inspect | schema | run | resume | replay | test | compare`: programmable harnesses from the command line, offline. Runs use mock models and fixture tools, read no configuration and start no model; exit codes 0-5 are listed on `sven harness --help`. `run` writes `--trace` (JSONL), `--record`, `--trajectory` and `--checkpoint-out` files on request and prints `[sven:harness]` progress lines on stderr. A real model (`--model`) needs `--model-endpoint`; `--toolset` accepts only `none`.
 - `sven-harness-testkit` (surface tier): case manifests (`cases/*.yaml`) with sequenced, rule-driven, file and failing model fixtures, fixture tools (`ok`, `error`, `block`, workspace writes), expectations (status, output, failure, step counts, tools invoked, forbidden capabilities, token bounds) and a `resume` phase; `run_case`, `run_suite`, `compare`, `validate`, `inspect`, `io_schema`; every case is replay-checked; a leaked fixture call fails the case; a live model is built only under `OptIn`.
@@ -37,18 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `deb`, `deb/debug`, `deb/release` -> `package/deb`, `package/deb/debug`, `package/deb/release`
   - `docs-pdf` -> `docs/pdf`; `samples/list` -> `samples`
   - New: `package`, `hooks`, `site`, `papers`, `test/crate`, `build/crate`, and the generated families above
-
-### Fixed
-- **sven-sdk**: `Agent::trajectory()` marks each context compaction as a `System` step with `extra.context_management`; after a compaction the agent's history is now the compacted conversation the kernel holds (it used to keep the uncompacted event-folded history whenever the compacted thread was no longer than the seed).
-- A harness session under `--approval manual` (or `ApprovalPolicy::Manual`) ran its writes without asking: a machine supplied to the builder skipped the host's approval mode and read-only narrowing. It is now bounded like a registered machine, and `HarnessMachine` implements the approval flow (`RequestHumanApproval`, `HumanApproved`, `HumanRejected`), one held call at a time.
-- A harness child could exceed its own document: its policy is now the inherited contract narrowed by its own declared capabilities.
-- A tool whose name implied a lower capability than the tool really has no longer runs under the lower one: harness sessions and harness children reconcile each call against the registry. Not applied when a `tool_executor_override` replaces the tool slot.
-- An `agent` step's first turn offered no tools, an omitted `tools` list behaved as none, and a proposed call outside a declared list was run. The first turn now offers the list (or the agent-mode tools), the list is an enforced allowlist, refused calls are reported to the model, and a turn of only refused calls continues at once. An agent loop that never continued after a tool settled is fixed with it.
-- A `verify` step in a `parallel` branch or a delegated child failed with "no verify executor is configured"; children now verify against the session's verify root.
-- A harness child could not delegate or fan out, and its depth was never passed down; children now carry their depth and `max_delegate_depth` bounds the whole chain.
-- A `parallel` step without the `SpawnChild` capability compiled and failed at run time; `validate` now rejects it.
-- A `retry` body's every attempt is a step start and counted as such, exhaustion continues at `on_exhausted`, and the retry frame ends with its body.
-- A run waiting on live child runs was judged quiescent, so a deadline or cancellation could surface as a stall; a run's tool calls, now bound to its cancel scope, also end with the run.
 
 ## [3.0.0] - 2026-10-01
 

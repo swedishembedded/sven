@@ -333,10 +333,11 @@ impl StepAssembler {
                     function,
                 },
             ) => {
-                let arguments = serde_json::from_str(&function.arguments)
-                    .unwrap_or_else(|_| Value::Object(Map::new()));
-                let invocation = ToolInvocation::new(tool_call_id.clone(), function.name.clone())
-                    .with_arguments(arguments);
+                let invocation = crate::tool_invocation::tool_invocation(
+                    tool_call_id,
+                    &function.name,
+                    &function.arguments,
+                );
                 self.pending_or_new().tool_calls.push(invocation);
             }
             (

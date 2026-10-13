@@ -31,6 +31,12 @@ pub type ThreadId = String;
 #[derive(Debug, Default)]
 pub struct ThreadStore {
     threads: HashMap<ThreadId, Vec<Message>>,
+    /// The model's raw argument text, by call id, for tool calls whose
+    /// arguments were not valid JSON. The thread holds such a call with `{}`
+    /// arguments - history is replayed to providers, and a malformed string
+    /// there would be rejected by some - so this is where the original text
+    /// is kept for whoever records the run.
+    unparsed_arguments: HashMap<String, String>,
     /// Every compaction applied to any thread, oldest first.
     compactions: Vec<CompactionRecord>,
 }
@@ -122,6 +128,19 @@ impl ThreadStore {
             ));
         }
         open.len()
+    }
+
+    /// Keeps the raw argument text of tool calls the model garbled beyond
+    /// repair, by call id. See [`unparsed_arguments`](Self::unparsed_arguments).
+    pub fn record_unparsed_arguments(&mut self, raw: HashMap<String, String>) {
+        self.unparsed_arguments.extend(raw);
+    }
+
+    /// Raw argument text, by call id, of every call recorded with
+    /// [`record_unparsed_arguments`](Self::record_unparsed_arguments).
+    #[must_use]
+    pub fn unparsed_arguments(&self) -> &HashMap<String, String> {
+        &self.unparsed_arguments
     }
 
     /// Notes that a thread was compacted. Call alongside
