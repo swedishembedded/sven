@@ -13,39 +13,35 @@ info@swedishembedded.com.
 title: "Practical Application Of State Machine Patterns in Rust"
 author:
   - "Martin Schröder"
-  - "Swedish Embedded AB — martin.schroder@swedishembedded.com"
+  - "Swedish Embedded AB - martin.schroder@swedishembedded.com"
 date: "2026-10-12"
 ---
 
 # Abstract
 
-Event-driven systems outgrow the ad-hoc structures they start in: boolean
-flags multiply, event handlers interleave, and the question "what states can
-the system be in?" loses its answer. This paper states and validates a
-methodology for building large-scale hierarchical state machine (HSM)
-architectures in Rust that scale while remaining comprehensible. The
-methodology rests on four commitments. First, a formal core: the state
-hierarchy, its configuration invariant and the least-common-ancestor (LCA)
-transition semantics are defined mathematically, and the two properties that
-make every other guarantee possible - configuration preservation and dispatch
-termination - are stated and proved. Second, a purity boundary: transition
-functions are pure functions from state, event and context to a reaction
-value carrying typed effects; all input/output is performed by executors
-behind a single permission gate, which turns authorisation from a convention
-into a type structure. Third, hierarchical composition: submachines, in-state
-activity loops and context-resident durable state, with snapshot and replay
-restore semantics that provably restore only configurations a running machine
-can reach. Fourth, mechanical validation: the kernel's control flow is model
-checked in TLA+ under a discipline in which some models are required to fail,
-so the suite cannot decay into ceremony. The methodology is instantiated in a
-production agent kernel whose entire control flow fits in roughly five
-hundred lines of Rust: at the time of writing its model-checking suite
-comprises 16 configurations, all landing on their expected outcome (6 pass,
-8 pinned rejected designs failing on a named property, 1 tracked gap,
-1 priced trade-off), and the kernel and machine layers carry 222 passing
-tests. The paper argues that scale in state-machine architecture is bought
-not by making the engine richer but by making the engine smaller, purer and
-better checked.
+Event-driven systems outgrow the ad-hoc structures they start in: flags
+multiply, handlers interleave, and the set of states the system can be in
+stops being a mathematical object. This paper states and validates a
+methodology for building large hierarchical state machine (HSM)
+architectures in Rust that stay comprehensible as they grow. It rests on
+four commitments. A formal core defines the state tree, its configuration
+invariant and least-common-ancestor transition semantics, and proves
+configuration preservation and dispatch termination under stated
+assumptions. A purity boundary makes transitions pure functions that return
+typed effects, which executors perform behind a single permission gate;
+every effect a machine may wait on is answered, even when it is refused.
+Hierarchical composition uses in-state activity loops, submachines with
+exactly-once completion, and context-resident durable state with snapshot
+and replay restore. Mechanical validation model checks the kernel's control
+flow in TLA+ under a discipline in which some configurations must fail. The
+methodology is instantiated in the kernel of a production AI coding agent,
+whose dispatch algorithm is about five hundred lines of Rust. Its 16 TLC
+configurations all land on their expected outcome (6 pass, 8 rejected
+designs fail on a named property, 1 tracked gap, 1 priced trade-off), the
+models found three defects since fixed, and the engine, runtime and machine
+crates carry 222 passing tests. The evidence comes from one system and its
+own validation machinery: it supports the soundness and reproducibility of
+the methodology, not its generality across domains.
 
 # Introduction
 
@@ -730,6 +726,22 @@ semantic decision (does leaving cancel the child or park it?) that the
 system has not yet needed to make; the suite will say so the day the
 property starts passing.
 
+**Where the evidence is thin.** Four boundaries of the evidence are worth
+stating plainly. First, the engine model is exhaustive for one ten-state
+hierarchy; transitions to an ancestor or to a descendant of the source
+occur in no model and are covered by the proof sketch of Theorem 1 alone.
+Second, the per-call independence of tool calls (Section 4.3) is a
+property of the kernel's code structure that neither the effect-delivery
+model nor, as far as we found, any test exercises. Third, two assumptions
+of Section 3 are contracts rather than checks: a root that defers is caught
+only by a debug assertion, and a cyclic initial transition is stopped by
+the drill guard, which promises termination and not a valid configuration
+(the guarded-drill model checks termination only). Fourth, the
+comprehensibility claim of Section 5.4 is an argument from the size of
+what a reader must hold, not a measurement: no study of developers and no
+comparison against an alternative architecture of the same agent was
+made.
+
 **Costs of the methodology.** Purity taxes expressiveness: a transition
 cannot log, cannot sample the clock, cannot read a file, and must express
 all such desires as effects for the runtime to grant - which is the point,
@@ -738,7 +750,13 @@ in-state loop concentrates logic (mitigated by shared loop plumbing).
 Snapshot restore leans on every machine maintaining a faithful state
 enumeration; the restorability test catches omission, not wrong
 enumeration. And model checking is only as current as its models: the
-naming rule makes drift visible, not impossible.
+naming rule makes drift visible, not impossible. The drift is not
+hypothetical: while this paper was revised, a model comment still
+claimed that the kernel failed the delivery obligation its own
+configuration requires it to pass, and within a day of writing, two
+kernel changes (cancellation reaching tool calls, child runs counting
+against quiescence) had made Section 4.4 stale. Both were found by
+re-reading code against text, which no gate automates.
 
 **Threats to validity.** The methodology is instantiated in one system and
 evaluated by its own validation machinery; the paper therefore claims
@@ -758,12 +776,13 @@ action, and let typed effects cross it through one permission gate, so that
 authorisation is structural and a refused effect is still an answer owed.
 Compose by hierarchy and submachines rather than by new engines, and keep
 all durable state where the snapshot can see it. And validate mechanically,
-with a suite that must contain failures, so that it keeps its teeth. The
-result - demonstrated here on a production agent kernel whose entire
-control flow is a five-hundred-line checked algorithm - is a system whose
-behaviour remains enumerable, auditable and comprehensible as it grows:
-the state machine pattern, applied with the rigour its own theory has
-always deserved.
+with a suite that must contain failures, so that it keeps its teeth. In the
+production agent kernel examined here, whose dispatch algorithm is about
+five hundred lines of Rust, these disciplines keep the reachable
+configurations enumerable and every dispatch audited, and the model
+checker found three defects in the engine and runtime, all since fixed. The most consequential
+open question is external validity: whether the same disciplines hold
+their cost in a second system built by a different team.
 
 # References
 
