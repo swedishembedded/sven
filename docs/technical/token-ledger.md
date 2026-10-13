@@ -184,6 +184,6 @@ ledger measures what the headless runner actually sends.
 configuration file) sends the definitions of the core tools only. In the ledger
 the other tools' `schema:` lines disappear, the `tools` tool appears, and the
 system prompt gains a `Deferred Tools` section (counted in `system_runtime`).
-`make bench/ledger DISCLOSURE=full|deferred` measures either mode, and the
+`make benchmark/ledger DISCLOSURE=full|deferred` measures either mode, and the
 measured savings are in
 [tool-disclosure.md](tool-disclosure.md#measurements).

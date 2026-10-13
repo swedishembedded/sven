@@ -159,6 +159,10 @@ $(E2E_SUITE_TARGETS): test/e2e/%: build
 $(E2E_TEST_TARGETS): test/e2e/%: build
 	bats tests/e2e/$(dir $*)[0-9]*_$(subst -,_,$(notdir $*)).bats
 
+## test/e2e/basic/deferred - the basic suite with every invocation run under --tool-disclosure deferred (requires bats-core)
+test/e2e/basic/deferred: build
+	SVEN_E2E_TOOL_DISCLOSURE=deferred bats tests/e2e/basic/
+
 # Harness suites run capped (HARNESS_JOBS build jobs, 4 test threads) so they
 # stay light on a shared machine. Each suite's cargo invocation differs, so
 # they are written out rather than generated.
@@ -350,9 +354,9 @@ benchmark/report:
 	@python3 benchmarks/report.py target/benchmark > target/benchmark/report.md
 	@cat target/benchmark/report.md
 
-## benchmark/ledger - token-ledger baseline: replay fixed scenarios against the mock provider and write per-scenario ledger summaries plus a report naming the sven commit; OUT=DIR chooses where (default: outside the repository)
+## benchmark/ledger - token-ledger baseline: replay fixed scenarios against the mock provider and write per-scenario ledger summaries plus a report naming the sven commit; OUT=DIR chooses where (default: outside the repository), DISCLOSURE=full|deferred picks the tool disclosure mode measured
 benchmark/ledger: build
-	@bash benchmarks/ledger/run.sh $(if $(OUT),--out $(OUT),)
+	@bash benchmarks/ledger/run.sh $(if $(OUT),--out $(OUT),) $(if $(DISCLOSURE),--tool-disclosure $(DISCLOSURE),)
 
 # ---------------------------------------------------------------------------
 ##@ Documentation
@@ -621,7 +625,7 @@ generate/config/golden:
 
 # Declared last so every generated list above is already defined.
 .PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
-        test test/features test/gates test/e2e $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
+        test test/features test/gates test/e2e test/e2e/basic/deferred $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
         test/harness test/harness/local-model $(HARNESS_TARGETS) \
         generate generate/harness generate/harness/sample-bundle \
         generate/config generate/config/golden \

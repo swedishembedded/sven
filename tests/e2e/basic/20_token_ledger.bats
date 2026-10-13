@@ -8,6 +8,8 @@
 #   • a tool-using run attributes the tool call and its result to the tool
 #   • the ledger is saved in the trajectory and `sven ledger` summarizes it
 #   • a trajectory without a ledger is reported as such, not as zeros
+#   • --tool-disclosure deferred charges the core tools only, and a deferred
+#     tool is loaded before it is called; full is the legacy listing
 
 load helpers
 
@@ -73,4 +75,38 @@ load helpers
     for tool in read_file write_file edit_file shell grep find_file; do
         [[ "${ledger}" =~ \"${tool}\":[1-9][0-9]* ]]
     done
+}
+
+@test "20.08 --tool-disclosure deferred charges the core tools and the tools tool, not the rest" {
+    run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger --tool-disclosure deferred'
+    ledger="$(grep '^\[sven:ledger\] ' <<<"${STDERR_OUT}")"
+    for tool in read_file write_file edit_file shell grep find_file todo tools; do
+        [[ "${ledger}" =~ \"${tool}\":[1-9][0-9]* ]]
+    done
+    for tool in task system web_fetch web_search skill memory; do
+        [[ ! "${ledger}" =~ \"tool_schemas\":\{[^\}]*\"${tool}\": ]]
+    done
+    # What is not loaded is described once, in the system prompt.
+    [[ "${ledger}" == *'"Deferred Tools":'* ]]
+}
+
+@test "20.09 --tool-disclosure full is the legacy listing: no tools tool, no index" {
+    run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger --tool-disclosure full'
+    ledger="$(grep '^\[sven:ledger\] ' <<<"${STDERR_OUT}")"
+    [[ "${ledger}" =~ \"task\":[1-9][0-9]* ]]
+    [[ ! "${ledger}" =~ \"tool_schemas\":\{[^\}]*\"tools\": ]]
+    [[ "${ledger}" != *'"Deferred Tools":'* ]]
+}
+
+@test "20.10 a deferred tool is loaded through the tools tool before it is called" {
+    local home_dir
+    home_dir="$(mktemp -d)"
+    run_split_output env HOME="${home_dir}" bash -c \
+        'echo "remember the launch code" | "$BIN" --headless --model mock --tool-disclosure deferred -v'
+    [ "${EXIT_CODE}" -eq 0 ]
+    load_line="$(grep -n '\[sven:tool:call\].* name="tools"' <<<"${STDERR_OUT}" | head -1 | cut -d: -f1)"
+    call_line="$(grep -n '\[sven:tool:call\].* name="semantic_memory"' <<<"${STDERR_OUT}" | head -1 | cut -d: -f1)"
+    [[ -n "${load_line}" && -n "${call_line}" ]]
+    [[ "${load_line}" -lt "${call_line}" ]]
+    rm -rf "${home_dir}"
 }

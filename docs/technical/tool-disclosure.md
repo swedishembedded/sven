@@ -181,7 +181,7 @@ brain's actions become descriptors, deferred like any other tool, found with
 
 ## Measurements
 
-`make bench/ledger` (mock provider, empty home, default tools; estimated
+`make benchmark/ledger` (mock provider, empty home, default tools; estimated
 tokens, `bytes_div_4`), before this change and with each mode after it:
 
 **Per scenario** (summed over each scenario's requests). *before* is the tree
@@ -231,5 +231,5 @@ for a long one that does not (`tool_heavy`, which uses core tools only, is
 Ledger lines of a default `agent` session: 15 definitions in `full`; in
 `deferred` 8 (the core tools and `tools`) plus a `Deferred Tools` system
 section. The bats suite runs in both modes (`make tests/e2e/basic` and
-`make tests/e2e/basic/deferred`); the cases that fail do so identically in both.
+`make test/e2e/basic/deferred`); the cases that fail do so identically in both.
 

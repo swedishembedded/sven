@@ -64,6 +64,19 @@ responses:
     pattern: "ledger-bench summarize"
     reply: "Summary: two modules surveyed, one re-read, notes written."
 
+  # -- deferred_tool: one call to a tool that is not a core tool. With every
+  # tool offered it is one request; under deferred disclosure the scripted
+  # model loads the tool first, which is the extra request this measures.
+
+  - match_type: contains
+    pattern: "ledger-bench remember"
+    tool_calls:
+      - id: tc-remember
+        tool: memory
+        args:
+          action: list
+    after_tool_reply: "No notes yet."
+
   # -- noisy_output: one command that prints 3000 log lines
 
   - match_type: contains

@@ -31,6 +31,17 @@ else
     BIN="${_debug}"
 fi
 
+# SVEN_E2E_TOOL_DISCLOSURE=full|deferred (set by `make test/e2e/basic/deferred`)
+# runs every invocation of the suite under `--tool-disclosure MODE`. This is a
+# switch of the test harness, not of sven: the binary reads no such variable.
+if [[ -n "${SVEN_E2E_TOOL_DISCLOSURE:-}" ]]; then
+    _wrapper="${BATS_RUN_TMPDIR:-${TMPDIR:-/tmp}}/sven-${SVEN_E2E_TOOL_DISCLOSURE}"
+    printf '#!/usr/bin/env bash\nexec "%s" --tool-disclosure "%s" "$@"\n' \
+        "${BIN}" "${SVEN_E2E_TOOL_DISCLOSURE}" >"${_wrapper}"
+    chmod +x "${_wrapper}"
+    BIN="${_wrapper}"
+fi
+
 export BIN
 
 # ── Fixture paths ─────────────────────────────────────────────────────────────
