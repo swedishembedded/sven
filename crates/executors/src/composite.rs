@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use sven_hsm::{AuditTrailHandle, Effect, EffectKind, ObservationSink};
-use sven_kernel::{Clock, EffectExecutor, EventSink};
+use sven_kernel::{CancelScope, Clock, EffectExecutor, EventSink};
 use sven_tool_registry::ToolRegistry;
 use tokio::sync::mpsc;
 
@@ -63,6 +63,21 @@ impl CompositeExecutor {
 
 #[async_trait]
 impl EffectExecutor for CompositeExecutor {
+    fn bind_cancel(&mut self, scope: &CancelScope) {
+        let slots = [
+            &mut self.turn,
+            &mut self.tool,
+            &mut self.user,
+            &mut self.timer,
+            &mut self.audit,
+            &mut self.verify,
+        ];
+        for slot in slots.into_iter().flatten() {
+            slot.bind_cancel(scope);
+        }
+        self.internal.bind_cancel(scope);
+    }
+
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
         let kind = effect.kind();
         match kind {

@@ -172,6 +172,10 @@ impl ToolExecutor {
 
 #[async_trait]
 impl EffectExecutor for ToolExecutor {
+    fn bind_cancel(&mut self, scope: &CancelScope) {
+        self.cancel = scope.clone();
+    }
+
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
         let Effect::CallTool {
             call_id,

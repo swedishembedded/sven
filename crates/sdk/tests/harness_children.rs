@@ -276,3 +276,91 @@ async fn cancelling_a_run_stops_its_children() {
     }
     panic!("a child's tool call kept running after the run was cancelled");
 }
+
+const BLOCKING_TOP_LEVEL: &str = r#"
+api_version: "1"
+name: blocking-top-level
+entry: wait
+capabilities: [ReadFile]
+limits: { max_steps: 10 }
+steps:
+  wait:
+    tool: { name: read_block, then: out }
+  out:
+    return: { value: "never" }
+"#;
+
+/// Runs the top-level blocking harness under `options`, waits for its tool
+/// call to be in flight, optionally fires `cancel`, and returns once the
+/// run ended; the caller then checks the call was dropped.
+async fn end_a_blocked_run(
+    options: impl FnOnce(&CancelToken) -> RunOptions,
+    cancel_when_blocked: bool,
+) -> (RunConclusion, Arc<AtomicUsize>) {
+    let started = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let engine = builder()
+        .tool(Arc::new(Blocks {
+            started: Arc::clone(&started),
+            dropped: Arc::clone(&dropped),
+        }))
+        .build()
+        .expect("an engine builds");
+    let harness = engine
+        .load_harness_from_str(BLOCKING_TOP_LEVEL)
+        .expect("loads");
+    let token = CancelToken::new();
+    let bounds = options(&token);
+    let mut run = harness.start(json!({})).expect("starts");
+    let worker = tokio::spawn(async move { run.execute(bounds).await });
+
+    for _ in 0..500 {
+        if started.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        started.load(Ordering::SeqCst),
+        1,
+        "the tool call is in flight"
+    );
+    if cancel_when_blocked {
+        token.cancel();
+    }
+    let outcome = tokio::time::timeout(Duration::from_secs(10), worker)
+        .await
+        .expect("the bounded run ends in time")
+        .expect("the worker joins")
+        .expect("an outcome");
+    (outcome.conclusion, dropped)
+}
+
+async fn assert_call_dropped(dropped: &AtomicUsize) {
+    for _ in 0..300 {
+        if dropped.load(Ordering::SeqCst) == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the run's own tool call kept running after the run ended");
+}
+
+#[tokio::test]
+async fn cancelling_a_run_stops_its_own_tool_call() {
+    let (conclusion, dropped) =
+        end_a_blocked_run(|t| RunOptions::new().cancel(t.clone()), true).await;
+    assert_eq!(conclusion, RunConclusion::Cancelled);
+    assert_call_dropped(&dropped).await;
+}
+
+#[tokio::test]
+async fn a_deadline_stops_the_tool_call_it_suspended() {
+    let (conclusion, dropped) = end_a_blocked_run(
+        |_| RunOptions::new().deadline(Duration::from_millis(300)),
+        false,
+    )
+    .await;
+    assert_eq!(conclusion, RunConclusion::Timeout);
+    assert_call_dropped(&dropped).await;
+}

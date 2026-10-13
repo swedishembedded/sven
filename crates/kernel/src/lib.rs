@@ -98,12 +98,27 @@ pub trait EffectExecutor: Send {
     /// goes to `obs`; exactly the completion fact that advances the machine
     /// goes to `sink`.
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink);
+
+    /// Hands the executor the scope that stops its run, once, before the
+    /// first effect.
+    ///
+    /// An executor that starts work outliving its `execute` call (a spawned
+    /// tool call) stops that work when `scope` is cancelled. The kernel
+    /// cancels the scope when the run ends for any reason - a bound, a
+    /// cancellation, or the run being dropped - so nothing started on a
+    /// run's behalf outlives it. The default does nothing: an executor whose
+    /// `execute` finishes its work has nothing to stop.
+    fn bind_cancel(&mut self, _scope: &CancelScope) {}
 }
 
 #[async_trait]
 impl EffectExecutor for Box<dyn EffectExecutor> {
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
         self.as_mut().execute(effect, sink, obs).await;
+    }
+
+    fn bind_cancel(&mut self, scope: &CancelScope) {
+        self.as_mut().bind_cancel(scope);
     }
 }
 
@@ -338,6 +353,8 @@ where
 {
     let mut processed: u64 = 0;
     let mut last_error: Option<String> = None;
+    executor.bind_cancel(&cancel);
+    let _run_over = cancel.cancel_on_drop();
     // Same in-flight registry as the erased loop. The typed runtime exposes no
     // quiescence-based capture, so the set is only fed; keeping the bookkeeping
     // identical means run_effects has one contract.

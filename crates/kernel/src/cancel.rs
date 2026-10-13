@@ -50,6 +50,12 @@ impl CancelScope {
         self.token.cancelled().await;
     }
 
+    /// A guard that cancels this scope when dropped.
+    #[must_use = "the scope is cancelled as soon as the guard is dropped"]
+    pub(crate) fn cancel_on_drop(&self) -> CancelOnDrop {
+        CancelOnDrop(self.clone())
+    }
+
     /// Cancels this scope at `deadline` unless it is cancelled first.
     ///
     /// The timer runs on its own task for as long as the returned guard
@@ -68,6 +74,15 @@ impl CancelScope {
             }
         });
         DeadlineTimer(timer)
+    }
+}
+
+/// Cancels its scope when dropped (see [`CancelScope::cancel_on_drop`]).
+pub(crate) struct CancelOnDrop(CancelScope);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
     }
 }
 

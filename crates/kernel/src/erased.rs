@@ -329,6 +329,10 @@ where
     let mut processed: u64 = 0;
     let mut last_error: Option<String> = None;
     let cancel = children.scope();
+    executor.bind_cancel(&cancel);
+    // Whatever ends this loop - a cancellation, the queue closing, the
+    // runtime being dropped - ends the work started on the run's behalf.
+    let _run_over = cancel.cancel_on_drop();
     // Dispatched `CallTool` effects whose result event has not re-entered the
     // queue yet. Tool execution is spawned concurrently by the executor, so an
     // empty event queue does not mean the machine has nothing left to do -
