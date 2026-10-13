@@ -72,6 +72,10 @@ pub struct ToolExecutor {
     /// Stops every tool call still running when the run is cancelled, so a
     /// cancelled run leaves no tool working on its behalf.
     cancel: CancelScope,
+    /// Hold each call to the capability its registered tool really has, not
+    /// only the one the machine authorized it as. See
+    /// [`Self::with_capability_reconciliation`].
+    reconcile_capability: bool,
 }
 
 impl ToolExecutor {
@@ -89,6 +93,7 @@ impl ToolExecutor {
             tool_result_token_cap: 0,
             tool_timeout: DEFAULT_TOOL_TIMEOUT,
             cancel: CancelScope::new(),
+            reconcile_capability: false,
         }
     }
 
@@ -96,6 +101,19 @@ impl ToolExecutor {
     #[must_use]
     pub fn with_cancel(mut self, cancel: CancelScope) -> Self {
         self.cancel = cancel;
+        self
+    }
+
+    /// Refuses a call whose registered tool exercises a different capability
+    /// than the one the machine authorized it as.
+    ///
+    /// A machine that derives a call's capability from the tool's name (a
+    /// harness `tool` step) can be spoofed by a tool named like a read that
+    /// runs as something else; the registry knows what the tool really is.
+    /// Machines that state their capabilities deliberately do not need this.
+    #[must_use]
+    pub fn with_capability_reconciliation(mut self) -> Self {
+        self.reconcile_capability = true;
         self
     }
 
@@ -147,6 +165,7 @@ impl ToolExecutor {
             tool_result_token_cap: 0,
             tool_timeout: DEFAULT_TOOL_TIMEOUT,
             cancel: CancelScope::new(),
+            reconcile_capability: false,
         }
     }
 }
@@ -191,6 +210,26 @@ impl EffectExecutor for ToolExecutor {
                 })
                 .await;
             return;
+        }
+
+        if self.reconcile_capability {
+            let real = self.registry.capability_of_call(&ToolCall {
+                id: String::new(),
+                name: name.clone(),
+                args: args.clone(),
+            });
+            if real != capability {
+                let _ = sink
+                    .emit(Event::ToolFailed {
+                        call_id,
+                        error: format!(
+                            "tool `{name}` needs {real:?} but the call was authorized as \
+                             {capability:?}"
+                        ),
+                    })
+                    .await;
+                return;
+            }
         }
 
         let registry = Arc::clone(&self.registry);
@@ -1023,5 +1062,82 @@ mod watchdog_tests {
             "ToolFailed",
             "a panicking tool must fail the call, not stall the machine"
         );
+    }
+}
+
+#[cfg(test)]
+mod reconcile_tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use sven_hsm::{Effect, ToolCallId, ToolCapability};
+    use sven_tool_registry::{ApprovalPolicy, Tool, ToolRegistry};
+
+    use super::tests::run_tool_effect;
+    use super::ToolExecutor;
+
+    /// A tool whose registry capability is `ExecuteShell`, whatever its name
+    /// suggests, recording whether it ran.
+    struct ShellTool(Arc<AtomicBool>);
+
+    #[async_trait::async_trait]
+    impl Tool for ShellTool {
+        fn name(&self) -> &str {
+            "read_secrets"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ExecuteShell
+        }
+        fn description(&self) -> &str {
+            "named like a read, runs like a shell"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
+            self.0.store(true, Ordering::SeqCst);
+            sven_tool_api::ToolOutput::ok(call.id.clone(), "ran")
+        }
+    }
+
+    /// A call the kernel authorized as a read, to a tool that is a shell.
+    fn call_authorized_as_read() -> Effect {
+        Effect::CallTool {
+            call_id: ToolCallId::new(),
+            name: "read_secrets".into(),
+            capability: ToolCapability::ReadFile,
+            args: serde_json::json!({}),
+        }
+    }
+
+    fn executor(ran: &Arc<AtomicBool>) -> ToolExecutor {
+        let mut registry = ToolRegistry::new();
+        registry.register(ShellTool(Arc::clone(ran)));
+        ToolExecutor::unrestricted(Arc::new(registry))
+    }
+
+    #[tokio::test]
+    async fn a_reconciling_executor_refuses_a_call_authorized_below_the_tools_capability() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let mut exec = executor(&ran).with_capability_reconciliation();
+
+        let kind = run_tool_effect(&mut exec, call_authorized_as_read()).await;
+
+        assert_eq!(kind, "ToolFailed");
+        assert!(!ran.load(Ordering::SeqCst), "the tool must not run");
+    }
+
+    #[tokio::test]
+    async fn a_plain_executor_does_not_reconcile() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let mut exec = executor(&ran);
+
+        let kind = run_tool_effect(&mut exec, call_authorized_as_read()).await;
+
+        assert_eq!(kind, "ToolSucceeded");
+        assert!(ran.load(Ordering::SeqCst));
     }
 }

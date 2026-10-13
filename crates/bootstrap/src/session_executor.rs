@@ -16,7 +16,7 @@
 //! procure our services by sending an email to info@swedishembedded.com.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use sven_executors::user::{ApprovalRequest, UserQuestion};
@@ -40,6 +40,12 @@ pub(crate) struct UserGates {
     pub approval_mode: ApprovalMode,
 }
 
+/// The root `Effect::Verify` is jailed to: the session's project root, or
+/// the working directory when it has none.
+fn verify_root(project_root: Option<&Path>) -> PathBuf {
+    project_root.map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+}
+
 /// Parallel-execution fan-out: in SDLC mode, and in a session with
 /// registered harness documents, the kernel can service
 /// `Effect::InstantiateSubmachine` by running each child as an isolated
@@ -52,6 +58,7 @@ pub(crate) fn child_spawner(
     config: &Arc<Config>,
     tool_registry: &Arc<sven_tool_registry::ToolRegistry>,
     gates: &UserGates,
+    project_root: Option<&Path>,
 ) -> Option<Arc<dyn ChildSpawner>> {
     if mode != "sdlc" && harnesses.is_empty() {
         return None;
@@ -63,6 +70,7 @@ pub(crate) fn child_spawner(
             Arc::clone(tool_registry),
         )
         .with_harnesses(Arc::clone(harnesses))
+        .with_verify_root(verify_root(project_root))
         .with_gates(
             gates.questions.clone(),
             gates.approvals.clone(),
@@ -91,6 +99,12 @@ pub(crate) struct ExecutorParts {
     pub parked_tx: mpsc::Sender<sven_executors::user::ParkedQuestion>,
     /// Replaces only the tool slot, keeping every other default executor.
     pub tool_executor_override: Option<ToolExecutorFactory>,
+    /// Hold every tool call to the capability its registered tool really has
+    /// (see [`ToolExecutor::with_capability_reconciliation`]). For sessions
+    /// whose machine derives call capabilities from tool names. Not applied
+    /// to a tool slot substituted by `tool_executor_override`, whose
+    /// executor the override owns.
+    pub reconcile_capabilities: bool,
 }
 
 /// A caller-supplied executor replaces the default composite wholesale;
@@ -111,7 +125,7 @@ pub(crate) fn compose(
     // Only the verified-task machine's `Verifying` state ever emits
     // `Effect::Verify` (see its `permission_policy`), so wiring it here
     // unconditionally is harmless for every other mode.
-    let verify_root = parts.project_root.unwrap_or_else(|| PathBuf::from("."));
+    let verify_root = verify_root(parts.project_root.as_deref());
     let turn_executor = TurnExecutor::new(
         Arc::clone(&parts.model),
         None,
@@ -136,16 +150,21 @@ pub(crate) fn compose(
         .with_verify(verify_root);
     let composed = match parts.tool_executor_override {
         Some(factory) => base.with_tool_slot(factory(parts.conv_store, parts.call_id_to_thread)),
-        None => base.with_tool_executor(
-            ToolExecutor::with_shared_store(
+        None => {
+            let tools = ToolExecutor::with_shared_store(
                 parts.tool_registry,
                 Default::default(),
                 parts.call_id_to_thread,
                 parts.conv_store,
             )
             .with_no_tools(parts.no_tools)
-            .with_tool_result_token_cap(parts.config.agent.tool_result_token_cap),
-        ),
+            .with_tool_result_token_cap(parts.config.agent.tool_result_token_cap);
+            base.with_tool_executor(if parts.reconcile_capabilities {
+                tools.with_capability_reconciliation()
+            } else {
+                tools
+            })
+        }
     };
     Box::new(composed.build())
 }

@@ -18,6 +18,7 @@ use sven_harness_spec::Template;
 use sven_hsm::{Context, Effect, ProposedToolCall, Reaction, ToolCallId};
 use sven_vocab::{RefusedCall, TurnRequest};
 
+use crate::approval::HeldCall;
 use crate::machine::{harness_thread, HarnessMachine};
 use crate::run::{AgentLoop, HarnessRunState, Inflight, Waiting};
 use crate::state::HarnessState;
@@ -146,6 +147,17 @@ impl HarnessMachine {
             })
             .collect();
         agent.pending = admitted.iter().map(|call| call.call_id).collect();
+        agent.calls = admitted
+            .iter()
+            .map(|call| {
+                let held = HeldCall {
+                    name: call.name.clone(),
+                    capability: call.capability,
+                    args: call.args.clone(),
+                };
+                (call.call_id.as_uuid().to_string(), held)
+            })
+            .collect();
         run.counts.tool_calls += admitted.len() as u64;
         // Still Waiting::Model: the loop's tool results arrive in the same
         // state through the tool-settling arm.

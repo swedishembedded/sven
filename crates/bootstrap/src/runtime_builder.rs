@@ -481,30 +481,14 @@ impl RuntimeBuilder {
         // from its name, so an unregistered mode is refused outright —
         // unless the caller supplied its own machine, which carries its own
         // policy and answers for what it may do.
-        let (machine, policy) = match self.machine_override.take() {
-            Some((machine, policy)) => (machine, policy),
-            None => {
-                let registry = match self.mode_registry.take() {
-                    Some(supplied) => supplied,
-                    None => Arc::new(crate::modes::mode_registry()),
-                };
-                let registration = registry.get(&self.mode).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "unknown mode {:?}; available: {:?}",
-                        self.mode,
-                        registry.modes()
-                    )
-                })?;
-                let policy = crate::mode_policy::session_policy(
-                    &registry,
-                    &self.mode,
-                    self.agent_mode.unwrap_or(AgentMode::Agent),
-                    self.approval_mode,
-                )?;
-                let machine = (registration.factory)();
-                (machine, policy)
-            }
-        };
+        let harness_session = self.machine_override.is_some();
+        let (machine, policy) = crate::mode_policy::session_machine(
+            self.machine_override.take(),
+            self.mode_registry.take(),
+            &self.mode,
+            self.agent_mode,
+            self.approval_mode,
+        )?;
 
         // ── Initialise model provider ─────────────────────────────────────────
         let model_cfg = self
@@ -772,6 +756,7 @@ impl RuntimeBuilder {
             &self.config,
             &tool_registry,
             &gates,
+            self.runtime_ctx.project_root.as_deref(),
         );
 
         // The default composite wires every effect kind; a caller-supplied
@@ -792,6 +777,7 @@ impl RuntimeBuilder {
                 #[cfg(feature = "memory")]
                 parked_tx,
                 tool_executor_override: self.tool_executor_override.take(),
+                reconcile_capabilities: harness_session,
             },
         );
 

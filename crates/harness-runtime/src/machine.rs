@@ -388,7 +388,7 @@ impl HarnessMachine {
             Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
                 self.on_agent_tool_settled(&mut run, *call_id, ctx)
             }
-            _ => Reaction::Ignored,
+            _ => self.on_gate_event(&mut run, event, ctx),
         }
     }
 
@@ -419,7 +419,7 @@ impl HarnessMachine {
             } if Some(done) == inflight.call_id.as_ref() => {
                 self.side_effect_failed(&mut run, error, ctx)
             }
-            _ => Reaction::Ignored,
+            _ => self.on_gate_event(&mut run, event, ctx),
         }
     }
 

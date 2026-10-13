@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sven_harness_spec::{Expr, HarnessBundle, HarnessPlan, Helper, Path, Template};
 use sven_hsm::{Context, MachineId, ToolCallId};
+
+use crate::approval::{HeldCall, HeldGate};
 use uuid::Uuid;
 
 use crate::error::HarnessRunError;
@@ -242,7 +244,7 @@ pub enum Waiting {
 /// Mirrors the machines' `LoopState` in miniature: a harness agent step has
 /// a fixed tool allowlist, no all-tools fallback, and no schema demand —
 /// the plan's agent primitive is exactly this loop and nothing else.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AgentLoop {
     /// The agent step's id.
     pub step: String,
@@ -263,6 +265,11 @@ pub struct AgentLoop {
     /// into the next turn so the model reads why they did not run.
     #[serde(default)]
     pub refused: BTreeMap<String, String>,
+    /// The calls the last turn proposed and the step admitted (call id to
+    /// call): what a call the permission gate holds for approval is run as
+    /// once it is approved.
+    #[serde(default)]
+    pub calls: BTreeMap<String, HeldCall>,
 }
 
 /// The active retry frame: which retry step is in play, its body, and how
@@ -480,6 +487,10 @@ pub struct HarnessRunState {
     /// bundle is refused even when the plan itself is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle_digest: Option<String>,
+    /// Calls the permission gate holds for a person, oldest first: the
+    /// first is being asked about, the rest wait their turn.
+    #[serde(default)]
+    pub approvals: Vec<HeldGate>,
     /// The structured execution trace: what the run did, in order.
     pub trace: Vec<TraceRecord>,
     /// Limit counters.

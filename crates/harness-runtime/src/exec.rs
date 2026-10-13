@@ -11,8 +11,6 @@
 //! the walk, so one dispatch runs a whole pure chain and everything that
 //! happens between two pieces of I/O.
 
-use std::collections::BTreeMap;
-
 use serde_json::Value;
 use sven_harness_spec::{DelegateTarget, PlanPrimitive, PlanStep};
 use sven_hsm::{capability_for_tool_name, Context, Effect, Event, Reaction};
@@ -167,10 +165,8 @@ impl HarnessMachine {
                     step: step_id.clone(),
                     thread: harness_thread(self.run.plan()),
                     tools: tools.clone().unwrap_or_default(),
-                    pending: Vec::new(),
-                    rounds: 0,
                     open: tools.is_none(),
-                    refused: BTreeMap::new(),
+                    ..AgentLoop::default()
                 });
                 let effect = self.agent_turn_effect(run, prompt, tools);
                 self.cache_effect(effect.clone());

@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The kernel permission policy that goes with an interactive mode.
 
+use std::sync::Arc;
+
+use sven_hsm::submachine::ErasedMachine;
 use sven_hsm::{PermissionPolicy, ToolCapability};
 use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
 use sven_vocab::{AgentMode, ApprovalMode};
@@ -43,6 +46,52 @@ pub(crate) fn session_policy(
         host_narrowing(registration.policy.clone(), agent_mode),
         approval,
     ))
+}
+
+/// A machine and the policy its session runs it under.
+pub(crate) type SessionMachine = (Box<dyn ErasedMachine>, PermissionPolicy);
+
+/// The machine a session runs and its policy: the caller's own `supplied`
+/// machine, or the one registered for `mode`.
+///
+/// A supplied machine arrives with the policy its host answers for (no
+/// policy is guessed from the mode name), but that policy is bounded by the
+/// session exactly as a registered one is: the host's narrowing for the
+/// read-only modes and the approval mode apply to it too. A registered mode
+/// is looked up before anything starts, and an unregistered one is refused.
+///
+/// # Errors
+///
+/// An unregistered `mode`, or any refusal of [`session_policy`].
+pub(crate) fn session_machine(
+    supplied: Option<SessionMachine>,
+    registry: Option<Arc<ModeRegistry>>,
+    mode: &str,
+    agent_mode: Option<AgentMode>,
+    approval: ApprovalMode,
+) -> anyhow::Result<SessionMachine> {
+    let agent_mode = agent_mode.unwrap_or(AgentMode::Agent);
+    if let Some((machine, policy)) = supplied {
+        let policy = supplied_machine_policy(policy, agent_mode, approval);
+        return Ok((machine, policy));
+    }
+    let registry = registry.unwrap_or_else(|| Arc::new(crate::modes::mode_registry()));
+    let registration = registry.get(mode).ok_or_else(|| {
+        anyhow::anyhow!("unknown mode {:?}; available: {:?}", mode, registry.modes())
+    })?;
+    let policy = session_policy(&registry, mode, agent_mode, approval)?;
+    Ok(((registration.factory)(), policy))
+}
+
+/// The policy a caller-supplied machine runs under: its own, narrowed by the
+/// host for the read-only `AgentMode`s and put under `approval` - the same
+/// two bounds [`session_policy`] applies to a registered machine's policy.
+pub(crate) fn supplied_machine_policy(
+    policy: PermissionPolicy,
+    agent_mode: AgentMode,
+    approval: ApprovalMode,
+) -> PermissionPolicy {
+    with_approval(host_narrowing(policy, agent_mode), approval)
 }
 
 /// What the host withholds from a machine's registered policy for the

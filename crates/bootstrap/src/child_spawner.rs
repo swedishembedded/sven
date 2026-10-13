@@ -43,6 +43,7 @@
 //! needs a person ends with `ok: false` and says so.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -75,12 +76,16 @@ struct Gates {
 
 /// Spawns isolated child kernels: parallel SDLC task children, and the
 /// harness children a session's `delegate` and `parallel` steps name.
+#[derive(Clone)]
 pub struct SdlcChildSpawner {
     default_model: Arc<dyn sven_model::ModelProvider>,
     config: Arc<Config>,
     tool_registry: Arc<ToolRegistry>,
     gates: Option<Gates>,
     harnesses: Arc<sven_harness_runtime::HarnessRegistry>,
+    /// The root a child's `Effect::Verify` is jailed to; without one a child
+    /// has no verifier and a verify step of it fails.
+    verify_root: Option<PathBuf>,
 }
 
 impl SdlcChildSpawner {
@@ -97,7 +102,16 @@ impl SdlcChildSpawner {
             tool_registry,
             gates: None,
             harnesses: Arc::new(sven_harness_runtime::HarnessRegistry::new()),
+            verify_root: None,
         }
+    }
+
+    /// Gives every child a verifier jailed to `root` - the root its parent
+    /// session verifies against - so a verify step of a child can run.
+    #[must_use]
+    pub fn with_verify_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.verify_root = Some(root.into());
+        self
     }
 
     /// The named harness documents children may be: what a `delegate` or
@@ -159,10 +173,16 @@ impl SdlcChildSpawner {
 
     /// The child's executor: its own turn loop and tool slot, the parent's
     /// gates when there are any, all stopped with the child's run.
+    /// `reconcile_capabilities` holds the child's tool calls to their
+    /// registered capability (see
+    /// [`ToolExecutor::with_capability_reconciliation`]): a harness child
+    /// derives a call's capability from the tool's name, a task child states
+    /// it itself.
     fn executor(
         &self,
         contract: &ChildRunContract,
         run: &ChildRun,
+        reconcile_capabilities: bool,
     ) -> sven_executors::CompositeExecutor {
         let conv_store = Arc::new(std::sync::Mutex::new(ThreadStore::new()));
         let call_id_to_thread = Arc::new(std::sync::Mutex::new(HashMap::<
@@ -208,11 +228,19 @@ impl SdlcChildSpawner {
             conv_store,
         )
         .with_cancel(run.cancel.clone());
+        let tool_executor = if reconcile_capabilities {
+            tool_executor.with_capability_reconciliation()
+        } else {
+            tool_executor
+        };
 
-        let builder = CompositeExecutorBuilder::default()
+        let mut builder = CompositeExecutorBuilder::default()
             .with_turn(turn_executor)
             .with_tool_executor(tool_executor)
             .with_timers(Arc::new(SystemClock::new()));
+        if let Some(root) = &self.verify_root {
+            builder = builder.with_verify(root);
+        }
         match &self.gates {
             Some(gates) => builder.with_user_slot(Box::new(
                 UserExecutor::new(gates.questions.clone(), gates.approvals.clone())
@@ -224,6 +252,10 @@ impl SdlcChildSpawner {
         .build()
     }
 }
+
+/// The depth a harness child runs at when its descriptor names none: a
+/// child of a top-level run, which itself runs at depth 1.
+const DEFAULT_CHILD_DEPTH: u64 = 2;
 
 /// What a child that was stopped before finishing reports.
 fn stopped_result(task: &str, contract: &ChildRunContract) -> Value {
@@ -252,15 +284,8 @@ impl ChildSpawner for SdlcChildSpawner {
             self.spawn_task_child(machine, task.to_string(), run, parent)
                 .await;
         } else if let Some(name) = descriptor.get("harness").and_then(Value::as_str) {
-            self.spawn_harness_child(
-                machine,
-                name,
-                descriptor.get("entry").and_then(Value::as_str),
-                descriptor.get("input").cloned().unwrap_or(json!({})),
-                run,
-                parent,
-            )
-            .await;
+            self.spawn_harness_child(machine, name, &descriptor, run, parent)
+                .await;
         } else if let Some(mode) = descriptor.get("mode").and_then(Value::as_str) {
             self.spawn_mode_child(
                 machine,
@@ -315,7 +340,7 @@ impl SdlcChildSpawner {
         }
         ctx.set_fact(TaskMachine::HUMAN_GATE_FACT, self.gates.is_some());
 
-        let executor = self.executor(&contract, &run);
+        let executor = self.executor(&contract, &run, false);
         let rt = ErasedRuntime::spawn_child_run(
             Box::new(Hsm::new(TaskMachine::new(task.clone()))) as Box<dyn ErasedMachine>,
             ctx,
@@ -352,19 +377,25 @@ impl SdlcChildSpawner {
     /// A harness child runs a registered harness document as an isolated
     /// child kernel, entered at the descriptor's branch when it names one,
     /// with the descriptor's input namespace. Its contract is the parent's
-    /// inherited one as-is: a harness child is the same kind of thing as
-    /// its parent and may delegate and fan out within the budgets the
-    /// parent itself runs under. The plan's terminal outcome is the
-    /// child's result.
+    /// inherited one narrowed by the child's own declared capabilities: a
+    /// child holds only what both its parent and its own document allow.
+    /// It may delegate and fan out in turn - its descriptor carries the
+    /// depth it runs at, so the plan's `max_delegate_depth` bounds the whole
+    /// chain. The plan's terminal outcome is the child's result.
     async fn spawn_harness_child(
         &self,
         machine: MachineId,
         name: &str,
-        entry: Option<&str>,
-        input: Value,
+        descriptor: &Value,
         run: ChildRun,
         parent: EventSink,
     ) {
+        let entry = descriptor.get("entry").and_then(Value::as_str);
+        let input = descriptor.get("input").cloned().unwrap_or(json!({}));
+        let depth = descriptor
+            .get("depth")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_CHILD_DEPTH);
         let Some(plan) = self.harnesses.resolve(name) else {
             self.report_failure(
                 machine,
@@ -375,7 +406,8 @@ impl SdlcChildSpawner {
             return;
         };
         let data = sven_harness_runtime::HarnessRunData::from_parts((*plan).clone(), input)
-            .with_helpers(self.harnesses.helpers(name));
+            .with_helpers(self.harnesses.helpers(name))
+            .with_delegate_depth(depth);
         let data = match entry {
             Some(step) => match data.with_entry(step) {
                 Ok(data) => data,
@@ -392,7 +424,10 @@ impl SdlcChildSpawner {
             None => data,
         };
 
-        let contract = run.contract.clone();
+        let own = ChildRunContract::new(
+            sven_harness_runtime::HarnessMachine::permission_policy_for(&data),
+        );
+        let contract = run.contract.narrow(&own);
         let run = ChildRun {
             contract: contract.clone(),
             cancel: run.cancel,
@@ -402,14 +437,14 @@ impl SdlcChildSpawner {
             ctx.set_fact(MAX_TOOL_ROUNDS_FACT, rounds);
         }
 
-        let executor = self.executor(&contract, &run);
+        let executor = self.executor(&contract, &run, true);
         let rt = ErasedRuntime::spawn_child_run(
             Box::new(Hsm::new(sven_harness_runtime::HarnessMachine::new(data)))
                 as Box<dyn ErasedMachine>,
             ctx,
             executor,
             64,
-            None,
+            Some(Arc::new(self.clone()) as Arc<dyn ChildSpawner>),
             run,
         );
 

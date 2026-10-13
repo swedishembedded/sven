@@ -25,6 +25,7 @@
 //! to info@swedishembedded.com.
 
 mod agent_loop;
+mod approval;
 mod checkpoint;
 mod error;
 mod events;
@@ -34,6 +35,7 @@ mod registry;
 mod run;
 mod state;
 
+pub use approval::{HeldCall, HeldGate};
 pub use error::HarnessRunError;
 pub use events::harness_event;
 pub use machine::{harness_thread, HarnessMachine};

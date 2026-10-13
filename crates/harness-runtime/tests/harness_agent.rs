@@ -152,7 +152,11 @@ fn a_proposed_call_outside_the_allowlist_is_never_run() {
         },
     );
     let requests = llm_requests(&fx);
-    assert_eq!(requests.len(), 1, "the loop continues once the tool settled");
+    assert_eq!(
+        requests.len(),
+        1,
+        "the loop continues once the tool settled"
+    );
     let refused = requests[0]["refused_calls"].as_array().expect("refusals");
     assert_eq!(refused.len(), 1);
     assert_eq!(refused[0]["call_id"], denied_id.as_uuid().to_string());
