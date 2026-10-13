@@ -40,7 +40,9 @@
 # `.`. Pattern rules (`%`) and file targets are not checked. The list comes from
 # scripts/make-help.sh, which reads `make -pRrq`, so generated targets count.
 #
-# Usage: scripts/gates/check-make-targets.sh
+# Usage: scripts/gates/check-make-targets.sh [--makefile FILE]
+#   --makefile FILE  lint FILE instead of ./Makefile (used by the self-test,
+#                    tests/gates/make-targets.bats, to prove the failing paths)
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -48,9 +50,19 @@ export LC_ALL=C
 
 LEAVES=" all clean fmt help "
 
-public=$(bash scripts/make-help.sh --targets)
-defined=$(bash scripts/make-help.sh --defined)
-docs=$(bash scripts/make-help.sh --docs)
+help_args=()
+case "${1:-}" in
+"") ;;
+--makefile)
+    [ "$#" -eq 2 ] || { echo "usage: $0 [--makefile FILE]" >&2; exit 2; }
+    help_args=(--makefile "$(realpath -- "$2")")
+    ;;
+*) echo "usage: $0 [--makefile FILE]" >&2; exit 2 ;;
+esac
+
+public=$(bash scripts/make-help.sh "${help_args[@]}" --targets)
+defined=$(bash scripts/make-help.sh "${help_args[@]}" --defined)
+docs=$(bash scripts/make-help.sh "${help_args[@]}" --docs)
 
 failures=0
 fail() {
@@ -58,8 +70,33 @@ fail() {
     failures=$((failures + 1))
 }
 
-# A doc name as an anchored regex: <x> is one path segment.
-shape() { sed -E 's/<[^>]+>/[^\/]+/g' <<<"$1"; }
+# A doc name as an anchored regex: <x> is one path segment. Done in-shell and
+# once per doc line: the generated families make the target list long, so a
+# fork per (target, doc) pair would take minutes.
+shape() {
+    local out=$1
+    while [[ $out =~ (<[^>]+>) ]]; do
+        out=${out/"${BASH_REMATCH[1]}"/"[^/]+"}
+    done
+    printf '%s' "$out"
+}
+
+declare -A is_defined=() is_public=() has_children=()
+while IFS= read -r t; do [ -n "$t" ] && is_defined[$t]=1; done <<<"$defined"
+while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    is_public[$t]=1
+    # A bare name with public descendants is an area, not a leaf.
+    [[ $t == */* ]] && has_children[${t%%/*}]=1
+done <<<"$public"
+
+doc_names=() doc_sections=() doc_regexes=()
+while IFS=$'\t' read -r doc section; do
+    [ -n "$doc" ] || continue
+    doc_names+=("$doc")
+    doc_sections+=("$section")
+    doc_regexes+=("^$(shape "$doc")\$")
+done <<<"$docs"
 
 while IFS= read -r name; do
     [ -n "$name" ] || continue
@@ -71,39 +108,41 @@ while IFS= read -r name; do
     prefix=$name
     while [[ $prefix == */* ]]; do
         prefix=${prefix%/*}
-        if ! grep -qxF -- "$prefix" <<<"$defined"; then
+        [ -n "${is_defined[$prefix]:-}" ] ||
             fail "$name" "prefix '$prefix' is not a defined target (tab completion cannot descend)"
-        fi
     done
 
-    if [[ $name != */* && $LEAVES != *" $name "* ]] && ! grep -q -- "^$name/" <<<"$public"; then
+    if [[ $name != */* && $LEAVES != *" $name "* && -z "${has_children[$name]:-}" ]]; then
         fail "$name" "single-segment leaf; name it <concept>/<action> (only$LEAVES may be a bare leaf)"
     fi
 
     documented=0
-    while IFS=$'\t' read -r doc _; do
-        [ -n "$doc" ] || continue
-        if [[ $name =~ ^$(shape "$doc")$ ]]; then
+    for re in "${doc_regexes[@]}"; do
+        if [[ $name =~ $re ]]; then
             documented=1
             break
         fi
-    done <<<"$docs"
+    done
     [ "$documented" = 1 ] || fail "$name" "no '## $name - description' (or matching <placeholder>) line in Makefile"
 done <<<"$public"
 
-while IFS=$'\t' read -r doc section; do
-    [ -n "$doc" ] || continue
-    [ -n "$section" ] || fail "$doc" "doc line is not under a '##@ Section' line"
+for i in "${!doc_names[@]}"; do
+    doc=${doc_names[$i]}
+    [ -n "${doc_sections[$i]}" ] || fail "$doc" "doc line is not under a '##@ Section' line"
     if [[ $doc == *"<"* ]]; then
-        grep -qE -- "^$(shape "$doc")$" <<<"$public" || fail "$doc" "family doc line matches no target"
+        matched=0
+        for t in "${!is_public[@]}"; do
+            if [[ $t =~ ${doc_regexes[$i]} ]]; then matched=1; break; fi
+        done
+        [ "$matched" = 1 ] || fail "$doc" "family doc line matches no target"
     else
-        grep -qxF -- "$doc" <<<"$defined" || fail "$doc" "documented in Makefile but no such target"
+        [ -n "${is_defined[$doc]:-}" ] || fail "$doc" "documented in Makefile but no such target"
     fi
-done <<<"$docs"
+done
 
 if [ "$failures" -ne 0 ]; then
     printf 'check-make-targets: %d violation(s); the rule is at the top of this script\n' "$failures" >&2
     exit 1
 fi
 printf 'check-make-targets: %d public targets, all named, reachable, documented and in a section\n' \
-    "$(grep -c . <<<"$public")"
+    "${#is_public[@]}"

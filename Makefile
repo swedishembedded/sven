@@ -106,7 +106,7 @@ package/deb/release: build/release
 ## Tests, static checks, formal models and benchmarks. Only `test`, `check` and
 ## `benchmark` run their default set; the other areas are opt-in.
 
-## test - default: workspace unit + integration tests, then test/features
+## test - default: workspace unit + integration tests, then test/features, test/gates
 ##   (test/e2e, test/harness, test/crate and test/formal are separate)
 # --workspace is required: the root Cargo.toml defines both a [workspace] and
 # its own [package] (the `sven` binary), so plain `cargo test` here tests
@@ -117,6 +117,7 @@ package/deb/release: build/release
 test:
 	$(CARGO) test --workspace $(CARGO_FLAGS)
 	$(MAKE) test/features
+	$(MAKE) test/gates
 
 ## test/features - the feature-off configurations' own tests (see check/features)
 test/features:
@@ -124,6 +125,11 @@ test/features:
 		echo "test -p $$p --no-default-features"; \
 		$(CARGO) test -q -p $$p --no-default-features $(CARGO_FLAGS) || exit 1; \
 	done
+
+## test/gates - self-tests of the text gates on scratch trees and Makefiles (bats, no build)
+##   Proves the gates fail on bad input, not only pass on this tree.
+test/gates:
+	bats tests/gates/
 
 ## test/crate - lists the per-package test targets; tests nothing
 test/crate:
@@ -611,7 +617,7 @@ generate/config/golden:
 
 # Declared last so every generated list above is already defined.
 .PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
-        test test/features test/e2e $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
+        test test/features test/gates test/e2e $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
         test/harness test/harness/local-model $(HARNESS_TARGETS) \
         generate generate/harness generate/harness/sample-bundle \
         generate/config generate/config/golden \

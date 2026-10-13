@@ -13,6 +13,9 @@
 # parser to keep right.
 #
 #   make-help.sh            every target, by section, as a tree
+#   make-help.sh --makefile FILE ...
+#                           read FILE instead of ./Makefile (first argument
+#                           pair; the self-tests point the lint at scratch files)
 #   make-help.sh <prefix>   the children of <prefix>/ (a list-only umbrella)
 #   make-help.sh --targets  public targets: static .PHONY, not `_`/`.` prefixed
 #   make-help.sh --defined  every target that has a rule (no pattern rules)
@@ -33,16 +36,22 @@
 # over a computed list) are real names, which is also why tab completion sees
 # them.
 set -euo pipefail
+makefile=Makefile
+if [ "${1:-}" = "--makefile" ]; then
+    [ "$#" -ge 2 ] || { echo "make-help: --makefile needs a file" >&2; exit 2; }
+    makefile=$(realpath -- "$2")
+    shift 2
+fi
 cd "$(dirname "$0")/.."
 export LC_ALL=C
 
-python3 - "$@" <<'PY'
+python3 - "$makefile" "$@" <<'PY'
 import os
 import re
 import subprocess
 import sys
 
-MAKEFILE = "Makefile"
+MAKEFILE = sys.argv[1]
 DOC = re.compile(r"^## (\S+) - (.*)$")
 CONT = re.compile(r"^##\s{2,}(\S.*)$")
 SECTION = re.compile(r"^##@\s+(\S.*)$")
@@ -51,7 +60,7 @@ SECTION = re.compile(r"^##@\s+(\S.*)$")
 def make_database():
     env = {k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS")}
     out = subprocess.run(
-        [os.environ.get("MAKE", "make"), "--no-print-directory", "-pRrq", ".DEFAULT"],
+        [os.environ.get("MAKE", "make"), "--no-print-directory", "-f", MAKEFILE, "-pRrq", ".DEFAULT"],
         capture_output=True, text=True, env=env, check=False,
     )
     return out.stdout.splitlines()
@@ -171,5 +180,5 @@ def main(argv):
         children(argv[0].rstrip("/"))
 
 
-main(sys.argv[1:])
+main(sys.argv[2:])
 PY

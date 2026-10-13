@@ -185,6 +185,7 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
 | `make check/arch` | architecture ratchet only |
 | `make check/clippy` | clippy only |
 | `make check/doc` | `cargo doc`, broken intra-doc links are errors |
+| `make test/gates` | Bats self-tests of the text gates (make-targets) on scratch trees; no build needed, part of `make test` |
 | `make fmt` | Format |
 | `make test/harness` | Every harness suite (one `test/harness/<suite>` each) (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
 | `make test/harness/local-model` | OPT-IN: the `live-local` case of the `ticket-routing` sample against a model you already serve (`ENDPOINT=<url>`, optional `MODEL=<spec>`; refuses without ENDPOINT); never part of `make test` or `make check` |
