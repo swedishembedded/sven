@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 <!-- Copyright (c) 2026 Martin Schröder <info@swedishembedded.com> -->
 
-# 01-decision - pure branching
+# branching - pure branching
 
 A harness with no model, no tool and no capability: the run is a walk over
 `assign` and `branch` steps, so the same input always takes the same path and
@@ -17,15 +17,15 @@ The harness picks a discount tier from a plan and a vip flag:
 
 Conditions are paths (`inputs.vip`), `eq`/`ne` against a literal, and `all`,
 `any` and `not` over those. There are no ordering comparisons: a threshold on
-a number belongs in a helper (see [07-custom-transform](../07-custom-transform/)).
+a number belongs in a helper (see [custom-helper](../custom-helper/)).
 
 ## Run it
 
 ```sh
-sven harness validate samples/harnesses/01-decision
-sven harness inspect  samples/harnesses/01-decision
-sven harness test     samples/harnesses/01-decision
-sven harness run      samples/harnesses/01-decision --input '{"plan": "pro", "vip": false}'
+sven harness validate samples/harnesses/branching
+sven harness inspect  samples/harnesses/branching
+sven harness test     samples/harnesses/branching
+sven harness run      samples/harnesses/branching --input '{"plan": "pro", "vip": false}'
 ```
 
 `sven harness test` runs every file under `cases/` on mock models and fixture

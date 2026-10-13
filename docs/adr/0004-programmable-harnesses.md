@@ -235,7 +235,7 @@ scope and end with it.
 
 **Tooling.** `sven-harness-testkit` (surface tier) runs case manifests on
 fresh engines with mock models and fixture tools and checks each run by
-replaying it; `sven harness` is its command line; eight samples
+replaying it; `sven harness` is its command line; seven named samples
 (`samples/harnesses`) and an SDK-only runner exercise it. Harness events are
 rendered by the headless runner and ignored by ACP.
 

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Golden: `samples/harnesses/07-custom-transform/bundle.yaml` is generated.
+//! Golden: `samples/harnesses/custom-helper/bundle.yaml` is generated.
 //!
 //! The sample is authored without a toolchain: the helper is a hand-encoded
 //! WASM module (the echo module of `transform.rs`), so the committed bundle
@@ -41,7 +41,7 @@ const HEADER: &str = "\
 ";
 
 fn sample_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/harnesses/07-custom-transform")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/harnesses/custom-helper")
 }
 
 fn read_document() -> Result<String, String> {

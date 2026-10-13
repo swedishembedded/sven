@@ -187,7 +187,7 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
 | `make check/doc` | `cargo doc`, broken intra-doc links are errors |
 | `make fmt` | Format |
 | `make test/harness` | Every harness suite (one `test/harness/<suite>` each) (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
-| `make test/harness/local-model` | OPT-IN: the `08-local-qwen` sample against a model you already serve (`ENDPOINT=<url>`, optional `MODEL=<spec>`; refuses without ENDPOINT); never part of `make test` or `make check` |
+| `make test/harness/local-model` | OPT-IN: the `live-local` case of the `ticket-routing` sample against a model you already serve (`ENDPOINT=<url>`, optional `MODEL=<spec>`; refuses without ENDPOINT); never part of `make test` or `make check` |
 | `make generate/harness/sample-bundle`, `make generate/config/golden` | Rewrite committed derived files (`generate/<area>/<file>`); the matching tests only check them |
 | `make help` | Every target as a tree; names are concept first (`test/harness`, `check/gates/no-machine-paths`), so `make <TAB>` descends level by level (`check/gates/make-targets` enforces it) |
 | `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |

@@ -147,22 +147,24 @@ steps:
     }
 }
 
-/// Case files under `samples_root/*/cases/` that name a live model, except in
-/// directories whose name starts with `allowed_prefix`.
-fn live_cases_outside(samples_root: &Path, allowed_prefix: &str) -> Vec<PathBuf> {
+/// The only case file name that may name a live model.
+const LIVE_CASE_FILE: &str = "live-local.yaml";
+
+/// Case files under `samples_root/*/cases/` that name a live model, except
+/// those named [`LIVE_CASE_FILE`].
+fn live_cases_outside_the_allowed_file(samples_root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let Ok(samples) = std::fs::read_dir(samples_root) else {
         return found; // no samples directory yet: nothing can name a live model
     };
     for sample in samples.flatten() {
-        let name = sample.file_name().to_string_lossy().into_owned();
-        if name.starts_with(allowed_prefix) {
-            continue;
-        }
         let Ok(cases) = std::fs::read_dir(sample.path().join("cases")) else {
             continue;
         };
         for case in cases.flatten() {
+            if case.file_name() == LIVE_CASE_FILE {
+                continue;
+            }
             let text = std::fs::read_to_string(case.path()).unwrap_or_default();
             let doc: serde_yaml::Value =
                 serde_yaml::from_str(&text).unwrap_or(serde_yaml::Value::Null);
@@ -175,28 +177,28 @@ fn live_cases_outside(samples_root: &Path, allowed_prefix: &str) -> Vec<PathBuf>
 }
 
 #[test]
-fn the_sample_scan_finds_a_live_case_outside_the_allowed_sample() {
+fn the_sample_scan_finds_a_live_case_in_any_file_but_live_local() {
     let tmp = tempfile::tempdir().unwrap();
     write_tree(
         tmp.path(),
         &[
-            ("02-model-routing/cases/ok.yaml", ROUTING_BUG_CASE),
-            ("03-sneaky/cases/live.yaml", LIVE_CASE),
-            ("08-local-qwen/cases/smoke.yaml", LIVE_CASE),
+            ("ticket-routing/cases/ok.yaml", ROUTING_BUG_CASE),
+            ("ticket-routing/cases/live-local.yaml", LIVE_CASE),
+            ("sneaky/cases/live.yaml", LIVE_CASE),
         ],
     );
-    let found = live_cases_outside(tmp.path(), "08-");
+    let found = live_cases_outside_the_allowed_file(tmp.path());
     assert_eq!(found.len(), 1);
-    assert!(found[0].ends_with("03-sneaky/cases/live.yaml"));
-    assert!(live_cases_outside(&tmp.path().join("absent"), "08-").is_empty());
+    assert!(found[0].ends_with("sneaky/cases/live.yaml"));
+    assert!(live_cases_outside_the_allowed_file(&tmp.path().join("absent")).is_empty());
 }
 
 #[test]
 fn no_default_sample_names_a_live_model() {
     let samples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/harnesses");
-    let offenders = live_cases_outside(&samples, "08-local-qwen");
+    let offenders = live_cases_outside_the_allowed_file(&samples);
     assert!(
         offenders.is_empty(),
-        "only samples/harnesses/08-local-qwen may use `live`: {offenders:?}"
+        "only a case file named {LIVE_CASE_FILE} may use `live`: {offenders:?}"
     );
 }

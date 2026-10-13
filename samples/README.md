@@ -62,14 +62,15 @@ check` (clippy `--workspace --all-targets`) are what actually cover samples.
 ## Harness samples are data directories
 
 `samples/harnesses/` is the exception to "every sample is a directory with a
-`Cargo.toml`". Its numbered entries (`01-decision` .. `08-local-qwen`) are
-programmable harnesses: a YAML document, the cases that state what it must do,
+`Cargo.toml`". Its named entries (`branching`, `ticket-routing`,
+`scoped-agent`, `repair-loop`, `parallel-research`, `suspend-resume`,
+`custom-helper`) are programmable harnesses: a YAML document, the cases that state what it must do,
 and nothing to compile. They are not workspace members and `make check/gates/samples`
 has nothing to say about them; they are judged by the harness test kit, which
 the repository's own test (`cargo test -p sven-harness-testkit --test samples`)
 and `sven harness test` both run, on mock models and fixture tools only. The
-one sample that names a real local model, `08-local-qwen`, is opt-in and is
-only ever validated and skipped by default.
+one case that names a real local model, `ticket-routing/cases/live-local.yaml`,
+is opt-in (`--model` and `--model-endpoint`) and is skipped by default.
 
 The test kit is a workspace crate, so no sample could depend on it under rule
 1. `samples/harnesses/sdk-runner` is the sample that obeys the rules: a real

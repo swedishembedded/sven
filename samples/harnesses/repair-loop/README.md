@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 <!-- Copyright (c) 2026 Martin Schröder <info@swedishembedded.com> -->
 
-# 04-repair-loop - do not take the tool's word for it
+# repair-loop - do not take the tool's word for it
 
 A patch tool is retried while it fails (up to three attempts). Once it claims
 success, an independent `verify` step checks that `fixed.txt` really exists,
@@ -24,9 +24,9 @@ not).
 ## Run it
 
 ```sh
-sven harness validate samples/harnesses/04-repair-loop
-sven harness inspect  samples/harnesses/04-repair-loop
-sven harness test     samples/harnesses/04-repair-loop
+sven harness validate samples/harnesses/repair-loop
+sven harness inspect  samples/harnesses/repair-loop
+sven harness test     samples/harnesses/repair-loop
 ```
 
 `sven harness test` runs every file under `cases/` on mock models and fixture

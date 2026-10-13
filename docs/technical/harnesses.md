@@ -251,7 +251,7 @@ count `StepStarted` per step (a retry body counts once per attempt).
 use sven_sdk::{Engine, RunOptions};
 
 let engine = Engine::builder().model_provider(provider).build()?;
-let harness = engine.load_harness("samples/harnesses/02-model-routing/harness.yaml")?;
+let harness = engine.load_harness("samples/harnesses/ticket-routing/harness.yaml")?;
 
 let mut run = harness
     .start(serde_json::json!({ "ticket": "crash on start" }))?

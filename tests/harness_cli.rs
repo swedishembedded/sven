@@ -368,33 +368,27 @@ fn a_failing_case_makes_test_exit_1() {
 }
 
 #[test]
-fn the_committed_samples_pass_offline_and_the_local_model_one_is_skipped() {
+fn the_committed_samples_pass_offline_and_the_live_case_is_skipped() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(sample(""))
         .expect("samples")
         .filter_map(Result::ok)
         .map(|e| e.path())
-        .filter(|p| {
-            p.is_dir()
-                && p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with(|c: char| c.is_ascii_digit()))
-        })
+        .filter(|p| p.join("cases").is_dir())
         .collect();
     dirs.sort();
-    assert_eq!(dirs.len(), 8);
+    assert_eq!(dirs.len(), 7, "the seven named samples: {dirs:?}");
 
     let out = run(sven(tmp.path()).arg("test").args(&dirs).arg("--json"));
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let suites = stdout_json(&out);
     let suites = suites.as_array().expect("one report per directory");
-    assert_eq!(suites.len(), 8);
-    for suite in suites {
+    assert_eq!(suites.len(), 7);
+    for (dir, suite) in dirs.iter().zip(suites) {
         assert_eq!(suite["failed"], 0, "{suite}");
-        let local = suite["harness"]
-            .as_str()
-            .is_some_and(|n| n.contains("qwen"));
-        assert_eq!(suite["skipped"].as_u64().unwrap_or(0) > 0, local, "{suite}");
+        // Only ticket-routing's live-local case is skipped, and only it.
+        let skipped = u64::from(dir.ends_with("ticket-routing"));
+        assert_eq!(suite["skipped"].as_u64(), Some(skipped), "{suite}");
     }
 }
 
@@ -446,7 +440,7 @@ fn run_without_a_model_source_fails_a_model_step_cleanly() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let out = run(sven(tmp.path())
         .arg("run")
-        .arg(sample("02-model-routing"))
+        .arg(sample("ticket-routing"))
         .args(["--input", r#"{"ticket": "crash"}"#, "--json"]));
     assert_eq!(code(&out), 1, "{}", stderr(&out));
     let report = stdout_json(&out);
@@ -464,7 +458,7 @@ fn a_real_model_is_refused_without_an_endpoint() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let out = run(sven(tmp.path())
         .arg("run")
-        .arg(sample("02-model-routing"))
+        .arg(sample("ticket-routing"))
         .args([
             "--input",
             r#"{"ticket": "crash"}"#,
@@ -490,7 +484,7 @@ fn the_live_opt_in_is_flags_only_and_the_old_variables_change_nothing() {
         .env(retired("LOCAL_MODEL"), "1")
         .env(retired("LOCAL_ENDPOINT"), "http://127.0.0.1:9")
         .arg("run")
-        .arg(sample("02-model-routing"))
+        .arg(sample("ticket-routing"))
         .args([
             "--input",
             r#"{"ticket": "crash"}"#,
@@ -508,8 +502,8 @@ fn the_live_opt_in_is_flags_only_and_the_old_variables_change_nothing() {
         .env(retired("LOCAL_MODEL"), "1")
         .env(retired("LOCAL_ENDPOINT"), "http://127.0.0.1:9")
         .arg("test")
-        .arg(sample("08-local-qwen"))
-        .arg("--json"));
+        .arg(sample("ticket-routing"))
+        .args(["--case", "live-local", "--json"]));
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let suites = stdout_json(&out);
     assert_eq!(suites[0]["skipped"], 1, "{suites}");
@@ -527,7 +521,7 @@ fn test_and_compare_take_the_live_flags_and_the_model_needs_its_endpoint() {
     }
     let out = run(sven(tmp.path())
         .arg("test")
-        .arg(sample("08-local-qwen"))
+        .arg(sample("ticket-routing"))
         .args(["--model", "ollama/qwen3:8b"]));
     assert_eq!(code(&out), 2, "--model alone is a usage error");
 }

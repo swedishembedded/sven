@@ -9,7 +9,8 @@
 //! `sven-sdk` and a few lines of its own - load the document on an engine,
 //! start a run, execute it, compare the verdict. It deliberately carries
 //! none of the kit: a case that names tools, rule-driven or live models,
-//! workspaces, bounds or a resume phase is refused with a pointer to the kit.
+//! workspaces, bounds or a resume phase is refused with a pointer to the kit
+//! (a directory run reports a live-model case as skipped instead).
 //!
 //! Swedish Embedded AB implements embeddable agent runtimes for its clients.
 //! If your team needs expertise in running agent workflows from your own
@@ -41,6 +42,9 @@ pub enum Outcome {
     Passed,
     /// These expectations did not hold.
     Failed(Vec<String>),
+    /// The case names a live model, which a directory run never reaches;
+    /// the reason says how to run it.
+    Skipped(String),
 }
 
 /// One judged case.
@@ -124,6 +128,7 @@ struct FailureExpect {
 }
 
 /// Runs every `cases/*.yaml` of the harness directory `dir`, in name order.
+/// A case that names a live model is reported as skipped, not run.
 ///
 /// # Errors
 ///
@@ -138,6 +143,16 @@ pub async fn run_dir(dir: &Path) -> anyhow::Result<Vec<CaseResult>> {
     cases.sort();
     let mut results = Vec::new();
     for case in cases {
+        if names_a_live_model(&case)? {
+            results.push(CaseResult {
+                case: case_name(&case),
+                outcome: Outcome::Skipped(
+                    "names a live model; run it with `sven harness test <dir> --model-endpoint <url>`"
+                        .to_string(),
+                ),
+            });
+            continue;
+        }
         results.push(run_case(dir, &case).await?);
     }
     Ok(results)
@@ -151,10 +166,7 @@ pub async fn run_dir(dir: &Path) -> anyhow::Result<Vec<CaseResult>> {
 /// that does not load, or inputs the harness does not accept. A run that
 /// ends in the plan's own failure is a verdict, not an error.
 pub async fn run_case(dir: &Path, case_path: &Path) -> anyhow::Result<CaseResult> {
-    let name = case_path
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let name = case_name(case_path);
     let text = std::fs::read_to_string(case_path)
         .with_context(|| format!("reading {}", case_path.display()))?;
     let case = parse_case(&name, &text)?;
@@ -259,6 +271,26 @@ pub async fn run_case(dir: &Path, case_path: &Path) -> anyhow::Result<CaseResult
 }
 
 /// Parses a case, refusing by name anything that needs the test kit.
+/// A case's name: its file stem.
+fn case_name(case_path: &Path) -> String {
+    case_path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Whether the case file asks for a live model.
+fn names_a_live_model(case_path: &Path) -> anyhow::Result<bool> {
+    let text = std::fs::read_to_string(case_path)
+        .with_context(|| format!("reading {}", case_path.display()))?;
+    let raw: serde_yaml::Value = serde_yaml::from_str(&text)
+        .with_context(|| format!("{} is not valid YAML", case_path.display()))?;
+    Ok(raw
+        .get("model")
+        .and_then(|model| model.get("live"))
+        .is_some_and(|live| !live.is_null()))
+}
+
 fn parse_case(name: &str, text: &str) -> anyhow::Result<Case> {
     let raw: serde_yaml::Value = serde_yaml::from_str(text).context("not valid YAML")?;
     if let Some(feature) = needs_the_kit(&raw) {

@@ -12,7 +12,7 @@ The model is a 60-line `ModelProvider` that serves the case's `model.sequence`
 one answer per call (`src/model.rs`). That is all the "mock" a text-only case
 needs.
 
-It is minimal on purpose. A case that needs tools, `rules`, a `live` model, a
+It is minimal on purpose. A case that needs tools, `rules`, a
 workspace, bounds or a resume phase is refused with a message pointing to the
 full runner:
 
@@ -20,11 +20,15 @@ full runner:
 case `happy` uses `tools`, which this runner (public SDK only) does not carry; run it with `sven harness test <dir>`
 ```
 
+A case that names a `live` model is refused the same way when run alone, and
+reported as skipped in a directory run: this runner never reaches a model it
+was not handed.
+
 ## Run it
 
 ```sh
-cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/01-decision
-cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/02-model-routing
+cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/branching
+cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
 cargo test -p sample-harnesses-sdk-runner
 ```
 
@@ -33,9 +37,10 @@ cargo test -p sample-harnesses-sdk-runner
 ```text
 PASS bug
 PASS feature
+SKIP live-local (names a live model; run it with `sven harness test <dir> --model-endpoint <url>`)
 PASS malformed-then-valid
 PASS unroutable
-4 passed, 0 failed
+4 passed, 0 failed, 1 skipped
 ```
 
 The exit code is 0 when every case passes, 1 when one fails, 2 when a case or

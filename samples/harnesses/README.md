@@ -3,28 +3,27 @@
 
 # Harness samples
 
-Eight programmable harnesses, each a data directory: a YAML document, the
-cases that state what it must do, and nothing to compile. They are ordered
-from the simplest program to the most involved, and every one of them runs
+Seven programmable harnesses, each a data directory: a YAML document, the
+cases that state what it must do, and nothing to compile. The table lists
+them from the simplest program to the most involved; every default case runs
 offline on mock models and fixture tools.
 
 | Sample | What it shows |
 |---|---|
-| [01-decision](01-decision/) | pure branching: `assign` and `branch`, no model, no capability |
-| [02-model-routing](02-model-routing/) | one schema-constrained model turn, retried, then routed |
-| [03-tool-agent](03-tool-agent/) | delegation to a child, and an agent held to its tool list |
-| [04-repair-loop](04-repair-loop/) | retry around a tool, then an independent verification |
-| [05-parallel-research](05-parallel-research/) | `parallel` branches joined in declared order, and cancellation |
-| [06-checkpoint-replay](06-checkpoint-replay/) | suspend on a bound, resume the checkpoint, replay offline |
-| [07-custom-transform](07-custom-transform/) | a sandboxed WASM helper carried in a bundle |
-| [08-local-qwen](08-local-qwen/) | a real local model, strictly opt-in, never run by default |
+| [branching](branching/) | pure branching: `assign` and `branch`, no model, no capability |
+| [ticket-routing](ticket-routing/) | one schema-constrained model turn, retried, then routed; its `live-local` case is the opt-in real-model run |
+| [scoped-agent](scoped-agent/) | delegation to a child, and an agent held to its tool list |
+| [repair-loop](repair-loop/) | retry around a tool, then an independent verification |
+| [parallel-research](parallel-research/) | `parallel` branches joined in declared order, and cancellation |
+| [suspend-resume](suspend-resume/) | suspend on a bound, resume the checkpoint, replay offline |
+| [custom-helper](custom-helper/) | a sandboxed WASM helper carried in a bundle |
 | [sdk-runner](sdk-runner/) | the same cases, run from an application with the SDK alone |
 
 ## Layout of a sample
 
 ```text
-NN-name/
-  harness.yaml     the main document (07 ships bundle.yaml and document.yaml instead)
+name/
+  harness.yaml     the main document (custom-helper ships bundle.yaml and document.yaml instead)
   children/*.yaml  documents the main one delegates to, by name
   cases/*.yaml     one case per file: input, model, tools, expectations
   fixtures/        files a case refers to (model scripts), when a sample has any
@@ -48,9 +47,9 @@ and must reach the same verdict and trace.
 ## Running them
 
 ```sh
-sven harness test samples/harnesses/0*/          # all samples, offline
+sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,parallel-research,suspend-resume,custom-helper}   # all samples, offline
 cargo test -p sven-harness-testkit --test samples
 ```
 
-Only [08-local-qwen](08-local-qwen/) needs a model that is really running, and
-it is skipped unless you opt in explicitly.
+Only the `live-local` case of [ticket-routing](ticket-routing/) needs a model
+that is really running, and it is skipped unless you pass `--model-endpoint`.

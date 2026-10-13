@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 <!-- Copyright (c) 2026 Martin Schröder <info@swedishembedded.com> -->
 
-# 06-checkpoint-replay - suspend, resume, replay
+# suspend-resume - suspend, resume, replay
 
 A run that is stopped by a bound is not lost. Here a report read blocks, the
 case's 300 ms deadline suspends the run, and the checkpoint it leaves resumes
@@ -21,14 +21,14 @@ What it shows:
 ## Run it
 
 ```sh
-sven harness validate samples/harnesses/06-checkpoint-replay
-sven harness inspect  samples/harnesses/06-checkpoint-replay
-sven harness test     samples/harnesses/06-checkpoint-replay
-sven harness run      samples/harnesses/06-checkpoint-replay --tool-fixture blocked.yaml --timeout 1 \
+sven harness validate samples/harnesses/suspend-resume
+sven harness inspect  samples/harnesses/suspend-resume
+sven harness test     samples/harnesses/suspend-resume
+sven harness run      samples/harnesses/suspend-resume --tool-fixture blocked.yaml --timeout 1 \
     --record run.json --checkpoint-out checkpoint.json     # exit 3: suspended
-sven harness resume   samples/harnesses/06-checkpoint-replay --checkpoint checkpoint.json \
+sven harness resume   samples/harnesses/suspend-resume --checkpoint checkpoint.json \
     --tool-fixture answered.yaml                           # exit 0: completed
-sven harness replay   samples/harnesses/06-checkpoint-replay --recording run.json
+sven harness replay   samples/harnesses/suspend-resume --recording run.json
 ```
 
 `sven harness test` runs every file under `cases/` on mock models and fixture

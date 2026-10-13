@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 <!-- Copyright (c) 2026 Martin Schröder <info@swedishembedded.com> -->
 
-# 03-tool-agent - least privilege across a delegation
+# scoped-agent - least privilege across a delegation
 
 `triage` answers a question from the notes. It does not read them itself: it
 delegates to the child harness `reader` (`children/reader.yaml`), and the
@@ -27,9 +27,9 @@ calls are refused and the case fails with the tool never invoked.
 ## Run it
 
 ```sh
-sven harness validate samples/harnesses/03-tool-agent
-sven harness inspect  samples/harnesses/03-tool-agent
-sven harness test     samples/harnesses/03-tool-agent
+sven harness validate samples/harnesses/scoped-agent
+sven harness inspect  samples/harnesses/scoped-agent
+sven harness test     samples/harnesses/scoped-agent
 ```
 
 `sven harness test` runs every file under `cases/` on mock models and fixture

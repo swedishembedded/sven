@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 <!-- Copyright (c) 2026 Martin Schröder <info@swedishembedded.com> -->
 
-# 05-parallel-research - fan out, join in order
+# parallel-research - fan out, join in order
 
 `parallel` starts two branches at once (`max_parallel: 2`) and continues at its
 join when both have returned. Branch `history` is one model turn; branch
@@ -23,9 +23,9 @@ What it shows:
 ## Run it
 
 ```sh
-sven harness validate samples/harnesses/05-parallel-research
-sven harness inspect  samples/harnesses/05-parallel-research
-sven harness test     samples/harnesses/05-parallel-research
+sven harness validate samples/harnesses/parallel-research
+sven harness inspect  samples/harnesses/parallel-research
+sven harness test     samples/harnesses/parallel-research
 ```
 
 `sven harness test` runs every file under `cases/` on mock models and fixture

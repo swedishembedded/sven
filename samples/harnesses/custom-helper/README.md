@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 <!-- Copyright (c) 2026 Martin Schröder <info@swedishembedded.com> -->
 
-# 07-custom-transform - a sandboxed helper in a bundle
+# custom-helper - a sandboxed helper in a bundle
 
 Data reshaping does not belong in a model turn or a tool, and a harness has no
 arithmetic of its own. `transform` runs a *helper*: a WebAssembly module that
@@ -47,9 +47,9 @@ make generate/harness/sample-bundle
 ## Run it
 
 ```sh
-sven harness validate samples/harnesses/07-custom-transform
-sven harness inspect  samples/harnesses/07-custom-transform
-sven harness test     samples/harnesses/07-custom-transform
+sven harness validate samples/harnesses/custom-helper
+sven harness inspect  samples/harnesses/custom-helper
+sven harness test     samples/harnesses/custom-helper
 ```
 
 `sven harness test` runs every file under `cases/` on mock models and fixture

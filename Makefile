@@ -192,16 +192,16 @@ test/harness/samples:
 test/harness/cli:
 	$(HARNESS_TEST) -p sven --test harness_cli -- --test-threads=4
 
-## test/harness/local-model - OPT-IN: the live-model case of a harness sample against a server you already run
+## test/harness/local-model - OPT-IN: the live-local case of the ticket-routing sample against a server you already run
 ##   Needs ENDPOINT=<url> (and optionally MODEL=<provider/name>) on the make command
 ##   line; refuses with exit 2 without ENDPOINT. Nothing is pulled or started.
 ##   Not part of test/harness.
 MODEL ?= ollama/qwen3:8b
 ENDPOINT ?=
-LOCAL_MODEL_SAMPLE = samples/harnesses/08-local-qwen
+LOCAL_MODEL_SAMPLE = samples/harnesses/ticket-routing
 test/harness/local-model:
 	@test -n "$(ENDPOINT)" || { echo "test/harness/local-model: pass ENDPOINT=<url> of a model server you are already running (optional MODEL=<provider/name>); nothing is pulled or started"; exit 2; }
-	$(CARGO) run --jobs $(HARNESS_JOBS) -p sven -- harness test $(LOCAL_MODEL_SAMPLE) --case smoke --model $(MODEL) --model-endpoint $(ENDPOINT)
+	$(CARGO) run --jobs $(HARNESS_JOBS) -p sven -- harness test $(LOCAL_MODEL_SAMPLE) --case live-local --model $(MODEL) --model-endpoint $(ENDPOINT)
 
 ## test/formal - machine-check the TLA+ models of the HSM kernel (needs a JRE; not part of `make test`)
 # Not part of `make check`: the models need a JRE and a pinned 2 MB download,

@@ -32,13 +32,13 @@ steps:
   finish:   { return: { value: { tier: "{{ facts.tier }}", discount: "{{ facts.discount }}" } } }
 ```
 
-This is [samples/harnesses/01-decision](../samples/harnesses/01-decision/). Each
+This is [samples/harnesses/branching](../samples/harnesses/branching/). Each
 step is a map with exactly one primitive key; `then` names the next step.
 
 ```sh
-$ sven harness validate samples/harnesses/01-decision
-OK samples/harnesses/01-decision (decision)
-$ sven harness run samples/harnesses/01-decision --input '{"plan": "pro", "vip": false}' --quiet
+$ sven harness validate samples/harnesses/branching
+OK samples/harnesses/branching (decision)
+$ sven harness run samples/harnesses/branching --input '{"plan": "pro", "vip": false}' --quiet
 status: completed
 output: {"discount":10,"tier":"silver"}
 steps: 4
@@ -57,7 +57,7 @@ NN-name/
 ```
 
 `bundle.yaml` is a document plus its WASM helpers in one file (see
-[07-custom-transform](../samples/harnesses/07-custom-transform/)); a bundle is
+[custom-helper](../samples/harnesses/custom-helper/)); a bundle is
 pinned by one digest covering both.
 
 ## Commands
@@ -185,7 +185,7 @@ expect:
 
 Only `expect.status` is required. A case that stops on a bound and continues
 from its checkpoint adds a `resume` phase, which needs `expect.status:
-suspended` in the first phase (this is `06-checkpoint-replay`):
+suspended` in the first phase (this is `suspend-resume`):
 
 ```yaml
 bounds: { deadline_ms: 300 }
@@ -221,29 +221,28 @@ expectation is never loosened to make a run pass.
 
 ## Samples tour
 
-[samples/harnesses](../samples/harnesses/) holds eight harnesses, each a data
+[samples/harnesses](../samples/harnesses/) holds seven harnesses, each a data
 directory with its cases:
 
 | Sample | What it shows |
 |---|---|
-| `01-decision` | `assign` and `branch` only: no model, no capability |
-| `02-model-routing` | a schema-constrained `predict` inside a `retry`, then a branch |
-| `03-tool-agent` | delegation to a child; an `agent` step held to its tool list |
-| `04-repair-loop` | `retry` around a failing tool, then an independent `verify` |
-| `05-parallel-research` | `parallel` branches joined in declared order; cancellation |
-| `06-checkpoint-replay` | suspend on a deadline, resume the checkpoint, replay offline |
-| `07-custom-transform` | a sandboxed WASM helper carried in a bundle |
-| `08-local-qwen` | a real local model; opt-in only |
+| `branching` | `assign` and `branch` only: no model, no capability |
+| `ticket-routing` | a schema-constrained `predict` inside a `retry`, then a branch; its `live-local` case is the opt-in real-model run |
+| `scoped-agent` | delegation to a child; an `agent` step held to its tool list |
+| `repair-loop` | `retry` around a failing tool, then an independent `verify` |
+| `parallel-research` | `parallel` branches joined in declared order; cancellation |
+| `suspend-resume` | suspend on a deadline, resume the checkpoint, replay offline |
+| `custom-helper` | a sandboxed WASM helper carried in a bundle |
 | `sdk-runner` | the same cases from an application, with the SDK alone |
 
 ```sh
-sven harness test samples/harnesses/0*/      # every sample, offline
-cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/02-model-routing
+sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,parallel-research,suspend-resume,custom-helper}   # every sample, offline
+cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
 ```
 
 ### Suspend, resume, replay
 
-The checkpoint flow of `06-checkpoint-replay`, from a shell. `blocked.yaml`
+The checkpoint flow of `suspend-resume`, from a shell. `blocked.yaml`
 is a read that never answers and `answered.yaml` one that does:
 
 ```yaml
@@ -261,7 +260,7 @@ read_report:
 ```
 
 ```sh
-H=samples/harnesses/06-checkpoint-replay
+H=samples/harnesses/suspend-resume
 sven harness run    $H --tool-fixture blocked.yaml --timeout 1 \
     --record run.json --trace trace.jsonl --checkpoint-out checkpoint.json   # exit 3
 sven harness resume $H --checkpoint checkpoint.json --tool-fixture answered.yaml   # exit 0
@@ -283,8 +282,8 @@ suite must not depend on one.
 - Without `--model-endpoint`, `run --model SPEC` is refused (exit 2) and a
   case that names `live` is reported as `SKIP`, never failed.
 - `make test`, `make check` and `make test/harness` never reach a live model.
-  `make test/harness/local-model` runs [08-local-qwen](../samples/harnesses/08-local-qwen/)
-  against `ENDPOINT=<url>` (optional `MODEL=<spec>`) and refuses to start
+  `make test/harness/local-model` runs the `live-local` case of
+  [ticket-routing](../samples/harnesses/ticket-routing/) against `ENDPOINT=<url>` (optional `MODEL=<spec>`) and refuses to start
   without it.
 
 ## Authorization in one paragraph

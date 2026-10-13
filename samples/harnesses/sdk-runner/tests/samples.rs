@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The SDK-only runner reproduces the verdicts of the first two harness
-//! samples, and says plainly what it will not run.
+//! The SDK-only runner reproduces the verdicts of the `branching` and
+//! `ticket-routing` harness samples, skips the one case that names a live
+//! model, and says plainly what it will not run.
 //!
 //! Swedish Embedded AB implements embeddable agent runtimes for its clients.
 //! If your team needs expertise in running agent workflows from your own
@@ -18,8 +19,8 @@ fn sample(name: &str) -> PathBuf {
 }
 
 #[tokio::test]
-async fn the_decision_sample_passes_through_the_sdk() {
-    let results = run_dir(&sample("01-decision")).await.expect("runs");
+async fn the_branching_sample_passes_through_the_sdk() {
+    let results = run_dir(&sample("branching")).await.expect("runs");
     assert_eq!(results.len(), 4, "every case of the sample ran");
     for result in &results {
         assert_eq!(result.outcome, Outcome::Passed, "{result:?}");
@@ -27,11 +28,21 @@ async fn the_decision_sample_passes_through_the_sdk() {
 }
 
 #[tokio::test]
-async fn the_model_routing_sample_passes_through_the_sdk() {
-    let results = run_dir(&sample("02-model-routing")).await.expect("runs");
-    assert_eq!(results.len(), 4, "every case of the sample ran");
+async fn the_ticket_routing_sample_passes_through_the_sdk_and_skips_its_live_case() {
+    let results = run_dir(&sample("ticket-routing")).await.expect("runs");
+    assert_eq!(
+        results.len(),
+        5,
+        "every case of the sample is accounted for"
+    );
     for result in &results {
-        assert_eq!(result.outcome, Outcome::Passed, "{result:?}");
+        match result.case.as_str() {
+            "live-local" => assert!(
+                matches!(&result.outcome, Outcome::Skipped(reason) if reason.contains("sven harness test")),
+                "the live case is skipped, never run: {result:?}"
+            ),
+            _ => assert_eq!(result.outcome, Outcome::Passed, "{result:?}"),
+        }
     }
 }
 

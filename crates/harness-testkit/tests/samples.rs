@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Spec: every harness sample under `samples/harnesses/` validates and passes
-//! its own cases on mock models. The one sample that names a real local model
-//! only ever skips here - it needs an explicit opt-in this suite never gives.
+//! its own cases on mock models. The one case that names a real local model
+//! (`ticket-routing/cases/live-local.yaml`) only ever skips here - it needs an
+//! explicit endpoint this suite never gives.
 //!
 //! Swedish Embedded AB implements offline verification for programmable agent
 //! harnesses for its clients. If your team needs expertise in testing
@@ -18,18 +19,31 @@ fn samples_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/harnesses")
 }
 
-/// The numbered sample directories, sorted.
+/// The harness samples shipped, by directory name.
+const SAMPLES: [&str; 7] = [
+    "branching",
+    "custom-helper",
+    "parallel-research",
+    "repair-loop",
+    "scoped-agent",
+    "suspend-resume",
+    "ticket-routing",
+];
+
+/// The one case that names a live model, and so only ever skips.
+const LIVE_CASE: (&str, &str) = ("ticket-routing", "live-local");
+
+/// The sample directories on disk: every directory holding a harness
+/// document, sorted.
 fn sample_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(samples_root())
         .expect("samples/harnesses exists")
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| {
-            path.is_dir()
-                && path.file_name().is_some_and(|n| {
-                    n.to_string_lossy()
-                        .starts_with(|c: char| c.is_ascii_digit())
-                })
+            ["harness.yaml", "document.yaml", "bundle.yaml"]
+                .iter()
+                .any(|doc| path.join(doc).is_file())
         })
         .collect();
     dirs.sort();
@@ -39,7 +53,11 @@ fn sample_dirs() -> Vec<PathBuf> {
 #[tokio::test]
 async fn every_default_sample_validates_and_passes() {
     let dirs = sample_dirs();
-    assert_eq!(dirs.len(), 8, "eight numbered harness samples: {dirs:?}");
+    let names: Vec<String> = dirs
+        .iter()
+        .map(|d| d.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, SAMPLES, "the seven named harness samples");
     let options = RunnerOptions {
         opt_in: OptIn::none(),
         ..RunnerOptions::default()
@@ -55,16 +73,19 @@ async fn every_default_sample_validates_and_passes() {
         let report = run_suite(&dir, &options).await;
         assert!(report.valid, "{name}: invalid: {:?}", report.error);
         assert_eq!(report.failed, 0, "{name}: {:#?}", report.cases);
-        if name.starts_with("08-") {
-            assert_eq!(report.passed, 0, "{name} is opt-in only");
-            assert!(report.skipped > 0, "{name} reports its cases as skipped");
-            assert!(report
-                .cases
-                .iter()
-                .all(|c| matches!(c.status, CaseStatus::Skipped { .. })));
-        } else {
-            assert_eq!(report.skipped, 0, "{name}: no default sample skips");
-            assert!(report.passed > 0, "{name}: runs and passes its cases");
+        assert!(report.passed > 0, "{name}: runs and passes its cases");
+        for case in &report.cases {
+            let is_live = (name.as_str(), case.case.as_str()) == LIVE_CASE;
+            if is_live {
+                assert!(
+                    matches!(case.status, CaseStatus::Skipped { .. }),
+                    "{name}/{}: the live case only skips: {:?}",
+                    case.case,
+                    case.status
+                );
+            } else {
+                assert_eq!(case.status, CaseStatus::Passed, "{name}/{}", case.case);
+            }
         }
     }
 }

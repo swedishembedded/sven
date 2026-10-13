@@ -34,9 +34,14 @@ async fn main() -> ExitCode {
     };
 
     let mut failed = 0usize;
+    let mut skipped = 0usize;
     for result in &results {
         match &result.outcome {
             Outcome::Passed => println!("PASS {}", result.case),
+            Outcome::Skipped(reason) => {
+                skipped += 1;
+                println!("SKIP {} ({reason})", result.case);
+            }
             Outcome::Failed(reasons) => {
                 failed += 1;
                 println!("FAIL {}", result.case);
@@ -46,7 +51,12 @@ async fn main() -> ExitCode {
             }
         }
     }
-    println!("{} passed, {failed} failed", results.len() - failed);
+    let passed = results.len() - failed - skipped;
+    if skipped == 0 {
+        println!("{passed} passed, {failed} failed");
+    } else {
+        println!("{passed} passed, {failed} failed, {skipped} skipped");
+    }
     if failed == 0 {
         ExitCode::SUCCESS
     } else {
