@@ -193,6 +193,7 @@ records alone; a record that cannot be read is an error, never skipped.
 | `task_id`, `suite`, `seed` | the task; `task_id` is `<suite>-s<seed>` |
 | `variant` | `{id, name, role}` |
 | `probe` | `fallback` for a run whose provider was unreachable on purpose, else absent |
+| `attempts` | 1, or 2 when the sven process hung and the run was started once more |
 | `status` | `{state: completed}`, `{state: not_available, reason}` or `{state: failed, error}` |
 | `provenance` | `sven_commit`, `sven_dirty` (uncommitted changes to tracked files), `sven_binary`, `brain` (`model_id`, `checkpoint`, `commit`; absent without a Brain model), `matrix_sha256` |
 | `realization` | `tool_disclosure`, the exact `config_yaml`, `context_assembly_requested`, `context_assembly_supported` |
@@ -204,6 +205,7 @@ records alone; a record that cannot be read is an error, never skipped.
 The score: `suite`, `passed`, `hard_failures[]`, `labels[]`, and one of
 `evidence` (`critical_total`, `critical_visible`, `critical_recall`,
 `distractor_total`, `distractor_visible`, `precision`, `missing[]`),
+`delegation` (`agents`, `subagent_calls`, `duplicated_calls`),
 `shortlist` (per-probe `rank`, `shown`, `in_shortlist`, `offered_in_full`;
 `shortlist_recall`, `top1_rate`, `mean_reciprocal_rank`) and `security`
 (`leaks[]`, `bypasses[]`, `violations`, `permitted_actions_reached_model`).
