@@ -186,7 +186,7 @@ fn the_definition_of_a_named_function_brings_the_definitions_of_the_functions_it
 
 #[test]
 fn only_one_hop_of_callees_is_followed() {
-    let raw = "pub fn named(x: u64) -> u64 {\n    first_step(x)\n}\nfn first_step(x: u64) -> u64 {\n    second_step(x)\n}\nfn second_step(x: u64) -> u64 {\n    x + 1 // TWO-BODY\n}\n".repeat(1);
+    let raw = "pub fn named(x: u64) -> u64 {\n    first_step(x)\n}\nfn first_step(x: u64) -> u64 {\n    second_step(x)\n}\nfn second_step(x: u64) -> u64 {\n    x + 1 // TWO-BODY\n}\n".to_string();
     let focus = focus_from(&["`named`"]);
     let r = render(
         &request(
