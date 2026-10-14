@@ -155,6 +155,12 @@ fn a_demotion_is_named_in_the_record_once_and_counted_every_time() {
     let d = &first.new_demotions[0];
     assert!(d.chunk.starts_with("c-") && d.digest.len() == 64 && d.tokens_saved > 0);
     assert_eq!((d.from.as_str(), d.tool.as_str()), ("full", "shell"));
+    assert_eq!(d.reason, "age");
+    assert_eq!(
+        first.saved_by_reason.values().sum::<u32>(),
+        first.tokens_saved,
+        "every saved token has a reason"
+    );
 }
 
 #[test]

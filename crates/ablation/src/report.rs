@@ -133,6 +133,10 @@ pub struct Cell {
     pub decision_latency_ms_mean: Option<f64>,
     pub recovery_expansions_mean: Option<f64>,
     pub duplicate_tool_calls_mean: Option<f64>,
+    /// Mean estimated tokens context assembly saved, by the reason results
+    /// were demoted.
+    #[serde(default)]
+    pub context_saved_by_reason_mean: BTreeMap<String, f64>,
 }
 
 /// One suite and its variants.
@@ -352,6 +356,21 @@ fn mean_of(runs: &[&RunRecord], f: impl Fn(&RunRecord) -> Option<f64>) -> Option
     mean(&runs.iter().filter_map(|r| f(r)).collect::<Vec<_>>())
 }
 
+/// Mean per run of the tokens each demotion reason saved; a run without that
+/// reason counts as zero.
+fn saved_by_reason(runs: &[&RunRecord]) -> BTreeMap<String, f64> {
+    let mut sums: BTreeMap<String, f64> = BTreeMap::new();
+    for run in runs {
+        if let Some(tokens) = &run.tokens {
+            for (reason, saved) in &tokens.context_saved_by_reason {
+                *sums.entry(reason.clone()).or_default() += *saved as f64;
+            }
+        }
+    }
+    sums.values_mut().for_each(|v| *v /= runs.len() as f64);
+    sums
+}
+
 fn cell(view: &View<'_>, baseline: &str, variant: &str, suite: Suite) -> Cell {
     let runs: Vec<&RunRecord> = view
         .runs(variant)
@@ -416,6 +435,7 @@ fn cell(view: &View<'_>, baseline: &str, variant: &str, suite: Suite) -> Cell {
         duplicate_tool_calls_mean: mean_of(&runs, |r| {
             r.tokens.as_ref().map(|t| t.duplicate_tool_calls as f64)
         }),
+        context_saved_by_reason_mean: saved_by_reason(&runs),
     }
 }
 

@@ -219,10 +219,49 @@ pub fn render(report: &Report) -> String {
         }
         out.push('\n');
     }
+    saved_by_reason_section(&mut out, report);
     if let Some(recovery) = &report.recovery {
         recovery_section(&mut out, recovery);
     }
     out
+}
+
+/// Which demotions the saving of each architecture variant came from.
+fn saved_by_reason_section(out: &mut String, report: &Report) {
+    let rows: Vec<(&str, &str, &Cell)> = report
+        .suites
+        .iter()
+        .flat_map(|s| {
+            s.cells
+                .iter()
+                .map(move |c| (s.suite.name(), c.variant.as_str(), c))
+        })
+        .filter(|(_, _, c)| !c.context_saved_by_reason_mean.is_empty())
+        .collect();
+    if rows.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "## Tokens saved by reason\n\nMean estimated tokens per run that context assembly saved, summed over the requests of the task, by why the result was demoted: `age` (the only copy of its evidence, oldest first), `superseded` and `duplicate` (a later message replaced it), `passing_test`.\n"
+    );
+    let _ = writeln!(
+        out,
+        "| suite | variant | age | superseded | duplicate | passing_test |\n|---|---|---:|---:|---:|---:|"
+    );
+    for (suite, variant, c) in rows {
+        let m = &c.context_saved_by_reason_mean;
+        let n = |k: &str| num(m.get(k).copied(), 0);
+        let _ = writeln!(
+            out,
+            "| {suite} | {variant} | {} | {} | {} | {} |",
+            n("age"),
+            n("superseded"),
+            n("duplicate"),
+            n("passing_test")
+        );
+    }
+    out.push('\n');
 }
 
 /// The recovery-aware tables: the same tasks with a scripted model that

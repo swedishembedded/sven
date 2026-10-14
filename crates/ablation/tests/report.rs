@@ -433,6 +433,32 @@ fn a_model_variant_with_no_completed_runs_is_not_determinable() {
     ));
 }
 
+// ── saving by reason ─────────────────────────────────────────────────────────
+
+#[test]
+fn a_cell_reports_the_mean_tokens_each_reason_saved() {
+    let mut runs = Vec::new();
+    for (seed, superseded) in [(1, 100), (2, 300), (3, 200)] {
+        runs.push(record(&Spec::new(Suite::RelevantFile, seed, "A", 1000)));
+        let mut b = record(&Spec::new(Suite::RelevantFile, seed, "B", 700));
+        b.tokens.as_mut().unwrap().context_saved_by_reason = BTreeMap::from([
+            ("age".to_string(), 1000),
+            ("superseded".to_string(), superseded),
+        ]);
+        runs.push(b);
+    }
+    let report = build(&matrix(), &runs);
+    let cell = report.suites[0]
+        .cells
+        .iter()
+        .find(|c| c.variant == "B")
+        .unwrap();
+    assert_eq!(cell.context_saved_by_reason_mean["age"], 1000.0);
+    assert_eq!(cell.context_saved_by_reason_mean["superseded"], 200.0);
+    let md = sven_ablation::markdown::render(&report);
+    assert!(md.contains("Tokens saved by reason"), "{md}");
+}
+
 // ── recovery ─────────────────────────────────────────────────────────────────
 
 /// A recovery run of `spec`: the model fetched what was left out.

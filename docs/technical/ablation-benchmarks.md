@@ -212,7 +212,7 @@ records alone; a record that cannot be read is an error, never skipped.
 | `provenance` | `sven_commit`, `sven_dirty` (uncommitted changes to tracked files), `sven_binary`, `brain` (`model_id`, `checkpoint`, `commit`; absent without a Brain model), `matrix_sha256` |
 | `realization` | `tool_disclosure`, the exact `config_yaml`, `context_assembly_requested`, `context_assembly_supported` |
 | `segments[]` | per sven process: `exit_code`, the `ledger` (`sven ledger --json` verbatim), and the relative paths of the trajectory, request log and stderr |
-| `tokens` | `total`, `requests`, `trajectories`, `by_source` (`system`, `tool_schemas`, `user`, `assistant`, `tool_call_arguments`, `tool_results`, `media`), `tool_calls`, `duplicate_tool_calls`, `recovery_expansions`, `recovery_tokens`; summed over all segments and their sub-agents |
+| `tokens` | `total`, `requests`, `trajectories`, `by_source` (`system`, `tool_schemas`, `user`, `assistant`, `tool_call_arguments`, `tool_results`, `media`), `tool_calls`, `duplicate_tool_calls`, `recovery_expansions`, `recovery_tokens`, `context_saved_by_reason` (tokens context assembly saved over the requests, by why the result was demoted); summed over all segments and their sub-agents |
 | `decisions` | `inference_calls` and `latency_ms` the session waited, `accepted`, `abstained`, `applied`, every verdict as the trajectory recorded it (`traces`), `served_requests` answered by the injected provider |
 | `score` | the scorer's verdict (below), absent unless the run completed |
 
@@ -258,6 +258,10 @@ derived from the records and nothing else.
   *not determinable* when a variant needed for the comparison has no runs.
   Four metrics are tested per model, so one interval excluding zero by chance
   is possible; the verdict lists which metric carried it.
+- **Tokens saved by reason.** For variants that assemble context, the mean
+  tokens per run saved by results demoted because they were old (`age`), because
+  a later message replaced them (`superseded`, `duplicate`) and because the test
+  run passed (`passing_test`).
 - **With recovery.** For runs with `probe: recovery`: per suite and variant,
   critical-evidence recall in the request that first carried the final question
   (what the harness delivers on its own) and in the request the model answered

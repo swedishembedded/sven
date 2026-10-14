@@ -117,6 +117,11 @@ pub struct TokenRecord {
     /// hidden.
     pub recovery_expansions: u64,
     pub recovery_tokens: u64,
+    /// Estimated tokens context assembly saved, summed over requests, by the
+    /// reason the results were demoted (`age`, `superseded`, `duplicate`,
+    /// `passing_test`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub context_saved_by_reason: BTreeMap<String, u64>,
 }
 
 impl TokenRecord {
@@ -132,6 +137,12 @@ impl TokenRecord {
             record.duplicate_tool_calls += s.duplicate_tool_calls;
             record.recovery_expansions += s.expansions;
             record.recovery_tokens += s.expanded_tokens;
+            for (reason, tokens) in &s.context_saved_by_reason {
+                *record
+                    .context_saved_by_reason
+                    .entry(reason.clone())
+                    .or_default() += tokens;
+            }
             let mut add = |source: &str, tokens: u64| {
                 *record.by_source.entry(source.to_string()).or_default() += tokens;
             };

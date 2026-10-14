@@ -41,7 +41,7 @@ records read each other.
 | `residual` | `reported` logical prompt minus `estimated_total`; positive means the estimator undercounts; absent exactly when `reported` is |
 | `tool_activity` | `calls` and `duplicate_calls` over the tool calls in the history sent with this request; `retries` and `errors` are reserved and absent |
 | `context_recovery` | `expansions`, `stale_expansions`, `expanded_bytes` and `expanded_tokens` over the expansions of demoted context in the history sent with this request (see [context-assembly.md](context-assembly.md)); absent when none |
-| `context_view` | how the history was assembled into this request when addressable context is on: `mode`, `demoted` results, `tokens_saved`, and `new_demotions` (chunk id, digest, tool, from, to, tokens saved); absent when it is off |
+| `context_view` | how the history was assembled into this request when addressable context is on: `mode`, `demoted` results, `tokens_saved`, `saved_by_reason` (those tokens by why the result was demoted: `age`, `superseded`, `duplicate`, `passing_test`) and `new_demotions` (chunk id, digest, tool, from, to, tokens saved, reason); absent when it is off |
 | `decision` | the decision-model inference the request's context was shaped by, since the previous request: `calls` (cache hits are not calls), `latency_ms` (wall time waited), `model_id`, `batch_size` (the most questions one call carried); `load_time_ms` stays empty because the provider does not report it. Absent when no decision ran. See [decisions](decisions.md) |
 | `wall_ms` | time from sending the request to the end of its response |
 

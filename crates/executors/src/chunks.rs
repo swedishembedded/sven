@@ -19,7 +19,7 @@
 //! fails the result stays whole, because a reference that cannot be expanded
 //! would lose the evidence.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -191,10 +191,17 @@ impl ContextAssembler {
             .assemble(messages, &pinned, self.advisor.as_ref());
         self.keep_unstorable_whole(&mut view, &original);
 
+        let mut saved_by_reason: BTreeMap<String, u32> = BTreeMap::new();
+        for d in &view.demotions {
+            *saved_by_reason
+                .entry(d.reason.as_str().to_string())
+                .or_default() += d.tokens_saved;
+        }
         let record = ContextView {
             mode: DEMOTE_MODE.to_string(),
             demoted: u32::try_from(view.demotions.len()).unwrap_or(u32::MAX),
             tokens_saved: view.demotions.iter().map(|d| d.tokens_saved).sum(),
+            saved_by_reason,
             new_demotions: view
                 .demotions
                 .iter()
@@ -207,6 +214,7 @@ impl ContextAssembler {
                     from: d.from.as_str().to_string(),
                     to: d.to.as_str().to_string(),
                     tokens_saved: d.tokens_saved,
+                    reason: d.reason.as_str().to_string(),
                 })
                 .collect(),
         };

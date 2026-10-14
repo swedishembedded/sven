@@ -148,6 +148,9 @@ pub struct DemotionRecord {
     pub to: String,
     /// Estimated tokens the smaller form saves on every request that carries it.
     pub tokens_saved: u32,
+    /// Why it was chosen: `age`, `superseded`, `duplicate` or `passing_test`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reason: String,
 }
 
 /// How the context of one request was assembled from the history.
@@ -168,6 +171,9 @@ pub struct ContextView {
     pub tokens_saved: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub new_demotions: Vec<DemotionRecord>,
+    /// `tokens_saved` by the reason the results were demoted.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub saved_by_reason: BTreeMap<String, u32>,
 }
 
 /// Cost of the decision-model inference made on behalf of a request (for
@@ -386,6 +392,9 @@ pub struct LedgerSummary {
     /// Estimated tokens those forms saved, summed over requests.
     #[serde(default)]
     pub context_tokens_saved: u64,
+    /// `context_tokens_saved` by the reason the results were demoted.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub context_saved_by_reason: BTreeMap<String, u64>,
     /// Expansions of demoted context, summed over trajectories.
     #[serde(default)]
     pub expansions: u64,
@@ -426,6 +435,7 @@ impl LedgerSummary {
         if let Some(view) = &request.context_view {
             self.demoted_results += u64::from(view.demoted);
             self.context_tokens_saved += u64::from(view.tokens_saved);
+            add_named(&mut self.context_saved_by_reason, &view.saved_by_reason);
         }
         if let Some(reported) = request.reported {
             self.reconciled_requests += 1;
@@ -483,6 +493,10 @@ impl LedgerSummary {
         self.duplicate_tool_calls += other.duplicate_tool_calls;
         self.demoted_results += other.demoted_results;
         self.context_tokens_saved += other.context_tokens_saved;
+        named(
+            &mut self.context_saved_by_reason,
+            &other.context_saved_by_reason,
+        );
         self.expansions += other.expansions;
         self.stale_expansions += other.stale_expansions;
         self.expanded_bytes += other.expanded_bytes;
@@ -559,6 +573,13 @@ impl LedgerSummary {
                 "demoted tool results: {}   tokens saved: {}",
                 self.demoted_results, self.context_tokens_saved
             );
+            if !self.context_saved_by_reason.is_empty() {
+                let by_reason: Vec<String> = by_size(&self.context_saved_by_reason)
+                    .into_iter()
+                    .map(|(reason, tokens)| format!("{reason} {tokens}"))
+                    .collect();
+                let _ = writeln!(out, "  saved by reason: {}", by_reason.join(", "));
+            }
         }
         if self.expansions > 0 {
             let _ = writeln!(
@@ -619,6 +640,7 @@ mod tests {
                 chunk: "c-0123456789abcdef".into(),
                 ..DemotionRecord::default()
             }],
+            ..ContextView::default()
         };
         let r = RequestBreakdown {
             context_view: Some(view),
@@ -636,6 +658,33 @@ mod tests {
             !json.contains("context_view"),
             "off leaves the record as it was"
         );
+    }
+
+    #[test]
+    fn the_saving_is_summed_by_the_reason_results_were_demoted() {
+        let view = ContextView {
+            mode: "demote".into(),
+            demoted: 3,
+            tokens_saved: 900,
+            saved_by_reason: BTreeMap::from([("age".into(), 600), ("superseded".into(), 300)]),
+            ..ContextView::default()
+        };
+        let r = RequestBreakdown {
+            context_view: Some(view),
+            ..RequestBreakdown::default()
+        };
+        let mut a = LedgerSummary::default();
+        a.add_request(&r);
+        a.add_request(&r);
+        assert_eq!(a.context_saved_by_reason["superseded"], 600);
+        let mut total = LedgerSummary::default();
+        total.merge(&a);
+        total.merge(&a);
+        assert_eq!(total.context_saved_by_reason["age"], 2400);
+        let table = total.render_table();
+        assert!(table.contains("superseded 1200"), "{table}");
+        let json = serde_json::to_string(&LedgerSummary::default()).unwrap();
+        assert!(!json.contains("context_saved_by_reason"), "empty stays out");
     }
 
     #[test]
