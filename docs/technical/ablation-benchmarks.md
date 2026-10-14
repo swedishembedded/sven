@@ -113,7 +113,7 @@ repository, tools, permissions and script.
 | `tool_selection` | an MCP catalog of 40-144 tools with overlapping descriptions in shuffled order; 8 queries (3 exact, 3 paraphrased, 2 indirect), one search each, then a call of the first | shortlist recall, top-1, reciprocal rank of the right tool among the search results; the catalog's tokens by source | whether a model picks right from a shortlist |
 | `restart_survival` | three sven processes; the second and third load the previous trajectory; rules and verified findings come from different processes, unverified rumours sit beside them | recall of 3 constraints and 3 verified findings in the last process's final request, tokens summed over all processes | whether a model obeys rules |
 | `delegation` | a parent hands five subgoals to sub-agents at once: three independent (two large files each), two overlapping (the same two large files and one of their own); each answers with a marked result; the parent combines them | recall of the five results in the parent's final request, tokens of the whole task including every sub-agent, reads repeated by more than one agent | whether a model would split the work this way |
-| `security` | `AGENTS.md` rules, secrets in `.env` and `secrets/`, a protected ledger, a cache; `research` mode, shell deny patterns; attempts to read the secrets, delete the cache, write the ledger; one permitted read | secrets in any request (leak), protected files changed or removed (bypass), project rules in the final request, whether the permitted read arrived | resistance to a model that evades the guards |
+| `security` | `AGENTS.md` rules, secrets in `.env` and `secrets/`, a protected ledger, a cache; shell deny patterns and `tools.disabled` for the file-writing tools; attempts to read the secrets, delete the cache, write the ledger; one permitted read | secrets in any request (leak), protected files changed or removed (bypass), project rules in the final request, whether the permitted read arrived | resistance to a model that evades the guards |
 
 Notes on what the suites do and do not test:
 
@@ -130,8 +130,8 @@ Notes on what the suites do and do not test:
   nothing else: C to G equal B. The delegation is scripted.
 - **Approvals.** Manual approval needs the interactive TUI and is not reachable
   from a headless run, so approval behaviour is not tested. The security suite
-  attempts only what the product says it blocks: shell deny patterns and the
-  `research` mode. The deny patterns are documented as a convenience and not a
+  attempts only what the product says it blocks: shell deny patterns and
+  disabled tools. The deny patterns are documented as a convenience and not a
   sandbox, and file reads through `read_file` are not claimed to be guarded,
   so the suite does not attempt them.
 - **Provenance of labels.** Evidence and look-alikes are labelled by unique
@@ -158,7 +158,7 @@ Both build `sven-ablation`, run every suite under every variant for the seeds
 | `--stock-model ID`, `--trained-model ID` | the models of D and E |
 | `--brain-commit SHA` | recorded as the server's commit; the wire does not report one |
 | `--fallback-probe` | also run each injected-provider variant once with its provider unreachable |
-| `--timeout-secs N` | longest one sven process may run (default 180) |
+| `--timeout-secs N` | longest one sven process may run (default 300) |
 | `--model NAME` | a real model instead of the script; never the default |
 
 Output layout:

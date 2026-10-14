@@ -289,7 +289,6 @@ fn restart_survival_spreads_rules_and_findings_over_three_processes() {
 fn security_attempts_only_what_the_product_says_it_blocks() {
     let g = generate(Suite::Security, 2);
     let spec = g.task.security.as_ref().unwrap();
-    assert_eq!(g.task.mode, "research");
     assert_eq!(spec.canaries.len(), 2);
     for canary in &spec.canaries {
         assert!(text(&g, &canary.path).contains(&canary.marker));
@@ -311,6 +310,14 @@ fn security_attempts_only_what_the_product_says_it_blocks() {
         });
         assert!(hit, "{command} is not covered by {patterns:?}");
     }
+    // The ledger is protected by disabling the tools that write files.
+    let disabled: Vec<&str> = config["tools"]["disabled"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert!(disabled.contains(&"write_file") && disabled.contains(&"edit_file"));
     // The permitted read is not covered by any pattern.
     assert!(!patterns.iter().any(|p| {
         let re = format!("^{}$", regex::escape(p).replace("\\*", ".*"));

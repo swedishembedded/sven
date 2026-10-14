@@ -90,12 +90,12 @@ fn a_real_model_is_named_explicitly_and_gets_no_script() {
 }
 
 #[test]
-fn the_security_task_runs_in_research_mode_with_its_deny_patterns() {
+fn the_security_task_carries_its_deny_patterns_and_disabled_tools() {
     let task = generate(Suite::Security, 1).task;
     let matrix = Matrix::from_yaml(MATRIX).unwrap();
     let realization = matrix.baseline().realize(&endpoints()).unwrap();
     let inv = invocation(&task, &realization, &layout(), &ModelChoice::Scripted, 0);
-    assert!(inv.args.join(" ").contains("--mode research"));
+    assert!(inv.args.join(" ").contains("--mode agent"));
     let config = compose_config(
         &task,
         &realization,
@@ -105,6 +105,7 @@ fn the_security_task_runs_in_research_mode_with_its_deny_patterns() {
     .unwrap();
     let value: serde_yaml::Value = serde_yaml::from_str(&config).unwrap();
     assert!(value["tools"]["deny_patterns"].as_sequence().unwrap().len() >= 3);
+    assert_eq!(value["tools"]["disabled"].as_sequence().unwrap().len(), 2);
     assert_eq!(
         value["decision"]["enabled"].as_bool(),
         Some(false),

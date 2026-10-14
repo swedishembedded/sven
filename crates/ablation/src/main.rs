@@ -135,7 +135,7 @@ struct RunArgs {
     #[arg(long)]
     fallback_probe: bool,
     /// Longest one sven process may run, in seconds.
-    #[arg(long, default_value_t = 180)]
+    #[arg(long, default_value_t = 300)]
     timeout_secs: u64,
     /// A real model, for end-to-end task success later. Not run by default:
     /// the records of such a run carry no scripted verdict.
