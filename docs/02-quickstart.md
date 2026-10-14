@@ -6,6 +6,30 @@ installed and an API key in your environment. If not, see
 
 ---
 
+## Check that sven can reach a model
+
+Before the first session, ask sven whether the model it would use is reachable. It
+builds the provider the way a session does and reports each step, with what to change
+when one fails:
+
+```sh
+sven doctor provider
+```
+
+```
+ok   provider: brain/Qwen/Qwen3-0.6B
+ok   endpoint: http://127.0.0.1:8788/v1 serves 23 model(s)
+ok   model: Qwen/Qwen3-0.6B is served
+ok   tools: the server advertises tool calling
+ready: sven can use this model
+```
+
+With a hosted provider it reports only that the provider could be built and which key it
+found missing, and sends nothing. [Troubleshooting](07-troubleshooting.md) explains each
+check.
+
+---
+
 ## Your first interactive session
 
 Open a terminal in any project directory and run:
