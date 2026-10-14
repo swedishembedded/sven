@@ -74,6 +74,10 @@ pub(super) struct SubagentChildState {
     text_buf: String,
     /// Buffered `ThinkingDelta`s, flushed the same way.
     thinking_buf: String,
+    /// Whether the child has streamed any answer text, flushed or not. The
+    /// text a turn boundary flushes leaves `text_buf` empty, so the buffer
+    /// alone cannot say whether the reported final text is already recorded.
+    produced_text: bool,
 }
 
 impl SubagentChildState {
@@ -84,6 +88,7 @@ impl SubagentChildState {
             self.thinking_buf.clear();
         }
         if !self.text_buf.is_empty() {
+            self.produced_text = true;
             self.assembler
                 .push_message(&Message::assistant(&self.text_buf));
             self.text_buf.clear();
@@ -438,6 +443,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                     assembler: child_assembler,
                     text_buf: String::new(),
                     thinking_buf: String::new(),
+                    produced_text: false,
                 },
             );
         }
@@ -624,6 +630,7 @@ fn finalize_subagent_child(
         mut assembler,
         text_buf,
         thinking_buf,
+        produced_text,
     } = child;
 
     if !thinking_buf.is_empty() {
@@ -632,9 +639,12 @@ fn finalize_subagent_child(
     // Prefer whatever was actually streamed (`text_buf`); `final_text` is
     // the ACP-reported "accumulated assistant response" and is only used as
     // a fallback for a mock/driver that reports `Finished` without ever
-    // streaming `TextDelta`s first.
+    // streaming `TextDelta`s first. Text a turn boundary already folded into
+    // the assembler is part of `final_text`, so it is not recorded twice.
     let closing_text = if !text_buf.is_empty() {
         text_buf
+    } else if produced_text {
+        String::new()
     } else {
         final_text.unwrap_or_default()
     };
@@ -658,4 +668,82 @@ fn finalize_subagent_child(
     write_stderr(&format!(
         "[sven:subagent:embedded] handle_id=\"{handle_id}\" trajectory_id=\"{trajectory_id}\""
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use sven_vocab::RequestBreakdown;
+
+    use super::*;
+
+    fn child_with_prompt(prompt: &str) -> SubagentChildState {
+        let mut assembler = StepAssembler::new();
+        assembler.push_message(&Message::user(prompt));
+        SubagentChildState {
+            trajectory_id: "child".into(),
+            assembler,
+            text_buf: String::new(),
+            thinking_buf: String::new(),
+            produced_text: false,
+        }
+    }
+
+    /// Replay `updates` for one child and return the messages of its agent steps.
+    fn agent_messages(updates: Vec<SubagentUpdate>) -> Vec<String> {
+        let mut children = HashMap::from([("h".to_string(), child_with_prompt("ping"))]);
+        let mut parent = StepAssembler::new();
+        let mut completed = Vec::new();
+        for update in updates {
+            handle_subagent_update(
+                "c",
+                "h".into(),
+                update,
+                &mut children,
+                &mut parent,
+                &mut completed,
+            );
+        }
+        completed[0]
+            .steps
+            .iter()
+            .filter(|s| s.source == atif::StepOrigin::Agent)
+            .filter_map(|s| s.message.as_text().map(str::to_owned))
+            .filter(|m| !m.is_empty())
+            .collect()
+    }
+
+    fn finished(text: &str) -> SubagentUpdate {
+        SubagentUpdate::Finished {
+            final_text: text.into(),
+        }
+    }
+
+    #[test]
+    fn a_streamed_answer_closed_by_its_request_ledger_is_recorded_once() {
+        let messages = agent_messages(vec![
+            SubagentUpdate::TextDelta("pong".into()),
+            SubagentUpdate::RequestLedger(Box::new(RequestBreakdown::default())),
+            finished("pong"),
+        ]);
+        assert_eq!(messages, vec!["pong"]);
+    }
+
+    #[test]
+    fn a_streamed_answer_closed_by_a_tool_call_is_not_repeated_by_the_final_text() {
+        let messages = agent_messages(vec![
+            SubagentUpdate::TextDelta("looking".into()),
+            SubagentUpdate::ToolCallStarted {
+                id: "t".into(),
+                name: "read".into(),
+                args: serde_json::json!({}),
+            },
+            finished("looking"),
+        ]);
+        assert_eq!(messages, vec!["looking"]);
+    }
+
+    #[test]
+    fn the_final_text_stands_in_when_the_child_streamed_nothing() {
+        assert_eq!(agent_messages(vec![finished("pong")]), vec!["pong"]);
+    }
 }
