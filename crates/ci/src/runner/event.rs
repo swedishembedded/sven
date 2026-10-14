@@ -672,8 +672,6 @@ fn finalize_subagent_child(
 
 #[cfg(test)]
 mod tests {
-    use sven_vocab::RequestBreakdown;
-
     use super::*;
 
     fn child_with_prompt(prompt: &str) -> SubagentChildState {
@@ -722,7 +720,7 @@ mod tests {
     fn a_streamed_answer_closed_by_its_request_ledger_is_recorded_once() {
         let messages = agent_messages(vec![
             SubagentUpdate::TextDelta("pong".into()),
-            SubagentUpdate::RequestLedger(Box::new(RequestBreakdown::default())),
+            SubagentUpdate::RequestLedger(Box::default()),
             finished("pong"),
         ]);
         assert_eq!(messages, vec!["pong"]);
