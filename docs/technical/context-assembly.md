@@ -66,8 +66,10 @@ shown by the time the result could first be demoted (`sven_chunks::Focus`):
   `read_lints` and `task`, with the line before and after (3 in `long`) and the
   declaration they sit in, even when the outline is cut;
 - the whole definition (up to 24 lines, 60 in `long`) of an identifier the user
-  put in backticks or a search looked for, when the file declares it. A file
-  that only mentions the name in a comment gets nothing extra.
+  put in backticks or a search looked for, when the file declares it, and, one
+  hop only, the definitions in the same file of up to 4 functions that
+  definition calls. A file that only mentions the name in a comment gets
+  nothing extra.
 
 File contents, search results and web pages are not read for places: they are
 untrusted text that happens to contain `path:line`, and they do not choose what

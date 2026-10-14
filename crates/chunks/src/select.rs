@@ -38,6 +38,8 @@ const DEFINITION_SHORT: usize = 24;
 const DEFINITION_LONG: usize = 60;
 /// Names whose definition is searched for in one file.
 const MAX_DEFINITIONS: usize = 8;
+/// Functions one named definition may bring in by calling them.
+const MAX_CALLEES: usize = 4;
 /// An identifier on more lines than this says nothing about any of them.
 const GENERIC_TOKEN_LINES: usize = 25;
 
@@ -102,14 +104,19 @@ pub(crate) fn file_focus(lines: &Lines<'_>, path: Option<&str>, focus: &Focus, l
 
     let mut defined = Vec::new();
     for symbol in focus.symbols().take(MAX_DEFINITIONS) {
-        if let Some(block) = definition(lines, symbol, definition_cap) {
-            defined.push(format!(
-                "{symbol} (L{}-L{})",
-                lines[block.start].0,
-                lines[block.end - 1].0
-            ));
-            kept.indexes.extend(block);
+        let Some(block) = definition(lines, symbol, definition_cap) else {
+            continue;
+        };
+        // One hop: what the named definition calls and this file declares.
+        let called = callees(lines, &block);
+        for callee in called.iter().filter(|c| *c != symbol).take(MAX_CALLEES) {
+            if let Some(inner) = definition(lines, callee, definition_cap) {
+                defined.push(span(lines, callee, &inner));
+                kept.indexes.extend(inner);
+            }
         }
+        defined.push(span(lines, symbol, &block));
+        kept.indexes.extend(block);
     }
     if !notes.is_empty() {
         kept.note.push_str(&format!(
@@ -125,6 +132,36 @@ pub(crate) fn file_focus(lines: &Lines<'_>, path: Option<&str>, focus: &Focus, l
         );
     }
     kept
+}
+
+fn span(lines: &Lines<'_>, name: &str, block: &std::ops::Range<usize>) -> String {
+    format!(
+        "{name} (L{}-L{})",
+        lines[block.start].0,
+        lines[block.end - 1].0
+    )
+}
+
+/// Names called (`name(`) in the lines of `block` after its first, in order,
+/// without repeats and without keywords that look like calls.
+fn callees(lines: &Lines<'_>, block: &std::ops::Range<usize>) -> Vec<String> {
+    static CALL: OnceLock<Regex> = OnceLock::new();
+    let call = CALL.get_or_init(|| {
+        Regex::new(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(").expect("call pattern is valid")
+    });
+    const KEYWORDS: [&str; 10] = [
+        "fn", "if", "while", "for", "match", "return", "Some", "Ok", "Err", "assert",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    for (_, text) in &lines[block.clone()][1.min(block.len())..] {
+        for c in call.captures_iter(text) {
+            let name = &c[1];
+            if name.len() >= 4 && !KEYWORDS.contains(&name) && !out.iter().any(|o| o == name) {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
 }
 
 /// The index range of the first declaration of `symbol`, through the end of

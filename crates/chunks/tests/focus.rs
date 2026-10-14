@@ -157,6 +157,59 @@ fn a_short_file_keeps_the_whole_definition_of_what_the_conversation_names() {
 }
 
 #[test]
+fn the_definition_of_a_named_function_brings_the_definitions_of_the_functions_it_calls_here() {
+    let mut raw = source_file();
+    raw.push_str("\n\npub fn settle_via_helper(entries: &[u64]) -> u64 {\n    inner_total(entries)\n}\n\nfn inner_total(entries: &[u64]) -> u64 {\n    entries.iter().sum() // INNER-BODY\n}\n");
+    let focus = focus_from(&["Find where `settle_via_helper` is used."]);
+    let r = render(
+        &request(
+            ChunkKind::File,
+            "read_file",
+            Some("src/lib.rs"),
+            &raw,
+            Some(&focus),
+        ),
+        Visibility::Short,
+    );
+    assert!(
+        r.text.contains("INNER-BODY"),
+        "one hop from the named function: {}",
+        r.text
+    );
+    assert!(
+        r.text.contains("inner_total (L"),
+        "the note names it: {}",
+        r.text
+    );
+    assert!(!r.text.contains("body of helper 30"));
+}
+
+#[test]
+fn only_one_hop_of_callees_is_followed() {
+    let raw = "pub fn named(x: u64) -> u64 {\n    first_step(x)\n}\nfn first_step(x: u64) -> u64 {\n    second_step(x)\n}\nfn second_step(x: u64) -> u64 {\n    x + 1 // TWO-BODY\n}\n".repeat(1);
+    let focus = focus_from(&["`named`"]);
+    let r = render(
+        &request(
+            ChunkKind::File,
+            "read_file",
+            Some("src/lib.rs"),
+            raw.as_str(),
+            Some(&focus),
+        ),
+        Visibility::Short,
+    );
+    assert!(
+        r.text.contains("second_step(x)"),
+        "the callee's body is kept"
+    );
+    assert!(
+        !r.text.contains("TWO-BODY"),
+        "its own callee is not: {}",
+        r.text
+    );
+}
+
+#[test]
 fn a_file_that_only_mentions_the_name_in_a_comment_gets_no_definition() {
     let raw = "// see settle_ledger: deprecated\nfn other() {\n    1\n}\n".repeat(30);
     let focus = focus_from(&["`settle_ledger`"]);
