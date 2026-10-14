@@ -238,7 +238,7 @@ fn excerpt(request: &RenderRequest<'_>, visibility: Visibility) -> String {
             let (h, t) = if long {
                 (FILE_LONG_HEAD, FILE_LONG_TAIL)
             } else {
-                (0, 0)
+                (SHORT_HEAD, 0)
             };
             shown.extend(0..h.min(lines.len()));
             shown.extend(lines.len().saturating_sub(t)..lines.len());

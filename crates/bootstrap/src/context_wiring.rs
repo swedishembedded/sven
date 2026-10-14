@@ -17,7 +17,9 @@ use std::sync::{Arc, Mutex};
 
 use sven_chunks::{ChunkStore, FsProbe};
 use sven_executors::{ChunkSession, ContextAssembler};
+use sven_model::Message;
 use sven_turn::assembly::ContextPolicy;
+use sven_turn::reconstruct::{reconstruct, ReconstructConfig};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -61,6 +63,34 @@ impl ContextWiring {
     /// The chunk session the tools and executors share.
     pub(crate) fn session(&self) -> Arc<ChunkSession> {
         Arc::clone(&self.session)
+    }
+
+    /// The history a session is seeded with. A resumed session in
+    /// `reconstruct` mode starts from the rebuilt history; if the evidence its
+    /// recap refers to cannot be stored the transcript is replayed whole,
+    /// because a reference that cannot be expanded loses the evidence.
+    pub(crate) fn seed(
+        wiring: &Option<Self>,
+        config: &Config,
+        initial: &[Message],
+    ) -> Vec<Message> {
+        let Some(wiring) = wiring
+            .as_ref()
+            .filter(|_| config.context.assembly.reconstructs())
+        else {
+            return initial.to_vec();
+        };
+        let rebuilt = reconstruct(initial, &ReconstructConfig::default());
+        if rebuilt
+            .evidence
+            .iter()
+            .all(|e| wiring.session.store_evidence(e))
+        {
+            rebuilt.messages
+        } else {
+            warn!("the history of the resumed session is replayed whole: its evidence could not be stored");
+            initial.to_vec()
+        }
     }
 
     /// Open (or create) the store of the session, or `None` when assembly is
@@ -172,6 +202,66 @@ mod tests {
             assert_ne!(wiring.store_id, bad);
             assert!(Uuid::parse_str(&wiring.store_id).is_ok());
         }
+    }
+
+    fn long_history() -> Vec<Message> {
+        use sven_model::{FunctionCall, MessageContent, Role};
+        let bulk = (1..=300)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        vec![
+            Message::user("Constraint: do not touch vendor/."),
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: "a".into(),
+                    function: FunctionCall {
+                        name: "read_file".into(),
+                        arguments: r#"{"path":"src/lib.rs"}"#.into(),
+                    },
+                },
+            },
+            Message::tool_result("a", bulk),
+            Message::assistant("done reading"),
+        ]
+    }
+
+    #[test]
+    fn only_reconstruct_rebuilds_the_history_of_a_resumed_session() {
+        let root = tempfile::tempdir().unwrap();
+        let history = long_history();
+        let mut config = Config::default();
+        for (mode, rebuilt) in [
+            (AssemblyMode::Off, false),
+            (AssemblyMode::Demote, false),
+            (AssemblyMode::Reconstruct, true),
+        ] {
+            config.context.assembly.mode = mode;
+            let wiring = ContextWiring::open(&config.context.assembly, Some(root.path()), None);
+            let seeded = ContextWiring::seed(&wiring, &config, &history);
+            assert_eq!(
+                seeded.len() != history.len() || seeded[1].as_text().is_some(),
+                rebuilt,
+                "{mode:?}"
+            );
+            if !rebuilt {
+                assert_eq!(seeded.len(), history.len());
+            }
+        }
+    }
+
+    #[test]
+    fn a_rebuilt_history_leaves_its_evidence_in_the_store() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.context.assembly.mode = AssemblyMode::Reconstruct;
+        let wiring = ContextWiring::open(&config.context.assembly, Some(root.path()), None);
+        let seeded = ContextWiring::seed(&wiring, &config, &long_history());
+        assert!(seeded.iter().any(|m| m
+            .as_text()
+            .is_some_and(|t| t.starts_with(sven_turn::reconstruct::RECAP_MARKER))));
+        assert_eq!(wiring.unwrap().session.store().lock().unwrap().len(), 1);
     }
 
     #[test]

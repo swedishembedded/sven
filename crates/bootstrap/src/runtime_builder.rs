@@ -724,7 +724,7 @@ impl RuntimeBuilder {
             if let Some(system_msg) = runtime.build_system_message(mode) {
                 store.append(seed_thread, system_msg);
             }
-            for msg in &self.initial_history {
+            for msg in &ContextWiring::seed(&context, &self.config, &self.initial_history) {
                 store.append(seed_thread, msg.clone());
             }
         }

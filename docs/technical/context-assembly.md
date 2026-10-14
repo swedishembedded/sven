@@ -52,7 +52,7 @@ A chunk is shown at one of four visibilities, from least to most:
 | visibility | content |
 |------------|---------|
 | `hidden` | one line: id, kind, size, how to expand |
-| `short` | command, test and other output: the first 3 and last 5 lines, every line matching error, fail, panic, assert, exception, traceback, fatal or warning (up to 30) with its line number, the match counts and the exit status of a shell call. A file: path, size and an outline of its declarations or headings (up to 40). A diff: the file list with added and removed counts and every hunk header |
+| `short` | command, test and other output: the first 3 and last 5 lines, every line matching error, fail, panic, assert, exception, traceback, fatal or warning (up to 30) with its line number, the match counts and the exit status of a shell call. A file: path, size, its first 3 lines and an outline of its declarations or headings (up to 40). A diff: the file list with added and removed counts and every hunk header |
 | `long` | the same with a wider window: 40 first and last lines and up to 200 matches; a file adds its first 30 and last 10 lines; a diff adds the first 8 lines of each hunk |
 | `full` | the raw text, unchanged |
 

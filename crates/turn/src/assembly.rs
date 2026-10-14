@@ -350,29 +350,42 @@ fn apply(mut messages: Vec<Message>, results: Vec<Entry>) -> AssembledView {
             to: entry.level,
             tokens_saved: entry.full_tokens.saturating_sub(tokens_of(&shown)),
         });
-        spill.push(Evidence {
-            draft: ChunkDraft {
-                kind: entry.kind,
-                provenance: Provenance {
-                    source_tool: entry.tool,
-                    args_digest: content_digest(canonical_json(&entry.arguments).as_bytes()),
-                    path: path_argument(&entry.arguments),
-                    source_version: None,
-                    turn: entry.round,
-                },
-                priority: 0,
-                sensitivity: Sensitivity::Internal,
-                lifetime: Lifetime::Session,
-                pinned: false,
-                failure: entry.failure,
-            },
-            raw: entry.raw,
-        });
+        spill.push(evidence(
+            &entry.tool,
+            &entry.arguments,
+            entry.round,
+            entry.kind,
+            entry.raw,
+        ));
     }
     AssembledView {
         messages,
         demotions,
         spill,
+    }
+}
+
+/// The record that stores `raw`, the result of `tool` called with `arguments`
+/// in round `turn`, as a chunk.
+#[must_use]
+pub fn evidence(tool: &str, arguments: &str, turn: u32, kind: ChunkKind, raw: String) -> Evidence {
+    Evidence {
+        draft: ChunkDraft {
+            kind,
+            provenance: Provenance {
+                source_tool: tool.to_string(),
+                args_digest: content_digest(canonical_json(arguments).as_bytes()),
+                path: path_argument(arguments),
+                source_version: None,
+                turn,
+            },
+            priority: 0,
+            sensitivity: Sensitivity::Internal,
+            lifetime: Lifetime::Session,
+            pinned: false,
+            failure: indicates_failure(&raw),
+        },
+        raw,
     }
 }
 

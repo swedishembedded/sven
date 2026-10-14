@@ -21,6 +21,7 @@ mod oneshot;
 mod tool_slots;
 
 pub mod prompts;
+pub mod reconstruct;
 mod runtime_context;
 mod stall;
 pub mod stream_turn;

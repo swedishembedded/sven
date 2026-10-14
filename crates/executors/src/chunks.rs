@@ -129,8 +129,9 @@ impl ChunkSession {
             .unwrap_or_default()
     }
 
-    /// Store the evidence behind a demotion; whether it is now in the store.
-    fn keep(&self, evidence: &Evidence) -> bool {
+    /// Store the evidence behind a demotion or a reconstructed history;
+    /// whether it is now in the store.
+    pub fn store_evidence(&self, evidence: &Evidence) -> bool {
         let Ok(mut store) = self.store.lock() else {
             return false;
         };
@@ -231,7 +232,7 @@ impl ContextAssembler {
             std::mem::take(&mut view.spill),
         );
         for (demotion, evidence) in demotions.into_iter().zip(spill) {
-            if self.session.keep(&evidence) {
+            if self.session.store_evidence(&evidence) {
                 kept.push((demotion, evidence));
                 continue;
             }

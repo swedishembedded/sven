@@ -41,6 +41,10 @@ pub enum AssemblyMode {
     /// Tool results of older rounds are sent in a smaller form, under a token
     /// budget, and can be expanded back to their raw text.
     Demote,
+    /// `demote`, and a resumed session starts from a rebuilt history: what
+    /// the user said, plus a recap of the stored tool activity, instead of
+    /// the whole transcript replayed.
+    Reconstruct,
 }
 
 /// `context.assembly`.
@@ -48,7 +52,8 @@ pub enum AssemblyMode {
 #[serde(default)]
 pub struct AssemblyConfig {
     /// `off` sends the conversation unchanged; `demote` shrinks the tool
-    /// results of older rounds once the conversation exceeds `budget_tokens`.
+    /// results of older rounds once the conversation exceeds `budget_tokens`;
+    /// `reconstruct` also rebuilds the history of a resumed session.
     pub mode: AssemblyMode,
     /// Estimated tokens of conversation above which results are demoted.
     pub budget_tokens: u32,
@@ -90,6 +95,12 @@ impl AssemblyConfig {
     #[must_use]
     pub fn enabled(&self) -> bool {
         self.mode != AssemblyMode::Off
+    }
+
+    /// Whether a resumed session starts from a rebuilt history.
+    #[must_use]
+    pub fn reconstructs(&self) -> bool {
+        self.mode == AssemblyMode::Reconstruct
     }
 
     /// The policy these settings describe.
@@ -147,6 +158,15 @@ mod tests {
             }
         );
         assert_eq!(a.store_limits().max_resident_bytes, 1024);
+    }
+
+    #[test]
+    fn reconstruct_demotes_too_and_is_the_only_mode_that_rebuilds_a_history() {
+        let demote = Config::from_document(&document("context: {assembly: {mode: demote}}\n"));
+        assert!(demote.context.assembly.enabled() && !demote.context.assembly.reconstructs());
+        let rebuild =
+            Config::from_document(&document("context: {assembly: {mode: reconstruct}}\n"));
+        assert!(rebuild.context.assembly.enabled() && rebuild.context.assembly.reconstructs());
     }
 
     #[test]

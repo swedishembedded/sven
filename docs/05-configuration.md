@@ -875,7 +875,7 @@ documented floors. How it works, what it saves and what it costs:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `mode` | `off` | `off` or `demote`. |
+| `mode` | `off` | `off`, `demote`, or `reconstruct`: `demote`, and a resumed session starts from a rebuilt history (the user's messages and a recap of the stored tool activity) instead of the whole transcript. |
 | `budget_tokens` | `12000` | Estimated tokens of conversation above which results are demoted. |
 | `keep_recent_rounds` | `2` | Rounds of tool calls, counted back from the newest, whose results are always sent in full. |
 | `min_demote_tokens` | `64` | Results smaller than this are never demoted. |
@@ -891,7 +891,7 @@ context:
 
 The evidence is kept under `.sven/context/<id>/` in the project; the id is a
 session fact, so a resumed session finds what its transcript refers to.
-`--context-assembly off|demote` sets the mode for one process and overrides the file.
+`--context-assembly off|demote|reconstruct` sets the mode for one process and overrides the file.
 
 ---
 

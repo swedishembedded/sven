@@ -8,6 +8,7 @@
 //! for each of these groups — this module only declares the clap grammar.
 
 mod agent;
+mod assembly;
 mod decisions;
 mod harness;
 mod index;
@@ -17,6 +18,8 @@ mod task;
 #[cfg(feature = "network")]
 mod team;
 mod tool;
+
+pub use assembly::ContextAssemblyArg;
 
 // `AcpCommands`/`McpCommands` live in `sven-acp`/`sven-mcp` themselves,
 // shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
@@ -85,25 +88,6 @@ impl From<DisclosureArg> for sven_bootstrap::Disclosure {
     }
 }
 
-/// The spelling of [`sven_bootstrap::AssemblyMode`] on the command line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum ContextAssemblyArg {
-    /// The conversation is sent as it is.
-    Off,
-    /// Tool results of older rounds are sent in a smaller form and can be
-    /// expanded back.
-    Demote,
-}
-
-impl From<ContextAssemblyArg> for sven_bootstrap::AssemblyMode {
-    fn from(arg: ContextAssemblyArg) -> Self {
-        match arg {
-            ContextAssemblyArg::Off => Self::Off,
-            ContextAssemblyArg::Demote => Self::Demote,
-        }
-    }
-}
-
 #[derive(Parser, Debug)]
 #[command(
     name = "sven",
@@ -168,6 +152,8 @@ pub struct Cli {
     /// `off` sends the conversation as it is. `demote` sends the tool results of
     /// older rounds in a smaller form once the conversation outgrows its token
     /// budget; the model can expand a shortened result back to its raw text.
+    /// `reconstruct` does that and starts a resumed session from a rebuilt
+    /// history instead of the whole transcript.
     #[arg(
         long,
         value_enum,
