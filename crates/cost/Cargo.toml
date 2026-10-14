@@ -1,0 +1,12 @@
+[package]
+name        = "sven-cost"
+version.workspace = true
+edition     = "2021"
+description = "Explicit cost of a model request: every term visible, unknown prices never chosen, cache break-even and routing decisions as pure functions. Services tier."
+license     = "Apache-2.0"
+
+[dependencies]
+sven-vocab         = { path = "../vocab" }
+sven-model-catalog = { path = "../model-catalog" }
+serde              = { workspace = true }
+serde_json         = { workspace = true }

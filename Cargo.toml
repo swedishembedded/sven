@@ -51,6 +51,8 @@ members = [
     # Typed questions for a small decision model, the policy over its answers
     # and the transport to the model provider
     "crates/decision",
+    # What a model request costs, term by term; cache break-even and routing
+    "crates/cost",
     # Transport-agnostic operator control protocol + kernel mappings
     "crates/control",
     # ATIF v1.7 trajectory format: the session store's on-disk format, the

@@ -21,6 +21,9 @@
 //! The static YAML catalog (`models.yaml`) is always consulted as a fallback
 //! so that offline use and uncommon providers degrade gracefully.
 
+mod pricing;
+pub use pricing::{lookup_pricing, CachePricing, Pricing};
+
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};

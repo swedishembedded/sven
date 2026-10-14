@@ -66,6 +66,7 @@ sven-kernel     = "services"
 sven-model-drivers = "services"
 sven-model-mock    = "services"
 sven-decision      = "services"
+sven-cost          = "services"
 
 # domain
 sven-memory        = "domain"

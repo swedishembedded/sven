@@ -1,0 +1,18 @@
+# Declared prices of catalog models, per million tokens, in one currency of the
+# table's own choosing. A model that is not listed has an unknown price, and
+# sven never chooses a model on cost when its price is unknown.
+#
+# The table ships empty on purpose: a price is a fact about a contract, not about
+# a model, and a stale one silently misdirects every decision made from it.
+# Declare the prices you pay in the configuration file (`cost.prices`).
+#
+# Entry shape:
+#   - provider: <driver id>
+#     id: <model id>
+#     input_per_mtok: <price of one million uncached prompt tokens>
+#     output_per_mtok: <price of one million generated tokens>
+#     cache:                        # omit when the provider has no prompt cache
+#       read_per_mtok: <price of one million prompt tokens served from the cache>
+#       write_per_mtok: <price of one million prompt tokens written to the cache>
+#       ttl_secs: <how long a cached prefix stays warm after its last use>
+prices: []

@@ -284,7 +284,9 @@ feature, off by default) · `sven-model-mock` (`--model mock`
 test/dev providers) · `sven-decision` (the decision runtime: typed questions a
 harness asks a small non-generative decision model, the full ranked
 distribution it answers with, distinct failure classes, a scripted mock
-provider; the decision model only advises)
+provider; the decision model only advises) · `sven-cost` (the cost of a
+request term by term, with `unknown` for an undeclared price; cache
+break-even and routing as pure functions; advisory)
 
 ### domain (concrete tool implementations + integrations)
 `sven-tools-fs` (file I/O + output-buffer tools; images and audio behind
@@ -634,6 +636,9 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
 - [docs/technical/decisions.md](docs/technical/decisions.md) -
   the decision runtime: typed questions for a small decision model, policy,
   failure classes and the mock provider; the model only advises.
+- [docs/technical/cost-model.md](docs/technical/cost-model.md) -
+  what a request costs, term by term: prices, cache state, handoff and
+  recovery; advisory and off by default.
 - `architecture.toml` - authoritative crate tiers, dependency legality, file-size
   ratchet. `.claude/skills/programming/rust/architecture.md` - the layering
   method this workspace follows, generalized for reuse elsewhere.
