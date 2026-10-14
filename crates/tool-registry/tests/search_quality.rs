@@ -25,14 +25,17 @@ const SHORTLIST: usize = 8;
 
 /// The held-out recall@8 on the standard plan, floored under what was
 /// measured so the pin catches regressions, not noise.
-const RECALL_FLOOR: [(QueryKind, f64); 3] = [
+const RECALL_FLOOR: [(QueryKind, f64); 4] = [
     (QueryKind::Exact, 0.98),
     (QueryKind::Paraphrase, 0.93),
     (QueryKind::Indirect, 0.90),
+    (QueryKind::Misspelled, 0.98),
 ];
 
 /// Ranks each of `queries` over `tools` with the ranker search uses, indexing
 /// the tools once.
+const MISSPELLED_TOP1_FLOOR: f64 = 0.90;
+
 fn current_ranker(tools: &[ToolDescriptor], queries: &[&str]) -> Vec<Vec<String>> {
     let prepared = Bm25Ranker.prepare(&RankingParams::default(), tools);
     queries
@@ -85,7 +88,7 @@ fn the_corpus_is_large_deterministic_and_split_without_overlap() {
                 .collect()
         };
     assert!(families(&tuning).is_disjoint(&families(&validation)));
-    for kind in [QueryKind::Exact, QueryKind::Paraphrase, QueryKind::Indirect] {
+    for kind in QueryKind::ALL {
         assert!(families(&tuning).iter().filter(|(k, _)| *k == kind).count() >= 3);
     }
 }
@@ -135,7 +138,7 @@ fn the_metrics_score_a_perfect_ranker_and_a_blind_one() {
         &all,
         SHORTLIST,
     );
-    for kind in [QueryKind::Exact, QueryKind::Paraphrase, QueryKind::Indirect] {
+    for kind in QueryKind::ALL {
         let (p, b) = (perfect.of(kind), blind.of(kind));
         assert!(p.queries >= 30);
         assert_eq!((p.recall, p.top1, p.mrr), (1.0, 1.0, 1.0));
@@ -160,6 +163,15 @@ fn held_out_recall_does_not_fall_below_the_recorded_floor() {
 
 /// A model that knows a tool's exact name must not be second-guessed by
 /// similar tools, whatever the style the name is written in.
+/// A name with a letter wrong is the nearest tool's name: that is what
+/// "did you mean" says, so the first match has to be right.
+#[test]
+fn a_misspelled_name_finds_its_tool_first() {
+    let held_out = measure(Split::Validation, &Plan::standard());
+    let got = held_out.of(QueryKind::Misspelled).top1;
+    assert!(got >= MISSPELLED_TOP1_FLOOR, "top-1 {got:.3}");
+}
+
 #[test]
 fn a_tool_asked_for_by_its_exact_name_is_first() {
     for catalog in catalogs(Split::Validation, &Plan::standard()) {

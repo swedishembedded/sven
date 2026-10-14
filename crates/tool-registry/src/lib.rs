@@ -7,6 +7,7 @@ pub mod analysis;
 pub mod descriptor;
 pub mod disclosure;
 pub mod expansion;
+pub mod fuzzy;
 pub mod index;
 pub mod policy;
 pub mod registry;

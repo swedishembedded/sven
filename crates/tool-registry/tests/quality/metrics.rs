@@ -32,7 +32,7 @@ pub struct KindScores {
 #[derive(Clone, Debug, Default)]
 pub struct Scores {
     k: usize,
-    kinds: [KindScores; 3],
+    kinds: [KindScores; 4],
 }
 
 impl Scores {
@@ -45,10 +45,7 @@ impl fmt::Display for Scores {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "| kind | queries | recall@{} | top-1 | MRR |", self.k)?;
         writeln!(f, "|---|---:|---:|---:|---:|")?;
-        for (kind, scores) in [QueryKind::Exact, QueryKind::Paraphrase, QueryKind::Indirect]
-            .into_iter()
-            .zip(&self.kinds)
-        {
+        for (kind, scores) in QueryKind::ALL.into_iter().zip(&self.kinds) {
             writeln!(
                 f,
                 "| {kind:?} | {} | {:.1}% | {:.1}% | {:.3} |",
@@ -63,7 +60,7 @@ impl fmt::Display for Scores {
 }
 
 pub fn evaluate(rank: &RankFn<'_>, catalogs: &[Catalog], k: usize) -> Scores {
-    let mut sums = [(0usize, 0usize, 0usize, 0.0f64); 3];
+    let mut sums = [(0usize, 0usize, 0usize, 0.0f64); 4];
     for catalog in catalogs {
         let tools = catalog.descriptors();
         let texts: Vec<&str> = catalog.queries.iter().map(|q| q.text.as_str()).collect();

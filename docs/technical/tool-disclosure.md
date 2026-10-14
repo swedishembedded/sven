@@ -202,8 +202,11 @@ catalog being searched, not a list of words:
   that catalog and no other.
 
 A tool asked for by its own name, whole or in quotes, goes above every other
-match. The ranker builds its index from the candidates each time it is asked;
-`Bm25Ranker::prepare` indexes once for many queries.
+match. A name that is nearly the query, spelled with a letter wrong, gets a
+bonus in proportion to the Dice coefficient of the character trigrams of the
+two (at least 0.6, four times the best BM25 score at 1.0), so a misspelled name
+finds its tool first. The ranker builds its index from the candidates each time
+it is asked; `Bm25Ranker::prepare` indexes once for many queries.
 
 ### Search quality
 
@@ -211,7 +214,10 @@ Search is the safety property of deferral: a tool the model cannot find is a
 failed task. `crates/tool-registry/tests/search_quality.rs` measures it on
 generated catalogs, with three query kinds: **exact** (the words of the tool's
 name), **paraphrased** (synonyms of them) and **indirect** (the tool's domain
-described without being named). The metrics are shortlist recall (the tool is
+described without being named), and a fourth for the nearest-name suggestion,
+**misspelled** (the tool's name with a letter wrong: dropped, swapped or doubled
+in the tuning split, replaced, inserted or the last dropped in the validation
+split). The metrics are shortlist recall (the tool is
 within the first 8 results, what `search` shows), top-1 and mean reciprocal
 rank.
 
@@ -251,15 +257,20 @@ subset of catalogs whose mean probability is at least 0.4.
 | | validation | exact | 99.8% | 84.4% | 0.895 |
 | | | paraphrased | 63.5% | 7.3% | 0.239 |
 | | | indirect | 11.5% | 2.7% | 0.057 |
-| as described above | tuning | exact | 99.6% | 94.4% | 0.963 |
+| the text, ending alignment and widening, without the name bonus | tuning | misspelled | 99.6% | 62.1% | 0.771 |
+| | validation | misspelled | 100.0% | 71.7% | 0.827 |
+| as described above | tuning | exact | 100.0% | 100.0% | 1.000 |
 | | | paraphrased | 96.0% | 63.5% | 0.767 |
 | | | indirect | 94.6% | 56.9% | 0.703 |
+| | | misspelled | 100.0% | 99.8% | 0.999 |
 | | validation | exact | 100.0% | 100.0% | 1.000 |
 | | | paraphrased | 95.2% | 62.7% | 0.750 |
 | | | indirect | 90.2% | 54.8% | 0.682 |
+| | | misspelled | 100.0% | 100.0% | 1.000 |
 | | validation, evidence | exact | 100.0% | 100.0% | 1.000 |
 | | | paraphrased | 98.6% | 72.3% | 0.816 |
 | | | indirect | 97.3% | 67.7% | 0.788 |
+| | | misspelled | 100.0% | 100.0% | 1.000 |
 
 Each addition was kept or dropped on the tuning split; the validation split
 shows whether it carried over. Validation recall@8, the fitted ranker with one
@@ -274,6 +285,7 @@ moves):
 | parameter descriptions | 94.8% | 89.0% | |
 | `k1` 5.0 for 0.6 | 94.0% | 88.1% | |
 | ending alignment | 94.8% | 90.2% | exact top-1 85.4% for 100% |
+| the name bonus | 95.2% | 90.2% | misspelled top-1 71.7% for 100%; exact top-1 100% in both |
 | the doubled-consonant reduction | unchanged | unchanged | exact top-1 2.7 points lower (82.3% for 85.0%, an earlier fit) |
 
 Tried and dropped, each added to the fitted ranker (validation paraphrased /
@@ -288,6 +300,19 @@ names a category such as `network` should still find it). The tools' `modes`
 are not indexed: the candidates are already limited to the session's current
 mode, so every one of them carries the same modes and the field cannot tell
 them apart.
+
+Three ranking stages were built, measured and removed because they did not carry
+over to the validation split or lowered it. Replacing a query word no tool uses
+by the nearest word the tools use (one or two edits) fixed misspelled names on
+the tuning split but, next to the name bonus, cost paraphrased recall 2.1
+points on validation (93.1% for 95.2%) through words it wrongly corrected.
+Diversifying the first 24 results by maximal marginal relevance over the name
+terms never raised the tuning objective and at a relevance share of 0.5 cost
+4.7 points of indirect recall on validation (86.7%): the 8 results are rarely
+near-duplicates of each other, because the clusters of similar tools in the
+corpus hold fewer than 10 members. A category stage, raising the tools of the
+category that holds most of the best matches, lowered the top-1 of exact queries
+to 97.9% and of misspelled ones to 95.8% on validation without helping recall.
 
 The paraphrased and indirect targets of the work (99% and 95% within the first
 8) are met only where the catalog's text carries evidence for the paraphrase

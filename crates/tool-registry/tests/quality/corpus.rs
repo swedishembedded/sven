@@ -31,6 +31,15 @@ pub enum Split {
     Validation,
 }
 
+impl QueryKind {
+    pub const ALL: [Self; 4] = [
+        Self::Exact,
+        Self::Paraphrase,
+        Self::Indirect,
+        Self::Misspelled,
+    ];
+}
+
 impl Split {
     /// Query template families are numbered across splits: the tuning split
     /// owns 0-2 of each kind, the validation split 3-5.
@@ -57,6 +66,8 @@ pub enum QueryKind {
     Paraphrase,
     /// Describes the tool's domain without naming it.
     Indirect,
+    /// The tool's name with one word misspelled.
+    Misspelled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -208,10 +219,7 @@ fn generate(split: Split, seed: u64, size: usize, per_kind: usize) -> Catalog {
     Rng::new(seed, "targets").shuffle(&mut order);
     let mut queries = Vec::new();
     let mut words = Rng::new(seed, "queries");
-    for (n, kind) in [QueryKind::Exact, QueryKind::Paraphrase, QueryKind::Indirect]
-        .into_iter()
-        .enumerate()
-    {
+    for (n, kind) in QueryKind::ALL.into_iter().enumerate() {
         for (i, &at) in order[n * per_kind..(n + 1) * per_kind].iter().enumerate() {
             let family = split.first_family() + (i + seed as usize) % 3;
             queries.push(query(&mut words, kind, family, combos[at], &tools[at].name));
@@ -335,6 +343,16 @@ fn query(
 ) -> Query {
     let (noun, synonym) = domain.objects[object];
     let variant = family % 3;
+    if kind == QueryKind::Misspelled {
+        let words = [domain.name, noun, verb.word];
+        let text = misspell(rng, family, &words, target);
+        return Query {
+            text,
+            kind,
+            family,
+            target: target.to_string(),
+        };
+    }
     let synonym_verb = verb.synonyms[rng.below(3)];
     let (d, g) = (domain.name, domain.gloss);
     let text = match (kind, family >= 3, variant) {
@@ -360,6 +378,7 @@ fn query(
         (QueryKind::Indirect, true, 0) => format!("when {g}, how to {synonym_verb} {synonym}"),
         (QueryKind::Indirect, true, 1) => format!("I work on {g}; {synonym_verb} the {synonym}"),
         (QueryKind::Indirect, true, _) => format!("{g} - {synonym} - {synonym_verb}"),
+        (QueryKind::Misspelled, ..) => unreachable!("handled above"),
     };
     Query {
         text,
@@ -383,4 +402,42 @@ fn lower_first(text: &str) -> String {
         .next()
         .map(|c| c.to_lowercase().chain(chars).collect())
         .unwrap_or_default()
+}
+
+/// `name` with one of `words` (the ones of four letters or more, if any) misspelled the way the
+/// template `family` does: the tuning split drops, swaps or doubles a letter,
+/// the validation split replaces a letter, inserts one or drops the last.
+fn misspell(rng: &mut Rng, family: usize, words: &[&str], name: &str) -> String {
+    let mut long: Vec<&str> = words
+        .iter()
+        .copied()
+        .filter(|w| w.chars().count() >= 4)
+        .collect();
+    if long.is_empty() {
+        long = words.to_vec();
+    }
+    let word = long[rng.below(long.len())];
+    let letters: Vec<char> = word.chars().collect();
+    let at = 1 + rng.below(letters.len() - 2);
+    let other = (b'a' + rng.below(26) as u8) as char;
+    let mut typo = letters.clone();
+    match family {
+        0 => {
+            typo.remove(at);
+        }
+        1 => typo.swap(at, at + 1),
+        2 => typo.insert(at, letters[at]),
+        3 => typo[at] = if other == letters[at] { 'x' } else { other },
+        4 => typo.insert(at, other),
+        _ => {
+            typo.pop();
+        }
+    }
+    let typo: String = typo.into_iter().collect();
+    // Camel-cased names carry the word with a capital.
+    if name.contains(word) {
+        name.replace(word, &typo)
+    } else {
+        name.replace(&capitalise(word), &capitalise(&typo))
+    }
 }

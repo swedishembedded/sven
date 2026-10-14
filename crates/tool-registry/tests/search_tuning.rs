@@ -23,7 +23,7 @@ use quality::metrics::{evaluate, Scores};
 use sven_tool_registry::{Bm25Ranker, RankingParams, ToolDescriptor};
 
 const SHORTLIST: usize = 8;
-const KINDS: [QueryKind; 3] = [QueryKind::Exact, QueryKind::Paraphrase, QueryKind::Indirect];
+const KINDS: [QueryKind; 4] = QueryKind::ALL;
 
 /// A parameter and the values tried for it.
 struct Knob {
@@ -37,6 +37,16 @@ const KNOBS: &[Knob] = &[
         name: "align_endings",
         values: &[0.0, 1.0],
         set: |p, v| p.align_endings = v > 0.0,
+    },
+    Knob {
+        name: "name_similarity",
+        values: &[0.0, 0.5, 1.0, 2.0, 4.0],
+        set: |p, v| p.name_similarity = v,
+    },
+    Knob {
+        name: "name_similarity_floor",
+        values: &[0.5, 0.6, 0.7, 0.8],
+        set: |p, v| p.name_similarity_floor = v,
     },
     Knob {
         name: "w.description",

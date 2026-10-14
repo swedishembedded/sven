@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 use crate::analysis::terms;
 use crate::descriptor::ToolDescriptor;
+use crate::fuzzy::trigrams;
 
 /// How much a term counts for, by where it was found. A weight of 0 leaves the
 /// field out of the index.
@@ -45,6 +46,8 @@ pub struct Document<'a> {
     pub name: &'a str,
     /// The distinct terms of the name, sorted.
     pub name_terms: Vec<String>,
+    /// Trigrams of the name's terms in order, for near-miss matching.
+    pub name_grams: Vec<u32>,
     pub terms: BTreeMap<String, f64>,
     pub length: f64,
 }
@@ -68,12 +71,15 @@ pub fn document<'a>(tool: &'a ToolDescriptor, weights: &FieldWeights) -> Documen
     for text in &tool.parameter_descriptions {
         add(text, weights.parameter_descriptions);
     }
-    let mut name_terms = terms(&tool.name);
+    let name_words = terms(&tool.name);
+    let name_grams = trigrams(&name_words.join(" "));
+    let mut name_terms = name_words;
     name_terms.sort();
     name_terms.dedup();
     Document {
         name: &tool.name,
         name_terms,
+        name_grams,
         terms: terms_of,
         length,
     }

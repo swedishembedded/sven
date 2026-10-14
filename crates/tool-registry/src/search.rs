@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use crate::analysis::{named_spans, terms};
 use crate::descriptor::ToolDescriptor;
 use crate::expansion::{align_ending, widen, Expansion};
+use crate::fuzzy::{dice, trigrams};
 use crate::index::{FieldWeights, Index};
 
 /// A candidate with the score a ranker gave it.
@@ -62,6 +63,12 @@ pub struct RankingParams {
     /// A query term the tools never use is replaced by the same word with an
     /// `e` added or removed, if the tools use that.
     pub align_endings: bool,
+    /// How much the similarity of the query to a tool's name adds, in units
+    /// of the best BM25 score.
+    pub name_similarity: f64,
+    /// Names less similar to the query than this (Dice coefficient of their
+    /// trigrams) add nothing.
+    pub name_similarity_floor: f64,
     pub expansion: Expansion,
 }
 
@@ -72,6 +79,8 @@ impl Default for RankingParams {
             b: 0.9,
             weights: FieldWeights::default(),
             align_endings: true,
+            name_similarity: 4.0,
+            name_similarity_floor: 0.6,
             expansion: Expansion::default(),
         }
     }
@@ -129,8 +138,8 @@ impl PreparedRanking<'_> {
     pub fn rank(&self, query: &str) -> Vec<RankedTool> {
         let (index, params) = (&self.index, &self.params);
         let mut wanted = terms(query);
-        if params.align_endings {
-            for term in &mut wanted {
+        for term in &mut wanted {
+            if params.align_endings {
                 align_ending(index, term);
             }
         }
@@ -167,6 +176,16 @@ impl PreparedRanking<'_> {
         for (score, doc) in scores.iter_mut().zip(&index.documents) {
             if spans.contains(&doc.name_terms) {
                 *score += ceiling;
+            }
+        }
+        if params.name_similarity > 0.0 {
+            let best = scores.iter().copied().fold(0.0, f64::max).max(1.0);
+            let asked = trigrams(&terms(query).join(" "));
+            for (score, doc) in scores.iter_mut().zip(&index.documents) {
+                let close = dice(&asked, &doc.name_grams);
+                if close >= params.name_similarity_floor {
+                    *score += params.name_similarity * best * close;
+                }
             }
         }
         let mut ranked: Vec<RankedTool> = index
