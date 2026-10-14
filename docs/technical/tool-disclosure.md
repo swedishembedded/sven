@@ -348,6 +348,55 @@ The paraphrased and indirect targets of the work (99% and 95% within the first
 synonym to a tool, no ranking that reads text can find the tool, and the
 numbers above show the gap (95.2% and 90.2% over all catalogs).
 
+### Search in the ablation benchmark
+
+The `tool_selection` suite of the [ablation benchmark](ablation-benchmarks.md)
+(a catalog of 40 to 144 MCP tools whose descriptions overlap, shuffled by the
+seed; per seed three exact, three paraphrased and two indirect queries, one
+search each) reads what `search` shows. Three seeds, scripted model, 24 probes
+per variant. *Before* is the recorded run of the previous ranker
+(`benchmarks/ablation/sample/report.md`); *after* is this ranker, run with the
+suite's own runner (`benchmarks/ablation/run --suites tool_selection --seeds 3`)
+on the binary built from this tree.
+
+| variant | shortlist recall | top-1 | MRR | decision calls per run | tokens, mean per run | tokens vs A |
+|---|---:|---:|---:|---:|---:|---:|
+| A, full disclosure | 100.0% | - | - | 0 | 172,752 before, 173,292 after | 1.00 |
+| B, deferred, before | 79.2% | 58.3% | 0.649 | 0 | 78,679 | 2.19 [1.98, 2.34] |
+| B, deferred, after | 95.8% | 79.2% | 0.858 | 0 | 85,972 | 2.01 [1.81, 2.16] |
+| G, oracle decisions, before | 79.2% | 79.2% | 0.792 | 3.3 | 78,679 | 2.19 |
+| G, oracle decisions, after | 95.8% | 95.8% | 0.958 | 7.3 | 85,972 | 2.01 |
+
+The rule-based heuristic (C) and the random control (F) again equal B. By kind,
+after: exact 9 of 9 first, paraphrased 9 of 9 on the shortlist and 8 of 9 first,
+indirect 5 of 6 on the shortlist and 2 of 6 first. The one miss is an indirect
+query, `put away hours record for paying employees`: the catalog never states
+what "paying employees" is, and the synonym of the object sits in the
+description of only some of the tools that carry it, so that is a case of the
+limit stated above and not of the ranking. The 24 probes are too few to put a
+percentage on one kind; the generated corpus is where the targets are measured,
+and the suite shows that the gain is not an artefact of it. The suite does not
+meet the 99% and 95% targets for indirect queries (83% of six probes).
+
+The deferred variants spend 9.3% more tokens than before, which lowers the
+saving against full disclosure from 2.19 to 2.01: the results are longer (the
+names after the matches) and stay in the conversation for the later requests of
+the task. The decision model is asked about 7.3 of the 8 searches per run
+instead of 3.3 because near-identical tools tie more often now that every tool
+of a (domain, object) group shares the words of its description; it moves the
+top-1 from 79.2% to 95.8% (G). The margin under which it is asked (the best
+and the second match within 10% of each other) is unchanged. On the generated
+corpus (1,920 searches per split), the best match is wrong in 20.6% of the
+searches (validation), 22.9% are within 10% and in 67.0% of those the best
+match is the wrong one, covering 74.2% of all wrongly ordered searches; a
+margin of 5% would ask 16.0% and cover 57.3%, one of 20% would ask 37.6% and
+cover 87.9% with the best match wrong in 48.2% of the asked.
+
+Cost of a search at 2,000 tools (five generated catalogs of 400 under distinct
+prefixes, release build): building the index 41 ms, a query on a built index
+1.5 ms, so about 42 ms per search call, which builds its index from the
+descriptors each time. Nothing is retained between calls.
+
 ## The model router
 
 The router described in the [roadmap](../../.agents/roadmap/model-router.md)

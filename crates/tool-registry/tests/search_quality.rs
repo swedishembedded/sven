@@ -199,6 +199,7 @@ fn larger_sweep_over_many_catalogs() {
             evaluate(&current_ranker, &rich, SHORTLIST)
         );
         eprintln!("{split:?}: {}", result_size(&catalogs(split, &plan)));
+        eprintln!("{split:?}\n{}", ambiguity(&catalogs(split, &plan)));
         eprintln!(
             "{split:?}, shortlist and the 8 names after it (recall@{})\n{}",
             2 * SHORTLIST,
@@ -228,4 +229,98 @@ fn result_size(catalogs: &[quality::corpus::Catalog]) -> String {
         shown as f64 / searches as f64 / 4.0,
         related as f64 / searches as f64 / 4.0
     )
+}
+
+/// How often the two best matches are within a relative margin of each other
+/// (the condition under which a decision model is asked to break the tie) and,
+/// of those, how often the best one is the wrong one: a margin earns its
+/// model calls when the asked searches are mostly the wrongly ordered ones.
+fn ambiguity(catalogs: &[quality::corpus::Catalog]) -> String {
+    let margins = [0.0, 0.01, 0.02, 0.05, 0.10, 0.20];
+    let mut asked = [0usize; 6];
+    let mut wrong_when_asked = [0usize; 6];
+    let mut wrong_in_pool = [0usize; 6];
+    let (mut searches, mut wrong) = (0usize, 0usize);
+    for catalog in catalogs {
+        let tools = catalog.descriptors();
+        let prepared = Bm25Ranker.prepare(&RankingParams::default(), &tools);
+        for query in &catalog.queries {
+            let ranked = prepared.rank(&query.text);
+            searches += 1;
+            let first_wrong = ranked.first().is_none_or(|r| r.name != query.target);
+            wrong += usize::from(first_wrong);
+            let gap = match ranked.as_slice() {
+                [a, b, ..] => (a.score - b.score) / a.score,
+                _ => f64::INFINITY,
+            };
+            let in_pool = ranked.iter().take(8).any(|r| r.name == query.target);
+            for (i, margin) in margins.iter().enumerate() {
+                if gap <= *margin {
+                    asked[i] += 1;
+                    wrong_when_asked[i] += usize::from(first_wrong);
+                    wrong_in_pool[i] += usize::from(first_wrong && in_pool);
+                }
+            }
+        }
+    }
+    let mut out = format!(
+        "{searches} searches, the best match is wrong in {:.1}%\n| margin | asked | best wrong among asked | fixable among asked | wrong bests asked |\n|---:|---:|---:|---:|---:|\n",
+        100.0 * wrong as f64 / searches as f64
+    );
+    for (i, margin) in margins.iter().enumerate() {
+        out.push_str(&format!(
+            "| {margin} | {:.1}% | {:.1}% | {:.1}% | {:.1}% |\n",
+            100.0 * asked[i] as f64 / searches as f64,
+            100.0 * wrong_when_asked[i] as f64 / asked[i].max(1) as f64,
+            100.0 * wrong_in_pool[i] as f64 / asked[i].max(1) as f64,
+            100.0 * wrong_when_asked[i] as f64 / wrong.max(1) as f64
+        ));
+    }
+    out
+}
+
+/// Search over a few thousand tools must stay cheap: the index of a catalog
+/// is built per search call, so that is what is timed.
+/// `cargo test --release -p sven-tool-registry --test search_quality -- --ignored --nocapture latency`
+#[test]
+#[ignore = "timing; run in release"]
+fn latency_on_a_catalog_of_two_thousand_tools() {
+    let plan = Plan {
+        catalogs: 5,
+        sizes: &[400],
+        queries_per_kind: 20,
+    };
+    let mut tools: Vec<ToolDescriptor> = Vec::new();
+    let mut queries: Vec<String> = Vec::new();
+    for (i, split) in [Split::Tuning, Split::Validation]
+        .into_iter()
+        .cycle()
+        .take(5)
+        .enumerate()
+    {
+        let catalog = catalogs(split, &plan).remove(i / 2);
+        tools.extend(catalog.descriptors().into_iter().map(|mut t| {
+            t.name = format!("k{i}-{}", t.name);
+            t
+        }));
+        queries.extend(catalog.queries.into_iter().map(|q| q.text));
+    }
+    let params = RankingParams::default();
+    let started = std::time::Instant::now();
+    let prepared = Bm25Ranker.prepare(&params, &tools);
+    let index = started.elapsed();
+    let started = std::time::Instant::now();
+    let hits: usize = queries.iter().map(|q| prepared.rank(q).len()).sum();
+    let per_query = started.elapsed() / queries.len() as u32;
+    let started = std::time::Instant::now();
+    let whole: usize = queries
+        .iter()
+        .take(20)
+        .map(|q| Bm25Ranker.rank_with(&params, q, &tools).len())
+        .sum();
+    let per_search = started.elapsed() / 20;
+    eprintln!(
+        "{} tools: index {index:?}, query on a prepared index {per_query:?}, index and query per search call {per_search:?} ({hits} and {whole} matches)",
+        tools.len()
+    );
 }
