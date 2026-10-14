@@ -92,7 +92,7 @@ pub(crate) struct ExecutorParts {
     pub cancel_handle: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
     pub no_tools: bool,
     /// Where the turn executor accounts for the session's decision calls.
-    pub decision_telemetry: Arc<sven_decision::DecisionTelemetry>,
+    pub decision_telemetry: Arc<sven_decision::telemetry::DecisionTelemetry>,
     /// Root of the filesystem every effect shares; also where verification
     /// runs.
     pub project_root: Option<PathBuf>,

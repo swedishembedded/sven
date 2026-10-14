@@ -491,13 +491,7 @@ impl RuntimeBuilder {
         )?;
 
         // ── Decisions ─────────────────────────────────────────────────────────
-        // Off contacts nothing; `required` refuses to start without a suitable
-        // model, before anything that depends on one is assembled.
-        let decision = Arc::new(
-            sven_decision::DecisionRuntime::new(self.config.decision.clone())
-                .map_err(|e| anyhow::anyhow!("invalid decision configuration: {e}"))?,
-        );
-        decision.require_ready().await.map_err(anyhow::Error::msg)?;
+        let decision = crate::decision_ranker::runtime_for(&self.config).await?;
 
         // ── Initialise model provider ─────────────────────────────────────────
         let model_cfg = self
@@ -940,7 +934,7 @@ pub struct SessionBundle {
 /// forwarded — they are registry mutations (add/remove a tool from the live
 /// `ToolRegistry`), not renderable observations, and have no `UiEvent`
 /// counterpart.
-fn spawn_tool_event_forwarder(mut rx: mpsc::Receiver<ToolEvent>, obs: ObservationSink) {
+pub(crate) fn spawn_tool_event_forwarder(mut rx: mpsc::Receiver<ToolEvent>, obs: ObservationSink) {
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             let ui_event = match event {
@@ -1000,21 +994,6 @@ mod tests {
     use sven_kernel::EventSink;
 
     use super::*;
-
-    #[tokio::test]
-    async fn a_tool_notice_reaches_every_surface_as_a_warning() {
-        let obs = ObservationSink::new(8);
-        let mut seen = obs.subscribe();
-        let (tx, rx) = mpsc::channel(4);
-        spawn_tool_event_forwarder(rx, obs);
-        tx.send(ToolEvent::Notice("decisions unavailable".into()))
-            .await
-            .unwrap();
-        match seen.recv().await.unwrap() {
-            sven_vocab::SessionEvent::Warning(text) => assert_eq!(text, "decisions unavailable"),
-            other => panic!("expected a warning, got {other:?}"),
-        }
-    }
 
     /// Forwards every effect it receives to a channel so the test can assert
     /// the kernel routed effects to the injected executor.

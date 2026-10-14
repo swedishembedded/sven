@@ -353,6 +353,18 @@ impl ToolRanker for DecisionRanker {
     }
 }
 
+/// The session's decision runtime. Off contacts nothing; `required` refuses
+/// to start without a suitable model, before anything that depends on one is
+/// assembled.
+pub async fn runtime_for(config: &crate::Config) -> anyhow::Result<Arc<DecisionRuntime>> {
+    let runtime = Arc::new(
+        DecisionRuntime::new(config.decision.clone())
+            .map_err(|e| anyhow::anyhow!("invalid decision configuration: {e}"))?,
+    );
+    runtime.require_ready().await.map_err(anyhow::Error::msg)?;
+    Ok(runtime)
+}
+
 /// The ranker a session searches with: the decision ranker when decisions are
 /// on and `decision.features.tool_routing` allows it, otherwise `None` and
 /// BM25 alone.
@@ -370,4 +382,26 @@ pub fn for_session(
         Arc::clone(runtime),
         Some(notices),
     )))
+}
+
+#[cfg(test)]
+mod notice_tests {
+    use sven_hsm::ObservationSink;
+    use sven_tool_api::events::ToolEvent;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn a_tool_notice_reaches_every_surface_as_a_warning() {
+        let obs = ObservationSink::new(8);
+        let mut seen = obs.subscribe();
+        let (tx, rx) = mpsc::channel(4);
+        crate::runtime_builder::spawn_tool_event_forwarder(rx, obs);
+        tx.send(ToolEvent::Notice("decisions unavailable".into()))
+            .await
+            .unwrap();
+        match seen.recv().await.unwrap() {
+            sven_vocab::SessionEvent::Warning(text) => assert_eq!(text, "decisions unavailable"),
+            other => panic!("expected a warning, got {other:?}"),
+        }
+    }
 }
