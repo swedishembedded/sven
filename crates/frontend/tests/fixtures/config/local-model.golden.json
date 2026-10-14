@@ -48,6 +48,18 @@
       "timeout_ms": 500,
       "warn_if_unavailable": true
     },
+    "delegation": {
+      "assumed_parent_context_tokens": 8000,
+      "child_overhead_tokens": 4000,
+      "context_window_tokens": 128000,
+      "min_samples": 2,
+      "parallel_credit_tokens": 1500,
+      "policy": "off",
+      "replay_rounds": 3,
+      "report_tokens": 400,
+      "unknown_work_tokens": 6000,
+      "write_surcharge_tokens": 1000
+    },
     "knowledge": {
       "disclosure": "deferred"
     },

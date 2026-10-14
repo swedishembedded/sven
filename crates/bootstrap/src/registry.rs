@@ -410,6 +410,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
         .with_scope(p.runtime.path_scope.clone())
         .with_chunks(p.chunks)
         .with_near_match(p.near_match)
+        .with_delegation(p.cfg.delegation)
         .with_wall_clock(p.cfg.agent.child_run_timeout())
         .with_turn_budgets(
             Some(p.cfg.agent.max_tool_rounds),
@@ -468,6 +469,7 @@ fn build_profile_research(
         .with_scope(paths.clone())
         .with_chunks(integrations.chunks.clone())
         .with_near_match(integrations.near_match.clone())
+        .with_delegation(cfg.delegation)
         .with_wall_clock(cfg.agent.child_run_timeout())
         .with_turn_budgets(Some(cfg.agent.max_tool_rounds), cfg.model.max_output_tokens)
         .with_approver(integrations.approver.clone(), integrations.approval_mode)

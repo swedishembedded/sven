@@ -139,3 +139,37 @@ approval gate, and teammates of an agent team keep their own worktrees and
 task claims. Deduplication does not touch it: a writing subgoal is never
 answered from another call, never put to the decision model, and never
 served to a read-only twin or the reverse, whatever its scope overlaps.
+
+## Cost policy
+
+`delegation.policy` (`off`, `advise`, `enforce`; default `off`) decides whether
+a subtask is worth a sub-agent. With `off` nothing is estimated and every call
+behaves as it always has. The estimate (`task_tool/voi.rs`, a pure function)
+is in tokens and delegates only when `expected_benefit > coordination_cost`:
+
+```text
+coordination_cost = child_overhead + brief + report (+ write_surcharge)
+expected_benefit  = inline_work * (1 + parent_context / context_window) * (1 + replay_rounds)
+                    + (independent_subgoals - 1) * parallel_credit
+```
+
+- `brief` is the tokens of the child's first request.
+- `inline_work` is the sum of the sizes (bytes / 4) of the files the call
+  declares in `paths` when all are literal and readable; otherwise
+  `unknown_work_tokens`, which is chosen large enough to delegate.
+- `child_overhead` and `report` are the averages of the session's finished
+  children (the input tokens their turns used, and the size of what they
+  handed back) once `min_samples` have; the configured values before.
+- `parent_context` is the tokens of the chunks the session recorded when
+  addressable context is on, `assumed_parent_context_tokens` otherwise. It is
+  a proxy: the tool cannot see the conversation.
+- `independent_subgoals` counts the subgoals in flight, this one included.
+
+`advise` launches the child and, when the estimate favoured doing the work
+inline, ends the result with a `Delegation note`. `enforce` does not launch:
+the result (not an error) says what a sub-agent would cost and save, and tells
+the model to do the subtask itself, with the prompt it gave. Every number is a
+configuration key (`docs/05-configuration.md#delegation`). The policy only
+ever declines to delegate; it cannot start a child, widen one, or override a
+permission, an approval or the concurrency rules, and the deduplication above
+is decided first.

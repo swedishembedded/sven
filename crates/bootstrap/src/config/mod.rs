@@ -21,6 +21,7 @@
 
 mod agent;
 mod context;
+mod delegation;
 mod disclosure;
 mod listing;
 mod tools;
@@ -35,6 +36,7 @@ use sven_model_drivers::{providers_schema, ModelConfig, Providers};
 
 pub use agent::AgentConfig;
 pub use context::{AssemblyConfig, AssemblyMode, ContextSettings};
+pub use delegation::{DelegationConfig, DelegationPolicy};
 pub use disclosure::DisclosureConfig;
 pub use listing::ListingConfig;
 pub use tools::ToolsConfig;
@@ -73,6 +75,9 @@ pub struct Config {
     /// How the context of a request is assembled from the conversation. See
     /// `docs/technical/context-assembly.md`.
     pub context: ContextSettings,
+    /// Whether `task` declines a sub-agent that would cost more than it
+    /// saves. See `docs/technical/delegation.md`.
+    pub delegation: DelegationConfig,
     /// How much of each skill the system prompt carries. See
     /// `docs/technical/instruction-disclosure.md`.
     pub skills: ListingConfig,
@@ -94,6 +99,7 @@ impl Config {
             ("mcp_servers", mcp_servers_schema()),
             ("decision", DecisionConfig::schema()),
             ("context", ContextSettings::schema()),
+            ("delegation", DelegationConfig::schema()),
             ("skills", ListingConfig::schema()),
             ("subagents", ListingConfig::schema()),
             ("knowledge", ListingConfig::schema()),

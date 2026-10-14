@@ -25,6 +25,7 @@ use sven_executors::ChunkSession;
 use sven_tool_api::events::SubagentUpdate;
 
 use super::finding;
+use super::voi::Observed;
 
 /// The bytes of a child's transcript an update carries: the text it said, the
 /// calls it made and what they returned. Thinking is not forwarded to a
@@ -91,6 +92,20 @@ impl ChildLedger {
     pub(super) fn record(&self, cost: ChildCost) {
         if let Ok(mut all) = self.children.lock() {
             all.push(cost);
+        }
+    }
+
+    /// The averages of the children that finished and reported, once `min`
+    /// of them have: what the next child can be expected to cost.
+    pub(super) fn observed(&self, min: u32) -> Observed {
+        let all = self.children.lock().map(|a| a.clone()).unwrap_or_default();
+        let min = usize::try_from(min.max(1)).unwrap_or(usize::MAX);
+        let average = |values: Vec<u64>| {
+            (values.len() >= min).then(|| values.iter().sum::<u64>() / values.len() as u64)
+        };
+        Observed {
+            child_overhead: average(all.iter().filter_map(|c| c.used.map(|(i, _)| i)).collect()),
+            report: average(all.iter().map(|c| c.handed_back).collect()),
         }
     }
 
@@ -271,6 +286,34 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("tokens not reported"));
+    }
+
+    #[test]
+    fn measured_averages_need_enough_finished_children() {
+        let ledger = ChildLedger::default();
+        let child = |input: Option<u64>, handed_back| ChildCost {
+            handle: "h".into(),
+            description: String::new(),
+            used: input.map(|i| (i, 10)),
+            handed_back,
+            transcript: 0,
+        };
+        assert_eq!(ledger.observed(2), Observed::default());
+        ledger.record(child(Some(1000), 100));
+        assert_eq!(
+            ledger.observed(2),
+            Observed::default(),
+            "one child is not enough"
+        );
+        ledger.record(child(None, 300));
+        let seen = ledger.observed(2);
+        assert_eq!(seen.report, Some(200));
+        assert_eq!(
+            seen.child_overhead, None,
+            "only one child reported its usage"
+        );
+        ledger.record(child(Some(3000), 200));
+        assert_eq!(ledger.observed(2).child_overhead, Some(2000));
     }
 
     #[test]

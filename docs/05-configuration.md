@@ -934,6 +934,37 @@ session fact, so a resumed session finds what its transcript refers to.
 
 ---
 
+### `delegation`
+
+Whether the `task` tool declines a sub-agent that would cost more than it
+saves. A sub-agent pays for its own system prompt and tool definitions and for
+the brief it reads, and hands a report back; work done inline stays in the
+parent's context and is sent again with every later request. The estimate,
+`expected_benefit > coordination_cost`, and what it does and does not measure:
+[docs/technical/delegation.md](technical/delegation.md#cost-policy). Every
+count is estimated tokens.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `policy` | `off` | `off`: every call launches and nothing is estimated. `advise`: every call launches, and the result says when the estimate favoured doing the work inline. `enforce`: a call whose estimated cost exceeds its estimated benefit is declined with the reason and the instruction to do the work inline. |
+| `child_overhead_tokens` | `4000` | What a sub-agent costs before it reads the task. Replaced by the measured average once `min_samples` sub-agents have finished and reported their usage. |
+| `report_tokens` | `400` | What the parent receives back. Replaced by the measured average like the overhead. |
+| `min_samples` | `2` | Finished sub-agents the measured averages need. |
+| `unknown_work_tokens` | `6000` | The work of a subtask whose files are not all declared as literal paths (`task`'s `paths`): unknown, so assumed large enough to delegate. |
+| `replay_rounds` | `3` | Later requests in which work done inline would be sent again. |
+| `parallel_credit_tokens` | `1500` | What each further independent subgoal in flight is worth. |
+| `write_surcharge_tokens` | `1000` | What a sub-agent that writes adds: review and conflict handling. |
+| `context_window_tokens` | `128000` | The parent's context window, which its context size is compared with. |
+| `assumed_parent_context_tokens` | `8000` | The parent's context size when the session records no chunks to measure it by. |
+
+```yaml
+delegation:
+  policy: advise
+  child_overhead_tokens: 4000
+```
+
+---
+
 ### `mcp_servers`
 
 MCP (Model Context Protocol) servers extend sven with additional tools, prompts,

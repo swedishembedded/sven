@@ -91,13 +91,14 @@ use sven_tool_api::{
     events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
-    PathScope, PermissionRequester,
+    PathScope,
 };
 use sven_tools_fs::{BufferSource, OutputBufferStore};
 use sven_vocab::{AgentMode, ApprovalMode};
 use sven_workspace::{AgentInfo, SharedAgents};
 
 mod admission;
+mod approver;
 mod brief;
 mod finding;
 mod handback;
@@ -106,6 +107,9 @@ mod report;
 mod session;
 mod subgoals;
 mod updates;
+mod voi;
+mod weigh;
+pub use approver::ChildApprover;
 use session::{run_acp_session, CancelGuard, SpawnArgs};
 pub(crate) use subgoals::NearMatch;
 
@@ -120,56 +124,6 @@ pub(crate) const SUBAGENT_DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
 /// request, the capability the call exercises (`"WriteFile"`, ...), so the
 /// parent answering it knows what the call does.
 pub const CAPABILITY_META_KEY: &str = "sven.capability";
-
-// ── Who answers a sub-agent's requests ───────────────────────────────────────
-
-/// Who answers a sub-agent's permission request that is not allowed outright.
-#[derive(Clone)]
-pub enum ChildApprover {
-    /// The host's requester (an IDE over ACP). The host is asked about every
-    /// call a tool's policy marks `Ask`, in the parent as in the child, so no
-    /// child request is allowed without it.
-    Host(Arc<dyn PermissionRequester>),
-    /// The session's own approval gate (`GateApprover`), asked under manual
-    /// approval about what the session's policy does not allow without
-    /// asking.
-    Gate(Arc<dyn PermissionRequester>),
-}
-
-impl ChildApprover {
-    /// Who answers a sub-agent's requests in a session with `host`'s
-    /// requester (an IDE over ACP), under `approval`: the host when there is
-    /// one, the session's own approval gate (`approvals`) under manual
-    /// approval, and nobody under auto - there the contract settles every
-    /// request.
-    pub(crate) fn for_session(
-        host: Option<Arc<dyn PermissionRequester>>,
-        approval: ApprovalMode,
-        approvals: &mpsc::Sender<sven_executors::ApprovalRequest>,
-        tools: &crate::config::ToolsConfig,
-    ) -> Option<Self> {
-        match (host, approval) {
-            (Some(host), _) => Some(Self::Host(host)),
-            (None, ApprovalMode::Manual) => Some(Self::Gate(Arc::new(
-                crate::session_handles::GateApprover::new(approvals.clone())
-                    .with_preapproval(crate::mode_policy::preapproval(tools)),
-            ))),
-            (None, ApprovalMode::Auto) => None,
-        }
-    }
-
-    /// The requester that is asked.
-    pub(crate) fn requester(&self) -> &dyn PermissionRequester {
-        match self {
-            Self::Host(r) | Self::Gate(r) => r.as_ref(),
-        }
-    }
-
-    /// `true` when the parent itself asks about every `Ask` call.
-    pub(crate) fn asks_every_call(&self) -> bool {
-        matches!(self, Self::Host(_))
-    }
-}
 
 // ── TaskTool ─────────────────────────────────────────────────────────────────
 
@@ -213,6 +167,8 @@ pub struct TaskTool {
     subgoals: Arc<subgoals::SubgoalRegistry>,
     /// Asked about a near-identical read-only goal; without one it launches.
     near_match: Option<Arc<dyn NearMatch>>,
+    /// Whether a subtask a sub-agent would not pay for is declined.
+    delegation: crate::config::DelegationConfig,
 }
 
 impl TaskTool {
@@ -241,6 +197,7 @@ impl TaskTool {
             ledger: Arc::default(),
             subgoals: Arc::default(),
             near_match: None,
+            delegation: crate::config::DelegationConfig::default(),
         }
     }
 
@@ -248,6 +205,13 @@ impl TaskTool {
     #[must_use]
     pub(crate) fn with_near_match(mut self, advisor: Option<Arc<dyn NearMatch>>) -> Self {
         self.near_match = advisor;
+        self
+    }
+
+    /// Holds each call to `delegation.policy` and its numbers.
+    #[must_use]
+    pub fn with_delegation(mut self, delegation: crate::config::DelegationConfig) -> Self {
+        self.delegation = delegation;
         self
     }
 
@@ -668,6 +632,18 @@ impl Tool for TaskTool {
             Err(answer) => return answer,
         };
 
+        let note = match self.weigh(&weigh::Candidate {
+            id: &call.id,
+            args: &call.args,
+            scope: &session,
+            brief: &prompt,
+            prompt: &original_prompt,
+            writes: acp_mode == "agent",
+        }) {
+            weigh::Verdict::Launch { note } => note,
+            weigh::Verdict::Decline(answer) => return answer,
+        };
+
         let exe = match std::env::current_exe() {
             Ok(p) => p,
             Err(e) => {
@@ -764,13 +740,16 @@ impl Tool for TaskTool {
             let _ = result_tx.send(output);
         });
 
-        let output = result_rx
+        let mut output = result_rx
             .await
             .unwrap_or_else(|_| ToolOutput::err(&handle_id, "sub-agent thread died unexpectedly"));
         leader.finish((!output.is_error).then(|| subgoals::Outcome {
             handle: handle_id.clone(),
             text: output.content.clone(),
         }));
+        if let (Some(note), false) = (note, output.is_error) {
+            output.content = format!("{}\n\n{note}", output.content);
+        }
         output
     }
 }

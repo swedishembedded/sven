@@ -1,0 +1,13 @@
+# docs/05-configuration.md and docs/technical/delegation.md: `task` declines a
+# sub-agent whose estimated cost exceeds what it saves.
+delegation:
+  policy: enforce
+  child_overhead_tokens: 6000
+  report_tokens: 600
+  min_samples: 3
+  unknown_work_tokens: 8000
+  replay_rounds: 4
+  parallel_credit_tokens: 2000
+  write_surcharge_tokens: 1500
+  context_window_tokens: 200000
+  assumed_parent_context_tokens: 12000

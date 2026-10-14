@@ -345,6 +345,16 @@ impl SubgoalRegistry {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Subgoals handed to a child that has not finished.
+    pub(super) fn in_flight(&self) -> u64 {
+        let running = self
+            .lock()
+            .iter()
+            .filter(|e| matches!(e.state, State::InFlight(_)))
+            .count();
+        u64::try_from(running).unwrap_or(u64::MAX)
+    }
+
     fn withdraw(&self, id: u64) {
         self.lock().retain(|e| e.id != id);
     }
