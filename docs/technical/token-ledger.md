@@ -131,6 +131,8 @@ compare runs made with the same `--out`.
 | `noisy_output` | one shell command that prints 3,000 log lines |
 | `long_history` | a 60-turn conversation replayed ahead of one more question |
 | `deferred_tool` | one call to a tool outside the core set; under deferred disclosure it is loaded first |
+| `catalog` | one prompt in a project with 40 skills, 12 subagents and 30 knowledge documents (see below) |
+| `catalog_skill` | the same project; the task loads the one skill it needs |
 
 Estimated input tokens, summed over the requests of each scenario (`bytes_div_4`;
 the mock provider's own usage numbers are synthetic, so the baseline does not
@@ -180,10 +182,11 @@ tokens of the schema the model is sent (name, description, parameters):
 That is 4,253 tokens for 15 tools, 284 on average, with the largest schema
 (`task`) four times the smallest. `research` mode offers 11 of them.
 
-Two of these figures grow with what is installed rather than with sven. The
-`skill` tool's description lists every discovered skill, and the `Skills`
-system section lists them again, so skill metadata is paid for twice on every
-request. MCP tools add their own schemas, charged to their own names.
+Two kinds of figure grow with what is installed rather than with sven. The
+system prompt lists every discovered skill, subagent and knowledge document
+(see [the instruction catalog](#the-instruction-catalog)); the `skill` tool's
+description does not repeat the skills, so each is paid for once. MCP tools add
+their own schemas, charged to their own names.
 
 These replace the earlier planning figures of about 350 tokens per tool and
 about 1,400 system tokens, which were taken on a 19-tool chat session; the
@@ -209,3 +212,30 @@ transcript show up as a smaller `tool results` figure, the demotions as
 `context_view` in each record, and the expansions they cause as
 `context_recovery`; the measured numbers are in
 [context-assembly.md](context-assembly.md#measured).
+
+## The instruction catalog
+
+Skills, subagents and knowledge documents are listed in the system prompt, and
+the list grows with the project, not with sven. `benchmarks/ledger/catalog_fixture.sh DIR`
+writes a deterministic project with 40 skills (10 packages of 3 sub-skills each),
+12 subagents, 30 knowledge documents and an `AGENTS.md`; the `catalog` and
+`catalog_skill` scenarios run in it. The same invocation always writes the same
+bytes, so figures taken at different commits compare.
+
+Estimated tokens of each system section (`system_runtime`), one request of the
+`catalog` scenario, default tool disclosure:
+
+| section | tokens |
+|---------|-------:|
+| `Skills` | 4,001 |
+| `Subagents` | 920 |
+| `Knowledge Base` | 962 |
+| `Project Instructions` | 36 |
+| `Deferred Tools` | 253 |
+| `Project Context` | 62 |
+| request total | 9,082 |
+
+The three listings are 5,883 of 9,082 tokens, 65% of a request that has not yet
+said anything, and an empty project's `minimal` request is 3,163. The project
+instructions are not part of that cost: `AGENTS.md` is referenced by path, and
+the section is the same 36 tokens however long the file is.

@@ -33,6 +33,10 @@
 #   long_history a 60-turn conversation replayed ahead of one more question
 #   deferred_tool one call to a tool outside the core set: under deferred
 #                disclosure the model loads it first, so this is what a load costs
+#   catalog      one prompt in a project with 40 skills, 12 agents and 30
+#                knowledge documents (catalog_fixture.sh): what the instruction
+#                listings cost a request
+#   catalog_skill the same project, and the task loads the one skill it needs
 
 set -euo pipefail
 
@@ -128,6 +132,7 @@ run_scenario() {
     shift 2
     local work="${out}/work/${name}"
     make_workspace "${work}"
+    case "${name}" in catalog*) bash "${here}/catalog_fixture.sh" "${work}" ;; esac
     (cd "${work}" && "${bin}" --headless --model mock --token-ledger \
         ${disclosure:+--tool-disclosure "${disclosure}"} \
         ${assembly:+--context-assembly "${assembly}"} \
@@ -142,6 +147,8 @@ run_scenario minimal /dev/null "ledger-bench minimal"
 run_scenario tool_heavy /dev/null --file "${here}/tool_heavy.md"
 run_scenario noisy_output /dev/null "ledger-bench noisy"
 run_scenario deferred_tool /dev/null "ledger-bench remember"
+run_scenario catalog /dev/null "ledger-bench catalog"
+run_scenario catalog_skill /dev/null "ledger-bench catalog skill"
 make_history "${out}/long_history.conversation.md" 60
 run_scenario long_history "${out}/long_history.conversation.md"
 

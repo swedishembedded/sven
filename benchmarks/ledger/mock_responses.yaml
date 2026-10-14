@@ -95,6 +95,23 @@ responses:
     pattern: "ledger-bench long history"
     reply: "Answered from the history."
 
+  # -- catalog: a project with 40 skills, 12 agents and 30 knowledge documents.
+  # catalog_skill loads the one skill its task needs.
+
+  - match_type: contains
+    pattern: "ledger-bench catalog skill"
+    tool_calls:
+      - id: tc-catalog-skill
+        tool: skill
+        args:
+          action: load
+          name: auth/review
+    after_tool_reply: "Reviewed the auth module with its skill."
+
+  - match_type: contains
+    pattern: "ledger-bench catalog"
+    reply: "pong"
+
   # -- minimal: the default request, no tool calls
 
   - match_type: contains
