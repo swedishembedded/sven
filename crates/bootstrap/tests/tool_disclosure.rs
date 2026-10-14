@@ -20,12 +20,23 @@ use sven_bootstrap::{BuiltinTools, Config, Disclosure, RuntimeBuilder};
 use sven_tool_registry::{ToolCall, ToolRegistry, DISCOVERY_TOOL};
 use sven_vocab::AgentMode;
 
+/// Points the process at one private home directory, once. Skills, personas
+/// and memory come from the home directory, and tests run in parallel: a home
+/// switched per test would let one test's registry lose a tool (the semantic
+/// memory store opens under it) while another's keeps it.
+fn isolate_home() {
+    static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let home = tempfile::tempdir().expect("a home directory").keep();
+        std::env::set_var("HOME", &home);
+        std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+        home
+    });
+}
+
 /// A coding session's registry under `disclosure`.
 async fn registry(disclosure: Disclosure) -> Arc<ToolRegistry> {
-    // Skills, personas and memory come from the home directory.
-    let home = tempfile::tempdir().expect("a home directory").keep();
-    std::env::set_var("HOME", &home);
-    std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+    isolate_home();
     let mut config = Config::default();
     config.model.provider = "mock".into();
     config.model.name = "mock-model".into();
@@ -72,8 +83,20 @@ async fn the_legacy_full_listing_is_untouched_and_has_no_discovery_tool() {
 async fn the_deferred_core_is_a_fraction_of_the_full_listing() {
     let full = registry(Disclosure::Full).await;
     let deferred = registry(Disclosure::Deferred).await;
-    let full_tokens = tokens(&full.schemas_offered(&[], "agent", &[]));
-    let core_tokens = tokens(&deferred.schemas_offered(&[], "agent", &[]));
+    // Compare over the tools both registries hold: an optional tool (the
+    // semantic memory store) that registers in one session and not the other
+    // would otherwise move the ratio. The discovery tool exists only under
+    // deferred disclosure and is part of its cost.
+    let shared = |name: &str| {
+        name == DISCOVERY_TOOL || (full.get(name).is_some() && deferred.get(name).is_some())
+    };
+    let offered = |registry: &ToolRegistry| {
+        let mut schemas = registry.schemas_offered(&[], "agent", &[]);
+        schemas.retain(|s| shared(&s.name));
+        tokens(&schemas)
+    };
+    let full_tokens = offered(&full);
+    let core_tokens = offered(&deferred);
     assert!(
         core_tokens * 2 < full_tokens,
         "core {core_tokens} vs full {full_tokens} estimated tokens"
