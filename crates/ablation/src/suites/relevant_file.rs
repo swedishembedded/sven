@@ -14,6 +14,10 @@
 //! searches for the function, reads the misleading files, reads the relevant
 //! file, reads unrelated files, and is finally asked for the root cause.
 //!
+//! On even seeds the defect is inside that function; on odd seeds the function
+//! calls a helper declared below it and the defect is in the helper, which the
+//! question does not name.
+//!
 //! Measured: whether the two defect lines are still in what the model reads
 //! at the final question (critical-evidence recall), how much of what is shown
 //! of the labelled files is the relevant one (precision), and the tokens by
@@ -54,12 +58,21 @@ pub fn generate(seed: u64) -> Generated {
     let cause = format!("EVID-REL-{}", rng.hex(6));
     let effect = format!("EVID-REL-{}", rng.hex(6));
     let mut text = source_lines(&mut rng, "billing", 40);
-    text.push_str(&format!(
-        "pub fn {symbol}(entries: &[u64], window_end: u64) -> u64 {{\n\
-         \x20   let cutoff = window_end - 1; // {cause} off-by-one: the final entry is dropped\n\
-         \x20   entries.iter().filter(|e| **e < cutoff).sum() // {effect} callers see a short total\n\
-         }}\n"
-    ));
+    // On even seeds the function the task names holds the defect itself; on
+    // odd seeds it hands the work to a helper declared below it, and the
+    // defect is in the helper, which the question does not name.
+    let helper = (seed % 2 == 1).then(|| function_name(&mut rng));
+    let defect = format!(
+        "    let cutoff = window_end - 1; // {cause} off-by-one: the final entry is dropped\n\
+         \x20   entries.iter().filter(|e| **e < cutoff).sum() // {effect} callers see a short total\n"
+    );
+    let signature = "(entries: &[u64], window_end: u64) -> u64";
+    match &helper {
+        None => text.push_str(&format!("pub fn {symbol}{signature} {{\n{defect}}}\n")),
+        Some(helper) => text.push_str(&format!(
+            "pub fn {symbol}{signature} {{\n    {helper}(entries, window_end)\n}}\n\nfn {helper}{signature} {{\n{defect}}}\n"
+        )),
+    }
     files.insert(relevant.clone(), text.into_bytes());
     for (marker, source) in [(&cause, &relevant), (&effect, &relevant)] {
         task.evidence.push(Evidence {

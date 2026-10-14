@@ -14,6 +14,10 @@
 //! greps the log for every such word, reads unrelated files, and is finally
 //! asked which tests failed and why.
 //!
+//! Half of the look-alike lines carry a log level that says they are not
+//! errors and half are bare, so a form that ranks by level alone is tested
+//! against lines it cannot tell from a failure.
+//!
 //! Measured: whether every cause and effect line is still in the request at
 //! the final question (critical-evidence recall), precision against the
 //! look-alike lines, expansions of demoted context and tokens by source. The
@@ -79,17 +83,37 @@ pub fn generate(seed: u64) -> Generated {
     for _ in 0..lookalikes {
         let at = slots.pop().expect("the log is longer than its events");
         let marker = format!("DIST-{}", rng.hex(6));
-        let line = match rng.below(4) {
-            0 => format!("WARN retry succeeded after transient error on attempt 2 ({marker})"),
-            1 => format!(
-                "INFO summary: 0 failed, {} passed ({marker})",
-                rng.between(100, 900)
+        // Half of the look-alikes carry a log level that says they are not
+        // errors; the other half are bare, as the output of many test
+        // runners is, and nothing but their words tells them from a failure.
+        let (level, text) = match rng.below(4) {
+            0 => (
+                "WARN",
+                format!("retry succeeded after transient error on attempt 2 ({marker})"),
             ),
-            2 => format!(
-                "DEBUG ignoring expected failure in flaky_net_test_{} ({marker})",
-                rng.below(9)
+            1 => (
+                "INFO",
+                format!(
+                    "summary: 0 failed, {} passed ({marker})",
+                    rng.between(100, 900)
+                ),
             ),
-            _ => format!("WARN deprecated call, error code table will change ({marker})"),
+            2 => (
+                "DEBUG",
+                format!(
+                    "ignoring expected failure in flaky_net_test_{} ({marker})",
+                    rng.below(9)
+                ),
+            ),
+            _ => (
+                "WARN",
+                format!("deprecated call, error code table will change ({marker})"),
+            ),
+        };
+        let line = if rng.below(2) == 0 {
+            format!("{level} {text}")
+        } else {
+            text
         };
         events.insert(at, (line, Some((EvidenceRole::Distractor, marker))));
     }

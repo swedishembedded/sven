@@ -449,3 +449,68 @@ fn the_recovery_pattern_matches_the_reference_a_demoted_result_carries() {
         .collect();
     assert!(!found.is_empty() && found.iter().all(|f| *f == id.to_string()));
 }
+
+// ── harder fixtures ──────────────────────────────────────────────────────────
+
+#[test]
+fn noisy_output_look_alikes_are_half_leveled_and_half_bare() {
+    let (mut leveled, mut bare) = (0, 0);
+    for seed in 1..7 {
+        let g = generate(Suite::NoisyOutput, seed);
+        let log = text(&g, "ci/build.log");
+        for line in log.lines().filter(|l| l.contains("(DIST-")) {
+            if ["WARN ", "INFO ", "DEBUG "]
+                .iter()
+                .any(|p| line.starts_with(p))
+            {
+                leveled += 1;
+            } else {
+                bare += 1;
+            }
+        }
+    }
+    assert!(leveled > 20 && bare > 20, "{leveled} leveled, {bare} bare");
+}
+
+#[test]
+fn relevant_file_puts_the_defect_in_the_named_function_on_even_seeds_and_in_a_helper_on_odd_ones() {
+    let (mut inline, mut delegated) = (0, 0);
+    for seed in 1..9 {
+        let g = generate(Suite::RelevantFile, seed);
+        let symbol = g.task.segments[0].turns[0].calls[0].args["pattern"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let critical: Vec<_> = g.task.critical().collect();
+        let source = text(&g, &critical[0].source);
+        let cause = source
+            .lines()
+            .position(|l| l.contains(&critical[0].marker))
+            .unwrap();
+        let lines: Vec<&str> = source.lines().collect();
+        let declaration = lines[..=cause]
+            .iter()
+            .rev()
+            .find(|l| l.contains("fn "))
+            .unwrap();
+        assert_eq!(occurrences(&g, &critical[0].marker), 1);
+        assert_eq!(
+            declaration.contains(&format!("fn {symbol}(")),
+            seed % 2 == 0,
+            "seed {seed}"
+        );
+        if declaration.contains(&format!("fn {symbol}(")) {
+            inline += 1;
+        } else {
+            delegated += 1;
+            assert!(
+                source.contains(&format!("{symbol}(entries")),
+                "the named function is still defined"
+            );
+        }
+    }
+    assert!(
+        inline > 0 && delegated > 0,
+        "{inline} inline, {delegated} delegated"
+    );
+}
