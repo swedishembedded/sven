@@ -1,9 +1,5 @@
 # docs/05-configuration.md and docs/technical/instruction-disclosure.md:
-# compact skill, subagent and knowledge listings in the system prompt, the
-# rest through the tools that serve each catalog.
+# the skill listing in full, the subagent and knowledge listings as the
+# default index, which the file need not state.
 skills:
-  disclosure: deferred
-subagents:
-  disclosure: deferred
-knowledge:
-  disclosure: deferred
+  disclosure: full

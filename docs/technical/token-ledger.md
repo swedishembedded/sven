@@ -223,7 +223,9 @@ writes a deterministic project with 40 skills (10 packages of 3 sub-skills each)
 bytes, so figures taken at different commits compare.
 
 Estimated tokens of each system section (`system_runtime`), one request of the
-`catalog` scenario, default tool disclosure:
+`catalog` scenario, default tool disclosure and `INSTRUCTIONS=full` (the
+listings in full; the default of a program that reads the configuration file
+is the index, see below):
 
 | section | tokens |
 |---------|-------:|
@@ -241,6 +243,7 @@ instructions are not part of that cost: `AGENTS.md` is referenced by path, and
 the section is the same 36 tokens however long the file is.
 
 `make benchmark/ledger INSTRUCTIONS=deferred` measures the same project with
-the three listings reduced to an index each; the sections, the savings and what
+the three listings reduced to an index each (the default of a program that reads
+the configuration file); the sections, the savings and what
 stays in full are in
 [instruction-disclosure.md](instruction-disclosure.md#measured).

@@ -712,7 +712,7 @@ Three sections of one shape, one per listing in the system prompt.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `disclosure` | `full` | `full` lists every entry's whole metadata in the system prompt. `deferred` lists a short line per entry and leaves the details to the tool that serves the catalog. |
+| `disclosure` | `deferred` | `full` lists every entry's whole metadata in the system prompt. `deferred` lists a short line per entry and leaves the details to the tool that serves the catalog. |
 
 ```yaml
 skills:
@@ -729,8 +729,11 @@ knowledge:
 | `subagents` | a name, `(readonly)` and a summary of at most 80 characters (a count above 50) | `task` `action: "agents"` |
 | `knowledge` | a subsystem and the files it covers (a count above 50) | `search_knowledge`, `list_knowledge` |
 
-`--skill-disclosure`, `--subagent-disclosure` and `--knowledge-disclosure`
-`full|deferred` set a mode for one process and override the file. Under
+A program that reads the configuration file defers the three listings unless
+the file says otherwise; a configuration an embedding application builds in code
+(`Config::default()`) is `full`. `--skill-disclosure`, `--subagent-disclosure`
+and `--knowledge-disclosure` `full|deferred` set a mode for one process and
+override the file. Under
 `deferred` skills the model finds one the index does not make obvious with
 `skill` `search` (ranked like tool search, and re-ranked by the decision model
 under `decision.features.skill_selection`). A skill with `sven.always: true`

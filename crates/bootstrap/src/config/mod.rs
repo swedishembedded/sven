@@ -142,7 +142,8 @@ impl Config {
     /// the active model ([`Self::settle`]), and the defaults of a program
     /// that reads the file.
     ///
-    /// Such a program discloses tools on demand unless the file says
+    /// Such a program discloses tools on demand, and lists skills, subagents
+    /// and knowledge documents by a short index, unless the file says
     /// otherwise. `Config::default()` - what an embedding application builds
     /// in code - stays `full`, so the tools such an application registers are
     /// in every request as before.
@@ -150,6 +151,15 @@ impl Config {
         self.settle(document.contains("model"));
         if !document.contains_path(&["tools", "disclosure", "mode"]) {
             self.tools.disclosure.mode = sven_tool_registry::Disclosure::Deferred;
+        }
+        for (section, listing) in [
+            ("skills", &mut self.skills),
+            ("subagents", &mut self.subagents),
+            ("knowledge", &mut self.knowledge),
+        ] {
+            if !document.contains_path(&[section, "disclosure"]) {
+                listing.disclosure = sven_turn::instructions::ListingDisclosure::Deferred;
+            }
         }
     }
 
@@ -187,25 +197,27 @@ mod tests {
     }
 
     #[test]
-    fn catalogs_are_listed_in_full_unless_the_file_defers_them() {
-        use sven_turn::instructions::{InstructionDisclosure, ListingDisclosure::Deferred};
-        assert_eq!(
-            Config::default().instruction_disclosure(),
-            InstructionDisclosure::default()
-        );
-        let deferred = Config::from_document(&document(
-            "skills: {disclosure: deferred}\nknowledge: {disclosure: deferred}\n",
+    fn a_program_that_reads_the_file_defers_the_catalogs_unless_the_file_says_otherwise() {
+        use sven_turn::instructions::{InstructionDisclosure, ListingDisclosure::*};
+        let all = |mode| InstructionDisclosure {
+            skills: mode,
+            subagents: mode,
+            knowledge: mode,
+        };
+        assert_eq!(Config::default().instruction_disclosure(), all(Full));
+        let silent = Config::from_document(&document("agent: {max_tool_rounds: 7}\n"));
+        assert_eq!(silent.instruction_disclosure(), all(Deferred));
+        let mixed = Config::from_document(&document(
+            "skills: {disclosure: full}\nknowledge: {disclosure: deferred}\n",
         ));
         assert_eq!(
-            deferred.instruction_disclosure(),
+            mixed.instruction_disclosure(),
             InstructionDisclosure {
-                skills: Deferred,
+                skills: Full,
+                subagents: Deferred,
                 knowledge: Deferred,
-                ..InstructionDisclosure::default()
             }
         );
-        let silent = Config::from_document(&document("agent: {max_tool_rounds: 7}\n"));
-        assert_eq!(silent.instruction_disclosure(), InstructionDisclosure::default());
     }
 
     #[test]

@@ -78,11 +78,11 @@ section_tokens() {
 @test "21.05 --subagent-disclosure and --knowledge-disclosure shrink their own listings only" {
     bash "${FIXTURE_SCRIPT}" "${WORK}/project"
     cd "${WORK}/project"
-    run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger'
+    run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger --skill-disclosure full --subagent-disclosure full --knowledge-disclosure full'
     full_agents="$(section_tokens Subagents)"
     full_knowledge="$(section_tokens 'Knowledge Base')"
     full_skills="$(section_tokens Skills)"
-    run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger --subagent-disclosure deferred --knowledge-disclosure deferred'
+    run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger --skill-disclosure full --subagent-disclosure deferred --knowledge-disclosure deferred'
     [[ "$(section_tokens Subagents)" -lt $((full_agents / 2)) ]]
     [[ "$(section_tokens 'Knowledge Base')" -lt "${full_knowledge}" ]]
     [[ "$(section_tokens Skills)" -eq "${full_skills}" ]]

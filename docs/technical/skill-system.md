@@ -147,8 +147,12 @@ block described in [instruction-disclosure.md](instruction-disclosure.md).
 
 ## System prompt injection (`sven-turn`)
 
-At startup, `build_skills_section()` serialises the discovered skills into an
-XML block that is appended to the system prompt:
+Under `skills.disclosure: full` (the default of a configuration built in code),
+`build_skills_section()` serialises the discovered skills into an XML block that
+is appended to the system prompt. A program that reads the configuration file
+lists a one-line index instead (`build_skills_index()`), with the descriptions
+and bodies behind the `skill` tool; see
+[instruction-disclosure.md](instruction-disclosure.md). The full listing:
 
 ```xml
 ## Skills

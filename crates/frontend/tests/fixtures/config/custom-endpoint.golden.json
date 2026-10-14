@@ -49,7 +49,7 @@
       "warn_if_unavailable": true
     },
     "knowledge": {
-      "disclosure": "full"
+      "disclosure": "deferred"
     },
     "mcp_servers": {},
     "model": {
@@ -80,10 +80,10 @@
     },
     "providers": {},
     "skills": {
-      "disclosure": "full"
+      "disclosure": "deferred"
     },
     "subagents": {
-      "disclosure": "full"
+      "disclosure": "deferred"
     },
     "tools": {
       "asr": {

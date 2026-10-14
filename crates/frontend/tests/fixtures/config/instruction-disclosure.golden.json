@@ -77,7 +77,7 @@
     },
     "providers": {},
     "skills": {
-      "disclosure": "deferred"
+      "disclosure": "full"
     },
     "subagents": {
       "disclosure": "deferred"

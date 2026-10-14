@@ -114,9 +114,11 @@ disclosure mode:
 
 ## Progressive disclosure of skills
 
-`skills.disclosure` ([configuration](../05-configuration.md#skills)) or
-`--skill-disclosure` for one process (the subagent and knowledge listings have
-[their own](#subagents-and-knowledge-documents)):
+`skills.disclosure` ([configuration](../05-configuration.md#skills-subagents-and-knowledge))
+or `--skill-disclosure` for one process (the subagent and knowledge listings
+have [their own](#subagents-and-knowledge-documents)). The default is `deferred`
+for a program that reads the configuration file and does not set the mode, and
+`full` for a `Config` built in code, as for tool disclosure:
 
 | mode | the system prompt lists |
 |------|-------------------------|
@@ -162,7 +164,7 @@ result is BM25's.
 ## Subagents and knowledge documents
 
 The same switch, per listing: `subagents.disclosure` and `knowledge.disclosure`
-(`--subagent-disclosure`, `--knowledge-disclosure`), `full` by default.
+(`--subagent-disclosure`, `--knowledge-disclosure`), with the same defaults.
 
 - **Subagents.** `deferred` lists `- <name> (readonly): <summary>`, the summary
   at most 80 characters, and says to delegate with `task` and the name as
@@ -179,9 +181,29 @@ Both give a count instead of lines above 50 entries. A subagent or document
 with a conditional `sven.activation` is left out of both modes and announced
 when it applies.
 
+## The default
+
+`deferred` is the default of a program that reads the configuration file. The
+conditions for it were that the basic end-to-end suite passes with every
+invocation under it and that no required instruction is lost:
+
+- `make test/e2e/basic/instructions-deferred` ends with the same failures as
+  `make test/e2e/basic` and no others (the cases that fail do so identically in
+  both; they do not involve instructions).
+- What a required instruction rests on does not depend on the index: the project
+  instructions section, a pinned skill's full entry, the announcement of an
+  active instruction, loading a skill by its exact command and the `mode` enum of
+  the `task` tool are all independent of it, and a test pins each.
+
+What the tests cannot measure is whether a model that sees an 80-character
+summary instead of a whole description picks the right skill as reliably as one
+that sees all of it; no suite scores that yet. A project whose descriptions put
+the decisive trigger phrase late sets `skills.disclosure: full`, or writes the
+decisive words first: the index shows the first line of the description.
+
 ## Measured
 
-`make benchmark/ledger INSTRUCTIONS=deferred` on the catalog fixture (40
+`make benchmark/ledger INSTRUCTIONS=full|deferred` on the catalog fixture (40
 skills, 12 subagents, 30 knowledge documents; see the
 [token ledger](token-ledger.md#the-instruction-catalog)), estimated tokens of
 each system section of one request:
