@@ -63,6 +63,22 @@ pub struct KnowledgeInfo {
     pub path: PathBuf,
     /// Document body - everything after the closing YAML `---` fence.
     pub body: String,
+    /// When the document is listed to the model. Absent means always.
+    pub activation: Option<crate::Activation>,
+}
+
+impl KnowledgeInfo {
+    /// The document's stable identity across listings, activation sets and
+    /// snapshots: `knowledge:` followed by the file name without `.md`.
+    #[must_use]
+    pub fn id(&self) -> String {
+        let stem = self
+            .path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&self.subsystem);
+        format!("knowledge:{stem}")
+    }
 }
 
 /// Thread-safe, live-refreshable collection of discovered knowledge documents.
@@ -98,6 +114,9 @@ struct KnowledgeFrontmatter {
     files: Vec<String>,
     #[serde(default)]
     updated: Option<String>,
+    /// Sven-specific block; only `activation` is read.
+    #[serde(default)]
+    sven: Option<crate::activation::SvenInstructionBlock>,
 }
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
@@ -139,6 +158,11 @@ fn parse_knowledge_file(raw: &str, path: &Path) -> Option<KnowledgeInfo> {
         return None;
     };
 
+    if let Err(reason) = fm.sven.as_ref().map_or(Ok(()), |b| b.validate()) {
+        warn!(path = %path.display(), %reason, "invalid knowledge activation - skipping");
+        return None;
+    }
+
     if fm.subsystem.trim().is_empty() {
         warn!(path = %path.display(), "knowledge file missing `subsystem:` field - skipping");
         return None;
@@ -150,6 +174,7 @@ fn parse_knowledge_file(raw: &str, path: &Path) -> Option<KnowledgeInfo> {
         updated: fm.updated,
         path: path.to_path_buf(),
         body,
+        activation: fm.sven.and_then(|b| b.activation),
     })
 }
 
@@ -350,6 +375,24 @@ mod tests {
 
     fn write_doc(dir: &Path, name: &str, content: &str) {
         fs::write(dir.join(format!("{name}.md")), content).unwrap();
+    }
+
+    #[test]
+    fn a_document_declares_activation_and_has_a_stable_id() {
+        let raw = "---\nsubsystem: HSM Kernel\nsven:\n  activation:\n    paths: [\"crates/hsm/**\"]\n---\nBody";
+        let path = PathBuf::from("knowledge/sven-hsm.md");
+        let info = parse_knowledge_file(raw, &path).unwrap();
+        assert_eq!(info.id(), "knowledge:sven-hsm");
+        assert_eq!(
+            info.activation.unwrap().paths,
+            vec!["crates/hsm/**".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_unknown_activation_key_refuses_the_document() {
+        let raw = "---\nsubsystem: S\nsven:\n  activation:\n    pathz: [a]\n---\nBody";
+        assert!(parse_knowledge_file(raw, &PathBuf::from("s.md")).is_none());
     }
 
     #[test]

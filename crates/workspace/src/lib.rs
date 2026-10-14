@@ -9,6 +9,9 @@
 //! These are general-purpose utilities usable by any frontend (CI runner,
 //! TUI, daemon, etc.) without depending on any specific runner crate.
 
+pub mod activation;
+pub use activation::{glob_match, is_active, Activation, ActivationFacts};
+
 pub mod display;
 pub use display::{format_agents_list, format_grouped_list, format_skills_tree};
 
@@ -21,7 +24,7 @@ pub use agents::{discover_agents, AgentInfo, SharedAgents};
 pub mod skills;
 pub use skills::{
     discover_commands, discover_skills, discover_skills_anchored, load_skill_content_from_disk,
-    parse_skill_file, ParsedSkill, SharedSkills, SkillInfo, SvenSkillMeta,
+    parse_skill_file, parse_skill_frontmatter, ParsedSkill, SharedSkills, SkillInfo, SvenSkillMeta,
 };
 
 pub mod knowledge;

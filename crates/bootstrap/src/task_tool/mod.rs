@@ -937,6 +937,7 @@ mod tests {
             content: content.to_string(),
             agent_md_path: std::path::PathBuf::from(format!("agents/{name}.md")),
             knowledge: vec![],
+            activation: None,
         }
     }
 

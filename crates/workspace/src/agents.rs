@@ -89,6 +89,17 @@ pub struct AgentInfo {
     /// Shown with the agent in listings. Files are resolved from
     /// `.sven/knowledge/`.
     pub knowledge: Vec<String>,
+    /// When the subagent is listed to the model. Absent means always.
+    pub activation: Option<crate::Activation>,
+}
+
+impl AgentInfo {
+    /// The subagent's stable identity across listings, activation sets and
+    /// snapshots: `agent:` followed by its name.
+    #[must_use]
+    pub fn id(&self) -> String {
+        format!("agent:{}", self.name)
+    }
 }
 
 /// A shared, live-refreshable collection of discovered subagents.
@@ -126,6 +137,9 @@ struct AgentFrontmatter {
     /// Knowledge doc filenames this agent cross-references.
     #[serde(default)]
     knowledge: Vec<String>,
+    /// Sven-specific block; only `activation` is read.
+    #[serde(default)]
+    sven: Option<crate::activation::SvenInstructionBlock>,
 }
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
@@ -149,6 +163,10 @@ fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<Age
                 return None;
             }
         };
+        if let Err(reason) = fm.sven.as_ref().map_or(Ok(()), |b| b.validate()) {
+            warn!(path = %path.display(), %reason, "invalid agent activation - skipping");
+            return None;
+        }
         (fm, body)
     } else {
         // No frontmatter: entire file is the system prompt body.
@@ -160,6 +178,7 @@ fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<Age
                 readonly: false,
                 is_background: false,
                 knowledge: vec![],
+                sven: None,
             },
             rest.to_string(),
         )
@@ -220,6 +239,7 @@ fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<Age
         content,
         agent_md_path: path.to_path_buf(),
         knowledge: fm.knowledge,
+        activation: fm.sven.and_then(|b| b.activation),
     })
 }
 
@@ -333,6 +353,28 @@ mod tests {
         fs::create_dir_all(dir).unwrap();
         let content = format!("---\ndescription: {description}\n{extra_fm}---\n\n{body}");
         fs::write(dir.join(format!("{name}.md")), content).unwrap();
+    }
+
+    #[test]
+    fn an_agent_declares_activation_and_has_a_stable_id() {
+        let raw = "---\ndescription: d\nsven:\n  activation:\n    modes: [plan]\n---\nBody";
+        let a = parse_agent_file(raw, "verifier", std::path::Path::new("verifier.md")).unwrap();
+        assert_eq!(a.id(), "agent:verifier");
+        assert_eq!(a.activation.unwrap().modes, vec!["plan".to_string()]);
+        let plain = parse_agent_file(
+            "---\ndescription: d\n---\nB",
+            "x",
+            std::path::Path::new("x.md"),
+        );
+        assert!(plain.unwrap().activation.is_none());
+    }
+
+    #[test]
+    fn an_unknown_activation_key_refuses_the_agent() {
+        let raw = "---\ndescription: d\nsven:\n  activation:\n    pathz: [a]\n---\nBody";
+        assert!(parse_agent_file(raw, "x", std::path::Path::new("x.md")).is_none());
+        let empty = "---\ndescription: d\nsven:\n  activation: {}\n---\nBody";
+        assert!(parse_agent_file(empty, "x", std::path::Path::new("x.md")).is_none());
     }
 
     #[test]

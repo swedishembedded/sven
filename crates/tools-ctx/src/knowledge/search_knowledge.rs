@@ -246,6 +246,7 @@ mod tests {
                 subsystem.to_lowercase().replace(' ', "-")
             )),
             body: body.to_string(),
+            activation: None,
         }
     }
 

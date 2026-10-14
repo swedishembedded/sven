@@ -117,6 +117,11 @@ pub struct SvenSkillMeta {
     /// for skills that should only be invoked explicitly by the user.
     #[serde(default)]
     pub user_invocable_only: bool,
+
+    /// When the skill applies to a session. Absent means always. Unknown keys
+    /// and an empty block are rejected: the skill is not loaded.
+    #[serde(default)]
+    pub activation: Option<crate::Activation>,
 }
 
 /// A fully parsed and validated skill.
@@ -142,6 +147,21 @@ pub struct SkillInfo {
     pub content: String,
     /// Optional sven-specific metadata.
     pub sven_meta: Option<SvenSkillMeta>,
+}
+
+impl SkillInfo {
+    /// The skill's stable identity across listings, activation sets and
+    /// snapshots: `skill:` followed by its command.
+    #[must_use]
+    pub fn id(&self) -> String {
+        format!("skill:{}", self.command)
+    }
+
+    /// The skill's activation block, when it declares one.
+    #[must_use]
+    pub fn activation(&self) -> Option<&crate::Activation> {
+        self.sven_meta.as_ref().and_then(|m| m.activation.as_ref())
+    }
 }
 
 /// A shared, live-refreshable collection of discovered skills.
@@ -213,22 +233,38 @@ pub fn load_skill_content_from_disk(path: &Path) -> Option<String> {
 /// non-empty `description`.
 #[must_use]
 pub fn parse_skill_file(raw: &str) -> Option<ParsedSkill> {
+    parse_skill_frontmatter(raw).ok()
+}
+
+/// [`parse_skill_file`] with the reason a file is refused: the YAML error
+/// names the offending key, for example an unknown `activation` key.
+///
+/// # Errors
+///
+/// Returns the reason when the frontmatter is missing, malformed, lacks a
+/// non-empty `description` or carries an invalid `activation` block.
+pub fn parse_skill_frontmatter(raw: &str) -> Result<ParsedSkill, String> {
     let rest = raw.trim_start_matches('\n');
 
     // ── Frontmatter path ─────────────────────────────────────────────────────
     if let Some(after_open) = rest.strip_prefix("---") {
-        let close = after_open.find("\n---")?;
+        let close = after_open
+            .find("\n---")
+            .ok_or("the frontmatter fence is not closed")?;
         let yaml_block = &after_open[..close];
         // Body starts after "\n---" (4 bytes). Strip one leading newline if present.
         let body = after_open[close + 4..].trim_start_matches('\n').to_string();
 
-        let fm: RawFrontmatter = serde_yaml::from_str(yaml_block).ok()?;
+        let fm: RawFrontmatter = serde_yaml::from_str(yaml_block).map_err(|e| e.to_string())?;
 
         if fm.description.trim().is_empty() {
-            return None;
+            return Err("the description is empty".to_string());
+        }
+        if let Some(activation) = fm.sven.as_ref().and_then(|m| m.activation.as_ref()) {
+            activation.validate()?;
         }
 
-        return Some(ParsedSkill {
+        return Ok(ParsedSkill {
             name: fm.name.filter(|n| !n.trim().is_empty()),
             description: fm.description,
             version: fm.version,
@@ -243,7 +279,7 @@ pub fn parse_skill_file(raw: &str) -> Option<ParsedSkill> {
     // (or from the text of the first `# Heading` if no plain line comes first).
     // The entire file becomes the body.
     if rest.trim().is_empty() {
-        return None;
+        return Err("the file is empty".to_string());
     }
 
     let description = rest
@@ -263,7 +299,7 @@ pub fn parse_skill_file(raw: &str) -> Option<ParsedSkill> {
         })
         .unwrap_or_else(|| "Skill".to_string());
 
-    Some(ParsedSkill {
+    Ok(ParsedSkill {
         name: None,
         description,
         version: None,
@@ -347,10 +383,10 @@ fn try_load_skill(
         }
     };
 
-    let parsed = match parse_skill_file(&raw) {
-        Some(p) => p,
-        None => {
-            warn!(source, path = %skill_md.display(), "failed to parse SKILL.md frontmatter - skipping");
+    let parsed = match parse_skill_frontmatter(&raw) {
+        Ok(p) => p,
+        Err(reason) => {
+            warn!(source, path = %skill_md.display(), %reason, "failed to parse SKILL.md frontmatter - skipping");
             return None;
         }
     };
@@ -845,6 +881,54 @@ mod tests {
         let frontmatter =
             format!("---\ndescription: |\n  {description}\n{extra_frontmatter}---\n\n{body}");
         fs::write(skill_dir.join("SKILL.md"), frontmatter).unwrap();
+    }
+
+    // ── activation ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_skill_without_activation_has_none_and_stable_id() {
+        let tmp = TempDir::new().unwrap();
+        write_skill(tmp.path(), "sven/plan", "Plan.", "", "Body.");
+        let skills = scan_skills_dir(tmp.path(), "test");
+        let skill = skills.iter().find(|s| s.command == "sven/plan").unwrap();
+        assert!(skill.activation().is_none());
+        assert_eq!(skill.id(), "skill:sven/plan");
+    }
+
+    #[test]
+    fn a_skill_declares_activation_in_its_sven_block() {
+        let raw = "---\ndescription: x\nsven:\n  activation:\n    paths: [\"src/auth/**\"]\n    modes: [plan]\n---\nB";
+        let parsed = parse_skill_file(raw).expect("parses");
+        let a = parsed.sven_meta.unwrap().activation.unwrap();
+        assert_eq!(a.paths, vec!["src/auth/**".to_string()]);
+        assert_eq!(a.modes, vec!["plan".to_string()]);
+    }
+
+    #[test]
+    fn an_unknown_activation_key_refuses_the_skill_and_names_the_key() {
+        let raw = "---\ndescription: x\nsven:\n  activation:\n    pathz: [a]\n---\nB";
+        let err = parse_skill_frontmatter(raw).err().expect("refused");
+        assert!(err.contains("pathz"), "{err}");
+        assert!(parse_skill_file(raw).is_none());
+    }
+
+    #[test]
+    fn an_activation_without_a_condition_refuses_the_skill() {
+        let raw = "---\ndescription: x\nsven:\n  activation: {}\n---\nB";
+        assert!(parse_skill_frontmatter(raw).is_err());
+    }
+
+    #[test]
+    fn a_refused_skill_is_not_discovered() {
+        let tmp = TempDir::new().unwrap();
+        write_skill(
+            tmp.path(),
+            "bad",
+            "Bad.",
+            "sven:\n  activation:\n    pathz: [a]\n",
+            "Body.",
+        );
+        assert!(scan_skills_dir(tmp.path(), "test").is_empty());
     }
 
     // ── parse_skill_file ──────────────────────────────────────────────────────

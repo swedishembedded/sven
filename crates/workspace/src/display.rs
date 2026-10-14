@@ -222,6 +222,7 @@ mod tests {
             content: String::new(),
             agent_md_path: PathBuf::from(path),
             knowledge: vec![],
+            activation: None,
         }
     }
 
@@ -271,6 +272,7 @@ mod tests {
             user_invocable_only: false,
             requires_bins: vec![],
             requires_env: vec![],
+            activation: None,
         });
         let out = format_skills_tree(&[skill]);
         assert!(out.contains("`1.2.3`"));

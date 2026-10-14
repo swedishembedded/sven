@@ -155,6 +155,7 @@ mod tests {
                 updated: Some("2026-01-15".to_string()),
                 path: std::path::PathBuf::from(".sven/knowledge/sven-hsm.md"),
                 body: "HSM body.".to_string(),
+                activation: None,
             },
             KnowledgeInfo {
                 subsystem: "Tool System".to_string(),
@@ -162,6 +163,7 @@ mod tests {
                 updated: None,
                 path: std::path::PathBuf::from(".sven/knowledge/sven-tools.md"),
                 body: "Tools body.".to_string(),
+                activation: None,
             },
         ];
 
