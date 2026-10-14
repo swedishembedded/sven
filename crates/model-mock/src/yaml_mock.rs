@@ -194,8 +194,8 @@ impl sven_model::ModelProvider for YamlMockProvider {
         // under deferred tool disclosure: a tool whose definition is not in
         // the request is loaded through the `tools` tool before it is called.
         // With every tool offered this never applies.
-        let called = tools_called_since_last_user(&req);
-        let only_loaded_so_far = !called.is_empty() && called.iter().all(|name| *name == "tools");
+        let called = tool_call_ids_since_last_user(&req);
+        let only_loaded_so_far = !called.is_empty() && called.iter().all(|id| *id == LOAD_CALL_ID);
         let events = match rule {
             Some(r) if has_tool_results && only_loaded_so_far && !r.tool_calls.is_empty() => {
                 // The load has come back: make the scripted calls.
@@ -354,13 +354,16 @@ fn unloaded_tools(rule: &ResponseRule, req: &CompletionRequest) -> Vec<String> {
     missing
 }
 
+/// The id of the call the mock makes to load a tool.
+const LOAD_CALL_ID: &str = "mock-load";
+
 /// A single call that loads `names` through the discovery tool.
 fn load_call_events(names: &[String]) -> Vec<anyhow::Result<ResponseEvent>> {
     let args = serde_json::json!({"action": "load", "names": names});
     vec![
         Ok(ResponseEvent::ToolCall {
             index: 0,
-            id: "mock-load".to_string(),
+            id: LOAD_CALL_ID.to_string(),
             name: "tools".to_string(),
             arguments: args.to_string(),
         }),
@@ -368,14 +371,18 @@ fn load_call_events(names: &[String]) -> Vec<anyhow::Result<ResponseEvent>> {
     ]
 }
 
-/// The names of the tools called after the last user message.
-fn tools_called_since_last_user(req: &CompletionRequest) -> Vec<&str> {
+/// The ids of the tool calls made after the last user message. A load the
+/// mock made itself is told apart from a scripted call to the same tool by
+/// its id.
+fn tool_call_ids_since_last_user(req: &CompletionRequest) -> Vec<&str> {
     req.messages
         .iter()
         .rev()
         .take_while(|m| m.role != Role::User)
         .filter_map(|m| match &m.content {
-            sven_model::MessageContent::ToolCall { function, .. } => Some(function.name.as_str()),
+            sven_model::MessageContent::ToolCall { tool_call_id, .. } => {
+                Some(tool_call_id.as_str())
+            }
             _ => None,
         })
         .collect()
@@ -490,6 +497,56 @@ responses:
         assert_eq!(lines[1]["request"], 2);
         assert_eq!(lines[1]["messages"][1]["kind"], "tool_result");
         assert_eq!(lines[1]["messages"][1]["text"], "ok");
+    }
+
+    #[tokio::test]
+    async fn a_scripted_call_to_the_discovery_tool_is_not_mistaken_for_a_load() {
+        use sven_model::{FunctionCall, MessageContent, ToolSchema};
+        let yaml = "responses:\n  - match_type: contains\n    pattern: find\n    tool_calls:\n      - id: s-1\n        tool: tools\n        args: {action: search, query: x}\n    after_tool_reply: searched\n";
+        let p = YamlMockProvider::load(yaml).unwrap();
+        let tools = vec![ToolSchema {
+            name: "tools".into(),
+            description: String::new(),
+            parameters: serde_json::json!({}),
+            ..Default::default()
+        }];
+        let first = CompletionRequest {
+            messages: vec![Message::user("find it")],
+            tools: tools.clone(),
+            stream: true,
+            ..Default::default()
+        };
+        assert!(collect(&p, first)
+            .await
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::ToolCall { id, .. } if id == "s-1")));
+        let call = Message {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: "s-1".into(),
+                function: FunctionCall {
+                    name: "tools".into(),
+                    arguments: "{}".into(),
+                },
+            },
+        };
+        let again = CompletionRequest {
+            messages: vec![
+                Message::user("find it"),
+                call,
+                Message::tool_result("s-1", "found"),
+            ],
+            tools,
+            stream: true,
+            ..Default::default()
+        };
+        let events = collect(&p, again).await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "searched")),
+            "{events:?}"
+        );
     }
 
     #[tokio::test]
