@@ -210,3 +210,33 @@ async fn the_expansion_tool_is_the_context_tool_with_only_the_expand_action() {
         .await;
     assert!(other.is_error && other.content.contains("expand"));
 }
+
+#[test]
+fn an_id_the_session_lacks_is_read_from_the_snapshot_it_was_given() {
+    let mut f = fixture();
+    let snapshot_dir = tempfile::tempdir().unwrap();
+    let theirs = {
+        let mut writer = ChunkStore::open(snapshot_dir.path(), StoreLimits::default()).unwrap();
+        writer
+            .put(
+                "from the parent\n",
+                draft(ChunkKind::CommandOutput, None, None),
+            )
+            .unwrap()
+            .chunk
+            .id
+            .to_string()
+    };
+    let snapshot = ChunkStore::open_read_only(snapshot_dir.path(), StoreLimits::default()).unwrap();
+    f.expander = f.expander.with_snapshot(Arc::new(Mutex::new(snapshot)));
+    let own = record(&f, "own\n", draft(ChunkKind::CommandOutput, None, None));
+
+    let out = expand(&f, json!({"chunk": theirs}));
+    assert!(!out.is_error, "{}", out.content);
+    assert!(out.content.ends_with("\nfrom the parent\n"));
+    assert!(!expand(&f, json!({"chunk": own})).is_error);
+    assert!(
+        expand(&f, json!({"chunk": "c-0123456789abcdef"})).is_error,
+        "an id neither store holds is still refused"
+    );
+}

@@ -319,3 +319,59 @@ fn seeing_the_content_again_without_a_version_keeps_the_version_already_known() 
     let chunk = store.put("x", late).unwrap().chunk;
     assert_eq!(chunk.provenance.source_version, Some(v));
 }
+
+#[test]
+fn a_read_only_store_serves_what_was_recorded_and_records_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = {
+        let mut writer = open(dir.path(), 1 << 20);
+        writer
+            .put("evidence", draft(ChunkKind::CommandOutput))
+            .unwrap()
+            .chunk
+            .id
+    };
+    let index_before = fs::read(dir.path().join("index.jsonl")).unwrap();
+
+    let mut reader = ChunkStore::open_read_only(dir.path(), StoreLimits::default()).unwrap();
+    assert!(reader.is_read_only());
+    assert_eq!(reader.read(&id).unwrap(), "evidence");
+    assert!(reader.put("new", draft(ChunkKind::CommandOutput)).is_err());
+    assert!(reader.set_pinned(&id, true).is_err());
+    assert_eq!(reader.len(), 1);
+    assert_eq!(
+        fs::read(dir.path().join("index.jsonl")).unwrap(),
+        index_before,
+        "a read-only store never writes the index"
+    );
+}
+
+#[test]
+fn a_read_only_store_does_not_create_the_directory_it_is_pointed_at() {
+    let parent = tempfile::tempdir().unwrap();
+    let missing = parent.path().join("absent");
+    assert!(ChunkStore::open_read_only(&missing, StoreLimits::default()).is_err());
+    assert!(!missing.exists());
+}
+
+#[test]
+fn a_record_the_writer_is_still_appending_does_not_fail_a_read_only_open() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let mut writer = open(dir.path(), 1 << 20);
+        writer
+            .put("whole", draft(ChunkKind::CommandOutput))
+            .unwrap();
+    }
+    let index = dir.path().join("index.jsonl");
+    let mut torn = fs::read(&index).unwrap();
+    torn.extend_from_slice(b"{\"id\":\"c-00");
+    fs::write(&index, torn).unwrap();
+
+    let reader = ChunkStore::open_read_only(dir.path(), StoreLimits::default()).unwrap();
+    assert_eq!(reader.len(), 1, "the torn tail is not a chunk");
+    assert!(
+        ChunkStore::open(dir.path(), StoreLimits::default()).is_err(),
+        "a writer still refuses a damaged index"
+    );
+}

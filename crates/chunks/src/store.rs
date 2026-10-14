@@ -90,6 +90,7 @@ pub struct ChunkStore {
     resident: HashMap<ChunkId, Resident>,
     resident_bytes: usize,
     clock: u64,
+    read_only: bool,
 }
 
 impl ChunkStore {
@@ -102,28 +103,54 @@ impl ChunkStore {
     pub fn open(dir: &Path, limits: StoreLimits) -> Result<Self> {
         fs::create_dir_all(dir.join(PAYLOAD_DIR))
             .with_context(|| format!("create chunk store {}", dir.display()))?;
-        let mut chunks = BTreeMap::new();
-        let index = dir.join(INDEX_FILE);
-        if index.exists() {
-            let file = File::open(&index).context("open chunk index")?;
-            for (n, line) in BufReader::new(file).lines().enumerate() {
-                let line = line.context("read chunk index")?;
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let chunk: ContextChunk = serde_json::from_str(&line)
-                    .with_context(|| format!("chunk index line {}", n + 1))?;
-                chunks.insert(chunk.id.clone(), chunk);
-            }
+        let chunks = load_index(&dir.join(INDEX_FILE), false)?;
+        Ok(Self::with_chunks(dir, limits, chunks, false))
+    }
+
+    /// Open the existing store in `dir` for reading only: nothing is created,
+    /// [`put`](Self::put) and [`set_pinned`](Self::set_pinned) fail, and the
+    /// index is never written. The store is the snapshot of what was recorded
+    /// when it was opened. A record that the writer was still appending (an
+    /// unterminated last line) is not part of the snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `dir` is not a chunk store or its index is unreadable.
+    pub fn open_read_only(dir: &Path, limits: StoreLimits) -> Result<Self> {
+        if !dir.join(PAYLOAD_DIR).is_dir() {
+            bail!("{} is not a chunk store", dir.display());
         }
-        Ok(Self {
+        let chunks = load_index(&dir.join(INDEX_FILE), true)?;
+        Ok(Self::with_chunks(dir, limits, chunks, true))
+    }
+
+    fn with_chunks(
+        dir: &Path,
+        limits: StoreLimits,
+        chunks: BTreeMap<ChunkId, ContextChunk>,
+        read_only: bool,
+    ) -> Self {
+        Self {
             dir: dir.to_path_buf(),
             limits,
             chunks,
             resident: HashMap::new(),
             resident_bytes: 0,
             clock: 0,
-        })
+            read_only,
+        }
+    }
+
+    /// The directory the store lives in.
+    #[must_use]
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Whether the store refuses to record anything.
+    #[must_use]
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Record `content`. Identical content is stored once: the existing record
@@ -134,6 +161,7 @@ impl ChunkStore {
     /// Fails when `content` exceeds [`StoreLimits::max_chunk_bytes`] or the
     /// payload or index cannot be written.
     pub fn put(&mut self, content: &str, draft: ChunkDraft) -> Result<PutOutcome> {
+        self.ensure_writable()?;
         if content.len() > self.limits.max_chunk_bytes {
             bail!(
                 "content of {} bytes exceeds the chunk limit of {} bytes",
@@ -240,6 +268,7 @@ impl ChunkStore {
     ///
     /// Fails when `id` is unknown or the index cannot be written.
     pub fn set_pinned(&mut self, id: &ChunkId, pinned: bool) -> Result<()> {
+        self.ensure_writable()?;
         let chunk = self
             .chunks
             .get_mut(id)
@@ -271,6 +300,13 @@ impl ChunkStore {
         } else {
             Freshness::Stale { recorded, current }
         })
+    }
+
+    fn ensure_writable(&self) -> Result<()> {
+        if self.read_only {
+            bail!("the chunk store {} is read-only", self.dir.display());
+        }
+        Ok(())
     }
 
     fn payload_path(&self, digest: &str) -> PathBuf {
@@ -335,4 +371,37 @@ impl ChunkStore {
             }
         }
     }
+}
+
+/// The chunks recorded in the index at `path`, a later line replacing an
+/// earlier one. A missing index is an empty store. With `tolerate_open_tail`
+/// an unterminated last line that does not parse is skipped: it is a record
+/// whose writer has not finished.
+fn load_index(path: &Path, tolerate_open_tail: bool) -> Result<BTreeMap<ChunkId, ContextChunk>> {
+    let mut chunks = BTreeMap::new();
+    if !path.exists() {
+        return Ok(chunks);
+    }
+    let file = File::open(path).context("open chunk index")?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut number = 0;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).context("read chunk index")? == 0 {
+            break;
+        }
+        number += 1;
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<ContextChunk>(&line) {
+            Ok(chunk) => {
+                chunks.insert(chunk.id.clone(), chunk);
+            }
+            Err(_) if tolerate_open_tail && !line.ends_with('\n') => break,
+            Err(e) => return Err(e).with_context(|| format!("chunk index line {number}")),
+        }
+    }
+    Ok(chunks)
 }

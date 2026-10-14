@@ -31,6 +31,9 @@ use sven_vocab::AgentMode;
 pub struct ChunkExpander {
     store: SharedChunkStore,
     probe: Arc<dyn SourceProbe + Send + Sync>,
+    /// Evidence another session recorded, read only: consulted for an id the
+    /// session's own store does not hold.
+    snapshot: Option<SharedChunkStore>,
 }
 
 impl ChunkExpander {
@@ -38,7 +41,22 @@ impl ChunkExpander {
     /// chunk is checked for staleness, never a way to read a file.
     #[must_use]
     pub fn new(store: SharedChunkStore, probe: Arc<dyn SourceProbe + Send + Sync>) -> Self {
-        Self { store, probe }
+        Self {
+            store,
+            probe,
+            snapshot: None,
+        }
+    }
+
+    /// Also expands the chunks of `snapshot`, a store opened read-only (see
+    /// [`ChunkStore::open_read_only`](sven_chunks::ChunkStore::open_read_only)),
+    /// for ids the session's own store lacks. Staleness is judged by the same
+    /// probe, so a snapshot chunk of a file that has since changed is
+    /// reported stale, never as current.
+    #[must_use]
+    pub fn with_snapshot(mut self, snapshot: SharedChunkStore) -> Self {
+        self.snapshot = Some(snapshot);
+        self
     }
 
     /// The parameters of `action=expand`, for a tool definition that offers it.
@@ -84,10 +102,19 @@ impl ChunkExpander {
         let first = line_argument(args, "first_line")?;
         let last = line_argument(args, "last_line")?;
 
-        let mut store = self
+        let own = self
             .store
             .lock()
             .map_err(|_| "the chunk store is unavailable".to_string())?;
+        let mut store = match (&self.snapshot, own.get(&id).is_some()) {
+            (Some(snapshot), false) => {
+                drop(own);
+                snapshot
+                    .lock()
+                    .map_err(|_| "the chunk store is unavailable".to_string())?
+            }
+            _ => own,
+        };
         let chunk = store
             .get(&id)
             .cloned()
