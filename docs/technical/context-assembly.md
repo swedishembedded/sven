@@ -279,13 +279,38 @@ records 0 expansions.
   it is reconstructed, with the constraint, the recorded fact, the open todo
   item and the error line all present, and the task completes.
 
+### Recall against saving (ablation, scripted model)
+
+`make benchmark/ablation` replays six task families with a scripted model
+([ablation-benchmarks.md](ablation-benchmarks.md#demotion-and-recall-what-was-measured)).
+With the defaults the final request keeps 100% of the critical evidence of
+`relevant_file` and `noisy_output` with a model that never asks, and the tokens
+over the whole task fall by 1.42x and 1.19x. Before the forms kept what the
+conversation points at, the same fixtures kept 0% and 92%. Lowering the budget
+saves more (up to 1.96x and 1.54x with `budget_tokens` 1,500 and
+`keep_recent_rounds` 0) but `noisy_output` then keeps 69% unless the model
+expands, and an expansion costs a further request that replays the history.
+Still failing:
+
+- no setting reaches the 2x token gate on every targeted suite, with or without
+  recovery;
+- a log with many bare look-alike lines overflows the 30 error-like lines of the
+  `short` form;
+- a defect that is not in a definition the conversation names, nor in a function
+  it calls in the same file, is lost from `short` and `long` forms until the
+  model expands;
+- the superseded and duplicate rules are tested but save nothing on the
+  fixtures, which never re-read a file.
+
 ### Default
 
-`context.assembly.mode` stays `off`. The savings are measured only against a
-scripted model that never needs an old result back; what a demotion costs in
-real sessions is the expansions it causes, and that is not measured yet. The
-mechanism is complete and `make test/e2e/basic/demote` passes the basic
-suite (362 cases, four of which need the checkout's git work tree and fail the
-same way with assembly off when the suite runs from a copy), but flipping the default is a decision for after
-`context_recovery` has been read on real sessions: a rate of expansions of
-recently demoted chunks says the budget or the representation is wrong.
+`context.assembly.mode` stays `off`. The recall gate holds at the default
+budget and keep (`budget_tokens` 12,000, `keep_recent_rounds` 1 or 2) without
+relying on the model asking, but the token gate fails under every setting tried,
+and nothing here measures task success: a scripted model neither needs an old
+result back nor reasons from a shortened one. A real-model evaluation (the
+`--model` slot of the ablation benchmark) would have to show, on the same tasks
+and with the recovery-aware report: task success not below the baseline,
+expansions of recently demoted chunks rare, and total tokens including the
+fetches at least 2x lower. Until then the mechanism is complete and measured,
+and opt-in.
