@@ -222,6 +222,10 @@ pub struct RunRecord {
     /// `fallback` for a run whose decision provider was unreachable on
     /// purpose.
     pub probe: Option<String>,
+    /// How many times the run was started; a process that hangs is started
+    /// once more.
+    #[serde(default = "one_attempt")]
+    pub attempts: u32,
     pub status: RunStatus,
     pub provenance: Provenance,
     pub realization: Option<RealizationRecord>,
@@ -229,6 +233,10 @@ pub struct RunRecord {
     pub tokens: Option<TokenRecord>,
     pub decisions: DecisionRecord,
     pub score: Option<Score>,
+}
+
+fn one_attempt() -> u32 {
+    1
 }
 
 impl RunRecord {
@@ -251,6 +259,7 @@ impl RunRecord {
             seed,
             variant: variant.into(),
             probe: None,
+            attempts: 1,
             status,
             provenance,
             realization: None,

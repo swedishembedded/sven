@@ -40,6 +40,9 @@ use crate::trajectory::decision_record;
 /// of a run, not a failure of it.
 const EXIT_TOOL_ERRORS: i32 = 3;
 
+/// How a failure caused by a process that did not finish begins.
+const TIMED_OUT: &str = "sven did not finish within";
+
 /// How a run differs from an ordinary one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Probe {
@@ -177,12 +180,30 @@ impl Runner {
 
     /// Runs `generated` under `variant` and writes the record next to the
     /// run's files. Never panics and never skips: an unavailable variant and
-    /// a failed run are records too.
+    /// a failed run are records too. A process that hangs is tried once more:
+    /// a run starts from a clean directory and has no effect outside it, so a
+    /// second attempt is safe, and the record says it took two.
     pub async fn run(
         &self,
         generated: &Generated,
         variant: &Variant,
         probe: Option<Probe>,
+    ) -> RunRecord {
+        let first = self.attempt(generated, variant, probe, 1).await;
+        let hung =
+            matches!(&first.status, RunStatus::Failed { error } if error.starts_with(TIMED_OUT));
+        if hung {
+            return self.attempt(generated, variant, probe, 2).await;
+        }
+        first
+    }
+
+    async fn attempt(
+        &self,
+        generated: &Generated,
+        variant: &Variant,
+        probe: Option<Probe>,
+        attempt: u32,
     ) -> RunRecord {
         let task = &generated.task;
         let mut record = RunRecord::new(
@@ -193,6 +214,7 @@ impl Runner {
             self.provenance(),
             RunStatus::Completed,
         );
+        record.attempts = attempt;
         record.probe = probe.map(|p| p.name().to_string());
         record.scripted = self.options.model == ModelChoice::Scripted;
         let label = match probe {
@@ -437,7 +459,7 @@ impl Runner {
             Ok(Ok(output)) => Ok(output.status.code().unwrap_or(-1)),
             Ok(Err(e)) => Err(failed("waiting for sven", e)),
             Err(_) => Err(Stop::Failed(format!(
-                "sven did not finish within {} s",
+                "{TIMED_OUT} {} s",
                 self.options.timeout.as_secs()
             ))),
         }
