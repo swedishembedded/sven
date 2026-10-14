@@ -175,6 +175,48 @@ ties (see [decisions](decisions.md#tool-search-re-ranking)), and in every other
 case the result is BM25's, exactly. The nearest-name suggestion for a
 misspelled `load` is always BM25.
 
+### Search quality
+
+Search is the safety property of deferral: a tool the model cannot find is a
+failed task. `crates/tool-registry/tests/search_quality.rs` measures it on
+generated catalogs, with three query kinds: **exact** (the words of the tool's
+name), **paraphrased** (synonyms of them) and **indirect** (the tool's domain
+described without being named). The metrics are shortlist recall (the tool is
+within the first 8 results, what `search` shows), top-1 and mean reciprocal
+rank.
+
+The corpus is seeded and deterministic: catalogs of 40 to 288 overlapping tools
+(a tool is a domain, an object and a verb), shuffled, named in four styles, and
+queries from six template families per kind. It is split in two so that tuning
+never sees what is reported:
+
+- the **tuning** split is the only data a ranking parameter or a text
+  normalisation may be fitted on;
+- the **validation** split shares no catalog seed, no domain, object or verb,
+  and no query template family with it, so its numbers say how search does on
+  tools and phrasings it was not shaped by.
+
+`cargo test -p sven-tool-registry --test search_quality` runs 6 catalogs and 180
+queries per split in about a second and pins the held-out recall;
+`-- --ignored` runs 24 catalogs and 1,440 queries per split.
+
+What the generator assumes is stated in `tests/quality/corpus.rs`: a tool's
+name, summary and parameters use the plain words, while its longer description
+mentions a synonym of the object, of the verb and a gloss of the domain only
+some of the time (a probability drawn per catalog, 0.4 to 0.8). A query none of
+whose words occurs in the catalog's text cannot be answered by any lexical
+ranker, so the numbers below are a function of that assumption and are
+comparable between rankers, not predictions for a given catalog.
+
+| ranker | split | kind | recall@8 | top-1 | MRR |
+|---|---|---|---:|---:|---:|
+| BM25 over name, summary, category (baseline) | tuning (sweep) | exact | 99.4% | 84.8% | 0.900 |
+| | | paraphrased | 56.9% | 8.3% | 0.243 |
+| | | indirect | 14.4% | 3.8% | 0.078 |
+| | validation (sweep) | exact | 100.0% | 100.0% | 1.000 |
+| | | paraphrased | 60.0% | 8.8% | 0.255 |
+| | | indirect | 14.0% | 2.9% | 0.067 |
+
 ## The model router
 
 The router described in the [roadmap](../../.agents/roadmap/model-router.md)
