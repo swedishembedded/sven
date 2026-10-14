@@ -16,11 +16,12 @@
 //! stand in for it, or re-order its shortlist, without the discovery tool
 //! changing, which is why [`ToolRanker::rank`] is async.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use async_trait::async_trait;
 
+use crate::analysis::{named_spans, terms};
 use crate::descriptor::ToolDescriptor;
+use crate::expansion::{align_ending, widen, Expansion};
+use crate::index::{FieldWeights, Index};
 
 /// A candidate with the score a ranker gave it.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,106 +41,39 @@ pub trait ToolRanker: Send + Sync {
     async fn rank(&self, query: &str, candidates: &[ToolDescriptor]) -> Vec<RankedTool>;
 }
 
-/// Okapi BM25 over the tokens of each tool's name, summary and category.
+/// Okapi BM25 over the weighted terms of each tool's name, summary, category,
+/// description and parameters.
 ///
-/// A name token counts three times: the name is the most deliberate word
-/// anybody chose for the tool. Tokens are lowercased runs of letters and
-/// digits (so `read_file`, `read-file` and `readFile` all give `read` and
-/// `file`) with plural and verb endings removed, and common words dropped.
+/// A name term counts three times a summary term: the name is the most
+/// deliberate word anybody chose for the tool. See [`RankingParams`] for the
+/// rest.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Bm25Ranker;
 
-/// BM25 term-frequency saturation.
-const K1: f64 = 1.2;
-/// BM25 length normalisation.
-const B: f64 = 0.75;
-/// How much more a token of the tool's name weighs than one of its summary.
-const NAME_WEIGHT: f64 = 3.0;
+/// Everything that shapes a ranking. The defaults are what search uses;
+/// the fields are public so that a measurement can vary one at a time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RankingParams {
+    /// BM25 term-frequency saturation.
+    pub k1: f64,
+    /// BM25 length normalisation.
+    pub b: f64,
+    pub weights: FieldWeights,
+    /// A query term the tools never use is replaced by the same word with an
+    /// `e` added or removed, if the tools use that.
+    pub align_endings: bool,
+    pub expansion: Expansion,
+}
 
-/// Words that say nothing about which tool is wanted.
-const STOP_WORDS: &[&str] = &[
-    "a", "an", "and", "any", "are", "as", "at", "be", "by", "can", "do", "for", "from", "how", "i",
-    "in", "into", "is", "it", "its", "me", "my", "need", "of", "on", "or", "should", "that", "the",
-    "then", "this", "to", "tool", "use", "want", "when", "which", "with", "you", "your",
-];
-
-/// The tokens of `text`, in order of appearance, stems only.
-fn tokens(text: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut word = String::new();
-    let mut previous_lower = false;
-    for c in text.chars() {
-        if !c.is_alphanumeric() {
-            flush(&mut word, &mut words);
-            previous_lower = false;
-            continue;
+impl Default for RankingParams {
+    fn default() -> Self {
+        Self {
+            k1: 5.0,
+            b: 0.9,
+            weights: FieldWeights::default(),
+            align_endings: true,
+            expansion: Expansion::default(),
         }
-        // `readFile` is two words.
-        if c.is_uppercase() && previous_lower {
-            flush(&mut word, &mut words);
-        }
-        previous_lower = c.is_lowercase() || c.is_ascii_digit();
-        word.extend(c.to_lowercase());
-    }
-    flush(&mut word, &mut words);
-    words
-}
-
-fn flush(word: &mut String, words: &mut Vec<String>) {
-    if word.is_empty() {
-        return;
-    }
-    let token = std::mem::take(word);
-    if !STOP_WORDS.contains(&token.as_str()) {
-        words.push(stem(token));
-    }
-}
-
-/// Removes a plural or verb ending: enough to make `searches`, `searching`
-/// and `search` one term, and no more.
-fn stem(token: String) -> String {
-    // `min_stem` keeps short words whole: `string` is not `str` + `ing`.
-    let strip = |suffix: &str, replacement: &str, min_stem: usize| -> Option<String> {
-        token
-            .strip_suffix(suffix)
-            .filter(|rest| rest.chars().count() >= min_stem)
-            .map(|rest| format!("{rest}{replacement}"))
-    };
-    strip("ies", "y", 3)
-        .or_else(|| strip("sses", "ss", 2))
-        .or_else(|| strip("ing", "", 4))
-        .or_else(|| strip("ed", "", 3))
-        .or_else(|| strip("es", "", 3).filter(|s| s.ends_with(['s', 'x', 'z', 'h'])))
-        .or_else(|| {
-            let keeps_s = token.ends_with("ss") || token.ends_with("us");
-            (!keeps_s).then(|| strip("s", "", 3)).flatten()
-        })
-        .unwrap_or(token)
-}
-
-/// A candidate reduced to weighted term counts.
-struct Document<'a> {
-    name: &'a str,
-    terms: BTreeMap<String, f64>,
-    length: f64,
-}
-
-fn document(tool: &ToolDescriptor) -> Document<'_> {
-    let mut terms = BTreeMap::new();
-    let mut length = 0.0;
-    let mut add = |text: &str, weight: f64| {
-        for token in tokens(text) {
-            *terms.entry(token).or_insert(0.0) += weight;
-            length += weight;
-        }
-    };
-    add(&tool.name, NAME_WEIGHT);
-    add(&tool.summary, 1.0);
-    add(tool.category(), 1.0);
-    Document {
-        name: &tool.name,
-        terms,
-        length,
     }
 }
 
@@ -155,40 +89,94 @@ impl Bm25Ranker {
     /// for a model: the nearest name to a misspelling is always BM25.
     #[must_use]
     pub fn rank_now(&self, query: &str, candidates: &[ToolDescriptor]) -> Vec<RankedTool> {
-        let wanted: BTreeSet<String> = tokens(query).into_iter().collect();
-        if wanted.is_empty() || candidates.is_empty() {
+        self.rank_with(&RankingParams::default(), query, candidates)
+    }
+
+    /// Ranks with `params` instead of the defaults.
+    #[must_use]
+    pub fn rank_with(
+        &self,
+        params: &RankingParams,
+        query: &str,
+        candidates: &[ToolDescriptor],
+    ) -> Vec<RankedTool> {
+        self.prepare(params, candidates).rank(query)
+    }
+
+    /// Indexes `candidates` once, for many queries over the same tools.
+    #[must_use]
+    pub fn prepare<'a>(
+        &self,
+        params: &RankingParams,
+        candidates: &'a [ToolDescriptor],
+    ) -> PreparedRanking<'a> {
+        PreparedRanking {
+            index: Index::build(candidates, &params.weights),
+            params: *params,
+        }
+    }
+}
+
+/// A candidate set indexed for ranking: [`Bm25Ranker::prepare`].
+pub struct PreparedRanking<'a> {
+    index: Index<'a>,
+    params: RankingParams,
+}
+
+impl PreparedRanking<'_> {
+    /// The candidates that match `query`, best first.
+    #[must_use]
+    pub fn rank(&self, query: &str) -> Vec<RankedTool> {
+        let (index, params) = (&self.index, &self.params);
+        let mut wanted = terms(query);
+        if params.align_endings {
+            for term in &mut wanted {
+                align_ending(index, term);
+            }
+        }
+        wanted.sort();
+        wanted.dedup();
+        if wanted.is_empty() || index.documents.is_empty() {
             return Vec::new();
         }
-        let documents: Vec<Document<'_>> = candidates.iter().map(document).collect();
-        let count = documents.len() as f64;
-        let average_length = (documents.iter().map(|d| d.length).sum::<f64>() / count).max(1.0);
+        let count = index.documents.len() as f64;
+        let query_terms = widen(index, &wanted, &params.expansion);
 
-        // The query terms are visited in sorted order and each document's
-        // score is a sum over them, so the floating-point result is the same
-        // whatever order the candidates came in.
-        let mut ranked: Vec<RankedTool> = documents
+        // The query terms are visited in sorted order and the documents in
+        // name order, so every floating-point sum is the same whatever order
+        // the candidates came in.
+        let mut scores = vec![0.0f64; index.documents.len()];
+        for (term, weight) in &query_terms {
+            let Some(holding) = index.postings.get(term) else {
+                continue;
+            };
+            let holders = holding.len() as f64;
+            let idf = (1.0 + (count - holders + 0.5) / (holders + 0.5)).ln();
+            for &at in holding {
+                let doc = &index.documents[at];
+                let frequency = doc.terms[term];
+                let norm =
+                    params.k1 * (1.0 - params.b + params.b * doc.length / index.average_length);
+                scores[at] += weight * idf * frequency * (params.k1 + 1.0) / (frequency + norm);
+            }
+        }
+        // A tool asked for by its own name, written out whole, is what was
+        // meant whatever else its text says: it goes above every other match.
+        let spans = named_spans(query);
+        let ceiling = scores.iter().copied().fold(0.0, f64::max) + 1.0;
+        for (score, doc) in scores.iter_mut().zip(&index.documents) {
+            if spans.contains(&doc.name_terms) {
+                *score += ceiling;
+            }
+        }
+        let mut ranked: Vec<RankedTool> = index
+            .documents
             .iter()
-            .filter_map(|doc| {
-                let score: f64 = wanted
-                    .iter()
-                    .map(|term| {
-                        let frequency = doc.terms.get(term).copied().unwrap_or(0.0);
-                        if frequency == 0.0 {
-                            return 0.0;
-                        }
-                        let holding = documents
-                            .iter()
-                            .filter(|d| d.terms.contains_key(term))
-                            .count() as f64;
-                        let idf = (1.0 + (count - holding + 0.5) / (holding + 0.5)).ln();
-                        let norm = K1 * (1.0 - B + B * doc.length / average_length);
-                        idf * frequency * (K1 + 1.0) / (frequency + norm)
-                    })
-                    .sum();
-                (score > 0.0).then(|| RankedTool {
-                    name: doc.name.to_string(),
-                    score,
-                })
+            .zip(scores)
+            .filter(|(_, score)| *score > 0.0)
+            .map(|(doc, score)| RankedTool {
+                name: doc.name.to_string(),
+                score,
             })
             .collect();
         ranked.sort_by(|a, b| {
@@ -197,25 +185,5 @@ impl Bm25Ranker {
                 .then_with(|| a.name.cmp(&b.name))
         });
         ranked
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn name_styles_and_endings_give_the_same_terms() {
-        assert_eq!(tokens("read_file"), ["read", "file"]);
-        assert_eq!(tokens("read-file"), ["read", "file"]);
-        assert_eq!(tokens("readFile"), ["read", "file"]);
-        assert_eq!(tokens("Searches files"), tokens("search file"));
-        assert_eq!(tokens("searching"), tokens("search"));
-    }
-
-    #[test]
-    fn short_words_and_double_s_are_not_mangled() {
-        assert_eq!(tokens("class bus"), ["class", "bus"]);
-        assert_eq!(tokens("is"), Vec::<String>::new());
     }
 }

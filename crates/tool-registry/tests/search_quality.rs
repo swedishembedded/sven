@@ -19,15 +19,25 @@ mod quality;
 
 use quality::corpus::{catalogs, Plan, QueryKind, Split};
 use quality::metrics::{evaluate, Scores};
-use sven_tool_registry::{Bm25Ranker, ToolDescriptor};
+use sven_tool_registry::{Bm25Ranker, RankingParams, ToolDescriptor};
 
 const SHORTLIST: usize = 8;
 
-fn current_ranker(query: &str, tools: &[ToolDescriptor]) -> Vec<String> {
-    Bm25Ranker
-        .rank_now(query, tools)
-        .into_iter()
-        .map(|r| r.name)
+/// The held-out recall@8 on the standard plan, floored under what was
+/// measured so the pin catches regressions, not noise.
+const RECALL_FLOOR: [(QueryKind, f64); 3] = [
+    (QueryKind::Exact, 0.98),
+    (QueryKind::Paraphrase, 0.93),
+    (QueryKind::Indirect, 0.90),
+];
+
+/// Ranks each of `queries` over `tools` with the ranker search uses, indexing
+/// the tools once.
+fn current_ranker(tools: &[ToolDescriptor], queries: &[&str]) -> Vec<Vec<String>> {
+    let prepared = Bm25Ranker.prepare(&RankingParams::default(), tools);
+    queries
+        .iter()
+        .map(|q| prepared.rank(q).into_iter().map(|r| r.name).collect())
         .collect()
 }
 
@@ -116,9 +126,15 @@ fn the_metrics_score_a_perfect_ranker_and_a_blind_one() {
                 .map(|q| (q.text.as_str(), q.target.as_str()))
         })
         .collect();
-    let oracle = |q: &str, _: &[ToolDescriptor]| vec![truth[q].to_string()];
+    let oracle = |_: &[ToolDescriptor], queries: &[&str]| -> Vec<Vec<String>> {
+        queries.iter().map(|q| vec![truth[q].to_string()]).collect()
+    };
     let perfect = evaluate(&oracle, &all, SHORTLIST);
-    let blind = evaluate(&|_: &str, _: &[ToolDescriptor]| Vec::new(), &all, SHORTLIST);
+    let blind = evaluate(
+        &|_: &[ToolDescriptor], queries: &[&str]| vec![Vec::new(); queries.len()],
+        &all,
+        SHORTLIST,
+    );
     for kind in [QueryKind::Exact, QueryKind::Paraphrase, QueryKind::Indirect] {
         let (p, b) = (perfect.of(kind), blind.of(kind));
         assert!(p.queries >= 30);
@@ -127,18 +143,32 @@ fn the_metrics_score_a_perfect_ranker_and_a_blind_one() {
     }
 }
 
-/// The baseline of the ranker as it stands, pinned as floors so that a change
-/// which lowers a held-out number fails here. Raise the floors with the ranker.
+/// The recall of the ranker as it stands on the held-out split, pinned as
+/// floors so that a change which lowers it fails here.
 #[test]
-fn held_out_search_quality_does_not_fall_below_the_recorded_baseline() {
+fn held_out_recall_does_not_fall_below_the_recorded_floor() {
     let held_out = measure(Split::Validation, &Plan::standard());
     eprintln!("held-out\n{held_out}");
-    for (kind, floor) in quality::BASELINE_RECALL_FLOOR {
+    for (kind, floor) in RECALL_FLOOR {
         let got = held_out.of(kind).recall;
         assert!(
             got >= floor,
             "{kind:?} recall@{SHORTLIST} {got:.3} < {floor}"
         );
+    }
+}
+
+/// A model that knows a tool's exact name must not be second-guessed by
+/// similar tools, whatever the style the name is written in.
+#[test]
+fn a_tool_asked_for_by_its_exact_name_is_first() {
+    for catalog in catalogs(Split::Validation, &Plan::standard()) {
+        let tools = catalog.descriptors();
+        let asked: Vec<String> = tools.iter().map(|t| format!("\"{}\"", t.name)).collect();
+        let asked: Vec<&str> = asked.iter().map(String::as_str).collect();
+        for (tool, ranked) in tools.iter().zip(current_ranker(&tools, &asked)) {
+            assert_eq!(ranked.first(), Some(&tool.name), "{}", tool.name);
+        }
     }
 }
 
@@ -148,5 +178,13 @@ fn larger_sweep_over_many_catalogs() {
     let plan = Plan::sweep();
     for split in [Split::Tuning, Split::Validation] {
         eprintln!("{split:?}\n{}", measure(split, &plan));
+        let rich: Vec<_> = catalogs(split, &plan)
+            .into_iter()
+            .filter(|c| c.evidence >= 0.4)
+            .collect();
+        eprintln!(
+            "{split:?}, catalogs whose text holds evidence for paraphrases\n{}",
+            evaluate(&current_ranker, &rich, SHORTLIST)
+        );
     }
 }

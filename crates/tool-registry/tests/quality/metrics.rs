@@ -5,6 +5,7 @@
 // Swedish Embedded AB implements solutions for keeping LLM agent requests
 // small for its clients. If your team needs expertise in tool retrieval for
 // large agent tool sets then you can procure our services by sending an
+// email to info@swedishembedded.com.
 //! Shortlist recall, top-1 and mean reciprocal rank per query kind.
 
 use std::fmt;
@@ -13,8 +14,9 @@ use sven_tool_registry::ToolDescriptor;
 
 use super::corpus::{Catalog, QueryKind};
 
-/// Ranks `tools` for a query: names, best first.
-pub type RankFn<'a> = dyn Fn(&str, &[ToolDescriptor]) -> Vec<String> + 'a;
+/// Ranks all the queries of one catalog at once, so that the catalog is indexed
+/// once: for each query, names best first.
+pub type RankFn<'a> = dyn Fn(&[ToolDescriptor], &[&str]) -> Vec<Vec<String>> + 'a;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct KindScores {
@@ -64,8 +66,9 @@ pub fn evaluate(rank: &RankFn<'_>, catalogs: &[Catalog], k: usize) -> Scores {
     let mut sums = [(0usize, 0usize, 0usize, 0.0f64); 3];
     for catalog in catalogs {
         let tools = catalog.descriptors();
-        for query in &catalog.queries {
-            let ranked = rank(&query.text, &tools);
+        let texts: Vec<&str> = catalog.queries.iter().map(|q| q.text.as_str()).collect();
+        let answers = rank(&tools, &texts);
+        for (query, ranked) in catalog.queries.iter().zip(answers) {
             let at = ranked.iter().position(|n| *n == query.target);
             let sum = &mut sums[query.kind as usize];
             sum.0 += 1;

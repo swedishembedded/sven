@@ -15,11 +15,17 @@
 //! under), and the category is that bucket's label. There is no taxonomy of
 //! tools apart from the capabilities.
 
+use serde_json::Value;
 use sven_tool_api::{one_line_summary, Tool, ToolCapability, SUMMARY_MAX_CHARS};
 
 /// The category of every tool that comes from an MCP server, whatever
 /// capability it is gated under.
 pub const MCP_CATEGORY: &str = "mcp";
+
+/// The most parameters of one tool that are indexed for search.
+const MAX_INDEXED_PARAMETERS: usize = 64;
+/// The most characters of a description, or of a parameter's, that are indexed.
+const MAX_INDEXED_CHARS: usize = 2_000;
 
 /// A tool in one line: enough to decide whether to load it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +39,12 @@ pub struct ToolDescriptor {
     pub capability: ToolCapability,
     /// Whether the tool comes from an MCP server.
     pub mcp: bool,
+    /// The whole description. Only search reads it: a word the summary leaves
+    /// out is often in the sentences after it.
+    pub description: String,
+    /// What the tool's schema says each top-level parameter is for, in
+    /// parameter-name order. Only search reads it.
+    pub parameter_descriptions: Vec<String>,
 }
 
 impl ToolDescriptor {
@@ -51,6 +63,8 @@ impl ToolDescriptor {
             summary,
             capability: tool.kernel_capability(),
             mcp: tool.is_mcp(),
+            description: truncated(tool.description()),
+            parameter_descriptions: parameter_descriptions(&tool.parameters_schema()),
         }
     }
 
@@ -78,6 +92,28 @@ impl ToolDescriptor {
     }
 }
 
+fn truncated(text: &str) -> String {
+    text.chars().take(MAX_INDEXED_CHARS).collect()
+}
+
+/// The descriptions of the top-level properties of a JSON Schema object, in
+/// property-name order.
+fn parameter_descriptions(schema: &Value) -> Vec<String> {
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut named: Vec<(&String, String)> = properties
+        .iter()
+        .take(MAX_INDEXED_PARAMETERS)
+        .filter_map(|(name, property)| {
+            let text = property.get("description")?.as_str()?;
+            Some((name, truncated(text)))
+        })
+        .collect();
+    named.sort();
+    named.into_iter().map(|(_, text)| text).collect()
+}
+
 /// A short lowercase label for a capability, the vocabulary a model filters
 /// tools by.
 #[must_use]
@@ -98,6 +134,20 @@ pub fn capability_label(capability: ToolCapability) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parameter_descriptions_come_from_the_schema_in_name_order() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "zone": {"type": "string", "description": "Where."},
+                "format": {"type": "string", "enum": ["csv"], "description": "File format."},
+                "plain": {"type": "integer"}
+            }
+        });
+        assert_eq!(parameter_descriptions(&schema), ["File format.", "Where."]);
+        assert!(parameter_descriptions(&serde_json::json!({"type": "object"})).is_empty());
+    }
 
     #[test]
     fn every_capability_has_a_distinct_label() {

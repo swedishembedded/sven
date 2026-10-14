@@ -158,22 +158,52 @@ before summaries existed falls back to the first sentence of its description,
 and an MCP tool is summarised from its server's description the same way.
 
 `ToolDescriptor` is what the index and `search` work with: name, summary, the
-tool's `ToolCapability` and whether it is an MCP tool. Nothing is declared
-beside the tool, so it cannot drift: the risk class is the capability the
-kernel gates the tool under, and the category is that capability's label.
+tool's `ToolCapability`, whether it is an MCP tool and, for search only, the
+whole description and the descriptions of the schema's top-level parameters.
+Nothing is declared beside the tool, so it cannot drift: the risk class is the
+capability the kernel gates the tool under, and the category is that
+capability's label.
 
 ## Search
 
-`ToolRanker` ranks descriptors against a query; `Bm25Ranker` is the default:
-Okapi BM25 over the stemmed tokens of the name (counted three times), the
-summary and the category, with common words dropped. It is a pure function:
-the same query over the same tools answers identically in every run, whatever
-order the tools were registered in (ties are ordered by name). It calls no
-model. `rank` is async so that a ranker backed by a model fits behind the same
-trait: with `decision.features.tool_routing` a decision model breaks BM25's
+`ToolRanker` ranks descriptors against a query; `Bm25Ranker` is the default.
+It is a pure function: the same query over the same tools answers identically
+in every run, whatever order the tools were registered in (ties are ordered by
+name). It calls no model and never loads or runs a tool; it only orders
+descriptors. `rank` is async so that a ranker backed by a model fits behind the
+same trait: with `decision.features.tool_routing` a decision model breaks BM25's
 ties (see [decisions](decisions.md#tool-search-re-ranking)), and in every other
 case the result is BM25's, exactly. The nearest-name suggestion for a
 misspelled `load` is always BM25.
+
+What is indexed, per tool, with the weight of a term found there:
+
+| field | weight | comes from |
+|---|---:|---|
+| name | 2.0 | `readFile`, `read_file` and `read-file` all give `read`, `file` |
+| summary | 1.0 | the line the index shows |
+| category | 1.0 | the capability label, or `mcp` |
+| description | 0.4 | the whole description, not only its first sentence |
+| parameter descriptions | 0.2 | the `description` of each top-level property of the tool's schema |
+
+Terms are lowercased, split at word boundaries, stripped of plural and verb
+endings (`searches`, `searching`), a doubled final consonant is reduced
+(`cancelling` meets `cancel`) and common words are dropped. Scores are BM25 with
+`k1` 5.0 and `b` 0.9 over the weighted term counts. Two further steps use the
+catalog being searched, not a list of words:
+
+- **Ending alignment.** A query term no tool uses is replaced by the same word
+  with an `e` added or removed if the tools use that: `deleting` finds `delete`
+  without merging two unrelated words that differ by an `e`.
+- **Widening.** A query term that at least two tools hold is added to with the
+  terms held by at least 90% of those tools (at most eight, each counting up to
+  as much as a query term, in proportion to that share). A tool described as
+  "also known as a package" beside `parcel` makes `package` mean `parcel` in
+  that catalog and no other.
+
+A tool asked for by its own name, whole or in quotes, goes above every other
+match. The ranker builds its index from the candidates each time it is asked;
+`Bm25Ranker::prepare` indexes once for many queries.
 
 ### Search quality
 
@@ -186,36 +216,84 @@ within the first 8 results, what `search` shows), top-1 and mean reciprocal
 rank.
 
 The corpus is seeded and deterministic: catalogs of 40 to 288 overlapping tools
-(a tool is a domain, an object and a verb), shuffled, named in four styles, and
-queries from six template families per kind. It is split in two so that tuning
-never sees what is reported:
+(a tool is a domain, an object and a verb; ten verbs, twelve domains of four
+objects per split), shuffled, named in four styles, and queries from six
+template families per kind. It is split in two so that tuning never sees what is
+reported:
 
 - the **tuning** split is the only data a ranking parameter or a text
-  normalisation may be fitted on;
+  normalisation may be fitted on (`tests/search_tuning.rs`, an opt-in release
+  test: each parameter in turn takes the value of its grid that raises the
+  tuning objective, recall@8 plus half the MRR averaged over the kinds);
 - the **validation** split shares no catalog seed, no domain, object or verb,
   and no query template family with it, so its numbers say how search does on
   tools and phrasings it was not shaped by.
 
 `cargo test -p sven-tool-registry --test search_quality` runs 6 catalogs and 180
 queries per split in about a second and pins the held-out recall;
-`-- --ignored` runs 24 catalogs and 1,440 queries per split.
+`-- --ignored` runs 24 catalogs and 480 queries per kind per split. The numbers
+below are that sweep.
 
 What the generator assumes is stated in `tests/quality/corpus.rs`: a tool's
 name, summary and parameters use the plain words, while its longer description
 mentions a synonym of the object, of the verb and a gloss of the domain only
-some of the time (a probability drawn per catalog, 0.4 to 0.8). A query none of
-whose words occurs in the catalog's text cannot be answered by any lexical
-ranker, so the numbers below are a function of that assumption and are
-comparable between rankers, not predictions for a given catalog.
+some of the time (a probability drawn per catalog from 0 to 0.8). A query none
+of whose words occurs in the catalog's text cannot be answered by any lexical
+ranker, so the numbers are a function of that assumption and are comparable
+between rankers, not predictions for a given catalog. "Evidence" below is the
+subset of catalogs whose mean probability is at least 0.4.
 
 | ranker | split | kind | recall@8 | top-1 | MRR |
 |---|---|---|---:|---:|---:|
-| BM25 over name, summary, category (baseline) | tuning (sweep) | exact | 99.4% | 84.8% | 0.900 |
-| | | paraphrased | 56.9% | 8.3% | 0.243 |
-| | | indirect | 14.4% | 3.8% | 0.078 |
-| | validation (sweep) | exact | 100.0% | 100.0% | 1.000 |
-| | | paraphrased | 60.0% | 8.8% | 0.255 |
-| | | indirect | 14.0% | 2.9% | 0.067 |
+| BM25 over name, summary, category (before) | tuning | exact | 99.2% | 82.9% | 0.884 |
+| | | paraphrased | 60.4% | 8.8% | 0.255 |
+| | | indirect | 12.3% | 2.9% | 0.063 |
+| | validation | exact | 99.8% | 84.4% | 0.895 |
+| | | paraphrased | 63.5% | 7.3% | 0.239 |
+| | | indirect | 11.5% | 2.7% | 0.057 |
+| as described above | tuning | exact | 99.6% | 94.4% | 0.963 |
+| | | paraphrased | 96.0% | 63.5% | 0.767 |
+| | | indirect | 94.6% | 56.9% | 0.703 |
+| | validation | exact | 100.0% | 100.0% | 1.000 |
+| | | paraphrased | 95.2% | 62.7% | 0.750 |
+| | | indirect | 90.2% | 54.8% | 0.682 |
+| | validation, evidence | exact | 100.0% | 100.0% | 1.000 |
+| | | paraphrased | 98.6% | 72.3% | 0.816 |
+| | | indirect | 97.3% | 67.7% | 0.788 |
+
+Each addition was kept or dropped on the tuning split; the validation split
+shows whether it carried over. Validation recall@8, the fitted ranker with one
+thing taken away (exact is at 100% throughout; its top-1 is given where it
+moves):
+
+| taken away | paraphrased | indirect | other |
+|---|---:|---:|---|
+| nothing | 95.2% | 90.2% | |
+| the description beyond the summary | 75.6% | 50.8% | |
+| widening | 86.5% | 69.0% | |
+| parameter descriptions | 94.8% | 89.0% | |
+| `k1` 5.0 for 0.6 | 94.0% | 88.1% | |
+| ending alignment | 94.8% | 90.2% | exact top-1 85.4% for 100% |
+| the doubled-consonant reduction | unchanged | unchanged | exact top-1 2.7 points lower (82.3% for 85.0%, an earlier fit) |
+
+Tried and dropped, each added to the fitted ranker (validation paraphrased /
+indirect recall, against 95.2% / 90.2%): parameter names 94.6% / 91.0%
+and enumeration values 94.2% / 91.5% (no gain on either split: a parameter is
+named for the object the tool is already named for); dropping a final `e` from
+every term, which lifts the exact top-1 like the alignment but costs the tuning
+split 0.7 and 2.1 points of paraphrased and indirect recall through words it
+merges; ignoring query terms held by most tools (no change); the category
+weight (no change either way, so the existing weight of 1 stays: a query that
+names a category such as `network` should still find it). The tools' `modes`
+are not indexed: the candidates are already limited to the session's current
+mode, so every one of them carries the same modes and the field cannot tell
+them apart.
+
+The paraphrased and indirect targets of the work (99% and 95% within the first
+8) are met only where the catalog's text carries evidence for the paraphrase
+(98.6% and 97.3% on validation). Where a catalog says nothing that links a
+synonym to a tool, no ranking that reads text can find the tool, and the
+numbers above show the gap (95.2% and 90.2% over all catalogs).
 
 ## The model router
 

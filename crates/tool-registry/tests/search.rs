@@ -39,6 +39,8 @@ fn hundred_tools() -> Vec<ToolDescriptor> {
                 summary: summary.replace("{}", object),
                 capability: ToolCapability::NetworkAccess,
                 mcp: true,
+                description: String::new(),
+                parameter_descriptions: Vec::new(),
             })
         })
         .collect()
@@ -124,6 +126,67 @@ async fn equal_scores_are_ordered_by_name() {
     let mut sorted = reads.clone();
     sorted.sort();
     assert_eq!(reads, sorted);
+}
+
+fn described(name: &str, summary: &str, description: &str, parameters: &[&str]) -> ToolDescriptor {
+    ToolDescriptor {
+        name: name.into(),
+        summary: summary.into(),
+        capability: ToolCapability::NetworkAccess,
+        mcp: true,
+        description: description.into(),
+        parameter_descriptions: parameters.iter().map(|p| (*p).to_string()).collect(),
+    }
+}
+
+#[tokio::test]
+async fn words_beyond_the_summary_find_the_tool() {
+    let mut tools = hundred_tools();
+    tools.push(described(
+        "vault_open",
+        "Opens a vault.",
+        "Opens a vault. Also known as unsealing the strongbox.",
+        &["Passphrase protecting the safe."],
+    ));
+    assert_eq!(top("unseal the strongbox", &tools).await[0], "vault_open");
+    assert_eq!(
+        top("passphrase for the safe", &tools).await[0],
+        "vault_open"
+    );
+}
+
+#[tokio::test]
+async fn inflections_that_differ_by_an_e_or_a_doubled_letter_meet() {
+    let tools = vec![
+        described("share_file", "Shares a file.", "", &[]),
+        described("cancel_job", "Cancels a job.", "", &[]),
+        described("sync_job", "Synchronises a job.", "", &[]),
+    ];
+    assert_eq!(top("sharing a file", &tools).await[0], "share_file");
+    assert_eq!(top("cancelling the job", &tools).await[0], "cancel_job");
+}
+
+#[tokio::test]
+async fn a_word_the_catalog_only_uses_beside_another_leads_to_it() {
+    // Three tools say "package" next to "parcel"; the fourth says only "parcel".
+    let mut tools: Vec<ToolDescriptor> = ["a", "b", "c"]
+        .iter()
+        .map(|n| {
+            described(
+                &format!("parcel_track_{n}"),
+                "Tracks a parcel.",
+                "Tracks a parcel. Also known as following a package.",
+                &[],
+            )
+        })
+        .collect();
+    tools.push(described("parcel_weigh", "Weighs a parcel.", "", &[]));
+    tools.extend((0..20).map(|i| described(&format!("noise_{i}"), "Does other work.", "", &[])));
+    let ranked = top("package", &tools).await;
+    // The three that say it come first; the one that only shares their other
+    // word is still on the shortlist, which no tool is without the widening.
+    assert_eq!(ranked.len(), 4, "{ranked:?}");
+    assert_eq!(ranked[3], "parcel_weigh");
 }
 
 #[tokio::test]

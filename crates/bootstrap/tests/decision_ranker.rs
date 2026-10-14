@@ -28,6 +28,8 @@ fn tool(name: &str, summary: &str, capability: ToolCapability) -> ToolDescriptor
         summary: summary.into(),
         capability,
         mcp: false,
+        description: String::new(),
+        parameter_descriptions: Vec::new(),
     }
 }
 

@@ -5,6 +5,7 @@
 // Swedish Embedded AB implements solutions for keeping LLM agent requests
 // small for its clients. If your team needs expertise in tool retrieval for
 // large agent tool sets then you can procure our services by sending an
+// email to info@swedishembedded.com.
 //! Seeded catalogs of overlapping tools and the queries that mean one of them.
 //!
 //! **What the generator assumes.** A tool is a (domain, object, verb) triple.
@@ -84,6 +85,16 @@ impl ToolSpec {
             summary: self.summary.clone(),
             capability: self.capability,
             mcp: self.mcp,
+            description: self.description.clone(),
+            parameter_descriptions: {
+                let mut named: Vec<_> = self
+                    .params
+                    .iter()
+                    .map(|p| (&p.name, &p.description))
+                    .collect();
+                named.sort();
+                named.into_iter().map(|(_, text)| text.clone()).collect()
+            },
         }
     }
 }
@@ -96,9 +107,13 @@ pub struct Query {
     pub target: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Catalog {
     pub seed: u64,
+    /// The mean of the three probabilities with which the description states
+    /// a synonym of the object, a synonym of the verb and a gloss of the
+    /// domain: how much evidence the catalog's text holds for paraphrases.
+    pub evidence: f64,
     /// In the order a registry would hand them over: shuffled.
     pub tools: Vec<ToolSpec>,
     pub queries: Vec<Query>,
@@ -173,9 +188,9 @@ fn generate(split: Split, seed: u64, size: usize, per_kind: usize) -> Catalog {
         summary: (seed / 4) % 3,
         server_prefix: seed.is_multiple_of(2),
         native: seed.is_multiple_of(3),
-        object_synonym: 0.4 + 0.1 * rng.below(5) as f64,
-        verb_synonym: 0.4 + 0.1 * rng.below(5) as f64,
-        gloss: 0.4 + 0.1 * rng.below(5) as f64,
+        object_synonym: 0.2 * rng.below(5) as f64,
+        verb_synonym: 0.2 * rng.below(5) as f64,
+        gloss: 0.2 * rng.below(5) as f64,
     };
     let mut combos: Vec<Combo> = Vec::new();
     for domain in domains(split) {
@@ -202,8 +217,10 @@ fn generate(split: Split, seed: u64, size: usize, per_kind: usize) -> Catalog {
             queries.push(query(&mut words, kind, family, combos[at], &tools[at].name));
         }
     }
+    let evidence = (style.object_synonym + style.verb_synonym + style.gloss) / 3.0;
     Catalog {
         seed,
+        evidence,
         tools,
         queries,
     }
@@ -324,7 +341,7 @@ fn query(
         (QueryKind::Exact, false, 0) => format!("{} {noun} {d}", verb.word),
         (QueryKind::Exact, false, 1) => format!("{} {noun}s, {d}", verb.gerund),
         (QueryKind::Exact, false, _) => format!("{noun} {}", verb.word),
-        (QueryKind::Exact, true, 0) => format!("please {} a {noun}", verb.word),
+        (QueryKind::Exact, true, 0) => format!("tool for {} {noun} ({d})", verb.gerund),
         (QueryKind::Exact, true, 1) => format!("{d}: {noun} / {}", verb.third_person),
         (QueryKind::Exact, true, _) => format!("how do I {} {noun} for {d}?", verb.word),
         (QueryKind::Paraphrase, false, 0) => format!("I need to {synonym_verb} a {synonym} in {d}"),

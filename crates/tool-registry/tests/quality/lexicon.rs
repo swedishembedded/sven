@@ -307,7 +307,7 @@ const fn v(
     }
 }
 
-const TUNING_VERBS: [Verb; 6] = [
+const TUNING_VERBS: [Verb; 10] = [
     v(
         ("create", "creates", "creating"),
         ["make", "add", "set up"],
@@ -344,9 +344,33 @@ const TUNING_VERBS: [Verb; 6] = [
         "Updates the fields of a {}",
         (false, false),
     ),
+    v(
+        ("move", "moves", "moving"),
+        ["relocate", "transfer", "shift"],
+        "Moves a {} to a new place",
+        (false, false),
+    ),
+    v(
+        ("rename", "renames", "renaming"),
+        ["retitle", "relabel", "rebrand"],
+        "Renames an existing {}",
+        (false, false),
+    ),
+    v(
+        ("share", "shares", "sharing"),
+        ["distribute", "circulate", "pass around"],
+        "Shares a {} with other people",
+        (false, false),
+    ),
+    v(
+        ("close", "closes", "closing"),
+        ["shut", "finish", "wrap up"],
+        "Closes an open {}",
+        (false, false),
+    ),
 ];
 
-const VALIDATION_VERBS: [Verb; 6] = [
+const VALIDATION_VERBS: [Verb; 10] = [
     v(
         ("delete", "deletes", "deleting"),
         ["remove", "erase", "discard"],
@@ -381,6 +405,30 @@ const VALIDATION_VERBS: [Verb; 6] = [
         ("schedule", "schedules", "scheduling"),
         ["plan", "book", "arrange"],
         "Schedules a {} for later",
+        (false, false),
+    ),
+    v(
+        ("reopen", "reopens", "reopening"),
+        ["restart", "revive", "resume"],
+        "Reopens a closed {}",
+        (false, false),
+    ),
+    v(
+        ("assign", "assigns", "assigning"),
+        ["allocate", "delegate", "hand over"],
+        "Assigns a {} to someone",
+        (false, false),
+    ),
+    v(
+        ("validate", "validates", "validating"),
+        ["verify", "check", "confirm"],
+        "Validates the data of a {}",
+        (true, false),
+    ),
+    v(
+        ("tag", "tags", "tagging"),
+        ["label", "mark", "categorize"],
+        "Adds a tag to a {}",
         (false, false),
     ),
 ];
