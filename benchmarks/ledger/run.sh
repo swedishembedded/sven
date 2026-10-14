@@ -12,7 +12,7 @@
 # agent context budgets then you can procure our services by sending an email
 # to info@swedishembedded.com.
 #
-# Usage: benchmarks/ledger/run.sh [--out DIR] [--bin PATH] [--tool-disclosure MODE] [--context-assembly MODE]
+# Usage: benchmarks/ledger/run.sh [--out DIR] [--bin PATH] [--tool-disclosure MODE] [--context-assembly MODE] [--config FILE]
 #   --out DIR   where results go (default: $TMPDIR/sven-ledger-bench or /tmp/...)
 #   --bin PATH  the sven binary to measure (default: target/release/sven, else
 #               target/debug/sven)
@@ -22,6 +22,9 @@
 #   --context-assembly MODE
 #               off or demote, passed to every run; omitted, the binary's
 #               default applies
+#   --config FILE
+#               a configuration file passed to every run (for example to set
+#               context.assembly.budget_tokens)
 #
 # Scenarios (one trajectory, summary table and summary JSON each):
 #   minimal      a single prompt, default tool set: the fixed cost of a request
@@ -39,6 +42,7 @@ out="${TMPDIR:-/tmp}/sven-ledger-bench"
 bin=""
 disclosure=""
 assembly=""
+config_file=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -46,6 +50,7 @@ while [[ $# -gt 0 ]]; do
         --bin) bin="$2"; shift 2 ;;
         --tool-disclosure) disclosure="$2"; shift 2 ;;
         --context-assembly) assembly="$2"; shift 2 ;;
+        --config) config_file="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
         -h|--help) sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -126,6 +131,7 @@ run_scenario() {
     (cd "${work}" && "${bin}" --headless --model mock --token-ledger \
         ${disclosure:+--tool-disclosure "${disclosure}"} \
         ${assembly:+--context-assembly "${assembly}"} \
+        ${config_file:+--config "${config_file}"} \
         --output-trace "${out}/${name}.trajectory.json" "$@" \
         <"${input}" >"${out}/${name}.stdout" 2>"${out}/${name}.stderr")
     "${bin}" ledger "${out}/${name}.trajectory.json" --json >"${out}/${name}.summary.json"
