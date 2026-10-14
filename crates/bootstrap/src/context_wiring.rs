@@ -21,7 +21,7 @@ use sven_turn::assembly::ContextPolicy;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::config::AssemblyConfig;
+use crate::config::{AssemblyConfig, Config};
 
 /// The session fact that names the chunk store directory.
 pub(crate) const CONTEXT_STORE_FACT: &str = "context_store";
@@ -38,6 +38,31 @@ pub(crate) struct ContextWiring {
 }
 
 impl ContextWiring {
+    /// The wiring `config` asks for, reopening the store `snapshot` recorded.
+    /// The store's id is recorded among `facts`, so a snapshot carries it.
+    pub(crate) fn for_session(
+        config: &Config,
+        project_root: Option<&Path>,
+        snapshot: Option<&sven_hsm::Snapshot>,
+        facts: &mut serde_json::Map<String, serde_json::Value>,
+    ) -> Option<Self> {
+        let wiring = Self::open(
+            &config.context.assembly,
+            project_root,
+            resumed_store_id(snapshot).as_deref(),
+        )?;
+        facts.insert(
+            CONTEXT_STORE_FACT.into(),
+            serde_json::json!(wiring.store_id),
+        );
+        Some(wiring)
+    }
+
+    /// The chunk session the tools and executors share.
+    pub(crate) fn session(&self) -> Arc<ChunkSession> {
+        Arc::clone(&self.session)
+    }
+
     /// Open (or create) the store of the session, or `None` when assembly is
     /// off. A store that cannot be opened is logged and the session runs
     /// without assembly: an optimization never stops a session from starting.
@@ -85,7 +110,7 @@ impl ContextWiring {
 }
 
 /// The store id a snapshot recorded, if it recorded one.
-pub(crate) fn resumed_store_id(snapshot: Option<&sven_hsm::Snapshot>) -> Option<String> {
+fn resumed_store_id(snapshot: Option<&sven_hsm::Snapshot>) -> Option<String> {
     snapshot?
         .context
         .facts

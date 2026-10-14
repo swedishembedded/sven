@@ -13,6 +13,15 @@
       "system_prompt": null,
       "tool_result_token_cap": 4000
     },
+    "context": {
+      "assembly": {
+        "budget_tokens": 12000,
+        "keep_recent_rounds": 2,
+        "min_demote_tokens": 64,
+        "mode": "off",
+        "resident_bytes": 16777216
+      }
+    },
     "decision": {
       "brain": {
         "api_key": "fixture-key",

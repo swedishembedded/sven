@@ -64,6 +64,7 @@ configure:
 |---------|---------|
 | `model`, `providers` | the model drivers (`sven-model-drivers`) |
 | `agent`, `tools` (patterns, `disabled`, `timeout_secs`, `context`, `disclosure`) | the session assembly (`sven-bootstrap`) |
+| `context` | the session assembly (`sven-bootstrap`) |
 | `tools.web`, `tools.lints` | the web tools (`sven-tools-web`) |
 | `tools.memory` | the memory tool (`sven-tools-ctx`) |
 | `tools.asr` | `attach_file` (`sven-tools-fs`) |
@@ -858,6 +859,39 @@ decision:
   policy:
     minimum_model_quality: validated
 ```
+
+---
+
+### `context.assembly`
+
+How the context of a request is assembled from the conversation. With `off` the
+conversation is sent exactly as it is. With `demote`, once the conversation
+exceeds `budget_tokens`, the tool results of older rounds are sent in a smaller,
+deterministic form that names the chunk it came from; the raw text is stored
+outside the conversation and the model can ask for it with `context` and
+`action=expand`. Failures and pinned chunks are never shortened below the
+documented floors. How it works, what it saves and what it costs:
+[docs/technical/context-assembly.md](technical/context-assembly.md).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mode` | `off` | `off` or `demote`. |
+| `budget_tokens` | `12000` | Estimated tokens of conversation above which results are demoted. |
+| `keep_recent_rounds` | `2` | Rounds of tool calls, counted back from the newest, whose results are always sent in full. |
+| `min_demote_tokens` | `64` | Results smaller than this are never demoted. |
+| `resident_bytes` | `16777216` | Bytes of stored evidence held in memory; the rest is read back from disk. |
+
+```yaml
+context:
+  assembly:
+    mode: demote
+    budget_tokens: 12000
+    keep_recent_rounds: 2
+```
+
+The evidence is kept under `.sven/context/<id>/` in the project; the id is a
+session fact, so a resumed session finds what its transcript refers to.
+`--context-assembly off|demote` sets the mode for one process and overrides the file.
 
 ---
 

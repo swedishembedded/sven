@@ -41,9 +41,9 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::context::{BuiltinTools, RuntimeContext, ToolSetProfile};
+use crate::context_wiring::ContextWiring;
 use crate::registry::{build_tool_registry_with_integrations, IntegrationProviders};
 use crate::session_executor::{self, ExecutorParts, UserGates};
-use crate::task_tool::ChildApprover;
 
 /// Builds the executor installed in the composite's **tool slot** (`CallTool`),
 /// given the `TurnExecutor`'s shared conversation store and `call_id → thread`
@@ -590,29 +590,28 @@ impl RuntimeBuilder {
             sven_tools_fs::OutputBufferStore::new(),
         ));
 
-        // ── User/approval channels ────────────────────────────────────────────
-        // Created before the tools, so a `task` sub-agent's permission
-        // requests reach this session's own approval gate (or the host's
-        // requester, when it brought one).
+        // User/approval channels exist before the tools, so a `task`
+        // sub-agent's permission requests reach this session's own gate.
         let (question_tx, question_rx) = mpsc::channel::<UserQuestion>(16);
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalRequest>(16);
-        let approver = ChildApprover::for_session(
-            self.permission_requester.clone(),
-            self.approval_mode,
-            &approval_tx,
-            &self.config.tools,
+        let root = self.runtime_ctx.project_root.as_deref();
+        let context = ContextWiring::for_session(
+            &self.config,
+            root,
+            self.kernel_snapshot.as_ref(),
+            &mut self.context_facts,
         );
-        // Semantic memory is opened here, the one real assembly point every
-        // surface goes through, so it is on without any surface opting in.
-        let integration_providers = IntegrationProviders {
-            #[cfg(feature = "memory")]
-            memory_store: crate::registry::open_memory_store().await,
-            approver,
-            approval_mode: self.approval_mode,
-        };
+        let integration_providers =
+            IntegrationProviders::for_session(crate::registry::SessionIntegrations {
+                permission_requester: self.permission_requester.clone(),
+                approval_mode: self.approval_mode,
+                approval_tx: &approval_tx,
+                tools: &self.config.tools,
+                chunks: context.as_ref().map(ContextWiring::session),
+            })
+            .await;
 
         let mode = self.agent_mode.unwrap_or(AgentMode::Agent);
-        let root = self.runtime_ctx.project_root.as_deref();
         let q = self.tool_question_tx.clone();
         let tool_profile = ToolSetProfile::for_selection(
             self.builtin_tools,
@@ -788,6 +787,7 @@ impl RuntimeBuilder {
                 cancel_handle,
                 no_tools: runtime.no_tools,
                 decision_telemetry: Arc::clone(decision.telemetry()),
+                context,
                 project_root: self.runtime_ctx.project_root.clone(),
                 audit_trail: audit_trail.clone(),
                 #[cfg(feature = "memory")]

@@ -85,6 +85,25 @@ impl From<DisclosureArg> for sven_bootstrap::Disclosure {
     }
 }
 
+/// The spelling of [`sven_bootstrap::AssemblyMode`] on the command line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ContextAssemblyArg {
+    /// The conversation is sent as it is.
+    Off,
+    /// Tool results of older rounds are sent in a smaller form and can be
+    /// expanded back.
+    Demote,
+}
+
+impl From<ContextAssemblyArg> for sven_bootstrap::AssemblyMode {
+    fn from(arg: ContextAssemblyArg) -> Self {
+        match arg {
+            ContextAssemblyArg::Off => Self::Off,
+            ContextAssemblyArg::Demote => Self::Demote,
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "sven",
@@ -141,6 +160,21 @@ pub struct Cli {
         overrides_with = "tool_disclosure"
     )]
     pub tool_disclosure: Option<DisclosureArg>,
+
+    /// How the context of a request is assembled from the conversation,
+    /// overriding `context.assembly.mode` of the configuration file for this
+    /// process.
+    ///
+    /// `off` sends the conversation as it is. `demote` sends the tool results of
+    /// older rounds in a smaller form once the conversation outgrows its token
+    /// budget; the model can expand a shortened result back to its raw text.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "MODE",
+        overrides_with = "context_assembly"
+    )]
+    pub context_assembly: Option<ContextAssemblyArg>,
 
     /// Model to use, e.g. "gpt-4o" or "anthropic/claude-opus-4-5"
     #[arg(long, short = 'M', env = "SVEN_MODEL")]

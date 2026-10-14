@@ -42,6 +42,17 @@ if [[ -n "${SVEN_E2E_TOOL_DISCLOSURE:-}" ]]; then
     BIN="${_wrapper}"
 fi
 
+# SVEN_E2E_CONTEXT_ASSEMBLY=off|demote (set by `make tests/e2e/basic/demote`)
+# runs every invocation under `--context-assembly MODE`; the same kind of
+# harness switch as above.
+if [[ -n "${SVEN_E2E_CONTEXT_ASSEMBLY:-}" ]]; then
+    _wrapper="${BATS_RUN_TMPDIR:-${TMPDIR:-/tmp}}/sven-context-${SVEN_E2E_CONTEXT_ASSEMBLY}"
+    printf '#!/usr/bin/env bash\nexec "%s" --context-assembly "%s" "$@"\n' \
+        "${BIN}" "${SVEN_E2E_CONTEXT_ASSEMBLY}" >"${_wrapper}"
+    chmod +x "${_wrapper}"
+    BIN="${_wrapper}"
+fi
+
 export BIN
 
 # ── Fixture paths ─────────────────────────────────────────────────────────────

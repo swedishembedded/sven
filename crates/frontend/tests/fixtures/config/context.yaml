@@ -1,0 +1,9 @@
+# docs/05-configuration.md and docs/technical/context-assembly.md: addressable
+# context, with the tool results of older rounds demoted under a token budget.
+context:
+  assembly:
+    mode: demote
+    budget_tokens: 8000
+    keep_recent_rounds: 3
+    min_demote_tokens: 32
+    resident_bytes: 1048576

@@ -201,27 +201,7 @@ impl Tool for ContextTool {
             let properties = schema["properties"]
                 .as_object_mut()
                 .expect("properties is an object");
-            properties.insert(
-                "chunk".into(),
-                json!({
-                    "type": "string",
-                    "description": "[action=expand] Chunk id (c-...) shown in a shortened tool result"
-                }),
-            );
-            properties.insert(
-                "first_line".into(),
-                json!({
-                    "type": "integer",
-                    "description": "[action=expand] First line of the chunk to return (1-indexed, default 1)"
-                }),
-            );
-            properties.insert(
-                "last_line".into(),
-                json!({
-                    "type": "integer",
-                    "description": "[action=expand] Last line of the chunk to return (inclusive, default the end)"
-                }),
-            );
+            properties.extend(ChunkExpander::parameters());
         }
         schema
     }

@@ -12,12 +12,15 @@
 # agent context budgets then you can procure our services by sending an email
 # to info@swedishembedded.com.
 #
-# Usage: benchmarks/ledger/run.sh [--out DIR] [--bin PATH] [--tool-disclosure MODE]
+# Usage: benchmarks/ledger/run.sh [--out DIR] [--bin PATH] [--tool-disclosure MODE] [--context-assembly MODE]
 #   --out DIR   where results go (default: $TMPDIR/sven-ledger-bench or /tmp/...)
 #   --bin PATH  the sven binary to measure (default: target/release/sven, else
 #               target/debug/sven)
 #   --tool-disclosure MODE
 #               full or deferred, passed to every run; omitted, the binary's
+#               default applies
+#   --context-assembly MODE
+#               off or demote, passed to every run; omitted, the binary's
 #               default applies
 #
 # Scenarios (one trajectory, summary table and summary JSON each):
@@ -35,12 +38,14 @@ repo="$(cd "${here}/../.." && pwd)"
 out="${TMPDIR:-/tmp}/sven-ledger-bench"
 bin=""
 disclosure=""
+assembly=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --out) out="$2"; shift 2 ;;
         --bin) bin="$2"; shift 2 ;;
         --tool-disclosure) disclosure="$2"; shift 2 ;;
+        --context-assembly) assembly="$2"; shift 2 ;;
         -h|--help) sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -120,6 +125,7 @@ run_scenario() {
     make_workspace "${work}"
     (cd "${work}" && "${bin}" --headless --model mock --token-ledger \
         ${disclosure:+--tool-disclosure "${disclosure}"} \
+        ${assembly:+--context-assembly "${assembly}"} \
         --output-trace "${out}/${name}.trajectory.json" "$@" \
         <"${input}" >"${out}/${name}.stdout" 2>"${out}/${name}.stderr")
     "${bin}" ledger "${out}/${name}.trajectory.json" --json >"${out}/${name}.summary.json"
@@ -133,9 +139,9 @@ run_scenario deferred_tool /dev/null "ledger-bench remember"
 make_history "${out}/long_history.conversation.md" 60
 run_scenario long_history "${out}/long_history.conversation.md"
 
-python3 - "${out}" "${commit}" "${dirty}" "${bin}" "${disclosure:-default}" <<'PY'
+python3 - "${out}" "${commit}" "${dirty}" "${bin}" "${disclosure:-default}" "${assembly:-default}" <<'PY'
 import json, sys, pathlib
-out, commit, dirty, binary, disclosure = sys.argv[1:6]
+out, commit, dirty, binary, disclosure, assembly = sys.argv[1:7]
 out = pathlib.Path(out)
 scenarios = {}
 for path in sorted(out.glob("*.summary.json")):
@@ -146,12 +152,14 @@ report = {
     "binary": binary,
     "provider": "mock",
     "tool_disclosure": disclosure,
+    "context_assembly": assembly,
     "scenarios": scenarios,
 }
 (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
 lines = [
     f"sven commit: {commit}" + (" (working tree had uncommitted changes)" if dirty == "true" else ""),
     f"tool disclosure: {disclosure}",
+    f"context assembly: {assembly}",
     "provider: mock (its usage numbers are synthetic, so reported/residual are in the JSON but not compared here)",
     "",
     f"{'scenario':<14}{'requests':>9}{'estimated':>11}{'system':>9}{'schemas':>9}"

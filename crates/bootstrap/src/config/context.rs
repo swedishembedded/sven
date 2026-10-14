@@ -19,11 +19,11 @@ use sven_turn::assembly::{
 /// `context`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ContextConfig {
+pub struct ContextSettings {
     pub assembly: AssemblyConfig,
 }
 
-impl ContextConfig {
+impl ContextSettings {
     /// The keys of the `context` section.
     #[must_use]
     pub fn schema() -> Schema {
@@ -128,7 +128,7 @@ mod tests {
         let config = Config::from_document(&document("agent: {max_tool_rounds: 7}\n"));
         assert_eq!(config.context.assembly.mode, AssemblyMode::Off);
         assert!(!config.context.assembly.enabled());
-        assert_eq!(Config::default().context, ContextConfig::default());
+        assert_eq!(Config::default().context, ContextSettings::default());
     }
 
     #[test]
@@ -159,9 +159,8 @@ mod tests {
         let known = document("context: {assembly: {mode: demote, budget_tokens: 1}}\n");
         assert!(known.unknown_keys(&Config::schema()).is_empty());
         let typo = document("context: {assembly: {mod: demote}}\n");
-        assert_eq!(
-            typo.unknown_keys(&Config::schema()),
-            vec!["context.assembly.mod".to_string()]
-        );
+        let unknown = typo.unknown_keys(&Config::schema());
+        assert_eq!(unknown.len(), 1);
+        assert!(unknown[0].contains("context.assembly.mod"), "{unknown:?}");
     }
 }

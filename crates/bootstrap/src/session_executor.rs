@@ -93,6 +93,8 @@ pub(crate) struct ExecutorParts {
     pub no_tools: bool,
     /// Where the turn executor accounts for the session's decision calls.
     pub decision_telemetry: Arc<sven_decision::telemetry::DecisionTelemetry>,
+    /// The session's addressable context, when it is on.
+    pub context: Option<crate::context_wiring::ContextWiring>,
     /// Root of the filesystem every effect shares; also where verification
     /// runs.
     pub project_root: Option<PathBuf>,
@@ -128,6 +130,10 @@ pub(crate) fn compose(
     // `Effect::Verify` (see its `permission_policy`), so wiring it here
     // unconditionally is harmless for every other mode.
     let verify_root = verify_root(parts.project_root.as_deref());
+    let (chunk_session, assembler) = match parts.context {
+        Some(c) => (Some(c.session), Some(c.assembler)),
+        None => (None, None),
+    };
     let turn_executor = TurnExecutor::new(
         Arc::clone(&parts.model),
         None,
@@ -139,7 +145,8 @@ pub(crate) fn compose(
     .with_no_tools(parts.no_tools)
     .with_compaction_config(parts.config.agent.compaction())
     .with_turn_limits(parts.config.agent.turn_limits())
-    .with_decision_telemetry(parts.decision_telemetry);
+    .with_decision_telemetry(parts.decision_telemetry)
+    .with_context_assembler(assembler);
     let user_executor = UserExecutor::new(parts.gates.questions, parts.gates.approvals)
         .with_approval_mode(parts.gates.approval_mode)
         .with_preapproval(crate::mode_policy::preapproval(&parts.config.tools));
@@ -161,7 +168,8 @@ pub(crate) fn compose(
                 parts.conv_store,
             )
             .with_no_tools(parts.no_tools)
-            .with_tool_result_token_cap(parts.config.agent.tool_result_token_cap);
+            .with_tool_result_token_cap(parts.config.agent.tool_result_token_cap)
+            .with_chunk_session(chunk_session);
             base.with_tool_executor(if parts.reconcile_capabilities {
                 tools.with_capability_reconciliation()
             } else {

@@ -25,6 +25,7 @@ pub mod config;
 pub mod context;
 pub mod context_query;
 pub mod context_tool;
+mod context_wiring;
 pub mod decision_ranker;
 pub mod kernel_bridge;
 mod mode_policy;
@@ -39,7 +40,10 @@ pub mod tool_discovery;
 #[cfg(feature = "android")]
 pub mod ui_test_dispatch;
 
-pub use config::{AgentConfig, Config, DisclosureConfig, ToolsConfig};
+pub use config::{
+    AgentConfig, AssemblyConfig, AssemblyMode, Config, ContextSettings, DisclosureConfig,
+    ToolsConfig,
+};
 pub use context::{BuiltinTools, Questions, RuntimeContext, ToolSetProfile};
 pub use context_query::{
     build_context_query_tools, ContextConfig, ContextQueryTool, ContextReduceTool,

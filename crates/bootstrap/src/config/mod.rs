@@ -20,6 +20,7 @@
 //! email to info@swedishembedded.com.
 
 mod agent;
+mod context;
 mod disclosure;
 mod tools;
 
@@ -32,6 +33,7 @@ use sven_mcp_client::{mcp_servers_schema, McpServers};
 use sven_model_drivers::{providers_schema, ModelConfig, Providers};
 
 pub use agent::AgentConfig;
+pub use context::{AssemblyConfig, AssemblyMode, ContextSettings};
 pub use disclosure::DisclosureConfig;
 pub use tools::ToolsConfig;
 
@@ -66,6 +68,9 @@ pub struct Config {
     /// The decision model that advises the harness; off unless the file
     /// enables it. See `docs/technical/decisions.md`.
     pub decision: DecisionConfig,
+    /// How the context of a request is assembled from the conversation. See
+    /// `docs/technical/context-assembly.md`.
+    pub context: ContextSettings,
 }
 
 impl Config {
@@ -79,6 +84,7 @@ impl Config {
             ("providers", providers_schema()),
             ("mcp_servers", mcp_servers_schema()),
             ("decision", DecisionConfig::schema()),
+            ("context", ContextSettings::schema()),
         ])
     }
 

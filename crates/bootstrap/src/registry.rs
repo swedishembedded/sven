@@ -23,11 +23,12 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 use crate::Config;
+use sven_chunks::EXPAND_TOOL_NAME;
 use sven_model::ModelProvider;
 use sven_tool_api::events::{TodoItem, ToolEvent};
 use sven_tool_registry::ToolRegistry;
 use sven_tools_agent::{AskQuestionTool, ModelCatalogEntry, SkillTool, SystemTool, TodoTool};
-use sven_tools_ctx::ContextStore;
+use sven_tools_ctx::{ChunkExpandTool, ChunkExpander, ContextStore};
 use sven_tools_exec::ShellTool;
 #[cfg(feature = "media")]
 use sven_tools_fs::AttachFileTool;
@@ -63,6 +64,47 @@ pub struct IntegrationProviders {
     pub approver: Option<ChildApprover>,
     /// The session's approval mode, which its `task` sub-agents are held to.
     pub approval_mode: sven_vocab::ApprovalMode,
+    /// The session's chunk store, when addressable context is on: the
+    /// `context` tool then expands the references a shortened result carries.
+    pub chunks: Option<Arc<sven_executors::ChunkSession>>,
+}
+
+/// What a session's integrations are opened from.
+pub(crate) struct SessionIntegrations<'a> {
+    pub permission_requester: Option<Arc<dyn sven_tool_api::PermissionRequester>>,
+    pub approval_mode: sven_vocab::ApprovalMode,
+    /// The session's own approval gate, which `task` sub-agents reach when no
+    /// requester was brought.
+    pub approval_tx: &'a mpsc::Sender<sven_executors::user::ApprovalRequest>,
+    pub tools: &'a crate::config::ToolsConfig,
+    pub chunks: Option<Arc<sven_executors::ChunkSession>>,
+}
+
+impl IntegrationProviders {
+    /// The integrations of a session. Semantic memory is opened here, the one
+    /// real assembly point every surface goes through, so it is on without
+    /// any surface opting in.
+    pub(crate) async fn for_session(session: SessionIntegrations<'_>) -> Self {
+        Self {
+            #[cfg(feature = "memory")]
+            memory_store: open_memory_store().await,
+            approver: ChildApprover::for_session(
+                session.permission_requester,
+                session.approval_mode,
+                session.approval_tx,
+                session.tools,
+            ),
+            approval_mode: session.approval_mode,
+            chunks: session.chunks,
+        }
+    }
+
+    /// The expansion the session's tools offer, if addressable context is on.
+    fn expander(&self) -> Option<ChunkExpander> {
+        self.chunks
+            .as_ref()
+            .map(|c| ChunkExpander::new(c.store().clone(), c.probe()))
+    }
 }
 
 /// The semantic memory store (SQLite + FTS5) for the `semantic_memory` tool.
@@ -164,6 +206,7 @@ pub fn build_tool_registry_with_integrations(
             include_gdb_context: true,
             approver: integrations.approver.clone(),
             approval_mode: integrations.approval_mode,
+            expansion: integrations.expander(),
         }),
         ToolSetProfile::Coding {
             questions,
@@ -181,6 +224,7 @@ pub fn build_tool_registry_with_integrations(
             include_gdb_context: false,
             approver: integrations.approver.clone(),
             approval_mode: integrations.approval_mode,
+            expansion: integrations.expander(),
         }),
         ToolSetProfile::Research { questions, todos } => build_profile_research(
             cfg,
@@ -204,6 +248,14 @@ pub fn build_tool_registry_with_integrations(
             buffer_store,
         ),
     };
+
+    // A profile without the full `context` tool still has to answer the
+    // references a shortened result carries.
+    if let Some(expander) = integrations.expander() {
+        if reg.get(EXPAND_TOOL_NAME).is_none() {
+            reg.register(ChunkExpandTool::new(expander));
+        }
+    }
 
     // Register integration tools if providers are available.
     register_integration_tools(&mut reg, integrations);
@@ -272,6 +324,7 @@ struct FullProfileParams<'a> {
     include_gdb_context: bool,
     approver: Option<ChildApprover>,
     approval_mode: sven_vocab::ApprovalMode,
+    expansion: Option<ChunkExpander>,
 }
 
 /// Full and Coding profiles share the same builder; `include_gdb_context`
@@ -291,12 +344,15 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
 
     register_base_tools(
         &mut reg,
-        p.cfg,
-        p.model,
-        p.tool_event_tx.clone(),
-        p.runtime,
-        Arc::clone(&p.buffer_store),
-        p.include_gdb_context,
+        BaseTools {
+            cfg: p.cfg,
+            model: p.model,
+            tool_event_tx: p.tool_event_tx.clone(),
+            runtime: p.runtime,
+            buffer_store: Arc::clone(&p.buffer_store),
+            include_full: p.include_gdb_context,
+            expansion: p.expansion,
+        },
     );
 
     register_ask_question(&mut reg, p.questions);
@@ -396,12 +452,15 @@ fn build_profile_subagent(
 
     register_base_tools(
         &mut reg,
-        cfg,
-        model,
-        tool_event_tx.clone(),
-        runtime,
-        buffer_store,
-        false, // No GDB/context in sub-agents
+        BaseTools {
+            cfg,
+            model,
+            tool_event_tx: tool_event_tx.clone(),
+            runtime,
+            buffer_store,
+            include_full: false, // No GDB/context in sub-agents
+            expansion: None,
+        },
     );
 
     // ask_question omitted: sub-agents run headless.
@@ -411,21 +470,34 @@ fn build_profile_subagent(
     reg
 }
 
+/// What [`register_base_tools`] registers the shared tool set from.
+struct BaseTools<'a> {
+    cfg: &'a Config,
+    model: Arc<dyn ModelProvider>,
+    tool_event_tx: mpsc::Sender<ToolEvent>,
+    runtime: &'a AgentRuntimeContext,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
+    include_full: bool,
+    /// Lets the `context` tool expand shortened results; only the Full
+    /// profile has that tool.
+    expansion: Option<ChunkExpander>,
+}
+
 /// Register the lean consolidated tool set shared by agent profiles.
 ///
 /// `include_full` controls whether the GDB and context tools are included.
 /// SubAgent uses the slimmer set (no GDB, no context) since sub-agents
 /// typically perform focused coding/research tasks.
-#[allow(clippy::too_many_arguments)]
-fn register_base_tools(
-    reg: &mut ToolRegistry,
-    cfg: &Config,
-    model: Arc<dyn ModelProvider>,
-    tool_event_tx: mpsc::Sender<ToolEvent>,
-    runtime: &AgentRuntimeContext,
-    buffer_store: Arc<Mutex<OutputBufferStore>>,
-    include_full: bool,
-) {
+fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
+    let BaseTools {
+        cfg,
+        model,
+        tool_event_tx,
+        runtime,
+        buffer_store,
+        include_full,
+        expansion,
+    } = params;
     // ── File I/O ─────────────────────────────────────────────────────────────
     // read_file already handles images (auto-detected by extension). Every
     // path-taking tool resolves through the session's scope.
@@ -473,16 +545,18 @@ fn register_base_tools(
     if include_full {
         // Compound context tool: open|read|grep|query|reduce
         let context_store = Arc::new(Mutex::new(ContextStore::new()));
-        reg.register(
-            ContextTool::new(
-                context_store,
-                model,
-                &cfg.tools.context,
-                cfg.agent.turn_limits(),
-                Some(tool_event_tx),
-            )
-            .with_scope(paths.clone()),
-        );
+        let context = ContextTool::new(
+            context_store,
+            model,
+            &cfg.tools.context,
+            cfg.agent.turn_limits(),
+            Some(tool_event_tx),
+        )
+        .with_scope(paths.clone());
+        reg.register(match expansion {
+            Some(expander) => context.with_expansion(expander),
+            None => context,
+        });
 
         // Compound GDB tool: start_server|connect|command|interrupt|wait_stopped|status|stop
         // GDB tools use Unix signal APIs and are only available on Unix platforms.
