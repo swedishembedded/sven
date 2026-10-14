@@ -15,6 +15,7 @@
 
 pub mod assembly;
 mod assembly_focus;
+mod assembly_supersede;
 mod compact;
 pub mod instructions;
 pub mod ledger;

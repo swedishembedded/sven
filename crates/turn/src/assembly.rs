@@ -41,9 +41,10 @@ use sven_chunks::{
     allowed_visibilities, content_digest, indicates_failure, render, tokens_of, ChunkDraft,
     ChunkId, ChunkKind, Focus, Lifetime, Provenance, RenderRequest, Sensitivity, Visibility,
 };
-use sven_model::{Message, MessageContent, ToolResultContent};
+use sven_model::{Message, MessageContent, Role, ToolResultContent};
 
 use crate::assembly_focus::window_focuses;
+use crate::assembly_supersede::replaced_results;
 use crate::ledger::canonical_json;
 
 /// Tokens of conversation a request may carry before results are demoted.
@@ -110,6 +111,48 @@ impl VisibilityAdvisor for DeterministicAdvisor {
     }
 }
 
+/// Why a result was chosen to be shown smaller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DemotionReason {
+    /// Nothing else about it: it is among the oldest results.
+    Age,
+    /// A later read of the same file, or an edit of it, replaced it.
+    Superseded,
+    /// An identical result appears again later.
+    Duplicate,
+    /// A test run that passed: its evidence is the pass.
+    PassingTest,
+}
+
+impl DemotionReason {
+    /// The name used in records and reports.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Age => "age",
+            Self::Superseded => "superseded",
+            Self::Duplicate => "duplicate",
+            Self::PassingTest => "passing_test",
+        }
+    }
+
+    /// Whether a later message holds what this result held.
+    fn replaced(self) -> bool {
+        matches!(self, Self::Superseded | Self::Duplicate)
+    }
+
+    /// What every shortened form of the result says about why.
+    fn note(self) -> Option<&'static str> {
+        match self {
+            Self::Superseded => {
+                Some("superseded: the file was read again or changed after this was read")
+            }
+            Self::Duplicate => Some("duplicate: an identical result appears later"),
+            Self::Age | Self::PassingTest => None,
+        }
+    }
+}
+
 /// A result that was shown smaller than it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Demotion {
@@ -120,6 +163,7 @@ pub struct Demotion {
     pub from: Visibility,
     pub to: Visibility,
     pub tokens_saved: u32,
+    pub reason: DemotionReason,
 }
 
 /// The raw text behind a demotion, for the caller to store.
@@ -171,12 +215,24 @@ impl ContextPolicy {
         }
         let mut results = self.collect(&messages, pinned);
         let mut remaining = total;
-        for pass in [Visibility::Long, Visibility::Short] {
-            for r in &mut results {
+        // Cheapest losses first: what a later message replaced, then test
+        // runs that passed, then everything else oldest first, a step at a
+        // time.
+        let phases: [Phase; 4] = [
+            (|e| e.reason.replaced(), Visibility::Hidden),
+            (
+                |e| e.reason == DemotionReason::PassingTest,
+                Visibility::Short,
+            ),
+            (|_| true, Visibility::Long),
+            (|_| true, Visibility::Short),
+        ];
+        for (applies, to) in phases {
+            for r in results.iter_mut().filter(|r| applies(r)) {
                 if remaining <= budget {
                     break;
                 }
-                remaining = remaining.saturating_sub(r.demote(pass, advisor));
+                remaining = remaining.saturating_sub(r.demote(to, advisor));
             }
         }
         apply(messages, results)
@@ -186,6 +242,10 @@ impl ContextPolicy {
     fn collect(&self, messages: &[Message], pinned: &HashSet<ChunkId>) -> Vec<Entry> {
         let calls = index_calls(messages);
         let newest = calls.values().map(|c| c.round).max().unwrap_or(0);
+        let replaced = replaced_results(messages);
+        // A result the model has not yet answered with a message of its own
+        // is one it has had no chance to act on.
+        let last_assistant = messages.iter().rposition(|m| m.role == Role::Assistant);
         let mut out: Vec<Entry> = Vec::new();
         for (index, message) in messages.iter().enumerate() {
             let MessageContent::ToolResult {
@@ -207,9 +267,20 @@ impl ContextPolicy {
             if age < self.config.keep_recent_rounds
                 || full_tokens < self.config.min_demote_tokens
                 || pinned.contains(&chunk_id)
+                || last_assistant.is_none_or(|a| index > a)
             {
                 continue;
             }
+            let failure = indicates_failure(raw);
+            let reason = if replaced.superseded.contains(tool_call_id) {
+                DemotionReason::Superseded
+            } else if replaced.duplicate.contains(tool_call_id) {
+                DemotionReason::Duplicate
+            } else if kind == ChunkKind::TestResult && !failure {
+                DemotionReason::PassingTest
+            } else {
+                DemotionReason::Age
+            };
             out.push(Entry {
                 index,
                 tool_call_id: tool_call_id.clone(),
@@ -219,7 +290,8 @@ impl ContextPolicy {
                 arguments: call.arguments.clone(),
                 round: call.round,
                 age,
-                failure: indicates_failure(raw),
+                failure,
+                reason,
                 raw: raw.clone(),
                 full_tokens,
                 level: Visibility::Full,
@@ -281,6 +353,9 @@ fn index_calls(messages: &[Message]) -> HashMap<&str, CallInfo> {
     calls
 }
 
+/// Which results a step of the policy applies to, and how far it takes them.
+type Phase = (fn(&Entry) -> bool, Visibility);
+
 /// The index of the message that opens each round, oldest first.
 fn round_starts(messages: &[Message]) -> Vec<usize> {
     let mut starts = Vec::new();
@@ -305,6 +380,7 @@ struct Entry {
     round: u32,
     age: u32,
     failure: bool,
+    reason: DemotionReason,
     raw: String,
     full_tokens: u32,
     level: Visibility,
@@ -353,6 +429,7 @@ impl Entry {
                 pinned: false,
                 raw: &self.raw,
                 focus: Some(&self.focus),
+                note: self.reason.note(),
             },
             target,
         );
@@ -382,6 +459,7 @@ fn apply(mut messages: Vec<Message>, results: Vec<Entry>) -> AssembledView {
             from: Visibility::Full,
             to: entry.level,
             tokens_saved: entry.full_tokens.saturating_sub(tokens_of(&shown)),
+            reason: entry.reason,
         });
         spill.push(evidence(
             &entry.tool,

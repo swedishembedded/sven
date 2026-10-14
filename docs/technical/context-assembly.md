@@ -97,11 +97,27 @@ summary or a compiler error line.
 
 `sven_turn::assembly::ContextPolicy` is a pure function of the conversation
 about to be sent. Under a token budget it keeps the tool results of the most
-recent rounds in full and demotes older ones, oldest first, only as far as the
-budget requires: first to `long`, then, if the view is still over budget, to
-`short`. It returns the view, a `Demotion` for every result it shrank (chunk
-id, tool, from, to, tokens saved) and the raw text of each, which the caller
-stores so the reference can be expanded.
+recent rounds in full and demotes older ones, cheapest loss first, only as far
+as the budget requires. It returns the view, a `Demotion` for every result it
+shrank (chunk id, tool, from, to, tokens saved, reason) and the raw text of
+each, which the caller stores so the reference can be expanded.
+
+The order is the order of how likely the evidence is to be needed again:
+
+1. **Replaced by a later message**, straight to `hidden` with the reason in the
+   reference. A *superseded* result is a read of a file that was read again
+   whole (or with the same arguments) or that a successful `write_file`,
+   `edit_file` or `delete_file` changed afterwards. A later read of a part of
+   the file does not supersede an earlier read of all of it. A *duplicate* is a
+   result whose text appears again later, byte for byte. The newest copy is
+   never touched.
+2. **A test run that passed**, to `short`: the evidence is the pass.
+3. **Everything else**, oldest first, to `long` and then, if the view is still
+   over budget, to `short`. These are the only copies of their evidence.
+
+A result the model has not answered with a message of its own, that is, one
+with no assistant message after it, is never demoted: the model has not had a
+chance to act on it.
 
 | setting | default | meaning |
 |---------|--------:|---------|

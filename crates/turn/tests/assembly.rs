@@ -190,6 +190,7 @@ fn expansions_and_tools_without_a_representation_are_never_demoted() {
     m.push(Message::tool_result("w1", log("edit", 400)));
     m.push(call("s1", "shell", "{}"));
     m.push(Message::tool_result("s1", log("sh", 400)));
+    m.push(Message::assistant("done"));
     let original = results(&m)
         .into_iter()
         .map(str::to_string)
@@ -329,4 +330,169 @@ fn what_a_result_keeps_does_not_change_when_later_output_names_more() {
         results(&after.messages)[0],
         "a form is fixed once the result leaves the recent rounds"
     );
+}
+// ── which results are demoted first ──────────────────────────────────────────
+
+use sven_turn::assembly::DemotionReason;
+
+/// One round: the model calls `tool` with `args`, gets `result`, then speaks.
+fn round(m: &mut Vec<Message>, id: &str, tool: &str, args: &str, result: String) {
+    m.push(call(id, tool, args));
+    m.push(Message::tool_result(id, result));
+    m.push(Message::assistant(format!("after {id}")));
+}
+
+fn file(tag: &str) -> String {
+    (1..=120)
+        .map(|n| format!("L{n}:pub fn {tag}_{n}() {{ /* {tag} body {n} */ }}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn tokens(messages: &[Message]) -> u32 {
+    messages.iter().map(Message::approx_tokens).sum::<usize>() as u32
+}
+
+/// A budget just under `messages`, so exactly the cheapest-to-lose result goes.
+fn just_over(messages: &[Message]) -> ContextPolicy {
+    policy(tokens(messages) - 200, 1)
+}
+
+#[test]
+fn a_result_the_model_has_not_yet_acted_on_is_never_demoted() {
+    let mut m = vec![Message::user("go")];
+    round(&mut m, "a", "read_file", r#"{"path":"a.rs"}"#, file("a"));
+    m.push(call("b", "read_file", r#"{"path":"b.rs"}"#));
+    m.push(Message::tool_result("b", file("b")));
+    let view = assemble(&policy(0, 0), m.clone());
+    let shown = results(&view.messages);
+    assert_ne!(shown[0], result_text(&m[2]), "the answered result goes");
+    assert_eq!(
+        shown[1],
+        result_text(&m[5]),
+        "the unanswered one stays whole"
+    );
+}
+
+#[test]
+fn an_older_read_of_a_file_that_was_read_again_goes_before_a_result_that_is_the_only_copy() {
+    let mut m = vec![Message::user("go")];
+    round(
+        &mut m,
+        "only",
+        "read_file",
+        r#"{"path":"only.rs"}"#,
+        file("only"),
+    );
+    round(&mut m, "old", "read_file", r#"{"path":"a.rs"}"#, file("a"));
+    round(&mut m, "new", "read_file", r#"{"path":"a.rs"}"#, file("a2"));
+    round(&mut m, "end", "shell", "{}", log("end", 80));
+    let view = assemble(&just_over(&m), m.clone());
+    assert_eq!(view.demotions.len(), 1, "{:?}", view.demotions);
+    let d = &view.demotions[0];
+    assert_eq!(d.tool_call_id, "old");
+    assert_eq!(d.reason, DemotionReason::Superseded);
+    assert_eq!(d.to, Visibility::Hidden);
+    assert!(
+        results(&view.messages)[1].contains("superseded"),
+        "says why"
+    );
+}
+
+#[test]
+fn a_file_that_was_edited_after_it_was_read_is_superseded() {
+    let mut m = vec![Message::user("go")];
+    round(
+        &mut m,
+        "only",
+        "read_file",
+        r#"{"path":"only.rs"}"#,
+        file("only"),
+    );
+    round(
+        &mut m,
+        "old",
+        "read_file",
+        r#"{"path":"src/a.rs"}"#,
+        file("a"),
+    );
+    round(
+        &mut m,
+        "edit",
+        "edit_file",
+        r#"{"path":"./src/a.rs","old":"x","new":"y"}"#,
+        "edited".into(),
+    );
+    round(&mut m, "end", "shell", "{}", log("end", 80));
+    let view = assemble(&just_over(&m), m.clone());
+    assert_eq!(view.demotions.len(), 1);
+    assert_eq!(view.demotions[0].tool_call_id, "old");
+    assert_eq!(view.demotions[0].reason, DemotionReason::Superseded);
+}
+
+#[test]
+fn an_identical_result_that_appears_again_is_a_duplicate() {
+    let mut m = vec![Message::user("go")];
+    round(
+        &mut m,
+        "only",
+        "read_file",
+        r#"{"path":"only.rs"}"#,
+        file("only"),
+    );
+    round(
+        &mut m,
+        "one",
+        "shell",
+        r#"{"command":"ls"}"#,
+        log("same", 80),
+    );
+    round(
+        &mut m,
+        "two",
+        "shell",
+        r#"{"command":"ls -a"}"#,
+        log("same", 80),
+    );
+    round(&mut m, "end", "shell", "{}", log("end", 80));
+    let view = assemble(&just_over(&m), m.clone());
+    assert_eq!(view.demotions.len(), 1);
+    assert_eq!(view.demotions[0].tool_call_id, "one");
+    assert_eq!(view.demotions[0].reason, DemotionReason::Duplicate);
+}
+
+#[test]
+fn a_passing_test_log_goes_before_older_evidence_that_is_not_superseded() {
+    let mut m = vec![Message::user("go")];
+    round(
+        &mut m,
+        "only",
+        "read_file",
+        r#"{"path":"only.rs"}"#,
+        file("only"),
+    );
+    let pass = format!("{}\ntest result: ok. 80 passed; 0 failed", log("t", 80));
+    round(
+        &mut m,
+        "tests",
+        "shell",
+        r#"{"command":"cargo test"}"#,
+        pass,
+    );
+    round(&mut m, "end", "shell", "{}", log("end", 80));
+    let view = assemble(&just_over(&m), m.clone());
+    assert_eq!(view.demotions.len(), 1);
+    assert_eq!(view.demotions[0].tool_call_id, "tests");
+    assert_eq!(view.demotions[0].reason, DemotionReason::PassingTest);
+}
+
+#[test]
+fn a_result_that_is_the_only_copy_is_demoted_by_age_when_nothing_else_will_do() {
+    let m = history(6, 200);
+    let view = assemble(&policy(3_000, 2), m);
+    assert!(!view.demotions.is_empty());
+    assert!(view
+        .demotions
+        .iter()
+        .all(|d| d.reason == DemotionReason::Age));
 }

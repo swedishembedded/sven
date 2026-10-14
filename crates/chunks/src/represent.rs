@@ -119,6 +119,10 @@ pub struct RenderRequest<'a> {
     pub raw: &'a str,
     /// What the conversation points at; the forms below `full` keep it.
     pub focus: Option<&'a Focus>,
+    /// Why this result is shown small when that is a fact about the
+    /// conversation (a later read replaced it); stated in every form below
+    /// `full`.
+    pub note: Option<&'a str>,
 }
 
 /// A chunk as the transcript will carry it.
@@ -195,8 +199,9 @@ pub(crate) fn kind_name(kind: ChunkKind) -> String {
 }
 
 fn hidden(request: &RenderRequest<'_>) -> String {
+    let note = request.note.map(|n| format!("{n}; ")).unwrap_or_default();
     format!(
-        "[chunk {} hidden | {} | {}; expand: {}]",
+        "[chunk {} hidden | {} | {}; {note}expand: {}]",
         request.id,
         kind_name(request.kind),
         describe(request),
@@ -217,6 +222,9 @@ fn header(request: &RenderRequest<'_>, visibility: Visibility) -> String {
     }
     if request.source_tool == "shell" {
         let _ = write!(h, " | exit: {}", exit_status(request.raw).unwrap_or(0));
+    }
+    if let Some(note) = request.note {
+        let _ = write!(h, " | {note}");
     }
     h.push(']');
     h

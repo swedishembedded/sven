@@ -28,6 +28,7 @@ fn request<'a>(
         pinned: false,
         raw,
         focus,
+        note: None,
     }
 }
 
