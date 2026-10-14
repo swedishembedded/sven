@@ -156,6 +156,9 @@ impl<'a> TurnBuilder<'a> {
 
     #[must_use]
     pub fn finish(self) -> crate::task::Segment {
-        crate::task::Segment { turns: self.turns }
+        crate::task::Segment {
+            turns: self.turns,
+            children: Vec::new(),
+        }
     }
 }

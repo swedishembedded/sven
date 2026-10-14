@@ -320,3 +320,43 @@ fn a_security_run_cannot_be_scored_without_the_repository() {
     run.repo = None;
     assert!(score(&task, &run).is_err());
 }
+
+// ── delegation ───────────────────────────────────────────────────────────────
+
+fn read_call(path: &str) -> serde_json::Value {
+    serde_json::json!({"role": "assistant", "kind": "tool_call", "name": "read_file", "text": format!("{{\"path\":\"{path}\"}}")})
+}
+
+fn agent_request(pid: u32, calls: &[&str], results: &str) -> String {
+    let mut messages = vec![serde_json::json!({"role": "user", "kind": "text", "text": "q"})];
+    messages.extend(calls.iter().map(|p| read_call(p)));
+    messages.push(serde_json::json!({"role": "tool", "kind": "tool_result", "text": results}));
+    serde_json::json!({"request": 1, "pid": pid, "tools": [], "messages": messages}).to_string()
+}
+
+#[test]
+fn delegation_counts_reads_repeated_by_another_agent_and_needs_every_result() {
+    let task = generate(Suite::Delegation, 2).task;
+    let results: Vec<&str> = task.critical().map(|e| e.marker.as_str()).collect();
+    let lines = [
+        agent_request(7, &[], "start"),
+        agent_request(8, &["a.rs", "shared.rs"], "x"),
+        agent_request(9, &["b.rs", "shared.rs"], "y"),
+        agent_request(7, &[], &results.join(" ")),
+    ]
+    .join("\n");
+    let s = score(&task, &run(&[lines])).unwrap();
+    assert!(s.passed);
+    let d = s.delegation.unwrap();
+    assert_eq!((d.agents, d.subagent_calls, d.duplicated_calls), (3, 4, 1));
+
+    let lost = [
+        agent_request(7, &[], "start"),
+        agent_request(7, &[], &results[1..].join(" ")),
+    ]
+    .join("\n");
+    assert!(
+        !score(&task, &run(&[lost])).unwrap().passed,
+        "a result the parent never saw"
+    );
+}

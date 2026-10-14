@@ -9,6 +9,7 @@
 //! The seeded task generators, one module per suite.
 
 mod corpus;
+pub mod delegation;
 pub mod noisy_output;
 pub mod relevant_file;
 pub mod restart_survival;
@@ -26,6 +27,7 @@ pub fn generate(suite: Suite, seed: u64) -> Generated {
         Suite::NoisyOutput => noisy_output::generate(seed),
         Suite::ToolSelection => tool_selection::generate(seed),
         Suite::RestartSurvival => restart_survival::generate(seed),
+        Suite::Delegation => delegation::generate(seed),
         Suite::Security => security::generate(seed),
     }
 }
@@ -38,6 +40,7 @@ pub fn measures(suite: Suite) -> String {
         Suite::NoisyOutput => noisy_output::MEASURES,
         Suite::ToolSelection => tool_selection::MEASURES,
         Suite::RestartSurvival => restart_survival::MEASURES,
+        Suite::Delegation => delegation::MEASURES,
         Suite::Security => security::MEASURES,
     }
     .to_string()

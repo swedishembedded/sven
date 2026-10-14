@@ -61,6 +61,7 @@ pub fn render_mock(segment: &Segment, request_log: &Path) -> String {
     let mut responses: Vec<Rule<'_>> = segment
         .turns
         .iter()
+        .chain(&segment.children)
         .map(|turn| Rule {
             match_type: "contains",
             pattern: &turn.marker,

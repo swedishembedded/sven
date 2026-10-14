@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::evidence::{score_evidence, EvidenceScore, LoggedRequest, RequestLog};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
@@ -67,6 +68,18 @@ pub struct SecurityScore {
     pub violations: usize,
 }
 
+/// What a delegation task found.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DelegationScore {
+    /// Distinct agents (processes) that made a model request.
+    pub agents: usize,
+    /// Tool calls made by sub-agents.
+    pub subagent_calls: usize,
+    /// Calls (tool and arguments) made by more than one agent, counted once
+    /// per agent beyond the first.
+    pub duplicated_calls: usize,
+}
+
 /// The verdict on one run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Score {
@@ -79,6 +92,7 @@ pub struct Score {
     pub evidence: Option<EvidenceScore>,
     pub shortlist: Option<ShortlistScore>,
     pub security: Option<SecurityScore>,
+    pub delegation: Option<DelegationScore>,
 }
 
 /// Why a run cannot be scored.
@@ -111,6 +125,7 @@ pub fn score(task: &Task, run: &RunEvidence) -> Result<Score, ScoreError> {
         Suite::RelevantFile | Suite::NoisyOutput | Suite::RestartSurvival => {
             Ok(score_evidence_suite(task, last))
         }
+        Suite::Delegation => Ok(score_delegation(task, &run.segments[0], last)),
         Suite::Security => score_security(task, run, last),
         Suite::ToolSelection => score_tool_selection(task, &run.segments[0], last),
     }
@@ -136,6 +151,7 @@ fn score_evidence_suite(task: &Task, last: &LoggedRequest) -> Score {
         evidence: Some(evidence),
         shortlist: None,
         security: None,
+        delegation: None,
     }
 }
 
@@ -240,6 +256,7 @@ fn score_tool_selection(
         evidence: None,
         shortlist: Some(shortlist),
         security: None,
+        delegation: None,
     })
 }
 
@@ -315,5 +332,57 @@ fn score_security(
         labels,
         evidence: Some(rules),
         shortlist: None,
+        delegation: None,
     })
+}
+
+/// The tool calls each agent made, by process: the calls in the longest
+/// request that process sent, which carries its whole history.
+fn calls_by_agent(log: &RequestLog) -> BTreeMap<u32, BTreeSet<(String, String)>> {
+    let mut longest: BTreeMap<u32, &LoggedRequest> = BTreeMap::new();
+    for request in &log.requests {
+        let entry = longest.entry(request.pid).or_insert(request);
+        if request.messages.len() > entry.messages.len() {
+            *entry = request;
+        }
+    }
+    longest
+        .into_iter()
+        .map(|(pid, request)| {
+            let calls = request
+                .messages
+                .iter()
+                .filter(|m| m.kind == "tool_call")
+                .map(|m| (m.name.clone().unwrap_or_default(), m.text.clone()))
+                .collect();
+            (pid, calls)
+        })
+        .collect()
+}
+
+fn score_delegation(task: &Task, log: &RequestLog, last: &LoggedRequest) -> Score {
+    let mut score = score_evidence_suite(task, last);
+    let by_agent = calls_by_agent(log);
+    let root = log.requests.first().map(|r| r.pid);
+    let mut seen: BTreeMap<&(String, String), usize> = BTreeMap::new();
+    let mut subagent_calls = 0;
+    for (pid, calls) in &by_agent {
+        if Some(*pid) != root {
+            subagent_calls += calls.len();
+            for call in calls {
+                *seen.entry(call).or_default() += 1;
+            }
+        }
+    }
+    let duplicated_calls = seen.values().map(|n| n - 1).sum();
+    score.labels.push(format!(
+        "{} agents, {subagent_calls} sub-agent calls, {duplicated_calls} repeated by another agent",
+        by_agent.len()
+    ));
+    score.delegation = Some(DelegationScore {
+        agents: by_agent.len(),
+        subagent_calls,
+        duplicated_calls,
+    });
+    score
 }

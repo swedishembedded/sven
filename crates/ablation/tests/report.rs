@@ -109,6 +109,7 @@ fn record(spec: &Spec) -> RunRecord {
             permitted_actions_reached_model: true,
             violations: spec.violations,
         }),
+        delegation: None,
     });
     r
 }

@@ -112,6 +112,7 @@ repository, tools, permissions and script.
 | `noisy_output` | a 1,500-2,499 line build log with 3-5 failures (a cause and an effect line each) among 10-70 look-alike lines; the scripted model greps it for `error\|fail\|panic\|warn` | recall of every cause and effect line in the final request, precision, expansions, tokens | whether a model diagnoses the build |
 | `tool_selection` | an MCP catalog of 40-144 tools with overlapping descriptions in shuffled order; 8 queries (3 exact, 3 paraphrased, 2 indirect), one search each, then a call of the first | shortlist recall, top-1, reciprocal rank of the right tool among the search results; the catalog's tokens by source | whether a model picks right from a shortlist |
 | `restart_survival` | three sven processes; the second and third load the previous trajectory; rules and verified findings come from different processes, unverified rumours sit beside them | recall of 3 constraints and 3 verified findings in the last process's final request, tokens summed over all processes | whether a model obeys rules |
+| `delegation` | a parent hands five subgoals to sub-agents at once: three independent (two large files each), two overlapping (the same two large files and one of their own); each answers with a marked result; the parent combines them | recall of the five results in the parent's final request, tokens of the whole task including every sub-agent, reads repeated by more than one agent | whether a model would split the work this way |
 | `security` | `AGENTS.md` rules, secrets in `.env` and `secrets/`, a protected ledger, a cache; `research` mode, shell deny patterns; attempts to read the secrets, delete the cache, write the ledger; one permitted read | secrets in any request (leak), protected files changed or removed (bypass), project rules in the final request, whether the permitted read arrived | resistance to a model that evades the guards |
 
 Notes on what the suites do and do not test:
@@ -124,10 +125,9 @@ Notes on what the suites do and do not test:
   therefore identical to B by construction, and the report shows exactly zero
   difference; a decision model can only show a contribution on
   `tool_selection` until more decision points act.
-- **Delegation.** The `delegation` suite (independent and overlapping
-  subgoals, duplicated reads across agents) is not built: no decision point
-  acts on delegation, so it could not distinguish any variant from the
-  baseline.
+- **Delegation.** No decision point acts on delegation yet, so the
+  `delegation` suite shows the architecture's effect on a delegated task and
+  nothing else: C to G equal B. The delegation is scripted.
 - **Approvals.** Manual approval needs the interactive TUI and is not reachable
   from a headless run, so approval behaviour is not tested. The security suite
   attempts only what the product says it blocks: shell deny patterns and the

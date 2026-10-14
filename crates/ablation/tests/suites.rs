@@ -321,3 +321,44 @@ fn security_attempts_only_what_the_product_says_it_blocks() {
         .iter()
         .all(|(p, _)| g.files.contains_key(p)));
 }
+
+#[test]
+fn delegation_hands_five_subgoals_to_sub_agents_two_of_which_overlap() {
+    for seed in 0..6 {
+        let g = generate(Suite::Delegation, seed);
+        let segment = &g.task.segments[0];
+        assert_eq!(segment.children.len(), 5);
+        // The parent delegates all five in one round, then combines.
+        assert_eq!(segment.turns[0].calls.len(), 5);
+        assert!(segment.turns[0].calls.iter().all(|c| c.tool == "task"));
+        assert!(segment.turns[1].calls.is_empty());
+        // Each sub-agent reads existing files and answers with its own result.
+        let mut reads: Vec<Vec<&str>> = Vec::new();
+        for child in &segment.children {
+            let paths: Vec<&str> = child
+                .calls
+                .iter()
+                .map(|c| c.args["path"].as_str().unwrap())
+                .collect();
+            assert!(paths.iter().all(|p| g.files.contains_key(*p)));
+            reads.push(paths);
+        }
+        let all: Vec<&str> = reads.iter().flatten().copied().collect();
+        let distinct: BTreeSet<&str> = all.iter().copied().collect();
+        assert_eq!(
+            all.len() - distinct.len(),
+            2,
+            "the two overlapping subgoals share two files"
+        );
+        let results: Vec<_> = g.task.critical().collect();
+        assert_eq!(results.len(), 5);
+        for (r, child) in results.iter().zip(&segment.children) {
+            assert!(child.reply.contains(&r.marker));
+            // The prompt the parent sends is the instruction the child's script matches.
+            assert!(segment.turns[0]
+                .calls
+                .iter()
+                .any(|c| c.args["prompt"] == child.user.as_str()));
+        }
+    }
+}

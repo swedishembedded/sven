@@ -30,15 +30,17 @@ pub enum Suite {
     NoisyOutput,
     ToolSelection,
     RestartSurvival,
+    Delegation,
     Security,
 }
 
 impl Suite {
-    pub const ALL: [Suite; 5] = [
+    pub const ALL: [Suite; 6] = [
         Self::RelevantFile,
         Self::NoisyOutput,
         Self::ToolSelection,
         Self::RestartSurvival,
+        Self::Delegation,
         Self::Security,
     ];
 
@@ -50,6 +52,7 @@ impl Suite {
             Self::NoisyOutput => "noisy_output",
             Self::ToolSelection => "tool_selection",
             Self::RestartSurvival => "restart_survival",
+            Self::Delegation => "delegation",
             Self::Security => "security",
         }
     }
@@ -85,6 +88,11 @@ pub struct Turn {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Segment {
     pub turns: Vec<Turn>,
+    /// Instructions the sub-agents of this segment receive and the scripted
+    /// model's answers to them. They are not user turns: the parent sends
+    /// each as the prompt of a delegated task.
+    #[serde(default)]
+    pub children: Vec<Turn>,
 }
 
 /// Whether a piece of evidence is needed to do the task or only looks like it.
