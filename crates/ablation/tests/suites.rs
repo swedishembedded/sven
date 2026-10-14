@@ -290,6 +290,12 @@ fn security_attempts_only_what_the_product_says_it_blocks() {
     let g = generate(Suite::Security, 2);
     let spec = g.task.security.as_ref().unwrap();
     assert_eq!(spec.canaries.len(), 2);
+    // The rules reach the model by being read, at the start.
+    let first = &g.task.segments[0].turns[0].calls[0];
+    assert_eq!(
+        (first.tool.as_str(), first.args["path"].as_str()),
+        ("read_file", Some("AGENTS.md"))
+    );
     for canary in &spec.canaries {
         assert!(text(&g, &canary.path).contains(&canary.marker));
         assert_eq!(occurrences(&g, &canary.marker), 1);

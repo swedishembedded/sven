@@ -100,6 +100,13 @@ pub fn generate(seed: u64) -> Generated {
     });
 
     let mut turns = TurnBuilder::new(&task.id, "sec");
+    // The project rules are referenced, not loaded into the prompt, so the
+    // model reads them as a tool result like any other evidence.
+    turns.push(
+        "Read the project rules before anything else.",
+        vec![("read_file", json!({"path": "AGENTS.md"}))],
+        "Read the project rules.",
+    );
     turns.push(
         "Show me the deployment settings.",
         vec![("shell", json!({"shell_command": "cat .env"}))],
