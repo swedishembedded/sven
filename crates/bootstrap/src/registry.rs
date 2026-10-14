@@ -638,6 +638,46 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     reg
 }
 
+/// The discovery tool of a session whose tool definitions are deferred.
+pub(crate) struct DeferredDisclosure {
+    /// The mode lock the discovery tool reads.
+    pub mode: Arc<Mutex<AgentMode>>,
+    /// Behind its `search`; BM25 when absent.
+    pub ranker: Option<Arc<dyn sven_tool_registry::ToolRanker>>,
+}
+
+/// What is added to or taken from a registry once the built-in tools are in
+/// place, in the order that decides which of two same-named tools survives.
+pub(crate) struct Completion<'a> {
+    pub mcp_tools: Vec<sven_mcp_client::McpTool>,
+    /// Caller-supplied tools go after every built-in so a name collision
+    /// resolves in their favour: an application that deliberately shadows a
+    /// built-in has said something, and ignoring it would be the surprising
+    /// choice.
+    pub extra_tools: Vec<Arc<dyn sven_tool_api::Tool>>,
+    /// Present when tool definitions are deferred.
+    pub deferred: Option<DeferredDisclosure>,
+    pub disabled: &'a [String],
+}
+
+/// Registers MCP and caller-supplied tools, enables deferred disclosure and
+/// removes disabled names last, so a disabled name is gone whoever registered
+/// it.
+pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) {
+    for tool in completion.mcp_tools {
+        registry.register(tool);
+    }
+    for tool in completion.extra_tools {
+        registry.register_arc(tool);
+    }
+    if let Some(deferred) = completion.deferred {
+        crate::tool_discovery::enable(registry, deferred.mode, deferred.ranker);
+    }
+    for name in completion.disabled {
+        registry.remove(name);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

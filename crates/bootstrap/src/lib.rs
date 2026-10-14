@@ -28,6 +28,7 @@ pub mod context_tool;
 mod context_wiring;
 pub mod decision_ranker;
 pub mod kernel_bridge;
+mod mcp_setup;
 mod mode_policy;
 pub mod modes;
 pub mod registry;

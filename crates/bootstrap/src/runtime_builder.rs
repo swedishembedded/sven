@@ -23,14 +23,13 @@
 //! ```
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::Config;
 use sven_executors::user::{ApprovalRequest, UserQuestion};
 use sven_executors::ThreadStore;
 use sven_hsm::{Context, ObservationSink, Principal, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, ErasedRuntime};
-use sven_mcp_client::{McpEvent, McpManager, McpTool};
+use sven_mcp_client::{McpEvent, McpManager};
 use sven_model::Message;
 use sven_model_drivers::ModelConfig;
 use sven_tool_api::events::ToolEvent;
@@ -38,7 +37,6 @@ use sven_tool_api::PermissionRequester;
 use sven_tools_agent::QuestionRequest;
 use sven_vocab::{AgentMode, ApprovalMode};
 use tokio::sync::mpsc;
-use tracing::{info, warn};
 
 use crate::context::{BuiltinTools, RuntimeContext, ToolSetProfile};
 use crate::context_wiring::ContextWiring;
@@ -515,59 +513,14 @@ impl RuntimeBuilder {
         };
 
         // ── MCP setup ────────────────────────────────────────────────────────
-        // Reuse a caller-supplied manager (session rebuild) instead of building
-        // and connecting a fresh one, so the frontend's manager handle and MCP
-        // connections survive a mid-session mode/model change. A reused manager
-        // yields a closed event-receiver stub — the caller keeps consuming from
-        // the original manager's stream.
-        let (mcp_manager, mcp_event_rx) = match self.shared_mcp_manager.take() {
-            Some(existing) => {
-                let (_tx, rx) = tokio::sync::mpsc::channel(1);
-                (existing, rx)
-            }
-            // No built-in tools means no configured MCP servers either: the
-            // caller asked for exactly the tools it registers.
-            None if self.builtin_tools == BuiltinTools::None => {
-                let (mcp_event_tx, mcp_event_rx) = tokio::sync::mpsc::channel(1);
-                let manager = McpManager::new(Default::default(), mcp_event_tx, false);
-                (manager, mcp_event_rx)
-            }
-            None => {
-                let (mcp_event_tx, mcp_event_rx) = tokio::sync::mpsc::channel(64);
-                let mcp_manager = McpManager::new(
-                    self.config.mcp_servers.clone(),
-                    mcp_event_tx,
-                    self.allow_interactive_oauth,
-                );
-                mcp_manager.connect_all().await;
-                mcp_manager.start_background_tasks();
-
-                let has_enabled_servers = self.config.mcp_servers.values().any(|c| c.enabled);
-                if let Some(timeout_ms) = self.wait_for_mcp_tools_ms {
-                    if has_enabled_servers {
-                        let deadline =
-                            tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
-                        let poll_interval = Duration::from_millis(200);
-                        loop {
-                            let tools = mcp_manager.tools().await;
-                            if !tools.is_empty() {
-                                info!(
-                                    count = tools.len(),
-                                    "MCP tools available for kernel runtime"
-                                );
-                                break;
-                            }
-                            if tokio::time::Instant::now() >= deadline {
-                                warn!(timeout_ms, "MCP tools not available within timeout");
-                                break;
-                            }
-                            tokio::time::sleep(poll_interval).await;
-                        }
-                    }
-                }
-                (mcp_manager, mcp_event_rx)
-            }
-        };
+        let (mcp_manager, mcp_event_rx) = crate::mcp_setup::connect(crate::mcp_setup::McpSetup {
+            shared: self.shared_mcp_manager.take(),
+            no_builtin_tools: self.builtin_tools == BuiltinTools::None,
+            servers: &self.config.mcp_servers,
+            allow_interactive_oauth: self.allow_interactive_oauth,
+            wait_for_tools_ms: self.wait_for_mcp_tools_ms,
+        })
+        .await;
 
         // ── Build tool registry ───────────────────────────────────────────────
         // Seed the mode lock from the interactive mode so in-session `/mode`
@@ -650,29 +603,22 @@ impl RuntimeBuilder {
             self.park_questions,
         );
 
-        let mcp_tools: Vec<McpTool> = mcp_manager.tools().await;
-        for tool in mcp_tools {
-            tool_registry.register(tool);
-        }
-
-        // Caller-supplied tools go last so a name collision resolves in their
-        // favour: an application that deliberately shadows a built-in has said
-        // something, and silently ignoring it would be the surprising choice.
-        for tool in std::mem::take(&mut self.extra_tools) {
-            tool_registry.register_arc(tool);
-        }
-
-        if self.config.tools.disclosure.mode == sven_tool_registry::Disclosure::Deferred
-            && !runtime.no_tools
-        {
-            let ranker = crate::decision_ranker::for_session(&decision, decision_notices);
-            crate::tool_discovery::enable(&mut tool_registry, Arc::clone(&mode_lock), ranker);
-        }
-
-        // Last, so a disabled name is gone whoever registered it.
-        for name in &self.config.tools.disabled {
-            tool_registry.remove(name);
-        }
+        let deferred_ranker = (self.config.tools.disclosure.mode
+            == sven_tool_registry::Disclosure::Deferred
+            && !runtime.no_tools)
+            .then(|| crate::decision_ranker::for_session(&decision, decision_notices));
+        crate::registry::complete(
+            &mut tool_registry,
+            crate::registry::Completion {
+                mcp_tools: mcp_manager.tools().await,
+                extra_tools: std::mem::take(&mut self.extra_tools),
+                deferred: deferred_ranker.map(|ranker| crate::registry::DeferredDisclosure {
+                    mode: Arc::clone(&mode_lock),
+                    ranker,
+                }),
+                disabled: &self.config.tools.disabled,
+            },
+        );
 
         if let Some(requester) = self.permission_requester {
             tool_registry.set_permission_requester(requester);
