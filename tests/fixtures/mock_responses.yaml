@@ -182,6 +182,16 @@ responses:
           shell_command: "echo sven_mock_shell_output"
     after_tool_reply: "Shell command executed. Output contained: sven_mock_shell_output"
 
+  # A shell command that outlives any run deadline a test sets.
+  - match_type: contains
+    pattern: "run a slow command"
+    tool_calls:
+      - id: tc-slow
+        tool: shell
+        args:
+          shell_command: "sleep 60"
+    after_tool_reply: "The slow command finished."
+
   - match_type: contains
     pattern: "run ls"
     tool_calls:

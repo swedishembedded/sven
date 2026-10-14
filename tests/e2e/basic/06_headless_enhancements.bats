@@ -589,6 +589,12 @@ EOF
     [ "${status}" -eq 0 ]
 }
 
+@test "06.52b --run-timeout 0 means no limit" {
+    run bash -c \
+        'echo "ping" | "$BIN" --headless --model mock --run-timeout 0 2>/dev/null'
+    [ "${status}" -eq 0 ]
+}
+
 @test "06.52a an elapsed --run-timeout exits 124 and still records the run" {
     # The deadline is enforced per observation rather than by racing the whole
     # drive loop, so a timed-out run keeps the trajectory it accumulated and
@@ -596,7 +602,7 @@ EOF
     local work_dir
     work_dir="$(tmp_file)"
     mkdir -p "${work_dir}/.sven"
-    run bash -c 'cd "$1" && echo "ping" | "$BIN" --headless --model mock --run-timeout 0 2>/dev/null' -- "${work_dir}"
+    run bash -c 'cd "$1" && echo "run a slow command" | "$BIN" --headless --model mock --run-timeout 1 2>/dev/null' -- "${work_dir}"
     [ "${status}" -eq 124 ]
     run python3 -c "
 import glob, json, sys
