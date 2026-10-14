@@ -16,7 +16,6 @@ use std::sync::Arc;
 use sven_turn::instructions::{Activator, InstructionCatalog};
 use sven_turn::AgentRuntimeContext;
 
-
 /// Root of the filesystem every effect shares, and the session's activator.
 pub(crate) struct InstructionWiring {
     /// Root of the project; also where verification runs.

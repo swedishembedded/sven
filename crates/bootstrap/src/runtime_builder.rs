@@ -535,6 +535,7 @@ impl RuntimeBuilder {
         runtime.system_prompt_override = self.runtime_ctx.system_prompt_override;
         runtime.no_system = self.runtime_ctx.no_system;
         runtime.no_tools = self.runtime_ctx.no_tools;
+        runtime.skill_disclosure = self.config.skills.disclosure;
 
         let todos = Arc::new(tokio::sync::Mutex::new(Vec::<
             sven_tool_api::events::TodoItem,
@@ -603,19 +604,21 @@ impl RuntimeBuilder {
             self.park_questions,
         );
 
-        let deferred_ranker = (self.config.tools.disclosure.mode
-            == sven_tool_registry::Disclosure::Deferred
-            && !runtime.no_tools)
-            .then(|| crate::decision_ranker::for_session(&decision, decision_notices));
+        let (deferred, skill_ranker) = crate::decision_ranker::session_rankers(
+            &self.config,
+            &runtime,
+            &mode_lock,
+            &decision,
+            decision_notices,
+        );
         crate::registry::complete(
             &mut tool_registry,
             crate::registry::Completion {
                 mcp_tools: mcp_manager.tools().await,
                 extra_tools: std::mem::take(&mut self.extra_tools),
-                deferred: deferred_ranker.map(|ranker| crate::registry::DeferredDisclosure {
-                    mode: Arc::clone(&mode_lock),
-                    ranker,
-                }),
+                deferred,
+                skill_ranker,
+                skills: runtime.skills.clone(),
                 disabled: &self.config.tools.disabled,
             },
         );

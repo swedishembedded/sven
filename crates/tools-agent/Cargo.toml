@@ -2,11 +2,12 @@
 name        = "sven-tools-agent"
 version.workspace = true
 edition     = "2021"
-description = "Agent self-management tools: the compound system tool (mode/model switching, MCP server add/remove), todo (session task planning), ask_question (mid-turn human-in-the-loop questions), and skill (load/list the agent's own available skills). Domain tier."
+description = "Agent self-management tools: the compound system tool (mode/model switching, MCP server add/remove), todo (session task planning), ask_question (mid-turn human-in-the-loop questions), and skill (load/list/search the agent's own available skills). Domain tier."
 license     = "Apache-2.0"
 
 [dependencies]
 sven-tool-api  = { path = "../tool-api" }
+sven-tool-registry = { path = "../tool-registry" }
 sven-mcp-client = { path = "../mcp-client" }
 sven-hsm       = { path = "../hsm" }
 sven-vocab     = { path = "../vocab" }

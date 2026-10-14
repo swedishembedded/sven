@@ -92,6 +92,9 @@
         "name": "openai"
       }
     },
+    "skills": {
+      "disclosure": "full"
+    },
     "tools": {
       "asr": {
         "model": "brain/nemotronasr",

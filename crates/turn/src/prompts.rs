@@ -53,6 +53,8 @@ pub struct PromptContext<'a> {
     /// list are loaded, and which exist. `None` when every tool is in the
     /// list. Fixed for the session, so part of the stable prefix.
     pub tool_index: Option<&'a str>,
+    /// How much of each skill's metadata the Skills section carries.
+    pub skill_disclosure: instructions::SkillDisclosure,
 }
 
 impl<'a> Default for PromptContext<'a> {
@@ -68,6 +70,7 @@ impl<'a> Default for PromptContext<'a> {
             knowledge: Arc::from(Vec::<KnowledgeInfo>::new()),
             knowledge_drift_note: None,
             tool_index: None,
+            skill_disclosure: instructions::SkillDisclosure::Full,
         }
     }
 }
@@ -91,6 +94,7 @@ impl<'a> PromptContext<'a> {
             knowledge: self.knowledge.clone(),
             knowledge_drift_note: self.knowledge_drift_note,
             tool_index: self.tool_index,
+            skill_disclosure: self.skill_disclosure,
         }
     }
 
@@ -679,7 +683,12 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
     // what a session touches.
     let skills_section = {
         let (listed, dormant) = unconditional(&ctx.skills, instructions::skill_is_unconditional);
-        let s = build_skills_section(&listed);
+        let s = match ctx.skill_disclosure {
+            instructions::SkillDisclosure::Full => build_skills_section(&listed),
+            instructions::SkillDisclosure::Deferred => {
+                crate::skill_index::build_skills_index(&listed)
+            }
+        };
         with_dormant_note(s, "Skills", "skill", dormant)
     };
 

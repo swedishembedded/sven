@@ -657,6 +657,10 @@ pub(crate) struct Completion<'a> {
     pub extra_tools: Vec<Arc<dyn sven_tool_api::Tool>>,
     /// Present when tool definitions are deferred.
     pub deferred: Option<DeferredDisclosure>,
+    /// Orders the `skill` tool's search; BM25 when absent.
+    pub skill_ranker: Option<Arc<dyn sven_tool_registry::ToolRanker>>,
+    /// The skills the `skill` tool serves.
+    pub skills: sven_workspace::SharedSkills,
     pub disabled: &'a [String],
 }
 
@@ -672,6 +676,9 @@ pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) 
     }
     if let Some(deferred) = completion.deferred {
         crate::tool_discovery::enable(registry, deferred.mode, deferred.ranker);
+    }
+    if let (Some(ranker), true) = (completion.skill_ranker, registry.get("skill").is_some()) {
+        registry.register(SkillTool::new(completion.skills).with_ranker(ranker));
     }
     for name in completion.disabled {
         registry.remove(name);

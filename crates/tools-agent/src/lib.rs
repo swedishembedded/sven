@@ -20,5 +20,6 @@ pub mod todo;
 
 pub use ask_question::{AskQuestionTool, Question, QuestionRequest};
 pub use skill::SkillTool;
+mod skill_search;
 pub use system::{ModelCatalogEntry, SystemTool};
 pub use todo::TodoTool;

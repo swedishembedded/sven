@@ -706,6 +706,28 @@ approval rules. How it works, what it saves and what it costs:
 
 ---
 
+### `skills`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `disclosure` | `full` | `full` lists every skill's name and description in the system prompt. `deferred` lists a command and a summary of at most 80 characters per skill - package counts above 50 skills - and leaves the description and the body to the `skill` tool. |
+
+```yaml
+skills:
+  disclosure: deferred
+```
+
+`--skill-disclosure full|deferred` sets the mode for one process and overrides
+the file. Under `deferred` the model loads a skill with `skill` `load`, finds
+one the index does not make obvious with `skill` `search` (ranked like tool
+search, and re-ranked by the decision model under
+`decision.features.skill_selection`) and lists them all with `skill` `list`. A
+skill with `sven.always: true` keeps its full entry; a skill's `sven.activation`
+block decides when it is listed at all. How it works and what it saves:
+[docs/technical/instruction-disclosure.md](technical/instruction-disclosure.md).
+
+---
+
 ### `tools.web`
 
 | Key | Default | Description |
@@ -839,7 +861,8 @@ does not accept changes nothing. How it works, the policy table and the wire:
 | Key | Default | Acted on by |
 |-----|---------|-------------|
 | `tool_routing` | `true` | Re-ranks ambiguous `tools search` results. |
-| `context_selection`, `skill_selection`, `delegation`, `cache_routing` | `true` | Nothing yet: the flag is read, no decision point asks. |
+| `skill_selection` | `true` | Re-ranks ambiguous `skill search` results. |
+| `context_selection`, `delegation`, `cache_routing` | `true` | Nothing yet: the flag is read, no decision point asks. |
 | `model_routing`, `permission_advisory` | `false` | Nothing yet. A permission decision is advisory-only and never grants. |
 
 #### `decision.policy`

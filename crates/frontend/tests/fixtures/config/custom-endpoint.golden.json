@@ -76,6 +76,9 @@
       "temperature": 0.0
     },
     "providers": {},
+    "skills": {
+      "disclosure": "full"
+    },
     "tools": {
       "asr": {
         "model": "brain/nemotronasr",

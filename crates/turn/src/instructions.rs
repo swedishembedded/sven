@@ -23,11 +23,24 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sven_workspace::{
     is_active, ActivationFacts, AgentInfo, KnowledgeInfo, SharedAgents, SharedKnowledge,
     SharedSkills, SkillInfo,
 };
+
+/// How much of each skill's metadata the system prompt carries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillDisclosure {
+    /// Every skill's name and description, as the listing always was.
+    #[default]
+    Full,
+    /// A compact index (command and a short summary); the description and the
+    /// body load through the `skill` tool.
+    Deferred,
+}
 
 /// The longest summary of an instruction in a listing, in characters.
 pub const SUMMARY_CHARS: usize = 80;

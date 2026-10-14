@@ -10,6 +10,7 @@
 mod agent;
 mod assembly;
 mod decisions;
+mod disclosure;
 mod harness;
 mod index;
 #[cfg(feature = "memory")]
@@ -20,13 +21,14 @@ mod team;
 mod tool;
 
 pub use assembly::ContextAssemblyArg;
+pub use disclosure::DisclosureArg;
 
 // `AcpCommands`/`McpCommands` live in `sven-acp`/`sven-mcp` themselves,
 // shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
 // than duplicated here.
 pub use agent::AgentCommands;
-pub use harness::{HarnessCommands, HarnessRunArgs, LiveModelArgs, ToolsetArg};
 pub use decisions::{DecisionsCommands, DoctorCommands};
+pub use harness::{HarnessCommands, HarnessRunArgs, LiveModelArgs, ToolsetArg};
 pub use index::IndexCommands;
 #[cfg(feature = "memory")]
 pub use questions::QuestionsCommands;
@@ -68,24 +70,6 @@ pub enum OutputFormatArg {
     /// history. See --output-trace/--trace to persist the equivalent full
     /// trajectory document to a file instead of streaming step-by-step.
     Jsonl,
-}
-
-/// The spelling of [`sven_bootstrap::Disclosure`] on the command line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum DisclosureArg {
-    /// Every tool's definition in every request.
-    Full,
-    /// Core and loaded tools in full; the rest by summary until loaded.
-    Deferred,
-}
-
-impl From<DisclosureArg> for sven_bootstrap::Disclosure {
-    fn from(arg: DisclosureArg) -> Self {
-        match arg {
-            DisclosureArg::Full => Self::Full,
-            DisclosureArg::Deferred => Self::Deferred,
-        }
-    }
 }
 
 #[derive(Parser, Debug)]
@@ -144,6 +128,20 @@ pub struct Cli {
         overrides_with = "tool_disclosure"
     )]
     pub tool_disclosure: Option<DisclosureArg>,
+
+    /// How much of each skill the system prompt carries, overriding
+    /// `skills.disclosure` of the configuration file for this process.
+    ///
+    /// `full` lists every skill's name and description. `deferred` lists a
+    /// command and a short summary per skill; the description and the body
+    /// load through the `skill` tool, which also searches the skills.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "MODE",
+        overrides_with = "skill_disclosure"
+    )]
+    pub skill_disclosure: Option<DisclosureArg>,
 
     /// How the context of a request is assembled from the conversation,
     /// overriding `context.assembly.mode` of the configuration file for this

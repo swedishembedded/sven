@@ -8,6 +8,10 @@
 // email to info@swedishembedded.com.
 //! A [`ToolRanker`] that lets a decision model break BM25's ties.
 //!
+//! The same ranker serves two decision points, each with its own label and
+//! feature flag ([`RoutingPoint`]): `tool_routing` re-ranks `tools search`
+//! and `skill_selection` re-ranks `skill search`.
+//!
 //! BM25 stays the candidate generator and the fallback. The model is asked
 //! only when BM25's two best candidates are within [`AMBIGUITY`] of each
 //! other, and never about more than [`OPTIONS_PER_REQUEST`] options at once:
@@ -56,8 +60,32 @@ pub const AMBIGUITY: f64 = 0.10;
 /// The least tokens of the query worth asking about.
 const MIN_QUERY_TOKENS: u32 = 16;
 
-const TOOL_POINT: &str = "tool_routing";
-const CATEGORY_POINT: &str = "tool_routing.category";
+/// A decision point the ranker serves: the labels its two questions are
+/// traced under and the flag that switches it on.
+#[derive(Clone, Copy, Debug)]
+pub struct RoutingPoint {
+    /// The question that picks one of the shortlisted candidates.
+    pub choice: &'static str,
+    /// The question that picks a category when the pool spans several.
+    pub category: &'static str,
+    /// The `decision.features.*` flag that gates the point.
+    pub feature: Feature,
+}
+
+impl RoutingPoint {
+    /// Which tool `tools search` should put first.
+    pub const TOOLS: Self = Self {
+        choice: "tool_routing",
+        category: "tool_routing.category",
+        feature: Feature::ToolRouting,
+    };
+    /// Which skill `skill search` should put first.
+    pub const SKILLS: Self = Self {
+        choice: "skill_selection",
+        category: "skill_selection.category",
+        feature: Feature::SkillSelection,
+    };
+}
 
 /// What asking one question came to.
 enum Asked {
@@ -110,12 +138,23 @@ impl DecisionRanker {
         runtime: Arc<DecisionRuntime>,
         notices: Option<mpsc::Sender<ToolEvent>>,
     ) -> Self {
+        Self::for_point(RoutingPoint::TOOLS, provider, runtime, notices)
+    }
+
+    /// A ranker for the decision point `point`.
+    #[must_use]
+    pub fn for_point(
+        point: RoutingPoint,
+        provider: Arc<dyn DecisionProvider>,
+        runtime: Arc<DecisionRuntime>,
+        notices: Option<mpsc::Sender<ToolEvent>>,
+    ) -> Self {
         let budget = runtime.config().input_budget_tokens(None);
         Self {
             bm25: Bm25Ranker,
             provider,
-            tool_policy: policy(TOOL_POINT, budget),
-            category_policy: policy(CATEGORY_POINT, budget),
+            tool_policy: policy(point.choice, budget),
+            category_policy: policy(point.category, budget),
             runtime,
             notices,
             model_limit: AtomicU32::new(0),
@@ -373,15 +412,49 @@ pub fn for_session(
     runtime: &Arc<DecisionRuntime>,
     notices: mpsc::Sender<ToolEvent>,
 ) -> Option<Arc<dyn ToolRanker>> {
-    if !runtime.feature_enabled(Feature::ToolRouting) {
+    for_point(RoutingPoint::TOOLS, runtime, notices)
+}
+
+/// The ranker for `point`: the decision ranker when decisions are on and the
+/// point's flag allows it, otherwise `None` and BM25 alone.
+#[must_use]
+pub fn for_point(
+    point: RoutingPoint,
+    runtime: &Arc<DecisionRuntime>,
+    notices: mpsc::Sender<ToolEvent>,
+) -> Option<Arc<dyn ToolRanker>> {
+    if !runtime.feature_enabled(point.feature) {
         return None;
     }
     let provider: Arc<dyn DecisionProvider> = runtime.provider()?.clone();
-    Some(Arc::new(DecisionRanker::new(
+    Some(Arc::new(DecisionRanker::for_point(
+        point,
         provider,
         Arc::clone(runtime),
         Some(notices),
     )))
+}
+
+/// The rankers a session's search tools use: the discovery tool's, present
+/// when tool definitions are deferred, and the `skill` tool's.
+#[must_use]
+pub(crate) fn session_rankers(
+    config: &crate::Config,
+    runtime: &sven_turn::AgentRuntimeContext,
+    mode: &Arc<tokio::sync::Mutex<sven_vocab::AgentMode>>,
+    decision: &Arc<DecisionRuntime>,
+    notices: mpsc::Sender<ToolEvent>,
+) -> (
+    Option<crate::registry::DeferredDisclosure>,
+    Option<Arc<dyn ToolRanker>>,
+) {
+    let deferred = (config.tools.disclosure.mode == sven_tool_registry::Disclosure::Deferred
+        && !runtime.no_tools)
+        .then(|| crate::registry::DeferredDisclosure {
+            mode: Arc::clone(mode),
+            ranker: for_session(decision, notices.clone()),
+        });
+    (deferred, for_point(RoutingPoint::SKILLS, decision, notices))
 }
 
 #[cfg(test)]

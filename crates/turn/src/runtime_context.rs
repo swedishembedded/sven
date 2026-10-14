@@ -70,6 +70,8 @@ pub struct AgentRuntimeContext {
     /// The `## Deferred Tools` system-prompt section, rendered from the tool
     /// registry once it is built; `None` when every tool is in the tool list.
     pub tool_index: Option<String>,
+    /// How much of each skill's metadata the system prompt lists.
+    pub skill_disclosure: crate::instructions::SkillDisclosure,
     /// Prior conversation messages to pre-load into the session history.
     ///
     /// Used when resuming a stored conversation: the tail of the local
@@ -127,6 +129,7 @@ impl AgentRuntimeContext {
                 knowledge: self.knowledge.get(),
                 knowledge_drift_note: self.knowledge_drift_note.as_deref(),
                 tool_index: self.tool_index.as_deref(),
+                skill_disclosure: self.skill_disclosure,
             };
             system_prompt(mode, self.system_prompt_override.as_deref(), ctx)
         };

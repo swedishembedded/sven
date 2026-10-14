@@ -6,6 +6,7 @@
 //! Actions:
 //! - `load` - load a named skill's full SKILL.md content into conversation context.
 //! - `list` - list available skills, optionally filtered by a regex.
+//! - `search` - the skills that best match a query, ranked like tool search.
 //!
 //! The model calls `load` after recognising that a user request matches one
 //! of the skills shown by `list` or listed in the system prompt's
@@ -24,6 +25,9 @@ use regex::Regex;
 use serde_json::{json, Value};
 use tracing::debug;
 
+use std::sync::Arc;
+
+use sven_tool_registry::{Bm25Ranker, ToolRanker};
 use sven_workspace::{load_skill_content_from_disk, SharedSkills, SkillInfo};
 
 use sven_hsm::ToolCapability;
@@ -45,11 +49,12 @@ fn build_description(skills: &[SkillInfo]) -> String {
     // The skills themselves are listed once, in the system prompt's
     // `<available_skills>` block; repeating them here would charge for the
     // list twice on every request.
-    "Load or list agent skills. action: load | list\n\
+    "Load, list or search agent skills. action: load | list | search\n\
      load: returns a skill's SKILL.md body, its base directory and bundled files. Use it \
      when the request matches an entry of <available_skills> in the system prompt; \
      pass the entry's <command> as `name`.\n\
-     list: skills whose command, name or description matches the `regex` (empty lists all)."
+     list: skills whose command, name or description matches the `regex` (empty lists all).\n\
+     search: the skills that best match a `query`, best first."
         .to_string()
 }
 
@@ -95,6 +100,8 @@ pub struct SkillTool {
     /// Pre-computed description string (may be slightly stale after a refresh;
     /// the system prompt's `<available_skills>` block is always current).
     description: String,
+    /// Orders the skills `search` returns; BM25 unless replaced.
+    ranker: Arc<dyn ToolRanker>,
 }
 
 impl SkillTool {
@@ -104,7 +111,15 @@ impl SkillTool {
         Self {
             skills,
             description,
+            ranker: Arc::new(Bm25Ranker),
         }
+    }
+
+    /// Orders `search` results with `ranker` instead of BM25.
+    #[must_use]
+    pub fn with_ranker(mut self, ranker: Arc<dyn ToolRanker>) -> Self {
+        self.ranker = ranker;
+        self
     }
 }
 
@@ -115,7 +130,7 @@ impl Tool for SkillTool {
     }
 
     fn summary(&self) -> &str {
-        "Load or list agent skills, task-specific instructions bundled with the project."
+        "Load, list or search agent skills, task-specific instructions bundled with the project."
     }
 
     fn description(&self) -> &str {
@@ -128,8 +143,8 @@ impl Tool for SkillTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["load", "list"],
-                    "description": "load or list"
+                    "enum": ["load", "list", "search"],
+                    "description": "load, list or search"
                 },
                 "name": {
                     "type": "string",
@@ -138,6 +153,10 @@ impl Tool for SkillTool {
                 "regex": {
                     "type": "string",
                     "description": "[list] Filter; empty lists all"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "[search] What the task needs, in your own words"
                 }
             },
             "required": ["action"],
@@ -161,9 +180,10 @@ impl Tool for SkillTool {
         match action.as_str() {
             "load" => self.exec_load(call).await,
             "list" => self.exec_list(call).await,
+            "search" => self.exec_search(call).await,
             other => ToolOutput::err(
                 &call.id,
-                format!("unknown action '{other}'. Valid: load, list"),
+                format!("unknown action '{other}'. Valid: load, list, search"),
             ),
         }
     }
@@ -253,6 +273,24 @@ impl SkillTool {
                  </skill_content>",
                 name = skill.name
             ),
+        )
+    }
+
+    async fn exec_search(&self, call: &ToolCall) -> ToolOutput {
+        let query = call
+            .args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|q| !q.is_empty());
+        let Some(query) = query else {
+            return ToolOutput::err(&call.id, "missing 'query' parameter for action=search");
+        };
+        debug!(query, "skill tool search");
+        let skills = self.skills.get();
+        ToolOutput::ok(
+            &call.id,
+            crate::skill_search::search(&*self.ranker, &skills, query).await,
         )
     }
 

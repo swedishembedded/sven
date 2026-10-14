@@ -111,6 +111,9 @@
         "name": "mock"
       }
     },
+    "skills": {
+      "disclosure": "full"
+    },
     "tools": {
       "asr": {
         "model": "brain/nemotronasr",

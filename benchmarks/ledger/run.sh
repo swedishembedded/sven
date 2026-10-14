@@ -12,11 +12,14 @@
 # agent context budgets then you can procure our services by sending an email
 # to info@swedishembedded.com.
 #
-# Usage: benchmarks/ledger/run.sh [--out DIR] [--bin PATH] [--tool-disclosure MODE] [--context-assembly MODE] [--config FILE]
+# Usage: benchmarks/ledger/run.sh [--out DIR] [--bin PATH] [--tool-disclosure MODE] [--skill-disclosure MODE] [--context-assembly MODE] [--config FILE]
 #   --out DIR   where results go (default: $TMPDIR/sven-ledger-bench or /tmp/...)
 #   --bin PATH  the sven binary to measure (default: target/release/sven, else
 #               target/debug/sven)
 #   --tool-disclosure MODE
+#               full or deferred, passed to every run; omitted, the binary's
+#               default applies
+#   --skill-disclosure MODE
 #               full or deferred, passed to every run; omitted, the binary's
 #               default applies
 #   --context-assembly MODE
@@ -45,6 +48,7 @@ repo="$(cd "${here}/../.." && pwd)"
 out="${TMPDIR:-/tmp}/sven-ledger-bench"
 bin=""
 disclosure=""
+skills=""
 assembly=""
 config_file=""
 
@@ -53,6 +57,7 @@ while [[ $# -gt 0 ]]; do
         --out) out="$2"; shift 2 ;;
         --bin) bin="$2"; shift 2 ;;
         --tool-disclosure) disclosure="$2"; shift 2 ;;
+        --skill-disclosure) skills="$2"; shift 2 ;;
         --context-assembly) assembly="$2"; shift 2 ;;
         --config) config_file="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
         -h|--help) sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -135,6 +140,7 @@ run_scenario() {
     case "${name}" in catalog*) bash "${here}/catalog_fixture.sh" "${work}" ;; esac
     (cd "${work}" && "${bin}" --headless --model mock --token-ledger \
         ${disclosure:+--tool-disclosure "${disclosure}"} \
+        ${skills:+--skill-disclosure "${skills}"} \
         ${assembly:+--context-assembly "${assembly}"} \
         ${config_file:+--config "${config_file}"} \
         --output-trace "${out}/${name}.trajectory.json" "$@" \
@@ -152,9 +158,9 @@ run_scenario catalog_skill /dev/null "ledger-bench catalog skill"
 make_history "${out}/long_history.conversation.md" 60
 run_scenario long_history "${out}/long_history.conversation.md"
 
-python3 - "${out}" "${commit}" "${dirty}" "${bin}" "${disclosure:-default}" "${assembly:-default}" <<'PY'
+python3 - "${out}" "${commit}" "${dirty}" "${bin}" "${disclosure:-default}" "${assembly:-default}" "${skills:-default}" <<'PY'
 import json, sys, pathlib
-out, commit, dirty, binary, disclosure, assembly = sys.argv[1:7]
+out, commit, dirty, binary, disclosure, assembly, skills = sys.argv[1:8]
 out = pathlib.Path(out)
 scenarios = {}
 for path in sorted(out.glob("*.summary.json")):
@@ -165,6 +171,7 @@ report = {
     "binary": binary,
     "provider": "mock",
     "tool_disclosure": disclosure,
+    "skill_disclosure": skills,
     "context_assembly": assembly,
     "scenarios": scenarios,
 }
@@ -172,6 +179,7 @@ report = {
 lines = [
     f"sven commit: {commit}" + (" (working tree had uncommitted changes)" if dirty == "true" else ""),
     f"tool disclosure: {disclosure}",
+    f"skill disclosure: {skills}",
     f"context assembly: {assembly}",
     "provider: mock (its usage numbers are synthetic, so reported/residual are in the JSON but not compared here)",
     "",

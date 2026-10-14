@@ -25,6 +25,7 @@ mod tool_slots;
 pub mod prompts;
 pub mod reconstruct;
 mod runtime_context;
+pub mod skill_index;
 mod stall;
 pub mod stream_turn;
 

@@ -53,6 +53,17 @@ if [[ -n "${SVEN_E2E_CONTEXT_ASSEMBLY:-}" ]]; then
     BIN="${_wrapper}"
 fi
 
+# SVEN_E2E_SKILL_DISCLOSURE=full|deferred (set by
+# `make test/e2e/basic/skills-deferred`) runs every invocation under
+# `--skill-disclosure MODE`; the same kind of harness switch as above.
+if [[ -n "${SVEN_E2E_SKILL_DISCLOSURE:-}" ]]; then
+    _wrapper="${BATS_RUN_TMPDIR:-${TMPDIR:-/tmp}}/sven-skills-${SVEN_E2E_SKILL_DISCLOSURE}"
+    printf '#!/usr/bin/env bash\nexec "%s" --skill-disclosure "%s" "$@"\n' \
+        "${BIN}" "${SVEN_E2E_SKILL_DISCLOSURE}" >"${_wrapper}"
+    chmod +x "${_wrapper}"
+    BIN="${_wrapper}"
+fi
+
 export BIN
 
 # ── Fixture paths ─────────────────────────────────────────────────────────────

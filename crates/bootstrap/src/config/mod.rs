@@ -22,6 +22,7 @@
 mod agent;
 mod context;
 mod disclosure;
+mod skills;
 mod tools;
 
 use std::path::Path;
@@ -35,6 +36,7 @@ use sven_model_drivers::{providers_schema, ModelConfig, Providers};
 pub use agent::AgentConfig;
 pub use context::{AssemblyConfig, AssemblyMode, ContextSettings};
 pub use disclosure::DisclosureConfig;
+pub use skills::SkillsConfig;
 pub use tools::ToolsConfig;
 
 /// Everything a session is configured by.
@@ -71,6 +73,9 @@ pub struct Config {
     /// How the context of a request is assembled from the conversation. See
     /// `docs/technical/context-assembly.md`.
     pub context: ContextSettings,
+    /// How much of each skill the system prompt carries. See
+    /// `docs/technical/instruction-disclosure.md`.
+    pub skills: SkillsConfig,
 }
 
 impl Config {
@@ -85,6 +90,7 @@ impl Config {
             ("mcp_servers", mcp_servers_schema()),
             ("decision", DecisionConfig::schema()),
             ("context", ContextSettings::schema()),
+            ("skills", SkillsConfig::schema()),
         ])
     }
 
@@ -161,6 +167,16 @@ mod tests {
 
     fn document(yaml: &str) -> ConfigDocument {
         ConfigDocument::from_yaml(yaml).unwrap()
+    }
+
+    #[test]
+    fn skills_are_listed_in_full_unless_the_file_defers_them() {
+        use sven_turn::instructions::SkillDisclosure;
+        assert_eq!(Config::default().skills.disclosure, SkillDisclosure::Full);
+        let deferred = Config::from_document(&document("skills: {disclosure: deferred}\n"));
+        assert_eq!(deferred.skills.disclosure, SkillDisclosure::Deferred);
+        let silent = Config::from_document(&document("agent: {max_tool_rounds: 7}\n"));
+        assert_eq!(silent.skills.disclosure, SkillDisclosure::Full);
     }
 
     #[test]

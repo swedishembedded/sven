@@ -7,12 +7,17 @@ with sven: the [token ledger](token-ledger.md#the-instruction-catalog) measures
 paid again by every request of every session whether or not the task touches
 any of them.
 
-**Activation** keeps a request from paying for instructions it does not need,
-without ever withholding one it does: an instruction may state when it
-applies. Until then it is not in the system prompt; once it applies, a short
-announcement rides with every request.
+Two mechanisms keep a request from paying for instructions it does not need,
+without ever withholding one it does:
 
-Activation grants nothing. Disclosure decides what the model is *told about*; a
+- **Activation**: an instruction may state when it applies. Until then it is
+  not in the system prompt; once it applies, a short announcement rides with
+  every request.
+- **Progressive disclosure of skills**
+  ([below](#progressive-disclosure-of-skills)): the system prompt lists a
+  compact index and the `skill` tool loads and searches the rest.
+
+Neither grants anything. Disclosure decides what the model is *told about*; a
 skill still loads by its exact command, a subagent is still delegated to
 through `task`, and every tool call is gated exactly as before. The text of an
 instruction file is untrusted evidence and cannot widen a permission.
@@ -106,3 +111,62 @@ disclosure mode:
 - A skill with `sven.always: true`, even if it also has an `activation` block.
 - A skill the user requests explicitly (a slash command), whose text is placed
   in the conversation and is not subject to any listing.
+
+## Progressive disclosure of skills
+
+`skills.disclosure` ([configuration](../05-configuration.md#skills)) or
+`--skill-disclosure` for one process:
+
+| mode | the system prompt lists |
+|------|-------------------------|
+| `full` | every skill's command, name and whole description in an `<available_skills>` block: the listing sven always sent |
+| `deferred` | one line per skill, `- <command>: <summary>`, the summary at most 80 characters with the boilerplate opening ("This skill should be used when") dropped |
+
+Above 50 skills the index gives a count per package instead of a line per skill
+(`- auth: 4`), so a project with hundreds of skills does not pay for hundreds
+of lines on every request; `skill` `list` (with a `regex`) and `skill` `search`
+are the live views either way.
+
+### One place for details: the `skill` tool
+
+There is no second discovery tool. The `skill` tool's actions:
+
+| action | arguments | result |
+|--------|-----------|--------|
+| `load` | `name` | the whole `SKILL.md` body, its base directory, bundled files and sub-skills |
+| `list` | optional `regex` | every skill the model may discover, one line each |
+| `search` | `query` | up to 8 skills, best first, each with its command and a summary of at most 160 characters |
+
+`search` ranks with the same `ToolRanker` as the `tools` tool: BM25 over the
+stemmed tokens of the command (counted three times) and the skill's whole
+description, which is where its trigger phrases live. It is a pure function of
+the query and the skills. With `decision.features.skill_selection` a decision
+model breaks BM25's ties exactly as it does for tools (see
+[decisions](decisions.md#skill-search-re-ranking)); in every other case the
+result is BM25's.
+
+### What is never deferred or hidden
+
+- A skill with `sven.always: true` keeps its full `<skill>` entry in the index.
+- A skill that is active (see [Activation](#activation)) is announced with every
+  request in the `## Active Instructions` block, whatever the mode.
+- Every skill loads by its exact command in either mode, activated or not,
+  listed or not: `load` never consults the index or the active set. A skill
+  marked `user_invocable_only` is left out of the model's index, `list` and
+  `search`, as it is from the full listing, and loads when its exact command is
+  named.
+- The project instructions file and explicitly requested skills, as under
+  [Pinned instructions](#pinned-instructions).
+
+## Measured
+
+`make benchmark/ledger SKILLS=deferred` on the 40-skill catalog fixture
+([token ledger](token-ledger.md#the-instruction-catalog)), estimated tokens of
+the `Skills` system section of one request:
+
+| `skills.disclosure` | `Skills` | request total |
+|---------------------|---------:|--------------:|
+| `full` | 4,001 | 9,082 |
+| `deferred` | 746 | 5,827 |
+
+The `skill` tool's definition grows by the `search` action, about 9 tokens.

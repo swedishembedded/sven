@@ -213,6 +213,19 @@ questions: a choice of at most 8 options, routine impact, a wrong answer costs
 little either way, winner probability at least 0.55 and a lead of at least 0.15,
 fall back to the legacy behaviour.
 
+## Skill search re-ranking
+
+The second decision point is the same mechanism pointed at skills. Under
+`skills.disclosure: deferred` the `skill` tool's `search` ranks the skills a
+session can load with BM25 over each skill's command and whole description; with
+`decision.enabled` and `decision.features.skill_selection` the same
+`DecisionRanker` lets the model break ties, labelled `skill_selection` (and
+`skill_selection.category`) in the traces instead of `tool_routing`. The
+pool, the 8-option cap, the two option orders in one batched call, the policy
+thresholds, abstention and failure (BM25's ranking exactly) and shadow mode are
+the tool search's. `RoutingPoint` in `bootstrap/src/decision_ranker.rs` is the
+one place a decision point declares its labels and flag.
+
 ## Tracing
 
 Every decision is accounted for. The session's `DecisionTelemetry` collects,

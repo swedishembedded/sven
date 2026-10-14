@@ -44,7 +44,7 @@ pub mod ui_test_dispatch;
 
 pub use config::{
     AgentConfig, AssemblyConfig, AssemblyMode, Config, ContextSettings, DisclosureConfig,
-    ToolsConfig,
+    SkillsConfig, ToolsConfig,
 };
 pub use context::{BuiltinTools, Questions, RuntimeContext, ToolSetProfile};
 pub use context_query::{
@@ -66,6 +66,7 @@ pub use sven_mcp_client::McpManager;
 pub use sven_tool_registry::Disclosure;
 /// What a session's `ask_question` tool sends a surface that answers it.
 pub use sven_tools_agent::{Question, QuestionRequest};
+pub use sven_turn::instructions::SkillDisclosure;
 pub use task_tool::{ChildApprover, TaskTool};
 #[cfg(feature = "android")]
 pub use ui_test_dispatch::{
