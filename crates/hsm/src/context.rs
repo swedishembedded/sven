@@ -145,9 +145,20 @@ pub struct Context {
     /// The set only grows and never reorders: a provider reuses its cached
     /// prefix only while the tool list it saw is a prefix of the new one.
     /// Grown by [`crate::event::Event::ToolsActivated`]; copied onto every model request a
-    /// machine emits (see [`Context::stamp_active_tools`]).
+    /// machine emits (see [`Context::stamp_request`]).
     #[serde(default)]
     pub active_tools: Vec<String>,
+    /// Ids of the skills, subagents and knowledge documents whose activation
+    /// condition has held, in the order they were activated.
+    ///
+    /// Session state like [`Context::active_tools`]: a snapshot restores it, a
+    /// replay rebuilds it, and it only grows, so an instruction stays listed
+    /// while its condition holds even when the context is rebuilt. Grown by
+    /// [`crate::event::Event::InstructionsActivated`]; copied onto every model
+    /// request a machine emits (see [`Context::stamp_request`]). The kernel
+    /// stores opaque ids and never interprets them.
+    #[serde(default)]
+    pub active_instructions: Vec<String>,
     /// Append-only audit trail of every dispatch (the event-sourcing spine).
     pub audit: Vec<AuditRecord>,
     /// Per-tool-call audit records (start, denied, approval-required, result).
@@ -257,11 +268,26 @@ impl Context {
         self.active_tools.len() - before
     }
 
-    /// Copies [`Context::active_tools`] onto `effect` when it is a model
-    /// turn request, so whoever executes the request knows which deferred
-    /// tools to offer without reaching into the context. Any other effect is
-    /// left as it is.
-    pub fn stamp_active_tools(&self, effect: &mut Effect) {
+    /// Adds `ids` to [`Context::active_instructions`], after the ones already
+    /// there. An id already present keeps its place. Returns how many were
+    /// new.
+    pub fn activate_instructions(&mut self, ids: &[String]) -> usize {
+        let before = self.active_instructions.len();
+        for id in ids {
+            if !self.active_instructions.contains(id) {
+                self.active_instructions.push(id.clone());
+            }
+        }
+        self.active_instructions.len() - before
+    }
+
+    /// Copies the session state a model request depends on onto `effect`
+    /// when it is a model turn request: the loaded tools
+    /// ([`Context::active_tools`]), the active instructions
+    /// ([`Context::active_instructions`]) and the label of the `state` the
+    /// request was emitted in, so whoever executes the request does not reach
+    /// into the context. Any other effect is left as it is.
+    pub fn stamp_request(&self, effect: &mut Effect, state: &str) {
         let Effect::CallLlm { request } = effect else {
             return;
         };
@@ -273,6 +299,11 @@ impl Context {
                 sven_vocab::turn::ACTIVE_TOOLS_KEY.to_string(),
                 Value::from(self.active_tools.clone()),
             );
+            object.insert(
+                sven_vocab::turn::ACTIVE_INSTRUCTIONS_KEY.to_string(),
+                Value::from(self.active_instructions.clone()),
+            );
+            object.insert(sven_vocab::turn::STATE_KEY.to_string(), Value::from(state));
         }
     }
 

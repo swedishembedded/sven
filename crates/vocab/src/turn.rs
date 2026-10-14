@@ -15,6 +15,14 @@ pub const TURN_KIND: &str = "turn";
 /// serialised name of [`TurnRequest::active_tools`].
 pub const ACTIVE_TOOLS_KEY: &str = "active_tools";
 
+/// The key under which a turn request carries the session's active
+/// instructions; the serialised name of [`TurnRequest::active_instructions`].
+pub const ACTIVE_INSTRUCTIONS_KEY: &str = "active_instructions";
+
+/// The key under which a turn request carries the label of the state it was
+/// emitted in; the serialised name of [`TurnRequest::state`].
+pub const STATE_KEY: &str = "state";
+
 /// A request for the HSM to run a **single streaming turn**: stream the model
 /// against a conversation thread, collect proposed tool calls, and post
 /// `sven_hsm::Event::LlmTurnComplete` back to the machine.
@@ -59,6 +67,18 @@ pub struct TurnRequest {
     /// Meaningful only when tools are disclosed on demand.
     #[serde(default)]
     pub active_tools: Vec<String>,
+    /// Ids of the skills, subagents and knowledge documents the session has
+    /// activated, in activation order.
+    ///
+    /// Not set by machines: the kernel copies `Context::active_instructions`
+    /// onto every turn request, like [`Self::active_tools`].
+    #[serde(default)]
+    pub active_instructions: Vec<String>,
+    /// The label of the machine state the request was emitted in. Not set by
+    /// machines: the kernel stamps it, so an executor can evaluate which
+    /// instructions wait for that state.
+    #[serde(default)]
+    pub state: String,
     /// Optional JSON Schema for structured output (name under `schema_name`).
     #[serde(default)]
     pub schema: Value,

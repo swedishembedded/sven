@@ -195,6 +195,8 @@ fn agent_request(
         tools,
         all_tools_mode: if all_tools { AGENT_MODE } else { "" }.to_string(),
         active_tools: Vec::new(),
+        active_instructions: Vec::new(),
+        state: String::new(),
         schema: Value::Null,
         schema_name: String::new(),
         model: None,

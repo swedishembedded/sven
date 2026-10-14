@@ -147,6 +147,22 @@ pub enum Event {
         names: Vec<String>,
     },
 
+    /// Skills, subagents or knowledge documents whose activation condition
+    /// now holds: a file they cover was touched or named, or the session
+    /// reached a mode or state they wait for.
+    ///
+    /// Posted by an executor, which is the only place that can see files and
+    /// the catalog. The kernel applies it to
+    /// [`crate::Context::active_instructions`] ahead of the machine; a machine
+    /// has nothing to do for it. Recording it as an event is what lets a
+    /// replay rebuild the set. It grants nothing: an activated instruction is
+    /// only listed to the model, whose calls are gated as always.
+    InstructionsActivated {
+        /// The instruction ids to add (`skill:<command>`, `agent:<name>`,
+        /// `knowledge:<file stem>`). Ids already active are ignored.
+        ids: Vec<String>,
+    },
+
     /// The permission gate requires approval before a tool call can proceed.
     ///
     /// Emitted by `run_effects` when a `CallTool` effect classifies as
@@ -344,6 +360,7 @@ impl Event {
             Event::ToolSucceeded { .. } => EventKind::ToolSucceeded,
             Event::ToolFailed { .. } => EventKind::ToolFailed,
             Event::ToolsActivated { .. } => EventKind::ToolsActivated,
+            Event::InstructionsActivated { .. } => EventKind::InstructionsActivated,
             Event::ToolApprovalRequired { .. } => EventKind::ToolApprovalRequired,
             Event::HumanApproved { .. } => EventKind::HumanApproved,
             Event::HumanRejected { .. } => EventKind::HumanRejected,
@@ -396,6 +413,8 @@ pub enum EventKind {
     ToolFailed,
     /// See [`Event::ToolsActivated`].
     ToolsActivated,
+    /// See [`Event::InstructionsActivated`].
+    InstructionsActivated,
     /// See [`Event::ToolApprovalRequired`].
     ToolApprovalRequired,
     /// See [`Event::HumanApproved`].

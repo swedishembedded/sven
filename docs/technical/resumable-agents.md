@@ -84,4 +84,8 @@ tools the model has loaded under deferred tool disclosure are
 `Context::active_tools`: an ordered, append-only list that a snapshot restores
 and a replay of the recorded `Event::ToolsActivated` events rebuilds, so a
 resumed agent is offered the same tool definitions in the same order as the
-one that was suspended (see [tool-disclosure.md](tool-disclosure.md)).
+one that was suspended (see [tool-disclosure.md](tool-disclosure.md)). The
+skills, subagents and knowledge documents whose activation condition has held
+are `Context::active_instructions`, restored and rebuilt the same way from
+`Event::InstructionsActivated` (see
+[instruction-disclosure.md](instruction-disclosure.md)).

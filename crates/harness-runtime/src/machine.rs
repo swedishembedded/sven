@@ -204,6 +204,8 @@ impl HarnessMachine {
             tools: Vec::new(),
             all_tools_mode: String::new(),
             active_tools: Vec::new(),
+            active_instructions: Vec::new(),
+            state: String::new(),
             schema,
             schema_name: name,
             model: None,

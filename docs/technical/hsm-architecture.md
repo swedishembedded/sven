@@ -69,6 +69,7 @@ domain-agnostic.
 | `ToolSucceeded { call_id, observation }` | A kernel-dispatched tool call succeeded |
 | `ToolFailed { call_id, error }` | A kernel-dispatched tool call failed |
 | `ToolsActivated { names }` | A tool call loaded tools the model may now be offered in full; applied to `Context::active_tools` by `Hsm::dispatch`, ahead of the machine ([tool-disclosure.md](tool-disclosure.md)) |
+| `InstructionsActivated { ids }` | Skills, subagents or knowledge documents whose activation holds; applied to `Context::active_instructions` by `Hsm::dispatch`, ahead of the machine ([instruction-disclosure.md](instruction-disclosure.md)) |
 | `ToolApprovalRequired { call_id, capability, description }` | A tool call needs human approval before executing |
 | `HumanApproved { approval_id }` | A human approved a pending request |
 | `HumanRejected { approval_id }` | A human rejected a pending request |
