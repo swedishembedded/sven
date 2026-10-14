@@ -201,7 +201,7 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
 | `make test/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour); one `test/e2e/basic/<test>` per bats file |
 | `make test/crate/<package>`, `make build/crate/<package>` | One workspace package, on demand (`make test/crate` lists them) |
 | `make test/e2e/basic/deferred` | The same suite with `--tool-disclosure deferred` on every invocation |
-| `make test/e2e/basic/skills-deferred` | The same suite with `--skill-disclosure deferred` on every invocation |
+| `make test/e2e/basic/instructions-deferred` | The same suite with the skill, subagent and knowledge listings deferred on every invocation |
 | `make test/formal` | TLA+ models of the HSM kernel (needs a JRE; see `formal/README.md`) |
 | `make docs` | Single-file user guide → `target/docs/sven-user-guide.md` |
 

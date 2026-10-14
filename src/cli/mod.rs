@@ -21,7 +21,7 @@ mod team;
 mod tool;
 
 pub use assembly::ContextAssemblyArg;
-pub use disclosure::DisclosureArg;
+pub use disclosure::DisclosureFlags;
 
 // `AcpCommands`/`McpCommands` live in `sven-acp`/`sven-mcp` themselves,
 // shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
@@ -114,34 +114,8 @@ pub struct Cli {
     #[arg(long, value_enum, default_value = "auto")]
     pub approval: ApprovalMode,
 
-    /// How much of each tool's definition every request carries, overriding
-    /// `tools.disclosure.mode` of the configuration file for this process.
-    ///
-    /// `full` sends every tool's definition. `deferred` sends the core tools'
-    /// and the ones the model has loaded, and describes the rest in a line each:
-    /// the model loads one through the `tools` tool before calling it. A `task`
-    /// sub-agent runs as its own process and reads the configuration file.
-    #[arg(
-        long,
-        value_enum,
-        value_name = "MODE",
-        overrides_with = "tool_disclosure"
-    )]
-    pub tool_disclosure: Option<DisclosureArg>,
-
-    /// How much of each skill the system prompt carries, overriding
-    /// `skills.disclosure` of the configuration file for this process.
-    ///
-    /// `full` lists every skill's name and description. `deferred` lists a
-    /// command and a short summary per skill; the description and the body
-    /// load through the `skill` tool, which also searches the skills.
-    #[arg(
-        long,
-        value_enum,
-        value_name = "MODE",
-        overrides_with = "skill_disclosure"
-    )]
-    pub skill_disclosure: Option<DisclosureArg>,
+    #[command(flatten)]
+    pub disclosure: DisclosureFlags,
 
     /// How the context of a request is assembled from the conversation,
     /// overriding `context.assembly.mode` of the configuration file for this

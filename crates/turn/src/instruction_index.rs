@@ -6,7 +6,8 @@
 // catalog of an LLM coding agent from taxing every request for its clients.
 // If your team needs expertise in agent context budgets then you can procure
 // our services by sending an email to info@swedishembedded.com.
-//! The compact skill index of deferred skill disclosure.
+//! The compact indexes of deferred disclosure: skills, subagents and
+//! knowledge documents.
 //!
 //! Each skill is one line, its command and a summary of at most
 //! [`SUMMARY_CHARS`](crate::instructions::SUMMARY_CHARS) characters. Above
@@ -18,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use sven_workspace::SkillInfo;
+use sven_workspace::{AgentInfo, KnowledgeInfo, SkillInfo};
 
 use crate::instructions::{summary, SUMMARY_CHARS};
 
@@ -29,6 +30,8 @@ pub const INDEX_LINE_LIMIT: usize = 50;
 const BOILERPLATE: &[&str] = &[
     "this skill should be used when ",
     "use this skill when ",
+    "use this subagent when ",
+    "use this agent when ",
     "use when ",
 ];
 
@@ -103,5 +106,74 @@ pub fn build_skills_index(skills: &[SkillInfo]) -> String {
          not load a skill unless it clearly applies.\n\n\
          <available_skills>\n{}\n</available_skills>",
         lines.join("\n")
+    )
+}
+
+/// The `## Subagents` section: a name and a summary per subagent, a count above
+/// [`INDEX_LINE_LIMIT`]. `agents` are the ones the system prompt lists.
+#[must_use]
+pub fn build_agents_index(agents: &[AgentInfo]) -> String {
+    if agents.is_empty() {
+        return String::new();
+    }
+    let body = if agents.len() > INDEX_LINE_LIMIT {
+        format!(
+            "{} subagents; `action: \"agents\"` lists them.",
+            agents.len()
+        )
+    } else {
+        agents
+            .iter()
+            .map(|a| {
+                let readonly = if a.readonly { " (readonly)" } else { "" };
+                format!("- {}{readonly}: {}", a.name, short(&a.description))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "## Subagents\n\n\
+         The following subagents are available for delegation. Delegate with the `task` \
+         tool, passing the subagent's name as `mode`; when the user's task clearly matches \
+         one, suggest it as a slash command (e.g. `/verifier confirm the auth flow`). \
+         The index gives a short summary of each; `task` with `action: \"agents\"` returns \
+         the full descriptions.\n\n\
+         <available_agents>\n{body}\n</available_agents>"
+    )
+}
+
+/// The `## Knowledge Base` section: a subsystem and the files it covers per
+/// document, a count above [`INDEX_LINE_LIMIT`]. `knowledge` are the documents
+/// the system prompt lists.
+#[must_use]
+pub fn build_knowledge_index(knowledge: &[KnowledgeInfo]) -> String {
+    if knowledge.is_empty() {
+        return String::new();
+    }
+    let body = if knowledge.len() > INDEX_LINE_LIMIT {
+        format!(
+            "{} documents; `search_knowledge \"<topic>\"` finds the ones for a topic and \
+             `list_knowledge` shows all.",
+            knowledge.len()
+        )
+    } else {
+        knowledge
+            .iter()
+            .map(|k| {
+                if k.files.is_empty() {
+                    format!("- {}", k.subsystem)
+                } else {
+                    format!("- {} ({})", k.subsystem, k.files.join(", "))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "## Knowledge Base\n\n\
+         Project knowledge documents are available for these subsystems, with the files \
+         each covers. Use `search_knowledge \"<topic>\"` to find relevant specs before \
+         modifying a subsystem, or `list_knowledge` to see all documents.\n\n\
+         <knowledge_base>\n{body}\n</knowledge_base>"
     )
 }

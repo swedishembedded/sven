@@ -13,9 +13,9 @@ without ever withholding one it does:
 - **Activation**: an instruction may state when it applies. Until then it is
   not in the system prompt; once it applies, a short announcement rides with
   every request.
-- **Progressive disclosure of skills**
-  ([below](#progressive-disclosure-of-skills)): the system prompt lists a
-  compact index and the `skill` tool loads and searches the rest.
+- **Progressive disclosure** ([below](#progressive-disclosure-of-skills)): the
+  system prompt lists a compact index of the skills, the subagents and the
+  knowledge documents, and the tool that serves each catalog returns the rest.
 
 Neither grants anything. Disclosure decides what the model is *told about*; a
 skill still loads by its exact command, a subagent is still delegated to
@@ -115,7 +115,8 @@ disclosure mode:
 ## Progressive disclosure of skills
 
 `skills.disclosure` ([configuration](../05-configuration.md#skills)) or
-`--skill-disclosure` for one process:
+`--skill-disclosure` for one process (the subagent and knowledge listings have
+[their own](#subagents-and-knowledge-documents)):
 
 | mode | the system prompt lists |
 |------|-------------------------|
@@ -158,15 +159,42 @@ result is BM25's.
 - The project instructions file and explicitly requested skills, as under
   [Pinned instructions](#pinned-instructions).
 
+## Subagents and knowledge documents
+
+The same switch, per listing: `subagents.disclosure` and `knowledge.disclosure`
+(`--subagent-disclosure`, `--knowledge-disclosure`), `full` by default.
+
+- **Subagents.** `deferred` lists `- <name> (readonly): <summary>`, the summary
+  at most 80 characters, and says to delegate with `task` and the name as
+  `mode`. `task` with `action: "agents"` returns every subagent with its whole
+  description, its model and whether it is read-only. The `mode` enum of the
+  `task` tool already names every subagent, so delegating never depends on the
+  index.
+- **Knowledge documents.** `deferred` lists `- <subsystem> (<files it covers>)`
+  and drops the `updated` date, which only the drift check uses. The
+  `search_knowledge` and `list_knowledge` actions of the `memory` tool return
+  the documents themselves, as they always did.
+
+Both give a count instead of lines above 50 entries. A subagent or document
+with a conditional `sven.activation` is left out of both modes and announced
+when it applies.
+
 ## Measured
 
-`make benchmark/ledger SKILLS=deferred` on the 40-skill catalog fixture
-([token ledger](token-ledger.md#the-instruction-catalog)), estimated tokens of
-the `Skills` system section of one request:
+`make benchmark/ledger INSTRUCTIONS=deferred` on the catalog fixture (40
+skills, 12 subagents, 30 knowledge documents; see the
+[token ledger](token-ledger.md#the-instruction-catalog)), estimated tokens of
+each system section of one request:
 
-| `skills.disclosure` | `Skills` | request total |
-|---------------------|---------:|--------------:|
-| `full` | 4,001 | 9,082 |
-| `deferred` | 746 | 5,827 |
+| section | `full` | `deferred` |
+|---------|-------:|-----------:|
+| `Skills` | 4,001 | 746 |
+| `Subagents` | 920 | 381 |
+| `Knowledge Base` | 962 | 488 |
+| the three listings | 5,883 | 1,615 |
+| `Project Instructions` | 36 | 35 |
+| request total | 9,082 | 4,814 |
 
-The `skill` tool's definition grows by the `search` action, about 9 tokens.
+The `skill` tool's definition grows by the `search` action and the `task`
+tool's by `agents`, about 10 tokens each; the request total above includes
+them.

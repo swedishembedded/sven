@@ -8,7 +8,8 @@ use std::sync::Arc;
 use sven_vocab::AgentMode;
 use sven_workspace::{find_workspace_root, AgentInfo, KnowledgeInfo, SkillInfo};
 
-use crate::instructions;
+use crate::instruction_index;
+use crate::instructions::{self, ListingDisclosure};
 
 /// All optional contextual blocks that can be injected into the system prompt.
 #[derive(Debug)]
@@ -53,8 +54,9 @@ pub struct PromptContext<'a> {
     /// list are loaded, and which exist. `None` when every tool is in the
     /// list. Fixed for the session, so part of the stable prefix.
     pub tool_index: Option<&'a str>,
-    /// How much of each skill's metadata the Skills section carries.
-    pub skill_disclosure: instructions::SkillDisclosure,
+    /// How much of each catalog entry the Skills, Subagents and Knowledge Base
+    /// sections carry.
+    pub disclosure: instructions::InstructionDisclosure,
 }
 
 impl<'a> Default for PromptContext<'a> {
@@ -70,7 +72,7 @@ impl<'a> Default for PromptContext<'a> {
             knowledge: Arc::from(Vec::<KnowledgeInfo>::new()),
             knowledge_drift_note: None,
             tool_index: None,
-            skill_disclosure: instructions::SkillDisclosure::Full,
+            disclosure: instructions::InstructionDisclosure::default(),
         }
     }
 }
@@ -94,7 +96,7 @@ impl<'a> PromptContext<'a> {
             knowledge: self.knowledge.clone(),
             knowledge_drift_note: self.knowledge_drift_note,
             tool_index: self.tool_index,
-            skill_disclosure: self.skill_disclosure,
+            disclosure: self.disclosure,
         }
     }
 
@@ -683,11 +685,9 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
     // what a session touches.
     let skills_section = {
         let (listed, dormant) = unconditional(&ctx.skills, instructions::skill_is_unconditional);
-        let s = match ctx.skill_disclosure {
-            instructions::SkillDisclosure::Full => build_skills_section(&listed),
-            instructions::SkillDisclosure::Deferred => {
-                crate::skill_index::build_skills_index(&listed)
-            }
+        let s = match ctx.disclosure.skills {
+            ListingDisclosure::Full => build_skills_section(&listed),
+            ListingDisclosure::Deferred => instruction_index::build_skills_index(&listed),
         };
         with_dormant_note(s, "Skills", "skill", dormant)
     };
@@ -695,7 +695,10 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
     // Agents - stable, injected after skills.
     let agents_section = {
         let (listed, dormant) = unconditional(&ctx.agents, instructions::agent_is_unconditional);
-        let s = build_agents_section(&listed);
+        let s = match ctx.disclosure.subagents {
+            ListingDisclosure::Full => build_agents_section(&listed),
+            ListingDisclosure::Deferred => instruction_index::build_agents_index(&listed),
+        };
         with_dormant_note(s, "Subagents", "subagent", dormant)
     };
 
@@ -703,7 +706,10 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
     let knowledge_section = {
         let (listed, dormant) =
             unconditional(&ctx.knowledge, instructions::knowledge_is_unconditional);
-        let s = build_knowledge_section(&listed);
+        let s = match ctx.disclosure.knowledge {
+            ListingDisclosure::Full => build_knowledge_section(&listed),
+            ListingDisclosure::Deferred => instruction_index::build_knowledge_index(&listed),
+        };
         with_dormant_note(s, "Knowledge Base", "knowledge document", dormant)
     };
 

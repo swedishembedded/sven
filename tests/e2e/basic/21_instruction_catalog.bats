@@ -59,22 +59,36 @@ teardown() {
     [[ "${ledger}" =~ \"Project\ Instructions\":[1-9][0-9]* ]]
 }
 
-skills_tokens() {
-    grep '^\[sven:ledger\] ' <<<"${STDERR_OUT}" | head -1 | sed -E 's/.*"Skills":([0-9]+).*/\1/'
+section_tokens() {
+    grep '^\[sven:ledger\] ' <<<"${STDERR_OUT}" | head -1 \
+        | sed -E "s/.*\"$1\":([0-9]+).*/\1/"
 }
 
 @test "21.04 --skill-disclosure deferred charges a fraction of the full skill listing" {
     bash "${FIXTURE_SCRIPT}" "${WORK}/project"
     cd "${WORK}/project"
     run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger --skill-disclosure full'
-    full="$(skills_tokens)"
+    full="$(section_tokens Skills)"
     run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger --skill-disclosure deferred'
-    deferred="$(skills_tokens)"
+    deferred="$(section_tokens Skills)"
     [[ "${full}" -gt 0 && "${deferred}" -gt 0 ]]
     [[ $((deferred * 3)) -lt "${full}" ]]
 }
 
-@test "21.05 a skill the index only summarises still loads by its command" {
+@test "21.05 --subagent-disclosure and --knowledge-disclosure shrink their own listings only" {
+    bash "${FIXTURE_SCRIPT}" "${WORK}/project"
+    cd "${WORK}/project"
+    run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger'
+    full_agents="$(section_tokens Subagents)"
+    full_knowledge="$(section_tokens 'Knowledge Base')"
+    full_skills="$(section_tokens Skills)"
+    run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger --subagent-disclosure deferred --knowledge-disclosure deferred'
+    [[ "$(section_tokens Subagents)" -lt $((full_agents / 2)) ]]
+    [[ "$(section_tokens 'Knowledge Base')" -lt "${full_knowledge}" ]]
+    [[ "$(section_tokens Skills)" -eq "${full_skills}" ]]
+}
+
+@test "21.06 a skill the index only summarises still loads by its command" {
     bash "${FIXTURE_SCRIPT}" "${WORK}/project"
     cd "${WORK}/project"
     export SVEN_MOCK_RESPONSES="${_REPO_ROOT}/benchmarks/ledger/mock_responses.yaml"
@@ -83,7 +97,7 @@ skills_tokens() {
     [[ "${STDERR_OUT}" == *'name="skill" success=true'* ]] || [[ "${STDERR_OUT}" == *'[sven:tool:result] id="tc-catalog-skill" name="skill" success=true'* ]]
 }
 
-@test "21.06 an unknown --skill-disclosure mode is refused" {
+@test "21.07 an unknown --skill-disclosure mode is refused" {
     run "${BIN}" --headless --model mock --skill-disclosure sometimes "ping"
     [[ "${status}" -ne 0 ]]
     [[ "${output}" == *"skill-disclosure"* ]]

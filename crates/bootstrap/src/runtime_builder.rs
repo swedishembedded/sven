@@ -535,7 +535,7 @@ impl RuntimeBuilder {
         runtime.system_prompt_override = self.runtime_ctx.system_prompt_override;
         runtime.no_system = self.runtime_ctx.no_system;
         runtime.no_tools = self.runtime_ctx.no_tools;
-        runtime.skill_disclosure = self.config.skills.disclosure;
+        runtime.disclosure = self.config.instruction_disclosure();
 
         let todos = Arc::new(tokio::sync::Mutex::new(Vec::<
             sven_tool_api::events::TodoItem,

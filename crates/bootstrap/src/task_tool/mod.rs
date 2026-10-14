@@ -93,10 +93,11 @@ use sven_tool_api::{
     tool::{Tool, ToolCall, ToolOutput},
     PathScope, PermissionRequester,
 };
-use sven_tools_fs::{BufGrepTool, BufReadTool, BufStatusTool, BufferSource, OutputBufferStore};
+use sven_tools_fs::{BufferSource, OutputBufferStore};
 use sven_vocab::{AgentMode, ApprovalMode};
 use sven_workspace::{AgentInfo, SharedAgents};
 
+mod inspect;
 mod report;
 mod session;
 mod updates;
@@ -421,7 +422,8 @@ impl Tool for TaskTool {
     fn description(&self) -> &str {
         "Run a focused sub-agent to completion and return its final answer (action=spawn,\n\
          the default; 'prompt' required), or inspect a finished one's output\n\
-         (action=status|read|grep; 'handle' required).\n\
+         (action=status|read|grep; 'handle' required), or list the discovered subagents\n\
+         with their descriptions (action=agents).\n\
          Spawning blocks until the sub-agent finishes; issue several calls to run several\n\
          at once. 'mode' is research, plan, agent or the name of a discovered subagent\n\
          persona, whose instructions become the sub-agent's system prompt and whose\n\
@@ -441,8 +443,8 @@ impl Tool for TaskTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["spawn", "status", "read", "grep"],
-                    "description": "spawn (default), or inspect a buffer"
+                    "enum": ["spawn", "status", "read", "grep", "agents"],
+                    "description": "spawn (default), inspect a buffer, or list the subagents"
                 },
                 "prompt": {
                     "type": "string",
@@ -519,116 +521,9 @@ impl Tool for TaskTool {
             .and_then(|v| v.as_str())
             .unwrap_or("spawn");
 
-        // ── Buffer inspection actions ─────────────────────────────────────────
-        match action {
-            "status" => {
-                let handle = match call
-                    .args
-                    .get("handle")
-                    .and_then(|v| v.as_str())
-                    .filter(|h| !h.is_empty())
-                {
-                    Some(h) => h.to_string(),
-                    None => {
-                        return ToolOutput::err(
-                            &call.id,
-                            "missing required parameter 'handle' for action=status",
-                        )
-                    }
-                };
-                return BufStatusTool::new(self.buffer_store.clone())
-                    .execute(&ToolCall {
-                        id: call.id.clone(),
-                        name: "buf_status".into(),
-                        args: serde_json::json!({ "handle": handle }),
-                    })
-                    .await;
-            }
-            "read" => {
-                let handle = match call
-                    .args
-                    .get("handle")
-                    .and_then(|v| v.as_str())
-                    .filter(|h| !h.is_empty())
-                {
-                    Some(h) => h.to_string(),
-                    None => {
-                        return ToolOutput::err(
-                            &call.id,
-                            "missing required parameter 'handle' for action=read",
-                        )
-                    }
-                };
-                let start_line = call
-                    .args
-                    .get("start_line")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1);
-                let end_line = call
-                    .args
-                    .get("end_line")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(50);
-                return BufReadTool::new(self.buffer_store.clone())
-                    .execute(&ToolCall {
-                        id: call.id.clone(),
-                        name: "buf_read".into(),
-                        args: serde_json::json!({
-                            "handle": handle,
-                            "start_line": start_line,
-                            "end_line": end_line
-                        }),
-                    })
-                    .await;
-            }
-            "grep" => {
-                let handle = match call
-                    .args
-                    .get("handle")
-                    .and_then(|v| v.as_str())
-                    .filter(|h| !h.is_empty())
-                {
-                    Some(h) => h.to_string(),
-                    None => {
-                        return ToolOutput::err(
-                            &call.id,
-                            "missing required parameter 'handle' for action=grep",
-                        )
-                    }
-                };
-                let pattern = match call.args.get("pattern").and_then(|v| v.as_str()) {
-                    Some(p) => p.to_string(),
-                    None => {
-                        return ToolOutput::err(
-                            &call.id,
-                            "missing required parameter 'pattern' for action=grep",
-                        )
-                    }
-                };
-                let context_lines = call
-                    .args
-                    .get("context_lines")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(2);
-                let limit = call
-                    .args
-                    .get("limit")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(50);
-                return BufGrepTool::new(self.buffer_store.clone())
-                    .execute(&ToolCall {
-                        id: call.id.clone(),
-                        name: "buf_grep".into(),
-                        args: serde_json::json!({
-                            "handle": handle,
-                            "pattern": pattern,
-                            "context_lines": context_lines,
-                            "limit": limit
-                        }),
-                    })
-                    .await;
-            }
-            _ => {}
+        // ── Actions that do not spawn ─────────────────────────────────────────
+        if let Some(output) = self.inspect(action, call).await {
+            return output;
         }
 
         // ── Validate spawn inputs ─────────────────────────────────────────────
@@ -947,6 +842,37 @@ mod tests {
             name: "task".into(),
             args,
         }
+    }
+
+    #[tokio::test]
+    async fn the_agents_action_lists_every_persona_with_its_whole_description() {
+        let agents = SharedAgents::new(vec![
+            persona("code-reviewer", "body", true),
+            persona_with_model("fixer", Some("fast")),
+        ]);
+        let out = make_task_with_agents(agents)
+            .execute(&call(json!({"action": "agents"})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(
+            out.content.contains("code-reviewer persona") && out.content.contains("(readonly)"),
+            "{}",
+            out.content
+        );
+        assert!(
+            out.content.contains("fixer") && out.content.contains("model: fast"),
+            "{}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn the_agents_action_says_so_when_there_are_no_personas() {
+        let out = make_task()
+            .execute(&call(json!({"action": "agents"})))
+            .await;
+        assert!(!out.is_error);
+        assert!(out.content.contains("no subagents"), "{}", out.content);
     }
 
     #[test]

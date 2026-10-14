@@ -212,12 +212,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut settings = Settings::load(cli.config.as_deref())?;
-    if let Some(disclosure) = cli.tool_disclosure {
-        settings.runtime.tools.disclosure.mode = disclosure.into();
-    }
-    if let Some(disclosure) = cli.skill_disclosure {
-        settings.runtime.skills.disclosure = disclosure.into();
-    }
+    cli.disclosure.apply(&mut settings.runtime);
     if let Some(mode) = cli.context_assembly {
         settings.runtime.context.assembly.mode = mode.into();
     }

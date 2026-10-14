@@ -239,3 +239,8 @@ The three listings are 5,883 of 9,082 tokens, 65% of a request that has not yet
 said anything, and an empty project's `minimal` request is 3,163. The project
 instructions are not part of that cost: `AGENTS.md` is referenced by path, and
 the section is the same 36 tokens however long the file is.
+
+`make benchmark/ledger INSTRUCTIONS=deferred` measures the same project with
+the three listings reduced to an index each; the sections, the savings and what
+stays in full are in
+[instruction-disclosure.md](instruction-disclosure.md#measured).

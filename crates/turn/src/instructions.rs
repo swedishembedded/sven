@@ -30,16 +30,28 @@ use sven_workspace::{
     SharedSkills, SkillInfo,
 };
 
-/// How much of each skill's metadata the system prompt carries.
+/// How much of each entry of a catalog listing the system prompt carries.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum SkillDisclosure {
-    /// Every skill's name and description, as the listing always was.
+pub enum ListingDisclosure {
+    /// Every entry's whole metadata, as the listing always was.
     #[default]
     Full,
-    /// A compact index (command and a short summary); the description and the
-    /// body load through the `skill` tool.
+    /// A compact index (a name and a short summary); the details load on
+    /// demand through the tool that serves the catalog.
     Deferred,
+}
+
+/// The disclosure of each of the three catalog listings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InstructionDisclosure {
+    /// The `## Skills` section; details through the `skill` tool.
+    pub skills: ListingDisclosure,
+    /// The `## Subagents` section; details through `task` `action: "agents"`.
+    pub subagents: ListingDisclosure,
+    /// The `## Knowledge Base` section; details through `search_knowledge`
+    /// and `list_knowledge`.
+    pub knowledge: ListingDisclosure,
 }
 
 /// The longest summary of an instruction in a listing, in characters.

@@ -17,6 +17,7 @@ pub mod assembly;
 mod assembly_focus;
 mod assembly_supersede;
 mod compact;
+pub mod instruction_index;
 pub mod instructions;
 pub mod ledger;
 mod ledger_recorder;
@@ -26,7 +27,6 @@ mod tool_slots;
 pub mod prompts;
 pub mod reconstruct;
 mod runtime_context;
-pub mod skill_index;
 mod stall;
 pub mod stream_turn;
 

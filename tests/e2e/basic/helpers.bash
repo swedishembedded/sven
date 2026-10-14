@@ -53,13 +53,15 @@ if [[ -n "${SVEN_E2E_CONTEXT_ASSEMBLY:-}" ]]; then
     BIN="${_wrapper}"
 fi
 
-# SVEN_E2E_SKILL_DISCLOSURE=full|deferred (set by
-# `make test/e2e/basic/skills-deferred`) runs every invocation under
-# `--skill-disclosure MODE`; the same kind of harness switch as above.
-if [[ -n "${SVEN_E2E_SKILL_DISCLOSURE:-}" ]]; then
-    _wrapper="${BATS_RUN_TMPDIR:-${TMPDIR:-/tmp}}/sven-skills-${SVEN_E2E_SKILL_DISCLOSURE}"
-    printf '#!/usr/bin/env bash\nexec "%s" --skill-disclosure "%s" "$@"\n' \
-        "${BIN}" "${SVEN_E2E_SKILL_DISCLOSURE}" >"${_wrapper}"
+# SVEN_E2E_INSTRUCTION_DISCLOSURE=full|deferred (set by
+# `make test/e2e/basic/instructions-deferred`) runs every invocation with the
+# skill, subagent and knowledge listings under that mode; the same kind of
+# harness switch as above.
+if [[ -n "${SVEN_E2E_INSTRUCTION_DISCLOSURE:-}" ]]; then
+    _wrapper="${BATS_RUN_TMPDIR:-${TMPDIR:-/tmp}}/sven-instructions-${SVEN_E2E_INSTRUCTION_DISCLOSURE}"
+    printf '#!/usr/bin/env bash\nexec "%s" --skill-disclosure "%s" --subagent-disclosure "%s" --knowledge-disclosure "%s" "$@"\n' \
+        "${BIN}" "${SVEN_E2E_INSTRUCTION_DISCLOSURE}" "${SVEN_E2E_INSTRUCTION_DISCLOSURE}" \
+        "${SVEN_E2E_INSTRUCTION_DISCLOSURE}" >"${_wrapper}"
     chmod +x "${_wrapper}"
     BIN="${_wrapper}"
 fi

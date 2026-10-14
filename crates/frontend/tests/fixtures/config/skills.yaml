@@ -1,4 +1,0 @@
-# docs/05-configuration.md and docs/technical/instruction-disclosure.md:
-# a compact skill index in the system prompt, the rest through the skill tool.
-skills:
-  disclosure: deferred

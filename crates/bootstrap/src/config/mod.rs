@@ -22,7 +22,7 @@
 mod agent;
 mod context;
 mod disclosure;
-mod skills;
+mod listing;
 mod tools;
 
 use std::path::Path;
@@ -36,7 +36,7 @@ use sven_model_drivers::{providers_schema, ModelConfig, Providers};
 pub use agent::AgentConfig;
 pub use context::{AssemblyConfig, AssemblyMode, ContextSettings};
 pub use disclosure::DisclosureConfig;
-pub use skills::SkillsConfig;
+pub use listing::ListingConfig;
 pub use tools::ToolsConfig;
 
 /// Everything a session is configured by.
@@ -75,7 +75,11 @@ pub struct Config {
     pub context: ContextSettings,
     /// How much of each skill the system prompt carries. See
     /// `docs/technical/instruction-disclosure.md`.
-    pub skills: SkillsConfig,
+    pub skills: ListingConfig,
+    /// How much of each subagent the system prompt carries.
+    pub subagents: ListingConfig,
+    /// How much of each knowledge document the system prompt carries.
+    pub knowledge: ListingConfig,
 }
 
 impl Config {
@@ -90,7 +94,9 @@ impl Config {
             ("mcp_servers", mcp_servers_schema()),
             ("decision", DecisionConfig::schema()),
             ("context", ContextSettings::schema()),
-            ("skills", SkillsConfig::schema()),
+            ("skills", ListingConfig::schema()),
+            ("subagents", ListingConfig::schema()),
+            ("knowledge", ListingConfig::schema()),
         ])
     }
 
@@ -111,6 +117,17 @@ impl Config {
         let document = ConfigDocument::load(extra)?;
         document.warn_unknown_keys(&Self::schema().with("tui", Schema::value()));
         Ok(Self::from_document(&document))
+    }
+
+    /// How much of each skill, subagent and knowledge entry the system prompt
+    /// carries.
+    #[must_use]
+    pub fn instruction_disclosure(&self) -> sven_turn::instructions::InstructionDisclosure {
+        sven_turn::instructions::InstructionDisclosure {
+            skills: self.skills.disclosure,
+            subagents: self.subagents.disclosure,
+            knowledge: self.knowledge.disclosure,
+        }
     }
 
     /// The configuration `document` holds, settled ([`Self::settle`]).
@@ -170,13 +187,25 @@ mod tests {
     }
 
     #[test]
-    fn skills_are_listed_in_full_unless_the_file_defers_them() {
-        use sven_turn::instructions::SkillDisclosure;
-        assert_eq!(Config::default().skills.disclosure, SkillDisclosure::Full);
-        let deferred = Config::from_document(&document("skills: {disclosure: deferred}\n"));
-        assert_eq!(deferred.skills.disclosure, SkillDisclosure::Deferred);
+    fn catalogs_are_listed_in_full_unless_the_file_defers_them() {
+        use sven_turn::instructions::{InstructionDisclosure, ListingDisclosure::Deferred};
+        assert_eq!(
+            Config::default().instruction_disclosure(),
+            InstructionDisclosure::default()
+        );
+        let deferred = Config::from_document(&document(
+            "skills: {disclosure: deferred}\nknowledge: {disclosure: deferred}\n",
+        ));
+        assert_eq!(
+            deferred.instruction_disclosure(),
+            InstructionDisclosure {
+                skills: Deferred,
+                knowledge: Deferred,
+                ..InstructionDisclosure::default()
+            }
+        );
         let silent = Config::from_document(&document("agent: {max_tool_rounds: 7}\n"));
-        assert_eq!(silent.skills.disclosure, SkillDisclosure::Full);
+        assert_eq!(silent.instruction_disclosure(), InstructionDisclosure::default());
     }
 
     #[test]

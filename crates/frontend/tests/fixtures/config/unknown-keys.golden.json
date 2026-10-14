@@ -48,6 +48,9 @@
       "timeout_ms": 500,
       "warn_if_unavailable": true
     },
+    "knowledge": {
+      "disclosure": "full"
+    },
     "mcp_servers": {
       "s": {
         "enabled": true,
@@ -93,6 +96,9 @@
       }
     },
     "skills": {
+      "disclosure": "full"
+    },
+    "subagents": {
       "disclosure": "full"
     },
     "tools": {

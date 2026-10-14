@@ -706,24 +706,36 @@ approval rules. How it works, what it saves and what it costs:
 
 ---
 
-### `skills`
+### `skills`, `subagents` and `knowledge`
+
+Three sections of one shape, one per listing in the system prompt.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `disclosure` | `full` | `full` lists every skill's name and description in the system prompt. `deferred` lists a command and a summary of at most 80 characters per skill - package counts above 50 skills - and leaves the description and the body to the `skill` tool. |
+| `disclosure` | `full` | `full` lists every entry's whole metadata in the system prompt. `deferred` lists a short line per entry and leaves the details to the tool that serves the catalog. |
 
 ```yaml
 skills:
   disclosure: deferred
+subagents:
+  disclosure: deferred
+knowledge:
+  disclosure: deferred
 ```
 
-`--skill-disclosure full|deferred` sets the mode for one process and overrides
-the file. Under `deferred` the model loads a skill with `skill` `load`, finds
-one the index does not make obvious with `skill` `search` (ranked like tool
-search, and re-ranked by the decision model under
-`decision.features.skill_selection`) and lists them all with `skill` `list`. A
-skill with `sven.always: true` keeps its full entry; a skill's `sven.activation`
-block decides when it is listed at all. How it works and what it saves:
+| section | `deferred` lists | details through |
+|---------|------------------|-----------------|
+| `skills` | a command and a summary of at most 80 characters (package counts above 50 skills) | `skill` `load`, `list`, `search` |
+| `subagents` | a name, `(readonly)` and a summary of at most 80 characters (a count above 50) | `task` `action: "agents"` |
+| `knowledge` | a subsystem and the files it covers (a count above 50) | `search_knowledge`, `list_knowledge` |
+
+`--skill-disclosure`, `--subagent-disclosure` and `--knowledge-disclosure`
+`full|deferred` set a mode for one process and override the file. Under
+`deferred` skills the model finds one the index does not make obvious with
+`skill` `search` (ranked like tool search, and re-ranked by the decision model
+under `decision.features.skill_selection`). A skill with `sven.always: true`
+keeps its full entry; an instruction's `sven.activation` block decides when it
+is listed at all. How it works and what it saves:
 [docs/technical/instruction-disclosure.md](technical/instruction-disclosure.md).
 
 ---
