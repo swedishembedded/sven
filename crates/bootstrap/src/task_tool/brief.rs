@@ -191,6 +191,10 @@ pub(super) struct Briefed {
     /// The call named evidence or a deliverable, so the child was asked to end
     /// with a finding.
     pub(super) structured: bool,
+    /// The evidence chunks named, and the deliverable asked for: part of what
+    /// makes two subgoals the same.
+    pub(super) evidence: Vec<ChunkId>,
+    pub(super) deliverable: Option<String>,
 }
 
 /// The child's first request for `prompt` and the call's `args`: `prompt`
@@ -205,6 +209,8 @@ pub(super) fn briefed(
             prompt: prompt.to_string(),
             evidence_store: None,
             structured: false,
+            evidence: Vec::new(),
+            deliverable: None,
         });
     };
     let Some(session) = chunks else {
@@ -219,6 +225,8 @@ pub(super) fn briefed(
             prompt: compose(prompt, &brief, &[], &[]),
             evidence_store: None,
             structured: true,
+            evidence: Vec::new(),
+            deliverable: brief.deliverable,
         });
     };
     let gathered = gather(session, &brief)?;
@@ -230,6 +238,8 @@ pub(super) fn briefed(
         prompt: compose(prompt, &brief, &gathered.constraints, &gathered.evidence),
         evidence_store,
         structured: true,
+        evidence: brief.evidence,
+        deliverable: brief.deliverable,
     })
 }
 

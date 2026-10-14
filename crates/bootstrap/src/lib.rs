@@ -27,6 +27,7 @@ pub mod context_query;
 pub mod context_tool;
 mod context_wiring;
 pub mod decision_ranker;
+mod delegation_decision;
 mod evidence_share;
 mod instruction_wiring;
 pub mod kernel_bridge;

@@ -81,3 +81,42 @@ child's result ends with a `Cost:` line; `task` with `action: "ledger"` lists
 every child and the total. The child's own requests are still charged to the
 session through the existing token accounting; this account adds the per-child
 view and the saving, which is an estimate of context size, not of money.
+
+## Deduplication
+
+Before it launches a child, a `task` call registers a subgoal in the session's
+registry (`task_tool/subgoals.rs`, one per `TaskTool`, so per session): the
+normalized goal (lower case, single spaces, punctuation at word edges
+dropped) and deliverable, the mode, the declared scope (`paths`: files or
+globs, and the `evidence` ids) and whether the child may write (an `agent`
+child does; `research` and `plan` children and read-only personas do not).
+
+| relation | when | what happens |
+|----------|------|--------------|
+| same | both read-only, same mode, same normalized goal and deliverable, and the new scope contained in the registered one | the call is not launched |
+| near | as above, but the wording differs while at least half of the words are shared | the decision model is asked (below); anything but a confident "same" launches |
+| distinct | anything else, and any pair with a writer | launches |
+
+Containment is conservative: every new path must equal a registered path or
+match a registered glob, every evidence id must be registered, and a subgoal
+that declares no scope is contained only in one that declares none. An unknown
+scope is never assumed to lie inside a known one. Two writing subgoals are
+never merged, whatever they say and whatever the model would answer.
+
+A call whose twin is running waits for it and is told which handle holds the
+result. A call whose twin finished is given that result only when every
+declared path is a literal file whose size and modification time are what they
+were when the twin was launched; with a glob, or no declared files, only a
+running twin is joined. A twin that fails or is cancelled is never joined: the
+waiting call launches its own child. `task` with `action: "ledger"` counts the
+launches avoided.
+
+### The decision model
+
+`decision.features.delegation` lets a decision model break the tie of a near
+match (`delegation_decision.rs`, label `delegation.same_goal`). The policy is
+declared in that file: a `same`/`different` choice asked in both option orders,
+confidence 0.9, margin 0.7, a false positive costing high. It only advises
+toward launching less, only inside scopes the deterministic rules already
+required to be contained; an abstention, a disagreement between the orders, a
+failure or `decision.policy.mode: shadow` launches normally.

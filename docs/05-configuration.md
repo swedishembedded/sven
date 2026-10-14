@@ -877,7 +877,8 @@ does not accept changes nothing. How it works, the policy table and the wire:
 |-----|---------|-------------|
 | `tool_routing` | `true` | Re-ranks ambiguous `tools search` results. |
 | `skill_selection` | `true` | Re-ranks ambiguous `skill search` results. |
-| `context_selection`, `delegation`, `cache_routing` | `true` | Nothing yet: the flag is read, no decision point asks. |
+| `delegation` | `true` | Says whether two near-identical read-only `task` goals are one ([delegation](technical/delegation.md#deduplication)). |
+| `context_selection`, `cache_routing` | `true` | Nothing yet: the flag is read, no decision point asks. |
 | `model_routing`, `permission_advisory` | `false` | Nothing yet. A permission decision is advisory-only and never grants. |
 
 #### `decision.policy`

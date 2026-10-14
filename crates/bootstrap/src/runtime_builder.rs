@@ -544,8 +544,7 @@ impl RuntimeBuilder {
             sven_tools_fs::OutputBufferStore::new(),
         ));
 
-        // User/approval channels exist before the tools, so a `task`
-        // sub-agent's permission requests reach this session's own gate.
+        // Channels exist before the tools: a `task` sub-agent asks this session's gate.
         let (question_tx, question_rx) = mpsc::channel::<UserQuestion>(16);
         let (approval_tx, approval_rx) = mpsc::channel::<ApprovalRequest>(16);
         let root = self.runtime_ctx.project_root.as_deref();
@@ -555,12 +554,14 @@ impl RuntimeBuilder {
             self.kernel_snapshot.as_ref(),
             &mut self.context_facts,
         );
+        let decision_notices = tool_event_tx.clone();
         let integration_providers =
             IntegrationProviders::for_session(crate::registry::SessionIntegrations {
                 permission_requester: self.permission_requester.clone(),
                 approval_mode: self.approval_mode,
                 approval_tx: &approval_tx,
                 config: &self.config,
+                near_match: crate::delegation_decision::for_session(&decision, &decision_notices),
                 chunks: context.as_ref().map(ContextWiring::session),
             })
             .await;
@@ -582,7 +583,6 @@ impl RuntimeBuilder {
             model: model_cfg.clone(),
             ..(*self.config).clone()
         };
-        let decision_notices = tool_event_tx.clone();
         let mut tool_registry = match tool_profile {
             Some(profile) => build_tool_registry_with_integrations(
                 &registry_config,

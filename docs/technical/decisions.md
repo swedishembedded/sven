@@ -252,3 +252,15 @@ mock.push_result(DecisionResult::for_answers(
 ));
 mock.push_error(DecisionError::Timeout { deadline: Duration::from_millis(500) });
 ```
+
+## Delegation: near-identical subgoals
+
+`decision.features.delegation` gates one decision point, labelled
+`delegation.same_goal` in the traces: whether two read-only `task` goals that
+share most of their words ask for the same result
+([delegation.md](delegation.md#deduplication)). It is asked only after the
+deterministic rules found the declared scopes contained and the wording not
+identical; a writing subgoal never reaches it. The question has two options
+(`same`, `different`), is asked in both orders, and needs a confidence of 0.9
+and a margin of 0.7. Abstention, a disagreement between the orders, a failure
+and shadow mode all mean the subgoal launches.

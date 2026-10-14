@@ -97,14 +97,17 @@ use sven_tools_fs::{BufferSource, OutputBufferStore};
 use sven_vocab::{AgentMode, ApprovalMode};
 use sven_workspace::{AgentInfo, SharedAgents};
 
+mod admission;
 mod brief;
 mod finding;
 mod handback;
 mod inspect;
 mod report;
 mod session;
+mod subgoals;
 mod updates;
 use session::{run_acp_session, CancelGuard, SpawnArgs};
+pub(crate) use subgoals::NearMatch;
 
 /// Environment variable set when running as a subagent (depth 0).
 ///
@@ -206,6 +209,10 @@ pub struct TaskTool {
     chunks: Option<Arc<sven_executors::ChunkSession>>,
     /// What each finished sub-agent cost and what its result spared the parent.
     ledger: Arc<handback::ChildLedger>,
+    /// The subgoals handed out so far, to recognise a repeat.
+    subgoals: Arc<subgoals::SubgoalRegistry>,
+    /// Asked about a near-identical read-only goal; without one it launches.
+    near_match: Option<Arc<dyn NearMatch>>,
 }
 
 impl TaskTool {
@@ -232,7 +239,16 @@ impl TaskTool {
             command_patterns: None,
             chunks: None,
             ledger: Arc::default(),
+            subgoals: Arc::default(),
+            near_match: None,
         }
+    }
+
+    /// Lets `advisor` say whether two near-identical read-only goals are one.
+    #[must_use]
+    pub(crate) fn with_near_match(mut self, advisor: Option<Arc<dyn NearMatch>>) -> Self {
+        self.near_match = advisor;
+        self
     }
 
     /// Lets a call brief its sub-agent from the chunks of `session`'s store.
@@ -490,6 +506,11 @@ impl Tool for TaskTool {
                     "type": "string",
                     "description": "[spawn] The shape of the answer wanted"
                 },
+                "paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "[spawn] Files or globs the sub-agent works on; lets a repeat of a read-only subgoal be recognised"
+                },
                 "workdir": {
                     "type": "string",
                     "description": "[spawn] Working directory (default: cwd)"
@@ -573,6 +594,7 @@ impl Tool for TaskTool {
             Ok(brief) => brief,
             Err(e) => return ToolOutput::err(&call.id, e),
         };
+        let original_prompt = prompt;
         let prompt = brief.prompt;
 
         let requested_mode = call
@@ -628,6 +650,23 @@ impl Tool for TaskTool {
         if std::env::var(SUBAGENT_DEPTH_ENV).is_ok() {
             return ToolOutput::err(&call.id, "sub-agents cannot spawn further sub-agents");
         }
+
+        let leader = match self
+            .admit(&admission::Call {
+                id: &call.id,
+                args: &call.args,
+                scope: &session,
+                mode: &requested_mode,
+                acp_mode: &acp_mode,
+                prompt: &original_prompt,
+                deliverable: brief.deliverable.as_deref(),
+                evidence: &brief.evidence,
+            })
+            .await
+        {
+            Ok(leader) => leader,
+            Err(answer) => return answer,
+        };
 
         let exe = match std::env::current_exe() {
             Ok(p) => p,
@@ -725,9 +764,14 @@ impl Tool for TaskTool {
             let _ = result_tx.send(output);
         });
 
-        result_rx
+        let output = result_rx
             .await
-            .unwrap_or_else(|_| ToolOutput::err(&handle_id, "sub-agent thread died unexpectedly"))
+            .unwrap_or_else(|_| ToolOutput::err(&handle_id, "sub-agent thread died unexpectedly"));
+        leader.finish((!output.is_error).then(|| subgoals::Outcome {
+            handle: handle_id.clone(),
+            text: output.content.clone(),
+        }));
+        output
     }
 }
 
@@ -1013,6 +1057,46 @@ mod tests {
             let out = t.execute(&call(args.clone())).await;
             assert!(out.is_error, "{args}: {}", out.content);
         }
+    }
+
+    /// A repeat of a read-only subgoal that is running waits for it and is
+    /// answered by reference, without a second child.
+    #[tokio::test]
+    async fn a_repeated_read_only_subgoal_is_answered_by_reference() {
+        use super::subgoals::{Access, Admission, Outcome, Subgoal, SubgoalSpec};
+        let task = Arc::new(make_task());
+        let spec = SubgoalSpec {
+            mode: "research",
+            prompt: "find the callers",
+            deliverable: None,
+            paths: &[],
+            evidence: &[],
+            access: Access::ReadOnly,
+        };
+        let scope = sven_tool_api::PathScope::confined(std::env::current_dir().unwrap()).unwrap();
+        let Admission::Launch(leader) =
+            task.subgoals.admit(Subgoal::new(&spec), &scope, None).await
+        else {
+            panic!("the first call launches")
+        };
+        let twin = {
+            let task = Arc::clone(&task);
+            tokio::spawn(async move {
+                task.execute(&call(
+                    json!({"prompt": "Find the callers.", "mode": "research"}),
+                ))
+                .await
+            })
+        };
+        tokio::task::yield_now().await;
+        leader.finish(Some(Outcome {
+            handle: "buf_0001".into(),
+            text: "found".into(),
+        }));
+        let out = twin.await.unwrap();
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("Not launched again") && out.content.contains("buf_0001"));
+        assert!(task.ledger.render().contains("launches avoided"));
     }
 
     #[tokio::test]

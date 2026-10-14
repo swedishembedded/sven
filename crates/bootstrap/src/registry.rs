@@ -71,6 +71,9 @@ pub struct IntegrationProviders {
     /// read-only (`context.evidence_store`): a sub-agent briefed with chunks
     /// expands them from it.
     pub(crate) shared_evidence: Option<crate::evidence_share::SharedEvidence>,
+    /// Tells `task` whether two near-identical read-only goals are the same
+    /// (`decision.features.delegation`); without one they launch separately.
+    pub(crate) near_match: Option<Arc<dyn crate::task_tool::NearMatch>>,
 }
 
 /// What a session's integrations are opened from.
@@ -81,6 +84,7 @@ pub(crate) struct SessionIntegrations<'a> {
     /// requester was brought.
     pub approval_tx: &'a mpsc::Sender<sven_executors::user::ApprovalRequest>,
     pub config: &'a Config,
+    pub(crate) near_match: Option<Arc<dyn crate::task_tool::NearMatch>>,
     pub chunks: Option<Arc<sven_executors::ChunkSession>>,
 }
 
@@ -101,6 +105,7 @@ impl IntegrationProviders {
             approval_mode: session.approval_mode,
             chunks: session.chunks,
             shared_evidence: shared_evidence(session.config),
+            near_match: session.near_match,
         }
     }
 
@@ -238,6 +243,7 @@ pub fn build_tool_registry_with_integrations(
             approval_mode: integrations.approval_mode,
             expansion: integrations.expander(),
             chunks: integrations.chunks.clone(),
+            near_match: integrations.near_match.clone(),
         }),
         ToolSetProfile::Coding {
             questions,
@@ -257,6 +263,7 @@ pub fn build_tool_registry_with_integrations(
             approval_mode: integrations.approval_mode,
             expansion: integrations.expander(),
             chunks: integrations.chunks.clone(),
+            near_match: integrations.near_match.clone(),
         }),
         ToolSetProfile::Research { questions, todos } => build_profile_research(
             cfg,
@@ -358,6 +365,7 @@ struct FullProfileParams<'a> {
     approval_mode: sven_vocab::ApprovalMode,
     expansion: Option<ChunkExpander>,
     chunks: Option<Arc<sven_executors::ChunkSession>>,
+    near_match: Option<Arc<dyn crate::task_tool::NearMatch>>,
 }
 
 /// Full and Coding profiles share the same builder; `include_gdb_context`
@@ -401,6 +409,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
         )
         .with_scope(p.runtime.path_scope.clone())
         .with_chunks(p.chunks)
+        .with_near_match(p.near_match)
         .with_wall_clock(p.cfg.agent.child_run_timeout())
         .with_turn_budgets(
             Some(p.cfg.agent.max_tool_rounds),
@@ -458,6 +467,7 @@ fn build_profile_research(
         )
         .with_scope(paths.clone())
         .with_chunks(integrations.chunks.clone())
+        .with_near_match(integrations.near_match.clone())
         .with_wall_clock(cfg.agent.child_run_timeout())
         .with_turn_budgets(Some(cfg.agent.max_tool_rounds), cfg.model.max_output_tokens)
         .with_approver(integrations.approver.clone(), integrations.approval_mode)

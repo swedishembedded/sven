@@ -17,6 +17,7 @@
 //! requests are still charged through `SubagentUpdate::TokensUsed`.
 
 use std::fmt::Write as _;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use sven_chunks::tokens_of;
@@ -75,34 +76,51 @@ impl ChildCost {
 
 /// The session's account of its children, in the order they finished.
 #[derive(Debug, Default)]
-pub(super) struct ChildLedger(Mutex<Vec<ChildCost>>);
+pub(super) struct ChildLedger {
+    children: Mutex<Vec<ChildCost>>,
+    /// Calls answered from a twin instead of launching a child.
+    avoided: AtomicU32,
+}
 
 impl ChildLedger {
+    /// A call was answered from a twin: no child was launched.
+    pub(super) fn note_avoided(&self) {
+        self.avoided.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(super) fn record(&self, cost: ChildCost) {
-        if let Ok(mut all) = self.0.lock() {
+        if let Ok(mut all) = self.children.lock() {
             all.push(cost);
         }
     }
 
-    /// One line per child and the totals.
+    /// One line per child, the totals and the launches avoided.
     pub(super) fn render(&self) -> String {
-        let all = self.0.lock().map(|a| a.clone()).unwrap_or_default();
-        if all.is_empty() {
-            return "no sub-agent has finished in this session".into();
-        }
+        let all = self.children.lock().map(|a| a.clone()).unwrap_or_default();
         let mut out = String::new();
-        for c in &all {
-            let _ = writeln!(out, "{} ({}): {}", c.handle, c.description, c.line());
+        if all.is_empty() {
+            out.push_str("no sub-agent has finished in this session");
+        } else {
+            for c in &all {
+                let _ = writeln!(out, "{} ({}): {}", c.handle, c.description, c.line());
+            }
+            let (given, transcript) = all
+                .iter()
+                .fold((0, 0), |(g, t), c| (g + c.handed_back, t + c.transcript));
+            let _ = write!(
+                out,
+                "total: {} sub-agents; handed back ~{given} tokens of ~{transcript} (saved ~{})",
+                all.len(),
+                transcript.saturating_sub(given)
+            );
         }
-        let (given, transcript) = all
-            .iter()
-            .fold((0, 0), |(g, t), c| (g + c.handed_back, t + c.transcript));
-        let _ = write!(
-            out,
-            "total: {} sub-agents; handed back ~{given} tokens of ~{transcript} (saved ~{})",
-            all.len(),
-            transcript.saturating_sub(given)
-        );
+        let avoided = self.avoided.load(Ordering::Relaxed);
+        if avoided > 0 {
+            let _ = write!(
+                out,
+                "\nlaunches avoided as repeats of a read-only subgoal: {avoided}"
+            );
+        }
         out
     }
 }
@@ -253,6 +271,22 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("tokens not reported"));
+    }
+
+    #[test]
+    fn avoided_launches_are_counted_in_the_account() {
+        let ledger = ChildLedger::default();
+        ledger.note_avoided();
+        ledger.record(ChildCost {
+            handle: "a".into(),
+            description: String::new(),
+            used: None,
+            handed_back: 1,
+            transcript: 2,
+        });
+        assert!(ledger
+            .render()
+            .contains("launches avoided as repeats of a read-only subgoal: 1"));
     }
 
     #[test]
