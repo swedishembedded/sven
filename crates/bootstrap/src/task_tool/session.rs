@@ -47,6 +47,7 @@ use sven_tool_api::{
 use sven_tools_fs::OutputBufferStore;
 use sven_vocab::ApprovalMode;
 
+use super::handback::{transcript_bytes, Child, Reporting};
 use super::report::{report, ReportContext, SessionEnd, TurnTokens};
 use super::updates::session_update_to_subagent_updates;
 use super::{ChildApprover, SUBAGENT_DEPTH_ENV};
@@ -225,6 +226,8 @@ pub(super) struct SpawnArgs {
     /// Fires when the parent's tool call is cancelled (or `execute` completes)
     /// so `run_acp_session` can forward a `session/cancel` to the child.
     pub(super) cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    /// How the child's answer is handed back and accounted.
+    pub(super) reporting: Reporting,
 }
 
 /// The parent's terms the child's server is started with, beyond the
@@ -250,13 +253,21 @@ struct UpdateSink {
     tool_event_tx: mpsc::Sender<ToolEvent>,
     call_id: String,
     handle_id: String,
+    /// Bytes of the child's transcript seen so far (see `transcript_bytes`).
+    transcript: Cell<usize>,
 }
 
 impl UpdateSink {
+    fn count(&self, update: &SubagentUpdate) {
+        self.transcript
+            .set(self.transcript.get() + transcript_bytes(update));
+    }
+
     /// Forwards one notification, returning the assistant text it carried.
     async fn forward(&self, notification: &SessionNotification) -> Option<String> {
         let (updates, text) = session_update_to_subagent_updates(&notification.update);
         for update in updates {
+            self.count(&update);
             let _ = self
                 .tool_event_tx
                 .send(ToolEvent::SubagentEvent {
@@ -439,6 +450,7 @@ where
             final_text.push_str(&text);
         }
         for update in updates_left {
+            updates.count(&update);
             let _ = updates.tool_event_tx.try_send(ToolEvent::SubagentEvent {
                 call_id: updates.call_id.clone(),
                 handle_id: updates.handle_id.clone(),
@@ -519,6 +531,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         buffer_store,
         tool_event_tx,
         cancel_rx,
+        reporting,
     } = args;
 
     // ── Spawn child process ───────────────────────────────────────────────────
@@ -623,6 +636,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         tool_event_tx: tool_event_tx.clone(),
         call_id: call_id.clone(),
         handle_id: handle_id.clone(),
+        transcript: Cell::new(0),
     };
     let (end, final_text) = drive(
         conn,
@@ -677,9 +691,23 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         _ => String::new(),
     };
 
+    // A child that finished is handed back as its finding or as it is, and
+    // entered in the parent's account of its children.
+    let (handed_back, cost_line) = match &end {
+        SessionEnd::Finished(_, tokens) => reporting.conclude(
+            &Child {
+                handle: &handle_id,
+                description: &description,
+                used: tokens.map(|t| (t.input, t.output)),
+                transcript_bytes: updates.transcript.get(),
+            },
+            &final_text,
+        ),
+        _ => (final_text.clone(), None),
+    };
     let result = report(
         &end,
-        &final_text,
+        &handed_back,
         &ReportContext {
             mode: &mode,
             budget_secs,
@@ -704,7 +732,13 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         .await;
 
     match result {
-        Ok(text) => ToolOutput::ok(&call_id, text),
+        Ok(text) => {
+            let text = match cost_line {
+                Some(line) => format!("{text}\n\n{line}"),
+                None => text,
+            };
+            ToolOutput::ok(&call_id, text)
+        }
         Err(reason) => ToolOutput::err(&call_id, reason),
     }
 }
@@ -1110,6 +1144,7 @@ mod tests {
             tool_event_tx,
             call_id: "c".into(),
             handle_id: "h".into(),
+            transcript: Cell::new(0),
         };
         let (_notify, notifications) = futures::channel::mpsc::unbounded();
         let (_cancel, cancel_rx) = tokio::sync::oneshot::channel();

@@ -49,3 +49,35 @@ from it, with the same staleness report as the parent's own expansions. The
 flag accepts only that shape (absolute, no `..`, a UUID as the last
 component); the model only ever supplies chunk ids, never a path. The child
 cannot record into, pin in or otherwise change the parent's store.
+
+## Results
+
+A child that was briefed is told to end its answer with one fenced `finding`
+block, a JSON object:
+
+| field | meaning |
+|-------|---------|
+| `summary` | what it found, in a few sentences (required, at most 2,000 characters) |
+| `evidence` | ids of the briefed chunks the answer rests on (at most 20; an id the parent's store never recorded is dropped) |
+| `files_touched` | files it changed, empty if it only read (at most 20 entries) |
+| `open_questions` | what it could not settle (at most 20 entries) |
+
+The parent is shown the summary, the evidence ids, the files touched and the
+open questions, not the child's transcript or the prose before the block. The
+whole answer is recorded in the parent's chunk store as a `subagent_finding`
+chunk whose source is `task:<handle>`, and the result ends with the call that
+expands it. A briefed child that produces no valid block is reported exactly as
+an unbriefed one is: its answer as it is. The block is untrusted text: ids are
+validated, every field is bounded and nothing in it is interpreted.
+
+### What a child cost
+
+Every finished child, briefed or not, is entered in the session's account:
+the tokens its turn used as the provider reported them, the estimated tokens
+(bytes / 4) of what the parent was handed, and of the child's whole transcript
+(what it said, the calls it made and what they returned), which is what
+forwarding the transcript would have put in the parent's context. A briefed
+child's result ends with a `Cost:` line; `task` with `action: "ledger"` lists
+every child and the total. The child's own requests are still charged to the
+session through the existing token accounting; this account adds the per-child
+view and the saving, which is an estimate of context size, not of money.

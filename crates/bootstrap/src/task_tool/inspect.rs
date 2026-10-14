@@ -8,7 +8,7 @@
 // info@swedishembedded.com.
 //! The `task` actions that do not spawn: reading a finished sub-agent's output
 //! buffer (`status`, `read`, `grep`) and listing the discovered subagents
-//! (`agents`).
+//! (`agents`) and what the finished ones cost (`ledger`).
 
 use serde_json::{json, Value};
 use sven_tool_api::{ToolCall, ToolOutput};
@@ -117,6 +117,7 @@ impl TaskTool {
                     ToolOutput::ok(&call.id, lines.join("\n"))
                 }
             }
+            "ledger" => ToolOutput::ok(&call.id, self.ledger.render()),
             _ => return None,
         })
     }

@@ -98,6 +98,8 @@ use sven_vocab::{AgentMode, ApprovalMode};
 use sven_workspace::{AgentInfo, SharedAgents};
 
 mod brief;
+mod finding;
+mod handback;
 mod inspect;
 mod report;
 mod session;
@@ -202,6 +204,8 @@ pub struct TaskTool {
     /// The session's chunk store, when addressable context is on: where a
     /// brief's evidence is read from.
     chunks: Option<Arc<sven_executors::ChunkSession>>,
+    /// What each finished sub-agent cost and what its result spared the parent.
+    ledger: Arc<handback::ChildLedger>,
 }
 
 impl TaskTool {
@@ -227,6 +231,7 @@ impl TaskTool {
             disabled_tools: Vec::new(),
             command_patterns: None,
             chunks: None,
+            ledger: Arc::default(),
         }
     }
 
@@ -455,8 +460,8 @@ impl Tool for TaskTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["spawn", "status", "read", "grep", "agents"],
-                    "description": "spawn (default), inspect a buffer, or list the subagents"
+                    "enum": ["spawn", "status", "read", "grep", "agents", "ledger"],
+                    "description": "spawn (default), inspect a buffer, list the subagents, or show what finished ones cost"
                 },
                 "prompt": {
                     "type": "string",
@@ -695,6 +700,11 @@ impl Tool for TaskTool {
             buffer_store: Arc::clone(&self.buffer_store),
             tool_event_tx: self.tool_event_tx.clone(),
             cancel_rx,
+            reporting: handback::Reporting {
+                structured: brief.structured,
+                chunks: self.chunks.clone(),
+                ledger: Arc::clone(&self.ledger),
+            },
         };
         // Subagents always run with depth 0.
         let depth_for_env = 0u32;
@@ -1003,6 +1013,18 @@ mod tests {
             let out = t.execute(&call(args.clone())).await;
             assert!(out.is_error, "{args}: {}", out.content);
         }
+    }
+
+    #[tokio::test]
+    async fn the_ledger_action_says_so_when_no_sub_agent_has_finished() {
+        let out = make_task()
+            .execute(&call(json!({"action": "ledger"})))
+            .await;
+        assert!(
+            !out.is_error && out.content.contains("no sub-agent"),
+            "{}",
+            out.content
+        );
     }
 
     #[tokio::test]

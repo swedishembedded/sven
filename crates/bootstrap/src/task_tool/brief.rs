@@ -188,6 +188,9 @@ pub(super) struct Briefed {
     /// The parent's store the child expands the briefed chunks from; present
     /// only when chunks were named.
     pub(super) evidence_store: Option<std::path::PathBuf>,
+    /// The call named evidence or a deliverable, so the child was asked to end
+    /// with a finding.
+    pub(super) structured: bool,
 }
 
 /// The child's first request for `prompt` and the call's `args`: `prompt`
@@ -201,6 +204,7 @@ pub(super) fn briefed(
         return Ok(Briefed {
             prompt: prompt.to_string(),
             evidence_store: None,
+            structured: false,
         });
     };
     let Some(session) = chunks else {
@@ -214,6 +218,7 @@ pub(super) fn briefed(
         return Ok(Briefed {
             prompt: compose(prompt, &brief, &[], &[]),
             evidence_store: None,
+            structured: true,
         });
     };
     let gathered = gather(session, &brief)?;
@@ -224,6 +229,7 @@ pub(super) fn briefed(
     Ok(Briefed {
         prompt: compose(prompt, &brief, &gathered.constraints, &gathered.evidence),
         evidence_store,
+        structured: true,
     })
 }
 
@@ -280,6 +286,7 @@ pub(super) fn compose(
     if let Some(deliverable) = &args.deliverable {
         let _ = write!(out, "\n## Deliverable\n{deliverable}\n");
     }
+    out.push_str(super::finding::REPORTING_INSTRUCTIONS);
     out
 }
 
@@ -427,7 +434,7 @@ mod tests {
             "a shortened form says how to expand it: {text}"
         );
         assert!(
-            text.ends_with("## Deliverable\nthe file and line of the caller\n"),
+            text.contains("## Deliverable\nthe file and line of the caller\n\n## Reporting"),
             "{text}"
         );
     }
@@ -514,7 +521,11 @@ mod tests {
             )],
         );
         assert_eq!(
-            text.matches("\n```\n").count(),
+            text.split("## Reporting")
+                .next()
+                .unwrap()
+                .matches("\n```\n")
+                .count(),
             1,
             "one closing fence: {text}"
         );
@@ -629,6 +640,7 @@ mod tests {
             let out = briefed(&serde_json::json!({"prompt": "look"}), "look", Some(&s)).unwrap();
             assert_eq!(out.prompt, "look");
             assert_eq!(out.evidence_store, None);
+            assert!(!out.structured);
         }
 
         #[test]
@@ -652,7 +664,8 @@ mod tests {
             assert!(briefed(&call, "p", None).is_err());
             let call = serde_json::json!({"prompt": "p", "deliverable": "a list"});
             let out = briefed(&call, "p", None).unwrap();
-            assert!(out.prompt.ends_with("## Deliverable\na list\n"));
+            assert!(out.prompt.contains("## Deliverable\na list\n"));
+            assert!(out.structured);
             assert_eq!(out.evidence_store, None);
         }
     }
