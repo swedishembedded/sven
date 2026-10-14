@@ -161,7 +161,7 @@ fn search_results(log: &RequestLog, query: &str) -> Option<Vec<String>> {
                         .skip(1)
                         .take_while(|l| !l.starts_with("Load the ones"))
                         .filter_map(|l| l.split(':').next())
-                        .map(|name| name.trim().to_string())
+                        .map(|name| name.trim().trim_start_matches("- ").to_string())
                         .collect(),
                 );
             }

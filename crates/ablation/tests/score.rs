@@ -127,7 +127,7 @@ fn search_result(query: &str, names: &[&str]) -> String {
         names.len()
     );
     for n in names {
-        out.push_str(&format!("{n}: does something\n"));
+        out.push_str(&format!("- {n}: does something. [mcp]\n"));
     }
     out.push_str("Load the ones you need with action=load and their names.");
     out

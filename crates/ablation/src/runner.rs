@@ -34,6 +34,11 @@ use crate::score::{score, RunEvidence};
 use crate::task::{Generated, Task};
 use crate::trajectory::decision_record;
 
+/// Exit status of a run that finished but had a tool call fail. The scripted
+/// attempts of the security suite are refused on purpose, so it is an outcome
+/// of a run, not a failure of it.
+const EXIT_TOOL_ERRORS: i32 = 3;
+
 /// How a run differs from an ordinary one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Probe {
@@ -113,7 +118,7 @@ impl Runner {
     ///
     /// The sven binary is missing, or `out` is inside the repository it
     /// measures.
-    pub async fn new(options: RunnerOptions, matrix_text: &str) -> Result<Self, String> {
+    pub async fn new(mut options: RunnerOptions, matrix_text: &str) -> Result<Self, String> {
         if !options.sven_bin.exists() {
             return Err(format!(
                 "the sven binary {} does not exist (run `make build`)",
@@ -129,6 +134,11 @@ impl Runner {
                 out.display()
             ));
         }
+        // Processes run in the repository of each task, so every path must be
+        // absolute.
+        options.sven_bin = std::fs::canonicalize(&options.sven_bin).map_err(|e| e.to_string())?;
+        options.bench_bin = std::fs::canonicalize(&options.bench_bin).map_err(|e| e.to_string())?;
+        options.out = out;
         let assembly_supported = probe_assembly(&options).await;
         Ok(Self {
             matrix_sha256: hex::encode(Sha256::digest(matrix_text.as_bytes())),
@@ -294,7 +304,7 @@ impl Runner {
             if self.options.model == ModelChoice::Scripted {
                 logs.push(RequestLog::read(&log_path)?);
             }
-            if exit_code != 0 {
+            if exit_code != 0 && exit_code != EXIT_TOOL_ERRORS {
                 return Err(Stop::Failed(format!(
                     "segment {index} exited with status {exit_code}; see {}",
                     dir.join("stderr.txt").display()
