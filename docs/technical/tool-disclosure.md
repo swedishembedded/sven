@@ -68,8 +68,8 @@ request; `tools` `list` is the live view either way.
 
 | action | arguments | result |
 |--------|-----------|--------|
-| `search` | `query`, optional `category` | the unloaded tools that match, best first, each with its summary |
-| `load` | `names` | the names that can be loaded are activated; the rest are reported, with the nearest tool for a misspelling |
+| `search` | `query`, optional `category` | the 8 best unloaded matches, each with its summary, then the names (only) of the next 8 |
+| `load` | `names` | the names that can be loaded are activated; the rest are reported, with the nearest tool for a name that is not one |
 | `list` | optional `offset`, `category` | every unloaded tool, 25 to a page, with the offset of the next page |
 | `help` | `names` | the full definition of up to three tools, without loading them |
 
@@ -207,6 +207,34 @@ bonus in proportion to the Dice coefficient of the character trigrams of the
 two (at least 0.6, four times the best BM25 score at 1.0), so a misspelled name
 finds its tool first. The ranker builds its index from the candidates each time
 it is asked; `Bm25Ranker::prepare` indexes once for many queries.
+
+### What a search shows
+
+`search` returns the 8 best matches with their summaries, `Load the ones you
+need with action=load and their names.`, and after it one line, `Also related
+(names only): a, b, ...`, with the next 8 names, so that a near miss is one
+`load` away and not another search. Held-out recall within the first 8 and
+within 16 (the validation sweep):
+
+| kind | recall@8 | recall@16 |
+|---|---:|---:|
+| exact | 100.0% | 100.0% |
+| paraphrased | 95.2% | 98.8% |
+| indirect | 90.2% | 96.5% |
+| misspelled | 100.0% | 100.0% |
+
+The 8 related names cost about 50 estimated tokens per search (one token per
+four bytes) against about 180 for the 8 matches in full. A search that misses
+costs another request, which carries the whole prompt again (thousands of
+tokens in the baseline scenarios of the [token ledger](token-ledger.md)), so
+the list pays for itself when it saves one miss in about sixty searches; it
+saves 3.6 in a hundred paraphrased searches and 6.3 in a hundred indirect ones
+and costs the exact ones about 50 tokens for nothing, which is the price of not
+knowing in advance which kind a search is. The line comes after the load
+instruction, where the ablation benchmark's reader of results stops, so its
+shortlist metrics count the 8 matches in full only. A name that is not a tool
+gets the nearest tool's name from the same ranker (a misspelled name finds its
+tool first in 100.0% of the held-out queries, so one suggestion is enough).
 
 ### Search quality
 

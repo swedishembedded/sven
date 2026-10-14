@@ -35,7 +35,8 @@ use tokio::sync::Mutex;
 use sven_hsm::ToolCapability;
 use sven_tool_api::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
 use sven_tool_registry::{
-    Bm25Ranker, Disclosure, ToolCatalog, ToolDescriptor, ToolRanker, ToolRegistry, DISCOVERY_TOOL,
+    present_matches, Bm25Ranker, Disclosure, ToolCatalog, ToolDescriptor, ToolRanker, ToolRegistry,
+    DISCOVERY_TOOL,
 };
 use sven_vocab::AgentMode;
 
@@ -114,19 +115,7 @@ impl ToolDiscoveryTool {
                 ),
             );
         }
-        let shown: Vec<&ToolDescriptor> = ranked
-            .iter()
-            .take(limit)
-            .filter_map(|r| pool.iter().find(|t| t.name == r.name))
-            .collect();
-        let mut out = format!(
-            "{} of {} matches for {query:?} (best first):\n",
-            shown.len(),
-            ranked.len()
-        );
-        push_lines(&mut out, &shown);
-        out.push_str("Load the ones you need with action=load and their names.");
-        ToolOutput::ok(&call.id, out)
+        ToolOutput::ok(&call.id, present_matches(query, &pool, &ranked, limit))
     }
 
     async fn list(&self, call: &ToolCall) -> ToolOutput {
@@ -360,7 +349,8 @@ fn names_arg(call: &ToolCall) -> Result<Vec<String>, String> {
 
 fn push_lines(out: &mut String, tools: &[&ToolDescriptor]) {
     for tool in tools {
-        out.push_str(&format!("- {} [{}]\n", tool.index_line(), tool.category()));
+        out.push_str(&tool.listing_line());
+        out.push('\n');
     }
 }
 

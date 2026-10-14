@@ -9,6 +9,7 @@ pub mod disclosure;
 pub mod expansion;
 pub mod fuzzy;
 pub mod index;
+pub mod matches;
 pub mod policy;
 pub mod registry;
 pub mod search;
@@ -19,6 +20,7 @@ pub use disclosure::{
 };
 pub use expansion::Expansion;
 pub use index::FieldWeights;
+pub use matches::{present_matches, RELATED_NAMES};
 pub use policy::ToolPolicy;
 pub use registry::{SharedToolDisplays, SharedTools, ToolDisplayInfo, ToolRegistry, ToolSchema};
 pub use search::{Bm25Ranker, PreparedRanking, RankedTool, RankingParams, ToolRanker};

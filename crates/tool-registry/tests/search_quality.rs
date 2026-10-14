@@ -19,7 +19,7 @@ mod quality;
 
 use quality::corpus::{catalogs, Plan, QueryKind, Split};
 use quality::metrics::{evaluate, Scores};
-use sven_tool_registry::{Bm25Ranker, RankingParams, ToolDescriptor};
+use sven_tool_registry::{present_matches, Bm25Ranker, RankingParams, ToolDescriptor};
 
 const SHORTLIST: usize = 8;
 
@@ -198,5 +198,34 @@ fn larger_sweep_over_many_catalogs() {
             "{split:?}, catalogs whose text holds evidence for paraphrases\n{}",
             evaluate(&current_ranker, &rich, SHORTLIST)
         );
+        eprintln!("{split:?}: {}", result_size(&catalogs(split, &plan)));
+        eprintln!(
+            "{split:?}, shortlist and the 8 names after it (recall@{})\n{}",
+            2 * SHORTLIST,
+            evaluate(&current_ranker, &catalogs(split, &plan), 2 * SHORTLIST)
+        );
     }
+}
+
+/// What a search result costs, in the estimate the token ledger uses (one
+/// token per four bytes): the matches shown in full and the names after them.
+fn result_size(catalogs: &[quality::corpus::Catalog]) -> String {
+    let (mut shown, mut related, mut searches) = (0usize, 0usize, 0usize);
+    for catalog in catalogs {
+        let tools = catalog.descriptors();
+        let prepared = Bm25Ranker.prepare(&RankingParams::default(), &tools);
+        for query in &catalog.queries {
+            let ranked = prepared.rank(&query.text);
+            let out = present_matches(&query.text, &tools, &ranked, SHORTLIST);
+            let (head, tail) = out.split_once("\nAlso related").unwrap_or((&out, ""));
+            shown += head.len();
+            related += tail.len();
+            searches += 1;
+        }
+    }
+    format!(
+        "per search, {:.0} estimated tokens for the {SHORTLIST} matches in full, {:.0} for the names after them",
+        shown as f64 / searches as f64 / 4.0,
+        related as f64 / searches as f64 / 4.0
+    )
 }

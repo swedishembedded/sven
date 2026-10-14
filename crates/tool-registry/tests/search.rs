@@ -10,7 +10,7 @@
 //! meant, and finds it the same way whatever order the tools come in.
 
 use sven_hsm::ToolCapability;
-use sven_tool_registry::{Bm25Ranker, ToolDescriptor, ToolRanker};
+use sven_tool_registry::{present_matches, Bm25Ranker, ToolDescriptor, ToolRanker, RELATED_NAMES};
 
 const VERBS: [(&str, &str); 10] = [
     ("read", "Get the details of one {} by id."),
@@ -193,4 +193,49 @@ async fn a_word_the_catalog_only_uses_beside_another_leads_to_it() {
 async fn a_query_that_matches_nothing_returns_nothing() {
     assert!(top("zzz qqq", &hundred_tools()).await.is_empty());
     assert!(top("the of and", &hundred_tools()).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_search_shows_its_best_with_summaries_and_the_next_names_only() {
+    let tools = hundred_tools();
+    let ranked = Bm25Ranker.rank("workspace", &tools).await;
+    assert!(ranked.len() > 8 + RELATED_NAMES, "{} matches", ranked.len());
+    let out = present_matches("workspace", &tools, &ranked, 8);
+
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines[0].starts_with(&format!(
+            "8 of {} matches for \"workspace\" (best first):",
+            ranked.len()
+        )),
+        "{out}"
+    );
+    // The shortlist keeps the format a reader of results relies on.
+    for (line, hit) in lines[1..9].iter().zip(&ranked) {
+        assert!(line.starts_with(&format!("- {}: ", hit.name)), "{line}");
+    }
+    let load = lines
+        .iter()
+        .position(|l| l.starts_with("Load the ones you need"))
+        .expect("load line");
+    assert_eq!(load, 9, "{out}");
+    // After it, only the names of the next matches, none repeated.
+    let related = lines[load + 1];
+    let expected: Vec<&str> = ranked[8..8 + RELATED_NAMES]
+        .iter()
+        .map(|r| r.name.as_str())
+        .collect();
+    assert_eq!(
+        related,
+        format!("Also related (names only): {}.", expected.join(", "))
+    );
+    assert_eq!(lines.len(), load + 2, "{out}");
+}
+
+#[tokio::test]
+async fn a_search_that_shows_every_match_lists_nothing_beside_it() {
+    let tools = hundred_tools();
+    let ranked = Bm25Ranker.rank("restore ticket", &tools).await;
+    let out = present_matches("restore ticket", &tools, &ranked, ranked.len());
+    assert!(!out.contains("Also related"), "{out}");
 }

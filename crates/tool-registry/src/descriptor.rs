@@ -85,6 +85,12 @@ impl ToolDescriptor {
         self.capability.is_read_only()
     }
 
+    /// The tool's line in a listing of matches or pages: `- name: summary [category]`.
+    #[must_use]
+    pub fn listing_line(&self) -> String {
+        format!("- {} [{}]", self.index_line(), self.category())
+    }
+
     /// The tool's line in an index: `name: summary`.
     #[must_use]
     pub fn index_line(&self) -> String {
