@@ -22,6 +22,7 @@
 
 use serde_json::Value;
 
+pub mod cost;
 pub mod harness;
 pub mod ledger;
 pub mod provenance;
@@ -30,6 +31,7 @@ pub mod turn;
 pub mod verify;
 pub mod wait;
 
+pub use cost::Amount;
 pub use harness::HarnessEvent;
 pub use ledger::{
     ContextRecovery, ContextView, DecisionInference, DecisionTraceRecord, DemotionRecord,

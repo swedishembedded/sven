@@ -232,7 +232,7 @@ pub struct DecisionTraceRecord {
 /// All `u32` figures other than [`reported`](Self::reported) are *estimates*
 /// made by [`estimator`](Self::estimator); they sum to
 /// [`estimated_total`](Self::estimated_total).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RequestBreakdown {
     /// Name of the estimator that produced the figures.
     #[serde(default)]
@@ -285,6 +285,10 @@ pub struct RequestBreakdown {
     /// addressable context is off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_view: Option<ContextView>,
+    /// What the cost-aware decisions of this request concluded and did; absent
+    /// when none was weighed. See `docs/technical/cost-model.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<crate::cost::CostRecord>,
     /// Decision-model inference cost, see [`DecisionInference`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<DecisionInference>,

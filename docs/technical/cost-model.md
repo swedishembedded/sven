@@ -63,3 +63,37 @@ idle time that is not known counts as expired. When a previous request exists
 - A price that is declared wrongly is wrong in every decision made from it.
 - `cache_read_per_mtok` above `cache_write_per_mtok` is rejected: a cache hit
   priced above a miss is not a cache.
+
+## Rebuild or keep
+
+Demotion, compaction and reconstruction shrink the prompt and change it from
+some token on. The provider's cache holds the prompt as a prefix, so everything
+behind the first changed token is lost and the next request writes the new text.
+`sven_cost::assess` compares, over the expected remaining requests, keeping the
+prompt with rebuilding it (prompt side only; what both options share cancels):
+
+- keep: the first request starts from the tokens the cache holds, each later
+  one reads the whole prompt;
+- rebuild: any model call the rebuild makes (a summary) at cold prices, the
+  first request reads only the cache in front of the first changed token and
+  writes the rest, each later one reads the smaller prompt.
+
+`Assessment` carries both totals, their difference, the recommendation (`keep`,
+`rebuild`, or `unknown` when a price is undeclared) and the break-even request
+count. Worked example: a 100,000-token prompt, a 10,000-token demotion whose
+first changed token is at 20,000, read 0.3 and write 3.75 per million: the
+rebuild costs 0.2385 more on the first request and saves 0.003 on each later
+one, so it breaks even at 80.5 requests and `keep` wins below that.
+
+The remaining requests are declared, else about as many as the session has made
+so far (capped); this is a heuristic, not a measurement.
+
+`CacheAware` (`off`, `advise`, `enforce`) and `gate` turn an assessment into an
+action. Only `enforce` skips, only a rebuild that is not needed to fit the
+model's window, and only on a known comparison that favours keeping. Each
+decision is a `RebuildRecord` in the request's ledger record under `cost`.
+
+**Status:** the decision functions and the record exist and are tested; the
+`cost.cache_aware` configuration key and the executor wiring that calls the
+gate in front of demotion, compaction and reconstruction are not implemented,
+so nothing consults them in a running session yet.

@@ -10,8 +10,8 @@
 
 use sven_model_catalog::Pricing;
 
-use crate::amount::Amount;
 use crate::cache::CacheState;
+use sven_vocab::Amount;
 
 const PER_MTOK: f64 = 1_000_000.0;
 

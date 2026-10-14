@@ -23,12 +23,21 @@
 //! - [`CacheState`] says how much of the prompt prefix the provider's cache is
 //!   expected to still hold.
 //!
+//! - [`assess`] and [`gate`] decide whether rewriting the prompt (demotion,
+//!   compaction, reconstruction) pays for the cached prefix it discards.
+//!
 //! See `docs/technical/cost-model.md`.
 
 mod amount;
 mod cache;
 mod model;
+mod rebuild;
 
-pub use amount::{cheapest, Amount};
+pub use amount::cheapest;
 pub use cache::CacheState;
 pub use model::{estimate, CostTerms, Placement, PromptShape, Recovery, StepInputs};
+pub use rebuild::{
+    assess, expected_remaining_requests, gate, record, Assessment, CacheAware, GateDecision,
+    Generation, Necessity, RebuildCandidate,
+};
+pub use sven_vocab::Amount;
