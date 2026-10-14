@@ -8,13 +8,24 @@ license     = "Apache-2.0"
 
 [dependencies]
 sven-decision = { path = "../decision" }
+sven-vocab    = { path = "../vocab" }
 async-trait   = { workspace = true }
+clap          = { workspace = true }
 serde         = { workspace = true }
 serde_json    = { workspace = true }
 serde_yaml    = { workspace = true }
 sha2          = { workspace = true }
 hex           = { workspace = true }
 thiserror     = { workspace = true }
+tokio         = { workspace = true }
+
+[[bin]]
+name = "sven-ablation"
+path = "src/main.rs"
 
 [dev-dependencies]
-tokio = { workspace = true }
+sven-model      = { path = "../model" }
+sven-model-mock = { path = "../model-mock" }
+futures         = { workspace = true }
+regex           = { workspace = true }
+tempfile        = { workspace = true }

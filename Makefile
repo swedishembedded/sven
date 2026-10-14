@@ -163,6 +163,10 @@ $(E2E_TEST_TARGETS): test/e2e/%: build
 test/e2e/basic/deferred: build
 	SVEN_E2E_TOOL_DISCLOSURE=deferred bats tests/e2e/basic/
 
+## test/e2e/basic/demote - the basic suite with every invocation run under --context-assembly demote (requires bats-core)
+test/e2e/basic/demote: build
+	SVEN_E2E_CONTEXT_ASSEMBLY=demote bats tests/e2e/basic/
+
 # Harness suites run capped (HARNESS_JOBS build jobs, 4 test threads) so they
 # stay light on a shared machine. Each suite's cargo invocation differs, so
 # they are written out rather than generated.
@@ -354,9 +358,17 @@ benchmark/report:
 	@python3 benchmarks/report.py target/benchmark > target/benchmark/report.md
 	@cat target/benchmark/report.md
 
-## benchmark/ledger - token-ledger baseline: replay fixed scenarios against the mock provider and write per-scenario ledger summaries plus a report naming the sven commit; OUT=DIR chooses where (default: outside the repository), DISCLOSURE=full|deferred picks the tool disclosure mode measured
+## benchmark/ledger - token-ledger baseline: replay fixed scenarios against the mock provider and write per-scenario ledger summaries plus a report naming the sven commit; OUT=DIR chooses where (default: outside the repository), DISCLOSURE=full|deferred picks the tool disclosure mode measured, ASSEMBLY=off|demote the context assembly
 benchmark/ledger: build
-	@bash benchmarks/ledger/run.sh $(if $(OUT),--out $(OUT),) $(if $(DISCLOSURE),--tool-disclosure $(DISCLOSURE),)
+	@bash benchmarks/ledger/run.sh $(if $(OUT),--out $(OUT),) $(if $(DISCLOSURE),--tool-disclosure $(DISCLOSURE),) $(if $(ASSEMBLY),--context-assembly $(ASSEMBLY),)
+
+## benchmark/ablation - ablation benchmark: every suite under every variant of benchmarks/ablation/matrix.yaml for several seeds with a scripted model; raw records and a JSON + Markdown report go to OUT (default: outside the repository); SEEDS=N, SUITES=a,b, VARIANTS=A,B, BRAIN_URL=URL and TRAINED_MODEL=ID narrow or extend a run
+benchmark/ablation: build
+	@cargo build $(CARGO_FLAGS) -p sven-ablation
+	@bash benchmarks/ablation/run --out $(or $(OUT),$(or $(TMPDIR),/tmp)/sven-ablation) --fallback-probe \
+	    $(if $(SEEDS),--seeds $(SEEDS),) $(if $(SUITES),--suites $(SUITES),) \
+	    $(if $(VARIANTS),--variants $(VARIANTS),) $(if $(BRAIN_URL),--brain-url $(BRAIN_URL),) \
+	    $(if $(TRAINED_MODEL),--trained-model $(TRAINED_MODEL),)
 
 # ---------------------------------------------------------------------------
 ##@ Documentation
@@ -625,7 +637,7 @@ generate/config/golden:
 
 # Declared last so every generated list above is already defined.
 .PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
-        test test/features test/gates test/e2e test/e2e/basic/deferred $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
+        test test/features test/gates test/e2e test/e2e/basic/deferred test/e2e/basic/demote $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
         test/harness test/harness/local-model $(HARNESS_TARGETS) \
         generate generate/harness generate/harness/sample-bundle \
         generate/config generate/config/golden \
@@ -640,4 +652,4 @@ generate/config/golden:
         release release/tag release/publish release/patch release/minor release/major \
         _require-cargo-release \
         site site/build site/publish site/serve \
-        benchmark benchmark/build benchmark/terminal-bench benchmark/report benchmark/ledger
+        benchmark benchmark/build benchmark/terminal-bench benchmark/report benchmark/ledger benchmark/ablation

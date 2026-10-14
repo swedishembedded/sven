@@ -29,7 +29,7 @@ variants:
     role: architecture
     description: Deferred tool disclosure and context assembly, no decisions. The saving of the architecture alone.
     tool_disclosure: deferred
-    context_assembly: on
+    context_assembly: demote
     decisions:
       kind: off
 
@@ -38,7 +38,7 @@ variants:
     role: heuristic
     description: The architecture with a deterministic rule-based decision provider. What a model has to beat.
     tool_disclosure: deferred
-    context_assembly: on
+    context_assembly: demote
     decisions:
       kind: heuristic
 
@@ -47,7 +47,7 @@ variants:
     role: stock_model
     description: The architecture with a stock decision model served by Brain (endpoint given with --brain-url).
     tool_disclosure: deferred
-    context_assembly: on
+    context_assembly: demote
     decisions:
       kind: brain
       model: stock
@@ -57,7 +57,7 @@ variants:
     role: trained_model
     description: The architecture with a trained decision model served by Brain (model id given with --trained-model).
     tool_disclosure: deferred
-    context_assembly: on
+    context_assembly: demote
     decisions:
       kind: brain
       model: trained
@@ -67,7 +67,7 @@ variants:
     role: negative_control
     description: Valid but random, seeded decisions. A model that does no better is not contributing.
     tool_disclosure: deferred
-    context_assembly: on
+    context_assembly: demote
     decisions:
       kind: random
 
@@ -76,6 +76,6 @@ variants:
     role: oracle
     description: Decisions from the labelled-correct answers. The upper bound decisions can reach.
     tool_disclosure: deferred
-    context_assembly: on
+    context_assembly: demote
     decisions:
       kind: oracle

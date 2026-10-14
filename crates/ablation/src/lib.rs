@@ -13,6 +13,30 @@
 //! * [`matrix`]: the variant definitions and how each is realized through
 //!   configuration alone.
 //! * [`providers`]: the decision providers that stand in for a model.
+//! * [`task`] and [`suites`]: seeded task generators, the same for every
+//!   variant.
+//! * [`mockscript`]: a task's scripted model.
+//! * [`evidence`] and [`score`]: what a model was sent and the objective
+//!   verdict on a run.
+//! * [`mcp_stub`]: the tool catalog server of the tool-selection suite.
 
+pub mod evidence;
+pub mod export;
+pub mod gates;
+pub mod loader;
+pub mod markdown;
 pub mod matrix;
+pub mod mcp_stub;
+pub mod mockscript;
+pub mod plan;
+pub mod provider_server;
 pub mod providers;
+pub mod record;
+pub mod report;
+pub mod rng;
+pub mod runner;
+pub mod score;
+pub mod stats;
+pub mod suites;
+pub mod task;
+pub mod trajectory;
