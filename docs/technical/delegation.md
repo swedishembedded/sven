@@ -173,3 +173,26 @@ configuration key (`docs/05-configuration.md#delegation`). The policy only
 ever declines to delegate; it cannot start a child, widen one, or override a
 permission, an approval or the concurrency rules, and the deduplication above
 is decided first.
+
+## Measured
+
+`make benchmark/ablation SUITES=delegation SEEDS=3 VARIANTS=A,B` (scripted
+model; the suite's five sub-agents are scripted with a bare `prompt`, so none
+of the mechanisms above is exercised by it):
+
+| | tokens, variant A | tokens, variant B |
+|---|---:|---:|
+| before | 81,080 | 81,341 |
+| with `evidence`, `deliverable`, `paths` and `ledger` always in the `task` schema | 81,536 | 81,645 |
+
+The difference is the tool definition alone (the `tool_schemas` source grew by
+456 tokens over the run); results, recall (100%) and duplicate reads are
+unchanged, which is what "byte-identical without the new fields" predicts. The
+fields are therefore offered only in sessions with addressable context, where
+the schema is 484 estimated tokens instead of about 460.
+
+Not measured: that briefs or deduplication save tokens in the suite. The suite
+would need scripted `task` calls that carry `evidence` ids (the parent's chunk
+ids, the digest of the exact tool result), a `finding` block in each scripted
+child reply, and an identical prompt with the same `paths` for the repeated
+subgoal. No model-quality or task-success claim follows from any figure here.

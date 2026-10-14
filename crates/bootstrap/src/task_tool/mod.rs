@@ -435,13 +435,13 @@ impl Tool for TaskTool {
         let mut mode_enum: Vec<String> = vec!["research".into(), "plan".into(), "agent".into()];
         mode_enum.extend(self.agents.get().iter().map(|a| a.name.clone()));
 
-        serde_json::json!({
+        let mut schema = serde_json::json!({
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["spawn", "status", "read", "grep", "agents", "ledger"],
-                    "description": "spawn (default), inspect a buffer, list the subagents, or show what finished ones cost"
+                    "enum": ["spawn", "status", "read", "grep", "agents"],
+                    "description": "spawn (default), inspect a buffer, or list the subagents"
                 },
                 "prompt": {
                     "type": "string",
@@ -455,25 +455,6 @@ impl Tool for TaskTool {
                     "type": "string",
                     "enum": mode_enum,
                     "description": "[spawn] Default agent"
-                },
-                "evidence": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "[spawn] Chunk ids (c-...) the sub-agent starts from, instead of your conversation"
-                },
-                "evidence_visibility": {
-                    "type": "string",
-                    "enum": ["hidden", "short", "long", "full"],
-                    "description": "[spawn] How much of each evidence chunk it sees first (default short)"
-                },
-                "deliverable": {
-                    "type": "string",
-                    "description": "[spawn] The shape of the answer wanted"
-                },
-                "paths": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "[spawn] Files or globs the sub-agent works on; lets a repeat of a read-only subgoal be recognised"
                 },
                 "workdir": {
                     "type": "string",
@@ -513,7 +494,28 @@ impl Tool for TaskTool {
             // schema-conformant model out of a guaranteed error round.
             "required": ["prompt", "handle"],
             "additionalProperties": false
-        })
+        });
+        // The brief, the declared scope and the cost account belong to
+        // sessions with addressable context; others keep the smaller schema.
+        if self.chunks.is_some() {
+            schema["properties"]["action"]["enum"] =
+                serde_json::json!(["spawn", "status", "read", "grep", "agents", "ledger"]);
+            schema["properties"]["evidence"] = serde_json::json!({
+                "type": "array", "items": {"type": "string"},
+                "description": "[spawn] Chunk ids (c-...) to start the sub-agent from"
+            });
+            schema["properties"]["evidence_visibility"] = serde_json::json!({
+                "type": "string", "enum": ["hidden", "short", "long", "full"]
+            });
+            schema["properties"]["deliverable"] = serde_json::json!({
+                "type": "string", "description": "[spawn] Answer shape wanted"
+            });
+            schema["properties"]["paths"] = serde_json::json!({
+                "type": "array", "items": {"type": "string"},
+                "description": "[spawn] Files or globs it works on"
+            });
+        }
+        schema
     }
 
     fn default_policy(&self) -> ApprovalPolicy {
@@ -1015,7 +1017,25 @@ mod tests {
     #[test]
     fn the_schema_offers_the_brief_fields_without_requiring_them() {
         let schema = make_task().parameters_schema();
-        for key in ["evidence", "evidence_visibility", "deliverable"] {
+        assert!(
+            schema["properties"].get("evidence").is_none(),
+            "no chunks, no brief fields"
+        );
+        let (store, _dir) = {
+            let dir = tempfile::tempdir().unwrap();
+            let s =
+                sven_chunks::ChunkStore::open(&dir.path().join("s"), Default::default()).unwrap();
+            let probe = sven_chunks::FsProbe::new(dir.path()).unwrap();
+            (
+                Arc::new(sven_executors::ChunkSession::new(
+                    Arc::new(std::sync::Mutex::new(s)),
+                    Arc::new(probe),
+                )),
+                dir,
+            )
+        };
+        let schema = make_task().with_chunks(Some(store)).parameters_schema();
+        for key in ["evidence", "evidence_visibility", "deliverable", "paths"] {
             assert!(schema["properties"].get(key).is_some(), "{key}");
             assert!(!schema["required"]
                 .as_array()
