@@ -78,6 +78,13 @@ pub fn render(report: &Report) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     );
+    if !h.assembly_settings.is_empty() {
+        let _ = writeln!(
+            out,
+            "- context assembly settings: {}",
+            h.assembly_settings.join("; ")
+        );
+    }
     let _ = writeln!(
         out,
         "- statistics: {:.0}% percentile bootstrap, {} resamples, seed {:#x}, unit: {}; no interval below {} pairs",

@@ -20,7 +20,7 @@ use sven_ablation::loader::load_runs;
 use sven_ablation::markdown;
 use sven_ablation::matrix::Matrix;
 use sven_ablation::mcp_stub;
-use sven_ablation::plan::ModelChoice;
+use sven_ablation::plan::{AssemblySettings, ModelChoice};
 use sven_ablation::report;
 use sven_ablation::runner::{Probe, Runner, RunnerOptions};
 use sven_ablation::score::{score, RunEvidence};
@@ -64,7 +64,7 @@ enum Command {
         run: PathBuf,
     },
     /// Run suites under variants and write raw records to --out.
-    Run(RunArgs),
+    Run(Box<RunArgs>),
     /// Turn the raw records under --runs into report.json and report.md.
     Report {
         #[arg(long)]
@@ -138,6 +138,14 @@ struct RunArgs {
     /// a scripted model that fetches what a shortened result left out.
     #[arg(long)]
     recovery: bool,
+    /// Estimated tokens of conversation above which context assembly demotes
+    /// results (default: the product's).
+    #[arg(long)]
+    assembly_budget: Option<u32>,
+    /// Rounds of tool calls whose results context assembly never demotes
+    /// (default: the product's).
+    #[arg(long)]
+    keep_recent_rounds: Option<u32>,
     /// Longest one sven process may run, in seconds.
     #[arg(long, default_value_t = 300)]
     timeout_secs: u64,
@@ -183,7 +191,7 @@ fn run(command: Command) -> Result<ExitCode, String> {
         Command::Score { task, run } => score_command(&task, &run),
         Command::Run(args) => {
             let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-            runtime.block_on(run_command(args))
+            runtime.block_on(run_command(*args))
         }
         Command::Report { runs, out } => report_command(&runs, &out),
         Command::ExportFixtures {
@@ -300,6 +308,10 @@ async fn run_command(args: RunArgs) -> Result<ExitCode, String> {
         trained_model: args.trained_model.clone(),
         brain_commit: args.brain_commit.clone(),
         model,
+        assembly: AssemblySettings {
+            budget_tokens: args.assembly_budget,
+            keep_recent_rounds: args.keep_recent_rounds,
+        },
     };
     let runner = Runner::new(options, &matrix_text).await?;
     std::fs::write(args.out.join("matrix.yaml"), &matrix_text).map_err(|e| e.to_string())?;

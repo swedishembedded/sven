@@ -85,6 +85,62 @@ pub fn merge(into: &mut Value, from: Value) {
     }
 }
 
+/// What context assembly may spend and keep, when a run is not to use the
+/// product's defaults.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AssemblySettings {
+    pub budget_tokens: Option<u32>,
+    pub keep_recent_rounds: Option<u32>,
+}
+
+/// `config_yaml` with `settings` written under `context.assembly`.
+///
+/// # Errors
+///
+/// A configuration that is not YAML.
+pub fn with_assembly_settings(
+    config_yaml: &str,
+    settings: &AssemblySettings,
+) -> Result<String, String> {
+    if *settings == AssemblySettings::default() {
+        return Ok(config_yaml.to_string());
+    }
+    let mut config: Value = serde_yaml::from_str(config_yaml).map_err(|e| e.to_string())?;
+    let mut assembly = serde_json::Map::new();
+    if let Some(n) = settings.budget_tokens {
+        assembly.insert("budget_tokens".into(), n.into());
+    }
+    if let Some(n) = settings.keep_recent_rounds {
+        assembly.insert("keep_recent_rounds".into(), n.into());
+    }
+    let fragment = serde_yaml::to_value(serde_json::json!({"context": {"assembly": assembly}}))
+        .map_err(|e| e.to_string())?;
+    merge(&mut config, fragment);
+    serde_yaml::to_string(&config).map_err(|e| e.to_string())
+}
+
+/// The assembly settings a configuration runs with, as a report states them;
+/// `None` when it does not assemble context.
+#[must_use]
+pub fn assembly_description(config_yaml: &str) -> Option<String> {
+    let config: Value = serde_yaml::from_str(config_yaml).ok()?;
+    let assembly = config.get("context")?.get("assembly")?;
+    if assembly.get("mode")?.as_str()? == "off" {
+        return None;
+    }
+    let setting = |key: &str| {
+        assembly
+            .get(key)
+            .and_then(Value::as_u64)
+            .map_or_else(|| "default".to_string(), |n| n.to_string())
+    };
+    Some(format!(
+        "budget_tokens {}, keep_recent_rounds {}",
+        setting("budget_tokens"),
+        setting("keep_recent_rounds")
+    ))
+}
+
 /// The configuration file of a run: the task's base configuration, the
 /// variant's, and the stub MCP server when the task has a catalog.
 ///

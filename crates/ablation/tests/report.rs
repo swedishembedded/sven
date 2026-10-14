@@ -565,3 +565,26 @@ fn a_report_without_recovery_runs_has_no_recovery_section() {
         .collect();
     assert!(build(&matrix(), &runs).recovery.is_none());
 }
+
+#[test]
+fn the_header_states_the_assembly_settings_the_runs_used() {
+    let mut a = record(&Spec::new(Suite::RelevantFile, 1, "A", 1000));
+    let mut b = record(&Spec::new(Suite::RelevantFile, 1, "B", 700));
+    let realization = |config: &str| sven_ablation::record::RealizationRecord {
+        tool_disclosure: "deferred".into(),
+        config_yaml: config.into(),
+        context_assembly_requested: "demote".into(),
+        context_assembly_supported: true,
+    };
+    a.realization = Some(realization("context:\n  assembly:\n    mode: off\n"));
+    b.realization = Some(realization(
+        "context:\n  assembly:\n    mode: demote\n    budget_tokens: 4000\n",
+    ));
+    let report = build(&matrix(), &[a, b]);
+    assert_eq!(
+        report.header.assembly_settings,
+        ["budget_tokens 4000, keep_recent_rounds default"]
+    );
+    assert!(sven_ablation::markdown::render(&report)
+        .contains("context assembly settings: budget_tokens 4000"));
+}

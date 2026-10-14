@@ -95,6 +95,10 @@ pub struct Header {
     /// Variants whose `context_assembly` request had no effect because the
     /// binary has no such key.
     pub context_assembly_ignored_by_binary: bool,
+    /// The `context.assembly` settings the runs used (`default` where the
+    /// product's own value applied), one entry per distinct set.
+    #[serde(default)]
+    pub assembly_settings: Vec<String>,
 }
 
 /// How many runs of a variant ended each way.
@@ -657,6 +661,15 @@ pub fn build(matrix: &Matrix, runs: &[RunRecord]) -> Report {
             unit: "one task at one seed run under two variants (a pair); turns and requests are never resampled".into(),
             minimum_pairs: MIN_PAIRS,
         },
+        assembly_settings: distinct(&|r| {
+            r.realization
+                .as_ref()
+                .and_then(|x| crate::plan::assembly_description(&x.config_yaml))
+                .unwrap_or_default()
+        })
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect(),
         context_assembly_ignored_by_binary: runs.iter().any(|r| {
             r.realization.as_ref().is_some_and(|x| {
                 !x.context_assembly_supported && x.context_assembly_requested != "off"

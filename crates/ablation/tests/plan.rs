@@ -159,3 +159,45 @@ fn merging_replaces_scalars_and_combines_maps() {
         serde_yaml::from_str("x: {a: 1, b: 3, c: 4}\ny: 1\nz: 5").unwrap();
     assert_eq!(a, expected);
 }
+
+// ── context assembly settings ────────────────────────────────────────────────
+
+#[test]
+fn assembly_settings_are_written_under_context_assembly_and_leave_the_rest_alone() {
+    use sven_ablation::plan::{assembly_description, with_assembly_settings, AssemblySettings};
+    let config = "context:\n  assembly:\n    mode: demote\ndecision:\n  enabled: false\n";
+    let settings = AssemblySettings {
+        budget_tokens: Some(4000),
+        keep_recent_rounds: Some(1),
+    };
+    let out = with_assembly_settings(config, &settings).unwrap();
+    let value: serde_yaml::Value = serde_yaml::from_str(&out).unwrap();
+    let assembly = &value["context"]["assembly"];
+    assert_eq!(assembly["mode"], "demote");
+    assert_eq!(assembly["budget_tokens"], 4000);
+    assert_eq!(assembly["keep_recent_rounds"], 1);
+    assert_eq!(value["decision"]["enabled"], false);
+    assert_eq!(
+        assembly_description(&out).as_deref(),
+        Some("budget_tokens 4000, keep_recent_rounds 1")
+    );
+}
+
+#[test]
+fn no_settings_leave_the_configuration_as_it_was_and_are_described_as_defaults() {
+    use sven_ablation::plan::{assembly_description, with_assembly_settings, AssemblySettings};
+    let config = "context:\n  assembly:\n    mode: demote\n";
+    assert_eq!(
+        with_assembly_settings(config, &AssemblySettings::default()).unwrap(),
+        config
+    );
+    assert_eq!(
+        assembly_description(config).as_deref(),
+        Some("budget_tokens default, keep_recent_rounds default")
+    );
+    assert_eq!(
+        assembly_description("context:\n  assembly:\n    mode: off\n"),
+        None,
+        "a variant without assembly has no settings to describe"
+    );
+}

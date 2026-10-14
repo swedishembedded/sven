@@ -170,6 +170,7 @@ Both build `sven-ablation`, run every suite under every variant for the seeds
 | `--brain-url URL` | the Brain server for variants D and E |
 | `--stock-model ID`, `--trained-model ID` | the models of D and E |
 | `--brain-commit SHA` | recorded as the server's commit; the wire does not report one |
+| `--assembly-budget N`, `--keep-recent-rounds N` | the `context.assembly` settings of the variants that assemble context (default: the product's); the report header states the settings the runs used |
 | `--recovery` | also run the suites whose final question recovers with a model that fetches what shortened results left out |
 | `--fallback-probe` | also run each injected-provider variant once with its provider unreachable |
 | `--timeout-secs N` | longest one sven process may run (default 300) |

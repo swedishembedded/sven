@@ -24,7 +24,10 @@ use tokio::process::Command;
 use crate::evidence::RequestLog;
 use crate::matrix::{Decisions, Endpoints, Variant};
 use crate::mockscript::{render_conversation, render_mock, render_recovering_mock};
-use crate::plan::{compose_config, invocation, Invocation, ModelChoice, RunLayout};
+use crate::plan::{
+    compose_config, invocation, with_assembly_settings, AssemblySettings, Invocation, ModelChoice,
+    RunLayout,
+};
 use crate::provider_server::ProviderServer;
 use crate::providers::{HeuristicProvider, OracleProvider, RandomProvider};
 use crate::record::{
@@ -83,6 +86,8 @@ pub struct RunnerOptions {
     pub trained_model: Option<String>,
     pub brain_commit: Option<String>,
     pub model: ModelChoice,
+    /// Context assembly settings of the variants that assemble context.
+    pub assembly: AssemblySettings,
 }
 
 /// A run that cannot go on, and why.
@@ -289,6 +294,10 @@ impl Runner {
         let mut realization = variant
             .realize(&endpoints)
             .map_err(|u| Stop::Unavailable(u.to_string()))?;
+        if variant.context_assembly != "off" {
+            realization.config_yaml =
+                with_assembly_settings(&realization.config_yaml, &self.options.assembly)?;
+        }
         if probe == Some(Probe::Fallback) {
             realization.config_yaml = realization
                 .config_yaml
