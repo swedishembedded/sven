@@ -67,13 +67,15 @@ use sven_decision::telemetry::DecisionTelemetry;
 use sven_hsm::{Effect, Event, ObservationSink, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, EventSink};
 use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
-use sven_tool_registry::{ToolOffer, ToolRegistry};
+use sven_tool_registry::ToolRegistry;
 use sven_turn::{stream_turn, to_model_schemas, AbortedError, ModelResolver};
 use sven_vocab::TurnRequest;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
 mod compaction;
+mod context_view;
 
+use crate::chunks::ContextAssembler;
 use crate::notices;
 use crate::thread_store::{
     append_messages, refusal_reasons, register_calls, snapshot_thread, ThreadStore,
@@ -124,6 +126,8 @@ pub struct TurnExecutor {
     warned_without_tools: std::collections::HashSet<String>,
     /// Decision accounting charged to the next request's ledger record.
     decisions: Option<Arc<DecisionTelemetry>>,
+    /// Builds the context view of each request when addressable context is on.
+    context: Option<ContextAssembler>,
 }
 
 /// Proactive-compaction settings, mirroring the agent settings'
@@ -186,6 +190,7 @@ impl TurnExecutor {
             empty_turns: Arc::new(Mutex::new(HashMap::new())),
             warned_without_tools: std::collections::HashSet::new(),
             decisions: None,
+            context: None,
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
@@ -222,6 +227,14 @@ impl TurnExecutor {
     #[must_use]
     pub fn with_decision_telemetry(mut self, telemetry: Arc<DecisionTelemetry>) -> Self {
         self.decisions = Some(telemetry);
+        self
+    }
+
+    /// Builds each request's context from the history with `assembler`
+    /// instead of sending the history as it is. `None` sends the history.
+    #[must_use]
+    pub fn with_context_assembler(mut self, assembler: Option<ContextAssembler>) -> Self {
+        self.context = assembler;
         self
     }
 
@@ -290,17 +303,21 @@ impl EffectExecutor for TurnExecutor {
 
         // Resolve tool schemas: named list takes priority; fall back to all-mode.
         // `--no-tools` overrides whatever the requesting machine asked for -
-        // the model never sees a single tool definition.
-        let (tool_schemas, withheld_tools) = if self.no_tools {
-            (vec![], Vec::new())
-        } else {
-            let offered = self.tools.offer(&ToolOffer {
-                names: &req.tools,
-                all_tools_mode: &req.all_tools_mode,
-                active: &req.active_tools,
-            });
-            (to_model_schemas(offered.schemas), offered.withheld)
-        };
+        // the model never sees a single tool definition. The context view is
+        // decided with them: a request that carries a reference offers the tool
+        // that expands it (see `context_view`).
+        let planned = self.plan_request(&req, &messages);
+        let expandable = context_view::offers_expansion(&planned.offered);
+        let mut view = planned.view;
+        let withheld_tools = planned.offered.withheld;
+        let tool_schemas = to_model_schemas(planned.offered.schemas);
+        if !planned.activate.is_empty() {
+            let _ = sink
+                .emit(Event::ToolsActivated {
+                    names: planned.activate,
+                })
+                .await;
+        }
 
         notices::report_served_model_change(model.as_ref(), obs);
         notices::warn_if_tools_unsupported(
@@ -338,7 +355,7 @@ impl EffectExecutor for TurnExecutor {
         let context_window = model.catalog_context_window();
         let configured_max_output = self.limits.cap_output(model.catalog_max_output_tokens());
         let mut estimate = sven_model::budget::estimate_request_tokens(
-            &messages,
+            view.as_ref().map_or(&messages, |v| &v.0),
             &tool_schemas,
             req.dynamic_suffix.as_deref(),
         );
@@ -363,13 +380,21 @@ impl EffectExecutor for TurnExecutor {
                         obs,
                     )
                     .await;
+                view = self.reassemble_view(&messages, expandable);
                 estimate = sven_model::budget::estimate_request_tokens(
-                    &messages,
+                    view.as_ref().map_or(&messages, |v| &v.0),
                     &tool_schemas,
                     req.dynamic_suffix.as_deref(),
                 );
             }
         }
+        let (messages, context_view) = match view {
+            Some((assembled, record)) => {
+                self.mark_view_sent(&record);
+                (assembled, Some(record))
+            }
+            None => (messages, None),
+        };
 
         if let Some(budget) =
             sven_model::budget::effective_input_budget(context_window, configured_max_output)
@@ -458,8 +483,11 @@ impl EffectExecutor for TurnExecutor {
                     ..
                 } = &mut ev
                 {
-                    if let (Some(decisions), Some(breakdown)) = (&decisions, breakdown) {
-                        notices::charge_decisions(decisions, breakdown);
+                    if let Some(breakdown) = breakdown {
+                        if let Some(decisions) = &decisions {
+                            notices::charge_decisions(decisions, breakdown);
+                        }
+                        breakdown.context_view.clone_from(&context_view);
                     }
                     (*cache_read_total, *cache_write_total) = notices::add_cache_totals(
                         &cache_totals,

@@ -40,6 +40,7 @@
 //! ```
 
 pub mod audit;
+pub mod chunks;
 pub mod composite;
 pub mod internal;
 mod notices;
@@ -54,6 +55,7 @@ pub mod verify;
 pub use audit::{
     append_chain, read_chain, verify_chain, AuditExecutor, ChainError, ChainedLine, GENESIS_HASH,
 };
+pub use chunks::{ChunkSession, ContextAssembler};
 pub use composite::{CompositeExecutor, CompositeExecutorBuilder};
 pub use internal::InternalExecutor;
 pub use thread_store::{ThreadId, ThreadStore};

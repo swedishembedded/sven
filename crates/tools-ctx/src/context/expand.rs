@@ -15,14 +15,19 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
+use async_trait::async_trait;
+use serde_json::{json, Map, Value};
 use sven_chunks::{
     render_expansion, ChunkId, ExpansionRequest, Freshness, LineRange, SharedChunkStore,
-    SourceProbe,
+    SourceProbe, EXPAND_ACTION, EXPAND_TOOL_NAME,
 };
-use sven_tool_api::tool::{ToolCall, ToolOutput};
+use sven_hsm::ToolCapability;
+use sven_tool_api::policy::ApprovalPolicy;
+use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
+use sven_vocab::AgentMode;
 
 /// Reads chunks back from the session's [`ChunkStore`](sven_chunks::ChunkStore).
+#[derive(Clone)]
 pub struct ChunkExpander {
     store: SharedChunkStore,
     probe: Arc<dyn SourceProbe + Send + Sync>,
@@ -34,6 +39,28 @@ impl ChunkExpander {
     #[must_use]
     pub fn new(store: SharedChunkStore, probe: Arc<dyn SourceProbe + Send + Sync>) -> Self {
         Self { store, probe }
+    }
+
+    /// The parameters of `action=expand`, for a tool definition that offers it.
+    #[must_use]
+    pub fn parameters() -> Map<String, Value> {
+        let Value::Object(map) = json!({
+            "chunk": {
+                "type": "string",
+                "description": "[action=expand] Chunk id (c-...) shown in a shortened tool result"
+            },
+            "first_line": {
+                "type": "integer",
+                "description": "[action=expand] First line of the chunk to return (1-indexed, default 1)"
+            },
+            "last_line": {
+                "type": "integer",
+                "description": "[action=expand] Last line of the chunk to return (inclusive, default the end)"
+            }
+        }) else {
+            unreachable!("a JSON object literal is an object")
+        };
+        map
     }
 
     /// Run `action=expand`: `chunk`, and optionally `first_line` and
@@ -121,5 +148,76 @@ fn line_argument(args: &Value, key: &str) -> Result<Option<usize>, String> {
             .and_then(|n| usize::try_from(n).ok())
             .map(Some)
             .ok_or_else(|| format!("'{key}' must be an integer >= 1")),
+    }
+}
+
+/// The `context` tool in a session that has none of the large-content
+/// actions: it offers only `expand`, so a reference in a shortened tool result
+/// is never a dead end. Where the full `context` tool is registered it carries
+/// this action itself and this tool is not registered.
+pub struct ChunkExpandTool {
+    expander: ChunkExpander,
+}
+
+impl ChunkExpandTool {
+    #[must_use]
+    pub fn new(expander: ChunkExpander) -> Self {
+        Self { expander }
+    }
+}
+
+#[async_trait]
+impl Tool for ChunkExpandTool {
+    fn name(&self) -> &str {
+        EXPAND_TOOL_NAME
+    }
+
+    fn summary(&self) -> &str {
+        "Return the raw text of a chunk that a shortened tool result referred to."
+    }
+
+    fn description(&self) -> &str {
+        "Return the raw text behind a chunk id (c-...) that an earlier tool result showed in a \
+         shorter form. action=expand, chunk=<id>; optionally first_line and last_line to read \
+         only part of it. The first line of the result says which chunk and lines these are and \
+         whether the file it was read from has changed since; a STALE chunk is what the file \
+         contained then, not now."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        let mut properties = ChunkExpander::parameters();
+        properties.insert(
+            "action".into(),
+            json!({
+                "type": "string",
+                "enum": [EXPAND_ACTION],
+                "description": "Which context operation to perform"
+            }),
+        );
+        json!({
+            "type": "object",
+            "properties": properties,
+            "required": ["action", "chunk"],
+            "additionalProperties": false
+        })
+    }
+
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
+    }
+
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Research, AgentMode::Plan, AgentMode::Agent]
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        match call.args.get("action").and_then(Value::as_str) {
+            Some(EXPAND_ACTION) => self.expander.expand(call),
+            _ => ToolOutput::err(&call.id, format!("action must be '{EXPAND_ACTION}'")),
+        }
     }
 }

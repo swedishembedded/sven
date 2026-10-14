@@ -32,6 +32,7 @@ use sven_kernel::{CancelScope, EffectExecutor, EventSink};
 
 /// Default for [`ToolExecutor::tool_timeout`].
 const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(600);
+use crate::chunks::ChunkSession;
 use crate::thread_store::ThreadStore;
 use sven_model::Message;
 use sven_tool_registry::{ToolCall, ToolOutput, ToolRegistry, DISCOVERY_TOOL};
@@ -76,6 +77,9 @@ pub struct ToolExecutor {
     /// only the one the machine authorized it as. See
     /// [`Self::with_capability_reconciliation`].
     reconcile_capability: bool,
+    /// When addressable context is on, each result is recorded as a chunk as
+    /// it is appended, so a file read keeps the version it was read at.
+    chunks: Option<Arc<ChunkSession>>,
 }
 
 impl ToolExecutor {
@@ -94,6 +98,7 @@ impl ToolExecutor {
             tool_timeout: DEFAULT_TOOL_TIMEOUT,
             cancel: CancelScope::new(),
             reconcile_capability: false,
+            chunks: None,
         }
     }
 
@@ -146,6 +151,14 @@ impl ToolExecutor {
         Self::new(registry, HashSet::new())
     }
 
+    /// Records each result in the session's chunk store as it is appended to
+    /// the conversation (addressable context). `None` records nothing.
+    #[must_use]
+    pub fn with_chunk_session(mut self, chunks: Option<Arc<ChunkSession>>) -> Self {
+        self.chunks = chunks;
+        self
+    }
+
     /// Creates an executor with a pre-shared call_id registry and store.
     ///
     /// Used when `TurnExecutor` (Phase B) needs to share its registry with this
@@ -166,6 +179,7 @@ impl ToolExecutor {
             tool_timeout: DEFAULT_TOOL_TIMEOUT,
             cancel: CancelScope::new(),
             reconcile_capability: false,
+            chunks: None,
         }
     }
 }
@@ -259,6 +273,7 @@ impl EffectExecutor for ToolExecutor {
         let tool_result_token_cap = self.tool_result_token_cap;
         let tool_timeout = self.tool_timeout;
         let cancel = self.cancel.clone();
+        let chunks = self.chunks.clone();
 
         // Spawn-and-forget: the task runs concurrently with other effects.
         tokio::spawn(async move {
@@ -385,16 +400,19 @@ impl EffectExecutor for ToolExecutor {
             // - unlike UiEvent::ToolFinished/Event::ToolSucceeded above, which
             // always carry the full output for human/audit visibility.
             if let Some((tid, orig)) = mapping {
+                let category = registry.output_category(&name);
+                let truncated =
+                    sven_turn::smart_truncate(&output.content, category, tool_result_token_cap);
+                let stored = if output.is_error {
+                    format!("error: {truncated}")
+                } else {
+                    truncated
+                };
+                if let Some(chunks) = &chunks {
+                    chunks.record_result(&name, &tool_call.args, &stored);
+                }
                 if let Ok(mut s) = store.lock() {
-                    let category = registry.output_category(&name);
-                    let truncated =
-                        sven_turn::smart_truncate(&output.content, category, tool_result_token_cap);
-                    let msg = if output.is_error {
-                        Message::tool_result(orig, format!("error: {truncated}"))
-                    } else {
-                        Message::tool_result(orig, &truncated)
-                    };
-                    s.append(&tid, msg);
+                    s.append(&tid, Message::tool_result(orig, stored));
                 }
             }
 

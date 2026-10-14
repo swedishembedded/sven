@@ -297,7 +297,8 @@ fn tool_activity(messages: &[Message]) -> ToolActivity {
 
 /// Arguments in a form that is equal for equal JSON values: object keys
 /// sorted at every depth. Text that is not JSON is compared as trimmed text.
-pub(crate) fn canonical_json(arguments: &str) -> String {
+/// `arguments` in a form that is equal for equal JSON values.
+pub fn canonical_json(arguments: &str) -> String {
     fn sorted(value: serde_json::Value) -> serde_json::Value {
         match value {
             serde_json::Value::Object(map) => serde_json::Value::Object(

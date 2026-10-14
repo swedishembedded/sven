@@ -17,8 +17,10 @@ use sven_chunks::{
     ChunkDraft, ChunkKind, ChunkStore, FsProbe, Lifetime, Provenance, Sensitivity, SourceProbe,
     StoreLimits,
 };
+use sven_tool_api::tool::Tool;
 use sven_tool_api::tool::ToolCall;
-use sven_tools_ctx::ChunkExpander;
+use sven_tools_ctx::{ChunkExpandTool, ChunkExpander};
+use sven_vocab::AgentMode;
 
 struct Fixture {
     expander: ChunkExpander,
@@ -169,4 +171,42 @@ fn an_expansion_of_a_changed_file_says_the_chunk_is_stale() {
         stale.content.ends_with("\nv1"),
         "the old text is still returned"
     );
+}
+
+#[tokio::test]
+async fn the_expansion_tool_is_the_context_tool_with_only_the_expand_action() {
+    let f = fixture();
+    let id = record(&f, "x\ny\n", draft(ChunkKind::CommandOutput, None, None));
+    let tool = ChunkExpandTool::new(f.expander);
+    assert_eq!(tool.name(), "context");
+    assert!(tool.summary().len() <= 100, "{}", tool.summary());
+    let schema = tool.parameters_schema();
+    assert_eq!(schema["properties"]["action"]["enum"], json!(["expand"]));
+    assert_eq!(schema["required"], json!(["action", "chunk"]));
+    for key in ["chunk", "first_line", "last_line"] {
+        assert!(schema["properties"].get(key).is_some(), "{key}");
+    }
+    for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
+        assert!(tool.modes().contains(&mode));
+    }
+    assert_eq!(
+        tool.call_capability(&json!({"action": "expand"})),
+        sven_tool_api::ToolCapability::ReadFile
+    );
+    let out = tool
+        .execute(&ToolCall {
+            id: "c".into(),
+            name: "context".into(),
+            args: json!({"action": "expand", "chunk": id}),
+        })
+        .await;
+    assert!(!out.is_error && out.content.ends_with("\nx\ny\n"));
+    let other = tool
+        .execute(&ToolCall {
+            id: "c".into(),
+            name: "context".into(),
+            args: json!({"action": "open", "chunk": id}),
+        })
+        .await;
+    assert!(other.is_error && other.content.contains("expand"));
 }

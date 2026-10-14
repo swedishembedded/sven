@@ -32,8 +32,9 @@ pub mod wait;
 
 pub use harness::HarnessEvent;
 pub use ledger::{
-    ContextRecovery, DecisionInference, DecisionTraceRecord, LedgerSummary, ReportedUsage,
-    RequestBreakdown, ToolActivity, STEP_DECISIONS_EXTRA_KEY, STEP_METRICS_EXTRA_KEY,
+    ContextRecovery, ContextView, DecisionInference, DecisionTraceRecord, DemotionRecord,
+    LedgerSummary, ReportedUsage, RequestBreakdown, ToolActivity, STEP_DECISIONS_EXTRA_KEY,
+    STEP_METRICS_EXTRA_KEY,
 };
 
 pub use served::{describe_adapter, served_model_changed_text, AdapterRef};

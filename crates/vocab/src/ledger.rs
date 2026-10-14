@@ -133,6 +133,43 @@ impl ContextRecovery {
     }
 }
 
+/// A tool result shown in a smaller form than it has, first time it was.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DemotionRecord {
+    /// The chunk's id (`c-` and 16 hex digits): what an expansion asks for.
+    pub chunk: String,
+    /// SHA-256 of the raw text, hex: the reference into the chunk store.
+    pub digest: String,
+    /// The tool that produced the result.
+    pub tool: String,
+    /// The form it had (`full`) and the form it was given (`long`, `short`,
+    /// `hidden`).
+    pub from: String,
+    pub to: String,
+    /// Estimated tokens the smaller form saves on every request that carries it.
+    pub tokens_saved: u32,
+}
+
+/// How the context of one request was assembled from the history.
+///
+/// Present only when addressable context is on. Counts describe the request
+/// itself; `new_demotions` lists the results demoted for the first time by
+/// this request, so a trajectory names every demoted chunk once instead of
+/// once per request.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextView {
+    /// The assembly mode (`demote`).
+    pub mode: String,
+    /// Tool results this request carries in a form below `full`.
+    #[serde(default)]
+    pub demoted: u32,
+    /// Estimated tokens those forms save in this request.
+    #[serde(default)]
+    pub tokens_saved: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub new_demotions: Vec<DemotionRecord>,
+}
+
 /// Cost of the decision-model inference made on behalf of a request (for
 /// example a small model that re-ranks tool search results before the main
 /// model sees them): everything asked since the previous request.
@@ -238,6 +275,10 @@ pub struct RequestBreakdown {
     /// Expansions of demoted context at this request; absent when none.
     #[serde(default, skip_serializing_if = "ContextRecovery::is_empty")]
     pub context_recovery: ContextRecovery,
+    /// How the history was assembled into this request's context; absent when
+    /// addressable context is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_view: Option<ContextView>,
     /// Decision-model inference cost, see [`DecisionInference`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<DecisionInference>,
@@ -339,6 +380,12 @@ pub struct LedgerSummary {
     /// Duplicate tool calls, summed over trajectories.
     #[serde(default)]
     pub duplicate_tool_calls: u64,
+    /// Tool results sent in a form below `full`, summed over requests.
+    #[serde(default)]
+    pub demoted_results: u64,
+    /// Estimated tokens those forms saved, summed over requests.
+    #[serde(default)]
+    pub context_tokens_saved: u64,
     /// Expansions of demoted context, summed over trajectories.
     #[serde(default)]
     pub expansions: u64,
@@ -376,6 +423,10 @@ impl LedgerSummary {
         add_named(&mut self.tool_results, &request.tool_results);
         self.media += u64::from(request.media);
         self.wall_ms += request.wall_ms.unwrap_or(0);
+        if let Some(view) = &request.context_view {
+            self.demoted_results += u64::from(view.demoted);
+            self.context_tokens_saved += u64::from(view.tokens_saved);
+        }
         if let Some(reported) = request.reported {
             self.reconciled_requests += 1;
             self.estimated_reconciled += u64::from(request.estimated_total);
@@ -430,6 +481,8 @@ impl LedgerSummary {
         self.cache_write += other.cache_write;
         self.tool_calls += other.tool_calls;
         self.duplicate_tool_calls += other.duplicate_tool_calls;
+        self.demoted_results += other.demoted_results;
+        self.context_tokens_saved += other.context_tokens_saved;
         self.expansions += other.expansions;
         self.stale_expansions += other.stale_expansions;
         self.expanded_bytes += other.expanded_bytes;
@@ -500,6 +553,13 @@ impl LedgerSummary {
             "tool calls: {}   duplicate: {}",
             self.tool_calls, self.duplicate_tool_calls
         );
+        if self.demoted_results > 0 {
+            let _ = writeln!(
+                out,
+                "demoted tool results: {}   tokens saved: {}",
+                self.demoted_results, self.context_tokens_saved
+            );
+        }
         if self.expansions > 0 {
             let _ = writeln!(
                 out,
@@ -547,6 +607,35 @@ mod tests {
         assert!(!serde_json::to_string(&b)
             .unwrap()
             .contains("context_recovery"));
+    }
+
+    #[test]
+    fn a_context_view_is_summed_and_named_in_the_table() {
+        let view = ContextView {
+            mode: "demote".into(),
+            demoted: 3,
+            tokens_saved: 900,
+            new_demotions: vec![DemotionRecord {
+                chunk: "c-0123456789abcdef".into(),
+                ..DemotionRecord::default()
+            }],
+        };
+        let r = RequestBreakdown {
+            context_view: Some(view),
+            ..RequestBreakdown::default()
+        };
+        let mut s = LedgerSummary::default();
+        s.add_request(&r);
+        s.add_request(&r);
+        assert_eq!((s.demoted_results, s.context_tokens_saved), (6, 1800));
+        assert!(s
+            .render_table()
+            .contains("demoted tool results: 6   tokens saved: 1800"));
+        let json = serde_json::to_string(&RequestBreakdown::default()).unwrap();
+        assert!(
+            !json.contains("context_view"),
+            "off leaves the record as it was"
+        );
     }
 
     #[test]

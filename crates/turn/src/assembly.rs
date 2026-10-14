@@ -95,7 +95,7 @@ pub struct Candidate<'a> {
 /// Chooses how far to demote a candidate. It only advises: a choice outside
 /// [`Candidate::allowed`], or not below [`Candidate::current`], is replaced by
 /// the policy's own `default`.
-pub trait VisibilityAdvisor {
+pub trait VisibilityAdvisor: Send + Sync {
     fn advise(&self, candidate: &Candidate<'_>, default: Visibility) -> Visibility;
 }
 
@@ -112,6 +112,8 @@ impl VisibilityAdvisor for DeterministicAdvisor {
 /// A result that was shown smaller than it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Demotion {
+    /// The call whose result was shrunk, so a caller can put it back.
+    pub tool_call_id: String,
     pub chunk_id: ChunkId,
     pub tool: String,
     pub from: Visibility,
@@ -209,6 +211,7 @@ impl ContextPolicy {
             }
             out.push(Entry {
                 index,
+                tool_call_id: tool_call_id.clone(),
                 chunk_id,
                 kind,
                 tool: call.name.clone(),
@@ -265,6 +268,7 @@ fn index_calls(messages: &[Message]) -> HashMap<&str, CallInfo> {
 
 struct Entry {
     index: usize,
+    tool_call_id: String,
     chunk_id: ChunkId,
     kind: ChunkKind,
     tool: String,
@@ -339,6 +343,7 @@ fn apply(mut messages: Vec<Message>, results: Vec<Entry>) -> AssembledView {
             *content = ToolResultContent::Text(shown.clone());
         }
         demotions.push(Demotion {
+            tool_call_id: entry.tool_call_id,
             chunk_id: entry.chunk_id,
             tool: entry.tool.clone(),
             from: Visibility::Full,
@@ -400,7 +405,9 @@ fn is_test_command(arguments: &str) -> bool {
     argument(arguments, "command").is_some_and(|c| re.is_match(&c))
 }
 
-fn path_argument(arguments: &str) -> Option<String> {
+/// The file a call names in its `path` (or `file_path`) argument.
+#[must_use]
+pub fn path_argument(arguments: &str) -> Option<String> {
     argument(arguments, "path").or_else(|| argument(arguments, "file_path"))
 }
 

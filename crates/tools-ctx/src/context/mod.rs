@@ -23,7 +23,7 @@ pub mod query_runner;
 pub mod read;
 pub mod store;
 
-pub use expand::ChunkExpander;
+pub use expand::{ChunkExpandTool, ChunkExpander};
 pub use grep::ContextGrepTool;
 pub use open::ContextOpenTool;
 pub use query_runner::SubQueryRunner;
