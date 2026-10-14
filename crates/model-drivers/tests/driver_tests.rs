@@ -462,3 +462,30 @@ async fn test_deepseek_tool_calling() {
         .await
         .unwrap();
 }
+
+#[test]
+fn a_key_variable_that_is_not_set_is_a_missing_key_not_a_satisfied_one() {
+    let cfg = ModelConfig {
+        provider: "anthropic".into(),
+        name: "claude-sonnet-4-6".into(),
+        api_key_env: Some("SVEN_TEST_NO_SUCH_KEY_VAR".into()),
+        ..ModelConfig::default()
+    };
+    let err = from_config(&cfg).err().expect("no key must be refused");
+    let text = err.to_string();
+    assert!(
+        text.contains("SVEN_TEST_NO_SUCH_KEY_VAR") && text.contains("not set"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_provider_that_needs_no_key_is_not_refused_for_an_unset_key_variable() {
+    let cfg = ModelConfig {
+        provider: "ollama".into(),
+        name: "m".into(),
+        api_key_env: Some("SVEN_TEST_NO_SUCH_KEY_VAR".into()),
+        ..ModelConfig::default()
+    };
+    assert!(from_config(&cfg).is_ok());
+}

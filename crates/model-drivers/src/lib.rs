@@ -81,8 +81,23 @@ pub(crate) fn build_http_client() -> reqwest::Client {
 /// requirement — must mirror [`resolve_api_key`]'s precedence exactly, or this
 /// bails on a config that would actually have resolved a key.
 fn check_api_key_requirement(cfg: &ModelConfig) -> anyhow::Result<()> {
-    if cfg.api_key.is_some() || cfg.api_key_env.is_some() {
+    if cfg.api_key.is_some() {
         return Ok(());
+    }
+    // A variable named by `api_key_env` is the only place the key is looked
+    // for (see `resolve_api_key`), so naming one that is not set is a missing
+    // key, not a satisfied requirement.
+    if let Some(var) = &cfg.api_key_env {
+        let keyless = registry::get_driver(&cfg.provider).is_some_and(|m| !m.requires_api_key);
+        if keyless || std::env::var(var).is_ok() {
+            return Ok(());
+        }
+        bail!(
+            "No API key found for provider '{}' (model '{}'): api_key_env names {var}, \
+             which is not set.\nSet {var}, or give the key as api_key.",
+            cfg.provider,
+            cfg.name,
+        );
     }
     if let Some(meta) = registry::get_driver(&cfg.provider) {
         if let Some(env_var) = meta.default_api_key_env {
