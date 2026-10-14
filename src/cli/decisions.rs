@@ -25,6 +25,20 @@ pub enum DoctorCommands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Check that the model sven would use can be reached: the provider
+    /// builds, a local server answers and serves the model, and the model can
+    /// call tools. Probes only a server on this host or a private network, so
+    /// it spends nothing on a hosted provider. Honours `--model` and the
+    /// configuration files; exits non-zero when the model cannot be used.
+    ///
+    ///   sven doctor provider
+    ///   sven -M brain/qwen3 doctor provider --json
+    Provider {
+        /// Print the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// `sven decisions` subcommands.

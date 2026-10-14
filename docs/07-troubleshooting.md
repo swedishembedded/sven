@@ -1,5 +1,26 @@
 # Troubleshooting
 
+## Start here: can sven use the model?
+
+```sh
+sven doctor provider            # add --json for a machine-readable report
+sven -M brain/qwen3 doctor provider
+```
+
+It builds the provider the way a session would and reports each step as `ok`,
+`warn` or `FAIL`, with what to change when it is not `ok`:
+
+| Check | What it tells you |
+|---|---|
+| `provider` | the provider and model sven resolved, or the missing key |
+| `endpoint` | a local server (this host or a private network) answered and serves a model |
+| `model` | the model you named is one the server serves, and what it serves instead |
+| `tools` | the server advertises tool calling for it (a `warn` if it says it does not) |
+
+A hosted provider is never probed, so the check costs nothing and sends nothing; it
+reports only that the provider could be built. The exit status is non-zero when a
+check fails, so it can gate a CI job.
+
 ## API key issues
 
 ### sven exits immediately with "no API key"
@@ -27,6 +48,10 @@ config file:
 model:
   api_key_env: MY_CUSTOM_KEY_VAR
 ```
+
+A variable named this way is the only place the key is looked for. If it is not
+set, sven stops with a message naming it rather than sending a request with no
+key.
 
 ### "401 Unauthorized" or "invalid API key"
 

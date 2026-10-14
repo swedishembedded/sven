@@ -15,6 +15,7 @@ use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
 use run::harness::run_harness_command;
 use run::decisions::{run_decisions_models, run_doctor_decisions};
+use run::provider_doctor::run_doctor_provider;
 use run::index::run_index_command;
 use run::ledger::run_ledger_command;
 use run::logging::init_logging;
@@ -76,6 +77,15 @@ async fn main() -> anyhow::Result<()> {
             } => {
                 let config = Settings::load(cli.config.as_deref())?.runtime;
                 return run_doctor_decisions(&config, *json).await;
+            }
+            Commands::Doctor {
+                command: DoctorCommands::Provider { json },
+            } => {
+                let mut config = Settings::load(cli.config.as_deref())?.runtime;
+                if let Some(m) = &cli.model {
+                    config.model = config.resolve_model(m);
+                }
+                return run_doctor_provider(&config, *json).await;
             }
             Commands::Decisions {
                 command: DecisionsCommands::Models { json },

@@ -46,3 +46,36 @@ fn render(report: &ProviderReport) -> String {
     });
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sven_model_drivers::ProviderCheck;
+
+    fn check(verdict: Verdict, fix: Option<&str>) -> ProviderCheck {
+        ProviderCheck {
+            name: "endpoint",
+            verdict,
+            detail: "http://127.0.0.1:1/v1 did not answer".into(),
+            fix: fix.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_failed_check_prints_its_fix_and_the_report_is_not_ready() {
+        let text = render(&ProviderReport {
+            checks: vec![check(Verdict::Fail, Some("start the server"))],
+        });
+        assert!(text.contains("FAIL endpoint") && text.contains("fix: start the server"));
+        assert!(text.ends_with("not ready: fix the failed checks above\n"));
+    }
+
+    #[test]
+    fn warnings_do_not_stop_the_report_from_being_ready() {
+        let text = render(&ProviderReport {
+            checks: vec![check(Verdict::Warn, Some("pick a model with tools"))],
+        });
+        assert!(text.contains("warn endpoint"));
+        assert!(text.ends_with("ready: sven can use this model\n"));
+    }
+}
