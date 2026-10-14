@@ -150,6 +150,46 @@ impl TokenRecord {
     }
 }
 
+/// The ledger summaries that make up a task's tokens, given the summary of
+/// each process's saved trajectory and how many requests each process made
+/// (read from its request log).
+///
+/// A process that loads the trajectory of the one before saves a trajectory
+/// that holds both, so its summary already includes the earlier requests and
+/// summing every segment would count them again. Each later summary is either
+/// cumulative (its requests are its own plus the previous summary's) and the
+/// last one is the whole task, or disjoint (its requests are its own) and
+/// they are summed. Anything else is an error: a guess would silently change
+/// the tokens of the task.
+///
+/// # Errors
+///
+/// A segment whose requests fit neither reading.
+pub fn task_ledger(
+    summaries: &[LedgerSummary],
+    own_requests: &[u64],
+) -> Result<Vec<LedgerSummary>, String> {
+    let cumulative = (1..summaries.len())
+        .all(|i| summaries[i].requests == own_requests[i] + summaries[i - 1].requests);
+    let disjoint = (0..summaries.len()).all(|i| summaries[i].requests == own_requests[i]);
+    if summaries.len() <= 1 || disjoint {
+        return Ok(summaries.to_vec());
+    }
+    if cumulative && summaries[0].requests == own_requests[0] {
+        return Ok(summaries.last().cloned().into_iter().collect());
+    }
+    let at = (0..summaries.len())
+        .find(|&i| {
+            summaries[i].requests != own_requests[i]
+                && (i == 0 || summaries[i].requests != own_requests[i] + summaries[i - 1].requests)
+        })
+        .unwrap_or(0);
+    Err(format!(
+        "segment {at}: its ledger holds {} requests but the process made {}; the ledgers neither carry the earlier segments nor stand alone",
+        summaries[at].requests, own_requests[at]
+    ))
+}
+
 /// What the decision runtime did in a run.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DecisionRecord {

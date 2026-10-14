@@ -28,7 +28,8 @@ use crate::plan::{compose_config, invocation, Invocation, ModelChoice, RunLayout
 use crate::provider_server::ProviderServer;
 use crate::providers::{HeuristicProvider, OracleProvider, RandomProvider};
 use crate::record::{
-    BrainIdentity, Provenance, RealizationRecord, RunRecord, RunStatus, SegmentRecord, TokenRecord,
+    task_ledger, BrainIdentity, Provenance, RealizationRecord, RunRecord, RunStatus, SegmentRecord,
+    TokenRecord,
 };
 use crate::score::{score, RunEvidence};
 use crate::task::{Generated, Task};
@@ -319,7 +320,15 @@ impl Runner {
                 )));
             }
         }
-        record.tokens = Some(TokenRecord::from_segments(&summaries));
+        let counted = if self.options.model == ModelChoice::Scripted {
+            let own: Vec<u64> = logs.iter().map(|l| l.requests.len() as u64).collect();
+            task_ledger(&summaries, &own).map_err(Stop::Failed)?
+        } else {
+            // A real model leaves no request log to check against; a later
+            // process carries the earlier ones.
+            summaries.last().cloned().into_iter().collect()
+        };
+        record.tokens = Some(TokenRecord::from_segments(&counted));
         record.decisions = decision_record(&last_trajectory);
         record.decisions.served_requests =
             served.server.as_ref().map_or(0, |s| s.stats().decisions());
