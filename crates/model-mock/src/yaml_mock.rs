@@ -51,6 +51,12 @@ use sven_model::{CompletionRequest, ResponseEvent, ResponseStream, Role};
 #[derive(Debug, Deserialize)]
 pub struct MockConfig {
     pub responses: Vec<ResponseRule>,
+    /// When set, every request the provider receives is appended to this file
+    /// as one JSON line: the tools offered and every message, in full. It is
+    /// the record of exactly what a model would have read, for tests that
+    /// check what reached it.
+    #[serde(default)]
+    pub request_log: Option<std::path::PathBuf>,
 }
 
 /// One entry in the responses list.
@@ -173,6 +179,10 @@ impl sven_model::ModelProvider for YamlMockProvider {
 
         debug!(call_num, has_tool_results, last_user = %last_user_text, "yaml mock complete()");
 
+        if let Some(path) = &self.config.request_log {
+            append_request_log(path, call_num, &req)?;
+        }
+
         let rule = self.find_rule(&last_user_text);
 
         if let Some(msg) = rule.and_then(|r| r.error.as_deref()) {
@@ -251,6 +261,59 @@ impl YamlMockProvider {
 
         default_rule
     }
+}
+
+/// One JSON line of the request log: `{"request": n, "pid", "tools": [names],
+/// "messages": [{"role", "kind": text|tool_call|tool_result, "name"?, "text"}]}`.
+fn append_request_log(path: &Path, call_num: u32, req: &CompletionRequest) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let messages: Vec<serde_json::Value> = req
+        .messages
+        .iter()
+        .map(|m| {
+            let role = format!("{:?}", m.role).to_lowercase();
+            match &m.content {
+                sven_model::MessageContent::Text(t) => {
+                    serde_json::json!({"role": role, "kind": "text", "text": t})
+                }
+                sven_model::MessageContent::ContentParts(parts) => {
+                    let text: Vec<&str> = parts
+                        .iter()
+                        .filter_map(|p| match p {
+                            sven_model::ContentPart::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect();
+                    serde_json::json!({"role": role, "kind": "text", "text": text.join("\n")})
+                }
+                sven_model::MessageContent::ToolCall { function, .. } => serde_json::json!({
+                    "role": role, "kind": "tool_call",
+                    "name": function.name, "text": function.arguments,
+                }),
+                sven_model::MessageContent::ToolResult { content, .. } => serde_json::json!({
+                    "role": role, "kind": "tool_result",
+                    "text": content.as_text().unwrap_or("[non-text content]"),
+                }),
+            }
+        })
+        .collect();
+    let line = serde_json::json!({
+        "request": call_num,
+        "pid": std::process::id(),
+        "tools": req.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        "messages": messages,
+    });
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("opening the mock request log: {}", path.display()))?;
+    // One write per record: processes that share the log (a parent and its
+    // sub-agents) append whole lines, never fragments.
+    let record = format!("{line}\n");
+    file.write_all(record.as_bytes())
+        .with_context(|| format!("writing the mock request log: {}", path.display()))
 }
 
 // ─── Event constructors ───────────────────────────────────────────────────────
@@ -400,6 +463,39 @@ responses:
             events.push(ev.unwrap());
         }
         events
+    }
+
+    // ── Request log ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn the_request_log_records_what_the_model_was_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("requests.jsonl");
+        let yaml = format!(
+            "request_log: {}\nresponses:\n  - match_type: default\n    reply: ok\n",
+            log.display()
+        );
+        let p = YamlMockProvider::load(&yaml).unwrap();
+        collect(&p, req("first question")).await;
+        collect(&p, req_with_tool_result("second question")).await;
+
+        let lines: Vec<serde_json::Value> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2, "one line per request");
+        assert_eq!(lines[0]["request"], 1);
+        assert_eq!(lines[0]["messages"][0]["text"], "first question");
+        assert_eq!(lines[1]["request"], 2);
+        assert_eq!(lines[1]["messages"][1]["kind"], "tool_result");
+        assert_eq!(lines[1]["messages"][1]["text"], "ok");
+    }
+
+    #[tokio::test]
+    async fn without_a_request_log_nothing_is_written() {
+        let p = provider();
+        collect(&p, req("ping")).await;
     }
 
     // ── Match types ───────────────────────────────────────────────────────────

@@ -17,4 +17,5 @@ tracing     = { workspace = true }
 tokio       = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
+tempfile    = { workspace = true }
 tokio       = { workspace = true, features = ["test-util", "macros", "rt"] }
