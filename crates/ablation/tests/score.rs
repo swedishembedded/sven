@@ -360,3 +360,74 @@ fn delegation_counts_reads_repeated_by_another_agent_and_needs_every_result() {
         "a result the parent never saw"
     );
 }
+
+// ── recovery ─────────────────────────────────────────────────────────────────
+
+fn question_request(request: u32, extra: &[serde_json::Value], results: &[&str]) -> String {
+    let task = generate(Suite::RelevantFile, 1).task;
+    let marker = task.segments[0].turns.last().unwrap().marker.clone();
+    let mut messages = vec![serde_json::json!({"role": "user", "kind": "text", "text": "earlier"})];
+    for r in results {
+        messages.push(serde_json::json!({"role": "tool", "kind": "tool_result", "text": r}));
+    }
+    messages.push(
+        serde_json::json!({"role": "user", "kind": "text", "text": format!("{marker} the question")}),
+    );
+    messages.extend(extra.iter().cloned());
+    serde_json::json!({"request": request, "pid": 7, "tools": [], "messages": messages}).to_string()
+}
+
+#[test]
+fn recall_is_scored_before_and_after_the_model_fetched_what_a_result_left_out() {
+    let task = evidence_task_with_question();
+    let expand = serde_json::json!(
+        {"role": "assistant", "kind": "tool_call", "name": "context", "text": "{\"action\":\"expand\",\"chunk\":\"c-0123456789abcdef\"}"}
+    );
+    let raw = serde_json::json!({"role": "tool", "kind": "tool_result", "text": "EVID-2 raw"});
+    let lines = [
+        question_request(1, &[], &["EVID-1 outline"]),
+        question_request(2, &[expand, raw], &["EVID-1 outline"]),
+    ];
+    let s = score(&task, &run(&lines)).unwrap();
+    let r = s.recovery.expect("a recoverable task reports recovery");
+    assert_eq!(
+        (r.critical_total, r.visible_before, r.visible_after),
+        (2, 1, 2)
+    );
+    assert!((r.recall_before - 0.5).abs() < 1e-9);
+    assert!((r.recall_after - 1.0).abs() < 1e-9);
+    assert_eq!(r.expansions, 1);
+    assert!(s.passed, "the verdict is the final request's, as before");
+}
+
+#[test]
+fn without_a_fetch_recall_after_is_recall_before() {
+    let task = evidence_task_with_question();
+    let s = score(
+        &task,
+        &run(&[question_request(1, &[], &["EVID-1 outline"])]),
+    )
+    .unwrap();
+    let r = s.recovery.unwrap();
+    assert_eq!(r.visible_before, r.visible_after);
+    assert_eq!(r.expansions, 0);
+}
+
+#[test]
+fn a_task_without_a_recoverable_question_reports_no_recovery() {
+    let task = evidence_task();
+    let mut task = task;
+    for t in &mut task.segments[0].turns {
+        t.recover = None;
+    }
+    let s = score(&task, &run(&[request(1, 7, &[], &["EVID-1 EVID-2"])])).unwrap();
+    assert!(s.recovery.is_none());
+}
+
+fn evidence_task_with_question() -> Task {
+    let mut task = evidence_task();
+    task.segments[0].turns.last_mut().unwrap().recover = Some(sven_ablation::task::Recovery {
+        focus: vec!["x".into()],
+    });
+    task
+}

@@ -134,6 +134,10 @@ struct RunArgs {
     /// Also run each decision variant once with its provider unreachable.
     #[arg(long)]
     fallback_probe: bool,
+    /// Also run each variant on the tasks whose final question recovers with
+    /// a scripted model that fetches what a shortened result left out.
+    #[arg(long)]
+    recovery: bool,
     /// Longest one sven process may run, in seconds.
     #[arg(long, default_value_t = 300)]
     timeout_secs: u64,
@@ -319,6 +323,17 @@ async fn run_command(args: RunArgs) -> Result<ExitCode, String> {
                     record.status,
                     sven_ablation::record::RunStatus::Failed { .. }
                 ));
+                if args.recovery && generated.task.recovers() {
+                    let record = runner.run(&generated, variant, Some(Probe::Recovery)).await;
+                    eprintln!(
+                        "{} {} recovery {:?}",
+                        generated.task.id, variant.id, record.status
+                    );
+                    problems += usize::from(matches!(
+                        record.status,
+                        sven_ablation::record::RunStatus::Failed { .. }
+                    ));
+                }
                 let probe = args.fallback_probe
                     && seed == args.first_seed
                     && variant.decisions.is_injected()

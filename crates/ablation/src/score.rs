@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::evidence::{score_evidence, EvidenceScore, LoggedRequest, RequestLog};
+use crate::recovery::{score_recovery, RecoveryScore};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -93,6 +94,10 @@ pub struct Score {
     pub shortlist: Option<ShortlistScore>,
     pub security: Option<SecurityScore>,
     pub delegation: Option<DelegationScore>,
+    /// Critical evidence before and after the model fetched what shortened
+    /// results left out; present for a task whose final question recovers.
+    #[serde(default)]
+    pub recovery: Option<RecoveryScore>,
 }
 
 /// Why a run cannot be scored.
@@ -123,7 +128,11 @@ pub fn score(task: &Task, run: &RunEvidence) -> Result<Score, ScoreError> {
         .ok_or_else(|| ScoreError("the run made no model request".into()))?;
     match task.suite {
         Suite::RelevantFile | Suite::NoisyOutput | Suite::RestartSurvival => {
-            Ok(score_evidence_suite(task, last))
+            let mut verdict = score_evidence_suite(task, last);
+            if let Some(log) = run.segments.last() {
+                verdict.recovery = score_recovery(task, log);
+            }
+            Ok(verdict)
         }
         Suite::Delegation => Ok(score_delegation(task, &run.segments[0], last)),
         Suite::Security => score_security(task, run, last),
@@ -152,6 +161,7 @@ fn score_evidence_suite(task: &Task, last: &LoggedRequest) -> Score {
         shortlist: None,
         security: None,
         delegation: None,
+        recovery: None,
     }
 }
 
@@ -257,6 +267,7 @@ fn score_tool_selection(
         shortlist: Some(shortlist),
         security: None,
         delegation: None,
+        recovery: None,
     })
 }
 
@@ -333,6 +344,7 @@ fn score_security(
         evidence: Some(rules),
         shortlist: None,
         delegation: None,
+        recovery: None,
     })
 }
 

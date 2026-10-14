@@ -375,3 +375,75 @@ fn delegation_hands_five_subgoals_to_sub_agents_two_of_which_overlap() {
         }
     }
 }
+
+// ── recovery ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn the_suites_where_demotion_applies_script_a_recovery_from_the_question_itself() {
+    for suite in [Suite::RelevantFile, Suite::NoisyOutput] {
+        for seed in 1..4 {
+            let task = generate(suite, seed).task;
+            let last = task.segments[0].turns.last().unwrap();
+            let recover = last.recover.as_ref().unwrap_or_else(|| panic!("{suite:?}"));
+            assert!(!recover.focus.is_empty());
+            let question = last.user.to_lowercase();
+            for term in &recover.focus {
+                assert!(
+                    question.contains(&term.to_lowercase()),
+                    "{suite:?}: focus {term:?} is not in the question"
+                );
+                for e in &task.evidence {
+                    assert!(
+                        !term.contains(&e.marker),
+                        "the focus must not be an evidence label"
+                    );
+                }
+            }
+            assert!(
+                task.segments[0].turns[..task.segments[0].turns.len() - 1]
+                    .iter()
+                    .all(|t| t.recover.is_none()),
+                "only the final question recovers"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_script_recovers_only_when_asked_to() {
+    use sven_ablation::mockscript::render_recovering_mock;
+    let task = generate(Suite::RelevantFile, 2).task;
+    let log = std::path::Path::new("/nonexistent/requests.jsonl");
+    let plain = render_mock(&task.segments[0], log);
+    let recovering = render_recovering_mock(&task.segments[0], log);
+    assert!(!plain.contains("recover"));
+    assert!(recovering.contains("recover"));
+    sven_model_mock::YamlMockProvider::load(&plain).unwrap();
+    sven_model_mock::YamlMockProvider::load(&recovering).unwrap();
+}
+
+#[test]
+fn the_recovery_pattern_matches_the_reference_a_demoted_result_carries() {
+    use sven_ablation::mockscript::EXPAND_REFERENCE;
+    use sven_chunks::{render, ChunkId, ChunkKind, RenderRequest, Visibility};
+    let raw = (1..=80).map(|n| format!("line {n}\n")).collect::<String>();
+    let id = ChunkId::for_content(raw.as_bytes());
+    let shown = render(
+        &RenderRequest {
+            id: id.clone(),
+            kind: ChunkKind::File,
+            source_tool: "read_file",
+            path: Some("src/a.rs"),
+            failure: false,
+            pinned: false,
+            raw: &raw,
+        },
+        Visibility::Short,
+    );
+    let re = Regex::new(EXPAND_REFERENCE).unwrap();
+    let found: Vec<String> = re
+        .captures_iter(&shown.text)
+        .map(|c| c[1].to_string())
+        .collect();
+    assert!(!found.is_empty() && found.iter().all(|f| *f == id.to_string()));
+}

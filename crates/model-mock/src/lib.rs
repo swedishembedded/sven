@@ -18,9 +18,11 @@
 //! dependency of sven-model-drivers.
 
 mod mock;
+mod recovery;
 mod stalling;
 mod yaml_mock;
 
 pub use mock::{FailingMockProvider, MockProvider, ScriptedMockProvider};
+pub use recovery::{RecoverCall, RecoverRule};
 pub use stalling::{StallMode, StallingMockProvider};
 pub use yaml_mock::YamlMockProvider;

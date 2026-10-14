@@ -11,6 +11,7 @@
 use std::fmt::Write;
 
 use crate::report::{Cell, Report, Verdict};
+use crate::report_recovery::RecoveryReport;
 use crate::stats::Interval;
 
 fn num(value: Option<f64>, digits: usize) -> String {
@@ -218,7 +219,64 @@ pub fn render(report: &Report) -> String {
         }
         out.push('\n');
     }
+    if let Some(recovery) = &report.recovery {
+        recovery_section(&mut out, recovery);
+    }
     out
+}
+
+/// The recovery-aware tables: the same tasks with a scripted model that
+/// fetches what a shortened result left out.
+fn recovery_section(out: &mut String, recovery: &RecoveryReport) {
+    let _ = writeln!(
+        out,
+        "## With recovery\n\nThe tasks whose final question names what to look at, run a second time with a scripted model that follows a reference back to the raw text when the shortened result mentions a term of the question (a fixed rule that does not know which lines matter). The main tables above are the model that never asks. `recall before` is the critical evidence in the request that first carried the final question, which is all the harness delivers on its own; `recall after` is the request the model answered from. Tokens include every fetch. Not measured: whether a real model would ask.\n"
+    );
+    for suite in &recovery.suites {
+        let _ = writeln!(
+            out,
+            "### Suite `{}`\n\n| variant | runs | pass | recall before | recall after | tokens mean | R_tokens vs baseline (geo-mean, 95% CI) | median R | expansions | tokens fetched |\n|---|---:|---:|---:|---:|---:|---|---:|---:|---:|",
+            suite.suite.name()
+        );
+        for c in suite.cells.iter().filter(|c| c.runs > 0) {
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                c.variant,
+                c.runs,
+                c.passes,
+                percent(c.recall_without_recovery),
+                percent(c.recall_after_recovery),
+                num(c.tokens_total_mean, 0),
+                interval(c.r_tokens, 2),
+                num(c.r_tokens_median, 2),
+                num(c.expansions_mean, 1),
+                num(c.expanded_tokens_mean, 0)
+            );
+        }
+        out.push('\n');
+    }
+    let _ = writeln!(
+        out,
+        "### Release gates on the recovery-aware measurement\n\nThe main runs, each replaced by its recovery run where there is one.\n"
+    );
+    for grid in &recovery.gates {
+        let _ = writeln!(
+            out,
+            "#### Variant {}\n\n| gate | status | detail |\n|---|---|---|",
+            grid.variant
+        );
+        for g in &grid.gates {
+            let _ = writeln!(
+                out,
+                "| {} | **{}** | {} |",
+                g.gate,
+                g.status.label(),
+                g.detail
+            );
+        }
+        out.push('\n');
+    }
 }
 
 fn row(out: &mut String, c: &Cell) {

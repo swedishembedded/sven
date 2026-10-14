@@ -78,6 +78,7 @@ pub fn generate(seed: u64) -> Generated {
                 })
                 .collect(),
             reply: format!("{result}: subgoal {} done.", n + 1),
+            recover: None,
         });
     }
 

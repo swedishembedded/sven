@@ -18,7 +18,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::task::{ScriptedCall, Segment, Task};
+use crate::task::{ScriptedCall, Segment, Task, Turn};
 
 #[derive(Serialize)]
 struct MockFile<'a> {
@@ -37,6 +37,37 @@ struct Rule<'a> {
     after_tool_reply: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reply: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recover: Option<Recover<'a>>,
+}
+
+/// How the scripted model follows a reference back to the raw text.
+#[derive(Serialize)]
+struct Recover<'a> {
+    reference: &'static str,
+    call: RecoverCall,
+    focus: &'a [String],
+}
+
+#[derive(Serialize)]
+struct RecoverCall {
+    tool: &'static str,
+    args: serde_json::Value,
+}
+
+/// What a demoted result says to fetch it again: the call the transcript
+/// names, `context {"action":"expand","chunk":"c-..."}`; group 1 is the id.
+pub const EXPAND_REFERENCE: &str = r#"context \{"action":"expand","chunk":"(c-[0-9a-f]{16})"\}"#;
+
+fn recovery(turn: &Turn) -> Option<Recover<'_>> {
+    turn.recover.as_ref().map(|r| Recover {
+        reference: EXPAND_REFERENCE,
+        call: RecoverCall {
+            tool: "context",
+            args: serde_json::json!({"action": "expand", "chunk": "{1}"}),
+        },
+        focus: &r.focus,
+    })
 }
 
 #[derive(Serialize)]
@@ -55,9 +86,21 @@ fn call(c: &ScriptedCall) -> Call<'_> {
 }
 
 /// The mock-response YAML for `segment`, logging every request to
-/// `request_log`.
+/// `request_log`. The model never asks for anything back.
 #[must_use]
 pub fn render_mock(segment: &Segment, request_log: &Path) -> String {
+    render(segment, request_log, false)
+}
+
+/// Like [`render_mock`], but the model follows a reference in front of it
+/// back to the raw text before it answers a turn that says how (see
+/// [`crate::task::Recovery`]).
+#[must_use]
+pub fn render_recovering_mock(segment: &Segment, request_log: &Path) -> String {
+    render(segment, request_log, true)
+}
+
+fn render(segment: &Segment, request_log: &Path, recovering: bool) -> String {
     let mut responses: Vec<Rule<'_>> = segment
         .turns
         .iter()
@@ -68,6 +111,7 @@ pub fn render_mock(segment: &Segment, request_log: &Path) -> String {
             tool_calls: turn.calls.iter().map(call).collect(),
             after_tool_reply: (!turn.calls.is_empty()).then_some(turn.reply.as_str()),
             reply: turn.calls.is_empty().then_some(turn.reply.as_str()),
+            recover: if recovering { recovery(turn) } else { None },
         })
         .collect();
     responses.push(Rule {
@@ -76,6 +120,7 @@ pub fn render_mock(segment: &Segment, request_log: &Path) -> String {
         tool_calls: Vec::new(),
         after_tool_reply: None,
         reply: Some("No scripted turn matches this instruction."),
+        recover: None,
     });
     serde_yaml::to_string(&MockFile {
         request_log: request_log.display().to_string(),

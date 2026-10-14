@@ -82,6 +82,19 @@ pub struct Turn {
     pub user: String,
     pub calls: Vec<ScriptedCall>,
     pub reply: String,
+    /// How the scripted model follows a reference back to the raw text before
+    /// it answers, when a run asks it to recover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recover: Option<Recovery>,
+}
+
+/// The fixed rule of a recovering scripted model: fetch every referenced
+/// result whose shortened form mentions one of these terms. The terms are
+/// words of the question the model was asked, never labels of the evidence,
+/// so the rule does not know which lines matter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Recovery {
+    pub focus: Vec<String>,
 }
 
 /// The turns run by one sven process. A cold restart is a new segment.
@@ -209,6 +222,15 @@ impl Task {
             security: None,
             oracle_labels: Vec::new(),
         }
+    }
+
+    /// Whether a scripted model can be asked to recover: some turn says how.
+    #[must_use]
+    pub fn recovers(&self) -> bool {
+        self.segments
+            .iter()
+            .flat_map(|s| &s.turns)
+            .any(|t| t.recover.is_some())
     }
 
     pub fn critical(&self) -> impl Iterator<Item = &Evidence> {

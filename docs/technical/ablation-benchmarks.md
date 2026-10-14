@@ -94,6 +94,19 @@ reported as a result. The Brain model identity (id and checkpoint) is read from
 the server and recorded; `--brain-commit` records the server's commit when the
 operator knows it, because the wire does not report one.
 
+**Recovery runs.** `--recovery` additionally runs every variant a second time
+on the suites whose final question says what to look at (`relevant_file`,
+`noisy_output`), with a scripted model that follows a reference back to the raw
+text. The rule is fixed and does not know which lines matter: when the request
+carries a result shown in a form below `full`, and that form mentions a term of
+the question (the function the question names; the word "failed"), the model
+calls `context` with `action=expand` for that chunk, once, and answers from the
+next request. A term must be a word of the question itself, never a label of
+the evidence (the generator refuses otherwise), and the call is made only if the
+request offers the `context` tool. The main runs keep the model that never asks,
+as the honest lower bound; recovery runs are records with `probe: recovery`,
+reported in their own section and never mixed into the main tables.
+
 **Fallback probe.** `--fallback-probe` additionally runs each injected-provider
 variant once with its provider unreachable (`decision.mode: auto` against a
 closed port). The run must complete; the gate "fallback 100% runnable" is
@@ -157,6 +170,7 @@ Both build `sven-ablation`, run every suite under every variant for the seeds
 | `--brain-url URL` | the Brain server for variants D and E |
 | `--stock-model ID`, `--trained-model ID` | the models of D and E |
 | `--brain-commit SHA` | recorded as the server's commit; the wire does not report one |
+| `--recovery` | also run the suites whose final question recovers with a model that fetches what shortened results left out |
 | `--fallback-probe` | also run each injected-provider variant once with its provider unreachable |
 | `--timeout-secs N` | longest one sven process may run (default 300) |
 | `--model NAME` | a real model instead of the script; never the default |
@@ -202,7 +216,11 @@ records alone; a record that cannot be read is an error, never skipped.
 | `decisions` | `inference_calls` and `latency_ms` the session waited, `accepted`, `abstained`, `applied`, every verdict as the trajectory recorded it (`traces`), `served_requests` answered by the injected provider |
 | `score` | the scorer's verdict (below), absent unless the run completed |
 
-The score: `suite`, `passed`, `hard_failures[]`, `labels[]`, and one of
+The score: `suite`, `passed`, `hard_failures[]`, `labels[]`, `recovery`
+(for a task whose final question recovers: `critical_total`, `visible_before`,
+`visible_after`, `recall_before`, `recall_after`, `expansions`; before is the
+request that first carried the final question, after is the request the model
+answered from, and `evidence` is always the latter), and one of
 `evidence` (`critical_total`, `critical_visible`, `critical_recall`,
 `distractor_total`, `distractor_visible`, `precision`, `missing[]`),
 `delegation` (`agents`, `subagent_calls`, `duplicated_calls`),
@@ -240,6 +258,14 @@ derived from the records and nothing else.
   *not determinable* when a variant needed for the comparison has no runs.
   Four metrics are tested per model, so one interval excluding zero by chance
   is possible; the verdict lists which metric carried it.
+- **With recovery.** For runs with `probe: recovery`: per suite and variant,
+  critical-evidence recall in the request that first carried the final question
+  (what the harness delivers on its own) and in the request the model answered
+  from, tokens including every fetch, `R_tokens` against the baseline's main
+  run, the number of expansions and the estimated tokens they brought back.
+  Gates are decided again on the recovery-aware measurement (the main runs, each
+  replaced by its recovery run where there is one), with a further gate that
+  asks for the recall without the model asking.
 - **Gates.** Six release gates per variant, each `PASS`, `FAIL` or
   `NOT-MEASURED`:
 

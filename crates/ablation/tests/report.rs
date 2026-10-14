@@ -110,6 +110,7 @@ fn record(spec: &Spec) -> RunRecord {
             violations: spec.violations,
         }),
         delegation: None,
+        recovery: None,
     });
     r
 }
@@ -430,4 +431,111 @@ fn a_model_variant_with_no_completed_runs_is_not_determinable() {
         verdict(&runs, "E"),
         Verdict::NotDeterminable { .. }
     ));
+}
+
+// ── recovery ─────────────────────────────────────────────────────────────────
+
+/// A recovery run of `spec`: the model fetched what was left out.
+fn recovery_run(spec: &Spec, before: usize, after: usize, expansions: usize) -> RunRecord {
+    let mut r = record(&Spec {
+        critical: (after, 2),
+        ..Spec::new(spec.suite, spec.seed, spec.variant, spec.tokens)
+    });
+    r.probe = Some("recovery".into());
+    let score = r.score.as_mut().unwrap();
+    score.recovery = Some(sven_ablation::recovery::RecoveryScore {
+        critical_total: 2,
+        visible_before: before,
+        visible_after: after,
+        recall_before: before as f64 / 2.0,
+        recall_after: after as f64 / 2.0,
+        expansions,
+    });
+    r.tokens.as_mut().unwrap().recovery_tokens = 300;
+    r
+}
+
+fn recovery_runs() -> Vec<RunRecord> {
+    let mut runs = Vec::new();
+    for seed in 1..=3 {
+        runs.push(record(&Spec::new(Suite::RelevantFile, seed, "A", 1000)));
+        let lost = Spec {
+            critical: (0, 2),
+            passed: false,
+            ..Spec::new(Suite::RelevantFile, seed, "B", 500)
+        };
+        runs.push(record(&lost));
+        runs.push(recovery_run(
+            &Spec::new(Suite::RelevantFile, seed, "B", 700),
+            0,
+            2,
+            1,
+        ));
+    }
+    runs
+}
+
+#[test]
+fn recovery_runs_stay_out_of_the_main_tables_and_get_their_own() {
+    let report = build(&matrix(), &recovery_runs());
+    let main = report.suites[0]
+        .cells
+        .iter()
+        .find(|c| c.variant == "B")
+        .unwrap();
+    assert_eq!(main.runs, 3);
+    assert_eq!(
+        main.critical_recall,
+        Some(0.0),
+        "the model that never asks is unchanged"
+    );
+    let recovery = report
+        .recovery
+        .expect("recovery runs make a recovery section");
+    let cell = recovery.suites[0]
+        .cells
+        .iter()
+        .find(|c| c.variant == "B")
+        .unwrap();
+    assert_eq!(cell.runs, 3);
+    assert_eq!(cell.recall_without_recovery, Some(0.0));
+    assert_eq!(cell.recall_after_recovery, Some(1.0));
+    assert_eq!(cell.expansions_mean, Some(1.0));
+    assert_eq!(cell.expanded_tokens_mean, Some(300.0));
+    let ratio = cell.r_tokens_median.unwrap();
+    assert!(
+        (ratio - 1000.0 / 700.0).abs() < 0.05,
+        "baseline / recovery run: {ratio}"
+    );
+}
+
+#[test]
+fn the_recovery_gates_separate_recall_after_asking_from_recall_without() {
+    let report = build(&matrix(), &recovery_runs());
+    let grid = &report.recovery.unwrap().gates;
+    let b = grid.iter().find(|g| g.variant == "B").unwrap();
+    let status = |name: &str| {
+        b.gates
+            .iter()
+            .find(|g| g.gate.contains(name))
+            .unwrap()
+            .status
+    };
+    assert_eq!(status("recall >= 99% without"), GateStatus::Fail);
+    assert_eq!(
+        b.gates
+            .iter()
+            .find(|g| g.gate == "critical evidence recall >= 99%")
+            .unwrap()
+            .status,
+        GateStatus::Pass
+    );
+}
+
+#[test]
+fn a_report_without_recovery_runs_has_no_recovery_section() {
+    let runs: Vec<RunRecord> = (1..=3)
+        .map(|s| record(&Spec::new(Suite::RelevantFile, s, "A", 1000)))
+        .collect();
+    assert!(build(&matrix(), &runs).recovery.is_none());
 }

@@ -23,7 +23,7 @@ use tokio::process::Command;
 
 use crate::evidence::RequestLog;
 use crate::matrix::{Decisions, Endpoints, Variant};
-use crate::mockscript::{render_conversation, render_mock};
+use crate::mockscript::{render_conversation, render_mock, render_recovering_mock};
 use crate::plan::{compose_config, invocation, Invocation, ModelChoice, RunLayout};
 use crate::provider_server::ProviderServer;
 use crate::providers::{HeuristicProvider, OracleProvider, RandomProvider};
@@ -43,18 +43,26 @@ const EXIT_TOOL_ERRORS: i32 = 3;
 /// How a failure caused by a process that did not finish begins.
 const TIMED_OUT: &str = "sven did not finish within";
 
+/// The `probe` of a record whose scripted model recovers.
+pub const RECOVERY_PROBE: &str = "recovery";
+
 /// How a run differs from an ordinary one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Probe {
     /// The decision provider is unreachable on purpose: the run must still
     /// complete.
     Fallback,
+    /// The scripted model follows a reference back to the raw text before it
+    /// answers (see [`crate::task::Recovery`]). Only tasks whose final
+    /// question recovers are run this way.
+    Recovery,
 }
 
 impl Probe {
     fn name(self) -> &'static str {
         match self {
             Self::Fallback => "fallback",
+            Self::Recovery => RECOVERY_PROBE,
         }
     }
 }
@@ -312,8 +320,12 @@ impl Runner {
                 render_conversation(task, index),
             )
             .map_err(|e| failed("conversation", e))?;
-            std::fs::write(dir.join("mock.yaml"), render_mock(segment, &log_path))
-                .map_err(|e| failed("mock script", e))?;
+            let mock = if probe == Some(Probe::Recovery) {
+                render_recovering_mock(segment, &log_path)
+            } else {
+                render_mock(segment, &log_path)
+            };
+            std::fs::write(dir.join("mock.yaml"), mock).map_err(|e| failed("mock script", e))?;
             let inv = invocation(task, &realization, layout, &self.options.model, index);
             let exit_code = self.spawn(&inv, &dir).await?;
             let trajectory_path = dir.join("trajectory.json");

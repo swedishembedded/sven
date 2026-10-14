@@ -244,6 +244,10 @@ pub struct Report {
     pub effects: Vec<Effect>,
     pub verdicts: Vec<ModelVerdict>,
     pub gates: Vec<GateGrid>,
+    /// Runs whose scripted model fetches what shortened results left out,
+    /// set beside the main runs; absent when there are none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<crate::report_recovery::RecoveryReport>,
 }
 
 /// Completed, scored runs of the main experiment, by variant then task.
@@ -698,5 +702,6 @@ pub fn build(matrix: &Matrix, runs: &[RunRecord]) -> Report {
         effects: effects(&view, matrix, &suites),
         verdicts: verdicts(&view, matrix, &suites),
         gates: crate::gates::grid(matrix, runs),
+        recovery: crate::report_recovery::build(matrix, runs, &view),
     }
 }

@@ -151,6 +151,28 @@ impl<'a> TurnBuilder<'a> {
                 })
                 .collect(),
             reply: reply.into(),
+            recover: None,
+        });
+    }
+
+    /// Lets the scripted model fetch what a shortened result left out before
+    /// it answers the last turn, following results that mention `focus`.
+    /// Every term must be a word of that turn's question.
+    ///
+    /// # Panics
+    ///
+    /// No turn yet, or a term the question does not contain.
+    pub fn recover_on(&mut self, focus: &[&str]) {
+        let turn = self.turns.last_mut().expect("a turn to recover on");
+        let question = turn.user.to_lowercase();
+        for term in focus {
+            assert!(
+                question.contains(&term.to_lowercase()),
+                "recovery focus {term:?} is not in the question"
+            );
+        }
+        turn.recover = Some(crate::task::Recovery {
+            focus: focus.iter().map(|t| (*t).to_string()).collect(),
         });
     }
 

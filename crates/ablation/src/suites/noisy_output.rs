@@ -140,6 +140,7 @@ pub fn generate(seed: u64) -> Generated {
         Vec::new(),
         "Answered from the evidence in context.",
     );
+    turns.recover_on(&["failed"]);
     task.segments.push(turns.finish());
     Generated { task, files }
 }

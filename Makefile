@@ -362,10 +362,10 @@ benchmark/report:
 benchmark/ledger: build
 	@bash benchmarks/ledger/run.sh $(if $(OUT),--out $(OUT),) $(if $(DISCLOSURE),--tool-disclosure $(DISCLOSURE),) $(if $(ASSEMBLY),--context-assembly $(ASSEMBLY),)
 
-## benchmark/ablation - ablation benchmark: every suite under every variant of benchmarks/ablation/matrix.yaml for several seeds with a scripted model; raw records and a JSON + Markdown report go to OUT (default: outside the repository); SEEDS=N, SUITES=a,b, VARIANTS=A,B, BRAIN_URL=URL and TRAINED_MODEL=ID narrow or extend a run
+## benchmark/ablation - ablation benchmark: every suite under every variant of benchmarks/ablation/matrix.yaml for several seeds with a scripted model, also with a model that fetches what shortened results left out; raw records and a JSON + Markdown report go to OUT (default: outside the repository); SEEDS=N, SUITES=a,b, VARIANTS=A,B, BRAIN_URL=URL and TRAINED_MODEL=ID narrow or extend a run
 benchmark/ablation: build
 	@cargo build $(CARGO_FLAGS) -p sven-ablation
-	@bash benchmarks/ablation/run --out $(or $(OUT),$(or $(TMPDIR),/tmp)/sven-ablation) --fallback-probe \
+	@bash benchmarks/ablation/run --out $(or $(OUT),$(or $(TMPDIR),/tmp)/sven-ablation) --fallback-probe --recovery \
 	    $(if $(SEEDS),--seeds $(SEEDS),) $(if $(SUITES),--suites $(SUITES),) \
 	    $(if $(VARIANTS),--variants $(VARIANTS),) $(if $(BRAIN_URL),--brain-url $(BRAIN_URL),) \
 	    $(if $(TRAINED_MODEL),--trained-model $(TRAINED_MODEL),)

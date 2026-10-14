@@ -24,6 +24,7 @@
 #   --stock-model ID       model of the stock variant (default: auto)
 #   --trained-model ID     model of the trained variant
 #   --fallback-probe       also run each decision variant with its provider unreachable
+#   --recovery             also run the suites whose final question recovers with a model that fetches what shortened results left out
 #   --model NAME           run with a real model instead of the script (records trajectories,
 #                          no scripted verdict; never run by default)
 # Every option is passed to `sven-ablation run`; see `sven-ablation run --help`.

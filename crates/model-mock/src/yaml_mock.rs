@@ -45,6 +45,8 @@ use tracing::debug;
 
 use sven_model::{CompletionRequest, ResponseEvent, ResponseStream, Role};
 
+use crate::recovery::RecoverRule;
+
 // ─── YAML schema ─────────────────────────────────────────────────────────────
 
 /// Root document.
@@ -87,6 +89,10 @@ pub struct ResponseRule {
     /// exercise the fail-loudly path end-to-end: `[sven:error]` on stderr,
     /// `success=false` in the step trace, non-zero exit.
     pub error: Option<String>,
+    /// For a rule that only replies: follow the references in the request
+    /// back to their raw text before replying (see [`RecoverRule`]).
+    #[serde(default)]
+    pub recover: Option<RecoverRule>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -133,6 +139,11 @@ impl YamlMockProvider {
     pub fn load(yaml: &str) -> anyhow::Result<Self> {
         let config: MockConfig =
             serde_yaml::from_str(yaml).context("parsing mock responses YAML")?;
+        for rule in &config.responses {
+            if let Some(recover) = &rule.recover {
+                recover.validate().context("parsing mock responses YAML")?;
+            }
+        }
         Ok(Self {
             config: Arc::new(config),
             call_count: Arc::new(Mutex::new(0)),
@@ -210,9 +221,18 @@ impl sven_model::ModelProvider for YamlMockProvider {
             }
             None => text_events("[no mock rule matched]", None),
             Some(r) if r.tool_calls.is_empty() => {
-                // Simple text response (optionally preceded by thinking)
-                let text = r.reply.as_deref().unwrap_or("[no reply configured]");
-                text_events(text, r.thinking.as_deref())
+                let recovery = r
+                    .recover
+                    .as_ref()
+                    .map(|x| x.calls(&req))
+                    .unwrap_or_default();
+                if recovery.is_empty() {
+                    // Simple text response (optionally preceded by thinking)
+                    let text = r.reply.as_deref().unwrap_or("[no reply configured]");
+                    text_events(text, r.thinking.as_deref())
+                } else {
+                    tool_call_events(&recovery)
+                }
             }
             Some(r) => match unloaded_tools(r, &req) {
                 missing if !missing.is_empty() => load_call_events(&missing),

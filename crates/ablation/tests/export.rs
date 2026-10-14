@@ -68,6 +68,7 @@ fn write_run(
         shortlist: None,
         security: None,
         delegation: None,
+        recovery: None,
     });
     std::fs::write(
         dir.join("record.json"),
