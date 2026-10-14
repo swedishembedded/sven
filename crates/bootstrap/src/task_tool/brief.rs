@@ -24,7 +24,9 @@
 use std::fmt::Write as _;
 
 use serde_json::Value;
-use sven_chunks::{render, tokens_of, ChunkId, ChunkKind, RenderRequest, Sensitivity, Visibility};
+use sven_chunks::{
+    render, tokens_of, ChunkId, ChunkKind, Freshness, RenderRequest, Sensitivity, Visibility,
+};
 use sven_executors::ChunkSession;
 
 /// Most chunks one brief names.
@@ -119,6 +121,8 @@ pub(super) struct BriefChunk {
     pub(super) pinned: bool,
     /// Labelled `secret`: named by id, never quoted.
     pub(super) secret: bool,
+    /// Whether the file the text was read from is as it was when it was read.
+    pub(super) freshness: Freshness,
     pub(super) raw: String,
 }
 
@@ -155,6 +159,11 @@ pub(super) fn gather(session: &ChunkSession, args: &BriefArgs) -> Result<Gathere
             .cloned()
             .ok_or_else(|| format!("no chunk {id} in this session"))?;
         let raw = store.read(id).map_err(|e| format!("{id}: {e:#}"))?;
+        // A probe that cannot answer (a path outside the root) is not
+        // freshness: the chunk is then presented as unverified.
+        let freshness = store
+            .freshness(id, session.probe().as_ref())
+            .unwrap_or(Freshness::Unverifiable);
         let chunk = BriefChunk {
             id: record.id,
             kind: record.kind,
@@ -163,6 +172,7 @@ pub(super) fn gather(session: &ChunkSession, args: &BriefArgs) -> Result<Gathere
             failure: record.failure,
             pinned: record.pinned,
             secret: record.sensitivity == Sensitivity::Secret,
+            freshness,
             raw,
         };
         if chunk.pinned && binds_the_child(chunk.kind) && !chunk.secret {
@@ -290,6 +300,9 @@ pub(super) fn compose(
                 quoted = quoted.saturating_add(tokens_of(&rendered.text));
                 rendered.text
             };
+            if let Some(warning) = provenance_warning(&c.freshness) {
+                let _ = writeln!(out, "{} {warning}", c.id);
+            }
             let _ = writeln!(out, "```untrusted {}\n{}\n```", c.id, fence_safe(&shown));
         }
     }
@@ -298,6 +311,22 @@ pub(super) fn compose(
     }
     out.push_str(super::finding::REPORTING_INSTRUCTIONS);
     out
+}
+
+/// What a reader must be told about a chunk that is not known to match its
+/// source: the evidence is a snapshot, and a snapshot is never presented as
+/// current when the file moved.
+fn provenance_warning(freshness: &Freshness) -> Option<&'static str> {
+    match freshness {
+        Freshness::Fresh | Freshness::NotFileDerived => None,
+        Freshness::Stale { .. } => Some(
+            "is STALE: the file changed after it was read; this is what it contained then, \
+             not now.",
+        ),
+        Freshness::Unverifiable => {
+            Some("source version was not recorded; the file may have changed since.")
+        }
+    }
 }
 
 fn request_for(c: &BriefChunk) -> RenderRequest<'_> {
@@ -347,6 +376,7 @@ mod tests {
             failure: false,
             pinned: false,
             secret: false,
+            freshness: Freshness::NotFileDerived,
             raw: raw.into(),
         }
     }
@@ -496,6 +526,33 @@ mod tests {
     }
 
     #[test]
+    fn a_chunk_whose_file_moved_is_never_presented_as_current() {
+        let args = BriefArgs::parse(&json!({"prompt": "p", "evidence": ["c-0000000000000001", "c-0000000000000002", "c-0000000000000003"]}))
+            .unwrap()
+            .unwrap();
+        let version = |size| sven_chunks::SourceVersion { size, mtime_ns: 1 };
+        let mut stale = chunk(1, ChunkKind::File, "old");
+        stale.freshness = Freshness::Stale {
+            recorded: version(3),
+            current: Some(version(9)),
+        };
+        let mut unknown = chunk(2, ChunkKind::File, "unversioned");
+        unknown.freshness = Freshness::Unverifiable;
+        let mut fresh = chunk(3, ChunkKind::File, "same");
+        fresh.freshness = Freshness::Fresh;
+        let text = compose("p", &args, &[], &[stale, unknown, fresh]);
+        assert!(text.contains("c-0000000000000001 is STALE"), "{text}");
+        assert!(
+            text.contains("c-0000000000000002 source version was not recorded"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("c-0000000000000003 is STALE")
+                && !text.contains("c-0000000000000003 source")
+        );
+    }
+
+    #[test]
     fn a_secret_chunk_is_named_but_never_quoted() {
         let args = BriefArgs::parse(&json!({
             "prompt": "p",
@@ -630,6 +687,29 @@ mod tests {
             let ghost = sven_chunks::ChunkId::parse("c-ffffffffffffffff").unwrap();
             let err = gather(&s, &args(&[&ghost])).unwrap_err();
             assert!(err.contains("c-ffffffffffffffff"), "{err}");
+        }
+
+        #[test]
+        fn a_file_that_changed_since_it_was_read_is_gathered_as_stale() {
+            let (s, dir) = session();
+            let path = dir.path().join("a.txt");
+            std::fs::write(&path, "v1").unwrap();
+            let version = sven_chunks::SourceProbe::version(&*s.probe(), "a.txt").unwrap();
+            let mut d = draft(ChunkKind::File, false, Sensitivity::Internal);
+            d.provenance.path = Some("a.txt".into());
+            d.provenance.source_version = version;
+            let id = record(&s, "v1", d);
+            let fresh = gather(&s, &args(&[&id])).unwrap();
+            assert!(matches!(
+                fresh.evidence[0].freshness,
+                sven_chunks::Freshness::Fresh
+            ));
+            std::fs::write(&path, "v2 is longer").unwrap();
+            let moved = gather(&s, &args(&[&id])).unwrap();
+            assert!(matches!(
+                moved.evidence[0].freshness,
+                sven_chunks::Freshness::Stale { .. }
+            ));
         }
 
         #[test]

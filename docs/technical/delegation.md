@@ -120,3 +120,22 @@ confidence 0.9, margin 0.7, a false positive costing high. It only advises
 toward launching less, only inside scopes the deterministic rules already
 required to be contained; an abstention, a disagreement between the orders, a
 failure or `decision.policy.mode: shadow` launches normally.
+
+## Read-only and writing children
+
+A read-only child (`research`, `plan`, a read-only persona) may share a
+retrieval snapshot with its parent: the briefed chunks and the parent's store
+as it was when the child started, opened read-only. A snapshot is evidence of
+what a file contained when it was read, so it is never presented as current
+when the file moved: a brief marks a chunk whose file changed (`is STALE`) or
+whose version was never recorded, an expansion in the child says the same in
+its header, and a finished result is reused for a repeated subgoal only while
+the declared files are unchanged.
+
+A writing child (`agent` mode, a persona that is not read-only) keeps every
+rule it had. It runs in the parent's tree under the parent's contract, a
+read-only parent cannot start one, its permission requests go to the parent's
+approval gate, and teammates of an agent team keep their own worktrees and
+task claims. Deduplication does not touch it: a writing subgoal is never
+answered from another call, never put to the decision model, and never
+served to a read-only twin or the reverse, whatever its scope overlaps.

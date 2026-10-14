@@ -83,3 +83,115 @@ impl TaskTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use serde_json::json;
+    use sven_tool_api::tool::{Tool, ToolCall};
+    use sven_tools_fs::OutputBufferStore;
+    use sven_vocab::AgentMode;
+    use sven_workspace::SharedAgents;
+    use tokio::sync::{mpsc, Mutex};
+
+    use super::super::subgoals::NearMatch;
+    use super::*;
+
+    /// An advisor that would say "same" to everything: nothing may reach it
+    /// for a writing subgoal.
+    struct AlwaysSame;
+
+    #[async_trait]
+    impl NearMatch for AlwaysSame {
+        async fn same_goal(&self, _: &str, _: &str) -> Option<bool> {
+            panic!("a writing subgoal was put to the advisor");
+        }
+    }
+
+    fn task(parent: AgentMode) -> TaskTool {
+        let (tx, _rx) = mpsc::channel(8);
+        TaskTool::new(
+            Arc::new(Mutex::new(OutputBufferStore::new())),
+            tx,
+            None,
+            SharedAgents::empty(),
+            Arc::new(Mutex::new(parent)),
+        )
+        .with_near_match(Some(Arc::new(AlwaysSame)))
+    }
+
+    fn admit_call<'a>(
+        args: &'a Value,
+        scope: &'a PathScope,
+        acp_mode: &'a str,
+        prompt: &'a str,
+    ) -> Call<'a> {
+        Call {
+            id: "t",
+            args,
+            scope,
+            mode: acp_mode,
+            acp_mode,
+            prompt,
+            deliverable: None,
+            evidence: &[],
+        }
+    }
+
+    #[tokio::test]
+    async fn two_writing_subgoals_with_overlapping_scope_are_both_launched() {
+        let task = task(AgentMode::Agent);
+        let scope = PathScope::confined(std::env::current_dir().unwrap()).unwrap();
+        let args = json!({"paths": ["src/parser.rs"]});
+        let first = task
+            .admit(&admit_call(&args, &scope, "agent", "fix the parser"))
+            .await;
+        let second = task
+            .admit(&admit_call(&args, &scope, "agent", "fix the parser"))
+            .await;
+        let third = task
+            .admit(&admit_call(&args, &scope, "agent", "fix the parser now"))
+            .await;
+        assert!(first.is_ok() && second.is_ok() && third.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_reader_is_not_answered_from_a_writer_nor_a_writer_from_a_reader() {
+        let task = task(AgentMode::Agent);
+        let scope = PathScope::confined(std::env::current_dir().unwrap()).unwrap();
+        let args = json!({"paths": ["src/parser.rs"]});
+        let writer = task
+            .admit(&admit_call(&args, &scope, "agent", "review the parser"))
+            .await;
+        let reader = task
+            .admit(&admit_call(&args, &scope, "research", "review the parser"))
+            .await;
+        let writer_again = task
+            .admit(&admit_call(&args, &scope, "agent", "review the parser"))
+            .await;
+        assert!(writer.is_ok() && reader.is_ok() && writer_again.is_ok());
+    }
+
+    /// The permission rule that keeps a child within its parent still
+    /// applies: deduplication never makes a writing child possible for a
+    /// read-only parent.
+    #[tokio::test]
+    async fn a_read_only_parent_still_cannot_start_a_writer() {
+        for parent in [AgentMode::Research, AgentMode::Plan] {
+            let out = task(parent)
+                .execute(&ToolCall {
+                    id: "t".into(),
+                    name: "task".into(),
+                    args: json!({"prompt": "fix the parser", "mode": "agent", "paths": ["src/p.rs"]}),
+                })
+                .await;
+            assert!(
+                out.is_error && out.content.contains("cannot delegate"),
+                "{}",
+                out.content
+            );
+        }
+    }
+}
