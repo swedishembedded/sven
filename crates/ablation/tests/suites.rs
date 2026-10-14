@@ -437,6 +437,7 @@ fn the_recovery_pattern_matches_the_reference_a_demoted_result_carries() {
             failure: false,
             pinned: false,
             raw: &raw,
+            focus: None,
         },
         Visibility::Short,
     );

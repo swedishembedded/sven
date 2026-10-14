@@ -20,6 +20,7 @@ fn request<'a>(kind: ChunkKind, raw: &'a str) -> RenderRequest<'a> {
         failure: false,
         pinned: false,
         raw,
+        focus: None,
     }
 }
 

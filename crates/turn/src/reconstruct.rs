@@ -342,6 +342,7 @@ fn write_quotes(
                 failure: *failed,
                 pinned: false,
                 raw,
+                focus: None,
             },
             if *failed {
                 Visibility::Long

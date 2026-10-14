@@ -259,3 +259,74 @@ fn an_advisor_cannot_promote_a_result_above_where_the_policy_left_it() {
     assert!(!view.demotions.is_empty());
     assert!(view.demotions.iter().all(|d| d.to < Visibility::Full));
 }
+
+// ── what a demoted result keeps because the conversation points at it ────────
+
+fn source(lines: usize) -> String {
+    (1..=lines)
+        .map(|n| match n % 4 {
+            1 => format!("L{n}:pub fn helper_{n}(x: u64) -> u64 {{"),
+            2 => format!("L{n}:    x + {n} // body line {n}"),
+            3 => format!("L{n}:}}"),
+            _ => format!("L{n}:"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A read of `src/lib.rs`, a failing build that names line 98, then `rounds`
+/// rounds of filler.
+fn read_then_error(rounds: usize) -> Vec<Message> {
+    let mut m = vec![Message::user("fix the build in `helper_217`")];
+    m.push(call("r", "read_file", r#"{"path":"src/lib.rs"}"#));
+    m.push(Message::tool_result("r", source(240)));
+    m.push(Message::assistant("read it"));
+    m.push(call("b", "shell", r#"{"command":"cargo build"}"#));
+    m.push(Message::tool_result(
+        "b",
+        format!(
+            "error[E0308]: mismatched types\n --> src/lib.rs:98:5\n{}",
+            log("b", 20)
+        ),
+    ));
+    m.push(Message::assistant("saw the error"));
+    for r in 0..rounds {
+        let id = format!("f{r}");
+        m.push(call(&id, "shell", &format!(r#"{{"command":"step {r}"}}"#)));
+        m.push(Message::tool_result(&id, log(&format!("f{r}"), 200)));
+        m.push(Message::assistant(format!("done step {r}")));
+    }
+    m
+}
+
+#[test]
+fn a_demoted_read_keeps_the_lines_that_later_output_names_and_the_definition_the_task_names() {
+    let view = assemble(&policy(2_500, 1), read_then_error(6));
+    let read = results(&view.messages)[0];
+    assert!(read.contains("short") || read.contains("long"), "{read}");
+    assert!(
+        read.contains("body line 98"),
+        "the line the error names: {read}"
+    );
+    assert!(
+        read.contains("body line 218"),
+        "the definition the task names: {read}"
+    );
+    assert!(read.contains("expand"), "{read}");
+}
+
+#[test]
+fn what_a_result_keeps_does_not_change_when_later_output_names_more() {
+    let before = assemble(&policy(2_500, 1), read_then_error(6));
+    let mut later = read_then_error(6);
+    later.push(Message::user("also look at src/lib.rs:200"));
+    later.push(call("x", "shell", r#"{"command":"more"}"#));
+    later.push(Message::tool_result("x", "error: see src/lib.rs:201"));
+    later.push(Message::assistant("ok"));
+    let after = assemble(&policy(2_500, 1), later);
+    assert_eq!(
+        results(&before.messages)[0],
+        results(&after.messages)[0],
+        "a form is fixed once the result leaves the recent rounds"
+    );
+}

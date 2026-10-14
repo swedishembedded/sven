@@ -23,8 +23,10 @@
 
 mod chunk;
 mod expand;
+mod focus;
 mod freshness;
 mod represent;
+mod select;
 mod store;
 
 pub use chunk::{
@@ -32,6 +34,7 @@ pub use chunk::{
     Lifetime, Provenance, Sensitivity, BYTES_PER_TOKEN,
 };
 pub use expand::{expansion_is_stale, render_expansion, ExpansionRequest, LineRange};
+pub use focus::{Focus, MAX_ENTRIES as MAX_FOCUS_ENTRIES};
 pub use freshness::{Freshness, FsProbe, ProbeError, SourceProbe, SourceVersion};
 pub use represent::{
     allowed_visibilities, indicates_failure, render, tokens_of, RenderRequest, Rendered,

@@ -52,11 +52,30 @@ A chunk is shown at one of four visibilities, from least to most:
 | visibility | content |
 |------------|---------|
 | `hidden` | one line: id, kind, size, how to expand |
-| `short` | command, test and other output: the first 3 and last 5 lines, every line matching error, fail, panic, assert, exception, traceback, fatal or warning (up to 30) with its line number, the match counts and the exit status of a shell call. A file: path, size, its first 3 lines and an outline of its declarations or headings (up to 40). A diff: the file list with added and removed counts and every hunk header |
-| `long` | the same with a wider window: 40 first and last lines and up to 200 matches; a file adds its first 30 and last 10 lines; a diff adds the first 8 lines of each hunk |
+| `short` | command, test and other output: the first 3 and last 5 lines, every error line (up to 30) with its line number, the 2 lines before it as its cause, up to 12 more lines that share an identifier or path with an error line, the match counts and the exit status of a shell call. A line that merely mentions an error word at a level that says it is not one (`WARN`, `INFO`, `DEBUG`, `0 failed`) ranks below real errors and only fills the cap. Search results: the number of matches and files and the first 2 matches of each file (up to 60 files). A file: path, size, its first 3 lines, an outline of its declarations or headings (up to 40), and what the conversation points at (below). A diff: the file list with added and removed counts and every hunk header |
+| `long` | the same with a wider window: 40 first and last lines, up to 200 matches, 5 cause lines per error and up to 80 related lines; search results keep 6 matches in each of up to 200 files; a file adds its first 30 and last 10 lines and a wider window around what the conversation points at; a diff adds the first 8 lines of each hunk |
 | `full` | the raw text, unchanged |
 
-The extractors are fixed functions of the text. No model is called, so the
+### What the conversation points at
+
+A shortened form of a file keeps the places and names the conversation has
+shown by the time the result could first be demoted (`sven_chunks::Focus`):
+
+- the lines a `path:line`, `path:line:column` or `path:first-last` mention
+  names, in the user's and the model's text and in the output of `shell`,
+  `read_lints` and `task`, with the line before and after (3 in `long`) and the
+  declaration they sit in, even when the outline is cut;
+- the whole definition (up to 24 lines, 60 in `long`) of an identifier the user
+  put in backticks or a search looked for, when the file declares it. A file
+  that only mentions the name in a comment gets nothing extra.
+
+File contents, search results and web pages are not read for places: they are
+untrusted text that happens to contain `path:line`, and they do not choose what
+else is kept. A focus holds at most 512 places and names. It is read from the
+messages up to the end of the last round that keeps results whole, so a form
+does not change as the history grows.
+
+The extractors are fixed functions of the text and the focus. No model is called, so the
 same chunk always renders identically, which keeps a provider's prompt cache
 valid for a request prefix that did not change.
 
@@ -96,9 +115,9 @@ expansion tool, of the editing tools and of every other tool are always sent
 as they are. A pinned chunk is never demoted, and a result that reports a
 failure is never demoted below `long`.
 
-The form of a result depends only on the result, its call and how far it was
-asked to go, so a result demoted for one request has the same text in the
-next and the provider's prompt cache is invalidated only from the first
+The form of a result depends only on the result, its call, what the conversation
+had pointed at when the result left the recent rounds and how far it was asked
+to go, so a result demoted for one request has the same text in the next and the provider's prompt cache is invalidated only from the first
 result that changes.
 
 ### Advisors

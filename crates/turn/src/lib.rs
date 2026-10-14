@@ -14,6 +14,7 @@
 //! reaching this crate at all.
 
 pub mod assembly;
+mod assembly_focus;
 mod compact;
 pub mod instructions;
 pub mod ledger;

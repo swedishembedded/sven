@@ -39,10 +39,11 @@ use std::sync::OnceLock;
 use regex::Regex;
 use sven_chunks::{
     allowed_visibilities, content_digest, indicates_failure, render, tokens_of, ChunkDraft,
-    ChunkId, ChunkKind, Lifetime, Provenance, RenderRequest, Sensitivity, Visibility,
+    ChunkId, ChunkKind, Focus, Lifetime, Provenance, RenderRequest, Sensitivity, Visibility,
 };
 use sven_model::{Message, MessageContent, ToolResultContent};
 
+use crate::assembly_focus::window_focuses;
 use crate::ledger::canonical_json;
 
 /// Tokens of conversation a request may carry before results are demoted.
@@ -185,7 +186,7 @@ impl ContextPolicy {
     fn collect(&self, messages: &[Message], pinned: &HashSet<ChunkId>) -> Vec<Entry> {
         let calls = index_calls(messages);
         let newest = calls.values().map(|c| c.round).max().unwrap_or(0);
-        let mut out = Vec::new();
+        let mut out: Vec<Entry> = Vec::new();
         for (index, message) in messages.iter().enumerate() {
             let MessageContent::ToolResult {
                 tool_call_id,
@@ -223,7 +224,21 @@ impl ContextPolicy {
                 full_tokens,
                 level: Visibility::Full,
                 shown: None,
+                focus: Focus::default(),
             });
+        }
+        let starts = round_starts(messages);
+        let ends: Vec<usize> = out
+            .iter()
+            .map(|e| {
+                let later = (e.round + self.config.keep_recent_rounds) as usize;
+                starts.get(later).copied().unwrap_or(messages.len())
+            })
+            .collect();
+        let tools: HashMap<&str, &str> =
+            calls.iter().map(|(id, c)| (*id, c.name.as_str())).collect();
+        for (entry, focus) in out.iter_mut().zip(window_focuses(messages, &tools, &ends)) {
+            entry.focus = focus;
         }
         out
     }
@@ -266,6 +281,20 @@ fn index_calls(messages: &[Message]) -> HashMap<&str, CallInfo> {
     calls
 }
 
+/// The index of the message that opens each round, oldest first.
+fn round_starts(messages: &[Message]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut previous_was_call = false;
+    for (i, message) in messages.iter().enumerate() {
+        let is_call = matches!(message.content, MessageContent::ToolCall { .. });
+        if is_call && !previous_was_call {
+            starts.push(i);
+        }
+        previous_was_call = is_call;
+    }
+    starts
+}
+
 struct Entry {
     index: usize,
     tool_call_id: String,
@@ -281,6 +310,9 @@ struct Entry {
     level: Visibility,
     /// The text shown at `level`; `None` while full.
     shown: Option<String>,
+    /// What the conversation pointed at when this result could first be
+    /// demoted; the shortened forms keep it.
+    focus: Focus,
 }
 
 impl Entry {
@@ -320,6 +352,7 @@ impl Entry {
                 failure: self.failure,
                 pinned: false,
                 raw: &self.raw,
+                focus: Some(&self.focus),
             },
             target,
         );

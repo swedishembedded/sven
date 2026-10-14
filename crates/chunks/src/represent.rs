@@ -30,6 +30,11 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::chunk::{ChunkId, ChunkKind, BYTES_PER_TOKEN};
+use crate::focus::Focus;
+use crate::select::{
+    chosen_signals, error_surroundings, file_focus, is_outline, search_hits, signal_lines,
+    signal_summary, Lines,
+};
 
 /// Name of the tool whose [`EXPAND_ACTION`] returns a chunk's raw text.
 pub const EXPAND_TOOL_NAME: &str = "context";
@@ -38,6 +43,10 @@ pub const EXPAND_TOOL_NAME: &str = "context";
 pub const EXPAND_ACTION: &str = "expand";
 
 const LINE_CAP: usize = 240;
+const SEARCH_FILES_SHORT: usize = 60;
+const SEARCH_FILES_LONG: usize = 200;
+const SEARCH_HITS_SHORT: usize = 2;
+const SEARCH_HITS_LONG: usize = 6;
 const SHORT_HEAD: usize = 3;
 const SHORT_TAIL: usize = 5;
 const SHORT_MATCHES: usize = 30;
@@ -108,6 +117,8 @@ pub struct RenderRequest<'a> {
     pub failure: bool,
     pub pinned: bool,
     pub raw: &'a str,
+    /// What the conversation points at; the forms below `full` keep it.
+    pub focus: Option<&'a Focus>,
 }
 
 /// A chunk as the transcript will carry it.
@@ -235,6 +246,11 @@ fn excerpt(request: &RenderRequest<'_>, visibility: Visibility) -> String {
         ChunkKind::Diff => return diff_excerpt(request, &lines, long, out),
         ChunkKind::File => {
             out.push_str(&outline_block(&lines, &mut shown));
+            if let Some(focus) = request.focus {
+                let kept = file_focus(&lines, request.path, focus, long);
+                out.push_str(&kept.note);
+                shown.extend(kept.indexes);
+            }
             let (h, t) = if long {
                 (FILE_LONG_HEAD, FILE_LONG_TAIL)
             } else {
@@ -246,19 +262,57 @@ fn excerpt(request: &RenderRequest<'_>, visibility: Visibility) -> String {
         _ => {
             shown.extend(0..head.min(lines.len()));
             shown.extend(lines.len().saturating_sub(tail)..lines.len());
+            if request.source_tool == "grep" {
+                if let Some(hits) = search_hits(&lines) {
+                    let (files, per_file) = if long {
+                        (SEARCH_FILES_LONG, SEARCH_HITS_LONG)
+                    } else {
+                        (SEARCH_FILES_SHORT, SEARCH_HITS_SHORT)
+                    };
+                    let _ = writeln!(
+                        out,
+                        "matches: {} lines in {} files",
+                        hits.files.iter().map(|(_, v)| v.len()).sum::<usize>(),
+                        hits.files.len()
+                    );
+                    for (_, indexes) in hits.files.iter().take(files) {
+                        shown.extend(indexes.iter().copied().take(per_file));
+                    }
+                    if hits.files.len() > files {
+                        let _ =
+                            writeln!(out, "[{} more files not shown]", hits.files.len() - files);
+                    }
+                    return finish(request, &lines, &shown, out);
+                }
+            }
             let found = signal_lines(&lines);
             out.push_str(&signal_summary(&found));
-            shown.extend(found.indexes.iter().copied().take(matches));
-            if found.indexes.len() > matches {
+            let chosen = chosen_signals(&found, matches);
+            shown.extend(&chosen);
+            let errors: Vec<usize> = found.strong.iter().copied().take(matches).collect();
+            shown.extend(error_surroundings(&lines, &errors, long));
+            let total = found.strong.len() + found.weak.len();
+            if total > chosen.len() {
                 let _ = writeln!(
                     out,
                     "[{} more matching lines not shown]",
-                    found.indexes.len() - matches
+                    total - chosen.len()
                 );
             }
         }
     }
-    let body = render_lines(&lines, &shown);
+    finish(request, &lines, &shown, out)
+}
+
+/// The header lines already in `out`, then the kept lines and the statement
+/// of what was left out.
+fn finish(
+    request: &RenderRequest<'_>,
+    lines: &Lines<'_>,
+    shown: &BTreeSet<usize>,
+    mut out: String,
+) -> String {
+    let body = render_lines(lines, shown);
     let shown_bytes = body.len();
     out.push_str(&body);
     let omitted = lines.len() - shown.len().min(lines.len());
@@ -289,7 +343,7 @@ fn clip(text: &str) -> String {
     }
 }
 
-fn render_lines(lines: &[(usize, &str)], shown: &BTreeSet<usize>) -> String {
+fn render_lines(lines: &Lines<'_>, shown: &BTreeSet<usize>) -> String {
     let mut out = String::new();
     let mut previous: Option<usize> = None;
     for &i in shown {
@@ -303,60 +357,11 @@ fn render_lines(lines: &[(usize, &str)], shown: &BTreeSet<usize>) -> String {
     out
 }
 
-struct Signals {
-    indexes: Vec<usize>,
-    errors: usize,
-    warnings: usize,
-}
-
-fn signal_lines(lines: &[(usize, &str)]) -> Signals {
-    static ERROR: OnceLock<Regex> = OnceLock::new();
-    static WARN: OnceLock<Regex> = OnceLock::new();
-    let error = ERROR.get_or_init(|| {
-        Regex::new(r"(?i)\b(error|errors|fail|failed|failure|failures|panic|panicked|assert|assertion|exception|traceback|fatal)\b")
-            .expect("error pattern is valid")
-    });
-    let warn = WARN.get_or_init(|| {
-        Regex::new(r"(?i)\bwarn(?:ing|ings)?\b").expect("warning pattern is valid")
-    });
-    let mut s = Signals {
-        indexes: Vec::new(),
-        errors: 0,
-        warnings: 0,
-    };
-    for (i, (_, text)) in lines.iter().enumerate() {
-        if error.is_match(text) {
-            s.errors += 1;
-            s.indexes.push(i);
-        } else if warn.is_match(text) {
-            s.warnings += 1;
-            s.indexes.push(i);
-        }
-    }
-    s
-}
-
-fn signal_summary(s: &Signals) -> String {
-    let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
-    format!(
-        "matched: {}, {}\n",
-        plural(s.errors, "error"),
-        plural(s.warnings, "warning")
-    )
-}
-
 fn outline_block(lines: &[(usize, &str)], shown: &mut BTreeSet<usize>) -> String {
-    static OUTLINE: OnceLock<Regex> = OnceLock::new();
-    let re = OUTLINE.get_or_init(|| {
-        Regex::new(
-            r"^\s*(?:(?:pub(?:\([^)]*\))?|export|async|unsafe|static)\s+)*(?:fn|struct|enum|trait|impl|mod|type|class|def|function|interface|const)\b|^#{1,6}\s",
-        )
-        .expect("outline pattern is valid")
-    });
     let found: Vec<usize> = lines
         .iter()
         .enumerate()
-        .filter(|(_, (_, t))| re.is_match(t))
+        .filter(|(_, (_, t))| is_outline(t))
         .map(|(i, _)| i)
         .collect();
     let mut out = format!("outline: {} entries\n", found.len());
