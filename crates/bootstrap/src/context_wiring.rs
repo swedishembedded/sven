@@ -24,6 +24,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::config::{AssemblyConfig, Config};
+use crate::evidence_share::is_store_id;
 
 /// The session fact that names the chunk store directory.
 pub(crate) const CONTEXT_STORE_FACT: &str = "context_store";
@@ -147,12 +148,6 @@ fn resumed_store_id(snapshot: Option<&sven_hsm::Snapshot>) -> Option<String> {
         .get(CONTEXT_STORE_FACT)?
         .as_str()
         .map(str::to_string)
-}
-
-/// Whether `id` is a name this module could have generated. A snapshot is
-/// input: its id becomes a directory name, so anything but a UUID is ignored.
-fn is_store_id(id: &str) -> bool {
-    Uuid::parse_str(id).is_ok_and(|u| u.hyphenated().to_string() == id)
 }
 
 #[cfg(test)]

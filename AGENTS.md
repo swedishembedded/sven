@@ -625,6 +625,9 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
 - [docs/technical/context-assembly.md](docs/technical/context-assembly.md) -
   addressable context: chunks, representations at four visibilities, the
   assembly policy, expansion as a recovery event and how to measure it.
+- [docs/technical/delegation.md](docs/technical/delegation.md) -
+  the `task` tool: briefs from typed evidence, structured results,
+  deduplication of subgoals, the cost policy and the measured effect.
 - [docs/technical/tool-definitions.md](docs/technical/tool-definitions.md) -
   the size of the tool definitions every request carries, how it is measured
   and the ceiling that pins it.

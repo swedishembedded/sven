@@ -83,6 +83,12 @@ pub enum AcpCommands {
         /// passes its session's patterns, so a sub-agent is held to them.
         #[arg(long, value_name = "JSON", value_parser = parse_command_patterns)]
         command_patterns: Option<CommandPatterns>,
+
+        /// The chunk store of the session that delegated to this one, opened
+        /// read-only so the briefed chunks can be expanded. Only the shape of a
+        /// session store (`<root>/.sven/context/<session id>`) is accepted.
+        #[arg(long, value_name = "DIR", value_parser = sven_bootstrap::evidence_store_path)]
+        evidence_store: Option<std::path::PathBuf>,
     },
 }
 
@@ -140,6 +146,7 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             permission_timeout_secs,
             approval,
             command_patterns,
+            evidence_store,
         } => {
             let mut config = sven_bootstrap::Config::load(None)?;
             if let Some(ref name) = model {
@@ -158,6 +165,7 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
                 config.tools.deny_patterns = patterns.deny.clone();
                 config.tools.auto_approve_patterns = patterns.auto_approve.clone();
             }
+            config.context.evidence_store = evidence_store.clone();
             let permission_timeout = permission_timeout_secs.map_or(
                 crate::agent::DEFAULT_PERMISSION_TIMEOUT,
                 std::time::Duration::from_secs,
@@ -249,5 +257,19 @@ mod tests {
             config.model.max_output_tokens,
             Some(entry.max_output_tokens)
         );
+    }
+
+    #[test]
+    fn only_a_session_store_is_accepted_as_the_delegating_evidence() {
+        let parse = |dir: &str| {
+            Cli::try_parse_from(["sven", "serve", "--evidence-store", dir]).map(|cli| {
+                let AcpCommands::Serve { evidence_store, .. } = cli.acp;
+                evidence_store
+            })
+        };
+        let ok = "/p/.sven/context/0b9cdb5e-7d0e-4f0e-9d6e-0d3f6a1c2b4a";
+        assert_eq!(parse(ok).unwrap(), Some(ok.into()));
+        assert!(parse("/etc").is_err());
+        assert!(parse("/p/.sven/context/../../../etc").is_err());
     }
 }

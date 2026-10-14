@@ -27,6 +27,7 @@ pub mod context_query;
 pub mod context_tool;
 mod context_wiring;
 pub mod decision_ranker;
+mod evidence_share;
 mod instruction_wiring;
 pub mod kernel_bridge;
 mod mcp_setup;
@@ -52,6 +53,7 @@ pub use context_query::{
     ModelSubQueryRunner,
 };
 pub use context_tool::ContextTool;
+pub use evidence_share::evidence_store_path;
 pub use kernel_bridge::{spawn_observation_bridge, spawn_question_bridge, KernelAgentSession};
 pub use modes::mode_registry;
 pub use registry::{

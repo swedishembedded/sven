@@ -238,6 +238,9 @@ pub(super) struct ServeTerms {
     pub(super) approval: ApprovalMode,
     /// The parent's `tools.deny_patterns` and `tools.auto_approve_patterns`.
     pub(super) command_patterns: Option<(Vec<String>, Vec<String>)>,
+    /// The parent's chunk store, which a child briefed with chunks reads
+    /// (read-only) to expand them.
+    pub(super) evidence_store: Option<PathBuf>,
 }
 
 // ── The protocol exchange ─────────────────────────────────────────────────────
@@ -486,6 +489,9 @@ fn serve_args(
     if let Some((deny, auto_approve)) = &terms.command_patterns {
         let patterns = serde_json::json!({"deny": deny, "auto_approve": auto_approve});
         flag("command-patterns", patterns.to_string());
+    }
+    if let Some(store) = &terms.evidence_store {
+        flag("evidence-store", store.display().to_string());
     }
     let seconds = contract
         .remaining(now)
@@ -903,6 +909,7 @@ mod tests {
             disabled_tools: vec!["shell".to_string()],
             approval: ApprovalMode::Manual,
             command_patterns: Some((vec!["rm -rf /*".into()], vec!["ls *".into()])),
+            evidence_store: None,
         };
         let args = serve_args(Some("fast"), &contract, &terms, now);
         assert_eq!(
@@ -945,6 +952,26 @@ mod tests {
             contract_for(AgentMode::Agent).with_deadline(now + Duration::from_millis(89_400));
         let args = serve_args(None, &contract, &ServeTerms::default(), now);
         assert_eq!(args[2..4], ["--wall-clock-secs", "90"]);
+    }
+
+    #[test]
+    fn a_briefed_child_is_given_the_parents_store_and_nothing_else_is() {
+        let store =
+            std::path::PathBuf::from("/p/.sven/context/0b9cdb5e-7d0e-4f0e-9d6e-0d3f6a1c2b4a");
+        let terms = ServeTerms {
+            evidence_store: Some(store.clone()),
+            ..ServeTerms::default()
+        };
+        let args = serve_args(
+            None,
+            &contract_for(AgentMode::Agent),
+            &terms,
+            std::time::Instant::now(),
+        );
+        assert_eq!(
+            args,
+            ["acp", "serve", "--evidence-store", store.to_str().unwrap()]
+        );
     }
 
     /// The child's kernel names the capability of a call it asks about; the

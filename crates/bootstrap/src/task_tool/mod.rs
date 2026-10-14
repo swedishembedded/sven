@@ -97,6 +97,7 @@ use sven_tools_fs::{BufferSource, OutputBufferStore};
 use sven_vocab::{AgentMode, ApprovalMode};
 use sven_workspace::{AgentInfo, SharedAgents};
 
+mod brief;
 mod inspect;
 mod report;
 mod session;
@@ -198,6 +199,9 @@ pub struct TaskTool {
     disabled_tools: Vec<String>,
     /// The session's `tools.deny_patterns` and `tools.auto_approve_patterns`.
     command_patterns: Option<(Vec<String>, Vec<String>)>,
+    /// The session's chunk store, when addressable context is on: where a
+    /// brief's evidence is read from.
+    chunks: Option<Arc<sven_executors::ChunkSession>>,
 }
 
 impl TaskTool {
@@ -222,7 +226,15 @@ impl TaskTool {
             approval_mode: ApprovalMode::Auto,
             disabled_tools: Vec::new(),
             command_patterns: None,
+            chunks: None,
         }
+    }
+
+    /// Lets a call brief its sub-agent from the chunks of `session`'s store.
+    #[must_use]
+    pub fn with_chunks(mut self, session: Option<Arc<sven_executors::ChunkSession>>) -> Self {
+        self.chunks = session;
+        self
     }
 
     /// Holds each child to these turn budgets - the session's own.
@@ -459,6 +471,20 @@ impl Tool for TaskTool {
                     "enum": mode_enum,
                     "description": "[spawn] Default agent"
                 },
+                "evidence": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "[spawn] Chunk ids (c-...) the sub-agent starts from, instead of your conversation"
+                },
+                "evidence_visibility": {
+                    "type": "string",
+                    "enum": ["hidden", "short", "long", "full"],
+                    "description": "[spawn] How much of each evidence chunk it sees first (default short)"
+                },
+                "deliverable": {
+                    "type": "string",
+                    "description": "[spawn] The shape of the answer wanted"
+                },
                 "workdir": {
                     "type": "string",
                     "description": "[spawn] Working directory (default: cwd)"
@@ -536,8 +562,13 @@ impl Tool for TaskTool {
             .args
             .get("description")
             .and_then(|v| v.as_str())
-            .unwrap_or(&prompt[..prompt.len().min(60)])
-            .to_string();
+            .map_or_else(|| prompt.chars().take(60).collect(), str::to_string);
+
+        let brief = match brief::briefed(&call.args, &prompt, self.chunks.as_deref()) {
+            Ok(brief) => brief,
+            Err(e) => return ToolOutput::err(&call.id, e),
+        };
+        let prompt = brief.prompt;
 
         let requested_mode = call
             .args
@@ -655,6 +686,7 @@ impl Tool for TaskTool {
                 disabled_tools: self.disabled_tools.clone(),
                 approval: self.approval_mode,
                 command_patterns: self.command_patterns.clone(),
+                evidence_store: brief.evidence_store,
             },
             workdir,
             model_override,
@@ -945,6 +977,32 @@ mod tests {
             })))
             .await;
         assert!(out.is_error);
+    }
+
+    #[test]
+    fn the_schema_offers_the_brief_fields_without_requiring_them() {
+        let schema = make_task().parameters_schema();
+        for key in ["evidence", "evidence_visibility", "deliverable"] {
+            assert!(schema["properties"].get(key).is_some(), "{key}");
+            assert!(!schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r == key));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_brief_that_cannot_be_built_is_refused_before_anything_starts() {
+        let t = make_task();
+        for args in [
+            json!({"prompt": "p", "evidence": ["../../etc/passwd"]}),
+            json!({"prompt": "p", "evidence": ["c-0123456789abcdef"]}),
+            json!({"prompt": "p", "evidence_visibility": "all", "deliverable": "x"}),
+        ] {
+            let out = t.execute(&call(args.clone())).await;
+            assert!(out.is_error, "{args}: {}", out.content);
+        }
     }
 
     #[tokio::test]

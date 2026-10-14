@@ -21,6 +21,11 @@ use sven_turn::assembly::{
 #[serde(default)]
 pub struct ContextSettings {
     pub assembly: AssemblyConfig,
+    /// The chunk store of the session that delegated to this one, read-only
+    /// (`sven acp serve --evidence-store`). Set by the parent that starts a
+    /// sub-agent; never read from or written to the configuration file.
+    #[serde(skip)]
+    pub evidence_store: Option<std::path::PathBuf>,
 }
 
 impl ContextSettings {
@@ -182,5 +187,21 @@ mod tests {
         let unknown = typo.unknown_keys(&Config::schema());
         assert_eq!(unknown.len(), 1);
         assert!(unknown[0].contains("context.assembly.mod"), "{unknown:?}");
+    }
+
+    #[test]
+    fn the_delegating_sessions_store_is_a_runtime_fact_not_a_file_key() {
+        let config = Config::from_document(&document(
+            "context:\n  evidence_store: /elsewhere/.sven/context/x\n",
+        ));
+        assert_eq!(config.context.evidence_store, None);
+        let set = ContextSettings {
+            evidence_store: Some("/p/.sven/context/id".into()),
+            ..ContextSettings::default()
+        };
+        assert!(serde_json::to_value(&set)
+            .unwrap()
+            .get("evidence_store")
+            .is_none());
     }
 }

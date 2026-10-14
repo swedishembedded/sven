@@ -67,6 +67,10 @@ pub struct IntegrationProviders {
     /// The session's chunk store, when addressable context is on: the
     /// `context` tool then expands the references a shortened result carries.
     pub chunks: Option<Arc<sven_executors::ChunkSession>>,
+    /// The chunk store of the session that delegated to this one, opened
+    /// read-only (`context.evidence_store`): a sub-agent briefed with chunks
+    /// expands them from it.
+    pub(crate) shared_evidence: Option<crate::evidence_share::SharedEvidence>,
 }
 
 /// What a session's integrations are opened from.
@@ -76,7 +80,7 @@ pub(crate) struct SessionIntegrations<'a> {
     /// The session's own approval gate, which `task` sub-agents reach when no
     /// requester was brought.
     pub approval_tx: &'a mpsc::Sender<sven_executors::user::ApprovalRequest>,
-    pub tools: &'a crate::config::ToolsConfig,
+    pub config: &'a Config,
     pub chunks: Option<Arc<sven_executors::ChunkSession>>,
 }
 
@@ -92,18 +96,44 @@ impl IntegrationProviders {
                 session.permission_requester,
                 session.approval_mode,
                 session.approval_tx,
-                session.tools,
+                &session.config.tools,
             ),
             approval_mode: session.approval_mode,
             chunks: session.chunks,
+            shared_evidence: shared_evidence(session.config),
         }
     }
 
-    /// The expansion the session's tools offer, if addressable context is on.
+    /// The expansion the session's tools offer: of its own chunks when
+    /// addressable context is on, and of the delegating session's snapshot
+    /// when it was briefed with one.
     fn expander(&self) -> Option<ChunkExpander> {
-        self.chunks
+        let own = self
+            .chunks
             .as_ref()
-            .map(|c| ChunkExpander::new(c.store().clone(), c.probe()))
+            .map(|c| ChunkExpander::new(c.store().clone(), c.probe()));
+        match (own, &self.shared_evidence) {
+            (Some(own), Some(shared)) => Some(own.with_snapshot(shared.store.clone())),
+            (None, Some(shared)) => Some(ChunkExpander::new(
+                shared.store.clone(),
+                Arc::clone(&shared.probe),
+            )),
+            (own, None) => own,
+        }
+    }
+}
+
+/// The delegating session's store, when this session was started with one.
+/// A store that cannot be opened is logged: the child then works from the
+/// brief's own text, and an expansion of a shared id says the chunk is unknown.
+fn shared_evidence(config: &Config) -> Option<crate::evidence_share::SharedEvidence> {
+    let dir = config.context.evidence_store.as_deref()?;
+    match crate::evidence_share::SharedEvidence::open(dir) {
+        Ok(shared) => Some(shared),
+        Err(e) => {
+            tracing::warn!(error = %e, "the delegating session's chunk store could not be opened");
+            None
+        }
     }
 }
 
@@ -207,6 +237,7 @@ pub fn build_tool_registry_with_integrations(
             approver: integrations.approver.clone(),
             approval_mode: integrations.approval_mode,
             expansion: integrations.expander(),
+            chunks: integrations.chunks.clone(),
         }),
         ToolSetProfile::Coding {
             questions,
@@ -225,6 +256,7 @@ pub fn build_tool_registry_with_integrations(
             approver: integrations.approver.clone(),
             approval_mode: integrations.approval_mode,
             expansion: integrations.expander(),
+            chunks: integrations.chunks.clone(),
         }),
         ToolSetProfile::Research { questions, todos } => build_profile_research(
             cfg,
@@ -325,6 +357,7 @@ struct FullProfileParams<'a> {
     approver: Option<ChildApprover>,
     approval_mode: sven_vocab::ApprovalMode,
     expansion: Option<ChunkExpander>,
+    chunks: Option<Arc<sven_executors::ChunkSession>>,
 }
 
 /// Full and Coding profiles share the same builder; `include_gdb_context`
@@ -367,6 +400,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
             parent_mode,
         )
         .with_scope(p.runtime.path_scope.clone())
+        .with_chunks(p.chunks)
         .with_wall_clock(p.cfg.agent.child_run_timeout())
         .with_turn_budgets(
             Some(p.cfg.agent.max_tool_rounds),
@@ -423,6 +457,7 @@ fn build_profile_research(
             mode_lock,
         )
         .with_scope(paths.clone())
+        .with_chunks(integrations.chunks.clone())
         .with_wall_clock(cfg.agent.child_run_timeout())
         .with_turn_budgets(Some(cfg.agent.max_tool_rounds), cfg.model.max_output_tokens)
         .with_approver(integrations.approver.clone(), integrations.approval_mode)
@@ -687,6 +722,62 @@ pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) 
 
 #[cfg(test)]
 mod tests {
+    /// A session started with the delegating session's store offers `context`
+    /// expansion of it even though its own addressable context is off.
+    #[test]
+    fn a_briefed_session_expands_the_delegating_stores_chunks() {
+        use sven_chunks::{
+            ChunkDraft, ChunkKind, ChunkStore, Lifetime, Provenance, Sensitivity, StoreLimits,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let dir = root
+            .path()
+            .join(".sven/context/0b9cdb5e-7d0e-4f0e-9d6e-0d3f6a1c2b4a");
+        let id = ChunkStore::open(&dir, StoreLimits::default())
+            .unwrap()
+            .put(
+                "parent evidence\n",
+                ChunkDraft {
+                    kind: ChunkKind::CommandOutput,
+                    provenance: Provenance {
+                        source_tool: "shell".into(),
+                        args_digest: String::new(),
+                        path: None,
+                        source_version: None,
+                        turn: 1,
+                    },
+                    priority: 0,
+                    sensitivity: Sensitivity::Internal,
+                    lifetime: Lifetime::Session,
+                    pinned: false,
+                    failure: false,
+                },
+            )
+            .unwrap()
+            .chunk
+            .id;
+        let mut cfg = Config::default();
+        cfg.context.evidence_store = Some(dir);
+        assert!(IntegrationProviders::default().expander().is_none());
+        let providers = IntegrationProviders {
+            shared_evidence: shared_evidence(&cfg),
+            ..IntegrationProviders::default()
+        };
+        let out = providers
+            .expander()
+            .expect("the snapshot is offered")
+            .expand(&sven_tool_api::tool::ToolCall {
+                id: "c".into(),
+                name: "context".into(),
+                args: serde_json::json!({"action": "expand", "chunk": id.to_string()}),
+            });
+        assert!(
+            !out.is_error && out.content.contains("parent evidence"),
+            "{}",
+            out.content
+        );
+    }
+
     use super::*;
     use sven_model_mock::MockProvider;
 

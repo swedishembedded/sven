@@ -560,7 +560,7 @@ impl RuntimeBuilder {
                 permission_requester: self.permission_requester.clone(),
                 approval_mode: self.approval_mode,
                 approval_tx: &approval_tx,
-                tools: &self.config.tools,
+                config: &self.config,
                 chunks: context.as_ref().map(ContextWiring::session),
             })
             .await;
