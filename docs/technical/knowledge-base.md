@@ -93,6 +93,11 @@ is automatically included.
 Files are sorted by subsystem name for deterministic output.  Files larger
 than 128 KiB are skipped with a warning.
 
+A document may state when it is listed in the system prompt with
+`sven.activation` (`paths`, `modes`, `states`, `always`) in its frontmatter;
+without it the document is listed always. See
+[instruction disclosure](instruction-disclosure.md).
+
 ---
 
 ## Tools

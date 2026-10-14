@@ -705,6 +705,7 @@ you do not need to declare them in the frontmatter.  Just create the directory.
 | `sven.requires_bins` | list | no | Skip this skill if any of the listed binaries are absent from `PATH` (e.g. `[docker, kubectl]`). |
 | `sven.requires_env` | list | no | Skip this skill if any of the listed environment variables are unset (e.g. `[AWS_PROFILE]`). |
 | `sven.user_invocable_only` | bool | no | Hide the skill from the model's skill listings, so it is loaded only when you name it. Use for skills you always want to invoke deliberately. Default: `false`. |
+| `sven.activation` | map | no | List the skill to the model only once it applies: `paths` (globs of files touched or named), `modes`, `states`, or `always`. Absent means always. See [instruction disclosure](technical/instruction-disclosure.md). |
 
 ---
 

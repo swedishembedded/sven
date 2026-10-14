@@ -74,6 +74,7 @@ use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
 mod compaction;
 mod context_view;
+mod instructions;
 
 use crate::chunks::ContextAssembler;
 use crate::notices;
@@ -128,6 +129,8 @@ pub struct TurnExecutor {
     decisions: Option<Arc<DecisionTelemetry>>,
     /// Builds the context view of each request when addressable context is on.
     context: Option<ContextAssembler>,
+    /// Activates and announces conditional instructions each turn.
+    instructions: Option<Arc<sven_turn::instructions::Activator>>,
 }
 
 /// Proactive-compaction settings, mirroring the agent settings'
@@ -191,6 +194,7 @@ impl TurnExecutor {
             warned_without_tools: std::collections::HashSet::new(),
             decisions: None,
             context: None,
+            instructions: None,
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
@@ -238,6 +242,17 @@ impl TurnExecutor {
         self
     }
 
+    /// Announces the instructions whose activation holds with each request and
+    /// records newly activated ones in the kernel. `None` announces nothing.
+    #[must_use]
+    pub fn with_instructions(
+        mut self,
+        instructions: Option<Arc<sven_turn::instructions::Activator>>,
+    ) -> Self {
+        self.instructions = instructions;
+        self
+    }
+
     /// Resolve the model provider, honouring a per-state override when both
     /// an override and a resolver are present.
     fn resolve_model(&self, model: &Option<String>) -> Arc<dyn sven_model::ModelProvider> {
@@ -275,7 +290,7 @@ impl EffectExecutor for TurnExecutor {
             return;
         }
 
-        let req = match TurnRequest::from_value(request) {
+        let mut req = match TurnRequest::from_value(request) {
             Ok(r) => r,
             Err(e) => {
                 let msg = format!("failed to deserialise TurnRequest: {e}");
@@ -300,6 +315,7 @@ impl EffectExecutor for TurnExecutor {
         // Snapshot the thread before any async I/O (guard is dropped immediately
         // by the helper so it is never held across an await boundary).
         let mut messages = snapshot_thread(&self.store, &thread_id);
+        instructions::announce(self.instructions.as_deref(), &mut req, &messages, sink).await;
 
         // Resolve tool schemas: named list takes priority; fall back to all-mode.
         // `--no-tools` overrides whatever the requesting machine asked for -

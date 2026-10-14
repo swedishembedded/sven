@@ -615,6 +615,9 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
 - [docs/technical/tool-disclosure.md](docs/technical/tool-disclosure.md) -
   deferred tool disclosure: core tools, the `tools` discovery tool, loading,
   ordering for the prompt cache, and the measured savings.
+- [docs/technical/instruction-disclosure.md](docs/technical/instruction-disclosure.md) -
+  skills, subagents and knowledge documents: stable ids, activation conditions,
+  the active set in the kernel context, and what the system prompt lists.
 - [docs/technical/token-ledger.md](docs/technical/token-ledger.md) - the
   per-request token ledger: where a request's input tokens come from, the
   `--token-ledger` line, `sven ledger`, and the baseline scenarios.

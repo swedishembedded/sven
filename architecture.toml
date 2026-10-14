@@ -359,6 +359,3 @@ lines = 856
 [[allow.large_file]]
 path = "tests/context_pipeline_test.rs"
 lines = 850
-[[allow.large_file]]
-path = "crates/workspace/src/skills.rs"
-lines = 825

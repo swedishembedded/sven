@@ -39,9 +39,9 @@ use sven_vocab::{AgentMode, ApprovalMode};
 use tokio::sync::mpsc;
 
 use crate::context::{BuiltinTools, RuntimeContext, ToolSetProfile};
-use crate::context_wiring::ContextWiring;
 use crate::registry::{build_tool_registry_with_integrations, IntegrationProviders};
 use crate::session_executor::{self, ExecutorParts, UserGates};
+use crate::{context_wiring::ContextWiring, instruction_wiring::InstructionWiring};
 
 /// Builds the executor installed in the composite's **tool slot** (`CallTool`),
 /// given the `TurnExecutor`'s shared conversation store and `call_id → thread`
@@ -734,7 +734,7 @@ impl RuntimeBuilder {
                 no_tools: runtime.no_tools,
                 decision_telemetry: Arc::clone(decision.telemetry()),
                 context,
-                project_root: self.runtime_ctx.project_root.clone(),
+                instructions: InstructionWiring::new(&runtime, &self.mode),
                 audit_trail: audit_trail.clone(),
                 #[cfg(feature = "memory")]
                 parked_tx,

@@ -28,6 +28,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::SkillInfo;
+
 /// The conditions under which an instruction applies.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,6 +47,21 @@ pub struct Activation {
     /// Applies while the machine is in one of these states, case-insensitive.
     #[serde(default)]
     pub states: Vec<String>,
+}
+
+impl SkillInfo {
+    /// The skill's stable identity across listings, activation sets and
+    /// snapshots: `skill:` followed by its command.
+    #[must_use]
+    pub fn id(&self) -> String {
+        format!("skill:{}", self.command)
+    }
+
+    /// The skill's activation block, when it declares one.
+    #[must_use]
+    pub fn activation(&self) -> Option<&Activation> {
+        self.sven_meta.as_ref().and_then(|m| m.activation.as_ref())
+    }
 }
 
 /// The `sven:` frontmatter block of a subagent or knowledge document. Only

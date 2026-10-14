@@ -36,6 +36,7 @@ use crate::chunks::ChunkSession;
 use crate::thread_store::ThreadStore;
 use sven_model::Message;
 use sven_tool_registry::{ToolCall, ToolOutput, ToolRegistry, DISCOVERY_TOOL};
+use sven_turn::instructions::Activator;
 
 /// Executes [`Effect::CallTool`] using the injected [`ToolRegistry`].
 pub struct ToolExecutor {
@@ -80,6 +81,9 @@ pub struct ToolExecutor {
     /// When addressable context is on, each result is recorded as a chunk as
     /// it is appended, so a file read keeps the version it was read at.
     chunks: Option<Arc<ChunkSession>>,
+    /// Activates the skills, subagents and knowledge documents that cover a
+    /// file a successful call touched. `None` activates nothing.
+    instructions: Option<Arc<Activator>>,
 }
 
 impl ToolExecutor {
@@ -99,6 +103,7 @@ impl ToolExecutor {
             cancel: CancelScope::new(),
             reconcile_capability: false,
             chunks: None,
+            instructions: None,
         }
     }
 
@@ -159,6 +164,14 @@ impl ToolExecutor {
         self
     }
 
+    /// Activates the instructions whose paths cover a file a successful call
+    /// names (`path`, `file`, ... arguments). `None` activates nothing.
+    #[must_use]
+    pub fn with_instructions(mut self, instructions: Option<Arc<Activator>>) -> Self {
+        self.instructions = instructions;
+        self
+    }
+
     /// Creates an executor with a pre-shared call_id registry and store.
     ///
     /// Used when `TurnExecutor` (Phase B) needs to share its registry with this
@@ -180,6 +193,7 @@ impl ToolExecutor {
             cancel: CancelScope::new(),
             reconcile_capability: false,
             chunks: None,
+            instructions: None,
         }
     }
 }
@@ -274,6 +288,7 @@ impl EffectExecutor for ToolExecutor {
         let tool_timeout = self.tool_timeout;
         let cancel = self.cancel.clone();
         let chunks = self.chunks.clone();
+        let instructions = self.instructions.clone();
 
         // Spawn-and-forget: the task runs concurrently with other effects.
         tokio::spawn(async move {
@@ -429,6 +444,13 @@ impl EffectExecutor for ToolExecutor {
                 let activated = registry.activations(&tool_call);
                 if !activated.is_empty() {
                     let _ = sink.emit(Event::ToolsActivated { names: activated }).await;
+                }
+                if let Some(instructions) = &instructions {
+                    let touched = instructions.paths_of_call(&tool_call.args);
+                    let ids = instructions.activated_by_paths(&touched);
+                    if !ids.is_empty() {
+                        let _ = sink.emit(Event::InstructionsActivated { ids }).await;
+                    }
                 }
                 let observation = serde_json::Value::String(output.content);
                 let _ = sink

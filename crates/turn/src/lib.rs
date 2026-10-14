@@ -15,6 +15,7 @@
 
 pub mod assembly;
 mod compact;
+pub mod instructions;
 pub mod ledger;
 mod ledger_recorder;
 mod oneshot;

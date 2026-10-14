@@ -1,11 +1,14 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Arc;
 
 use sven_vocab::AgentMode;
 use sven_workspace::{find_workspace_root, AgentInfo, KnowledgeInfo, SkillInfo};
+
+use crate::instructions;
 
 /// All optional contextual blocks that can be injected into the system prompt.
 #[derive(Debug)]
@@ -459,6 +462,40 @@ pub fn build_knowledge_section(knowledge: &[KnowledgeInfo]) -> String {
     )
 }
 
+/// The items the system prompt lists from the start, and how many it leaves to
+/// the per-turn announcement. Borrows the slice when nothing is left out, so a
+/// catalog without activation blocks costs nothing and renders as before.
+fn unconditional<T: Clone>(items: &[T], keep: fn(&T) -> bool) -> (Cow<'_, [T]>, usize) {
+    let dormant = items.iter().filter(|i| !keep(i)).count();
+    if dormant == 0 {
+        return (Cow::Borrowed(items), 0);
+    }
+    let listed = items.iter().filter(|i| keep(i)).cloned().collect();
+    (Cow::Owned(listed), dormant)
+}
+
+/// `section` followed by a line telling the model that `dormant` more items
+/// exist and will be announced; the heading alone when `section` is empty.
+fn with_dormant_note(section: String, heading: &str, noun: &str, dormant: usize) -> String {
+    if dormant == 0 {
+        return if section.is_empty() {
+            section
+        } else {
+            format!("\n\n{section}")
+        };
+    }
+    let plural = if dormant == 1 { "is" } else { "are" };
+    let note = format!(
+        "{dormant} more {noun}{} {plural} announced when they become relevant to the session.",
+        if dormant == 1 { "" } else { "s" }
+    );
+    if section.is_empty() {
+        format!("\n\n## {heading}\n\n{note}")
+    } else {
+        format!("\n\n{section}\n\n{note}")
+    }
+}
+
 fn build_guidelines_section() -> String {
     format!(
         "## Guidelines\n\n\
@@ -637,33 +674,28 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
     };
 
     // Skills - stable, injected after project instructions and before CI/git.
+    // Instructions with an activation condition are announced per turn once it
+    // holds (see `crate::instructions`), so the stable prefix never depends on
+    // what a session touches.
     let skills_section = {
-        let s = build_skills_section(&ctx.skills);
-        if s.is_empty() {
-            String::new()
-        } else {
-            format!("\n\n{s}")
-        }
+        let (listed, dormant) = unconditional(&ctx.skills, instructions::skill_is_unconditional);
+        let s = build_skills_section(&listed);
+        with_dormant_note(s, "Skills", "skill", dormant)
     };
 
     // Agents - stable, injected after skills.
     let agents_section = {
-        let s = build_agents_section(&ctx.agents);
-        if s.is_empty() {
-            String::new()
-        } else {
-            format!("\n\n{s}")
-        }
+        let (listed, dormant) = unconditional(&ctx.agents, instructions::agent_is_unconditional);
+        let s = build_agents_section(&listed);
+        with_dormant_note(s, "Subagents", "subagent", dormant)
     };
 
     // Knowledge base overview - stable, injected after agents.
     let knowledge_section = {
-        let s = build_knowledge_section(&ctx.knowledge);
-        if s.is_empty() {
-            String::new()
-        } else {
-            format!("\n\n{s}")
-        }
+        let (listed, dormant) =
+            unconditional(&ctx.knowledge, instructions::knowledge_is_unconditional);
+        let s = build_knowledge_section(&listed);
+        with_dormant_note(s, "Knowledge Base", "knowledge document", dormant)
     };
 
     // Knowledge drift warning - stable (computed once at session start).

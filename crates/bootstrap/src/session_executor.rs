@@ -95,9 +95,9 @@ pub(crate) struct ExecutorParts {
     pub decision_telemetry: Arc<sven_decision::telemetry::DecisionTelemetry>,
     /// The session's addressable context, when it is on.
     pub context: Option<crate::context_wiring::ContextWiring>,
-    /// Root of the filesystem every effect shares; also where verification
-    /// runs.
-    pub project_root: Option<PathBuf>,
+    /// The project root every effect shares (also where verification runs)
+    /// and the activation of conditional instructions.
+    pub instructions: crate::instruction_wiring::InstructionWiring,
     pub audit_trail: AuditTrailHandle,
     #[cfg(feature = "memory")]
     pub parked_tx: mpsc::Sender<sven_executors::user::ParkedQuestion>,
@@ -122,6 +122,7 @@ pub(crate) fn compose(
         return custom;
     }
     let audit_log_path = parts
+        .instructions
         .project_root
         .as_ref()
         .map(|r| r.join(".sven").join("audit.jsonl"))
@@ -129,7 +130,7 @@ pub(crate) fn compose(
     // Only the verified-task machine's `Verifying` state ever emits
     // `Effect::Verify` (see its `permission_policy`), so wiring it here
     // unconditionally is harmless for every other mode.
-    let verify_root = verify_root(parts.project_root.as_deref());
+    let verify_root = verify_root(parts.instructions.project_root.as_deref());
     let (chunk_session, assembler) = match parts.context {
         Some(c) => (Some(c.session), Some(c.assembler)),
         None => (None, None),
@@ -146,7 +147,8 @@ pub(crate) fn compose(
     .with_compaction_config(parts.config.agent.compaction())
     .with_turn_limits(parts.config.agent.turn_limits())
     .with_decision_telemetry(parts.decision_telemetry)
-    .with_context_assembler(assembler);
+    .with_context_assembler(assembler)
+    .with_instructions(Some(parts.instructions.activator()));
     let user_executor = UserExecutor::new(parts.gates.questions, parts.gates.approvals)
         .with_approval_mode(parts.gates.approval_mode)
         .with_preapproval(crate::mode_policy::preapproval(&parts.config.tools));
@@ -169,7 +171,8 @@ pub(crate) fn compose(
             )
             .with_no_tools(parts.no_tools)
             .with_tool_result_token_cap(parts.config.agent.tool_result_token_cap)
-            .with_chunk_session(chunk_session);
+            .with_chunk_session(chunk_session)
+            .with_instructions(Some(parts.instructions.activator()));
             base.with_tool_executor(if parts.reconcile_capabilities {
                 tools.with_capability_reconciliation()
             } else {

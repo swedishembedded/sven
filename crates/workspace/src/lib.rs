@@ -21,6 +21,7 @@ pub use shared::Shared;
 pub mod agents;
 pub use agents::{discover_agents, AgentInfo, SharedAgents};
 
+mod skill_frontmatter;
 pub mod skills;
 pub use skills::{
     discover_commands, discover_skills, discover_skills_anchored, load_skill_content_from_disk,

@@ -108,6 +108,8 @@ sven:                        # optional sven-specific block
   requires_bins: [docker]    # skip if these binaries are absent
   requires_env: [DOCKER_TOKEN] # skip if these env vars are unset
   user_invocable_only: false # hide from the model's skill listings
+  activation:                # optional: list only once it applies
+    paths: ["src/auth/**"]   # see instruction-disclosure.md
 ---
 
 # Skill body
@@ -138,7 +140,8 @@ pub struct SkillInfo {
 ```
 
 `SvenSkillMeta` carries availability guards (`requires_bins`, `requires_env`),
-the `always` and `user_invocable_only` flags.
+the `always` and `user_invocable_only` flags, and the optional `activation`
+block described in [instruction-disclosure.md](instruction-disclosure.md).
 
 ---
 
