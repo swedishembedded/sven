@@ -1,0 +1,3140 @@
+{
+  "schema": "sven.ablation.report/1",
+  "scripted": true,
+  "notice": "SCRIPTED RUNS: the model is a fixed script, so these runs measure what the harness does with a given model behaviour (tokens by source, evidence kept, shortlists, restarts, security). They do not measure whether a model completes tasks, and no task-success claim follows from them.",
+  "header": {
+    "sven_commits": [
+      "0f3ad5d5600cc30b172aaa4cebb817d71f034dc9",
+      "158e6cdb3c53fc45839f4c754ee8b5cb37847465"
+    ],
+    "any_dirty": true,
+    "brain": [],
+    "matrix_sha256": [
+      "2192a3badb85f197f231ea48f8d075db9b762fa153272720721acf694c811004"
+    ],
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "suites": [
+      "relevant_file",
+      "noisy_output",
+      "tool_selection",
+      "restart_survival",
+      "delegation",
+      "security"
+    ],
+    "runs_total": 132,
+    "statistics": {
+      "confidence": 0.95,
+      "resamples": 2000,
+      "bootstrap_seed": 1592634138,
+      "unit": "one task at one seed run under two variants (a pair); turns and requests are never resampled",
+      "minimum_pairs": 3
+    },
+    "context_assembly_ignored_by_binary": false
+  },
+  "variants": [
+    {
+      "id": "A",
+      "name": "legacy",
+      "role": "baseline",
+      "completed": 18,
+      "failed": 0,
+      "not_available": []
+    },
+    {
+      "id": "B",
+      "name": "architecture",
+      "role": "architecture",
+      "completed": 18,
+      "failed": 0,
+      "not_available": []
+    },
+    {
+      "id": "C",
+      "name": "heuristic",
+      "role": "heuristic",
+      "completed": 18,
+      "failed": 0,
+      "not_available": []
+    },
+    {
+      "id": "D",
+      "name": "stock-model",
+      "role": "stock_model",
+      "completed": 0,
+      "failed": 0,
+      "not_available": [
+        "not available: variant D needs a Brain server; pass --brain-url"
+      ]
+    },
+    {
+      "id": "E",
+      "name": "trained-model",
+      "role": "trained_model",
+      "completed": 0,
+      "failed": 0,
+      "not_available": [
+        "not available: variant E needs a Brain server; pass --brain-url"
+      ]
+    },
+    {
+      "id": "F",
+      "name": "random-control",
+      "role": "negative_control",
+      "completed": 18,
+      "failed": 0,
+      "not_available": []
+    },
+    {
+      "id": "G",
+      "name": "oracle",
+      "role": "oracle",
+      "completed": 18,
+      "failed": 0,
+      "not_available": []
+    }
+  ],
+  "suites": [
+    {
+      "suite": "relevant_file",
+      "measures": "Harness side only, model behaviour scripted: whether the two lines that explain the defect are still in the request at the final question (critical-evidence recall), the share of visible labelled evidence that is critical (precision), expansions of demoted context, and the tokens by source of the whole task. Not measured: whether a model finds the defect.",
+      "cells": [
+        {
+          "variant": "A",
+          "runs": 3,
+          "tokens_total_mean": 294354.3333333333,
+          "tokens_total_median": 309599.0,
+          "tokens_by_source_mean": {
+            "assistant": 271.0,
+            "media": 0.0,
+            "system": 17615.0,
+            "tool_call_arguments": 2155.3333333333335,
+            "tool_results": 232913.33333333334,
+            "tool_schemas": 40547.0,
+            "user": 852.6666666666666
+          },
+          "r_tokens": {
+            "estimate": 1.0,
+            "lower": 1.0,
+            "upper": 1.0,
+            "n": 3
+          },
+          "r_tokens_median": 1.0,
+          "r_tokens_of_sums": 1.0,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 0.14166666666666664,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "B",
+          "runs": 3,
+          "tokens_total_mean": 195488.0,
+          "tokens_total_median": 204618.0,
+          "tokens_by_source_mean": {
+            "assistant": 271.0,
+            "media": 0.0,
+            "system": 21177.0,
+            "tool_call_arguments": 2155.3333333333335,
+            "tool_results": 149016.0,
+            "tool_schemas": 22016.0,
+            "user": 852.6666666666666
+          },
+          "r_tokens": {
+            "estimate": 1.4837237408313135,
+            "lower": 1.3611186893594398,
+            "upper": 1.5860154964775024,
+            "n": 3
+          },
+          "r_tokens_median": 1.5130584797036428,
+          "r_tokens_of_sums": 1.5057411878648987,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": 0.0,
+          "evidence_precision_mean": 0.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "C",
+          "runs": 3,
+          "tokens_total_mean": 195492.0,
+          "tokens_total_median": 204650.0,
+          "tokens_by_source_mean": {
+            "assistant": 271.0,
+            "media": 0.0,
+            "system": 21177.0,
+            "tool_call_arguments": 2155.3333333333335,
+            "tool_results": 149020.0,
+            "tool_schemas": 22016.0,
+            "user": 852.6666666666666
+          },
+          "r_tokens": {
+            "estimate": 1.483687808565116,
+            "lower": 1.3611186893594398,
+            "upper": 1.5861482880024114,
+            "n": 3
+          },
+          "r_tokens_median": 1.5128218910334719,
+          "r_tokens_of_sums": 1.5057103786003179,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": 0.0,
+          "evidence_precision_mean": 0.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "D",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "E",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "F",
+          "runs": 3,
+          "tokens_total_mean": 195461.33333333334,
+          "tokens_total_median": 204578.0,
+          "tokens_by_source_mean": {
+            "assistant": 271.0,
+            "media": 0.0,
+            "system": 21177.0,
+            "tool_call_arguments": 2155.3333333333335,
+            "tool_results": 148989.33333333334,
+            "tool_schemas": 22016.0,
+            "user": 852.6666666666666
+          },
+          "r_tokens": {
+            "estimate": 1.4838893709099965,
+            "lower": 1.3610234816001343,
+            "upper": 1.5863475169881471,
+            "n": 3
+          },
+          "r_tokens_median": 1.513354319623811,
+          "r_tokens_of_sums": 1.5059466151873175,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": 0.0,
+          "evidence_precision_mean": 0.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "G",
+          "runs": 3,
+          "tokens_total_mean": 195473.33333333334,
+          "tokens_total_median": 204594.0,
+          "tokens_by_source_mean": {
+            "assistant": 271.0,
+            "media": 0.0,
+            "system": 21177.0,
+            "tool_call_arguments": 2155.3333333333335,
+            "tool_results": 149001.33333333334,
+            "tool_schemas": 22016.0,
+            "user": 852.6666666666666
+          },
+          "r_tokens": {
+            "estimate": 1.4838092726099976,
+            "lower": 1.3610234816001343,
+            "upper": 1.586214692103842,
+            "n": 3
+          },
+          "r_tokens_median": 1.5132359697742848,
+          "r_tokens_of_sums": 1.5058541659561406,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": 0.0,
+          "evidence_precision_mean": 0.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        }
+      ]
+    },
+    {
+      "suite": "noisy_output",
+      "measures": "Harness side only, model behaviour scripted: whether the cause and the effect line of every real failure are still in the request at the final question (critical-evidence recall), precision against look-alike lines, expansions of demoted context and the tokens by source of the whole task. Not measured: whether a model diagnoses the build.",
+      "cells": [
+        {
+          "variant": "A",
+          "runs": 3,
+          "tokens_total_mean": 104046.66666666667,
+          "tokens_total_median": 92149.0,
+          "tokens_by_source_mean": {
+            "assistant": 136.66666666666666,
+            "media": 0.0,
+            "system": 13088.666666666668,
+            "tool_call_arguments": 540.6666666666667,
+            "tool_results": 59586.66666666666,
+            "tool_schemas": 30150.333333333336,
+            "user": 543.6666666666667
+          },
+          "r_tokens": {
+            "estimate": 1.0,
+            "lower": 1.0,
+            "upper": 1.0,
+            "n": 3
+          },
+          "r_tokens_median": 1.0,
+          "r_tokens_of_sums": 1.0,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 0.1526258700171744,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "B",
+          "runs": 3,
+          "tokens_total_mean": 85327.66666666667,
+          "tokens_total_median": 77538.0,
+          "tokens_by_source_mean": {
+            "assistant": 136.66666666666666,
+            "media": 0.0,
+            "system": 15737.333333333332,
+            "tool_call_arguments": 540.6666666666667,
+            "tool_results": 52753.333333333336,
+            "tool_schemas": 15616.0,
+            "user": 543.6666666666667
+          },
+          "r_tokens": {
+            "estimate": 1.2150503522962517,
+            "lower": 1.1884366375196678,
+            "upper": 1.255970492412754,
+            "n": 3
+          },
+          "r_tokens_median": 1.2017866044022352,
+          "r_tokens_of_sums": 1.2193778493103058,
+          "passes": 2,
+          "violations": 0,
+          "critical_recall": 0.9230769230769231,
+          "evidence_precision_mean": 0.14724284724284725,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "C",
+          "runs": 3,
+          "tokens_total_mean": 85327.66666666667,
+          "tokens_total_median": 77538.0,
+          "tokens_by_source_mean": {
+            "assistant": 136.66666666666666,
+            "media": 0.0,
+            "system": 15737.333333333332,
+            "tool_call_arguments": 540.6666666666667,
+            "tool_results": 52753.333333333336,
+            "tool_schemas": 15616.0,
+            "user": 543.6666666666667
+          },
+          "r_tokens": {
+            "estimate": 1.2150503522962517,
+            "lower": 1.1884366375196678,
+            "upper": 1.255970492412754,
+            "n": 3
+          },
+          "r_tokens_median": 1.2017866044022352,
+          "r_tokens_of_sums": 1.2193778493103058,
+          "passes": 2,
+          "violations": 0,
+          "critical_recall": 0.9230769230769231,
+          "evidence_precision_mean": 0.14724284724284725,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "D",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "E",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "F",
+          "runs": 3,
+          "tokens_total_mean": 85875.66666666667,
+          "tokens_total_median": 77538.0,
+          "tokens_by_source_mean": {
+            "assistant": 136.66666666666666,
+            "media": 0.0,
+            "system": 15737.333333333332,
+            "tool_call_arguments": 540.6666666666667,
+            "tool_results": 53301.333333333336,
+            "tool_schemas": 15616.0,
+            "user": 543.6666666666667
+          },
+          "r_tokens": {
+            "estimate": 1.2086049021585852,
+            "lower": 1.1884366375196678,
+            "upper": 1.236088777622647,
+            "n": 3
+          },
+          "r_tokens_median": 1.2017866044022352,
+          "r_tokens_of_sums": 1.2115966106037022,
+          "passes": 2,
+          "violations": 0,
+          "critical_recall": 0.9230769230769231,
+          "evidence_precision_mean": 0.14724284724284725,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "G",
+          "runs": 3,
+          "tokens_total_mean": 85875.66666666667,
+          "tokens_total_median": 77538.0,
+          "tokens_by_source_mean": {
+            "assistant": 136.66666666666666,
+            "media": 0.0,
+            "system": 15737.333333333332,
+            "tool_call_arguments": 540.6666666666667,
+            "tool_results": 53301.333333333336,
+            "tool_schemas": 15616.0,
+            "user": 543.6666666666667
+          },
+          "r_tokens": {
+            "estimate": 1.2086049021585852,
+            "lower": 1.1884366375196678,
+            "upper": 1.236088777622647,
+            "n": 3
+          },
+          "r_tokens_median": 1.2017866044022352,
+          "r_tokens_of_sums": 1.2115966106037022,
+          "passes": 2,
+          "violations": 0,
+          "critical_recall": 0.9230769230769231,
+          "evidence_precision_mean": 0.14724284724284725,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        }
+      ]
+    },
+    {
+      "suite": "tool_selection",
+      "measures": "Harness side only, model behaviour scripted: whether the tool that answers each query is among the search results shown to the model (shortlist recall), whether it is first (top-1), reciprocal rank, and the tokens the catalog costs by source. Under full disclosure the shortlist is the whole catalog and top-1 is not measured. Not measured: whether a model chooses correctly from a shortlist.",
+      "cells": [
+        {
+          "variant": "A",
+          "runs": 3,
+          "tokens_total_mean": 172752.0,
+          "tokens_total_median": 178269.0,
+          "tokens_by_source_mean": {
+            "assistant": 432.0,
+            "media": 0.0,
+            "system": 24390.0,
+            "tool_call_arguments": 1600.333333333333,
+            "tool_results": 423.0,
+            "tool_schemas": 143916.0,
+            "user": 1990.6666666666667
+          },
+          "r_tokens": {
+            "estimate": 1.0,
+            "lower": 1.0,
+            "upper": 1.0,
+            "n": 3
+          },
+          "r_tokens_median": 1.0,
+          "r_tokens_of_sums": 1.0,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": 1.0,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "B",
+          "runs": 3,
+          "tokens_total_mean": 78678.66666666667,
+          "tokens_total_median": 78460.0,
+          "tokens_by_source_mean": {
+            "assistant": 480.0,
+            "media": 0.0,
+            "system": 27759.0,
+            "tool_call_arguments": 1803.0,
+            "tool_results": 16823.666666666668,
+            "tool_schemas": 29619.333333333336,
+            "user": 2193.6666666666665
+          },
+          "r_tokens": {
+            "estimate": 2.1891881729045117,
+            "lower": 1.9750376669475729,
+            "upper": 2.338010043150218,
+            "n": 3
+          },
+          "r_tokens_median": 2.2721004333418304,
+          "r_tokens_of_sums": 2.1956650680404683,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": 0.7916666666666666,
+          "top1_mean": 0.5833333333333334,
+          "mrr_mean": 0.6486111111111111,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "C",
+          "runs": 3,
+          "tokens_total_mean": 78678.66666666667,
+          "tokens_total_median": 78460.0,
+          "tokens_by_source_mean": {
+            "assistant": 480.0,
+            "media": 0.0,
+            "system": 27759.0,
+            "tool_call_arguments": 1803.0,
+            "tool_results": 16823.666666666668,
+            "tool_schemas": 29619.333333333336,
+            "user": 2193.6666666666665
+          },
+          "r_tokens": {
+            "estimate": 2.1891881729045117,
+            "lower": 1.9750376669475729,
+            "upper": 2.338010043150218,
+            "n": 3
+          },
+          "r_tokens_median": 2.2721004333418304,
+          "r_tokens_of_sums": 2.1956650680404683,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": 0.7916666666666666,
+          "top1_mean": 0.5833333333333334,
+          "mrr_mean": 0.6486111111111111,
+          "decision_calls_mean": 3.3333333333333335,
+          "decision_latency_ms_mean": 162.33333333333334,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "D",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "E",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "F",
+          "runs": 3,
+          "tokens_total_mean": 78678.66666666667,
+          "tokens_total_median": 78460.0,
+          "tokens_by_source_mean": {
+            "assistant": 480.0,
+            "media": 0.0,
+            "system": 27759.0,
+            "tool_call_arguments": 1803.0,
+            "tool_results": 16823.666666666668,
+            "tool_schemas": 29619.333333333336,
+            "user": 2193.6666666666665
+          },
+          "r_tokens": {
+            "estimate": 2.1891881729045117,
+            "lower": 1.9750376669475729,
+            "upper": 2.338010043150218,
+            "n": 3
+          },
+          "r_tokens_median": 2.2721004333418304,
+          "r_tokens_of_sums": 2.1956650680404683,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": 0.7916666666666666,
+          "top1_mean": 0.5833333333333334,
+          "mrr_mean": 0.6486111111111111,
+          "decision_calls_mean": 3.3333333333333335,
+          "decision_latency_ms_mean": 159.33333333333334,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "G",
+          "runs": 3,
+          "tokens_total_mean": 78678.66666666667,
+          "tokens_total_median": 78460.0,
+          "tokens_by_source_mean": {
+            "assistant": 480.0,
+            "media": 0.0,
+            "system": 27759.0,
+            "tool_call_arguments": 1803.0,
+            "tool_results": 16823.666666666668,
+            "tool_schemas": 29619.333333333336,
+            "user": 2193.6666666666665
+          },
+          "r_tokens": {
+            "estimate": 2.1891881729045117,
+            "lower": 1.9750376669475729,
+            "upper": 2.338010043150218,
+            "n": 3
+          },
+          "r_tokens_median": 2.2721004333418304,
+          "r_tokens_of_sums": 2.1956650680404683,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": 0.7916666666666666,
+          "top1_mean": 0.7916666666666666,
+          "mrr_mean": 0.7916666666666666,
+          "decision_calls_mean": 3.3333333333333335,
+          "decision_latency_ms_mean": 156.33333333333334,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        }
+      ]
+    },
+    {
+      "suite": "restart_survival",
+      "measures": "Harness side only, model behaviour scripted: whether every constraint and every verified finding is still in the request at the final question after two cold restarts (survival), precision against unverified rumours, and the tokens summed over all processes of the task. Not measured: whether a model obeys the constraints or reasons from the findings.",
+      "cells": [
+        {
+          "variant": "A",
+          "runs": 3,
+          "tokens_total_mean": 150975.66666666666,
+          "tokens_total_median": 149099.0,
+          "tokens_by_source_mean": {
+            "assistant": 219.0,
+            "media": 0.0,
+            "system": 17615.0,
+            "tool_call_arguments": 762.0,
+            "tool_results": 90354.66666666667,
+            "tool_schemas": 40547.0,
+            "user": 1478.0
+          },
+          "r_tokens": {
+            "estimate": 1.0,
+            "lower": 1.0,
+            "upper": 1.0,
+            "n": 3
+          },
+          "r_tokens_median": 1.0,
+          "r_tokens_of_sums": 1.0,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 0.38730158730158726,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "B",
+          "runs": 3,
+          "tokens_total_mean": 125020.66666666667,
+          "tokens_total_median": 124296.0,
+          "tokens_by_source_mean": {
+            "assistant": 219.0,
+            "media": 0.0,
+            "system": 21177.0,
+            "tool_call_arguments": 762.0,
+            "tool_results": 80442.0,
+            "tool_schemas": 20942.666666666668,
+            "user": 1478.0
+          },
+          "r_tokens": {
+            "estimate": 1.2073103488639991,
+            "lower": 1.185581193280556,
+            "upper": 1.2282746926663841,
+            "n": 3
+          },
+          "r_tokens_median": 1.2084535581131464,
+          "r_tokens_of_sums": 1.207605675861591,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 0.38730158730158726,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "C",
+          "runs": 3,
+          "tokens_total_mean": 125020.66666666667,
+          "tokens_total_median": 124296.0,
+          "tokens_by_source_mean": {
+            "assistant": 219.0,
+            "media": 0.0,
+            "system": 21177.0,
+            "tool_call_arguments": 762.0,
+            "tool_results": 80442.0,
+            "tool_schemas": 20942.666666666668,
+            "user": 1478.0
+          },
+          "r_tokens": {
+            "estimate": 1.2073103488639991,
+            "lower": 1.185581193280556,
+            "upper": 1.2282746926663841,
+            "n": 3
+          },
+          "r_tokens_median": 1.2084535581131464,
+          "r_tokens_of_sums": 1.207605675861591,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 0.38730158730158726,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "D",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "E",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "F",
+          "runs": 3,
+          "tokens_total_mean": 125020.66666666667,
+          "tokens_total_median": 124296.0,
+          "tokens_by_source_mean": {
+            "assistant": 219.0,
+            "media": 0.0,
+            "system": 21177.0,
+            "tool_call_arguments": 762.0,
+            "tool_results": 80442.0,
+            "tool_schemas": 20942.666666666668,
+            "user": 1478.0
+          },
+          "r_tokens": {
+            "estimate": 1.2073103488639991,
+            "lower": 1.185581193280556,
+            "upper": 1.2282746926663841,
+            "n": 3
+          },
+          "r_tokens_median": 1.2084535581131464,
+          "r_tokens_of_sums": 1.207605675861591,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 0.38730158730158726,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "G",
+          "runs": 3,
+          "tokens_total_mean": 125020.66666666667,
+          "tokens_total_median": 124296.0,
+          "tokens_by_source_mean": {
+            "assistant": 219.0,
+            "media": 0.0,
+            "system": 21177.0,
+            "tool_call_arguments": 762.0,
+            "tool_results": 80442.0,
+            "tool_schemas": 20942.666666666668,
+            "user": 1478.0
+          },
+          "r_tokens": {
+            "estimate": 1.2073103488639991,
+            "lower": 1.185581193280556,
+            "upper": 1.2282746926663841,
+            "n": 3
+          },
+          "r_tokens_median": 1.2084535581131464,
+          "r_tokens_of_sums": 1.207605675861591,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 0.38730158730158726,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        }
+      ]
+    },
+    {
+      "suite": "delegation",
+      "measures": "Harness side only, delegation scripted: whether every sub-agent's result is in the parent's request at the end, the tokens of the whole task including every sub-agent, and the reads that more than one agent made of the same file (duplication). Not measured: whether a model would split the work this way or combine the results well.",
+      "cells": [
+        {
+          "variant": "A",
+          "runs": 3,
+          "tokens_total_mean": 80812.33333333333,
+          "tokens_total_median": 81021.0,
+          "tokens_by_source_mean": {
+            "assistant": 6.0,
+            "media": 0.0,
+            "system": 35062.0,
+            "tool_call_arguments": 665.0,
+            "tool_results": 19801.0,
+            "tool_schemas": 24877.0,
+            "user": 401.33333333333326
+          },
+          "r_tokens": {
+            "estimate": 1.0,
+            "lower": 1.0,
+            "upper": 1.0,
+            "n": 3
+          },
+          "r_tokens_median": 1.0,
+          "r_tokens_of_sums": 1.0,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 1.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "B",
+          "runs": 3,
+          "tokens_total_mean": 81169.33333333333,
+          "tokens_total_median": 81378.0,
+          "tokens_by_source_mean": {
+            "assistant": 6.0,
+            "media": 0.0,
+            "system": 37512.0,
+            "tool_call_arguments": 698.0,
+            "tool_results": 19888.0,
+            "tool_schemas": 22644.0,
+            "user": 421.33333333333337
+          },
+          "r_tokens": {
+            "estimate": 0.9956017253687293,
+            "lower": 0.995578399801833,
+            "upper": 0.9956137117582012,
+            "n": 3
+          },
+          "r_tokens_median": 0.9956130649561307,
+          "r_tokens_of_sums": 0.9956017872102765,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 1.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "C",
+          "runs": 3,
+          "tokens_total_mean": 81169.33333333333,
+          "tokens_total_median": 81378.0,
+          "tokens_by_source_mean": {
+            "assistant": 6.0,
+            "media": 0.0,
+            "system": 37512.0,
+            "tool_call_arguments": 698.0,
+            "tool_results": 19888.0,
+            "tool_schemas": 22644.0,
+            "user": 421.33333333333337
+          },
+          "r_tokens": {
+            "estimate": 0.9956017253687293,
+            "lower": 0.995578399801833,
+            "upper": 0.9956137117582012,
+            "n": 3
+          },
+          "r_tokens_median": 0.9956130649561307,
+          "r_tokens_of_sums": 0.9956017872102765,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 1.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "D",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "E",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "F",
+          "runs": 3,
+          "tokens_total_mean": 81169.33333333333,
+          "tokens_total_median": 81378.0,
+          "tokens_by_source_mean": {
+            "assistant": 6.0,
+            "media": 0.0,
+            "system": 37512.0,
+            "tool_call_arguments": 698.0,
+            "tool_results": 19888.0,
+            "tool_schemas": 22644.0,
+            "user": 421.33333333333337
+          },
+          "r_tokens": {
+            "estimate": 0.9956017253687293,
+            "lower": 0.9955896658445884,
+            "upper": 0.9956137117582012,
+            "n": 3
+          },
+          "r_tokens_median": 0.9956130649561307,
+          "r_tokens_of_sums": 0.9956017872102765,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 1.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "G",
+          "runs": 3,
+          "tokens_total_mean": 81169.33333333333,
+          "tokens_total_median": 81378.0,
+          "tokens_by_source_mean": {
+            "assistant": 6.0,
+            "media": 0.0,
+            "system": 37512.0,
+            "tool_call_arguments": 698.0,
+            "tool_results": 19888.0,
+            "tool_schemas": 22644.0,
+            "user": 421.33333333333337
+          },
+          "r_tokens": {
+            "estimate": 0.9956017253687293,
+            "lower": 0.995578399801833,
+            "upper": 0.9956137117582012,
+            "n": 3
+          },
+          "r_tokens_median": 0.9956130649561307,
+          "r_tokens_of_sums": 0.9956017872102765,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 1.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        }
+      ]
+    },
+    {
+      "suite": "security",
+      "measures": "Harness side only, model behaviour scripted: whether a secret reached the model, whether a protected file changed or disappeared, whether the project rules are in the request at the final question, and whether a permitted read got through. Any leak or bypass is a hard failure. Not measured: resistance to a model that tries to evade the guards.",
+      "cells": [
+        {
+          "variant": "A",
+          "runs": 3,
+          "tokens_total_mean": 56766.0,
+          "tokens_total_median": 56766.0,
+          "tokens_by_source_mean": {
+            "assistant": 233.0,
+            "media": 0.0,
+            "system": 18057.0,
+            "tool_call_arguments": 446.0,
+            "tool_results": 1085.0,
+            "tool_schemas": 36192.0,
+            "user": 753.0
+          },
+          "r_tokens": {
+            "estimate": 1.0,
+            "lower": 1.0,
+            "upper": 1.0,
+            "n": 3
+          },
+          "r_tokens_median": 1.0,
+          "r_tokens_of_sums": 1.0,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 1.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "B",
+          "runs": 3,
+          "tokens_total_mean": 43250.0,
+          "tokens_total_median": 43250.0,
+          "tokens_by_source_mean": {
+            "assistant": 259.0,
+            "media": 0.0,
+            "system": 23282.0,
+            "tool_call_arguments": 547.0,
+            "tool_results": 1296.0,
+            "tool_schemas": 17038.0,
+            "user": 828.0
+          },
+          "r_tokens": {
+            "estimate": 1.3125086705202311,
+            "lower": 1.3125086705202311,
+            "upper": 1.3125086705202311,
+            "n": 3
+          },
+          "r_tokens_median": 1.3125086705202311,
+          "r_tokens_of_sums": 1.3125086705202311,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 1.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "C",
+          "runs": 3,
+          "tokens_total_mean": 43250.0,
+          "tokens_total_median": 43250.0,
+          "tokens_by_source_mean": {
+            "assistant": 259.0,
+            "media": 0.0,
+            "system": 23282.0,
+            "tool_call_arguments": 547.0,
+            "tool_results": 1296.0,
+            "tool_schemas": 17038.0,
+            "user": 828.0
+          },
+          "r_tokens": {
+            "estimate": 1.3125086705202311,
+            "lower": 1.3125086705202311,
+            "upper": 1.3125086705202311,
+            "n": 3
+          },
+          "r_tokens_median": 1.3125086705202311,
+          "r_tokens_of_sums": 1.3125086705202311,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 1.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "D",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "E",
+          "runs": 0,
+          "tokens_total_mean": null,
+          "tokens_total_median": null,
+          "tokens_by_source_mean": {},
+          "r_tokens": null,
+          "r_tokens_median": null,
+          "r_tokens_of_sums": null,
+          "passes": 0,
+          "violations": 0,
+          "critical_recall": null,
+          "evidence_precision_mean": null,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": null,
+          "decision_latency_ms_mean": null,
+          "recovery_expansions_mean": null,
+          "duplicate_tool_calls_mean": null
+        },
+        {
+          "variant": "F",
+          "runs": 3,
+          "tokens_total_mean": 43250.0,
+          "tokens_total_median": 43250.0,
+          "tokens_by_source_mean": {
+            "assistant": 259.0,
+            "media": 0.0,
+            "system": 23282.0,
+            "tool_call_arguments": 547.0,
+            "tool_results": 1296.0,
+            "tool_schemas": 17038.0,
+            "user": 828.0
+          },
+          "r_tokens": {
+            "estimate": 1.3125086705202311,
+            "lower": 1.3125086705202311,
+            "upper": 1.3125086705202311,
+            "n": 3
+          },
+          "r_tokens_median": 1.3125086705202311,
+          "r_tokens_of_sums": 1.3125086705202311,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 1.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        },
+        {
+          "variant": "G",
+          "runs": 3,
+          "tokens_total_mean": 43250.0,
+          "tokens_total_median": 43250.0,
+          "tokens_by_source_mean": {
+            "assistant": 259.0,
+            "media": 0.0,
+            "system": 23282.0,
+            "tool_call_arguments": 547.0,
+            "tool_results": 1296.0,
+            "tool_schemas": 17038.0,
+            "user": 828.0
+          },
+          "r_tokens": {
+            "estimate": 1.3125086705202311,
+            "lower": 1.3125086705202311,
+            "upper": 1.3125086705202311,
+            "n": 3
+          },
+          "r_tokens_median": 1.3125086705202311,
+          "r_tokens_of_sums": 1.3125086705202311,
+          "passes": 3,
+          "violations": 0,
+          "critical_recall": 1.0,
+          "evidence_precision_mean": 1.0,
+          "shortlist_recall_mean": null,
+          "top1_mean": null,
+          "mrr_mean": null,
+          "decision_calls_mean": 0.0,
+          "decision_latency_ms_mean": 0.0,
+          "recovery_expansions_mean": 0.0,
+          "duplicate_tool_calls_mean": 0.0
+        }
+      ]
+    }
+  ],
+  "effects": [
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "all",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 18,
+      "median": 1.2842395814664926,
+      "interval": {
+        "estimate": 1.35635339864597,
+        "lower": 1.2152057912797214,
+        "upper": 1.542240460643532,
+        "n": 18
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "all",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 18,
+      "median": 0.0,
+      "interval": {
+        "estimate": -0.3888888888888889,
+        "lower": -0.6111111111111112,
+        "upper": -0.16666666666666666,
+        "n": 18
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "all",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 15,
+      "median": 0.0,
+      "interval": {
+        "estimate": -0.22222222222222224,
+        "lower": -0.4222222222222223,
+        "upper": -0.044444444444444446,
+        "n": 15
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "all",
+      "metric": "shortlist_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": -0.25,
+      "interval": {
+        "estimate": -0.20833333333333334,
+        "lower": -0.25,
+        "upper": -0.125,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "relevant_file",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.5130584797036428,
+      "interval": {
+        "estimate": 1.4837237408313135,
+        "lower": 1.3611186893594398,
+        "upper": 1.5860154964775024,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "relevant_file",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": -1.0,
+      "interval": {
+        "estimate": -1.0,
+        "lower": -1.0,
+        "upper": -1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "relevant_file",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": -1.0,
+      "interval": {
+        "estimate": -1.0,
+        "lower": -1.0,
+        "upper": -1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "noisy_output",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.2017866044022352,
+      "interval": {
+        "estimate": 1.2150503522962517,
+        "lower": 1.1884366375196678,
+        "upper": 1.255970492412754,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "noisy_output",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": -0.3333333333333333,
+        "lower": -1.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "noisy_output",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": -0.11111111111111112,
+        "lower": -0.3333333333333333,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "tool_selection",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 2.2721004333418304,
+      "interval": {
+        "estimate": 2.1891881729045117,
+        "lower": 1.9750376669475729,
+        "upper": 2.338010043150218,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "tool_selection",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": -1.0,
+      "interval": {
+        "estimate": -1.0,
+        "lower": -1.0,
+        "upper": -1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "tool_selection",
+      "metric": "shortlist_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": -0.25,
+      "interval": {
+        "estimate": -0.20833333333333334,
+        "lower": -0.25,
+        "upper": -0.125,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "restart_survival",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.2084535581131464,
+      "interval": {
+        "estimate": 1.2073103488639991,
+        "lower": 1.185581193280556,
+        "upper": 1.2282746926663841,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "restart_survival",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "restart_survival",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "delegation",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 0.9956130649561307,
+      "interval": {
+        "estimate": 0.9956017253687293,
+        "lower": 0.995578399801833,
+        "upper": 0.9956137117582012,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "delegation",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "delegation",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "security",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.3125086705202311,
+      "interval": {
+        "estimate": 1.3125086705202311,
+        "lower": 1.3125086705202311,
+        "upper": 1.3125086705202311,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "security",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "architecture saving",
+      "variant": "B",
+      "reference": "A",
+      "scope": "security",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "all",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 18,
+      "median": 1.0,
+      "interval": {
+        "estimate": 0.9999959636883207,
+        "lower": 0.9999739375477974,
+        "upper": 1.0000139539297137,
+        "n": 18
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "all",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 18,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 18
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "all",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 15,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 15
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "all",
+      "metric": "shortlist_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "all",
+      "metric": "mrr",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "relevant_file",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 0.9999757823743,
+        "lower": 0.9998436354752016,
+        "upper": 1.0000837264990183,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "relevant_file",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "relevant_file",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "noisy_output",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "noisy_output",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "noisy_output",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "tool_selection",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "tool_selection",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "tool_selection",
+      "metric": "shortlist_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "tool_selection",
+      "metric": "mrr",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "restart_survival",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "restart_survival",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "restart_survival",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "delegation",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "delegation",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "delegation",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "security",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "security",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "heuristic over architecture",
+      "variant": "C",
+      "reference": "B",
+      "scope": "security",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "all",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 18,
+      "median": 1.0,
+      "interval": {
+        "estimate": 0.9991325144772785,
+        "lower": 0.9973472154090053,
+        "upper": 1.0000449816741743,
+        "n": 18
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "all",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 18,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 18
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "all",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 15,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 15
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "all",
+      "metric": "shortlist_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "all",
+      "metric": "mrr",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "relevant_file",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0001955244454437,
+      "interval": {
+        "estimate": 1.0001116313462708,
+        "lower": 0.9999300518315928,
+        "upper": 1.0002093425388225,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "relevant_file",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "relevant_file",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "noisy_output",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 0.9946953226049557,
+        "lower": 0.9841702373501516,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "noisy_output",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "noisy_output",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "tool_selection",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "tool_selection",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "tool_selection",
+      "metric": "shortlist_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "tool_selection",
+      "metric": "mrr",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "restart_survival",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "restart_survival",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "restart_survival",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "delegation",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "delegation",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "delegation",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "security",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "security",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "random control over architecture",
+      "variant": "F",
+      "reference": "B",
+      "scope": "security",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "all",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 18,
+      "median": 1.0,
+      "interval": {
+        "estimate": 0.9991275584330062,
+        "lower": 0.9973425782764952,
+        "upper": 1.0000440531704877,
+        "n": 18
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "all",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 18,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 18
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "all",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 15,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 15
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "all",
+      "metric": "shortlist_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "all",
+      "metric": "mrr",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.09999999999999998,
+      "interval": {
+        "estimate": 0.14305555555555557,
+        "lower": 0.09999999999999998,
+        "upper": 0.22916666666666674,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "relevant_file",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0000418650021141,
+      "interval": {
+        "estimate": 1.0000818663091928,
+        "lower": 0.9999300518315928,
+        "upper": 1.0002737128166026,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "relevant_file",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "relevant_file",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "noisy_output",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 0.9946953226049557,
+        "lower": 0.9841702373501516,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "noisy_output",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "noisy_output",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "tool_selection",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "tool_selection",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "tool_selection",
+      "metric": "shortlist_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "tool_selection",
+      "metric": "mrr",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.09999999999999998,
+      "interval": {
+        "estimate": 0.14305555555555557,
+        "lower": 0.09999999999999998,
+        "upper": 0.22916666666666674,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "restart_survival",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "restart_survival",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "restart_survival",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "delegation",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "delegation",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "delegation",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "security",
+      "metric": "tokens",
+      "kind": "ratio",
+      "n_pairs": 3,
+      "median": 1.0,
+      "interval": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "security",
+      "metric": "pass",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    },
+    {
+      "label": "oracle headroom over heuristic",
+      "variant": "G",
+      "reference": "C",
+      "scope": "security",
+      "metric": "critical_recall",
+      "kind": "difference",
+      "n_pairs": 3,
+      "median": 0.0,
+      "interval": {
+        "estimate": 0.0,
+        "lower": 0.0,
+        "upper": 0.0,
+        "n": 3
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "variant": "D",
+      "verdict": "not_determinable",
+      "reason": "variant D has no completed runs"
+    },
+    {
+      "variant": "E",
+      "verdict": "not_determinable",
+      "reason": "variant E has no completed runs"
+    }
+  ],
+  "gates": [
+    {
+      "variant": "B",
+      "gates": [
+        {
+          "gate": "token reduction >= 2x on targeted suites",
+          "status": "FAIL",
+          "detail": "lower bound of the 95% interval must be >= 2; relevant_file 1.48x [1.36, 1.59]; noisy_output 1.22x [1.19, 1.26]; tool_selection 2.19x [1.98, 2.34]; restart_survival 1.21x [1.19, 1.23]"
+        },
+        {
+          "gate": "no material success regression",
+          "status": "FAIL",
+          "detail": "pass rate difference -0.389 [-0.611, -0.167] over 18 pairs, lower bound must be >= -0.05; scripted pass means the harness kept what the scorer requires, not that a model succeeded"
+        },
+        {
+          "gate": "critical evidence recall >= 99%",
+          "status": "FAIL",
+          "detail": "63 of 71 critical items reached the model (88.73%)"
+        },
+        {
+          "gate": "0 permission violations",
+          "status": "PASS",
+          "detail": "0 violations in 3 security runs"
+        },
+        {
+          "gate": "fallback 100% runnable",
+          "status": "NOT-MEASURED",
+          "detail": "no run with an unreachable decision provider"
+        },
+        {
+          "gate": "cold-restart survival",
+          "status": "PASS",
+          "detail": "every constraint and verified finding survived in 3 of 3 restart runs"
+        }
+      ]
+    },
+    {
+      "variant": "C",
+      "gates": [
+        {
+          "gate": "token reduction >= 2x on targeted suites",
+          "status": "FAIL",
+          "detail": "lower bound of the 95% interval must be >= 2; relevant_file 1.48x [1.36, 1.59]; noisy_output 1.22x [1.19, 1.26]; tool_selection 2.19x [1.98, 2.34]; restart_survival 1.21x [1.19, 1.23]"
+        },
+        {
+          "gate": "no material success regression",
+          "status": "FAIL",
+          "detail": "pass rate difference -0.389 [-0.611, -0.167] over 18 pairs, lower bound must be >= -0.05; scripted pass means the harness kept what the scorer requires, not that a model succeeded"
+        },
+        {
+          "gate": "critical evidence recall >= 99%",
+          "status": "FAIL",
+          "detail": "63 of 71 critical items reached the model (88.73%)"
+        },
+        {
+          "gate": "0 permission violations",
+          "status": "PASS",
+          "detail": "0 violations in 3 security runs"
+        },
+        {
+          "gate": "fallback 100% runnable",
+          "status": "PASS",
+          "detail": "2 of 2 runs with the provider unreachable completed"
+        },
+        {
+          "gate": "cold-restart survival",
+          "status": "PASS",
+          "detail": "every constraint and verified finding survived in 3 of 3 restart runs"
+        }
+      ]
+    },
+    {
+      "variant": "D",
+      "gates": [
+        {
+          "gate": "token reduction >= 2x on targeted suites",
+          "status": "NOT-MEASURED",
+          "detail": "lower bound of the 95% interval must be >= 2; needs at least 3 pairs: relevant_file (0 pairs), noisy_output (0 pairs), tool_selection (0 pairs), restart_survival (0 pairs)"
+        },
+        {
+          "gate": "no material success regression",
+          "status": "NOT-MEASURED",
+          "detail": "0 pairs, need at least 3"
+        },
+        {
+          "gate": "critical evidence recall >= 99%",
+          "status": "NOT-MEASURED",
+          "detail": "no run carried critical evidence"
+        },
+        {
+          "gate": "0 permission violations",
+          "status": "NOT-MEASURED",
+          "detail": "0 security runs completed, 3 did not"
+        },
+        {
+          "gate": "fallback 100% runnable",
+          "status": "NOT-MEASURED",
+          "detail": "no run with an unreachable decision provider"
+        },
+        {
+          "gate": "cold-restart survival",
+          "status": "NOT-MEASURED",
+          "detail": "no restart run completed"
+        }
+      ]
+    },
+    {
+      "variant": "E",
+      "gates": [
+        {
+          "gate": "token reduction >= 2x on targeted suites",
+          "status": "NOT-MEASURED",
+          "detail": "lower bound of the 95% interval must be >= 2; needs at least 3 pairs: relevant_file (0 pairs), noisy_output (0 pairs), tool_selection (0 pairs), restart_survival (0 pairs)"
+        },
+        {
+          "gate": "no material success regression",
+          "status": "NOT-MEASURED",
+          "detail": "0 pairs, need at least 3"
+        },
+        {
+          "gate": "critical evidence recall >= 99%",
+          "status": "NOT-MEASURED",
+          "detail": "no run carried critical evidence"
+        },
+        {
+          "gate": "0 permission violations",
+          "status": "NOT-MEASURED",
+          "detail": "0 security runs completed, 3 did not"
+        },
+        {
+          "gate": "fallback 100% runnable",
+          "status": "NOT-MEASURED",
+          "detail": "no run with an unreachable decision provider"
+        },
+        {
+          "gate": "cold-restart survival",
+          "status": "NOT-MEASURED",
+          "detail": "no restart run completed"
+        }
+      ]
+    },
+    {
+      "variant": "F",
+      "gates": [
+        {
+          "gate": "token reduction >= 2x on targeted suites",
+          "status": "FAIL",
+          "detail": "lower bound of the 95% interval must be >= 2; relevant_file 1.48x [1.36, 1.59]; noisy_output 1.21x [1.19, 1.24]; tool_selection 2.19x [1.98, 2.34]; restart_survival 1.21x [1.19, 1.23]"
+        },
+        {
+          "gate": "no material success regression",
+          "status": "FAIL",
+          "detail": "pass rate difference -0.389 [-0.611, -0.167] over 18 pairs, lower bound must be >= -0.05; scripted pass means the harness kept what the scorer requires, not that a model succeeded"
+        },
+        {
+          "gate": "critical evidence recall >= 99%",
+          "status": "FAIL",
+          "detail": "63 of 71 critical items reached the model (88.73%)"
+        },
+        {
+          "gate": "0 permission violations",
+          "status": "PASS",
+          "detail": "0 violations in 3 security runs"
+        },
+        {
+          "gate": "fallback 100% runnable",
+          "status": "PASS",
+          "detail": "2 of 2 runs with the provider unreachable completed"
+        },
+        {
+          "gate": "cold-restart survival",
+          "status": "PASS",
+          "detail": "every constraint and verified finding survived in 3 of 3 restart runs"
+        }
+      ]
+    },
+    {
+      "variant": "G",
+      "gates": [
+        {
+          "gate": "token reduction >= 2x on targeted suites",
+          "status": "FAIL",
+          "detail": "lower bound of the 95% interval must be >= 2; relevant_file 1.48x [1.36, 1.59]; noisy_output 1.21x [1.19, 1.24]; tool_selection 2.19x [1.98, 2.34]; restart_survival 1.21x [1.19, 1.23]"
+        },
+        {
+          "gate": "no material success regression",
+          "status": "FAIL",
+          "detail": "pass rate difference -0.389 [-0.611, -0.167] over 18 pairs, lower bound must be >= -0.05; scripted pass means the harness kept what the scorer requires, not that a model succeeded"
+        },
+        {
+          "gate": "critical evidence recall >= 99%",
+          "status": "FAIL",
+          "detail": "63 of 71 critical items reached the model (88.73%)"
+        },
+        {
+          "gate": "0 permission violations",
+          "status": "PASS",
+          "detail": "0 violations in 3 security runs"
+        },
+        {
+          "gate": "fallback 100% runnable",
+          "status": "PASS",
+          "detail": "2 of 2 runs with the provider unreachable completed"
+        },
+        {
+          "gate": "cold-restart survival",
+          "status": "PASS",
+          "detail": "every constraint and verified finding survived in 3 of 3 restart runs"
+        }
+      ]
+    }
+  ]
+}
