@@ -34,19 +34,52 @@ workflow files.
 - **Knowledge base** - `.sven/knowledge/*.md` documents encode project facts; sven auto-detects drift when source files change after a document's `updated:` date and warns at session start.
 - **Terminal-native, zero runtime deps** - Structured text in, structured text out. No Node.js, no Python, no screenshots, no pixel-clicking.
 
-## Quick Start
-
-**Prerequisites:** Rust toolchain, API key for at least one supported provider (e.g. `OPENROUTER_API_KEY` for zero-config start with `openrouter/auto`).
+## Compiling from source
 
 ```sh
-# Build and run
-make build/release && ./target/release/sven
+make build/release
+export PATH="$PWD/target/release:$PATH"   # once per shell; the commands below are bare
+sven --version
+```
 
-# Pipe a one-shot task
-echo "Summarise the project" | sven
+Requires a recent stable Rust toolchain and nothing else. `make build` makes a debug
+build instead; its binary is in `target/debug`. Then check the build can reach a model
+(this needs a model to be set up, which the next section does):
 
-# Run a multi-step workflow file
-sven --file plan.md
+```sh
+sven doctor provider
+```
+
+## Quick Start
+
+Connect sven to a model and get a first answer to "hi". Pick one:
+
+**Brain - local, no account and no network.** Follow [Running on Brain](#running-on-brain),
+then:
+
+```sh
+sven doctor provider        # ok: provider, endpoint, model, tools
+sven --headless "hi"
+```
+
+**A hosted provider.** Export a key for one of them; sven finds it without any config file:
+
+```sh
+export OPENROUTER_API_KEY=...   # or ANTHROPIC_API_KEY, or OPENAI_API_KEY
+sven doctor provider            # names the key it is missing, if any
+sven --headless "hi"
+```
+
+With several keys set, OpenRouter is used first, then Anthropic, then OpenAI. Name one
+explicitly with `-M`, for example `sven -M openai/gpt-4o --headless "hi"`, or set it in
+`~/.config/sven/config.yaml` ([providers](docs/providers.md)).
+
+Then use it:
+
+```sh
+sven                                  # interactive TUI
+echo "Summarise the project" | sven   # pipe a one-shot task
+sven --file plan.md                   # run a multi-step workflow file
 ```
 
 See [Installation](docs/01-installation.md) and [Quick Start](docs/02-quickstart.md) for full setup details.
@@ -56,6 +89,26 @@ Install shell completions:
 ```sh
 sven completions bash >> ~/.bashrc      # also: zsh, fish, powershell
 ```
+
+## Running on Brain
+
+[brain](https://github.com/swedishembedded/brain) serves models on your own machine, so
+sven works with no cloud account and nothing leaving the computer. Build brain the same
+way (`make build/release` in its checkout, with its `target/release` on `PATH`), then:
+
+```sh
+brain pull Qwen/Qwen3-0.6B                 # fetch the weights once
+brain doctor --model Qwen/Qwen3-0.6B       # can this machine serve it?
+brain serve --openai 8788 &                # serve it; prints the API key it minted
+sven doctor provider                       # sven finds brain on its own
+sven --headless "hi"
+```
+
+sven detects a running brain from brain's keys file and asks it which model it serves, so
+no configuration is needed. If brain stops answering, sven falls back to a hosted provider
+when a key for one is set. For a larger model, a pinned name or a long context see
+[Brain in the provider reference](docs/providers.md#brain-local-edge-ai-server). A model
+this small answers "hi" but is weak at tool use; use a larger one for real work.
 
 ## Agent modes
 
@@ -357,13 +410,12 @@ make docs/pdf    # -> target/docs/sven-user-guide.pdf (requires pandoc)
 
 ## Building
 
+[Compiling from source](#compiling-from-source) covers the release build. Also:
+
 ```sh
-make build      # debug build
-make build/release  # optimised release build
+make build           # debug build
 make package/deb     # Debian package
 ```
-
-Requires a recent stable Rust toolchain. No other system dependencies.
 
 ```sh
 make test           # unit and integration tests
