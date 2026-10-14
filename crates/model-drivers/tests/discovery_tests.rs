@@ -8,78 +8,13 @@
 //! Discovery through the public factory: a local server says what it serves,
 //! and sven follows it without any model name in the configuration.
 
-use std::sync::{Arc, Mutex};
+mod common;
+
+use common::{list, Server};
 use std::time::{Duration, Instant};
 use sven_model::{CompletionRequest, Message};
 use sven_model_drivers::{from_config_probed, ModelConfig};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-
-/// A loopback model server whose `/models` answer can be changed while it
-/// runs. `/props` is absent (404) and chat completions are rejected with a
-/// context-overflow error, like a server whose window is smaller than the
-/// prompt.
-struct Server {
-    base_url: String,
-    models: Arc<Mutex<String>>,
-}
-
-impl Server {
-    async fn start(models: serde_json::Value) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
-        let models = Arc::new(Mutex::new(models.to_string()));
-        let served = Arc::clone(&models);
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut stream, _)) = listener.accept().await else {
-                    return;
-                };
-                let served = Arc::clone(&served);
-                tokio::spawn(async move {
-                    let mut buf = vec![0u8; 16384];
-                    let n = stream.read(&mut buf).await.unwrap_or(0);
-                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let line = head.lines().next().unwrap_or_default().to_string();
-                    let (status, body) = if line.starts_with("GET /v1/models") {
-                        (200, served.lock().unwrap().clone())
-                    } else if line.starts_with("POST /v1/chat/completions") {
-                        (
-                            400,
-                            r#"{"error":{"message":"request exceeds the available context size (n_ctx = 1024)"}}"#
-                                .to_string(),
-                        )
-                    } else {
-                        (404, "{}".to_string())
-                    };
-                    let resp = format!(
-                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    let _ = stream.write_all(resp.as_bytes()).await;
-                });
-            }
-        });
-        Self { base_url, models }
-    }
-
-    fn serve(&self, models: serde_json::Value) {
-        *self.models.lock().unwrap() = models.to_string();
-    }
-
-    fn config(&self, name: &str) -> ModelConfig {
-        ModelConfig {
-            provider: "ollama".into(),
-            name: name.into(),
-            base_url: Some(self.base_url.clone()),
-            ..ModelConfig::default()
-        }
-    }
-}
-
-fn list(entries: Vec<serde_json::Value>) -> serde_json::Value {
-    serde_json::json!({"object": "list", "data": entries})
-}
 
 #[tokio::test]
 async fn an_empty_name_resolves_to_the_single_served_model() {

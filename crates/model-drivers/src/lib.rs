@@ -26,12 +26,14 @@ pub mod dbus;
 mod discovery;
 mod google;
 mod openai;
+mod provider_check;
 pub(crate) mod openai_compat;
 mod resolve;
 
 pub use anthropic::AnthropicProvider;
 pub use config::{providers_schema, ModelConfig, ModelParams, ProviderEntry, Providers};
 pub use openai::OpenAiProvider;
+pub use provider_check::{check_provider, ProviderCheck, ProviderReport, Verdict};
 pub use resolve::{resolve_model_cfg, resolve_model_from_config, ModelResolver};
 
 use anyhow::bail;
