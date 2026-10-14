@@ -137,7 +137,15 @@ impl Runner {
         // Processes run in the repository of each task, so every path must be
         // absolute.
         options.sven_bin = std::fs::canonicalize(&options.sven_bin).map_err(|e| e.to_string())?;
-        options.bench_bin = std::fs::canonicalize(&options.bench_bin).map_err(|e| e.to_string())?;
+        // The stub MCP server is this executable. A rebuild while a long run
+        // is going replaces the file it was started from, so the run keeps
+        // its own copy.
+        let pinned = out.join("bin");
+        std::fs::create_dir_all(&pinned).map_err(|e| e.to_string())?;
+        let copy = pinned.join("sven-ablation");
+        std::fs::copy(&options.bench_bin, &copy)
+            .map_err(|e| format!("copying {}: {e}", options.bench_bin.display()))?;
+        options.bench_bin = copy;
         options.out = out;
         let assembly_supported = probe_assembly(&options).await;
         Ok(Self {
