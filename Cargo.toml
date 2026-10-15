@@ -16,6 +16,9 @@ members = [
     "crates/image",
     "crates/sven-audio",
     "crates/session-store",
+    # Agent memory: the contract and its conformance suite, then the SQLite adapter
+    "crates/memory-api",
+    "crates/memory-sqlite",
     # Addressable context: content-addressed evidence with provenance and
     # deterministic representations
     "crates/chunks",

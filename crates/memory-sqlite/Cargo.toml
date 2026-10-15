@@ -1,0 +1,22 @@
+[package]
+name        = "sven-memory-sqlite"
+version.workspace = true
+edition     = "2021"
+description = "SQLite adapter for the sven-memory-api contract: versioned schema, FTS5 lexical retrieval with the access scope applied inside the query, and stored embeddings per index generation."
+license     = "Apache-2.0"
+
+[dependencies]
+sven-memory-api = { path = "../memory-api" }
+
+async-trait = { workspace = true }
+dirs        = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+tokio       = { workspace = true }
+tracing     = { workspace = true }
+rusqlite    = { version = "0.31", features = ["bundled"] }
+
+[dev-dependencies]
+sven-memory-api = { path = "../memory-api", features = ["conformance"] }
+tempfile        = { workspace = true }
+tokio           = { workspace = true }

@@ -48,6 +48,7 @@ sven-image       = "foundation"
 sven-tui-nvim    = "foundation"
 sven-workspace   = "foundation"
 sven-vocab       = "foundation"
+sven-memory-api  = "foundation"
 atif             = "foundation"
 
 # kernel
@@ -59,6 +60,7 @@ sven-tool-api = "kernel"
 
 # services
 sven-session-store = "services"
+sven-memory-sqlite = "services"
 sven-chunks = "services"
 sven-tool-registry = "services"
 sven-mcp-client = "services"

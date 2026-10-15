@@ -1,0 +1,24 @@
+[package]
+name        = "sven-memory-api"
+version.workspace = true
+edition     = "2021"
+description = "The contract for agent memory: scoped units, opaque ids, index generations, annotations and retrieval records, plus a conformance suite every storage adapter must pass. No storage, no sven dependencies."
+license     = "Apache-2.0"
+
+[features]
+# The adapter conformance suite (`conformance::*` and the
+# `memory_conformance_tests!` macro). A host that implements `MemoryStore`
+# enables it as a dev-dependency feature and runs the same cases sven's own
+# adapter runs.
+conformance = []
+
+[dependencies]
+async-trait = { workspace = true }
+hex         = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+sha2        = { workspace = true }
+thiserror   = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
