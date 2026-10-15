@@ -44,6 +44,8 @@ conformance suite checks every implementation.
   identity, and no library code reads the current directory.
 - [ ] Add `sven-sdk` host seams:
   - run and call ids on human gates, and a gate handler per agent;
+  - a dropped gate handler concludes the call as denied instead of leaving
+    the turn parked;
   - approvals that can be parked and decided after a resume;
   - sequence numbers on events, a typed signal for dropped events, and a
     `Stream` adapter;
@@ -52,4 +54,14 @@ conformance suite checks every implementation.
   - a versioned `AgentState`;
   - `SessionEvent` marked `#[non_exhaustive]`.
   - A sample that uses only the SDK proves two sessions on one engine.
+- [ ] Record in the ATIF trajectory what it leaves out today.
+  - The step of a gated call carries the decision: approved, denied or
+    parked, decided by whom, under which policy, plus any typed argument
+    violation a schema pre-check found.
+  - A step that retrieves from memory carries what was retrieved: unit ids,
+    revisions, anchors, scores, the index generation, and whether each
+    result was put into the context.
+  - Both are versioned records under `extra.sven`, written from the kernel
+    store so a lagging event subscriber cannot lose them. The headless CI
+    trajectory keeps them too.
 - [ ] Add migration of existing memory rows into a default personal space.
