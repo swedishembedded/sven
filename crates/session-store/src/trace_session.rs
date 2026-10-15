@@ -29,8 +29,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use atif::{
-    AgentProfile, ContentSegment, ContextManagement, FinalMetrics, MessageBody, ObservationEntry,
-    StepMetrics, StepObservation, StepOrigin, SubagentRef, ToolInvocation, TraceStep, Trajectory,
+    AgentProfile, ContextManagement, FinalMetrics, GateDecision, MemoryRetrieval, MessageBody,
+    ObservationEntry, StepMetrics, StepObservation, StepOrigin, SubagentRef, ToolInvocation,
+    TraceStep, Trajectory,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -38,8 +39,9 @@ use serde_json::{Map, Value};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_vocab::RequestBreakdown;
 
+use crate::call_records::{makes_call, CallRecords};
 use crate::chat_document;
-use crate::chat_document::{json_str_to_yaml, TurnRecord};
+use crate::chat_document::TurnRecord;
 use crate::chat_document::{ChatDocument, ChatStatus, ChatUsage};
 use crate::conversation::ConversationRecord;
 
@@ -214,6 +216,9 @@ pub fn new_session_id() -> String {
 }
 
 pub use crate::compaction_details::ContextCompactionDetails;
+pub use crate::steps_view::{
+    steps_to_conversation_records, steps_to_messages, steps_to_turn_records,
+};
 
 // ── Turn assembly: streaming builder ────────────────────────────────────────
 
@@ -261,6 +266,7 @@ pub struct StepAssembler {
     steps: Vec<TraceStep>,
     next_step_id: u64,
     pending: Option<PendingAgentStep>,
+    records: CallRecords,
 }
 
 impl StepAssembler {
@@ -271,6 +277,7 @@ impl StepAssembler {
             steps: Vec::new(),
             next_step_id: 1,
             pending: None,
+            records: CallRecords::default(),
         }
     }
 
@@ -287,6 +294,7 @@ impl StepAssembler {
             steps: Vec::new(),
             next_step_id,
             pending: None,
+            records: CallRecords::default(),
         }
     }
 
@@ -455,6 +463,23 @@ impl StepAssembler {
         crate::step_ledger::record_request(&mut self.pending_or_new().metrics, request);
     }
 
+    /// Records the gate's decision about a call, as `extra.sven.gate` of the
+    /// step that made it. May come before the call, while its step is open, or
+    /// after the step closed; the step is found either way.
+    pub fn push_gate_decision(&mut self, decision: GateDecision) {
+        let call_id = decision.call_id.clone();
+        self.records.add_decision(decision);
+        self.reannotate_closed_step_of(&call_id);
+    }
+
+    /// Records what a memory retrieval returned, as `extra.sven.memory` of the
+    /// step that made the call. Timing is as for [`Self::push_gate_decision`].
+    pub fn push_memory_retrieval(&mut self, retrieval: MemoryRetrieval) {
+        let call_id = retrieval.call_id.clone();
+        self.records.add_retrieval(retrieval);
+        self.reannotate_closed_step_of(&call_id);
+    }
+
     /// Flush any still-open agent step and return the complete, ordered
     /// list of assembled steps.
     pub fn finish(mut self) -> Vec<TraceStep> {
@@ -471,13 +496,27 @@ impl StepAssembler {
             return;
         };
         let step_id = self.take_step_id();
-        self.steps.push(Self::pending_to_step(&pending, step_id));
+        self.steps
+            .push(Self::pending_to_step(&pending, step_id, &self.records));
+    }
+
+    /// Rewrites the call records of a closed step that made `call_id`. A call
+    /// of the open step, or one not yet made, is annotated when its step is
+    /// built.
+    fn reannotate_closed_step_of(&mut self, call_id: &str) {
+        if let Some(step) = self.steps.iter_mut().rev().find(|s| makes_call(s, call_id)) {
+            self.records.annotate(step);
+        }
     }
 
     /// Build the `TraceStep` a [`PendingAgentStep`] would become if flushed,
     /// without consuming it — the shared core of [`Self::flush_pending`] and
     /// [`Self::snapshot_including_pending`].
-    fn pending_to_step(pending: &PendingAgentStep, step_id: u64) -> TraceStep {
+    fn pending_to_step(
+        pending: &PendingAgentStep,
+        step_id: u64,
+        records: &CallRecords,
+    ) -> TraceStep {
         let mut step = TraceStep::new(
             step_id,
             StepOrigin::Agent,
@@ -497,6 +536,7 @@ impl StepAssembler {
                 results: pending.observation_results.clone(),
             })
         };
+        records.annotate(&mut step);
         step
     }
 
@@ -511,7 +551,11 @@ impl StepAssembler {
     pub fn snapshot_including_pending(&self) -> Vec<TraceStep> {
         let mut steps = self.steps.clone();
         if let Some(pending) = &self.pending {
-            steps.push(Self::pending_to_step(pending, self.next_step_id));
+            steps.push(Self::pending_to_step(
+                pending,
+                self.next_step_id,
+                &self.records,
+            ));
         }
         steps
     }
@@ -689,216 +733,6 @@ fn push_turn_record(assembler: &mut StepAssembler, turn: &TurnRecord) {
             *turn,
         ),
     }
-}
-
-// ── Reverse: TraceStep ⇄ Message ────────────────────────────────────────────
-
-/// Reverse of the turn assembler: un-merge `Vec<TraceStep>` back into a
-/// `Vec<Message>` suitable for seeding an agent's history on resume
-/// (equivalent to today's `chat_document::turns_to_messages`).
-///
-/// - `System`-source steps are skipped entirely.
-/// - Steps with `is_copied_context == Some(true)` are skipped — per the
-///   spec's SFT-filtering guidance ([`Trajectory::sft_steps`]), repurposed
-///   here for the same underlying reason: don't replay content the model
-///   didn't originally produce fresh.
-/// - `reasoning_content` is **never** replayed back into a message ("thinking
-///   not sent back to model", matching `turns_to_messages`'s documented
-///   behavior).
-/// - An agent step's `tool_calls` are emitted first (each as its own
-///   `Role::Assistant` `ToolCall` message, in array order), then their
-///   matching `observation.results` entries (each as its own `Role::Tool`
-///   `ToolResult` message, matched by `tool_call_id == source_call_id`, in
-///   the same order as `tool_calls`) — this is a canonical choice where the
-///   original interleaving is ambiguous (multiple tool calls per step).
-///   Finally, non-empty step `message` text is emitted as a trailing
-///   `Role::Assistant` text message.
-pub fn steps_to_messages(steps: &[TraceStep]) -> Vec<Message> {
-    let mut out = Vec::new();
-    for step in steps {
-        if step.is_excluded_from_sft() {
-            continue;
-        }
-        match step.source {
-            StepOrigin::System => continue,
-            StepOrigin::User => {
-                if let Some(text) = message_body_to_text(&step.message) {
-                    if !text.is_empty() {
-                        out.push(Message::user(text));
-                    }
-                }
-            }
-            StepOrigin::Agent => {
-                if let Some(tool_calls) = &step.tool_calls {
-                    for call in tool_calls {
-                        out.push(Message {
-                            role: Role::Assistant,
-                            content: MessageContent::ToolCall {
-                                tool_call_id: call.tool_call_id.clone(),
-                                function: FunctionCall {
-                                    name: call.function_name.clone(),
-                                    arguments: call.arguments.to_string(),
-                                },
-                            },
-                        });
-                    }
-                    if let Some(observation) = &step.observation {
-                        for call in tool_calls {
-                            if let Some(entry) = observation.results.iter().find(|r| {
-                                r.source_call_id.as_deref() == Some(call.tool_call_id.as_str())
-                            }) {
-                                let content = entry
-                                    .content
-                                    .as_ref()
-                                    .and_then(message_body_to_text)
-                                    .unwrap_or_default();
-                                out.push(Message::tool_result(call.tool_call_id.clone(), content));
-                            }
-                        }
-                    }
-                }
-                if let Some(text) = message_body_to_text(&step.message) {
-                    if !text.is_empty() {
-                        out.push(Message::assistant(text));
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Extract plain text from a [`MessageBody`]: the text form as-is, or (for
-/// `Segments`) the concatenation of its text segments, dropping any image
-/// segments — a best-effort, documented-lossy fallback since
-/// `sven_model::Message` has no way to reference an ATIF file-path image
-/// without reading it into a data URL first (out of scope here; see
-/// [`StepAssembler::push_message`]'s doc comment for the forward-direction
-/// counterpart of this same limitation).
-fn message_body_to_text(body: &MessageBody) -> Option<String> {
-    if let Some(text) = body.as_text() {
-        return Some(text.to_string());
-    }
-    body.as_segments().map(|segments| {
-        segments
-            .iter()
-            .filter_map(|segment| match segment {
-                ContentSegment::Text { text } => Some(text.as_str()),
-                ContentSegment::Image { .. } => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    })
-}
-
-// ── Reverse: TraceStep ⇄ TurnRecord (legacy YAML) ───────────────────────────
-
-/// Reverse of [`turn_records_to_steps`]: convert `Vec<TraceStep>` back into
-/// legacy `Vec<TurnRecord>`, for callers that accumulate ATIF-native steps
-/// during a run but still need to write (or update) a YAML `ChatDocument`
-/// from them (e.g. `--output-chat` alongside `--trace`).
-///
-/// - Steps with `is_copied_context == Some(true)` are skipped, matching
-///   [`steps_to_messages`]. **Callers that rebuild a trajectory from this
-///   view must carry those steps through** (capture them with
-///   [`copied_context_steps`] and rebuild with
-///   [`turn_records_to_steps_with_copied_context`] /
-///   [`conversation_records_to_steps_with_copied_context`]) or an
-///   open→save round trip permanently deletes them.
-/// - `System`-source steps are skipped, except a context-compaction step
-///   (detected via [`ContextCompactionDetails::from_step_extra`]), which
-///   becomes `TurnRecord::ContextCompacted`. Any other `System` step has no
-///   `TurnRecord` analog and is dropped.
-/// - An agent step's `reasoning_content`, if present, becomes a leading
-///   `TurnRecord::Thinking`.
-/// - `tool_calls` are emitted next (each its own `TurnRecord::ToolCall`, in
-///   array order), matched by `tool_call_id` to their `observation.results`
-///   entry (each its own `TurnRecord::ToolResult`) — same ordering rule as
-///   [`steps_to_messages`]. Finally, non-empty step `message` text becomes a
-///   trailing `TurnRecord::User`/`TurnRecord::Assistant` (by `source`).
-pub fn steps_to_turn_records(steps: &[TraceStep]) -> Vec<TurnRecord> {
-    let mut out = Vec::new();
-    for step in steps {
-        if step.is_excluded_from_sft() {
-            continue;
-        }
-        match step.source {
-            StepOrigin::System => {
-                if let Some(extra) = &step.extra {
-                    if let Some(details) = ContextCompactionDetails::from_step_extra(extra) {
-                        out.push(TurnRecord::ContextCompacted {
-                            tokens_before: details.tokens_before,
-                            tokens_after: details.tokens_after,
-                            strategy: details.strategy,
-                            turn: details.turn,
-                        });
-                    }
-                }
-            }
-            StepOrigin::User => {
-                if let Some(text) = message_body_to_text(&step.message) {
-                    if !text.is_empty() {
-                        out.push(TurnRecord::User { content: text });
-                    }
-                }
-            }
-            StepOrigin::Agent => {
-                if let Some(reasoning) = &step.reasoning_content {
-                    out.push(TurnRecord::Thinking {
-                        content: reasoning.clone(),
-                    });
-                }
-                if let Some(tool_calls) = &step.tool_calls {
-                    for call in tool_calls {
-                        out.push(TurnRecord::ToolCall {
-                            tool_call_id: call.tool_call_id.clone(),
-                            name: call.function_name.clone(),
-                            arguments: json_str_to_yaml(&call.arguments.to_string()),
-                        });
-                    }
-                    if let Some(observation) = &step.observation {
-                        for call in tool_calls {
-                            if let Some(entry) = observation.results.iter().find(|r| {
-                                r.source_call_id.as_deref() == Some(call.tool_call_id.as_str())
-                            }) {
-                                let content = entry
-                                    .content
-                                    .as_ref()
-                                    .and_then(message_body_to_text)
-                                    .unwrap_or_default();
-                                out.push(TurnRecord::ToolResult {
-                                    tool_call_id: call.tool_call_id.clone(),
-                                    content,
-                                });
-                            }
-                        }
-                    }
-                }
-                if let Some(text) = message_body_to_text(&step.message) {
-                    if !text.is_empty() {
-                        out.push(TurnRecord::Assistant { content: text });
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Reverse of [`conversation_records_to_steps`]: convert `Vec<TraceStep>` back
-/// into full-fidelity `Vec<ConversationRecord>` (messages, thinking blocks,
-/// context-compaction markers), for callers that need to reconstruct a
-/// display-oriented event stream from ATIF steps rather than the flat
-/// `Message`-only view [`steps_to_messages`] provides.
-///
-/// Built directly on [`steps_to_turn_records`] + [`crate::chat_document::turns_to_records`]
-/// — the same full-fidelity turn list, just re-expressed as `ConversationRecord`
-/// instead of the legacy YAML-oriented `TurnRecord`. This keeps exactly one
-/// TraceStep-to-turn-shape algorithm in the crate rather than duplicating the
-/// step-walking logic for two output types.
-pub fn steps_to_conversation_records(steps: &[TraceStep]) -> Vec<ConversationRecord> {
-    let turns = steps_to_turn_records(steps);
-    crate::chat_document::turns_to_records(&turns)
 }
 
 // ── File I/O built on atif::persist ────────────────────────────────────────

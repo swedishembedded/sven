@@ -1,6 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
+mod call_records;
 pub mod chat_document;
 mod compaction_details;
 pub mod conversation;
@@ -10,6 +11,7 @@ mod queue;
 pub mod reward;
 pub mod session_resolve;
 pub mod step_ledger;
+mod steps_view;
 pub mod title;
 mod tool_invocation;
 pub mod trace_session;
