@@ -474,7 +474,7 @@ pub(crate) async fn resolve_unconfigured(cfg: &ModelConfig) -> ModelConfig {
     if !is_unconfigured_default(cfg) {
         return cfg.clone();
     }
-    let brain_off = std::env::var("SVEN_DISABLE_BRAIN_AUTODETECT").is_ok();
+    let brain_off = crate::config::brain_autodetect_disabled();
     let candidates = ZERO_CONFIG_DRIVERS
         .iter()
         .filter(|id| !(brain_off && **id == "brain"))

@@ -666,13 +666,19 @@ fn detect_cloud_model(model: &mut ModelConfig) -> bool {
 /// environments that happen to have a stale brain keys file lying around but
 /// want cloud-provider defaults).
 fn brain_is_locally_detectable() -> bool {
-    if std::env::var("SVEN_DISABLE_BRAIN_AUTODETECT").is_ok() {
+    if brain_autodetect_disabled() {
         return false;
     }
     if std::env::var("BRAIN_API_KEY").is_ok() {
         return true;
     }
     brain_keys_file().is_some_and(|p| p.is_file())
+}
+
+/// Whether `SVEN_DISABLE_BRAIN_AUTODETECT` opts out of finding a local brain,
+/// by key file or by probing its default endpoint. The one place it is read.
+pub(crate) fn brain_autodetect_disabled() -> bool {
+    std::env::var("SVEN_DISABLE_BRAIN_AUTODETECT").is_ok()
 }
 
 fn brain_keys_file() -> Option<PathBuf> {

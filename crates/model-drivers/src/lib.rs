@@ -91,7 +91,7 @@ fn check_api_key_requirement(cfg: &ModelConfig) -> anyhow::Result<()> {
     // key, not a satisfied requirement.
     if let Some(var) = &cfg.api_key_env {
         let keyless = registry::get_driver(&cfg.provider).is_some_and(|m| !m.requires_api_key);
-        if keyless || std::env::var(var).is_ok() {
+        if keyless || resolve_api_key(cfg).is_some() {
             return Ok(());
         }
         bail!(
