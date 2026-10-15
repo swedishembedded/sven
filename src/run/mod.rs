@@ -10,7 +10,6 @@ pub(crate) mod agent_dispatch;
 pub(crate) mod chats;
 pub(crate) mod ci;
 pub(crate) mod decisions;
-pub(crate) mod provider_doctor;
 pub(crate) mod harness;
 pub(crate) mod index;
 pub(crate) mod ledger;
@@ -18,6 +17,7 @@ pub(crate) mod logging;
 pub(crate) mod models;
 pub(crate) mod oauth;
 pub(crate) mod pipeline;
+pub(crate) mod provider_doctor;
 #[cfg(feature = "memory")]
 pub(crate) mod questions;
 pub(crate) mod task;

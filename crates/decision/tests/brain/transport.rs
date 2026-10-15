@@ -306,8 +306,17 @@ async fn an_identical_decision_of_a_versioned_model_is_asked_once() {
     let p = provider(&brain.url, LAYA);
     let first = p.decide(&recorded_request()).await.unwrap();
     let second = p.decide(&recorded_request()).await.unwrap();
-    assert!(!first.cached && second.cached, "a hit says it ran no inference");
-    assert_eq!(first, DecisionResult { cached: false, ..second });
+    assert!(
+        !first.cached && second.cached,
+        "a hit says it ran no inference"
+    );
+    assert_eq!(
+        first,
+        DecisionResult {
+            cached: false,
+            ..second
+        }
+    );
     assert_eq!(brain.calls_of("decide"), 1);
 
     let changed = DecisionRequest {

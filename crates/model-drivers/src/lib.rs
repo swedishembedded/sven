@@ -26,8 +26,8 @@ pub mod dbus;
 mod discovery;
 mod google;
 mod openai;
-mod provider_check;
 pub(crate) mod openai_compat;
+mod provider_check;
 mod resolve;
 
 pub use anthropic::AnthropicProvider;

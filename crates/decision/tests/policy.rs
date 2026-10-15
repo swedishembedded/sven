@@ -13,8 +13,8 @@
 use std::time::Duration;
 
 use sven_decision::policy::{
-    agree, estimate_input_tokens, evaluate, evaluate_error, AbstainReason, AllowedShape, Cost, DecisionPolicy, FallbackAction,
-    Impact, PolicyDecl, Selected, Thresholds, Verdict,
+    agree, estimate_input_tokens, evaluate, evaluate_error, AbstainReason, AllowedShape, Cost,
+    DecisionPolicy, FallbackAction, Impact, PolicyDecl, Selected, Thresholds, Verdict,
 };
 use sven_decision::{
     Answer, Candidate, Choice, ChoiceOption, DecisionError, DecisionResult, Distribution,
@@ -332,7 +332,10 @@ fn two_orders_agree_only_on_the_same_winner() {
     let Selected::Candidate { margin, .. } = both.selected else {
         panic!("a candidate")
     };
-    assert!((margin - 0.6).abs() < 1e-5, "the weaker evidence stands: {margin}");
+    assert!(
+        (margin - 0.6).abs() < 1e-5,
+        "the weaker evidence stands: {margin}"
+    );
 
     assert_eq!(
         abstained(agree(&wins("a", "b", 0.9), &wins("b", "a", 0.9))),

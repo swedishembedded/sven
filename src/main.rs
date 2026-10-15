@@ -13,13 +13,13 @@ use run::agent::run_agent_command;
 use run::agent_dispatch::run_agent_dispatch_command;
 use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
-use run::harness::run_harness_command;
 use run::decisions::{run_decisions_models, run_doctor_decisions};
-use run::provider_doctor::run_doctor_provider;
+use run::harness::run_harness_command;
 use run::index::run_index_command;
 use run::ledger::run_ledger_command;
 use run::logging::init_logging;
 use run::models::{list_models_cmd, list_providers_cmd};
+use run::provider_doctor::run_doctor_provider;
 #[cfg(feature = "memory")]
 use run::questions::run_questions_command;
 use run::task::run_task_command;

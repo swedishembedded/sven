@@ -64,7 +64,8 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(tag: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("sven-doctor-provider-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("sven-doctor-provider-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         Self(dir)
@@ -99,7 +100,11 @@ impl Drop for Scratch {
 
 fn report(out: &Output) -> Value {
     serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
-        panic!("stdout is pure JSON ({e}): {}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
+        panic!(
+            "stdout is pure JSON ({e}): {}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
     })
 }
 
@@ -121,10 +126,17 @@ fn local_model(base: &str, name: &str) -> String {
 
 #[test]
 fn a_served_model_that_can_call_tools_is_ready() {
-    let base = serve(serde_json::json!({"object": "list", "data": [{"id": "resident", "capabilities": ["chat", "tools"]}]}));
+    let base = serve(
+        serde_json::json!({"object": "list", "data": [{"id": "resident", "capabilities": ["chat", "tools"]}]}),
+    );
     let scratch = Scratch::new("ready");
     let out = scratch.doctor(&local_model(&base, "resident"));
-    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let report = report(&out);
     assert_eq!(verdict(&report, "endpoint"), "ok");
     assert_eq!(verdict(&report, "model"), "ok");
@@ -147,10 +159,18 @@ fn a_model_the_server_does_not_serve_is_named_with_what_it_does_serve() {
     let out = scratch.doctor(&local_model(&base, "wanted"));
     assert_ne!(out.status.code(), Some(0));
     let report = report(&out);
-    let model = report["checks"].as_array().unwrap().iter().find(|c| c["name"] == "model").unwrap();
+    let model = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "model")
+        .unwrap();
     assert_eq!(model["verdict"], "fail");
     let detail = model["detail"].as_str().unwrap();
-    assert!(detail.contains("wanted") && detail.contains("other"), "{detail}");
+    assert!(
+        detail.contains("wanted") && detail.contains("other"),
+        "{detail}"
+    );
 }
 
 #[test]
@@ -160,5 +180,9 @@ fn a_key_variable_that_is_not_set_fails_the_provider_check_without_any_network()
     assert_ne!(out.status.code(), Some(0));
     let report = report(&out);
     assert_eq!(verdict(&report, "provider"), "fail");
-    assert!(report["checks"].as_array().unwrap().iter().all(|c| c["name"] != "endpoint"));
+    assert!(report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|c| c["name"] != "endpoint"));
 }

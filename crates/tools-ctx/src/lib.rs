@@ -20,7 +20,8 @@ pub mod knowledge;
 pub mod memory;
 
 pub use context::{
-    ChunkExpandTool, ChunkExpander, ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore, SubQueryRunner,
+    ChunkExpandTool, ChunkExpander, ContextGrepTool, ContextOpenTool, ContextReadTool,
+    ContextStore, SubQueryRunner,
 };
 pub use knowledge::{ListKnowledgeTool, SearchKnowledgeTool};
 pub use memory::{MemoryConfig, MemoryTool};
