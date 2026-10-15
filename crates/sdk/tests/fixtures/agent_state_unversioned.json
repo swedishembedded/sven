@@ -1,0 +1,13 @@
+{
+  "mode": "agent",
+  "history": [
+    {"role": "user", "content": "what colour?"},
+    {"role": "assistant", "content": "blue"}
+  ],
+  "role": "You answer in one word.",
+  "kernel": null,
+  "model": "scripted",
+  "tools": [],
+  "compactions": [],
+  "unparsed_arguments": {}
+}

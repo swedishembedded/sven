@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# The scripted model `--demo` runs on (sven's `mock` provider), so the sample
+# is deterministic without an API key. Rules match the last user message. A
+# real model decides these calls itself; run with `--config` to use one.
+
+responses:
+  - match_type: contains
+    pattern: "the ledger service"
+    tool_calls:
+      - id: call-ledger
+        tool: deploy
+        args: {service: ledger}
+    after_tool_reply: "The request to deploy the ledger service has been handled."
+
+  - match_type: contains
+    pattern: "the inventory service"
+    tool_calls:
+      - id: call-inventory
+        tool: deploy
+        args: {service: inventory}
+    after_tool_reply: "The request to deploy the inventory service has been handled."
+
+  - match_type: contains
+    pattern: "the search service"
+    tool_calls:
+      - id: call-search
+        tool: deploy
+        args: {service: search}
+    after_tool_reply: "The request to deploy the search service has been handled."
+
+  - match_type: contains
+    pattern: "the billing service"
+    tool_calls:
+      - id: call-billing
+        tool: deploy
+        args: {service: billing}
+    after_tool_reply: "The request to deploy the billing service has been handled."

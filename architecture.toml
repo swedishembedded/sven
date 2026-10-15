@@ -125,6 +125,7 @@ sven-ablation = "composite"
 # reading the manifest. Both gates run in `make check`.
 sample-study-svf = "sample"
 sample-agent-task = "sample"
+sample-host-sessions = "sample"
 sample-harnesses-sdk-runner = "sample"
 
 # ── Forbidden reachability. Checked transitively over normal dependencies. ─

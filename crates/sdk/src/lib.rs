@@ -47,9 +47,12 @@
 mod agent;
 mod engine;
 mod error;
+mod events;
+mod gates;
 mod harness;
 mod method;
 mod run;
+mod run_support;
 mod state;
 mod transcript;
 
@@ -58,18 +61,24 @@ pub use agent::Agent;
 pub use atif;
 pub use engine::{ApprovalPolicy, Engine, EngineBuilder, Toolset};
 pub use error::CallError;
+pub use events::{EventStream, RunEvent};
+pub use gates::HumanGate;
 pub use harness::{
     Harness, HarnessCheckpoint, HarnessFailure, HarnessOutcome, HarnessRecording, HarnessReplay,
     HarnessRun,
 };
 pub use method::{Method, Strategy};
-pub use run::{CancelToken, Question, RunConclusion, RunOptions, RunOutcome, Usage};
+pub use run::{
+    Approval, CancelToken, Decision, Question, RunConclusion, RunId, RunOptions, RunOutcome, Usage,
+};
 /// The schema derive a [`Method`]'s return type needs (`#[derive(JsonSchema)]`),
 /// at the version this SDK uses.
 pub use schemars;
 pub use state::AgentState;
-pub use sven_bootstrap::session_handles::HumanGate;
 pub use sven_harness_runtime::TraceRecord;
+/// Identifies an approval, as a [`HumanGate::Approval`] and a parked
+/// [`Approval`] carry it.
+pub use sven_hsm::ApprovalId;
 pub use sven_vocab::HarnessEvent;
 pub use transcript::{ToolCallRecord, Turn};
 

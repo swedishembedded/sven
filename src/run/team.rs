@@ -140,23 +140,28 @@ async fn run_task(
     let meter = tokio::spawn(async move {
         let mut used: u64 = 0;
         loop {
-            match events.recv().await {
-                Ok(SessionEvent::TokenUsage { input, output, .. }) => {
+            let Some(delivered) = events.recv().await else {
+                break;
+            };
+            match delivered.event {
+                SessionEvent::TokenUsage { input, output, .. } => {
                     used += u64::from(input) + u64::from(output);
                 }
-                Ok(SessionEvent::SubagentEvent {
+                SessionEvent::SubagentEvent {
                     update:
                         SubagentUpdate::TokensUsed {
                             input_tokens,
                             output_tokens,
                         },
                     ..
-                }) => used += input_tokens + output_tokens,
-                Ok(SessionEvent::ToolCallStarted(call)) => {
+                } => used += input_tokens + output_tokens,
+                SessionEvent::ToolCallStarted(call) => {
                     eprintln!("[teammate:{log_as}] tool: {}", call.name);
                 }
-                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                SessionEvent::EventsDropped { count } => {
+                    eprintln!("[teammate:{log_as}] {count} events were not counted");
+                }
+                _ => {}
             }
         }
         used

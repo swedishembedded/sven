@@ -550,6 +550,12 @@ types requiring a translator.
    exhaustive-worthy vs. legitimately open-ended (`Result`/`Option`/etc.).
    Tracked as an open follow-up, not yet done.
 
+`SessionEvent` is `#[non_exhaustive]`, so a consumer outside this workspace
+matches it with a wildcard arm and a new variant is not a breaking change for
+it; the renderers above keep an explicit arm for each variant they handle and a
+wildcard for the rest. `EventsDropped` is the one variant the kernel never
+emits: an SDK event stream inserts it where it lost events.
+
 ### Add identity / tenancy / auth
 1. `hsm/src/context.rs` `Principal`; stamped into `AuditRecord`.
 2. `sven-bootstrap` `SessionSupervisor` (principal→session ownership).

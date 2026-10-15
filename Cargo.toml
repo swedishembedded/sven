@@ -68,6 +68,7 @@ members = [
     # how a sample rots into something that no longer compiles.
     "samples/study/svf",
     "samples/agent/task",
+    "samples/host/sessions",
     "samples/harnesses/sdk-runner",
     # The harness helper runtime: an isolated WASM interpreter for `transform`
     # steps. Depends on no other sven crate, on purpose.

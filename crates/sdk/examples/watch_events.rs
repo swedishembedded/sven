@@ -23,8 +23,8 @@ async fn main() -> anyhow::Result<()> {
     // still buffered.
     let mut events = agent.events();
     let renderer = tokio::spawn(async move {
-        while let Ok(event) = events.recv().await {
-            match event {
+        while let Some(delivered) = events.recv().await {
+            match delivered.event {
                 SessionEvent::TextDelta(chunk) => print!("{chunk}"),
                 SessionEvent::ToolCallStarted(call) => {
                     println!("\n  → {} {}", call.name, call.args);

@@ -9,6 +9,8 @@ use sven_hsm::Snapshot;
 use sven_model::{Message, MessageContent};
 use sven_vocab::CompactionRecord;
 
+use crate::run::{Approval, RunId};
+
 /// A suspended agent: everything needed to resume it, and nothing that cannot
 /// outlive the process that made it.
 ///
@@ -18,6 +20,11 @@ use sven_vocab::CompactionRecord;
 /// run the same mode.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentState {
+    /// The format this state was written in; see [`AgentState::CURRENT_VERSION`].
+    /// Absent from states written before states were versioned, which read
+    /// as version 0.
+    #[serde(default)]
+    pub(crate) version: u32,
     /// Which machine this agent runs.
     pub(crate) mode: String,
     /// The conversation so far.
@@ -50,13 +57,34 @@ pub struct AgentState {
     /// `{}`).
     #[serde(default)]
     pub(crate) unparsed_arguments: BTreeMap<String, String>,
+    /// The sequence number the agent's next event will carry. Kept here so the
+    /// numbering of an agent's events carries on across a resume.
+    #[serde(default)]
+    pub(crate) next_event_seq: u64,
+    /// The run the agent is parked in, if its last run ended waiting on a
+    /// question or an approval. The answer or decision continues that run.
+    #[serde(default)]
+    pub(crate) open_run: Option<RunId>,
 }
 
 impl AgentState {
+    /// The format this build writes.
+    ///
+    /// Version 1 added the format version itself, the event sequence and the
+    /// parked run. Version 0 is every state written before: it has none of
+    /// those, resumes as an agent that has emitted no events and is parked
+    /// nowhere, and is written back as the current version. A state with a
+    /// version above this one was written by a newer build and is refused by
+    /// [`Engine::resume`](crate::Engine::resume) rather than resumed wrongly.
+    pub const CURRENT_VERSION: u32 = 1;
+
     /// Creates the state of an agent that has not run yet.
     #[must_use]
     pub fn new(mode: impl Into<String>) -> Self {
         Self {
+            version: Self::CURRENT_VERSION,
+            next_event_seq: 0,
+            open_run: None,
             mode: mode.into(),
             history: Vec::new(),
             role: None,
@@ -85,10 +113,40 @@ impl AgentState {
         message
     }
 
+    /// The format this state was written in.
+    #[must_use]
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// This state in the format this build writes. Only the version changes:
+    /// every field a newer format added has a default that an older state
+    /// resumes with.
+    pub(crate) fn migrated(mut self) -> Self {
+        self.version = Self::CURRENT_VERSION;
+        self
+    }
+
     /// The machine this agent runs.
     #[must_use]
     pub fn mode(&self) -> &str {
         &self.mode
+    }
+
+    /// The approval this agent is parked on, if its last run ended
+    /// [`RunConclusion::Waiting`](crate::RunConclusion::Waiting) on one.
+    ///
+    /// Read from the state alone, so a host that restarted finds what is
+    /// waiting for a decision without running anything.
+    #[must_use]
+    pub fn pending_approval(&self) -> Option<Approval> {
+        let kernel = self.kernel.as_ref()?;
+        let pending = kernel.context.pending_approval.as_ref()?;
+        Some(Approval::from_pending(
+            pending,
+            self.open_run?,
+            &kernel.context,
+        ))
     }
 
     /// The conversation so far.

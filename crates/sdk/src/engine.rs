@@ -10,6 +10,7 @@ use sven_model::ModelProvider;
 
 use crate::agent::Agent;
 use crate::error::CallError;
+use crate::gates::GateHandler;
 use crate::state::AgentState;
 
 /// The shared, expensive half of the framework.
@@ -28,8 +29,9 @@ pub struct Engine {
     config: Arc<Config>,
     provider: Option<Arc<dyn ModelProvider>>,
     approvals: ApprovalPolicy,
-    human: Option<sven_bootstrap::session_handles::HumanGateResponder>,
+    human: Option<GateHandler>,
     park_questions: bool,
+    park_approvals: bool,
     tools: Vec<Arc<dyn sven_tool_api::Tool>>,
     toolset: Toolset,
     machines: Option<Arc<sven_machines::ModeRegistry>>,
@@ -198,8 +200,16 @@ impl Engine {
     /// # Errors
     ///
     /// Returns [`CallError::Precondition`] if `state` names a mode this engine
-    /// cannot run.
+    /// cannot run, or was written by a newer format than this build reads.
     pub fn resume(&self, state: AgentState) -> Result<Agent, CallError> {
+        if state.version() > AgentState::CURRENT_VERSION {
+            return Err(CallError::Precondition(format!(
+                "cannot resume agent: its state is version {}, newer than the version {} \
+                 this build reads",
+                state.version(),
+                AgentState::CURRENT_VERSION
+            )));
+        }
         if !self.knows_mode(state.mode()) {
             return Err(CallError::Precondition(format!(
                 "cannot resume agent: this engine cannot run mode {:?}, only {:?}",
@@ -207,7 +217,7 @@ impl Engine {
                 self.modes()
             )));
         }
-        Ok(Agent::new(self.clone(), state))
+        Ok(Agent::new(self.clone(), state.migrated()))
     }
 
     pub(crate) fn config(&self) -> Arc<Config> {
@@ -222,12 +232,16 @@ impl Engine {
         self.approvals
     }
 
-    pub(crate) fn human(&self) -> Option<sven_bootstrap::session_handles::HumanGateResponder> {
+    pub(crate) fn human(&self) -> Option<GateHandler> {
         self.human.clone()
     }
 
     pub(crate) fn parks_questions(&self) -> bool {
         self.park_questions
+    }
+
+    pub(crate) fn parks_approvals(&self) -> bool {
+        self.park_approvals
     }
 
     pub(crate) fn tools(&self) -> Vec<Arc<dyn sven_tool_api::Tool>> {
@@ -280,8 +294,9 @@ pub struct EngineBuilder {
     config: Option<Arc<Config>>,
     provider: Option<Arc<dyn ModelProvider>>,
     approvals: ApprovalPolicy,
-    human: Option<sven_bootstrap::session_handles::HumanGateResponder>,
+    human: Option<GateHandler>,
     park_questions: bool,
+    park_approvals: bool,
     tools: Vec<Arc<dyn sven_tool_api::Tool>>,
     toolset: Toolset,
     machines: Option<sven_machines::ModeRegistry>,
@@ -397,8 +412,14 @@ impl EngineBuilder {
     /// approval request to `answer`, as a [`HumanGate`](crate::HumanGate).
     ///
     /// The handler owns replying through the channel each gate carries: now,
-    /// or later, after asking someone. A gate dropped without a reply leaves
-    /// the turn waiting, exactly as an unanswered person would.
+    /// or later, after asking someone. A gate dropped without a reply never
+    /// leaves the turn waiting: a question is answered with
+    /// [`NO_USER_ANSWER`](crate::tool::NO_USER_ANSWER), and an approval is
+    /// denied with the reason `handler_dropped`.
+    ///
+    /// This is the handler of every agent of the engine; an agent with a
+    /// handler of its own ([`Agent::with_human_gates`](crate::Agent::with_human_gates))
+    /// uses that instead.
     ///
     /// Without a handler nobody is there to ask: a question is answered at
     /// once with [`NO_USER_ANSWER`](crate::tool::NO_USER_ANSWER) (unless
@@ -425,6 +446,24 @@ impl EngineBuilder {
         self
     }
 
+    /// Parks an approval instead of putting it to a handler, under
+    /// [`ApprovalPolicy::Manual`]: the run ends
+    /// [`RunConclusion::Waiting`](crate::RunConclusion::Waiting) with the
+    /// approval in [`RunOutcome::approval`](crate::RunOutcome::approval), and
+    /// [`Agent::decide`](crate::Agent::decide) continues it, also after a
+    /// suspend and resume in another process. The run returns at once; it
+    /// never waits for the decision, and no [`Self::human_gates`] handler is
+    /// needed for it.
+    ///
+    /// Only the agent's own calls are parked. A call made by a sub-agent
+    /// started with the `task` tool is still put to the handler (or refused
+    /// without one), because the sub-agent does not outlive the run.
+    #[must_use]
+    pub fn park_approvals(mut self) -> Self {
+        self.park_approvals = true;
+        self
+    }
+
     /// Builds the engine.
     ///
     /// Without [`Self::config`] the engine uses [`Config::default`] rather than
@@ -436,13 +475,21 @@ impl EngineBuilder {
     ///
     /// [`CallError::Precondition`] when a [`Self::project_root`] does not
     /// exist or is not a directory, or under [`ApprovalPolicy::Manual`]
-    /// without a [`Self::human_gates`] handler - nobody could approve a call,
-    /// and approving it on their behalf is what manual approval rules out.
+    /// without a [`Self::human_gates`] handler or [`Self::park_approvals`] -
+    /// nobody could approve a call, and approving it on their behalf is what
+    /// manual approval rules out - and when [`Self::park_approvals`] is set
+    /// under any other policy, where nothing is ever asked.
     pub fn build(self) -> Result<Engine, CallError> {
-        if self.approvals == ApprovalPolicy::Manual && self.human.is_none() {
+        if self.park_approvals && self.approvals != ApprovalPolicy::Manual {
+            return Err(CallError::Precondition(
+                "park_approvals parks what manual approval asks: use ApprovalPolicy::Manual".into(),
+            ));
+        }
+        if self.approvals == ApprovalPolicy::Manual && self.human.is_none() && !self.park_approvals
+        {
             return Err(CallError::Precondition(
                 "manual approval needs a person to approve each call: give the engine a \
-                 human_gates handler, or use ApprovalPolicy::Auto"
+                 human_gates handler, park_approvals, or use ApprovalPolicy::Auto"
                     .into(),
             ));
         }
@@ -461,6 +508,7 @@ impl EngineBuilder {
             approvals: self.approvals,
             human: self.human,
             park_questions: self.park_questions,
+            park_approvals: self.park_approvals,
             tools: self.tools,
             toolset: self.toolset,
             machines: self.machines.map(Arc::new),

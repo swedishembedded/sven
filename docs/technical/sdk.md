@@ -45,7 +45,9 @@ for connecting its MCP servers again. The shared model provider is not rebuilt.
 `samples/agent/task` is a complete application on the facade alone: its own
 tools, bounded runs, a parked question answered after a suspend and resume,
 manual approval decided by the application, an independent check, and an ATIF
-trajectory.
+trajectory. `samples/host/sessions` is a host serving several sessions on one
+engine: a gate handler per session, approvals parked across a restart and
+decided from the stored state, and a numbered event stream.
 
 ## Tools
 
@@ -161,21 +163,22 @@ only whether an allowed call waits for a person:
   without asking anyone - shell and deletes included - and a decision a
   machine puts to a person (an SDLC `need_approval`) is approved.
 - `ApprovalPolicy::Manual`: every call that is not read-only - the agent's and
-  its children's - is put to the engine's `human_gates` handler as a
-  `HumanGate::Approval` carrying the tool and its arguments, one call at a
-  time. An engine under manual approval without a handler does not build
+  its children's - is put to a human-gate handler as a `HumanGate::Approval`
+  carrying the tool and its arguments, one call at a time. An engine under
+  manual approval with neither a handler nor `park_approvals` does not build
   (`CallError::Precondition`): nobody could approve, and approving on their
   behalf is what manual approval rules out.
 
-The same handler gets every question the agent asks as a `HumanGate::Question`:
+The handler gets every question the agent asks as a `HumanGate::Question` too:
 
 ```rust
 let engine = Engine::builder()
     .approvals(ApprovalPolicy::Manual)
     .human_gates(|gate| match gate {
-        HumanGate::Approval { capability, prompt, call, reply_tx } => {
+        HumanGate::Approval { run_id, approval_id, capability, prompt, call, reply_tx, .. } => {
             // `call` is the tool call it gates (name and arguments), if any;
-            // ask someone, reply now or later
+            // `run_id` and `approval_id` say which run and which call this is.
+            // Ask someone, reply now or later.
             let _ = reply_tx.send(policy_allows(capability, call.as_ref(), &prompt));
         }
         HumanGate::Question { prompt, reply_tx } => {
@@ -185,14 +188,24 @@ let engine = Engine::builder()
     .build()?;
 ```
 
-The run waits for the reply, bounded by its cancel token and deadline; a
-gate dropped without a reply leaves the turn waiting. The SDK sets no deadline
-of its own - an embedding application states the bound it wants with
-`RunOptions::deadline` (the headless runner, by contrast, applies
-`agent.max_run_timeout_secs`, four hours by default), so an application whose
-handler can stay silent should always give its calls one. An approved call runs
-exactly as the model proposed it.
-A refused call is answered in the conversation with the reason, so the next
+`EngineBuilder::human_gates` is the handler of every agent of the engine. A
+host that serves several sessions on one engine gives each agent its own with
+`Agent::with_human_gates`, which takes the place of the engine's for that
+agent (it is not part of the `AgentState`, so a resumed agent gets it again).
+A gate also names its run: the `run_id` of a `HumanGate::Approval` is the
+`run_id` of the `RunEvent`s of the same run, so a host with one handler can
+route by it instead.
+
+The run waits for the reply, bounded by its cancel token and deadline. A gate
+dropped without a reply never leaves it waiting: a question is answered with
+`NO_USER_ANSWER`, and an approval is denied with the reason `handler_dropped`,
+which the model reads like any other refusal ("a human did not approve it:
+handler_dropped"). The SDK sets no deadline of its own - an embedding
+application states the bound it wants with `RunOptions::deadline` (the headless
+runner, by contrast, applies `agent.max_run_timeout_secs`, four hours by
+default), so an application whose handler can stay silent should always give
+its calls one. An approved call runs exactly as the model proposed it. A
+refused call is answered in the conversation with the reason, so the next
 request is valid for every provider and the model learns why.
 
 Without a handler nobody is there to ask, and nothing waits for anybody: a
@@ -200,6 +213,40 @@ question is answered at once with `sven_sdk::tool::NO_USER_ANSWER` ("No user
 is available to answer this question. Proceed on your best judgement and
 state the assumption you made."), and the model carries on, naming its
 assumption.
+
+### Approvals that wait
+
+A host that cannot answer on the spot - the person is away, the process is
+restarting - parks approvals with `EngineBuilder::park_approvals` (under
+`ApprovalPolicy::Manual`; no handler is needed). The run returns at once, ending
+`RunConclusion::Waiting` with the approval in `outcome.approval`, and
+`Agent::decide` continues it, also after a suspend and resume in another
+process:
+
+```rust
+let outcome = agent.send("ship it").await?;
+if let Some(approval) = outcome.approval {
+    let state = agent.suspend();                 // store it anywhere
+    // ... later, anywhere ...
+    let mut agent = engine.resume(state)?;
+    let outcome = agent
+        .decide(approval.id, Decision::Deny { reason: "change freeze".into() })
+        .await?;
+}
+```
+
+An approval is for the one call it names (`approval.call`, with its arguments
+exactly as proposed); the next call of the same kind is parked again. A host
+that restarted finds what waits in the stored state alone, with
+`AgentState::pending_approval`. `Decision::Approve` runs the call as proposed;
+`Decision::Deny` does not run it and the model reads the reason. The run keeps
+the `RunId` it had, and an approval is decided once: deciding another id, or
+the same one again, is `CallError::Precondition`.
+
+Only the agent's own calls are parked. A call made by a sub-agent started with
+the `task` tool is still put to the handler (and refused without one): the
+sub-agent does not outlive the run. A harness run puts its approvals to the
+handler as well.
 
 ## Questions that wait
 
@@ -464,10 +511,32 @@ A model that simply answers poorly is not an error at all - it is the reply.
 
 ## Observing a run
 
-`Agent::events()` yields the same `SessionEvent` stream the TUI and the headless
-runner consume, so a custom surface renders progress without naming a kernel
-crate. Subscribe before calling `send`; a receiver created afterwards sees only
-what is still buffered.
+`Agent::events()` yields the same `SessionEvent` values the TUI and the
+headless runner consume, so a custom surface renders progress without naming a
+kernel crate. It is an `EventStream`: a `Stream` of `RunEvent`s (and
+`recv().await` for a plain loop), each carrying
+
+- `run_id`: the run the event belongs to. A message starts a run; an answer or
+  a decision continues the run it resumes.
+- `seq`: its place in the agent's stream. It only grows, over every run of the
+  agent and across a suspend and resume (the counter is part of the
+  `AgentState`), so a host that stores events can order them.
+- `event`: the `SessionEvent`.
+
+Subscribe before calling `send`; a stream created afterwards sees only what is
+still buffered.
+
+The buffer is bounded (1024 events per subscriber) and a run never waits for a
+subscriber. One that falls behind is told, not left guessing: where events were
+lost the stream carries `SessionEvent::EventsDropped { count }`, which takes the
+`seq` of the first event it stands in for, so the event after it follows the
+last lost one. The same marker is inserted when the kernel's own observations
+outrun the run's loop. An application that must see every event resynchronises
+from the agent's conversation on a marker: `Agent::trajectory()` is built from
+what the kernel holds and is complete whatever the stream dropped.
+
+`SessionEvent` is `#[non_exhaustive]`: match it with a wildcard arm, and a
+variant added later breaks nobody.
 
 sven logs through `tracing` (targets `sven_*`). The SDK installs no
 subscriber: the application's own subscriber, whatever it is, receives them.
@@ -536,6 +605,16 @@ with its result, so a later reader knows which definitions produced it.
 ```rust
 let agents = sven_sdk::workspace::discover_agents(Some(&project_root));
 ```
+
+## The state's format
+
+An `AgentState` names the format it was written in (`AgentState::version`,
+`AgentState::CURRENT_VERSION`). A state written before states were versioned
+reads as version 0 and resumes: the fields a newer format added start from
+their defaults (the event numbering at zero, no parked run), and it is written
+back as the current version. A state from a newer format than the build
+reads is refused by `Engine::resume` with `CallError::Precondition` instead
+of being resumed wrongly.
 
 ## Where the state comes from
 

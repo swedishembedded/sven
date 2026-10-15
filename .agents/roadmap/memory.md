@@ -42,18 +42,9 @@ conformance suite checks every implementation.
   - Re-export it through `sven-sdk`.
 - [ ] Add workspace identity: a worktree resolves to its main repository's
   identity, and no library code reads the current directory.
-- [ ] Add `sven-sdk` host seams:
-  - run and call ids on human gates, and a gate handler per agent;
-  - a dropped gate handler concludes the call as denied instead of leaving
-    the turn parked;
-  - approvals that can be parked and decided after a resume;
-  - sequence numbers on events, a typed signal for dropped events, and a
-    `Stream` adapter;
+- [ ] Add the remaining `sven-sdk` host seams:
   - an injectable memory store;
-  - a model override per agent;
-  - a versioned `AgentState`;
-  - `SessionEvent` marked `#[non_exhaustive]`.
-  - A sample that uses only the SDK proves two sessions on one engine.
+  - a model override per agent.
 - [ ] Record in the ATIF trajectory what it leaves out today.
   - The step of a gated call carries the decision: approved, denied or
     parked, decided by whom, under which policy, plus any typed argument

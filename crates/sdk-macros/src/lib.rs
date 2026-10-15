@@ -139,7 +139,7 @@ fn expand(input: &ItemTrait) -> syn::Result<proc_macro2::TokenStream> {
             #[must_use]
             #vis fn events(
                 &self,
-            ) -> ::tokio::sync::broadcast::Receiver<::sven_sdk::SessionEvent> {
+            ) -> ::sven_sdk::EventStream {
                 self.agent.events()
             }
 

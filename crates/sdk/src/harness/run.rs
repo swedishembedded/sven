@@ -22,9 +22,9 @@ use tokio::sync::broadcast;
 use super::record::{start_checkpoint, Recorder};
 use super::trajectory::Evidence;
 use super::HarnessCheckpoint;
-use crate::agent::ask_through;
 use crate::engine::Engine;
 use crate::error::CallError;
+use crate::gates::{ask_through, forward};
 use crate::run::{RunConclusion, RunOptions, Usage};
 
 /// How long a stopped run is given to report what it had before it is
@@ -297,7 +297,11 @@ impl HarnessRun {
             .await
             .map_err(CallError::Infrastructure)?;
         match human {
-            Some(responder) => tokio::spawn(session.channels.forward_to(responder)),
+            Some(handler) => tokio::spawn(forward(
+                session.channels,
+                crate::RunId::from_text(&self.run_id),
+                handler,
+            )),
             None => tokio::spawn(session.channels.answer_unattended()),
         };
 

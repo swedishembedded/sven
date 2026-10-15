@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
-use sven_hsm::Event;
+use sven_hsm::{ApprovalId, Event};
 use sven_model::Message;
 use sven_session_model::reduce_history;
 use sven_vocab::SessionEvent;
@@ -20,12 +20,14 @@ use sven_machines::machines::loop_core::{LoopState, LOOP_STATE_KEY, MAX_ROUNDS_R
 
 use crate::engine::Engine;
 use crate::error::CallError;
+use crate::events::{EventStream, RunEvent, EVENT_CAPACITY};
+use crate::gates::{ask_through, forward, GateHandler, HumanGate};
 use crate::method::{Method, Strategy};
-use crate::run::{Question, RunConclusion, RunOptions, RunOutcome, Usage};
+use crate::run::{
+    Approval, Decision, Question, RunConclusion, RunId, RunOptions, RunOutcome, Usage,
+};
+use crate::run_support::{parse_candidate, stop, Entry, TurnOptions};
 use crate::state::AgentState;
-
-/// Capacity of the per-agent event broadcast channel.
-const EVENT_CAPACITY: usize = 1024;
 
 /// A live agent: a conversation in progress against an [`Engine`].
 ///
@@ -36,7 +38,9 @@ const EVENT_CAPACITY: usize = 1024;
 pub struct Agent {
     engine: Engine,
     state: AgentState,
-    events: broadcast::Sender<SessionEvent>,
+    events: broadcast::Sender<RunEvent>,
+    /// This agent's own gate handler, which takes the place of the engine's.
+    gates: Option<GateHandler>,
 }
 
 impl Agent {
@@ -46,18 +50,41 @@ impl Agent {
             engine,
             state,
             events,
+            gates: None,
         }
     }
 
     /// Subscribes to everything this agent emits while it works.
     ///
-    /// The same [`SessionEvent`] stream the TUI and the headless runner
+    /// The same [`SessionEvent`] values the TUI and the headless runner
     /// consume, so a custom surface renders progress without reaching into any
-    /// kernel crate. Subscribe before calling [`Agent::send`]; a receiver
+    /// kernel crate - each with the [`RunId`] of the run it belongs to and a
+    /// sequence number that only grows over the life of the agent. The
+    /// subscriber that falls behind is told how many events it missed. See
+    /// [`EventStream`]. Subscribe before calling [`Agent::send`]; a stream
     /// created afterwards sees only what is still buffered.
     #[must_use]
-    pub fn events(&self) -> broadcast::Receiver<SessionEvent> {
-        self.events.subscribe()
+    pub fn events(&self) -> EventStream {
+        EventStream::new(self.events.subscribe())
+    }
+
+    /// Answers this agent's human gates with `handler` instead of the engine's
+    /// ([`EngineBuilder::human_gates`](crate::EngineBuilder::human_gates)), so
+    /// the host that serves several agents on one engine routes each gate to
+    /// the session it belongs to. The handler applies to every later run of
+    /// this agent, and is not part of its [`AgentState`]: a resumed agent gets
+    /// its handler again.
+    #[must_use]
+    pub fn with_human_gates(mut self, handler: impl Fn(HumanGate) + Send + Sync + 'static) -> Self {
+        self.gates = Some(Arc::new(handler));
+        self
+    }
+
+    /// The approval this agent is parked on, if its last run ended
+    /// [`RunConclusion::Waiting`] on one. See [`AgentState::pending_approval`].
+    #[must_use]
+    pub fn pending_approval(&self) -> Option<Approval> {
+        self.state.pending_approval()
     }
 
     /// The agent's current state, including its history.
@@ -202,6 +229,52 @@ impl Agent {
             question_id: pending.question_id,
             call_ref: pending.call_ref.clone(),
             answer: text.to_string(),
+        };
+        self.run(entry, &TurnOptions::default(), &bounds).await
+    }
+
+    /// Decides the approval the agent is parked on and continues the run. See
+    /// [`Self::decide_with`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::decide_with`].
+    pub async fn decide(
+        &mut self,
+        approval_id: ApprovalId,
+        decision: Decision,
+    ) -> Result<RunOutcome, CallError> {
+        self.decide_with(approval_id, decision, RunOptions::default())
+            .await
+    }
+
+    /// Decides the approval a run ended [`RunConclusion::Waiting`] on - see
+    /// [`EngineBuilder::park_approvals`](crate::EngineBuilder::park_approvals) -
+    /// and continues that run within `bounds`.
+    ///
+    /// An approved call runs exactly as the model proposed it; a denied one
+    /// does not run, and the model reads the reason. Works on a resumed agent
+    /// as well as on the one that asked, and the run keeps the [`RunId`] it
+    /// had. An approval is decided once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CallError::Precondition`] if the agent is not waiting on
+    /// `approval_id`, and otherwise fails as [`Self::send_with`].
+    pub async fn decide_with(
+        &mut self,
+        approval_id: ApprovalId,
+        decision: Decision,
+        bounds: RunOptions,
+    ) -> Result<RunOutcome, CallError> {
+        if self.pending_approval().map(|a| a.id) != Some(approval_id) {
+            return Err(CallError::Precondition(format!(
+                "the agent is not waiting on approval {approval_id}"
+            )));
+        }
+        let entry = Entry::Decision {
+            approval_id,
+            decision,
         };
         self.run(entry, &TurnOptions::default(), &bounds).await
     }
@@ -455,9 +528,20 @@ impl Agent {
         // own keys.
         let facts = options.facts.clone();
 
+        // A message starts a run. An answer or a decision continues the run
+        // the agent is parked in, which keeps its id.
+        let run_id = match &entry {
+            Entry::Message(_) => RunId::new(),
+            Entry::Answer { .. } | Entry::Decision { .. } => {
+                self.state.open_run.unwrap_or_else(RunId::new)
+            }
+        };
+
         // An answer is the result of the call that asked. It goes into the
         // history the session is seeded with, so it is in the thread before
-        // the machine resumes and reads it.
+        // the machine resumes and reads it. A decision needs no such thing:
+        // an approved call runs and answers itself, a denied one is answered
+        // with its reason by the next turn.
         let (event, prompt) = match entry {
             Entry::Message(text) => (
                 Event::UserMessage { text: text.clone() },
@@ -479,6 +563,19 @@ impl Agent {
                     None,
                 )
             }
+            Entry::Decision {
+                approval_id,
+                decision,
+            } => (
+                match decision {
+                    Decision::Approve => Event::HumanApproved { approval_id },
+                    Decision::Deny { reason } => Event::HumanRejected {
+                        approval_id,
+                        reason: Some(reason),
+                    },
+                },
+                None,
+            ),
         };
 
         // The turn executor parks the abort sender for the model call in
@@ -496,11 +593,14 @@ impl Agent {
         if self.engine.parks_questions() {
             builder = builder.with_parked_questions();
         }
-        let human = self.engine.human();
+        if self.engine.parks_approvals() {
+            builder = builder.with_parked_approvals();
+        }
+        let human = self.gates.clone().or_else(|| self.engine.human());
         // The model's `ask_question` goes to the host's handler, unless the
         // host chose to park it.
-        if let (Some(responder), false) = (&human, self.engine.parks_questions()) {
-            builder = builder.with_tool_question_tx(ask_through(Arc::clone(responder)));
+        if let (Some(handler), false) = (&human, self.engine.parks_questions()) {
+            builder = builder.with_tool_question_tx(ask_through(Arc::clone(handler)));
         }
         if let Some(registry) = self.engine.machines() {
             builder = builder.with_mode_registry(registry);
@@ -518,7 +618,7 @@ impl Agent {
             None => self.engine.config().model.name.clone(),
         });
         match human {
-            Some(responder) => tokio::spawn(bundle.channels.forward_to(responder)),
+            Some(handler) => tokio::spawn(forward(bundle.channels, run_id, handler)),
             None => tokio::spawn(bundle.channels.answer_unattended()),
         };
 
@@ -606,13 +706,17 @@ impl Agent {
                             _ => {}
                         }
                         reduce_history(&event, &mut self.state.history);
-                        let _ = self.events.send(event);
+                        self.publish(run_id, event);
                         if done {
                             break;
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    // The kernel's observations outran this loop: say so in the
+                    // stream instead of letting the gap pass unseen.
+                    Err(broadcast::error::RecvError::Lagged(count)) => {
+                        self.publish(run_id, SessionEvent::EventsDropped { count });
+                    }
                 },
                 captured = &mut settled => {
                     snapshot = captured;
@@ -653,114 +757,41 @@ impl Agent {
             .as_ref()
             .and_then(|snapshot| snapshot.context.pending_question.as_ref())
             .map(Question::from_pending);
-        let conclusion = stopped.unwrap_or(if question.is_some() {
+        // An approval left pending by a run that did not park it (cancelled
+        // while it waited on a handler) is not one to decide later.
+        let approval = self
+            .state
+            .kernel
+            .as_ref()
+            .filter(|_| self.engine.parks_approvals())
+            .and_then(|snapshot| {
+                let pending = snapshot.context.pending_approval.as_ref()?;
+                Some(Approval::from_pending(pending, run_id, &snapshot.context))
+            });
+        let conclusion = stopped.unwrap_or(if question.is_some() || approval.is_some() {
             RunConclusion::Waiting
         } else if rounds_ran_out {
             RunConclusion::BudgetExhausted
         } else {
             RunConclusion::Success
         });
+        let waiting = conclusion == RunConclusion::Waiting;
+        self.state.open_run = waiting.then_some(run_id);
         Ok(RunOutcome {
             conclusion,
             reply,
             usage,
-            question: question.filter(|_| conclusion == RunConclusion::Waiting),
+            question: question.filter(|_| waiting),
+            approval: approval.filter(|_| waiting),
         })
     }
-}
 
-/// How long a stopped run is given to report what it had before it is left.
-const WIND_DOWN: Duration = Duration::from_secs(5);
-
-/// Stops a run: interrupts the model call in flight, tells the machine the
-/// work is cancelled, and starts the wind-down clock.
-async fn stop(
-    handle: &sven_bootstrap::RuntimeHandle,
-    abort_slot: &tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    wind_down: std::pin::Pin<&mut tokio::time::Sleep>,
-) {
-    if let Some(abort) = abort_slot.lock().await.take() {
-        let _ = abort.send(());
+    /// Numbers `event` and delivers it to the subscribers. Delivery never
+    /// waits for a subscriber: one that is too far behind is told it missed
+    /// events (see [`EventStream`]).
+    fn publish(&mut self, run_id: RunId, event: SessionEvent) {
+        let seq = self.state.next_event_seq;
+        self.state.next_event_seq += 1;
+        let _ = self.events.send(RunEvent { seq, run_id, event });
     }
-    let _ = handle.cancel().await;
-    wind_down.reset(tokio::time::Instant::now() + WIND_DOWN);
-}
-
-/// What starts a run.
-enum Entry {
-    /// A message from the user.
-    Message(String),
-    /// The answer to the question the agent is waiting on.
-    Answer {
-        question_id: sven_hsm::QuestionId,
-        /// The conversation's id for the call that asked.
-        call_ref: String,
-        answer: String,
-    },
-}
-
-/// Per-turn overrides that do not belong to the agent's durable state.
-#[derive(Default)]
-struct TurnOptions {
-    /// System prompt for this turn.
-    role: Option<String>,
-    /// Whether the model is denied tools outright.
-    no_tools: bool,
-    /// Domain facts the machine needs in order to run the turn.
-    facts: serde_json::Map<String, serde_json::Value>,
-}
-
-/// Reads `answer` as `T`, describing the failure in terms a model can act on.
-///
-/// Tolerates a fenced code block around the JSON, because a model told to
-/// answer with JSON very often answers with JSON in a fence, and rejecting that
-/// spends a repair attempt on punctuation.
-fn parse_candidate<T: DeserializeOwned>(answer: &str) -> Result<T, String> {
-    let trimmed = strip_fence(answer.trim());
-    if trimmed.is_empty() {
-        return Err("the answer was empty".to_string());
-    }
-    serde_json::from_str::<T>(trimmed).map_err(|e| e.to_string())
-}
-
-/// Returns `text` without a surrounding ```/```json fence, if it has one.
-fn strip_fence(text: &str) -> &str {
-    let Some(rest) = text.strip_prefix("```") else {
-        return text;
-    };
-    let rest = rest.strip_prefix("json").unwrap_or(rest);
-    rest.trim_start_matches(['\r', '\n'])
-        .trim_end()
-        .strip_suffix("```")
-        .unwrap_or(rest)
-        .trim()
-}
-
-/// A question channel for the `ask_question` tool whose questions go to the
-/// host's `responder` as [`HumanGate::Question`](crate::HumanGate::Question)s:
-/// the questions' prompts, each with its options, and the host's reply
-/// returned as the answer. The channel closes when the session drops the
-/// tool.
-pub(crate) fn ask_through(
-    responder: sven_bootstrap::session_handles::HumanGateResponder,
-) -> tokio::sync::mpsc::Sender<sven_bootstrap::QuestionRequest> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<sven_bootstrap::QuestionRequest>(4);
-    tokio::spawn(async move {
-        while let Some(request) = rx.recv().await {
-            let prompt = request
-                .questions
-                .iter()
-                .map(|q| match q.options.as_slice() {
-                    [] => q.prompt.clone(),
-                    options => format!("{} ({})", q.prompt, options.join(" / ")),
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            responder(crate::HumanGate::Question {
-                prompt,
-                reply_tx: request.answer_tx,
-            });
-        }
-    });
-    tx
 }
