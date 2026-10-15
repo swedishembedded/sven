@@ -615,7 +615,11 @@ pub enum CollabEvent {
 /// [`Transition`](SessionEvent::Transition), the kernel's per-dispatch trace
 /// event. `sven-machines` re-exports it as `AgentEvent` and `sven-hsm` as
 /// `UiEvent`; both names refer to this type.
+///
+/// Non-exhaustive: a consumer outside this workspace matches with a wildcard
+/// arm, so a variant added later is not a breaking change for it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub enum SessionEvent {
     /// A text chunk streamed from the model.
     TextDelta(String),
@@ -709,6 +713,12 @@ pub enum SessionEvent {
     /// capability the served model lacks. Shown as a notice; never
     /// conversation content, and never a failure (that is `Error`).
     Warning(String),
+    /// A stream of events could not deliver `count` of them: the consumer fell
+    /// behind a bounded buffer and the oldest were discarded. Never emitted by
+    /// the kernel; the stream that dropped the events inserts it at the gap,
+    /// so a consumer that must see everything knows to resynchronise from the
+    /// stored conversation instead.
+    EventsDropped { count: u64 },
     /// The agent has finished processing the current user turn.
     TurnComplete,
     /// The current run was aborted (via Ctrl+C or /abort). `partial_text`

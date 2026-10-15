@@ -404,6 +404,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         | AgentEvent::CollabEvent(_)
         | AgentEvent::TitleGenerated(_)
         | AgentEvent::Transition { .. }
+        | AgentEvent::EventsDropped { .. }
         | AgentEvent::PeerList(_) => {}
         // A delegate subtree completed (a distinct feature from the `task`
         // tool's ACP subagents above). It carries only a condensed summary,
@@ -472,6 +473,9 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 write_stderr("[sven:agent:aborted]");
             }
         }
+        // `SessionEvent` is non-exhaustive: an event added later has no
+        // headless output until it is given one here.
+        _ => {}
     }
 }
 

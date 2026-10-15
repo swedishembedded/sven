@@ -71,6 +71,10 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
         | SessionEvent::SubagentEvent { .. }
         | SessionEvent::PeerList(_)
         | SessionEvent::Harness { .. }
+        | SessionEvent::EventsDropped { .. }
         | SessionEvent::Transition { .. } => {}
+        // `SessionEvent` is non-exhaustive: a variant added later has no
+        // history representation until this fold says it does.
+        _ => {}
     }
 }

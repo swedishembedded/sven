@@ -896,7 +896,11 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         UiEvent::CollabEvent(_)
         | UiEvent::PeerList(_)
         | UiEvent::QuestionAnswer { .. }
-        | UiEvent::TitleGenerated(_) => {}
+        | UiEvent::TitleGenerated(_)
+        | UiEvent::EventsDropped { .. } => {}
+        // `SessionEvent` is non-exhaustive: an event added later has no
+        // headless representation until it is given one here.
+        _ => {}
     }
     None
 }

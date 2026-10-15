@@ -183,7 +183,13 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         | AgentEvent::PeerList(_)
         // A harness run's lifecycle is the host's concern; the ACP wire
         // carries the agent's own progress, not the harness around it.
-        | AgentEvent::Harness { .. } => None,
+        | AgentEvent::Harness { .. }
+        // Only an SDK event stream reports its own gaps; the kernel never
+        // emits it, so there is nothing to send.
+        | AgentEvent::EventsDropped { .. } => None,
+        // The event type is non-exhaustive; an event added later is not sent
+        // until it is given a mapping here.
+        _ => None,
     }
 }
 
