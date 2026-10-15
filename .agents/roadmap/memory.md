@@ -15,25 +15,18 @@ conformance suite checks every implementation.
 
 ## Left to do
 
-- [ ] Add a `sven-memory-api` crate (foundation tier, no SQLite) and a
-  `sven-memory-sqlite` crate (services tier).
-  - The api crate holds scoped `MemoryStore`, an annotation log with
-    expected-revision checks, opaque string ids, `AccessContext` and
-    `IndexGeneration`.
-  - It also carries an adapter conformance suite behind a feature.
-- [ ] Fix the current SQLite store:
-  - Scope must filter inside the query, not after `LIMIT`.
-  - The `LIKE` fallback and the tag filter must escape wildcards.
-  - Row errors are dropped and must surface instead.
-  - The schema has no `user_version` and no migrator.
-  - Row ids are shown to the model.
-  - Without a home directory, the store falls back to the current directory.
-  - `SessionScope` is never stamped by any caller.
-- [ ] Correct `docs/17-memory.md` in the same change.
-  - It describes hybrid search that does not exist.
-  - It documents `db_path`/`backend` keys that nothing reads.
-- [ ] Move `QuestionLedger` out of `sven-memory`, so that `sven questions`
-  does not need SQLite.
+- [ ] Move the `semantic_memory` tool onto `MemoryStore` and retire the old
+  `sven-memory` SQLite store. The contract and `sven-memory-sqlite` already
+  avoid what the old store gets wrong, so the move removes these defects:
+  - scope filters after `LIMIT`, and `SessionScope` is never stamped by any
+    caller;
+  - the `LIKE` fallback and the tag filter do not escape wildcards;
+  - row errors are dropped;
+  - the schema has no `user_version` and no migrator;
+  - row ids are shown to the model;
+  - without a home directory the store falls back to the current directory.
+- [ ] Add annotation tools and the retrieval record (`RetrievalRecord`,
+  `NewAnnotation`, both already defined by the contract) to the tool surface.
 - [ ] Add a `sven-sources` crate for deterministic segmentation of text,
   markdown and code.
   - Anchors are a heading path plus a content fingerprint.

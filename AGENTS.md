@@ -245,7 +245,10 @@ organized into 11 tiers (`foundation` < `kernel` < `services` < `domain` <
 tier with a one-line purpose each.
 
 ### foundation (zero sven-\* dependencies)
-`sven-vocab` (shared nouns + `SessionEvent`) · `sven-chain` (hash-chained
+`sven-vocab` (shared nouns + `SessionEvent`) · `sven-memory-api` (the memory
+contract: scoped sources and units, opaque ids, access context, annotation log,
+index generations, the `MemoryStore` trait and its conformance suite; no
+storage) · `sven-chain` (hash-chained
 append-only JSONL) · `sven-config` (finds, layers, `${VAR}`-expands and
 merges the configuration file and reports the keys no section recognises;
 knows no section itself) · `sven-hsm`
@@ -267,7 +270,9 @@ Sven` codec) · `sven-tool-api` (`Tool` trait + `ToolDisplay`)
 
 ### services
 `sven-session-store` (ATIF trajectory-backed session store, legacy YAML chat
-import, `sven migrate-sessions`) · `sven-chunks`
+import, `sven migrate-sessions`, the parked-question ledger) ·
+`sven-memory-sqlite` (the SQLite adapter of the memory contract: versioned
+schema, scope applied inside each query, FTS5 retrieval) · `sven-chunks`
 (addressable context: content-addressed raw evidence with provenance, bounded
 resident payloads that spill to disk, staleness against the source file,
 deterministic representations at four visibilities) · `sven-tool-registry`
@@ -299,7 +304,7 @@ is always compiled) · `sven-turn` (impure turn primitives: `stream_turn`,
 `compact`/`smart_truncate`, `CompactionStrategy`, prompt assembly,
 `AgentRuntimeContext`) · `sven-team` (agent-team
 coordination) · `sven-memory` (semantic memory store and `semantic_memory`
-tool, parked-question ledger; the `memory` feature of `sven-bootstrap`)
+tool; the `memory` feature of `sven-bootstrap`)
 
 ### machines
 `sven-machines` (pure `Machine` impls: `ReactiveAgentMachine`, `SdlcMachine`,
