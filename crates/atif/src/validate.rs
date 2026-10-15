@@ -19,7 +19,10 @@
 
 use thiserror::Error;
 
-use crate::model::{StepOrigin, Trajectory};
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+
+use crate::model::{GateRecord, MemoryRecord, StepOrigin, TraceStep, Trajectory, SVEN_EXTRA_KEY};
 
 /// A single ATIF v1.7 rule violation, as collected by [`validate_trajectory`].
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -95,6 +98,44 @@ pub enum ValidationError {
         source_call_id: String,
     },
 
+    /// A record sven files under `extra.sven` (`sven.gate`, `sven.memory`) is
+    /// not the shape its schema defines.
+    #[error("step_id={step_id}: `extra.sven.{name}` is malformed: {reason}", name = record.trim_start_matches("sven."))]
+    InvalidSvenRecord {
+        /// The step carrying the record.
+        step_id: u64,
+        /// The record's name, such as `sven.gate`.
+        record: &'static str,
+        /// What is wrong with it.
+        reason: String,
+    },
+
+    /// A record sven files under `extra.sven` names a schema version this
+    /// crate does not know, so its shape cannot be checked or relied on.
+    #[error("step_id={step_id}: `extra.sven.{name}` has schema `{found}`, expected `{expected}`", name = record.trim_start_matches("sven."))]
+    UnknownSvenSchema {
+        /// The step carrying the record.
+        step_id: u64,
+        /// The record's name, such as `sven.gate`.
+        record: &'static str,
+        /// The schema string the record carries.
+        found: String,
+        /// The only schema string this crate knows for the record.
+        expected: &'static str,
+    },
+
+    /// An entry of a record sven files under `extra.sven` names a
+    /// `call_id` that is not among the `tool_call_id`s of the step carrying it.
+    #[error("step_id={step_id}: `extra.sven.{name}` names call `{call_id}`, which this step did not make", name = record.trim_start_matches("sven."))]
+    DanglingSvenCallId {
+        /// The step carrying the record.
+        step_id: u64,
+        /// The record's name, such as `sven.gate`.
+        record: &'static str,
+        /// The `call_id` that names no call of the step.
+        call_id: String,
+    },
+
     /// `schema_version` is empty or does not look like `"ATIF-v..."`.
     #[error("schema_version `{0}` does not look like a valid ATIF version string (expected e.g. \"ATIF-v1.7\")")]
     SchemaVersion(String),
@@ -124,6 +165,7 @@ pub fn validate_trajectory(trajectory: &Trajectory) -> Result<(), Vec<Validation
         validate_deterministic_dispatch(step, &mut errors);
         validate_source_call_ids(step, &mut errors);
         validate_subagent_refs(step, &mut errors);
+        validate_sven_records(step, &mut errors);
     }
     validate_embedded_subagents(trajectory, &mut errors);
 
@@ -237,6 +279,96 @@ fn validate_subagent_refs(step: &crate::model::TraceStep, errors: &mut Vec<Valid
             }
         }
     }
+}
+
+/// Checks the `extra.sven.gate` and `extra.sven.memory` records of `step`:
+/// each must carry the schema version this crate knows, have the shape that
+/// schema defines, and name only calls the step made.
+fn validate_sven_records(step: &TraceStep, errors: &mut Vec<ValidationError>) {
+    let Some(namespace) = step
+        .extra
+        .as_ref()
+        .and_then(|extra| extra.get(SVEN_EXTRA_KEY))
+    else {
+        return;
+    };
+    let made: Vec<&str> = step
+        .tool_calls
+        .iter()
+        .flatten()
+        .map(|call| call.tool_call_id.as_str())
+        .collect();
+
+    let mut check = |record: &'static str,
+                     name: &str,
+                     expected: &'static str,
+                     call_ids: &dyn Fn(&Value) -> Result<Vec<String>, String>| {
+        let Some(value) = namespace.get(name) else {
+            return;
+        };
+        match value.get("schema").and_then(Value::as_str) {
+            Some(found) if found == expected => {}
+            Some(found) => {
+                errors.push(ValidationError::UnknownSvenSchema {
+                    step_id: step.step_id,
+                    record,
+                    found: found.to_string(),
+                    expected,
+                });
+                return;
+            }
+            None => {
+                errors.push(ValidationError::InvalidSvenRecord {
+                    step_id: step.step_id,
+                    record,
+                    reason: "`schema` is missing or not a string".to_string(),
+                });
+                return;
+            }
+        }
+        let named = match call_ids(value) {
+            Ok(named) => named,
+            Err(reason) => {
+                errors.push(ValidationError::InvalidSvenRecord {
+                    step_id: step.step_id,
+                    record,
+                    reason,
+                });
+                return;
+            }
+        };
+        for call_id in named {
+            if !made.contains(&call_id.as_str()) {
+                errors.push(ValidationError::DanglingSvenCallId {
+                    step_id: step.step_id,
+                    record,
+                    call_id,
+                });
+            }
+        }
+    };
+
+    check(
+        "sven.gate",
+        GateRecord::NAME,
+        GateRecord::SCHEMA,
+        &|value| {
+            parse::<GateRecord>(value).map(|r| r.decisions.into_iter().map(|d| d.call_id).collect())
+        },
+    );
+    check(
+        "sven.memory",
+        MemoryRecord::NAME,
+        MemoryRecord::SCHEMA,
+        &|value| {
+            parse::<MemoryRecord>(value)
+                .map(|r| r.retrievals.into_iter().map(|d| d.call_id).collect())
+        },
+    );
+}
+
+fn parse<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
+    serde_json::from_value(value.clone()).map_err(|e| e.to_string())
 }
 
 fn validate_embedded_subagents(trajectory: &Trajectory, errors: &mut Vec<ValidationError>) {

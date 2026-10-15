@@ -15,6 +15,7 @@ mod metrics;
 mod observation;
 mod step;
 mod subagent;
+mod sven_records;
 mod tool;
 mod trajectory;
 
@@ -25,5 +26,9 @@ pub use metrics::StepMetrics;
 pub use observation::{ObservationEntry, StepObservation};
 pub use step::{ReasoningEffort, StepOrigin, TraceStep};
 pub use subagent::SubagentRef;
+pub use sven_records::{
+    ArgumentViolation, GateAuthority, GateDecision, GateOutcome, GateRecord, MemoryAnchor,
+    MemoryRecord, MemoryResult, MemoryRetrieval, SVEN_EXTRA_KEY,
+};
 pub use tool::ToolInvocation;
 pub use trajectory::{FinalMetrics, Trajectory};

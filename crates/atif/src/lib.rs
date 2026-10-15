@@ -17,11 +17,13 @@
 //! # Module map
 //!
 //! - [`model`] — the ATIF schema: [`Trajectory`], steps, tool calls,
-//!   observations, multimodal content, subagent references, and the
-//!   Section VII context-management convention.
+//!   observations, multimodal content, subagent references, the
+//!   Section VII context-management convention, and the `extra.sven.gate` and
+//!   `extra.sven.memory` records sven files on agent steps.
 //! - [`validate`] — [`validate::validate_trajectory`], which walks a
 //!   [`Trajectory`] (recursively, through embedded subagents) and collects
-//!   every rule violation rather than stopping at the first one.
+//!   every rule violation rather than stopping at the first one. It checks the
+//!   `extra.sven` records too: their shape, schema version and call ids.
 //! - [`persist`] — atomic whole-document JSON writes with concurrent
 //!   modification detection, a fast header-only reader, and an NDJSON
 //!   step stream reader/writer.
