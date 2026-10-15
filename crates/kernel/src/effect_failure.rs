@@ -30,6 +30,7 @@ pub fn failure_event(effect: &Effect, error: &str) -> Option<Event> {
         }),
         Effect::RequestHumanApproval { approval_id, .. } => Some(Event::HumanRejected {
             approval_id: *approval_id,
+            reason: Some(error),
         }),
         Effect::PersistAudit | Effect::EmitInternal { .. } | Effect::CancelTimeout { .. } => None,
         other => Some(Event::EffectFailed {

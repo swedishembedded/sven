@@ -208,8 +208,10 @@ pub(crate) fn spawn_parked_question_ledger() -> mpsc::Sender<sven_executors::use
 /// synchronously could not ask a person, which is the one thing a human gate
 /// is for.
 ///
-/// Dropping a gate without replying is not a silent default: the kernel's
-/// turn stays parked, exactly as it would if a person never answered.
+/// Dropping a gate without replying is not a silent default and never leaves
+/// the turn waiting: a question is answered with
+/// [`NO_USER_ANSWER`](sven_tool_api::NO_USER_ANSWER), and an approval is
+/// refused with the reason `handler_dropped`, which the model reads.
 pub enum HumanGate {
     /// `Effect::AskUser` - free text.
     Question {

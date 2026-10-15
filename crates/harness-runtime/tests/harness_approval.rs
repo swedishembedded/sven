@@ -153,6 +153,7 @@ fn a_refused_tool_step_call_fails_the_step_without_running() {
         &mut state,
         Event::HumanRejected {
             approval_id: approval_of(call_id),
+            reason: None,
         },
     );
 
@@ -223,6 +224,7 @@ fn gated_agent_calls_are_asked_one_at_a_time_and_the_loop_continues_after_them()
         &mut state,
         Event::HumanRejected {
             approval_id: approval_of(second_id),
+            reason: None,
         },
     );
     let fx = drive(

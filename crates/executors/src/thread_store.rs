@@ -101,25 +101,12 @@ impl ThreadStore {
     /// why the call was not run; a call without one is answered generically.
     /// Returns how many calls were answered.
     pub fn answer_open_calls(&mut self, id: &str, reasons: &HashMap<String, String>) -> usize {
+        let open: Vec<String> = self
+            .open_calls(id)
+            .into_iter()
+            .map(|(call, _)| call.to_string())
+            .collect();
         let thread = self.thread(id);
-        let answered: std::collections::HashSet<String> = thread
-            .iter()
-            .filter_map(|m| match &m.content {
-                MessageContent::ToolResult { tool_call_id, .. } => Some(tool_call_id.clone()),
-                _ => None,
-            })
-            .collect();
-        let open: Vec<String> = thread
-            .iter()
-            .filter_map(|m| match &m.content {
-                MessageContent::ToolCall { tool_call_id, .. }
-                    if !answered.contains(tool_call_id) =>
-                {
-                    Some(tool_call_id.clone())
-                }
-                _ => None,
-            })
-            .collect();
         for call in &open {
             let reason = reasons.get(call).map_or("it was refused", String::as_str);
             thread.push(Message::tool_result(
@@ -128,6 +115,64 @@ impl ThreadStore {
             ));
         }
         open.len()
+    }
+
+    /// The calls in thread `id` that no result answers, as the model made
+    /// them: its id for the call and the function it named.
+    fn open_calls(&self, id: &str) -> Vec<(&str, &sven_model::FunctionCall)> {
+        let Some(thread) = self.threads.get(id) else {
+            return Vec::new();
+        };
+        let answered: std::collections::HashSet<&str> = thread
+            .iter()
+            .filter_map(|m| match &m.content {
+                MessageContent::ToolResult { tool_call_id, .. } => Some(tool_call_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        thread
+            .iter()
+            .filter_map(|m| match &m.content {
+                MessageContent::ToolCall {
+                    tool_call_id,
+                    function,
+                } if !answered.contains(tool_call_id.as_str()) => {
+                    Some((tool_call_id.as_str(), function))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The registry entries (`kernel id -> (thread, model id)`) for the calls
+    /// of thread `id` that no result answers, recovered after the session
+    /// that proposed them is gone.
+    ///
+    /// The kernel names a call by an id it minted, and only the registry
+    /// knows the model's id for it; a machine's record of `proposed` calls
+    /// outlives the session, so each is paired with the open call of the same
+    /// function and arguments. Two identical calls pair in either order,
+    /// which is indistinguishable to everyone.
+    #[must_use]
+    pub fn recover_open_calls<'a>(
+        &self,
+        id: &str,
+        proposed: impl IntoIterator<Item = &'a ProposedToolCall>,
+    ) -> HashMap<ToolCallId, (ThreadId, String)> {
+        let mut open = self.open_calls(id);
+        let mut recovered = HashMap::new();
+        for call in proposed {
+            let found = open.iter().position(|(_, function)| {
+                function.name == call.name
+                    && serde_json::from_str::<serde_json::Value>(&function.arguments)
+                        .is_ok_and(|args| args == call.args)
+            });
+            if let Some(found) = found {
+                let (model_id, _) = open.swap_remove(found);
+                recovered.insert(call.call_id, (id.to_string(), model_id.to_string()));
+            }
+        }
+        recovered
     }
 
     /// Keeps the raw argument text of tool calls the model garbled beyond

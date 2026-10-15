@@ -421,10 +421,13 @@ pub fn control_command_to_kernel_event(cmd: &ControlCommand) -> Option<sven_hsm:
                 approval_id: ApprovalId::from_uuid(uuid),
             })
         }
-        ControlCommand::DenyTool { call_id, .. } => {
+        ControlCommand::DenyTool {
+            call_id, reason, ..
+        } => {
             let uuid = Uuid::parse_str(call_id).unwrap_or_else(|_| Uuid::new_v4());
             Some(Event::HumanRejected {
                 approval_id: ApprovalId::from_uuid(uuid),
+                reason: reason.clone(),
             })
         }
         _ => None,

@@ -338,7 +338,7 @@ where
     // empty event queue does not mean the machine has nothing left to do -
     // quiescence-based captures must wait these out. Effect- and event-derived
     // only: replay reproduces the same set without any live executor state.
-    let mut inflight = InFlight::default();
+    let mut inflight = InFlight::new(executor.parks_approvals());
 
     let init_effects = machine.init(&mut ctx);
     // Mirror the audit trail *before* running effects so a `PersistAudit`

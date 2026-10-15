@@ -91,7 +91,7 @@ impl HarnessMachine {
             Event::HumanApproved { approval_id } => {
                 self.on_gate_answered(run, *approval_id, true, ctx)
             }
-            Event::HumanRejected { approval_id } => {
+            Event::HumanRejected { approval_id, .. } => {
                 self.on_gate_answered(run, *approval_id, false, ctx)
             }
             _ => Reaction::Ignored,

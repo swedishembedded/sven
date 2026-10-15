@@ -19,7 +19,14 @@
 //!   session's policy requires no approval - so what arrives here is a
 //!   decision a machine puts to a person (an SDLC `need_approval`).
 //! * A question dropped unanswered gets [`sven_vocab::NO_USER_ANSWER`]; an
-//!   approval dropped unanswered is refused.
+//!   approval dropped unanswered is refused, with the reason
+//!   [`GATE_DROPPED`], so the model and a trajectory can tell a lost gate from
+//!   a person's "no".
+//! * With [`UserExecutor::with_parked_approvals`] an approval that would be
+//!   put to a person is not: like a parked question it waits in the kernel's
+//!   context ([`sven_hsm::Context::pending_approval`]) for whoever decides it
+//!   later, possibly in another process, and posts `Event::HumanApproved` or
+//!   `Event::HumanRejected` to the kernel.
 //! * A question or approval still waiting when its run stops is withdrawn:
 //!   the waiting task drops its receiver, so the frontend holding the
 //!   request sees `reply_tx` close and can take the prompt down.
@@ -46,6 +53,14 @@ use sven_kernel::{EffectExecutor, EventSink};
 
 use sven_vocab::ApprovalMode;
 use tokio::sync::{mpsc, oneshot};
+
+/// The reason an approval is refused with when the holder of its gate dropped
+/// it without replying.
+pub const GATE_DROPPED: &str = "handler_dropped";
+
+/// The reason an approval is refused with when nobody holds the approval
+/// channel any more.
+pub const NO_APPROVER: &str = "no_approver";
 
 // ── Channel message types ─────────────────────────────────────────────────────
 
@@ -94,6 +109,7 @@ pub struct UserExecutor {
     parked_tx: Option<mpsc::Sender<ParkedQuestion>>,
     approval_mode: ApprovalMode,
     preapproved: Option<Preapproval>,
+    park_approvals: bool,
 }
 
 /// Which tool calls manual approval approves without asking (a shell command
@@ -120,7 +136,18 @@ impl UserExecutor {
             parked_tx: None,
             approval_mode: ApprovalMode::Auto,
             preapproved: None,
+            park_approvals: false,
         }
+    }
+
+    /// Parks an approval that would be put to a person instead of asking:
+    /// nothing is sent down the approval channel and no reply is awaited, so
+    /// the run can stop with the approval pending and be decided later. See
+    /// the module doc.
+    #[must_use]
+    pub fn with_parked_approvals(mut self) -> Self {
+        self.park_approvals = true;
+        self
     }
 
     /// Under manual approval, approves a tool call `preapproved` accepts
@@ -230,6 +257,10 @@ impl EffectExecutor for UserExecutor {
                     let _ = sink.emit(Event::HumanApproved { approval_id }).await;
                     return;
                 }
+                if self.park_approvals {
+                    tracing::debug!(?approval_id, "UserExecutor: approval parked");
+                    return;
+                }
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let req = ApprovalRequest {
                     approval_id,
@@ -240,7 +271,12 @@ impl EffectExecutor for UserExecutor {
                 };
                 if self.approval_tx.send(req).await.is_err() {
                     tracing::warn!("UserExecutor: approval channel closed; emitting HumanRejected");
-                    let _ = sink.emit(Event::HumanRejected { approval_id }).await;
+                    let _ = sink
+                        .emit(Event::HumanRejected {
+                            approval_id,
+                            reason: Some(NO_APPROVER.to_string()),
+                        })
+                        .await;
                     return;
                 }
                 let sink = sink.clone();
@@ -254,13 +290,23 @@ impl EffectExecutor for UserExecutor {
                             let _ = sink.emit(Event::HumanApproved { approval_id }).await;
                         }
                         Ok(false) => {
-                            let _ = sink.emit(Event::HumanRejected { approval_id }).await;
+                            let _ = sink
+                                .emit(Event::HumanRejected {
+                                    approval_id,
+                                    reason: None,
+                                })
+                                .await;
                         }
                         Err(_) => {
                             tracing::warn!(
                                 "UserExecutor: approval oneshot dropped; emitting HumanRejected"
                             );
-                            let _ = sink.emit(Event::HumanRejected { approval_id }).await;
+                            let _ = sink
+                                .emit(Event::HumanRejected {
+                                    approval_id,
+                                    reason: Some(GATE_DROPPED.to_string()),
+                                })
+                                .await;
                         }
                     }
                 });
@@ -298,6 +344,10 @@ impl EffectExecutor for UserExecutor {
 
             _ => {}
         }
+    }
+
+    fn parks_approvals(&self) -> bool {
+        self.park_approvals
     }
 }
 

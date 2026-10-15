@@ -231,6 +231,18 @@ impl Context {
         }
     }
 
+    /// Resolves a pending approval by id as refused: the call it gates does
+    /// not run. Returns `false` if the id did not match.
+    pub fn refuse(&mut self, approval_id: ApprovalId) -> bool {
+        match self.pending_approval.take() {
+            Some(p) if p.approval_id == approval_id => true,
+            other => {
+                self.pending_approval = other;
+                false
+            }
+        }
+    }
+
     /// Records a parked question.
     pub fn set_pending_question(&mut self, pending: PendingQuestion) {
         self.pending_question = Some(pending);

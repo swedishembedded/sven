@@ -38,6 +38,9 @@ pub(crate) struct UserGates {
     pub questions: mpsc::Sender<UserQuestion>,
     pub approvals: mpsc::Sender<ApprovalRequest>,
     pub approval_mode: ApprovalMode,
+    /// The session's own approvals wait to be decided from outside the run
+    /// instead of being put to the approval channel. Children still ask.
+    pub park_approvals: bool,
 }
 
 /// The root `Effect::Verify` is jailed to: the session's project root, or
@@ -152,6 +155,11 @@ pub(crate) fn compose(
     let user_executor = UserExecutor::new(parts.gates.questions, parts.gates.approvals)
         .with_approval_mode(parts.gates.approval_mode)
         .with_preapproval(crate::mode_policy::preapproval(&parts.config.tools));
+    let user_executor = if parts.gates.park_approvals {
+        user_executor.with_parked_approvals()
+    } else {
+        user_executor
+    };
     #[cfg(feature = "memory")]
     let user_executor = user_executor.with_parked_questions(parts.parked_tx);
     let base = CompositeExecutorBuilder::default()

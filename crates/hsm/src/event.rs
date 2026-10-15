@@ -189,6 +189,10 @@ pub enum Event {
     HumanRejected {
         /// Matches the [`ApprovalId`] of the originating approval request.
         approval_id: ApprovalId,
+        /// Why it was refused, when whoever refused it said. The machine
+        /// passes it on to the model as the reason the call did not run.
+        #[serde(default)]
+        reason: Option<String>,
     },
 
     /// A tool call cannot be resolved without asking a human, and the answer

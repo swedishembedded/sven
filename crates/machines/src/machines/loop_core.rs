@@ -663,15 +663,22 @@ pub fn handle_tool_event<S>(
             }
         }
 
-        Event::HumanRejected { approval_id } => {
+        Event::HumanRejected {
+            approval_id,
+            reason,
+        } => {
             let mut ls = LoopState::load(ctx);
             if ls.awaiting_tool_approval == Some(*approval_id) {
                 ls.awaiting_tool_approval = None;
+                ctx.refuse(*approval_id);
                 // Rejected tool: resume loop; the next turn answers the call
                 // with the refusal so the model sees why it did not run.
                 ls.refusals.insert(
                     approval_id.as_uuid().to_string(),
-                    "a human did not approve it".to_string(),
+                    match reason {
+                        Some(reason) => format!("a human did not approve it: {reason}"),
+                        None => "a human did not approve it".to_string(),
+                    },
                 );
                 if ls.is_idle() {
                     let cont = make_turn(&mut ls);

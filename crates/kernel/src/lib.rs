@@ -109,6 +109,16 @@ pub trait EffectExecutor: Send {
     /// run's behalf outlives it. The default does nothing: an executor whose
     /// `execute` finishes its work has nothing to stop.
     fn bind_cancel(&mut self, _scope: &CancelScope) {}
+
+    /// Whether an approval request this executor accepts is parked rather
+    /// than answered: it waits in the context until a decision event arrives
+    /// from outside the run, which may be much later. The kernel then does
+    /// not count the request as work in flight, so a capture is served while
+    /// it is pending - the same contract as a parked question. The default is
+    /// `false`: the executor holds the request open and answers it.
+    fn parks_approvals(&self) -> bool {
+        false
+    }
 }
 
 #[async_trait]
@@ -120,6 +130,10 @@ impl EffectExecutor for Box<dyn EffectExecutor> {
     fn bind_cancel(&mut self, scope: &CancelScope) {
         self.as_mut().bind_cancel(scope);
     }
+
+    fn parks_approvals(&self) -> bool {
+        self.as_ref().parks_approvals()
+    }
 }
 
 /// Work the kernel has started and whose answer has not re-entered the
@@ -130,14 +144,34 @@ impl EffectExecutor for Box<dyn EffectExecutor> {
 /// request is outstanding until `HumanApproved`/`HumanRejected` for it: the
 /// host may answer at once or after asking someone, and either way the turn
 /// is not over. A parked question (`RequestHumanAnswer`) is deliberately not
-/// tracked - parking exists so a run can stop and resume when it is answered.
-#[derive(Default)]
+/// tracked, because parking exists so a run can stop and resume when it is
+/// answered; neither is an approval request that an executor which
+/// [parks approvals](EffectExecutor::parks_approvals) accepted.
 struct InFlight {
     tools: HashSet<ToolCallId>,
     approvals: HashSet<ApprovalId>,
+    parks_approvals: bool,
 }
 
 impl InFlight {
+    /// Nothing in flight; `parks_approvals` is the executor's answer to
+    /// [`EffectExecutor::parks_approvals`].
+    fn new(parks_approvals: bool) -> Self {
+        Self {
+            tools: HashSet::new(),
+            approvals: HashSet::new(),
+            parks_approvals,
+        }
+    }
+
+    /// Records an approval request handed to the executor. A parked request
+    /// is not work in flight: its decision arrives from outside the run.
+    fn hold_approval(&mut self, approval_id: ApprovalId) {
+        if !self.parks_approvals {
+            self.approvals.insert(approval_id);
+        }
+    }
+
     fn is_empty(&self) -> bool {
         self.tools.is_empty() && self.approvals.is_empty()
     }
@@ -152,7 +186,7 @@ impl InFlight {
             | Event::QuestionAsked { call_id, .. } => {
                 self.tools.remove(call_id);
             }
-            Event::HumanApproved { approval_id } | Event::HumanRejected { approval_id } => {
+            Event::HumanApproved { approval_id } | Event::HumanRejected { approval_id, .. } => {
                 self.approvals.remove(approval_id);
             }
             _ => {}
@@ -358,7 +392,7 @@ where
     // Same in-flight registry as the erased loop. The typed runtime exposes no
     // quiescence-based capture, so the set is only fed; keeping the bookkeeping
     // identical means run_effects has one contract.
-    let mut inflight = InFlight::default();
+    let mut inflight = InFlight::new(executor.parks_approvals());
 
     // Initial transitions run inside the single consumer task, so their entry
     // effects go through the same validate-then-execute path as everything else.
@@ -526,7 +560,7 @@ async fn run_effects<S, E>(
                 *last_error = None;
                 for effect in other_effects {
                     if let Effect::RequestHumanApproval { approval_id, .. } = &effect {
-                        inflight.approvals.insert(*approval_id);
+                        inflight.hold_approval(*approval_id);
                     }
                     children
                         .execute(effect, policy, &label, executor, sink, obs)

@@ -84,6 +84,8 @@ pub struct RuntimeBuilder {
     park_questions: bool,
     /// See [`RuntimeBuilder::with_approval_mode`].
     approval_mode: ApprovalMode,
+    /// See [`RuntimeBuilder::with_parked_approvals`].
+    park_approvals: bool,
     /// Conversation history to seed into the machine's thread before the
     /// first turn (used when resuming or switching sessions).
     initial_history: Vec<Message>,
@@ -167,6 +169,7 @@ impl RuntimeBuilder {
             model_cfg_override: None,
             tool_question_tx: None,
             park_questions: false,
+            park_approvals: false,
             approval_mode: ApprovalMode::Auto,
             initial_history: Vec::new(),
             permission_requester: None,
@@ -291,6 +294,20 @@ impl RuntimeBuilder {
     #[must_use]
     pub fn with_parked_questions(mut self) -> Self {
         self.park_questions = true;
+        self
+    }
+
+    /// Under manual approval, parks the session's own approvals instead of
+    /// putting them to [`KernelChannels::approval_rx`]: the run ends with the
+    /// approval pending in the kernel's context
+    /// ([`Context::pending_approval`](sven_hsm::Context::pending_approval)),
+    /// and a later session built from that snapshot decides it by posting
+    /// `Event::HumanApproved` or `Event::HumanRejected`. Calls of the
+    /// session's children are still asked on the channel: a child does not
+    /// outlive the run.
+    #[must_use]
+    pub fn with_parked_approvals(mut self) -> Self {
+        self.park_approvals = true;
         self
     }
 
@@ -681,6 +698,18 @@ impl RuntimeBuilder {
             ToolCallId,
             (String, String),
         >::new()));
+        // A session resumed in the middle of a turn still holds calls the
+        // model proposed and nothing has answered - one waiting for a
+        // decision, say. Their results and refusals are filed under the
+        // model's ids, which only this registry knows.
+        if let (Some(snapshot), Ok(store), Ok(mut registry)) = (
+            self.kernel_snapshot.as_ref(),
+            conv_store.lock(),
+            call_id_to_thread.lock(),
+        ) {
+            let proposed = sven_machines::machines::loop_core::LoopState::load(&snapshot.context);
+            registry.extend(store.recover_open_calls(seed_thread, proposed.proposed.values()));
+        }
 
         // A parked question's durable record is the same whichever surface
         // drives this session, so the drain is wired here, once.
@@ -711,6 +740,7 @@ impl RuntimeBuilder {
             questions: question_tx,
             approvals: approval_tx,
             approval_mode: self.approval_mode,
+            park_approvals: self.park_approvals,
         };
         let child_spawner = session_executor::child_spawner(
             &self.mode,

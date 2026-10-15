@@ -323,6 +323,7 @@ fn state_and_transition_coverage() {
         },
         Event::HumanRejected {
             approval_id: approval,
+            reason: None,
         },
         Event::ToolSucceeded {
             call_id: common::fixed_tool_id(),

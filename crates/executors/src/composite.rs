@@ -78,6 +78,12 @@ impl EffectExecutor for CompositeExecutor {
         self.internal.bind_cancel(scope);
     }
 
+    fn parks_approvals(&self) -> bool {
+        self.user
+            .as_ref()
+            .is_some_and(|user| user.parks_approvals())
+    }
+
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
         let kind = effect.kind();
         match kind {
