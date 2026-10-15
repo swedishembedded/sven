@@ -38,7 +38,7 @@ use tokio::sync::{mpsc, watch};
 use sven_hsm::{
     classify, validate_effects_are_allowed, ApprovalId, AuditRecord, Context, Effect,
     EffectDisposition, Event, EventKind, Hsm, Machine, ObservationSink, PermissionPolicy,
-    RuntimeReport, RuntimeStatus, StateLabel, ToolAuditRecord, ToolCallId, UiEvent,
+    RuntimeReport, RuntimeStatus, StateLabel, ToolAuditRecord, ToolCallId, ToolCapability, UiEvent,
 };
 
 mod cancel;
@@ -119,6 +119,14 @@ pub trait EffectExecutor: Send {
     fn parks_approvals(&self) -> bool {
         false
     }
+
+    /// Tells the executor that the permission gate refused the tool call
+    /// `call_id` outright, because `capability` is not permitted in the
+    /// session's current state. A refused call is never handed to
+    /// [`execute`](Self::execute); the machine is told by `ToolFailed`. This
+    /// is how an executor that records what happened to calls learns of the
+    /// ones it will never run. The default does nothing.
+    fn gate_refused(&mut self, _call_id: ToolCallId, _capability: ToolCapability, _reason: &str) {}
 }
 
 #[async_trait]
@@ -133,6 +141,10 @@ impl EffectExecutor for Box<dyn EffectExecutor> {
 
     fn parks_approvals(&self) -> bool {
         self.as_ref().parks_approvals()
+    }
+
+    fn gate_refused(&mut self, call_id: ToolCallId, capability: ToolCapability, reason: &str) {
+        self.as_mut().gate_refused(call_id, capability, reason);
     }
 }
 
@@ -628,6 +640,7 @@ async fn run_effects<S, E>(
                     reason.clone(),
                 ));
                 *last_error = Some(reason.clone());
+                executor.gate_refused(*call_id, capability, &reason);
                 let _ = sink
                     .emit(Event::ToolFailed {
                         call_id: *call_id,

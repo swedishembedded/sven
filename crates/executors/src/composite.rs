@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{AuditTrailHandle, Effect, EffectKind, ObservationSink};
+use sven_hsm::{AuditTrailHandle, Effect, EffectKind, ObservationSink, ToolCallId, ToolCapability};
 use sven_kernel::{CancelScope, Clock, EffectExecutor, EventSink};
 use sven_tool_registry::ToolRegistry;
 use tokio::sync::mpsc;
@@ -82,6 +82,12 @@ impl EffectExecutor for CompositeExecutor {
         self.user
             .as_ref()
             .is_some_and(|user| user.parks_approvals())
+    }
+
+    fn gate_refused(&mut self, call_id: ToolCallId, capability: ToolCapability, reason: &str) {
+        if let Some(user) = &mut self.user {
+            user.gate_refused(call_id, capability, reason);
+        }
     }
 
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {

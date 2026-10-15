@@ -12,9 +12,10 @@
 //! history.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use sven_hsm::{ProposedToolCall, ToolCallId};
+use atif::{GateAuthority, GateDecision, GateOutcome, MemoryRetrieval};
+use sven_hsm::{ProposedToolCall, ToolCallId, ToolCapability};
 use sven_tool_registry::ToolRegistry;
 
 use sven_model::{Message, MessageContent};
@@ -39,6 +40,12 @@ pub struct ThreadStore {
     unparsed_arguments: HashMap<String, String>,
     /// Every compaction applied to any thread, oldest first.
     compactions: Vec<CompactionRecord>,
+    /// What the permission gate decided about a call, by the model's call id.
+    /// Kept here, beside the thread that holds the call, so whoever records
+    /// the run finds the decision and the call together.
+    gate_decisions: HashMap<String, GateDecision>,
+    /// What each memory retrieval a tool made returned, oldest first.
+    memory_retrievals: Vec<MemoryRetrieval>,
 }
 
 impl ThreadStore {
@@ -188,6 +195,53 @@ impl ThreadStore {
         &self.unparsed_arguments
     }
 
+    /// Keeps the gate's decision about the call the model named `call_id`.
+    ///
+    /// Argument violations already noted for the call stay with it unless
+    /// `decision` brings its own.
+    pub fn record_gate_decision(&mut self, call_id: &str, mut decision: GateDecision) {
+        if decision.violations.is_empty() {
+            if let Some(known) = self.gate_decisions.remove(call_id) {
+                decision.violations = known.violations;
+            }
+        }
+        self.gate_decisions.insert(call_id.to_string(), decision);
+    }
+
+    /// Keeps the `violations` a schema pre-check found in the arguments of the
+    /// call the model named `call_id`. A call the gate said nothing about is
+    /// filed as `unasked`: the policy let it through without asking anyone.
+    pub fn record_argument_violations(
+        &mut self,
+        call_id: &str,
+        unasked: impl FnOnce() -> GateDecision,
+        violations: Vec<atif::ArgumentViolation>,
+    ) {
+        self.gate_decisions
+            .entry(call_id.to_string())
+            .or_insert_with(unasked)
+            .violations = violations;
+    }
+
+    /// Every gate decision recorded so far, ordered by call id.
+    #[must_use]
+    pub fn gate_decisions(&self) -> Vec<GateDecision> {
+        let mut decisions: Vec<_> = self.gate_decisions.values().cloned().collect();
+        decisions.sort_by(|a, b| a.call_id.cmp(&b.call_id));
+        decisions
+    }
+
+    /// Keeps what a memory retrieval returned.
+    pub fn record_memory_retrieval(&mut self, retrieval: MemoryRetrieval) {
+        self.memory_retrievals.push(retrieval);
+    }
+
+    /// Every memory retrieval recorded so far, oldest first.
+    #[must_use]
+    pub fn memory_retrievals(&self) -> &[MemoryRetrieval] {
+        &self.memory_retrievals
+    }
+
     /// Notes that a thread was compacted. Call alongside
     /// [`replace_thread`](Self::replace_thread) with the compacted history.
     pub fn record_compaction(&mut self, record: CompactionRecord) {
@@ -204,6 +258,93 @@ impl ThreadStore {
     #[must_use]
     pub fn len(&self, id: &str) -> usize {
         self.threads.get(id).map(Vec::len).unwrap_or(0)
+    }
+}
+
+/// The `policy` a decision is filed under when the policy required a person's
+/// approval of the call.
+pub(crate) const REQUIRES_APPROVAL: &str = "requires_approval";
+
+/// Files gate decisions in the conversation store under the model's id for the
+/// call, which is the id a trajectory names it by.
+///
+/// The gate, the person asked and the executor that runs the tool each know a
+/// different part of what happened to a call, and each knows the call by the
+/// kernel's id. The journal holds the registry that translates, so none of
+/// them needs the store or the model's ids.
+#[derive(Clone)]
+pub struct GateJournal {
+    store: Arc<Mutex<ThreadStore>>,
+    registry: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
+}
+
+/// What a party to a gate decision reports to the [`GateJournal`].
+pub struct GateVerdict<'a> {
+    /// The capability the call needed.
+    pub capability: ToolCapability,
+    /// The rule that routed the call; see [`GateDecision::policy`].
+    pub policy: &'a str,
+    /// What was decided.
+    pub outcome: GateOutcome,
+    /// Who decided it.
+    pub decided_by: GateAuthority,
+    /// Why, when whoever decided said.
+    pub reason: Option<String>,
+}
+
+impl GateVerdict<'static> {
+    /// A person's decision about a call that policy asked them to approve.
+    #[must_use]
+    pub fn human(capability: ToolCapability, approved: bool, reason: Option<String>) -> Self {
+        Self {
+            capability,
+            policy: REQUIRES_APPROVAL,
+            outcome: if approved {
+                GateOutcome::Approved
+            } else {
+                GateOutcome::Denied
+            },
+            decided_by: GateAuthority::Human,
+            reason,
+        }
+    }
+}
+
+impl GateJournal {
+    /// A journal writing to `store`, translating ids with `registry`.
+    #[must_use]
+    pub fn new(
+        store: Arc<Mutex<ThreadStore>>,
+        registry: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
+    ) -> Self {
+        Self { store, registry }
+    }
+
+    /// Records `verdict` for the call the kernel names `call_id`. A call the
+    /// registry does not know is not part of any thread, so there is no
+    /// trajectory step to attach a decision to and nothing is recorded.
+    pub fn record(&self, call_id: ToolCallId, verdict: GateVerdict<'_>) {
+        let Some(model_id) = self
+            .registry
+            .lock()
+            .ok()
+            .and_then(|registry| registry.get(&call_id).map(|(_, model_id)| model_id.clone()))
+        else {
+            return;
+        };
+        let decision = GateDecision {
+            decision_id: call_id.as_uuid().to_string(),
+            call_id: model_id.clone(),
+            capability: format!("{:?}", verdict.capability),
+            policy: verdict.policy.to_string(),
+            outcome: verdict.outcome,
+            decided_by: verdict.decided_by,
+            reason: verdict.reason,
+            violations: Vec::new(),
+        };
+        if let Ok(mut store) = self.store.lock() {
+            store.record_gate_decision(&model_id, decision);
+        }
     }
 }
 
@@ -312,6 +453,98 @@ mod tests {
         assert_eq!(store.answer_open_calls("t", &reasons), 0);
         let last = format!("{:?}", store.snapshot("t").last().unwrap());
         assert!(last.contains("a human said no"), "{last}");
+    }
+
+    fn decision(call_id: &str, by: GateAuthority) -> GateDecision {
+        GateDecision {
+            decision_id: format!("d-{call_id}"),
+            call_id: call_id.into(),
+            capability: "ExecuteShell".into(),
+            policy: "requires_approval".into(),
+            outcome: GateOutcome::Approved,
+            decided_by: by,
+            reason: None,
+            violations: Vec::new(),
+        }
+    }
+
+    fn violation() -> atif::ArgumentViolation {
+        atif::ArgumentViolation {
+            path: String::new(),
+            rule: "required".into(),
+            message: "missing".into(),
+        }
+    }
+
+    /// Violations are noted when the call runs, after the decision that let it
+    /// run: the decision must keep them, and a call nobody was asked about
+    /// still gets a record to carry them.
+    #[test]
+    fn violations_join_the_decision_whichever_arrives_first() {
+        let mut store = ThreadStore::new();
+        store.record_gate_decision("a", decision("a", GateAuthority::Human));
+        store.record_argument_violations(
+            "a",
+            || decision("a", GateAuthority::Policy),
+            vec![violation()],
+        );
+        store.record_argument_violations(
+            "b",
+            || decision("b", GateAuthority::Policy),
+            vec![violation()],
+        );
+        store.record_gate_decision("b", decision("b", GateAuthority::Human));
+
+        let decisions = store.gate_decisions();
+        assert_eq!(decisions.len(), 2);
+        for d in &decisions {
+            assert_eq!(d.decided_by, GateAuthority::Human, "{d:?}");
+            assert_eq!(d.violations.len(), 1, "{d:?}");
+        }
+    }
+
+    #[test]
+    fn the_journal_files_a_decision_under_the_models_call_id() {
+        let store = Arc::new(Mutex::new(ThreadStore::new()));
+        let registry = Arc::new(Mutex::new(HashMap::new()));
+        let kernel_id = ToolCallId::new();
+        registry
+            .lock()
+            .unwrap()
+            .insert(kernel_id, ("chat".to_string(), "call_xyz".to_string()));
+        let journal = GateJournal::new(Arc::clone(&store), registry);
+
+        journal.record(
+            kernel_id,
+            GateVerdict {
+                capability: ToolCapability::ExecuteShell,
+                policy: "requires_approval",
+                outcome: GateOutcome::Denied,
+                decided_by: GateAuthority::HandlerDropped,
+                reason: Some("handler_dropped".into()),
+            },
+        );
+        journal.record(
+            ToolCallId::new(),
+            GateVerdict {
+                capability: ToolCapability::ExecuteShell,
+                policy: "requires_approval",
+                outcome: GateOutcome::Denied,
+                decided_by: GateAuthority::Human,
+                reason: None,
+            },
+        );
+
+        let decisions = store.lock().unwrap().gate_decisions();
+        assert_eq!(
+            decisions.len(),
+            1,
+            "a call outside every thread is not recorded"
+        );
+        assert_eq!(decisions[0].call_id, "call_xyz");
+        assert_eq!(decisions[0].decision_id, kernel_id.as_uuid().to_string());
+        assert_eq!(decisions[0].capability, "ExecuteShell");
+        assert_eq!(decisions[0].reason.as_deref(), Some("handler_dropped"));
     }
 
     #[test]

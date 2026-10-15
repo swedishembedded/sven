@@ -39,6 +39,7 @@
 //! let runtime = Runtime::spawn(Hsm::new(machine), ctx, policy, executor, 64);
 //! ```
 
+mod argument_check;
 pub mod audit;
 pub mod chunks;
 pub mod composite;
@@ -58,7 +59,7 @@ pub use audit::{
 pub use chunks::{ChunkSession, ContextAssembler};
 pub use composite::{CompositeExecutor, CompositeExecutorBuilder};
 pub use internal::InternalExecutor;
-pub use thread_store::{ThreadId, ThreadStore};
+pub use thread_store::{GateJournal, GateVerdict, ThreadId, ThreadStore};
 pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
 pub use turn::{CompactionConfig, TurnExecutor};

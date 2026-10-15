@@ -8,6 +8,8 @@ license     = "Apache-2.0"
 [dependencies]
 sven-hsm    = { path = "../hsm" }
 sven-vocab  = { path = "../vocab" }
+atif        = { path = "../atif" }
+tokio       = { workspace = true }
 async-trait = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }

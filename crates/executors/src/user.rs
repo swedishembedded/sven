@@ -45,6 +45,7 @@
 //!   simply stays parked forever rather than being answered on its behalf.
 
 use async_trait::async_trait;
+use atif::{GateAuthority, GateOutcome};
 use std::sync::Arc;
 use sven_hsm::{
     ApprovalId, Effect, Event, ObservationSink, QuestionId, ToolCallId, ToolCapability,
@@ -53,6 +54,12 @@ use sven_kernel::{EffectExecutor, EventSink};
 
 use sven_vocab::ApprovalMode;
 use tokio::sync::{mpsc, oneshot};
+
+use crate::thread_store::{GateJournal, GateVerdict, REQUIRES_APPROVAL};
+
+/// The `policy` a call is filed under when the session's state does not
+/// permit its capability at all.
+const STATE_POLICY: &str = "state_allow_set";
 
 /// The reason an approval is refused with when the holder of its gate dropped
 /// it without replying.
@@ -110,6 +117,7 @@ pub struct UserExecutor {
     approval_mode: ApprovalMode,
     preapproved: Option<Preapproval>,
     park_approvals: bool,
+    gate_journal: Option<GateJournal>,
 }
 
 /// Which tool calls manual approval approves without asking (a shell command
@@ -137,7 +145,16 @@ impl UserExecutor {
             approval_mode: ApprovalMode::Auto,
             preapproved: None,
             park_approvals: false,
+            gate_journal: None,
         }
+    }
+
+    /// Records every approval this executor decides or has decided for it in
+    /// `journal`, so the trajectory says who let a call run, or why it did not.
+    #[must_use]
+    pub fn with_gate_journal(mut self, journal: GateJournal) -> Self {
+        self.gate_journal = Some(journal);
+        self
     }
 
     /// Parks an approval that would be put to a person instead of asking:
@@ -253,7 +270,23 @@ impl EffectExecutor for UserExecutor {
                     .as_ref()
                     .zip(self.preapproved.as_ref())
                     .is_some_and(|(call, preapproved)| preapproved(call));
+                let journal = self.gate_journal.clone();
+                let record = move |outcome, decided_by, reason: Option<&str>| {
+                    if let Some(journal) = &journal {
+                        journal.record(
+                            ToolCallId::from_uuid(approval_id.as_uuid()),
+                            GateVerdict {
+                                capability,
+                                policy: REQUIRES_APPROVAL,
+                                outcome,
+                                decided_by,
+                                reason: reason.map(str::to_string),
+                            },
+                        );
+                    }
+                };
                 if self.approval_mode == ApprovalMode::Auto || preapproved {
+                    record(GateOutcome::Approved, GateAuthority::Auto, None);
                     let _ = sink.emit(Event::HumanApproved { approval_id }).await;
                     return;
                 }
@@ -271,6 +304,11 @@ impl EffectExecutor for UserExecutor {
                 };
                 if self.approval_tx.send(req).await.is_err() {
                     tracing::warn!("UserExecutor: approval channel closed; emitting HumanRejected");
+                    record(
+                        GateOutcome::Denied,
+                        GateAuthority::HandlerDropped,
+                        Some(NO_APPROVER),
+                    );
                     let _ = sink
                         .emit(Event::HumanRejected {
                             approval_id,
@@ -287,9 +325,11 @@ impl EffectExecutor for UserExecutor {
                     };
                     match reply {
                         Ok(true) => {
+                            record(GateOutcome::Approved, GateAuthority::Human, None);
                             let _ = sink.emit(Event::HumanApproved { approval_id }).await;
                         }
                         Ok(false) => {
+                            record(GateOutcome::Denied, GateAuthority::Human, None);
                             let _ = sink
                                 .emit(Event::HumanRejected {
                                     approval_id,
@@ -300,6 +340,11 @@ impl EffectExecutor for UserExecutor {
                         Err(_) => {
                             tracing::warn!(
                                 "UserExecutor: approval oneshot dropped; emitting HumanRejected"
+                            );
+                            record(
+                                GateOutcome::Denied,
+                                GateAuthority::HandlerDropped,
+                                Some(GATE_DROPPED),
                             );
                             let _ = sink
                                 .emit(Event::HumanRejected {
@@ -348,6 +393,21 @@ impl EffectExecutor for UserExecutor {
 
     fn parks_approvals(&self) -> bool {
         self.park_approvals
+    }
+
+    fn gate_refused(&mut self, call_id: ToolCallId, capability: ToolCapability, reason: &str) {
+        if let Some(journal) = &self.gate_journal {
+            journal.record(
+                call_id,
+                GateVerdict {
+                    capability,
+                    policy: STATE_POLICY,
+                    outcome: GateOutcome::Denied,
+                    decided_by: GateAuthority::Policy,
+                    reason: Some(reason.to_string()),
+                },
+            );
+        }
     }
 }
 

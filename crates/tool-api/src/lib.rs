@@ -10,6 +10,7 @@
 //! holds the concrete `ToolRegistry` and the config-driven policy engines.
 //! See the `policy` module docs for why `ApprovalPolicy` lives here rather
 //! than there.
+pub mod call_records;
 pub mod display;
 pub mod events;
 pub mod grep_match;

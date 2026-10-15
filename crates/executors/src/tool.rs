@@ -32,9 +32,12 @@ use sven_kernel::{CancelScope, EffectExecutor, EventSink};
 
 /// Default for [`ToolExecutor::tool_timeout`].
 const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(600);
+use crate::argument_check::argument_violations;
 use crate::chunks::ChunkSession;
 use crate::thread_store::ThreadStore;
+use atif::{GateAuthority, GateDecision, GateOutcome};
 use sven_model::Message;
+use sven_tool_api::call_records::CallRecorder;
 use sven_tool_registry::{ToolCall, ToolOutput, ToolRegistry, DISCOVERY_TOOL};
 use sven_turn::instructions::Activator;
 
@@ -198,6 +201,42 @@ impl ToolExecutor {
     }
 }
 
+/// Checks `call`'s arguments against the parameter schema its tool declares
+/// and, when they disagree, files the violations with the call's gate
+/// decision. A call the gate never asked anyone about is given the decision
+/// that describes it: the policy allowed it.
+fn note_argument_violations(
+    registry: &ToolRegistry,
+    store: &Mutex<ThreadStore>,
+    kernel_call_id: ToolCallId,
+    capability: ToolCapability,
+    call: &ToolCall,
+) {
+    let Some(tool) = registry.get(&call.name) else {
+        return;
+    };
+    let violations = argument_violations(&tool.parameters_schema(), &call.args);
+    if violations.is_empty() {
+        return;
+    }
+    if let Ok(mut store) = store.lock() {
+        store.record_argument_violations(
+            &call.id,
+            || GateDecision {
+                decision_id: kernel_call_id.as_uuid().to_string(),
+                call_id: call.id.clone(),
+                capability: format!("{capability:?}"),
+                policy: "allowed".to_string(),
+                outcome: GateOutcome::Approved,
+                decided_by: GateAuthority::Policy,
+                reason: None,
+                violations: Vec::new(),
+            },
+            violations,
+        );
+    }
+}
+
 #[async_trait]
 impl EffectExecutor for ToolExecutor {
     fn bind_cancel(&mut self, scope: &CancelScope) {
@@ -310,6 +349,14 @@ impl EffectExecutor for ToolExecutor {
                 args,
             };
 
+            // The tool declares what it accepts; the model's arguments are
+            // checked against it before the tool sees them, and what is wrong
+            // goes into the trajectory. The call still runs: the tool answers
+            // a bad argument in its own words, which the model reads.
+            if mapping.is_some() {
+                note_argument_violations(&registry, &store, call_id, capability, &tool_call);
+            }
+
             // Display id used for outward observation correlation: the exact
             // id the LLM assigned (matching the earlier `UiEvent::ToolStarted`),
             // falling back to the internal uuid when no mapping exists.
@@ -322,12 +369,16 @@ impl EffectExecutor for ToolExecutor {
             // dropped, so without this the `call_id` stays in `loop_core`'s
             // pending set forever and the session wedges holding its whole
             // object graph — with no error surfaced anywhere.
+            let recorder = CallRecorder::new();
             let output = {
                 // Shadowed inside this block only; the outer `registry` is
                 // still used below for `output_category`.
                 let registry = Arc::clone(&registry);
                 let call = tool_call.clone();
-                let task = tokio::spawn(async move { registry.execute(&call).await });
+                let task = tokio::spawn(sven_tool_api::call_records::scope(
+                    recorder.clone(),
+                    async move { registry.execute(&call).await },
+                ));
                 let abort = task.abort_handle();
                 let finished = tokio::select! {
                     biased;
@@ -367,6 +418,17 @@ impl EffectExecutor for ToolExecutor {
                     }
                 }
             };
+
+            // What the tool says it retrieved belongs to this call, whatever
+            // came of the call.
+            if mapping.is_some() {
+                if let Ok(mut s) = store.lock() {
+                    for mut retrieval in recorder.memory_retrievals() {
+                        retrieval.call_id.clone_from(&tool_call.id);
+                        s.record_memory_retrieval(retrieval);
+                    }
+                }
+            }
 
             // A parked output has not concluded - it must not be treated as a
             // result at all. No UiEvent, no thread-append: the
