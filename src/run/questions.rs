@@ -13,7 +13,7 @@
 //! is what a human actually did, whether or not anything reads it back today.
 
 use sven_hsm::QuestionId;
-use sven_memory::{QuestionAnsweredRecord, QuestionLedger};
+use sven_session_store::{QuestionAnsweredRecord, QuestionLedger};
 
 use crate::cli::QuestionsCommands;
 

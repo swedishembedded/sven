@@ -10,12 +10,12 @@
 //! # Design
 //!
 //! ```text
-//! ┌──────────────────────────────────────────┐   ┌──────────────────────┐
-//! │            SemanticMemoryTool            │   │    QuestionLedger    │
-//! │  remember | recall | forget | list | get │   │ parked questions and │
-//! │      provenance-aware recall framing     │   │  their answers       │
-//! └────────────────────┬─────────────────────┘   └──────────────────────┘
-//!                      │                             hash-chained JSONL
+//! ┌──────────────────────────────────────────┐
+//! │            SemanticMemoryTool            │
+//! │  remember | recall | forget | list | get │
+//! │      provenance-aware recall framing     │
+//! └────────────────────┬─────────────────────┘
+//!                      │
 //!                      ▼
 //! ┌──────────────────────────────────────────┐
 //! │             SqliteMemoryStore            │
@@ -51,16 +51,11 @@
 //! # }
 //! ```
 
-pub mod question_ledger;
 pub mod recall;
 pub mod sqlite;
 pub mod store;
 pub mod tool;
 
-pub use question_ledger::{
-    QuestionAnsweredRecord, QuestionAskedRecord, QuestionLedger, QuestionLedgerEntry,
-    QuestionLedgerError,
-};
 pub use recall::SessionScope;
 pub use sqlite::SqliteMemoryStore;
 pub use store::{DocId, DocSummary, Document, SearchResult, VectorStore};

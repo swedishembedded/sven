@@ -20,7 +20,6 @@ use run::ledger::run_ledger_command;
 use run::logging::init_logging;
 use run::models::{list_models_cmd, list_providers_cmd};
 use run::provider_doctor::run_doctor_provider;
-#[cfg(feature = "memory")]
 use run::questions::run_questions_command;
 use run::task::run_task_command;
 // `run_acp_command`/`run_mcp_command` live in `sven-acp`/`sven-mcp`, shared
@@ -181,7 +180,6 @@ async fn main() -> anyhow::Result<()> {
             Commands::Index { command } => {
                 return run_index_command(command);
             }
-            #[cfg(feature = "memory")]
             Commands::Questions { command } => {
                 return run_questions_command(command);
             }

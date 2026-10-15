@@ -171,17 +171,16 @@ impl KernelChannels {
 /// Records every question a session parks in the question ledger, where
 /// `sven questions` finds it, and returns the channel the session's
 /// `UserExecutor` sends them down.
-#[cfg(feature = "memory")]
 pub(crate) fn spawn_parked_question_ledger() -> mpsc::Sender<sven_executors::user::ParkedQuestion> {
     let (parked_tx, mut parked_rx) = sven_executors::UserExecutor::parked_channel(16);
     tokio::spawn(async move {
-        let ledger = sven_memory::QuestionLedger::at_default_path();
+        let ledger = sven_session_store::QuestionLedger::at_default_path();
         while let Some(q) = parked_rx.recv().await {
             let asked_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            if let Err(err) = ledger.record_asked(&sven_memory::QuestionAskedRecord {
+            if let Err(err) = ledger.record_asked(&sven_session_store::QuestionAskedRecord {
                 question_id: q.question_id,
                 call_id: q.call_id,
                 prompt: q.prompt,

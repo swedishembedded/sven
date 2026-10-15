@@ -18,7 +18,6 @@ pub(crate) mod models;
 pub(crate) mod oauth;
 pub(crate) mod pipeline;
 pub(crate) mod provider_doctor;
-#[cfg(feature = "memory")]
 pub(crate) mod questions;
 pub(crate) mod task;
 #[cfg(feature = "network")]

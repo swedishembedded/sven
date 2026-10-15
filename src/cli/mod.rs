@@ -13,7 +13,6 @@ mod decisions;
 mod disclosure;
 mod harness;
 mod index;
-#[cfg(feature = "memory")]
 mod questions;
 mod task;
 #[cfg(feature = "network")]
@@ -30,7 +29,6 @@ pub use agent::AgentCommands;
 pub use decisions::{DecisionsCommands, DoctorCommands};
 pub use harness::{HarnessCommands, HarnessRunArgs, LiveModelArgs, ToolsetArg};
 pub use index::IndexCommands;
-#[cfg(feature = "memory")]
 pub use questions::QuestionsCommands;
 #[cfg(feature = "network")]
 pub use sven_acp::cli::AcpCommands;
@@ -493,7 +491,6 @@ pub enum Commands {
     ///
     ///   sven questions list
     ///   sven questions answer <id> "Axum"
-    #[cfg(feature = "memory")]
     Questions {
         #[command(subcommand)]
         command: QuestionsCommands,

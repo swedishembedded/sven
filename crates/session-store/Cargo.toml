@@ -15,6 +15,9 @@ sven-model    = { path = "../model" }
 sven-session-model = { path = "../session-model" }
 sven-vocab    = { path = "../vocab" }
 atif          = { path = "../atif" }
+# The parked-question ledger: hash-chained JSONL keyed by hsm's QuestionId.
+sven-chain    = { path = "../chain" }
+sven-hsm      = { path = "../hsm" }
 dirs          = { workspace = true }
 chrono        = { workspace = true }
 uuid          = { workspace = true }

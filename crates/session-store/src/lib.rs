@@ -7,6 +7,7 @@ mod compaction_details;
 pub mod conversation;
 pub mod frontmatter;
 mod markdown;
+pub mod question_ledger;
 mod queue;
 pub mod reward;
 pub mod session_resolve;
@@ -32,6 +33,10 @@ pub use conversation::{
 };
 pub use frontmatter::{parse_frontmatter, WorkflowMetadata};
 pub use markdown::{parse_workflow, ParsedWorkflow};
+pub use question_ledger::{
+    QuestionAnsweredRecord, QuestionAskedRecord, QuestionLedger, QuestionLedgerEntry,
+    QuestionLedgerError,
+};
 pub use queue::{Step, StepOptions, StepQueue};
 pub use reward::{
     apply_outcome_to_trajectory, trajectory_reward, OutcomeFold, RunConclusion, SessionOutcome,

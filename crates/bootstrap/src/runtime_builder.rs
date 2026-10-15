@@ -713,7 +713,6 @@ impl RuntimeBuilder {
 
         // A parked question's durable record is the same whichever surface
         // drives this session, so the drain is wired here, once.
-        #[cfg(feature = "memory")]
         let parked_tx = crate::session_handles::spawn_parked_question_ledger();
 
         // Shared mirror of the kernel's audit trail: the runtime syncs it
@@ -769,7 +768,6 @@ impl RuntimeBuilder {
                 context,
                 instructions: InstructionWiring::new(&runtime, &self.mode),
                 audit_trail: audit_trail.clone(),
-                #[cfg(feature = "memory")]
                 parked_tx,
                 tool_executor_override: self.tool_executor_override.take(),
                 reconcile_capabilities: harness_session,

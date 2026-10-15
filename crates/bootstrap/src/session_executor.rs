@@ -102,7 +102,6 @@ pub(crate) struct ExecutorParts {
     /// and the activation of conditional instructions.
     pub instructions: crate::instruction_wiring::InstructionWiring,
     pub audit_trail: AuditTrailHandle,
-    #[cfg(feature = "memory")]
     pub parked_tx: mpsc::Sender<sven_executors::user::ParkedQuestion>,
     /// Replaces only the tool slot, keeping every other default executor.
     pub tool_executor_override: Option<ToolExecutorFactory>,
@@ -164,7 +163,6 @@ pub(crate) fn compose(
     } else {
         user_executor
     };
-    #[cfg(feature = "memory")]
     let user_executor = user_executor.with_parked_questions(parts.parked_tx);
     let base = CompositeExecutorBuilder::default()
         .with_user_slot(Box::new(user_executor))
