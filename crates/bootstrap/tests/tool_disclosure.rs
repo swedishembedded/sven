@@ -97,9 +97,17 @@ async fn the_deferred_core_is_a_fraction_of_the_full_listing() {
     };
     let full_tokens = offered(&full);
     let core_tokens = offered(&deferred);
+    // The saving is the deferred tools' share of the listing. The coding
+    // presets add the media and speech tools to it, so only a build with them
+    // halves the listing; the minimal tool set still saves a third.
+    let (kept, of) = if cfg!(feature = "coding") {
+        (1, 2)
+    } else {
+        (2, 3)
+    };
     assert!(
-        core_tokens * 2 < full_tokens,
-        "core {core_tokens} vs full {full_tokens} estimated tokens"
+        core_tokens * of < full_tokens * kept,
+        "core {core_tokens} vs full {full_tokens} estimated tokens, must be under {kept}/{of}"
     );
 }
 
@@ -136,6 +144,12 @@ async fn full_disclosure_has_no_index() {
 #[tokio::test]
 async fn paraphrased_requests_find_the_tool_they_are_about() {
     let registry = registry(Disclosure::Deferred).await;
+    // `attach_file` exists only where images and audio can be decoded.
+    assert_eq!(
+        registry.get("attach_file").is_some(),
+        cfg!(feature = "media"),
+        "attach_file registration follows the media feature"
+    );
     for (query, wanted) in [
         ("fetch the text of a web page from a url", "web_fetch"),
         ("search the web for recent news", "web_search"),
@@ -146,6 +160,9 @@ async fn paraphrased_requests_find_the_tool_they_are_about() {
         ("attach an image to the conversation", "attach_file"),
         ("load a skill", "skill"),
     ] {
+        if registry.get(wanted).is_none() {
+            continue;
+        }
         let out = run(&registry, json!({"action": "search", "query": query})).await;
         assert!(!out.is_error, "{query}: {}", out.content);
         let first = out
