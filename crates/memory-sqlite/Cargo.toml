@@ -9,12 +9,11 @@ license     = "Apache-2.0"
 sven-memory-api = { path = "../memory-api" }
 
 async-trait = { workspace = true }
-dirs        = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 tokio       = { workspace = true }
 tracing     = { workspace = true }
-rusqlite    = { version = "0.31", features = ["bundled"] }
+rusqlite    = { workspace = true }
 
 [dev-dependencies]
 sven-memory-api = { path = "../memory-api", features = ["conformance"] }

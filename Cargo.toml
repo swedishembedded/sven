@@ -96,6 +96,7 @@ libc         = "0.2"
 fs4          = "0.13"
 walkdir      = "2"
 tempfile     = "3"
+rusqlite     = { version = "0.31", features = ["bundled"] }
 serde_yaml   = "0.9"
 anyhow       = "1"
 thiserror    = "1"
