@@ -87,3 +87,8 @@ gdb = ["sven-tools-gdb/mi"]
 serde_yaml = { workspace = true }
 tempfile = { workspace = true }
 sven-model-mock = { path = "../model-mock" }
+# tests/memory_import.rs writes a database in the previous store's format and
+# reads the result back; it is built only with the `memory` feature.
+rusqlite = { workspace = true }
+sven-memory-api = { path = "../memory-api" }
+sven-memory-sqlite = { path = "../memory-sqlite" }
