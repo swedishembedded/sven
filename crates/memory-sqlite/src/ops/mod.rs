@@ -13,5 +13,5 @@ mod retrieve;
 
 pub(crate) use annotate::{annotation_head, annotations, append_annotation};
 pub(crate) use generations::{put_embeddings, register_generation, set_generation_state};
-pub(crate) use ingest::{delete_source, ingest};
+pub(crate) use ingest::{delete_source, ingest, ingest_in};
 pub(crate) use retrieve::{get_unit, list_sources, retrieve};

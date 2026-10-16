@@ -16,6 +16,19 @@ pub(crate) fn ingest(
     ctx: &AccessContext,
     request: &IngestRequest,
 ) -> Result<IngestOutcome, MemoryError> {
+    let tx = conn.transaction().map_err(storage)?;
+    let outcome = ingest_in(&tx, ctx, request)?;
+    tx.commit().map_err(storage)?;
+    Ok(outcome)
+}
+
+/// Records `request` inside `tx`, which the caller commits. A caller that
+/// ingests many sources in one transaction gets all of them or none.
+pub(crate) fn ingest_in(
+    tx: &Transaction<'_>,
+    ctx: &AccessContext,
+    request: &IngestRequest,
+) -> Result<IngestOutcome, MemoryError> {
     ctx.require(&request.space, Permission::Ingest)?;
     request.validate()?;
 
@@ -31,7 +44,6 @@ pub(crate) fn ingest(
         })
         .collect();
 
-    let tx = conn.transaction().map_err(storage)?;
     let existing: Option<(i64, String)> = tx
         .query_row(
             "SELECT id, revision FROM mem_sources WHERE space_id = ?1 AND source_id = ?2",
@@ -45,7 +57,7 @@ pub(crate) fn ingest(
         Some((row, previous)) if previous == revision.as_str() => {
             // The content is already indexed; only the descriptive fields may
             // have moved, including the training-use label.
-            write_descriptors(&tx, row, request)?;
+            write_descriptors(tx, row, request)?;
             IngestOutcome::Unchanged { revision, units }
         }
         Some((row, previous)) => {
@@ -56,8 +68,8 @@ pub(crate) fn ingest(
                 params![row, revision.as_str(), request.text],
             )
             .map_err(storage)?;
-            write_descriptors(&tx, row, request)?;
-            insert_units(&tx, row, request, &units)?;
+            write_descriptors(tx, row, request)?;
+            insert_units(tx, row, request, &units)?;
             IngestOutcome::Replaced {
                 revision,
                 previous: RevisionId::new(previous),
@@ -83,12 +95,11 @@ pub(crate) fn ingest(
             )
             .map_err(storage)?;
             let row = tx.last_insert_rowid();
-            write_tags(&tx, row, request)?;
-            insert_units(&tx, row, request, &units)?;
+            write_tags(tx, row, request)?;
+            insert_units(tx, row, request, &units)?;
             IngestOutcome::Created { revision, units }
         }
     };
-    tx.commit().map_err(storage)?;
     Ok(outcome)
 }
 

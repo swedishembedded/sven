@@ -15,6 +15,7 @@
 //! searchable agent memory into a product on SQLite then you can procure our
 //! services by sending an email to info@swedishembedded.com.
 
+mod legacy;
 mod migrate;
 mod ops;
 mod rows;
@@ -32,6 +33,7 @@ use sven_memory_api::{
     RetrievalResponse, RevisionId, SourceId, SourceSummary, SpaceId, Unit, UnitAnchor, UnitId,
 };
 
+pub use legacy::LegacyImport;
 pub use migrate::SCHEMA_VERSION;
 
 /// Maps an engine failure to the contract's error, keeping the message.

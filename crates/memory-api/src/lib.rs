@@ -29,6 +29,7 @@ mod annotation;
 mod error;
 mod generation;
 mod ids;
+mod note;
 mod provenance;
 mod quote;
 mod request;
@@ -43,6 +44,7 @@ pub use annotation::{Annotation, AnnotationKind, Evidence, NewAnnotation};
 pub use error::MemoryError;
 pub use generation::{EmbeddingSpec, GenerationState, IndexGeneration, PromptStyle};
 pub use ids::{sha256_hex, AnnotationId, GenerationId, RevisionId, SourceId, SpaceId, UnitId};
+pub use note::{label_of, Note, ENTITY_TAG_PREFIX, MAX_LABEL_CHARS, SOURCE_TAG_PREFIX};
 pub use provenance::{Origin, Provenance, TrainingUse};
 pub use quote::quote_untrusted;
 pub use request::{

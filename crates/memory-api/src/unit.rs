@@ -57,6 +57,31 @@ pub struct NewUnit {
     pub text: String,
 }
 
+impl NewUnit {
+    /// A single unit that is all of `text`, for a source that is one passage
+    /// (a note) and needs no segmentation.
+    #[must_use]
+    pub fn whole(kind: UnitKind, text: &str) -> Self {
+        Self {
+            kind,
+            anchor: Anchor {
+                heading_path: Vec::new(),
+                block_ordinal: 0,
+                text_fingerprint: crate::sha256_hex(text.as_bytes()),
+            },
+            byte_range: Span {
+                start: 0,
+                end: text.len(),
+            },
+            char_range: Span {
+                start: 0,
+                end: text.chars().count(),
+            },
+            text: text.to_owned(),
+        }
+    }
+}
+
 /// A stored unit as retrieval returns it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Unit {
@@ -101,5 +126,22 @@ impl Unit {
             revision: self.revision.clone(),
             anchor: self.anchor.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_whole_text_unit_is_a_verbatim_slice_by_bytes_and_characters() {
+        let text = "naïve café";
+        let unit = NewUnit::whole(UnitKind::Prose, text);
+        assert_eq!(
+            text.get(unit.byte_range.start..unit.byte_range.end),
+            Some(text)
+        );
+        assert_eq!(unit.char_range.end, text.chars().count());
+        assert_ne!(unit.byte_range.end, unit.char_range.end);
     }
 }
