@@ -20,7 +20,7 @@ use crate::conversation::ConversationRecord;
 ///
 /// - `System`-source steps are skipped entirely.
 /// - Steps with `is_copied_context == Some(true)` are skipped — per the
-///   spec's SFT-filtering guidance ([`Trajectory::sft_steps`]), repurposed
+///   spec's SFT-filtering guidance ([`atif::Trajectory::sft_steps`]), repurposed
 ///   here for the same underlying reason: don't replay content the model
 ///   didn't originally produce fresh.
 /// - `reasoning_content` is **never** replayed back into a message ("thinking
@@ -114,7 +114,7 @@ fn message_body_to_text(body: &MessageBody) -> Option<String> {
 
 // ── Reverse: TraceStep ⇄ TurnRecord (legacy YAML) ───────────────────────────
 
-/// Reverse of [`turn_records_to_steps`]: convert `Vec<TraceStep>` back into
+/// Reverse of [`crate::trace_session::turn_records_to_steps`]: convert `Vec<TraceStep>` back into
 /// legacy `Vec<TurnRecord>`, for callers that accumulate ATIF-native steps
 /// during a run but still need to write (or update) a YAML `ChatDocument`
 /// from them (e.g. `--output-chat` alongside `--trace`).
@@ -122,9 +122,9 @@ fn message_body_to_text(body: &MessageBody) -> Option<String> {
 /// - Steps with `is_copied_context == Some(true)` are skipped, matching
 ///   [`steps_to_messages`]. **Callers that rebuild a trajectory from this
 ///   view must carry those steps through** (capture them with
-///   [`copied_context_steps`] and rebuild with
-///   [`turn_records_to_steps_with_copied_context`] /
-///   [`conversation_records_to_steps_with_copied_context`]) or an
+///   [`crate::trace_session::copied_context_steps`] and rebuild with
+///   [`crate::trace_session::turn_records_to_steps_with_copied_context`] /
+///   [`crate::trace_session::conversation_records_to_steps_with_copied_context`]) or an
 ///   open→save round trip permanently deletes them.
 /// - `System`-source steps are skipped, except a context-compaction step
 ///   (detected via [`ContextCompactionDetails::from_step_extra`]), which
@@ -206,7 +206,7 @@ pub fn steps_to_turn_records(steps: &[TraceStep]) -> Vec<TurnRecord> {
     out
 }
 
-/// Reverse of [`conversation_records_to_steps`]: convert `Vec<TraceStep>` back
+/// Reverse of [`crate::trace_session::conversation_records_to_steps`]: convert `Vec<TraceStep>` back
 /// into full-fidelity `Vec<ConversationRecord>` (messages, thinking blocks,
 /// context-compaction markers), for callers that need to reconstruct a
 /// display-oriented event stream from ATIF steps rather than the flat
