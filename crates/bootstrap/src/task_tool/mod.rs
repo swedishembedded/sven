@@ -1087,7 +1087,13 @@ mod tests {
                 .await
             })
         };
-        tokio::task::yield_now().await;
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while leader.waiters() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the repeated call waits on the running child");
         leader.finish(Some(Outcome {
             handle: "buf_0001".into(),
             text: "found".into(),

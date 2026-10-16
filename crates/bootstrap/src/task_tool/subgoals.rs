@@ -330,6 +330,14 @@ impl Leader {
     }
 }
 
+#[cfg(test)]
+impl Leader {
+    /// Calls waiting on this child; the registry's own receiver is not one.
+    pub(super) fn waiters(&self) -> usize {
+        self.tx.receiver_count().saturating_sub(1)
+    }
+}
+
 impl Drop for Leader {
     fn drop(&mut self) {
         if !self.finished {
