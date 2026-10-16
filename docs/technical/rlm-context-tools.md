@@ -2,7 +2,7 @@
 
 This document describes the internal architecture of sven's memory-mapped
 context tools, which implement the inference paradigm introduced in
-[_Recursive Language Models_](https://arxiv.org/abs/2512.24601) (RLM, 2024).
+[_Recursive Language Models_](https://arxiv.org/abs/2512.24601) (RLM, 2025).
 
 ---
 

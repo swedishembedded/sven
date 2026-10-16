@@ -1,8 +1,7 @@
 # research-to-stack - sven share
 
 **Status: planned. Nothing below has been started.** Update this file in the same commit that
-finishes or changes an item. Evidence for each item is in the cross-project research note
-(items U1, U11, U12, U13). Sven records facts and runs attempts; the embedding application
+finishes or changes an item. Sven records facts and runs attempts; the embedding application
 decides what they mean. Model providers are the only other component involved.
 
 ## Goal
