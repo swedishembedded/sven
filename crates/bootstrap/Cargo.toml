@@ -22,6 +22,7 @@ sven-turn              = { path = "../turn" }
 sven-workspace       = { path = "../workspace" }
 sven-mcp-client    = { path = "../mcp-client" }
 sven-hsm           = { path = "../hsm" }
+atif               = { path = "../atif" }
 sven-vocab         = { path = "../vocab" }
 # Always linked for the `tools.gdb` configuration section; the tools themselves
 # are the `gdb` feature, Unix only.

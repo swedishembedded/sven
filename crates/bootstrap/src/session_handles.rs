@@ -257,9 +257,43 @@ pub struct RuntimeHandle {
     /// The live tool registry. Exposed so frontends can hot-swap MCP tools via
     /// [`ToolRegistry::replace_mcp_tools`] without rebuilding the session.
     pub(crate) tool_registry: Arc<ToolRegistry>,
+    /// Where gate decisions made outside the session's executors are filed.
+    pub(crate) gate_journal: sven_executors::GateJournal,
 }
 
 impl RuntimeHandle {
+    /// What the permission gate decided about each call the session has made,
+    /// by the model's id for the call, with any argument violations a schema
+    /// check found.
+    #[must_use]
+    pub fn gate_decisions(&self) -> Vec<atif::GateDecision> {
+        read_store(&self.conv_store, ThreadStore::gate_decisions)
+    }
+
+    /// What each memory retrieval the session's tools made returned, oldest
+    /// first.
+    #[must_use]
+    pub fn memory_retrievals(&self) -> Vec<atif::MemoryRetrieval> {
+        read_store(&self.conv_store, |store| store.memory_retrievals().to_vec())
+    }
+
+    /// Notes in the conversation store that a person decided the approval
+    /// `approval_id` for a call needing `capability`, from outside the run
+    /// (a parked approval decided by whoever picked it up). A decision made
+    /// through the session's own approval channel is recorded by the session.
+    pub fn record_human_decision(
+        &self,
+        approval_id: sven_hsm::ApprovalId,
+        capability: sven_hsm::ToolCapability,
+        approved: bool,
+        reason: Option<String>,
+    ) {
+        self.gate_journal.record(
+            sven_hsm::ToolCallId::from_uuid(approval_id.as_uuid()),
+            sven_executors::GateVerdict::human(capability, approved, reason),
+        );
+    }
+
     /// Returns a cloneable sink for posting events into the kernel.
     #[must_use]
     pub fn sink(&self) -> EventSink {
@@ -341,10 +375,54 @@ impl RuntimeHandle {
     }
 }
 
+/// Reads the call records of a conversation store.
+///
+/// The records are append-only evidence of what the session's gate decided and
+/// what its tools read. A thread that panicked while holding the lock leaves
+/// them intact, so a poisoned lock is reported and the records are still
+/// returned rather than replaced by an empty set.
+fn read_store<T>(store: &std::sync::Mutex<ThreadStore>, read: impl FnOnce(&ThreadStore) -> T) -> T {
+    let guard = store.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("conversation store lock was poisoned; reading its call records anyway");
+        poisoned.into_inner()
+    });
+    read(&guard)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sven_hsm::ApprovalId;
+
+    /// The records of what the gate decided are evidence of what an agent was
+    /// allowed to do, so a store whose lock was poisoned by a panicking thread
+    /// still hands over what it holds instead of reporting nothing.
+    #[test]
+    fn records_are_read_from_a_poisoned_store() {
+        let store = Arc::new(std::sync::Mutex::new(ThreadStore::new()));
+        store
+            .lock()
+            .unwrap()
+            .record_memory_retrieval(atif::MemoryRetrieval {
+                call_id: "call_a".into(),
+                query: "q".into(),
+                space_ids: Vec::new(),
+                generation_id: "g".into(),
+                snapshot_id: None,
+                results: Vec::new(),
+            });
+        let poisoner = Arc::clone(&store);
+        let _ = std::thread::spawn(move || {
+            let _held = poisoner.lock().unwrap();
+            panic!("poison the store");
+        })
+        .join();
+        assert!(store.is_poisoned());
+
+        let retrievals = read_store(&store, |store| store.memory_retrievals().to_vec());
+        assert_eq!(retrievals.len(), 1);
+        assert_eq!(retrievals[0].call_id, "call_a");
+    }
 
     /// When the sub-agent's request is given up (the session that sent it
     /// ended), the gate sees its reply channel close and can withdraw the

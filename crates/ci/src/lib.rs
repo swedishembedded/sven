@@ -1,6 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
+mod call_records;
 pub mod context;
 pub mod index;
 mod kernel_agent;

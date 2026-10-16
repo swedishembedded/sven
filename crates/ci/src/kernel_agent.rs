@@ -29,8 +29,11 @@ use sven_machines::AgentEvent;
 use sven_model::Message;
 use sven_model_drivers::ModelConfig;
 use sven_session_model::reduce_history;
+use sven_session_store::StepAssembler;
 use sven_tool_registry::ToolRegistry;
 use sven_vocab::AgentMode;
+
+use crate::call_records::CallRecords;
 
 /// The kernel-backed agent the headless runner drives.
 ///
@@ -54,6 +57,9 @@ pub struct KernelAgent {
     history: Vec<Message>,
     /// MCP-tool wait budget (ms) applied to each rebuilt session.
     wait_for_mcp_ms: u64,
+    /// What the permission gate decided and what memory was read, across the
+    /// turns run so far; each turn's session holds only its own.
+    call_records: CallRecords,
 }
 
 impl KernelAgent {
@@ -72,6 +78,7 @@ impl KernelAgent {
             model_cfg,
             history: Vec::new(),
             wait_for_mcp_ms: 20_000,
+            call_records: CallRecords::default(),
         }
     }
 
@@ -164,11 +171,18 @@ impl KernelAgent {
             .map_err(|e| anyhow::anyhow!("{e} before UserMessage was delivered"))?;
 
         Self::drain_turn(&mut events_rx, &mut self.history, &tx).await;
+        self.call_records.absorb(CallRecords::of(&session.handle()));
 
         // Keep the runtime alive until the turn is fully drained so the audit
         // log flushes; dropping it shuts the session down.
         session.detach();
         Ok(())
+    }
+
+    /// Files what the turns run so far recorded about their calls into
+    /// `assembler`, under the steps that made them.
+    pub(crate) fn feed_call_records(&self, assembler: &mut StepAssembler) {
+        self.call_records.feed(assembler);
     }
 
     /// Multimodal variant of [`Self::submit`] for `--attach`-preloaded
@@ -205,6 +219,7 @@ impl KernelAgent {
             .map_err(|e| anyhow::anyhow!("{e} before UserMessage was delivered"))?;
 
         Self::drain_turn(&mut events_rx, &mut self.history, &tx).await;
+        self.call_records.absorb(CallRecords::of(&session.handle()));
 
         // Keep the runtime alive until the turn is fully drained so the audit
         // log flushes; dropping it shuts the session down.

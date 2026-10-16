@@ -119,6 +119,7 @@ pub mod config {
 /// [`EngineBuilder::tool`]. Re-exported here so an application never has to
 /// name a kernel crate to extend the agent.
 pub mod tool {
+    pub use sven_tool_api::call_records::record_memory_retrieval;
     pub use sven_tool_api::{
         ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolCapability, ToolDisplay, ToolOutput,
         ToolOutputPart, NO_USER_ANSWER,

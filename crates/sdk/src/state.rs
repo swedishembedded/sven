@@ -57,6 +57,15 @@ pub struct AgentState {
     /// `{}`).
     #[serde(default)]
     pub(crate) unparsed_arguments: BTreeMap<String, String>,
+    /// What the permission gate decided about each call, by the model's call
+    /// id, with any argument violations a schema check found. Kept beside the
+    /// history because that is where the calls are.
+    #[serde(default)]
+    pub(crate) gate_decisions: Vec<atif::GateDecision>,
+    /// What each memory retrieval the agent's tools made returned, oldest
+    /// first.
+    #[serde(default)]
+    pub(crate) memory_retrievals: Vec<atif::MemoryRetrieval>,
     /// The sequence number the agent's next event will carry. Kept here so the
     /// numbering of an agent's events carries on across a resume.
     #[serde(default)]
@@ -70,13 +79,14 @@ pub struct AgentState {
 impl AgentState {
     /// The format this build writes.
     ///
-    /// Version 1 added the format version itself, the event sequence and the
-    /// parked run. Version 0 is every state written before: it has none of
+    /// Version 2 added the gate decisions and memory retrievals of the agent's
+    /// calls; version 1 added the format version itself, the event sequence and
+    /// the parked run. Version 0 is every state written before: it has none of
     /// those, resumes as an agent that has emitted no events and is parked
     /// nowhere, and is written back as the current version. A state with a
     /// version above this one was written by a newer build and is refused by
     /// [`Engine::resume`](crate::Engine::resume) rather than resumed wrongly.
-    pub const CURRENT_VERSION: u32 = 1;
+    pub const CURRENT_VERSION: u32 = 2;
 
     /// Creates the state of an agent that has not run yet.
     #[must_use]
@@ -93,6 +103,40 @@ impl AgentState {
             tools: Vec::new(),
             compactions: Vec::new(),
             unparsed_arguments: BTreeMap::new(),
+            gate_decisions: Vec::new(),
+            memory_retrievals: Vec::new(),
+        }
+    }
+
+    /// Keeps the records the session's store holds about the calls its run
+    /// made. A decision replaces an earlier one about the same call: a
+    /// parked approval is asked in one run and decided in the next.
+    pub(crate) fn absorb_call_records(
+        &mut self,
+        decisions: Vec<atif::GateDecision>,
+        retrievals: &[atif::MemoryRetrieval],
+    ) {
+        for decision in decisions {
+            match self
+                .gate_decisions
+                .iter_mut()
+                .find(|known| known.call_id == decision.call_id)
+            {
+                Some(known) => *known = decision,
+                None => self.gate_decisions.push(decision),
+            }
+        }
+        self.memory_retrievals.extend(retrievals.iter().cloned());
+    }
+
+    /// Hands the records of the calls this state holds to `assembler`, so the
+    /// steps it builds carry them.
+    pub(crate) fn feed_call_records(&self, assembler: &mut sven_session_store::StepAssembler) {
+        for decision in &self.gate_decisions {
+            assembler.push_gate_decision(decision.clone());
+        }
+        for retrieval in &self.memory_retrievals {
+            assembler.push_memory_retrieval(retrieval.clone());
         }
     }
 

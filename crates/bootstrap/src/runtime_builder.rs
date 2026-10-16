@@ -831,6 +831,10 @@ impl RuntimeBuilder {
             sink: erased_runtime.sink(),
             obs: erased_runtime.observations(),
             status_rx: erased_runtime.status_watch(),
+            gate_journal: sven_executors::GateJournal::new(
+                Arc::clone(&conv_store_for_handle),
+                call_id_to_thread,
+            ),
             conv_store: conv_store_for_handle,
             tool_registry: tool_registry_for_handle,
         };

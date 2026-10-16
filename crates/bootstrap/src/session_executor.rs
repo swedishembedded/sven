@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 
 use sven_executors::user::{ApprovalRequest, UserQuestion};
 use sven_executors::{
-    CompositeExecutorBuilder, ThreadStore, ToolExecutor, TurnExecutor, UserExecutor,
+    CompositeExecutorBuilder, GateJournal, ThreadStore, ToolExecutor, TurnExecutor, UserExecutor,
 };
 use sven_hsm::{AuditTrailHandle, ToolCallId};
 use sven_kernel::{ChildSpawner, EffectExecutor, SystemClock};
@@ -153,6 +153,10 @@ pub(crate) fn compose(
     .with_context_assembler(assembler)
     .with_instructions(Some(parts.instructions.activator()));
     let user_executor = UserExecutor::new(parts.gates.questions, parts.gates.approvals)
+        .with_gate_journal(GateJournal::new(
+            Arc::clone(&parts.conv_store),
+            Arc::clone(&parts.call_id_to_thread),
+        ))
         .with_approval_mode(parts.gates.approval_mode)
         .with_preapproval(crate::mode_policy::preapproval(&parts.config.tools));
     let user_executor = if parts.gates.park_approvals {

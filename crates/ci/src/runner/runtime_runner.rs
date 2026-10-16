@@ -27,6 +27,7 @@ use sven_model::Message;
 use sven_session_store::trace_session::StepAssembler;
 use sven_vocab::AgentMode;
 
+use crate::call_records::CallRecords;
 use crate::ledger_output::LedgerOutput;
 use crate::output::{finalise_stdout, write_progress, write_stderr};
 use crate::runner::outcome::{exit_code_for_verified_task, verdict_from_context};
@@ -316,6 +317,10 @@ impl RuntimeRunner {
             }
         };
 
+        // What the session recorded about its calls, read before it is
+        // detached or joined away.
+        let call_records = CallRecords::of(&session.handle());
+
         // The verified-task machine's `Done`/`Parked` states are terminal
         // (unlike chat/agent/sdlc, which idle forever awaiting the next
         // prompt), so its kernel task actually returns once the run
@@ -354,6 +359,7 @@ impl RuntimeRunner {
             result == EXIT_SUCCESS
         ));
 
+        call_records.feed(&mut state.assembler);
         write_trajectory(state, result, &self.config, &opts.mode, verdict);
 
         Ok(result)

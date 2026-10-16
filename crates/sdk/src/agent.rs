@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sven_machines::machines::loop_core::{LoopState, LOOP_STATE_KEY, MAX_ROUNDS_REACHED_FACT};
+use sven_machines::machines::loop_core::MAX_ROUNDS_REACHED_FACT;
 
 use crate::engine::Engine;
 use crate::error::CallError;
@@ -28,6 +28,8 @@ use crate::run::{
 };
 use crate::run_support::{parse_candidate, stop, Entry, TurnOptions};
 use crate::state::AgentState;
+
+mod capture;
 
 /// A live agent: a conversation in progress against an [`Engine`].
 ///
@@ -128,6 +130,7 @@ impl Agent {
                 Some(compaction.turn),
             );
         }
+        self.state.feed_call_records(&mut assembler);
         for message in &self.state.history {
             assembler.push_message(&self.state.as_sent(message));
         }
@@ -422,76 +425,6 @@ impl Agent {
         facts
     }
 
-    /// Replaces the history folded from observations with the conversation
-    /// the kernel actually holds: the thread the model reads from, minus the
-    /// system message the session seeds. The observation broadcast can lag
-    /// and drop events under load; the store cannot.
-    ///
-    /// A machine that keeps its conversation on threads of its own (`sdlc`
-    /// runs one per phase) leaves the primary thread at its seed; its folded
-    /// history is kept. Compactions of the primary thread are recorded so the
-    /// trajectory can say the history is not the whole conversation.
-    fn take_history(&mut self, handle: &sven_bootstrap::RuntimeHandle, seeded: usize) {
-        let thread = sven_machines::mode::primary_thread(&self.state.mode);
-        let shared = handle.conversation_store();
-        let Ok(store) = shared.lock() else {
-            return;
-        };
-        let held: Vec<Message> = store
-            .snapshot(thread)
-            .into_iter()
-            .filter(|m| m.role != sven_model::Role::System)
-            .collect();
-        let compactions: Vec<_> = store
-            .compactions()
-            .iter()
-            .filter(|c| c.thread == thread)
-            .cloned()
-            .collect();
-        self.state.unparsed_arguments.extend(
-            store
-                .unparsed_arguments()
-                .iter()
-                .map(|(id, raw)| (id.clone(), raw.clone())),
-        );
-        drop(store);
-
-        // A compaction shrinks the thread, possibly below what the turn was
-        // seeded with, so growth alone cannot tell a thread the machine used
-        // from one it left at its seed.
-        if held.len() > seeded || (!compactions.is_empty() && !held.is_empty()) {
-            self.state.history = held;
-            self.state.compactions.extend(compactions);
-        }
-    }
-
-    /// Records the tools the model was offered, resolved exactly as the turn
-    /// executor resolves them: the machine's named tools, else everything the
-    /// registry has for the machine's mode. A kernel that never started a tool
-    /// loop offered nothing new, so the previous record stands.
-    fn take_offered_tools(&mut self, handle: &sven_bootstrap::RuntimeHandle, no_tools: bool) {
-        let Some(snapshot) = &self.state.kernel else {
-            return;
-        };
-        if snapshot.context.fact(LOOP_STATE_KEY).is_none() {
-            return;
-        }
-        let looping = LoopState::load(&snapshot.context);
-        let schemas = if no_tools {
-            Vec::new()
-        } else {
-            handle.tool_registry().schemas_offered(
-                &looping.tools,
-                &looping.all_tools_mode,
-                &snapshot.context.active_tools,
-            )
-        };
-        self.state.tools = schemas
-            .iter()
-            .map(|s| atif::function_tool(&s.name, &s.description, &s.parameters))
-            .collect();
-    }
-
     /// Builds a session, posts what starts the run, and folds the result
     /// back in.
     async fn run(
@@ -542,6 +475,13 @@ impl Agent {
         // the machine resumes and reads it. A decision needs no such thing:
         // an approved call runs and answers itself, a denied one is answered
         // with its reason by the next turn.
+        let parked_decision = match &entry {
+            Entry::Decision {
+                approval_id,
+                decision,
+            } => Some((*approval_id, decision.clone())),
+            _ => None,
+        };
         let (event, prompt) = match entry {
             Entry::Message(text) => (
                 Event::UserMessage { text: text.clone() },
@@ -613,6 +553,9 @@ impl Agent {
         }
 
         let bundle = builder.build_session().await?;
+        if let Some((approval_id, decision)) = &parked_decision {
+            self.record_parked_decision(&bundle.handle, *approval_id, decision);
+        }
         self.state.model = Some(match self.engine.provider() {
             Some(provider) => provider.model_name().to_string(),
             None => self.engine.config().model.name.clone(),

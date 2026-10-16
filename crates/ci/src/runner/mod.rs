@@ -1183,6 +1183,10 @@ impl CiRunner {
                 }
             }
 
+            // What the turn's session recorded about its calls (the gate's
+            // decisions, the memory read) belongs to steps already assembled.
+            agent.feed_call_records(&mut assembler);
+
             // ── Inject step output into template vars for subsequent steps ───
             // Makes {{step.<label>.output}} and {{step.<N>.output}} available
             // in all following steps without any file I/O.
