@@ -6,7 +6,9 @@ mod attachment;
 mod deadline;
 mod event;
 mod helpers;
+mod outcome;
 pub mod runtime_runner;
+mod ui_output;
 
 use attachment::build_attachment_parts;
 use event::{handle_event, stream_new_steps, StepState, SubagentChildState};
