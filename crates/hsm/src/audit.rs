@@ -184,8 +184,15 @@ pub struct ToolAuditRecord {
     pub capability: ToolCapability,
     /// Outcome of classification / execution.
     pub outcome: ToolAuditOutcome,
-    /// Error or denial reason; `None` for `Started` / `ApprovalRequired`.
+    /// Error or denial reason; for `Succeeded`, the tool's observation as
+    /// compact JSON, cut to [`TOOL_RESULT_AUDIT_CAP`] characters. `None` for
+    /// `Started` / `ApprovalRequired`.
     pub message: Option<String>,
+    /// Milliseconds between dispatch and the result, for `Succeeded` and
+    /// `Failed`; `None` for every other outcome and for records written
+    /// before durations were audited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
     /// Tenant that owned the session when the call was classified, if a
     /// [`Principal`] was set on the context. `None` for local sessions and
     /// for records serialized before principals existed.
@@ -213,6 +220,7 @@ impl ToolAuditRecord {
             capability,
             outcome: ToolAuditOutcome::Started,
             message: None,
+            duration_ms: None,
             tenant_id: None,
             actor_id: None,
         }
@@ -234,6 +242,7 @@ impl ToolAuditRecord {
             capability,
             outcome: ToolAuditOutcome::Denied,
             message: Some(reason.into()),
+            duration_ms: None,
             tenant_id: None,
             actor_id: None,
         }
@@ -254,6 +263,35 @@ impl ToolAuditRecord {
             capability,
             outcome: ToolAuditOutcome::ApprovalRequired,
             message: None,
+            duration_ms: None,
+            tenant_id: None,
+            actor_id: None,
+        }
+    }
+
+    /// Builds the record of a call that ran to its result: `Succeeded` with
+    /// the (capped) observation as `message`, or `Failed` with the error.
+    #[must_use]
+    pub fn finished(
+        started: &Self,
+        result: Result<&serde_json::Value, &str>,
+        duration_ms: u64,
+    ) -> Self {
+        let (outcome, message) = match result {
+            Ok(observation) => (
+                ToolAuditOutcome::Succeeded,
+                cap_chars(&observation.to_string(), TOOL_RESULT_AUDIT_CAP),
+            ),
+            Err(error) => (ToolAuditOutcome::Failed, error.to_string()),
+        };
+        Self {
+            state: started.state.clone(),
+            call_id: started.call_id,
+            name: started.name.clone(),
+            capability: started.capability,
+            outcome,
+            message: Some(message),
+            duration_ms: Some(duration_ms),
             tenant_id: None,
             actor_id: None,
         }
@@ -266,6 +304,18 @@ impl ToolAuditRecord {
             self.tenant_id = Some(p.tenant_id.clone());
             self.actor_id = Some(p.actor_id.clone());
         }
+    }
+}
+
+/// Longest tool result, in characters, an audit record keeps. The full
+/// observation reaches the conversation; the audit trail only needs enough
+/// to review what a call returned without growing with every large output.
+pub const TOOL_RESULT_AUDIT_CAP: usize = 1024;
+
+fn cap_chars(text: &str, cap: usize) -> String {
+    match text.char_indices().nth(cap) {
+        Some((end, _)) => format!("{}...", &text[..end]),
+        None => text.to_string(),
     }
 }
 

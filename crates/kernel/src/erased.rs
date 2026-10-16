@@ -416,7 +416,9 @@ where
         };
         // Retire in-flight calls whose result just arrived, before the
         // dispatch that consumes it.
-        inflight.retire(&event);
+        if let Some(record) = inflight.retire(&event) {
+            ctx.push_tool_audit(record);
+        }
         children.note_completion(&event);
         let outcome = machine.dispatch(&event, &mut ctx);
         let event_kind = outcome.event;

@@ -10,7 +10,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use common::{AgentMachine, GuardMachine, TState, TimerMachine};
 use serde_json::Value;
-use sven_hsm::{Context, Effect, Event, Hsm, ObservationSink, PermissionPolicy, ToolCapability};
+use sven_hsm::{
+    Context, Effect, Event, Hsm, ObservationSink, PermissionPolicy, ToolAuditOutcome,
+    ToolCapability,
+};
 use sven_kernel::{
     Clock, EffectExecutor, ErasedRuntime, EventSink, Runtime, TimerService, VirtualClock,
 };
@@ -401,4 +404,88 @@ async fn joining_a_runtime_still_returns_its_report() {
         rt.join().await.is_err(),
         "an aborted task reports a join error rather than hanging"
     );
+}
+
+/// Executor whose spawned tool takes [`TOOL_DELAY`] and then either succeeds
+/// with a structured observation or fails with an error.
+struct ResultingToolExec {
+    fail: bool,
+}
+
+#[async_trait]
+impl EffectExecutor for ResultingToolExec {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
+        if let Effect::CallTool { call_id, .. } = effect {
+            let sink = sink.clone();
+            let fail = self.fail;
+            tokio::spawn(async move {
+                tokio::time::sleep(TOOL_DELAY).await;
+                let event = if fail {
+                    Event::ToolFailed {
+                        call_id,
+                        error: "disk on fire".into(),
+                    }
+                } else {
+                    Event::ToolSucceeded {
+                        call_id,
+                        observation: serde_json::json!({"lines": 3}),
+                    }
+                };
+                sink.emit(event).await;
+            });
+        }
+    }
+}
+
+/// Runs the one-tool machine to completion and returns its tool audit trail.
+async fn tool_audit_of(fail: bool) -> Vec<sven_hsm::ToolAuditRecord> {
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(ToolThenWait::default())),
+        Context::new(),
+        PermissionPolicy::builder()
+            .allow_globally([ToolCapability::ReadFile])
+            .build(),
+        ResultingToolExec { fail },
+        16,
+    );
+    assert!(rt.post(Event::user_message("hi")).await);
+    // Served only once the tool's result has been dispatched.
+    let snapshot = rt.capture().await.expect("a snapshot is served");
+    rt.abort();
+    snapshot.context.tool_audit
+}
+
+/// Every finished call is audited as Started and then Succeeded/Failed, with
+/// how long it ran and what it returned, so cost analysis and failure review
+/// need not replay the conversation.
+#[tokio::test]
+async fn a_finished_tool_call_is_audited_with_duration_and_result() {
+    let trail = tool_audit_of(false).await;
+    let outcomes: Vec<_> = trail.iter().map(|r| r.outcome.clone()).collect();
+    assert_eq!(
+        outcomes,
+        [ToolAuditOutcome::Started, ToolAuditOutcome::Succeeded]
+    );
+    let done = &trail[1];
+    assert_eq!(done.call_id, trail[0].call_id);
+    assert_eq!(done.name, "reader");
+    assert!(
+        done.duration_ms.is_some_and(|ms| ms >= 100),
+        "duration covers the tool's run: {:?}",
+        done.duration_ms
+    );
+    assert_eq!(done.message.as_deref(), Some(r#"{"lines":3}"#));
+    assert_eq!(trail[0].duration_ms, None, "a start has no duration yet");
+}
+
+#[tokio::test]
+async fn a_failing_tool_call_yields_started_then_failed_with_a_duration() {
+    let trail = tool_audit_of(true).await;
+    let outcomes: Vec<_> = trail.iter().map(|r| r.outcome.clone()).collect();
+    assert_eq!(
+        outcomes,
+        [ToolAuditOutcome::Started, ToolAuditOutcome::Failed]
+    );
+    assert_eq!(trail[1].message.as_deref(), Some("disk on fire"));
+    assert!(trail[1].duration_ms.is_some_and(|ms| ms >= 100));
 }

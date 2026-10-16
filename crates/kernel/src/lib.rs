@@ -29,8 +29,9 @@
 
 mod abort_on_drop;
 use abort_on_drop::AbortOnDrop;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use async_trait::async_trait;
 use tokio::sync::{mpsc, watch};
@@ -160,7 +161,9 @@ impl EffectExecutor for Box<dyn EffectExecutor> {
 /// answered; neither is an approval request that an executor which
 /// [parks approvals](EffectExecutor::parks_approvals) accepted.
 struct InFlight {
-    tools: HashSet<ToolCallId>,
+    /// Dispatched calls awaiting their result, with the moment they were
+    /// dispatched and the audit record that announced them.
+    tools: HashMap<ToolCallId, (Instant, ToolAuditRecord)>,
     approvals: HashSet<ApprovalId>,
     parks_approvals: bool,
 }
@@ -170,7 +173,7 @@ impl InFlight {
     /// [`EffectExecutor::parks_approvals`].
     fn new(parks_approvals: bool) -> Self {
         Self {
-            tools: HashSet::new(),
+            tools: HashMap::new(),
             approvals: HashSet::new(),
             parks_approvals,
         }
@@ -188,14 +191,43 @@ impl InFlight {
         self.tools.is_empty() && self.approvals.is_empty()
     }
 
+    /// Records a dispatched call, timing it from now.
+    fn dispatch_tool(&mut self, started: ToolAuditRecord) {
+        self.tools
+            .insert(started.call_id, (Instant::now(), started));
+    }
+
     /// Retires what `event` answers, before the dispatch that consumes it.
-    fn retire(&mut self, event: &Event) {
+    ///
+    /// Returns the audit record of a call that just ran to its result, for
+    /// the caller to append to the context. A call refused by the gate was
+    /// never dispatched, so its `ToolFailed` yields none (it has a `Denied`
+    /// record already).
+    fn retire(&mut self, event: &Event) -> Option<ToolAuditRecord> {
         match event {
+            Event::ToolSucceeded {
+                call_id,
+                observation,
+            } => {
+                let (at, started) = self.tools.remove(call_id)?;
+                return Some(ToolAuditRecord::finished(
+                    &started,
+                    Ok(observation),
+                    elapsed_ms(at),
+                ));
+            }
+            Event::ToolFailed { call_id, error } => {
+                let (at, started) = self.tools.remove(call_id)?;
+                return Some(ToolAuditRecord::finished(
+                    &started,
+                    Err(error.as_str()),
+                    elapsed_ms(at),
+                ));
+            }
             // A parked call has answered as far as the kernel is concerned:
-            // it resumes only from `HumanAnswered`, however much later.
-            Event::ToolSucceeded { call_id, .. }
-            | Event::ToolFailed { call_id, .. }
-            | Event::QuestionAsked { call_id, .. } => {
+            // it resumes only from `HumanAnswered`, however much later. It
+            // has not finished, so it gets no result record.
+            Event::QuestionAsked { call_id, .. } => {
                 self.tools.remove(call_id);
             }
             Event::HumanApproved { approval_id } | Event::HumanRejected { approval_id, .. } => {
@@ -203,7 +235,12 @@ impl InFlight {
             }
             _ => {}
         }
+        None
     }
+}
+
+fn elapsed_ms(since: Instant) -> u64 {
+    u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 /// A handle to a running kernel. Post events, observe state, and join for the
@@ -402,8 +439,9 @@ where
     executor.bind_cancel(&cancel);
     let _run_over = cancel.cancel_on_drop();
     // Same in-flight registry as the erased loop. The typed runtime exposes no
-    // quiescence-based capture, so the set is only fed; keeping the bookkeeping
-    // identical means run_effects has one contract.
+    // quiescence-based capture, so the registry serves only to time calls for
+    // their result audit records; keeping the bookkeeping identical means
+    // run_effects has one contract.
     let mut inflight = InFlight::new(executor.parks_approvals());
 
     // Initial transitions run inside the single consumer task, so their entry
@@ -447,6 +485,9 @@ where
                 None => break,
             },
         };
+        if let Some(record) = inflight.retire(&event) {
+            ctx.push_tool_audit(record);
+        }
         children.note_completion(&event);
         let outcome = hsm.dispatch(&event, &mut ctx);
         let event_kind = outcome.event;
@@ -610,17 +651,13 @@ async fn run_effects<S, E>(
         };
         match classify(policy, &state, ctx, &effect) {
             EffectDisposition::Allowed => {
-                ctx.push_tool_audit(ToolAuditRecord::started(
-                    &state_label,
-                    *call_id,
-                    name,
-                    capability,
-                ));
+                let started = ToolAuditRecord::started(&state_label, *call_id, name, capability);
+                ctx.push_tool_audit(started.clone());
                 *last_error = None;
                 // Register before execution so the consumer loop holds the
                 // quiescence signal until the result event re-enters the
                 // queue, no matter how the executor runs the tool.
-                inflight.tools.insert(*call_id);
+                inflight.dispatch_tool(started);
                 executor.execute(effect, sink, obs).await;
             }
             EffectDisposition::Forbidden(reason) => {
