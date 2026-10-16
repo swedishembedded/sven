@@ -2,27 +2,17 @@
 name    = "sven-memory"
 version.workspace = true
 edition = "2021"
-description = "Semantic (vector + BM25) memory store for sven agents"
+description = "The semantic_memory tool: remember, recall, forget, list and get over any sven-memory-api store"
 
 [dependencies]
 sven-tool-api = { path = "../tool-api" }
-sven-vocab   = { path = "../vocab" }
 sven-memory-api = { path = "../memory-api" }
+atif         = { path = "../atif" }
 
-anyhow       = { workspace = true }
-thiserror    = { workspace = true }
 async-trait  = { workspace = true }
-serde        = { workspace = true }
 serde_json   = { workspace = true }
-tokio        = { workspace = true }
-tracing      = { workspace = true }
-dirs         = { workspace = true }
-chrono       = { workspace = true }
 uuid         = { workspace = true }
 
-# SQLite for persistent memory storage with FTS5
-rusqlite     = { workspace = true, features = ["load_extension"] }
-
 [dev-dependencies]
+sven-memory-sqlite = { path = "../memory-sqlite" }
 tokio    = { workspace = true }
-tempfile = { workspace = true }

@@ -57,7 +57,7 @@ use crate::GdbTool;
 pub struct IntegrationProviders {
     /// Semantic memory store for the `semantic_memory` tool.
     #[cfg(feature = "memory")]
-    pub memory_store: Option<Arc<dyn sven_memory::VectorStore>>,
+    pub memory_store: Option<Arc<dyn sven_memory_api::MemoryStore>>,
     /// Who answers a `task` sub-agent's permission requests that the
     /// session's policy does not allow outright: the host's requester, or the
     /// session's own approval gate. Without one they are refused.
@@ -142,14 +142,32 @@ fn shared_evidence(config: &Config) -> Option<crate::evidence_share::SharedEvide
     }
 }
 
-/// The semantic memory store (SQLite + FTS5) for the `semantic_memory` tool.
+/// The memory store (SQLite) for the `semantic_memory` tool.
 ///
-/// `open` fails only on a broken `$HOME`/on-disk state (permissions,
-/// corruption). That is not fatal to the session: the tool is left
-/// unregistered and the reason logged, exactly like a missing MCP tool.
+/// The rows of the store that predates the memory contract move into the
+/// personal space on the first open; later opens find nothing to move. Opening
+/// fails only on a missing home directory or a broken on-disk state
+/// (permissions, corruption, a newer schema). That is not fatal to the
+/// session: the tool is left unregistered and the reason logged, exactly like
+/// a missing MCP tool.
 #[cfg(feature = "memory")]
-pub(crate) async fn open_memory_store() -> Option<Arc<dyn sven_memory::VectorStore>> {
-    match sven_memory::SqliteMemoryStore::open(None).await {
+pub(crate) async fn open_memory_store() -> Option<Arc<dyn sven_memory_api::MemoryStore>> {
+    let opened = async {
+        let store = sven_memory_sqlite::SqliteMemory::open_in_home(dirs::home_dir().as_deref())?;
+        let moved = store
+            .import_legacy(&sven_memory_api::SpaceId::new(sven_memory::PERSONAL_SPACE))
+            .await?;
+        if moved.imported > 0 || moved.kept > 0 {
+            tracing::info!(
+                imported = moved.imported,
+                kept = moved.kept,
+                "moved the previous memory store's rows into the personal space"
+            );
+        }
+        Ok::<_, sven_memory_api::MemoryError>(store)
+    }
+    .await;
+    match opened {
         Ok(store) => Some(Arc::new(store)),
         Err(err) => {
             tracing::warn!(
@@ -310,7 +328,7 @@ fn register_integration_tools(_reg: &mut ToolRegistry, _providers: IntegrationPr
     #[cfg(feature = "memory")]
     {
         if let Some(store) = _providers.memory_store {
-            _reg.register(sven_memory::SemanticMemoryTool::new(store));
+            _reg.register(sven_memory::SemanticMemoryTool::personal(store));
         }
     }
 }

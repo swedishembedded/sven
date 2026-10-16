@@ -33,6 +33,9 @@ sven-harness-runtime = { path = "../harness-runtime" }
 sven-executors     = { path = "../executors" }
 # New integration crates - optional at bootstrap level
 sven-memory        = { path = "../memory", optional = true }
+sven-memory-api    = { path = "../memory-api", optional = true }
+sven-memory-sqlite = { path = "../memory-sqlite", optional = true }
+dirs               = { workspace = true, optional = true }
 anyhow       = { workspace = true }
 async-trait  = { workspace = true }
 futures      = { workspace = true }
@@ -70,11 +73,11 @@ dbus = ["sven-model-drivers/dbus"]
 # it (registered by `mode_registry`, never listed without it) and the
 # agent-dispatch `ui_test_dispatch` entry point.
 android = ["dep:sven-tools-android"]
-# Semantic memory (SQLite + FTS5 `semantic_memory` tool). Its own feature
-# because `rusqlite` is in xtask's
+# Semantic memory (the `semantic_memory` tool on the SQLite memory store). Its
+# own feature because `rusqlite` is in xtask's
 # FORBIDDEN_IN_MINIMAL list (`xtask/src/main.rs`) - the `minimal` build must
 # be able to exclude it while every other default build keeps it on.
-memory = ["dep:sven-memory"]
+memory = ["dep:sven-memory", "dep:sven-memory-api", "dep:sven-memory-sqlite", "dep:dirs"]
 # GDB/MI debugging tools (unix only regardless of this flag - see the
 # target-gated dependency below). Kept separately toggleable so a portable
 # headless build can exclude gdbmi and its transitive closure entirely.

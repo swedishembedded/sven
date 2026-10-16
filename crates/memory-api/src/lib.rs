@@ -12,7 +12,7 @@
 //! own database. Whatever the implementation, it must pass the conformance
 //! suite behind the `conformance` feature.
 //!
-//! * Ids ([`ids`]) are opaque strings. A row number never crosses the API.
+//! * Ids are opaque strings. A row number never crosses the API.
 //! * Isolation is by [`SpaceId`], applied inside the store's queries.
 //! * Vectors are only comparable within an [`IndexGeneration`], and a query
 //!   names the generation it reads.

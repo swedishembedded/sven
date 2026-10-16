@@ -1,65 +1,77 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `memory` extended tool with semantic remember/recall/forget.
+//! The `semantic_memory` tool over a [`MemoryStore`].
 //!
-//! This tool extends the basic KV memory with full-text and (optionally)
-//! vector-similarity search, making it suitable for a "second brain" use case.
+//! Each note is a source of one unit in the tool's space. The id the model
+//! sees is the note's opaque source id, never a row number.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use sven_memory_api::{
+    quote_untrusted, AccessContext, MemoryError, MemoryStore, Note, Origin, Permission, Provenance,
+    RetrievalRecord, RetrievalRequest, SourceId, SourceSummary, SpaceId, TrainingUse, UnitId,
+    ENTITY_TAG_PREFIX,
+};
 use sven_tool_api::{
+    call_records::record_memory_retrieval,
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolDisplay, ToolOutput},
     ToolCapability,
 };
 
-use crate::{
-    recall::{self, SessionScope},
-    store::{Document, VectorStore},
-    DocId,
-};
+/// The space the CLI keeps an agent's notes in.
+pub const PERSONAL_SPACE: &str = "personal";
 
-/// Semantic memory tool backed by a [`VectorStore`].
+/// What the trajectory records as the generation of a purely lexical query,
+/// which reads no embedding index.
+const LEXICAL_GENERATION: &str = "lexical";
+
+/// Semantic memory tool backed by a [`MemoryStore`].
 ///
 /// # Actions
 ///
 /// - `remember` - store a fact, note, or contact detail
-/// - `recall` - semantic search for relevant memories
+/// - `recall` - search for relevant memories
 /// - `forget` - delete a memory by ID
-/// - `list` - list all stored memories
+/// - `list` - list stored memories
 /// - `get` - retrieve a specific memory by ID
-///
-/// # Use cases
-///
-/// - **Second Brain**: Text anything to remember → `remember`; search later → `recall`
-/// - **CRM**: Save contact notes → `remember { entity: "Alice" }`; query → `recall "Alice"`
-/// - **Action items**: Save meeting notes → recall before calls
 pub struct SemanticMemoryTool {
-    store: Arc<dyn VectorStore>,
-    scope: SessionScope,
+    store: Arc<dyn MemoryStore>,
+    access: AccessContext,
+    space: SpaceId,
+    /// Names this tool instance as the author of what it writes.
+    run_id: String,
 }
 
 impl SemanticMemoryTool {
-    pub fn new(store: Arc<dyn VectorStore>) -> Self {
+    /// A tool that reads and writes `space` of `store` as `access` allows.
+    ///
+    /// `access` should grant [`Permission::Ingest`] and [`Permission::Delete`]
+    /// in `space` for `remember` and `forget` to work; without them those
+    /// actions report the refusal.
+    pub fn new(store: Arc<dyn MemoryStore>, access: AccessContext, space: SpaceId) -> Self {
         Self {
             store,
-            scope: SessionScope::new(),
+            access,
+            space,
+            run_id: uuid::Uuid::new_v4().to_string(),
         }
     }
 
-    /// Shares the session's [`SessionScope`] with this tool.
-    ///
-    /// Pass the same scope any other writer of this session's records stamps
-    /// them with, or this tool will not recall that writer's session-scoped
-    /// records.
-    #[must_use]
-    pub fn with_session_scope(mut self, scope: SessionScope) -> Self {
-        self.scope = scope;
-        self
+    /// A tool over the [`PERSONAL_SPACE`] of `store`, with full rights in it
+    /// and none anywhere else.
+    pub fn personal(store: Arc<dyn MemoryStore>) -> Self {
+        let space = SpaceId::new(PERSONAL_SPACE);
+        let access = AccessContext::new("sven")
+            .writing(space.clone(), &[Permission::Ingest, Permission::Delete]);
+        Self::new(store, access, space)
     }
 }
 
@@ -70,15 +82,13 @@ impl Tool for SemanticMemoryTool {
     }
 
     fn summary(&self) -> &str {
-        "Store and recall facts and notes by meaning in persistent semantic memory."
+        "Store and recall facts and notes in persistent memory."
     }
 
     fn description(&self) -> &str {
-        "Persistent semantic memory: store and recall facts, notes, contacts, and action items.\n\
+        "Persistent memory: store and recall facts, notes, contacts, and action items across sessions.\n\
          Actions: remember | recall | forget | list | get\n\
-         Use remember to save any information worth keeping. Use recall with a natural language \
-         query to find relevant stored memories. Perfect for second-brain knowledge management, \
-         personal CRM, and tracking action items across sessions."
+         recall matches words, not meaning. IDs are opaque text: pass them back unchanged."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -97,7 +107,7 @@ impl Tool for SemanticMemoryTool {
                 "tags": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "(remember) Tags for categorization (e.g. ['contact', 'alice', 'acme'])"
+                    "description": "(remember) Tags for categorization"
                 },
                 "entity": {
                     "type": "string",
@@ -105,22 +115,22 @@ impl Tool for SemanticMemoryTool {
                 },
                 "source": {
                     "type": "string",
-                    "description": "(remember) Source of this memory (e.g. 'email', 'calendar', 'user')"
+                    "description": "(remember) Where it came from (e.g. 'email')"
                 },
                 "query": {
                     "type": "string",
-                    "description": "(recall) Natural language query to search memories"
+                    "description": "(recall) Words to search memories for"
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "(recall/list) Maximum number of results. Default: 10"
+                    "description": "(recall/list) Maximum number of results. Default: 10 for recall, 20 for list"
                 },
                 "tag_filter": {
                     "type": "string",
-                    "description": "(list) Filter memories by this tag/entity substring"
+                    "description": "(list) Only memories with exactly this tag or entity"
                 },
                 "id": {
-                    "type": "integer",
+                    "type": "string",
                     "description": "(forget/get) Memory ID"
                 }
             },
@@ -174,194 +184,242 @@ impl Tool for SemanticMemoryTool {
 
 impl SemanticMemoryTool {
     async fn remember(&self, call: &ToolCall) -> ToolOutput {
-        let content = match call.args.get("content").and_then(|v| v.as_str()) {
-            Some(c) => c.to_string(),
-            None => return ToolOutput::err(&call.id, "remember requires 'content'"),
+        let Some(content) = str_arg(call, "content").filter(|c| !c.trim().is_empty()) else {
+            return ToolOutput::err(&call.id, "remember requires non-empty 'content'");
         };
-
-        let mut metadata = HashMap::new();
-
-        if let Some(entity) = call.args.get("entity").and_then(|v| v.as_str()) {
-            metadata.insert("entity".to_string(), entity.to_string());
-        }
-        if let Some(source) = call.args.get("source").and_then(|v| v.as_str()) {
-            metadata.insert("source".to_string(), source.to_string());
-        }
-        if let Some(tags) = call.args.get("tags").and_then(|v| v.as_array()) {
-            let tag_str = tags
-                .iter()
-                .filter_map(|t| t.as_str())
-                .collect::<Vec<_>>()
-                .join(",");
-            metadata.insert("tags".to_string(), tag_str);
-        }
-        metadata.insert(
-            "created".to_string(),
-            chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string(),
-        );
-
-        let doc = Document {
-            content: content.clone(),
-            metadata,
-            embedding: None,
+        let id = SourceId::new(format!(
+            "n-{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..16]
+        ));
+        let tags = call
+            .args
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|t| t.as_str())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let note = Note {
+            space: self.space.clone(),
+            source_id: id.clone(),
+            text: content,
+            entity: str_arg(call, "entity"),
+            source: str_arg(call, "source"),
+            tags,
+            provenance: Provenance {
+                origin: Origin::Agent {
+                    run_id: self.run_id.clone(),
+                },
+                captured_at: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs()),
+                training_use: TrainingUse::Unspecified,
+            },
         };
-
-        match self.store.insert(doc).await {
-            Ok(id) => ToolOutput::ok(
+        match self.store.ingest(&self.access, note.into_request()).await {
+            Ok(_) => ToolOutput::ok(
                 &call.id,
-                format!("Remembered (ID={id}): {}", truncate(&content, 80)),
+                format!("Remembered (ID={id}): {}", truncate(content, 80)),
             ),
             Err(e) => ToolOutput::err(&call.id, format!("remember failed: {e}")),
         }
     }
 
     async fn recall(&self, call: &ToolCall) -> ToolOutput {
-        let query = match call.args.get("query").and_then(|v| v.as_str()) {
-            Some(q) => q.to_string(),
-            None => return ToolOutput::err(&call.id, "recall requires 'query'"),
+        let Some(query) = str_arg(call, "query") else {
+            return ToolOutput::err(&call.id, "recall requires 'query'");
         };
-        let limit = call
-            .args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10) as usize;
+        let limit = usize_arg(call, "limit", 10);
+        let request = RetrievalRequest::new(query, limit);
+        let response = match self.store.retrieve(&self.access, request.clone()).await {
+            Ok(response) => response,
+            Err(e) => return ToolOutput::err(&call.id, format!("recall failed: {e}")),
+        };
 
-        match self.store.search(&query, limit).await {
-            Ok(results) => {
-                // Filtered here rather than in the store's query so no
-                // `VectorStore` implementation can forget the rule.
-                let visible: Vec<_> = results
-                    .into_iter()
-                    .filter(|r| recall::is_visible(&r.metadata, &self.scope))
-                    .collect();
-                if visible.is_empty() {
-                    return ToolOutput::ok(&call.id, "No memories found for that query.");
-                }
-                let mut lines = vec![format!("Found {} memories:", visible.len())];
-                for r in &visible {
-                    let entity = r
-                        .metadata
-                        .get("entity")
-                        .map(|s| format!(" [{s}]"))
-                        .unwrap_or_default();
-                    let body = truncate(&r.content, 120);
-                    lines.push(match recall::untrusted_label(&r.metadata) {
-                        Some(label) => format!(
-                            "- ID={}{entity}: {}",
-                            r.id,
-                            recall::quote_untrusted(label, &body)
-                        ),
-                        None => {
-                            let source = r
-                                .metadata
-                                .get("source")
-                                .map(|s| format!(" (via {s})"))
-                                .unwrap_or_default();
-                            format!("- ID={}{entity}{source}: {body}", r.id)
-                        }
-                    });
-                }
-                ToolOutput::ok(&call.id, lines.join("\n"))
-            }
-            Err(e) => ToolOutput::err(&call.id, format!("recall failed: {e}")),
+        // Every hit is shown, so every hit was put into the context.
+        record_memory_retrieval(to_trajectory(RetrievalRecord::new(
+            &request,
+            &response,
+            |_| true,
+        )));
+
+        if response.hits.is_empty() {
+            return ToolOutput::ok(&call.id, "No memories found for that query.");
         }
+        let mut lines = vec![format!("Found {} memories:", response.hits.len())];
+        for hit in &response.hits {
+            lines.push(format!(
+                "- ID={}: {}",
+                hit.unit.source_id,
+                framed(&hit.provenance.origin, &truncate(&hit.unit.text, 120))
+            ));
+        }
+        ToolOutput::ok(&call.id, lines.join("\n"))
     }
 
     async fn forget(&self, call: &ToolCall) -> ToolOutput {
-        let id = match call.args.get("id").and_then(|v| v.as_i64()) {
-            Some(id) => id as DocId,
-            None => return ToolOutput::err(&call.id, "forget requires 'id'"),
+        let Some(id) = str_arg(call, "id") else {
+            return ToolOutput::err(&call.id, "forget requires 'id'");
         };
-
-        // Another session's confined record answers exactly as a missing one,
-        // the same as `get`: deleting it would reach across the confinement
-        // boundary, and even the reply distinguishing "deleted" from "no such
-        // memory" is the existence oracle `get` deliberately refuses to be.
-        match self.store.get(id).await {
-            Ok(Some(doc)) if !recall::is_visible(&doc.metadata, &self.scope) => {
-                return ToolOutput::err(&call.id, format!("No memory with ID {id}."));
-            }
-            Ok(_) => {}
-            Err(e) => return ToolOutput::err(&call.id, format!("forget failed: {e}")),
-        }
-
-        match self.store.delete(id).await {
+        // A note of a space the tool cannot see answers exactly as a missing
+        // one: the store reports it as absent, so the reply is no oracle for
+        // whether it exists.
+        match self
+            .store
+            .delete_source(&self.access, &self.space, &SourceId::new(id))
+            .await
+        {
             Ok(true) => ToolOutput::ok(&call.id, format!("Memory {id} deleted.")),
-            Ok(false) => ToolOutput::err(&call.id, format!("No memory with ID {id}.")),
+            Ok(false) | Err(MemoryError::NotFound) => {
+                ToolOutput::err(&call.id, format!("No memory with ID {id}."))
+            }
             Err(e) => ToolOutput::err(&call.id, format!("forget failed: {e}")),
         }
     }
 
     async fn list(&self, call: &ToolCall) -> ToolOutput {
-        let tag_filter = call.args.get("tag_filter").and_then(|v| v.as_str());
-
-        match self.store.list(tag_filter).await {
-            Ok(summaries) => {
-                let summaries: Vec<_> = summaries
-                    .into_iter()
-                    .filter(|s| recall::is_visible(&s.metadata, &self.scope))
-                    .collect();
-                if summaries.is_empty() {
-                    return ToolOutput::ok(&call.id, "No memories stored.");
-                }
-                let limit = call
-                    .args
-                    .get("limit")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(20) as usize;
-                let mut lines = vec![format!("{} memories stored:", summaries.len())];
-                for s in summaries.iter().take(limit) {
-                    let entity = s
-                        .metadata
-                        .get("entity")
-                        .map(|e| format!(" [{e}]"))
-                        .unwrap_or_default();
-                    lines.push(match recall::untrusted_label(&s.metadata) {
-                        Some(label) => format!(
-                            "- ID={}{entity}: {}",
-                            s.id,
-                            recall::quote_untrusted(label, &s.snippet)
-                        ),
-                        None => format!("- ID={}{entity}: {}", s.id, s.snippet),
-                    });
-                }
-                ToolOutput::ok(&call.id, lines.join("\n"))
-            }
-            Err(e) => ToolOutput::err(&call.id, format!("list failed: {e}")),
+        let summaries = match self.sources(str_arg(call, "tag_filter")).await {
+            Ok(summaries) => summaries,
+            Err(e) => return ToolOutput::err(&call.id, format!("list failed: {e}")),
+        };
+        if summaries.is_empty() {
+            return ToolOutput::ok(&call.id, "No memories stored.");
         }
+        let limit = usize_arg(call, "limit", 20);
+        let mut lines = vec![format!("{} memories stored:", summaries.len())];
+        // The store lists oldest first; the model wants the latest.
+        for summary in summaries.iter().rev().take(limit) {
+            let entity = entity_of(summary)
+                .map(|e| format!(" [{e}]"))
+                .unwrap_or_default();
+            lines.push(format!(
+                "- ID={}{entity}: {}",
+                summary.source_id,
+                framed(&summary.provenance.origin, &summary.label)
+            ));
+        }
+        ToolOutput::ok(&call.id, lines.join("\n"))
+    }
+
+    /// The sources of the tool's space, or those with exactly `filter` as a
+    /// tag or as their entity. The store matches tags as whole strings.
+    async fn sources(&self, filter: Option<&str>) -> Result<Vec<SourceSummary>, MemoryError> {
+        let Some(filter) = filter else {
+            return self
+                .store
+                .list_sources(&self.access, &self.space, None)
+                .await;
+        };
+        let mut found = self
+            .store
+            .list_sources(&self.access, &self.space, Some(filter))
+            .await?;
+        let by_entity = format!("{ENTITY_TAG_PREFIX}{filter}");
+        let entity_matches = self
+            .store
+            .list_sources(&self.access, &self.space, Some(&by_entity))
+            .await?;
+        for summary in entity_matches {
+            if !found.iter().any(|f| f.source_id == summary.source_id) {
+                found.push(summary);
+            }
+        }
+        Ok(found)
     }
 
     async fn get(&self, call: &ToolCall) -> ToolOutput {
-        let id = match call.args.get("id").and_then(|v| v.as_i64()) {
-            Some(id) => id as DocId,
-            None => return ToolOutput::err(&call.id, "get requires 'id'"),
+        let Some(id) = str_arg(call, "id") else {
+            return ToolOutput::err(&call.id, "get requires 'id'");
         };
-
-        match self.store.get(id).await {
-            // Another session's confined record answers exactly as a missing
-            // one: asking by ID must not even confirm that it exists.
-            Ok(Some(doc)) if !recall::is_visible(&doc.metadata, &self.scope) => {
-                ToolOutput::err(&call.id, format!("No memory with ID {id}."))
-            }
-            Ok(Some(doc)) => {
-                let meta_display: String = doc
-                    .metadata
-                    .iter()
-                    .map(|(k, v)| format!("{k}: {v}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let body = match recall::untrusted_label(&doc.metadata) {
-                    Some(label) => recall::quote_untrusted(label, &doc.content),
-                    None => doc.content.clone(),
-                };
+        let missing = || ToolOutput::err(&call.id, format!("No memory with ID {id}."));
+        let sources = match self.sources(None).await {
+            Ok(sources) => sources,
+            Err(e) => return ToolOutput::err(&call.id, format!("get failed: {e}")),
+        };
+        let Some(summary) = sources.into_iter().find(|s| s.source_id.as_str() == id) else {
+            return missing();
+        };
+        let unit_id = UnitId::derive(&self.space, &summary.source_id, &summary.revision, 0);
+        match self
+            .store
+            .get_unit(&self.access, &self.space, &unit_id)
+            .await
+        {
+            Ok(Some(unit)) => {
+                let tags: Vec<&str> = summary.tags.iter().map(String::as_str).collect();
                 ToolOutput::ok(
                     &call.id,
-                    format!("Memory {id}:\n{body}\n\n[{meta_display}]"),
+                    format!(
+                        "Memory {id}:\n{}\n\n[tags: {}; origin: {}]",
+                        framed(&summary.provenance.origin, &unit.text),
+                        tags.join(", "),
+                        summary.provenance.origin.label()
+                    ),
                 )
             }
-            Ok(None) => ToolOutput::err(&call.id, format!("No memory with ID {id}.")),
+            Ok(None) | Err(MemoryError::NotFound) => missing(),
             Err(e) => ToolOutput::err(&call.id, format!("get failed: {e}")),
         }
+    }
+}
+
+fn str_arg<'a>(call: &'a ToolCall, key: &str) -> Option<&'a str> {
+    call.args.get(key).and_then(|v| v.as_str())
+}
+
+fn usize_arg(call: &ToolCall, key: &str, default: usize) -> usize {
+    call.args
+        .get(key)
+        .and_then(|v| v.as_u64())
+        .map_or(default, |n| usize::try_from(n).unwrap_or(usize::MAX))
+}
+
+/// What a note is about, from its entity tag.
+fn entity_of(summary: &SourceSummary) -> Option<&str> {
+    summary
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix(ENTITY_TAG_PREFIX))
+}
+
+/// `text` as it may enter a prompt: quoted unless a person stated it.
+fn framed(origin: &Origin, text: &str) -> String {
+    if origin.is_untrusted() {
+        quote_untrusted(origin.label(), text)
+    } else {
+        text.to_owned()
+    }
+}
+
+/// The retrieval as the trajectory records it.
+fn to_trajectory(record: RetrievalRecord) -> atif::MemoryRetrieval {
+    atif::MemoryRetrieval {
+        call_id: String::new(),
+        query: record.query,
+        space_ids: record.space_ids.iter().map(ToString::to_string).collect(),
+        generation_id: record
+            .generation_id
+            .map_or_else(|| LEXICAL_GENERATION.to_owned(), |g| g.to_string()),
+        snapshot_id: record.snapshot_id,
+        results: record
+            .results
+            .into_iter()
+            .map(|r| atif::MemoryResult {
+                unit_id: r.unit_id.to_string(),
+                revision: r.revision.to_string(),
+                anchor: atif::MemoryAnchor {
+                    heading_path: r.anchor.heading_path,
+                    block_ordinal: r.anchor.block_ordinal,
+                    text_fingerprint: r.anchor.text_fingerprint,
+                },
+                score: f64::from(r.score),
+                rank: u32::try_from(r.rank).unwrap_or(u32::MAX),
+                inserted: r.inserted,
+            })
+            .collect(),
     }
 }
 

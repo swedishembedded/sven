@@ -1,62 +1,33 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//!
-//! Semantic memory store for sven agents.
-//!
-//! Provides a [`VectorStore`] trait backed by SQLite + FTS5 (BM25 text search)
-//! with optional embedding vectors for semantic similarity search.
-//!
-//! # Design
+//! The `semantic_memory` tool: an agent's notes over any
+//! [`sven_memory_api::MemoryStore`].
 //!
 //! ```text
 //! ┌──────────────────────────────────────────┐
 //! │            SemanticMemoryTool            │
 //! │  remember | recall | forget | list | get │
-//! │      provenance-aware recall framing     │
 //! └────────────────────┬─────────────────────┘
-//!                      │
+//!                      │ AccessContext + one space
 //!                      ▼
 //! ┌──────────────────────────────────────────┐
-//! │             SqliteMemoryStore            │
-//! │  SQLite + FTS5 (BM25) + cosine vectors   │
+//! │       dyn MemoryStore (the contract)     │
 //! └──────────────────────────────────────────┘
 //! ```
 //!
-//! # Quick start
+//! The tool knows no storage. The host chooses the store and builds the
+//! [`AccessContext`](sven_memory_api::AccessContext) the tool runs under, and
+//! the store applies that context inside its own queries. What an agent
+//! writes is stored as untrusted material and quoted when it is recalled; a
+//! real recall is reported to the trajectory through
+//! [`sven_tool_api::call_records::record_memory_retrieval`].
 //!
-//! ```no_run
-//! use sven_memory::{SqliteMemoryStore, Document, VectorStore};
-//! use std::collections::HashMap;
-//!
-//! # async fn example() -> anyhow::Result<()> {
-//! let store = SqliteMemoryStore::open(None).await?;
-//!
-//! store.insert(Document {
-//!     content: "Alice from Acme Corp prefers afternoon calls.".to_string(),
-//!     metadata: {
-//!         let mut m = HashMap::new();
-//!         m.insert("source".to_string(), "contacts".to_string());
-//!         m.insert("entity".to_string(), "Alice".to_string());
-//!         m
-//!     },
-//!     embedding: None,
-//! }).await?;
-//!
-//! let results = store.search("Alice contact preferences", 5).await?;
-//! for r in results {
-//!     println!("{}: {}", r.score, r.content);
-//! }
-//! # Ok(())
-//! # }
-//! ```
+//! Swedish Embedded AB implements solutions for prompt-injection-resistant
+//! agent memory for its clients. If your team needs expertise in keeping
+//! untrusted retrieved content out of a model's context then you can procure
+//! our services by sending an email to info@swedishembedded.com.
 
-pub mod recall;
-pub mod sqlite;
-pub mod store;
-pub mod tool;
+mod tool;
 
-pub use recall::SessionScope;
-pub use sqlite::SqliteMemoryStore;
-pub use store::{DocId, DocSummary, Document, SearchResult, VectorStore};
-pub use tool::SemanticMemoryTool;
+pub use tool::{SemanticMemoryTool, PERSONAL_SPACE};

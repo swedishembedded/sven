@@ -303,8 +303,8 @@ agent self-management) · `sven-tools-web` (`web_fetch`/`web_search`, `grep`,
 is always compiled) · `sven-turn` (impure turn primitives: `stream_turn`,
 `compact`/`smart_truncate`, `CompactionStrategy`, prompt assembly,
 `AgentRuntimeContext`) · `sven-team` (agent-team
-coordination) · `sven-memory` (semantic memory store and `semantic_memory`
-tool; the `memory` feature of `sven-bootstrap`)
+coordination) · `sven-memory` (the `semantic_memory` tool over any
+`MemoryStore`; the `memory` feature of `sven-bootstrap`)
 
 ### machines
 `sven-machines` (pure `Machine` impls: `ReactiveAgentMachine`, `SdlcMachine`,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # 13_semantic_memory.bats - End-to-end coverage for the `semantic_memory`
-# tool (sven-memory's SQLite + FTS5 store), registered by default since the
+# tool (the SQLite + FTS5 memory store), registered by default since the
 # `memory` cargo feature (see crates/bootstrap/Cargo.toml).
 #
 # Validates the full remember -> recall round-trip through the real registry
