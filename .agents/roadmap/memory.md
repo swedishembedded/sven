@@ -1,6 +1,7 @@
 # memory
 
-**Status: planned. Nothing below has been started.**
+**Status: in progress. The `sven-memory-api` contract, its conformance suite
+and the `sven-memory-sqlite` adapter exist; the items below remain.**
 
 ## Goal
 
