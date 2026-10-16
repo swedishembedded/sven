@@ -162,8 +162,20 @@ impl DbusProvider {
         if let Some(max) = req.max_output_tokens_override.or(self.max_tokens) {
             params.insert("max_new".to_string(), json!(max));
         }
-        if let Some(t) = self.temperature {
+        if let Some(t) = req.sampling.temperature.or(self.temperature.map(f64::from)) {
             params.insert("temperature".to_string(), json!(t));
+        }
+        if let Some(p) = req.sampling.top_p {
+            params.insert("top_p".to_string(), json!(p));
+        }
+        if let Some(k) = req.sampling.top_k {
+            params.insert("top_k".to_string(), json!(k));
+        }
+        if let Some(seed) = req.sampling.seed {
+            params.insert("seed".to_string(), json!(seed));
+        }
+        if req.want_logprobs {
+            params.insert("logprobs".to_string(), json!(true));
         }
         serde_json::to_string(&Value::Object(params)).context("serialising params object")
     }
@@ -342,6 +354,35 @@ fn reply_text(
         })
 }
 
+/// What the server reports about the generation itself, from the
+/// `generation` object of `out_meta`.
+struct ReplyGeneration {
+    model: Option<String>,
+    seed: Option<u64>,
+    ids: Vec<i64>,
+    logprobs: Vec<f64>,
+}
+
+/// Parse the optional `generation` entry of `out_meta`. A server that does
+/// not report one, or reports it malformed, simply yields `None`: the text
+/// reply is still valid without the training-grade extras.
+fn reply_generation(out_meta: &str) -> Option<ReplyGeneration> {
+    let meta: Value = serde_json::from_str(out_meta).ok()?;
+    let g = meta.get("generation")?;
+    let list = |key: &str| {
+        g.get(key)
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+    };
+    Some(ReplyGeneration {
+        model: g.get("model").and_then(|m| m.as_str()).map(str::to_owned),
+        seed: g.get("seed").and_then(|s| s.as_u64()),
+        ids: list("token_ids").iter().filter_map(Value::as_i64).collect(),
+        logprobs: list("logprobs").iter().filter_map(Value::as_f64).collect(),
+    })
+}
+
 /// Best-effort token counts from the `result` JSON.
 ///
 /// Recognises both a nested `usage` object and flat `num_tokens`-style keys;
@@ -466,7 +507,7 @@ impl sven_model::ModelProvider for DbusProvider {
         );
 
         let proxy = self.manager().await?;
-        let (result_json, out_fds, _out_meta) = proxy
+        let (result_json, out_fds, out_meta) = proxy
             .run(
                 &self.model,
                 &self.opts.action,
@@ -482,17 +523,29 @@ impl sven_model::ModelProvider for DbusProvider {
         let (input_tokens, output_tokens) = reply_usage(&result_json);
 
         // One-shot: the whole reply arrives at once (see the module docs).
-        let events: Vec<Result<ResponseEvent>> = vec![
-            Ok(ResponseEvent::TextDelta(text)),
-            Ok(ResponseEvent::Usage {
-                input_tokens,
-                output_tokens,
-                cache_read_tokens: 0,
-                cache_write_tokens: 0,
-                cost_usd: None,
-            }),
-            Ok(ResponseEvent::Done),
-        ];
+        let mut events: Vec<Result<ResponseEvent>> = vec![Ok(ResponseEvent::TextDelta(text))];
+        if let Some(generation) = reply_generation(&out_meta) {
+            if req.want_logprobs && !(generation.ids.is_empty() && generation.logprobs.is_empty()) {
+                events.push(Ok(ResponseEvent::Tokens {
+                    ids: generation.ids,
+                    logprobs: generation.logprobs,
+                }));
+            }
+            if let Some(model) = generation.model {
+                events.push(Ok(ResponseEvent::Served {
+                    model,
+                    seed: generation.seed.or(req.sampling.seed),
+                }));
+            }
+        }
+        events.push(Ok(ResponseEvent::Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            cost_usd: None,
+        }));
+        events.push(Ok(ResponseEvent::Done));
         Ok(Box::pin(stream::iter(events)))
     }
 }

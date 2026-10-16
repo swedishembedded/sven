@@ -81,6 +81,7 @@ mod tests {
             max_output_tokens_override: None,
             core_tool_count: 0,
             response_format: None,
+            ..Default::default()
         }
     }
 

@@ -500,6 +500,23 @@ pub struct ToolSchema {
     pub is_mcp: bool,
 }
 
+/// Sampling controls for one completion.
+///
+/// Every field is optional: `None` leaves the choice to the provider's own
+/// configuration. The values are recorded with the trajectory so a run can be
+/// reproduced or scored later, which is why a `seed` is carried at all.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SamplingParams {
+    /// Softmax temperature; overrides the driver's configured temperature.
+    pub temperature: Option<f64>,
+    /// Nucleus-sampling mass.
+    pub top_p: Option<f64>,
+    /// Number of highest-probability tokens kept before sampling.
+    pub top_k: Option<u32>,
+    /// Seed for deterministic sampling on providers that honour one.
+    pub seed: Option<u64>,
+}
+
 /// Request sent to a model provider.
 #[derive(Debug, Clone, Default)]
 pub struct CompletionRequest {
@@ -541,6 +558,13 @@ pub struct CompletionRequest {
     /// JSON (optionally matching a schema).  Drivers that do not support it
     /// ignore the field; callers must always post-parse to stay portable.
     pub response_format: Option<ResponseFormat>,
+    /// Sampling controls for this request (see [`SamplingParams`]).
+    pub sampling: SamplingParams,
+    /// Ask the provider for the sampled token ids and their log-probabilities.
+    ///
+    /// Providers that cannot supply them ignore the flag and emit no
+    /// [`ResponseEvent::Tokens`]; consumers must treat absence as "unknown".
+    pub want_logprobs: bool,
 }
 
 /// A single streamed event from the model.
@@ -566,6 +590,16 @@ pub enum ResponseEvent {
     /// A thinking/reasoning delta from the model (extended thinking API).
     /// Accumulated into a Thinking segment and collapsed by default in the UI.
     ThinkingDelta(String),
+    /// Sampled tokens of the completion, in generation order.
+    ///
+    /// May arrive several times per completion; consumers append. `ids` and
+    /// `logprobs` are parallel when both are non-empty; a provider that
+    /// reports only one of them leaves the other empty.
+    Tokens { ids: Vec<i64>, logprobs: Vec<f64> },
+    /// What actually served the request: the model identity the provider
+    /// reports (which may differ from the one requested, e.g. behind a router)
+    /// and the sampling seed in effect, when known. Sent at most once.
+    Served { model: String, seed: Option<u64> },
     /// Final usage statistics
     Usage {
         input_tokens: u32,

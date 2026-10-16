@@ -149,6 +149,7 @@ impl ModelSubQueryRunner {
             max_output_tokens_override: None,
             core_tool_count: 0,
             response_format: None,
+            ..Default::default()
         };
 
         sven_turn::complete_text(self.provider.as_ref(), req, self.limits)

@@ -199,6 +199,9 @@ impl FakeManager {
             blobs.insert(name.clone(), bytes);
         }
 
+        let wants_logprobs = serde_json::from_str::<Value>(&params)
+            .map(|p| p["logprobs"] == true)
+            .unwrap_or(false);
         *self.seen.lock().unwrap() = Some(Seen {
             model,
             action,
@@ -214,10 +217,17 @@ impl FakeManager {
         let mut out_fds = HashMap::new();
         out_fds.insert("text".to_string(), text_fd);
 
+        // A server that was asked for token-level capture reports it in
+        // `out_meta` beside the per-output media metadata.
+        let out_meta = if wants_logprobs {
+            r#"{"text": {"media": "text"}, "generation": {"model": "brain/omni@r3", "seed": 7, "token_ids": [5, 6, 7], "logprobs": [-0.5, -0.25, -1.0]}}"#
+        } else {
+            r#"{"text": {"media": "text"}}"#
+        };
         Ok((
             r#"{"usage": {"input_tokens": 11, "output_tokens": 5}}"#.to_string(),
             out_fds,
-            r#"{"text": {"media": "text"}}"#.to_string(),
+            out_meta.to_string(),
         ))
     }
 
@@ -562,4 +572,45 @@ async fn a_non_data_url_blob_is_rejected_with_a_clear_error() {
         Err(e) => format!("{e:#}"),
     };
     assert!(msg.contains("inline data URL"), "{msg}");
+}
+
+#[tokio::test]
+async fn sampling_fields_travel_in_params_and_generation_meta_is_read_back() {
+    let (provider, seen, _server) = fake_server().await;
+    let req = sven_model::CompletionRequest {
+        messages: vec![Message::user("sample")],
+        sampling: sven_model::SamplingParams {
+            temperature: Some(0.25),
+            top_p: Some(0.9),
+            top_k: Some(40),
+            seed: Some(7),
+        },
+        want_logprobs: true,
+        ..Default::default()
+    };
+    let events = drain(provider.complete(req).await.unwrap()).await;
+
+    let params: Value =
+        serde_json::from_str(&seen.lock().unwrap().clone().unwrap().params).unwrap();
+    assert_eq!(params["temperature"].as_f64(), Some(0.25));
+    assert_eq!(params["top_p"].as_f64(), Some(0.9));
+    assert_eq!(params["top_k"], 40);
+    assert_eq!(params["seed"], 7);
+    assert_eq!(params["logprobs"], true);
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            ResponseEvent::Tokens { ids, logprobs }
+                if ids == &[5, 6, 7] && logprobs == &[-0.5, -0.25, -1.0]
+        )),
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            ResponseEvent::Served { model, seed } if model == "brain/omni@r3" && *seed == Some(7)
+        )),
+        "{events:?}"
+    );
 }

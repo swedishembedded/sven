@@ -20,6 +20,8 @@ use sven_model::ResponseEvent;
 pub(super) struct Frame {
     pub(super) events: Vec<ResponseEvent>,
     pub(super) terminal: bool,
+    /// The `model` the server reported on this frame, if any.
+    pub(super) model: Option<String>,
 }
 
 /// Parse a single complete SSE line into the events it carries.
@@ -37,6 +39,7 @@ pub(super) fn parse_sse_data_line(line: &str) -> Option<anyhow::Result<Frame>> {
         return Some(Ok(Frame {
             events: vec![ResponseEvent::Done],
             terminal: true,
+            model: None,
         }));
     }
     Some(match serde_json::from_str::<Value>(data) {
@@ -60,7 +63,11 @@ pub(super) fn parse_sse_data_line(line: &str) -> Option<anyhow::Result<Frame>> {
 /// to an empty `TextDelta` for exactly this reason.  An empty `TextDelta` is
 /// a no-op downstream (`stream_turn`'s non-empty guard skips it) beyond that
 /// watchdog reset.
-fn drain_lines(buf: &mut Vec<u8>, finished: &mut bool) -> Vec<anyhow::Result<ResponseEvent>> {
+fn drain_lines(
+    buf: &mut Vec<u8>,
+    finished: &mut bool,
+    served: &mut ServedReport,
+) -> Vec<anyhow::Result<ResponseEvent>> {
     let mut events = Vec::new();
     let mut completed_line = false;
     while let Some(nl_pos) = buf.iter().position(|&b| b == b'\n') {
@@ -74,6 +81,11 @@ fn drain_lines(buf: &mut Vec<u8>, finished: &mut bool) -> Vec<anyhow::Result<Res
             Some(Ok(frame)) => {
                 *finished |= frame.terminal;
                 events.extend(frame.events.into_iter().map(Ok));
+                // After the frame's own events: consumers of the first
+                // event of a frame (content) must not see a new lead event.
+                if let Some(event) = served.observe(frame.model) {
+                    events.push(Ok(event));
+                }
             }
             Some(Err(e)) => events.push(Err(e)),
             None => {}
@@ -91,7 +103,7 @@ fn drain_lines(buf: &mut Vec<u8>, finished: &mut bool) -> Vec<anyhow::Result<Res
 pub(crate) fn drain_complete_sse_lines_bytes(
     buf: &mut Vec<u8>,
 ) -> Vec<anyhow::Result<ResponseEvent>> {
-    drain_lines(buf, &mut false)
+    drain_lines(buf, &mut false, &mut ServedReport::new(None))
 }
 
 /// Drain all complete `\n`-terminated SSE lines from `buf`.
@@ -111,16 +123,50 @@ pub(crate) fn drain_complete_sse_lines(buf: &mut String) -> Vec<anyhow::Result<R
 /// TCP packets, and a multi-byte UTF-8 sequence across chunk boundaries) and
 /// remembers whether the generation reached a terminal frame, so the end of
 /// the byte stream can be told apart from an interrupted connection.
-#[derive(Default)]
 struct SseDecoder {
     buf: Vec<u8>,
     finished: bool,
+    served: ServedReport,
+}
+
+/// Emits [`ResponseEvent::Served`] once, from the first frame that names the
+/// serving model. The seed is the one the request carried: servers do not
+/// echo it back.
+struct ServedReport {
+    seed: Option<u64>,
+    done: bool,
+}
+
+impl ServedReport {
+    fn new(seed: Option<u64>) -> Self {
+        Self { seed, done: false }
+    }
+
+    fn observe(&mut self, model: Option<String>) -> Option<ResponseEvent> {
+        if self.done {
+            return None;
+        }
+        let model = model.filter(|m| !m.is_empty())?;
+        self.done = true;
+        Some(ResponseEvent::Served {
+            model,
+            seed: self.seed,
+        })
+    }
 }
 
 impl SseDecoder {
+    fn new(seed: Option<u64>) -> Self {
+        Self {
+            buf: Vec::new(),
+            finished: false,
+            served: ServedReport::new(seed),
+        }
+    }
+
     fn push(&mut self, bytes: &[u8]) -> Vec<anyhow::Result<ResponseEvent>> {
         self.buf.extend_from_slice(bytes);
-        drain_lines(&mut self.buf, &mut self.finished)
+        drain_lines(&mut self.buf, &mut self.finished, &mut self.served)
     }
 
     /// The byte stream ended cleanly. Flush an unterminated last line, then
@@ -132,7 +178,7 @@ impl SseDecoder {
         let mut out = Vec::new();
         if !self.buf.is_empty() {
             self.buf.push(b'\n');
-            out = drain_lines(&mut self.buf, &mut self.finished);
+            out = drain_lines(&mut self.buf, &mut self.finished, &mut self.served);
         }
         if !self.finished {
             out.push(Err(anyhow::anyhow!(
@@ -147,6 +193,7 @@ impl SseDecoder {
 /// the generation did and on transport errors.
 pub(crate) fn decode_events<B, E>(
     body: impl Stream<Item = Result<B, E>> + Unpin + Send + 'static,
+    seed: Option<u64>,
 ) -> impl Stream<Item = anyhow::Result<ResponseEvent>> + Send
 where
     B: AsRef<[u8]>,
@@ -161,7 +208,7 @@ where
     futures::stream::unfold(
         State {
             body,
-            decoder: SseDecoder::default(),
+            decoder: SseDecoder::new(seed),
             ready: VecDeque::new(),
             closed: false,
         },
@@ -220,6 +267,7 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
 
     let mut events = Vec::new();
     let mut terminal = false;
+    let model = v.get("model").and_then(|m| m.as_str()).map(str::to_owned);
 
     // Usage (emitted when stream_options.include_usage = true). Usually a
     // frame of its own with `choices: []`, but some servers attach it to the
@@ -297,7 +345,11 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
         if events.is_empty() {
             bail!("unrecognised stream frame (no usage/timings/error/choices): {v}");
         }
-        return Ok(Frame { events, terminal });
+        return Ok(Frame {
+            events,
+            terminal,
+            model,
+        });
     };
 
     let delta = &choice["delta"];
@@ -321,6 +373,23 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
         .filter(|t| !t.is_empty())
     {
         events.push(ResponseEvent::TextDelta(text.to_string()));
+    }
+
+    // Token-level capture. `logprobs.content[].logprob` is the OpenAI shape;
+    // `token_ids` is the extension carrying the sampled ids, accepted on the
+    // choice or inside `logprobs`.
+    let ids: Vec<i64> = choice
+        .get("token_ids")
+        .or_else(|| choice["logprobs"].get("token_ids"))
+        .and_then(|t| t.as_array())
+        .map(|a| a.iter().filter_map(Value::as_i64).collect())
+        .unwrap_or_default();
+    let logprobs: Vec<f64> = choice["logprobs"]["content"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|t| t["logprob"].as_f64()).collect())
+        .unwrap_or_default();
+    if !ids.is_empty() || !logprobs.is_empty() {
+        events.push(ResponseEvent::Tokens { ids, logprobs });
     }
 
     // Tool-call deltas. One delta may carry several parallel calls, each
@@ -367,7 +436,11 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
     if events.is_empty() {
         events.push(ResponseEvent::TextDelta(String::new()));
     }
-    Ok(Frame { events, terminal })
+    Ok(Frame {
+        events,
+        terminal,
+        model,
+    })
 }
 
 /// A tool call's `arguments` as JSON text. The schema says string; a few

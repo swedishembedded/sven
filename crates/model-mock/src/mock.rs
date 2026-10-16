@@ -32,17 +32,28 @@ impl sven_model::ModelProvider for MockProvider {
             .unwrap_or("[no input]")
             .to_string();
 
-        let events: Vec<anyhow::Result<ResponseEvent>> = vec![
-            Ok(ResponseEvent::TextDelta(format!("MOCK: {reply}"))),
-            Ok(ResponseEvent::Usage {
-                input_tokens: 10,
-                output_tokens: 10,
-                cache_read_tokens: 0,
-                cache_write_tokens: 0,
-                cost_usd: None,
-            }),
-            Ok(ResponseEvent::Done),
-        ];
+        let text = format!("MOCK: {reply}");
+        let mut events: Vec<anyhow::Result<ResponseEvent>> = Vec::new();
+        events.push(Ok(ResponseEvent::TextDelta(text.clone())));
+        if req.want_logprobs {
+            // One token per byte of the reply, so a test can predict the
+            // ids exactly; log-probabilities fall off with position.
+            let ids = text.bytes().map(i64::from).collect();
+            let logprobs = (0..text.len()).map(|i| -0.125 * (i + 1) as f64).collect();
+            events.push(Ok(ResponseEvent::Tokens { ids, logprobs }));
+            events.push(Ok(ResponseEvent::Served {
+                model: "mock-model".into(),
+                seed: req.sampling.seed,
+            }));
+        }
+        events.push(Ok(ResponseEvent::Usage {
+            input_tokens: 10,
+            output_tokens: 10,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            cost_usd: None,
+        }));
+        events.push(Ok(ResponseEvent::Done));
         Ok(Box::pin(stream::iter(events)))
     }
 }

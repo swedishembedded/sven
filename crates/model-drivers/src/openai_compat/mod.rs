@@ -489,8 +489,27 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             max_tokens_key: max_tokens,
             "stream_options": { "include_usage": true },
         });
+        // A per-request temperature overrides the configured one.
+        let temperature = req
+            .sampling
+            .temperature
+            .unwrap_or(f64::from(self.temperature));
         if use_temperature {
-            body["temperature"] = json!(self.temperature);
+            body["temperature"] = json!(temperature);
+        }
+        if let Some(top_p) = req.sampling.top_p {
+            body["top_p"] = json!(top_p);
+        }
+        // `top_k` and `seed` are not in the OpenAI schema; servers that do
+        // not know them ignore unknown fields.
+        if let Some(top_k) = req.sampling.top_k {
+            body["top_k"] = json!(top_k);
+        }
+        if let Some(seed) = req.sampling.seed {
+            body["seed"] = json!(seed);
+        }
+        if req.want_logprobs {
+            body["logprobs"] = json!(true);
         }
         if !tools.is_empty() {
             body["tools"] = json!(tools);
@@ -661,7 +680,7 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         // SSE events can be split across TCP packets, and a body that ends
         // before the generation did is an error, not a short answer; both
         // are the decoder's job (see `stream::SseDecoder`).
-        let event_stream = decode_events(resp.bytes_stream());
+        let event_stream = decode_events(resp.bytes_stream(), req.sampling.seed);
 
         Ok(Box::pin(event_stream))
     }

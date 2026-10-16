@@ -400,6 +400,7 @@ pub async fn stream_turn(
         max_output_tokens_override,
         core_tool_count,
         response_format,
+        ..Default::default()
     };
 
     let mut ledger = LedgerRecorder::start(&req);

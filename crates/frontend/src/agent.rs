@@ -91,6 +91,7 @@ async fn generate_title_with_config(
         max_output_tokens_override: Some(TITLE_MAX_TOKENS),
         core_tool_count: 0,
         response_format: None,
+        ..Default::default()
     };
 
     match sven_turn::complete_text(title_model.as_ref(), req, limits).await {
