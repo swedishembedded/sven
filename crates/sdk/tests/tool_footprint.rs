@@ -25,9 +25,9 @@ use sven_sdk::{Engine, Toolset};
 use sven_turn::ledger::schema_tokens;
 
 /// Estimated tokens of every definition `Toolset::coding()` offers.
-const CODING_CEILING: u32 = 3_000;
+const CODING_CEILING: u32 = 3_055;
 /// Estimated tokens of every definition `Toolset::research()` offers.
-const RESEARCH_CEILING: u32 = 2_330;
+const RESEARCH_CEILING: u32 = 2_390;
 
 /// Tools that exist only in some builds (cargo features unify across a test
 /// run), so they are not part of the stated size.

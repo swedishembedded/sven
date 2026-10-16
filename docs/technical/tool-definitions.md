@@ -23,8 +23,16 @@ cargo test -p sven-sdk --test tool_footprint -- --nocapture
 ```
 
 The same test fails when the total exceeds its ceiling (`CODING_CEILING`,
-`RESEARCH_CEILING`). The ceilings sit just above the measured totals, so a
-definition can only grow if the change raises the ceiling too.
+`RESEARCH_CEILING`). The ceilings sit just above the totals measured in the
+default build, which has the most tool text (image-capable `read_file` and
+`attach_file`); a build with fewer features is smaller. A definition can only
+grow if the change raises the ceiling too.
+
+The `task` growth (+26) is the brief and scope fields (`evidence`,
+`deliverable`, `paths`) and the `ledger` action offered with addressable
+context, which a model cannot guess from the other fields. The `skill` growth (+27) is the `search` action and its `query`
+parameter, which is how a model finds a skill the prompt's compact index does
+not name.
 
 ## Current size
 
@@ -33,11 +41,11 @@ definitions were tightened.
 
 | tool | before | now |
 |------|-------:|----:|
-| task | 591 | 458 |
+| task | 591 | 484 |
 | grep | 399 | 265 |
 | system | 395 | 293 |
 | edit_file | 385 | 199 |
-| todo | 324 | 229 |
+| todo | 324 | 226 |
 | find_file | 296 | 216 |
 | ask_question | 261 | 210 |
 | shell | 252 | 185 |
@@ -46,10 +54,10 @@ definitions were tightened.
 | attach_file | 196 | 146 |
 | write_file | 193 | 136 |
 | web_fetch | 140 | 97 |
-| skill | 137 | 104 |
+| skill | 137 | 131 |
 | web_search | 137 | 97 |
-| **coding total** | **4172** | **2987** |
-| **research total** | **3146** | **2321** |
+| **coding total** | **4172** | **3040** |
+| **research total** | **3146** | **2374** |
 
 The research set is the coding set without `edit_file`, `write_file`, `shell`
 and `attach_file`. `skill` is measured with no skills installed: its description
