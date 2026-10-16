@@ -24,30 +24,28 @@ impl Agent {
     /// trajectory can say the history is not the whole conversation.
     pub(super) fn take_history(&mut self, handle: &sven_bootstrap::RuntimeHandle, seeded: usize) {
         let thread = sven_machines::mode::primary_thread(&self.state.mode);
-        let shared = handle.conversation_store();
-        let Ok(store) = shared.lock() else {
-            return;
-        };
-        let held: Vec<Message> = store
-            .snapshot(thread)
-            .into_iter()
-            .filter(|m| m.role != sven_model::Role::System)
-            .collect();
-        let compactions: Vec<_> = store
-            .compactions()
-            .iter()
-            .filter(|c| c.thread == thread)
-            .cloned()
-            .collect();
-        self.state.unparsed_arguments.extend(
-            store
-                .unparsed_arguments()
+        let state = &mut self.state;
+        let (held, compactions) = handle.read_conversation(|store| {
+            let held: Vec<Message> = store
+                .snapshot(thread)
+                .into_iter()
+                .filter(|m| m.role != sven_model::Role::System)
+                .collect();
+            let compactions: Vec<_> = store
+                .compactions()
                 .iter()
-                .map(|(id, raw)| (id.clone(), raw.clone())),
-        );
-        self.state
-            .absorb_call_records(store.gate_decisions(), store.memory_retrievals());
-        drop(store);
+                .filter(|c| c.thread == thread)
+                .cloned()
+                .collect();
+            state.unparsed_arguments.extend(
+                store
+                    .unparsed_arguments()
+                    .iter()
+                    .map(|(id, raw)| (id.clone(), raw.clone())),
+            );
+            state.absorb_call_records(store.gate_decisions(), store.memory_retrievals());
+            (held, compactions)
+        });
 
         // A compaction shrinks the thread, possibly below what the turn was
         // seeded with, so growth alone cannot tell a thread the machine used

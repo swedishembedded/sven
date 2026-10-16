@@ -340,6 +340,14 @@ impl RuntimeHandle {
         Arc::clone(&self.conv_store)
     }
 
+    /// Reads the kernel's conversation store. A store whose lock was poisoned
+    /// by a panicking thread is reported and still read, as for
+    /// [`gate_decisions`](Self::gate_decisions), because what it holds is
+    /// append-only evidence.
+    pub fn read_conversation<T>(&self, read: impl FnOnce(&ThreadStore) -> T) -> T {
+        read_store(&self.conv_store, read)
+    }
+
     /// A snapshot of the reactive-agent conversation thread.
     ///
     /// Used to carry accumulated context forward when a session is rebuilt
