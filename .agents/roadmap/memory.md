@@ -45,14 +45,10 @@ conformance suite checks every implementation.
 - [ ] Add the remaining `sven-sdk` host seams:
   - an injectable memory store;
   - a model override per agent.
-- [ ] Record in the ATIF trajectory what it leaves out today.
-  - The step of a gated call carries the decision: approved, denied or
-    parked, decided by whom, under which policy, plus any typed argument
-    violation a schema pre-check found.
-  - A step that retrieves from memory carries what was retrieved: unit ids,
-    revisions, anchors, scores, the index generation, and whether each
-    result was put into the context.
-  - Both are versioned records under `extra.sven`, written from the kernel
-    store so a lagging event subscriber cannot lose them. The headless CI
-    trajectory keeps them too.
+- [ ] Have the memory tool report each retrieval through
+  `sven_sdk::tool::record_memory_retrieval`, with the unit ids, revisions,
+  anchors, scores and index generation of the scoped store, so
+  `extra.sven.memory` is written for real memory use. The trajectory side is
+  done (see `docs/technical/sdk.md`); only a test tool reports retrievals
+  today.
 - [ ] Add migration of existing memory rows into a default personal space.

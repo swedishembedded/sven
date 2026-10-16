@@ -365,6 +365,11 @@ object), not line-delimited — see
 **[docs/technical/pipe-composition.md](technical/pipe-composition.md)** for
 the full field reference.
 
+A step whose tool call the permission gate decided about, or whose arguments
+broke the tool's parameter schema, carries `extra.sven.gate`; a step that read
+from memory carries `extra.sven.memory`. Their fields are listed in
+**[docs/technical/sdk.md](technical/sdk.md)**, section "Trajectories".
+
 Every headless run also writes an automatic trajectory to `.sven/logs/` when a
 `.sven/` project directory exists, whether or not `--output-trace` was given —
 a flat directory of `*.json` documents an RL or SFT pipeline can ingest

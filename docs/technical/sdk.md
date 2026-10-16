@@ -568,6 +568,45 @@ What the document says about the model's view of the run:
   step's tool call also carries the model's text in `extra.raw_arguments` and
   `extra.unparsed_arguments: true`. The conversation replayed to the model keeps
   `{}`; only the exported record has the raw text.
+- **Gate decisions.** A step that made a call the permission gate decided
+  about carries `extra.sven.gate`: `{"schema": "sven.gate.v1", "decisions":
+  [...]}`, one entry per such call. An entry has `decision_id` (the id of the
+  approval request), `call_id` (the call's `tool_call_id` in the same step),
+  `capability`, `policy`, `decision` (`approved` or `denied`), `decided_by`
+  and, when whoever decided said, `reason`. `decided_by` is `human` (a person
+  answered through the gate), `auto` (the session approves on its own, or a
+  rule pre-approves the call), `handler_dropped` (the holder of the gate went
+  away without answering and the call was refused, reason `handler_dropped`),
+  or `policy` (the permission policy decided, nobody was asked). `policy` names
+  the rule that routed the call: `state_allow_set` (the capability is not
+  permitted in the current state), `requires_approval`, or `allowed`. A call
+  the policy let through unasked has no entry unless the check below found
+  something. An approval still parked is not a decision yet and has no entry
+  until `Agent::decide` answers it.
+- **Argument violations.** Before a tool runs, its call's arguments are
+  checked against the tool's parameter schema with a deterministic JSON Schema
+  validator. Each way they disagree is a `violations` entry on the call's gate
+  record: `path` (a JSON Pointer into the arguments), `rule` (the schema
+  keyword that failed, such as `required` or `type`) and `message`. The check
+  only observes: the call still reaches the tool, which answers a bad argument
+  in its own words. A violating call the policy let through unasked is
+  recorded as `approved` by `policy` under the rule `allowed`. Calls refused
+  at the gate never reach the tool and carry no violations.
+- **Memory use.** A tool that reads from memory reports what it returned with
+  `sven_sdk::tool::record_memory_retrieval`, called from inside its
+  `execute`. The step that made the call carries `extra.sven.memory`:
+  `{"schema": "sven.memory.v1", "retrievals": [...]}`, each retrieval with
+  `call_id`, `query`, `space_ids`, `generation_id`, `snapshot_id` (if any) and
+  `results`, each result with `unit_id`, `revision`, `anchor`, `score`,
+  `rank` and `inserted` (whether it was put into the model's context). The
+  executor fills in `call_id`. The tool must record before it hands work to a
+  task of its own.
+- **Guarantees.** Both records are filed from the kernel's conversation store,
+  not from progress events, so a subscriber that lagged cannot lose them; they
+  persist in `AgentState`, so a resumed agent exports them again. A reader
+  refuses a `schema` it does not know. `sven_sdk::atif::validate_trajectory`
+  checks both records: their shape, their schema versions, and that every
+  `call_id` names a call of the step that carries them.
 - **Not recorded.** The system prompt (the kernel regenerates it every turn),
   reasoning text, sampling parameters and per-step token metrics are not in the
   document.
