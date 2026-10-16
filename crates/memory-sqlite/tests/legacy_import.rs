@@ -272,3 +272,35 @@ async fn a_database_with_no_legacy_store_imports_nothing() {
     let report = store.import_legacy(&personal()).await.unwrap();
     assert_eq!((report.imported, report.kept), (0, 0));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn sessions_that_start_together_all_open_the_store_and_import_once() {
+    // Several rounds: a lost race between first opens is a matter of timing.
+    for round in 0..10 {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.sqlite");
+        legacy_database(&path, &[("a", "{}"), ("b", "{}"), ("c", "{}")]);
+
+        let starts: Vec<_> = (0..8)
+            .map(|_| {
+                let path = path.clone();
+                tokio::spawn(async move {
+                    let store = SqliteMemory::open(&path)?;
+                    store.import_legacy(&personal()).await
+                })
+            })
+            .collect();
+        let mut imported = 0;
+        for start in starts {
+            imported += start
+                .await
+                .unwrap()
+                .unwrap_or_else(|e| panic!("round {round}: a concurrent start failed: {e}"))
+                .imported;
+        }
+
+        assert_eq!(imported, 3, "round {round}: each row moves exactly once");
+        let store = SqliteMemory::open(&path).unwrap();
+        assert_eq!(sources(&store).await.len(), 3);
+    }
+}

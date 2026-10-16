@@ -41,6 +41,40 @@ pub(crate) fn storage(error: rusqlite::Error) -> MemoryError {
     MemoryError::Storage(error.to_string())
 }
 
+/// How many times switching a fresh database to write-ahead logging is
+/// retried while another connection is switching it too.
+const WAL_ATTEMPTS: u32 = 100;
+/// The pause between those attempts.
+const WAL_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Switches the database to write-ahead logging, which concurrent sessions
+/// need so a reader never blocks the writer.
+///
+/// The switch takes a lock that SQLite refuses at once instead of waiting for,
+/// whatever the busy timeout says, so sessions that start together would
+/// otherwise fail to open the store. The mode is stored in the file: once one
+/// connection has switched it, the others find it set and succeed.
+fn enable_wal(conn: &Connection) -> Result<(), MemoryError> {
+    let mut attempt = 0;
+    loop {
+        match conn.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => return Ok(()),
+            Err(e) if attempt + 1 < WAL_ATTEMPTS && is_contended(&e) => {
+                attempt += 1;
+                std::thread::sleep(WAL_RETRY_PAUSE);
+            }
+            Err(e) => return Err(storage(e)),
+        }
+    }
+}
+
+fn is_contended(error: &rusqlite::Error) -> bool {
+    matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    )
+}
+
 /// The location of the memory database below a home directory.
 const DEFAULT_RELATIVE_PATH: &str = ".config/sven/memory/memory.sqlite";
 
@@ -110,8 +144,7 @@ impl SqliteMemory {
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(storage)?;
         if durable {
-            conn.pragma_update(None, "journal_mode", "WAL")
-                .map_err(storage)?;
+            enable_wal(&conn)?;
             conn.pragma_update(None, "synchronous", "NORMAL")
                 .map_err(storage)?;
         }
