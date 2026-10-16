@@ -87,9 +87,15 @@ with its revision, anchor, score and rank. See
 ## Storage Location
 
 `~/.config/sven/memory/memory.sqlite`. It is not configurable; no
-`tools.memory` key selects a backend or a path. Without a home directory the
-store does not open and the tool is not offered, rather than writing into the
-current directory.
+`tools.memory` key selects a backend or a path. The location is an input of the
+session, not something it looks up: runtime detection
+(`RuntimeContext::auto_detect*`, which every CLI, TUI and ACP session goes
+through) supplies the user's home as `memory_home`, and a session built without
+one - `RuntimeContext::empty()`, or any session of the embedded SDK - opens no
+store and is not offered the tool, rather than writing into the current
+directory. A test gives the session a temporary directory as `memory_home` and
+never touches the real home. An SDK host that wants memory adds
+`SemanticMemoryTool` with `Engine::builder().tool(..)`.
 
 The SQLite file uses WAL mode for concurrent access and can be backed up with any standard file backup tool.
 The tool reads and writes one space of it, `personal`.

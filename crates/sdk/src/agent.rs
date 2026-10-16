@@ -461,6 +461,9 @@ impl Agent {
             system_prompt_override: options.role.clone(),
             no_tools: options.no_tools,
             path_scope: paths,
+            // An embedded engine never opens the user's own memory store; a
+            // host that wants memory adds its tool with `Engine::builder().tool`.
+            memory_home: None,
             ..discovered
         };
 

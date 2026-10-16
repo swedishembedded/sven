@@ -592,8 +592,9 @@ What the document says about the model's view of the run:
   in its own words. A violating call the policy let through unasked is
   recorded as `approved` by `policy` under the rule `allowed`. Calls refused
   at the gate never reach the tool and carry no violations.
-- **Memory use.** The built-in `semantic_memory` tool reports every recall; any
-  other tool that reads from memory reports what it returned with
+- **Memory use.** The `semantic_memory` tool (added with
+  `Engine::builder().tool`) reports every recall; any other tool that reads
+  from memory reports what it returned with
   `sven_sdk::tool::record_memory_retrieval`, called from inside its
   `execute`. The step that made the call carries `extra.sven.memory`:
   `{"schema": "sven.memory.v1", "retrievals": [...]}`, each retrieval with

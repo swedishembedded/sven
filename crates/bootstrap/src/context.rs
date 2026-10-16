@@ -67,6 +67,11 @@ pub struct RuntimeContext {
     /// default; detection never confines, so the CLI and TUI work on the
     /// process working directory as they always have.
     pub path_scope: PathScope,
+    /// The home directory the session keeps its semantic memory below
+    /// (`.config/sven/memory/memory.sqlite`). `None` opens no store and offers
+    /// no `semantic_memory` tool. Only detection resolves the user's real
+    /// home; a session built any other way is given its home or has none.
+    pub memory_home: Option<PathBuf>,
 }
 
 impl RuntimeContext {
@@ -140,6 +145,7 @@ impl RuntimeContext {
             knowledge,
             knowledge_drift_note,
             path_scope: PathScope::unconfined(),
+            memory_home: dirs::home_dir(),
         }
     }
 

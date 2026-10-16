@@ -35,7 +35,7 @@ sven-executors     = { path = "../executors" }
 sven-memory        = { path = "../memory", optional = true }
 sven-memory-api    = { path = "../memory-api", optional = true }
 sven-memory-sqlite = { path = "../memory-sqlite", optional = true }
-dirs               = { workspace = true, optional = true }
+dirs               = { workspace = true }
 anyhow       = { workspace = true }
 async-trait  = { workspace = true }
 futures      = { workspace = true }
@@ -77,7 +77,7 @@ android = ["dep:sven-tools-android"]
 # own feature because `rusqlite` is in xtask's
 # FORBIDDEN_IN_MINIMAL list (`xtask/src/main.rs`) - the `minimal` build must
 # be able to exclude it while every other default build keeps it on.
-memory = ["dep:sven-memory", "dep:sven-memory-api", "dep:sven-memory-sqlite", "dep:dirs"]
+memory = ["dep:sven-memory", "dep:sven-memory-api", "dep:sven-memory-sqlite"]
 # GDB/MI debugging tools (unix only regardless of this flag - see the
 # target-gated dependency below). Kept separately toggleable so a portable
 # headless build can exclude gdbmi and its transitive closure entirely.

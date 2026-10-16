@@ -84,6 +84,9 @@ pub(crate) struct SessionIntegrations<'a> {
     /// requester was brought.
     pub approval_tx: &'a mpsc::Sender<sven_executors::user::ApprovalRequest>,
     pub config: &'a Config,
+    /// The home the session's memory store lives below, if it has one.
+    #[cfg(feature = "memory")]
+    pub memory_home: Option<&'a std::path::Path>,
     pub(crate) near_match: Option<Arc<dyn crate::task_tool::NearMatch>>,
     pub chunks: Option<Arc<sven_executors::ChunkSession>>,
 }
@@ -95,7 +98,7 @@ impl IntegrationProviders {
     pub(crate) async fn for_session(session: SessionIntegrations<'_>) -> Self {
         Self {
             #[cfg(feature = "memory")]
-            memory_store: open_memory_store().await,
+            memory_store: open_memory_store(session.memory_home).await,
             approver: ChildApprover::for_session(
                 session.permission_requester,
                 session.approval_mode,
@@ -142,18 +145,23 @@ fn shared_evidence(config: &Config) -> Option<crate::evidence_share::SharedEvide
     }
 }
 
-/// The memory store (SQLite) for the `semantic_memory` tool.
+/// The memory store (SQLite) for the `semantic_memory` tool, kept below `home`.
+///
+/// Without a home the session has no store and the tool is not offered: nothing
+/// is looked up and nothing is created.
 ///
 /// The rows of the store that predates the memory contract move into the
 /// personal space on the first open; later opens find nothing to move. Opening
-/// fails only on a missing home directory or a broken on-disk state
-/// (permissions, corruption, a newer schema). That is not fatal to the
-/// session: the tool is left unregistered and the reason logged, exactly like
-/// a missing MCP tool.
+/// fails only on a broken on-disk state (permissions, corruption, a newer
+/// schema). That is not fatal to the session: the tool is left unregistered
+/// and the reason logged, exactly like a missing MCP tool.
 #[cfg(feature = "memory")]
-pub(crate) async fn open_memory_store() -> Option<Arc<dyn sven_memory_api::MemoryStore>> {
+pub(crate) async fn open_memory_store(
+    home: Option<&std::path::Path>,
+) -> Option<Arc<dyn sven_memory_api::MemoryStore>> {
+    let home = home?;
     let opened = async {
-        let store = sven_memory_sqlite::SqliteMemory::open_in_home(dirs::home_dir().as_deref())?;
+        let store = sven_memory_sqlite::SqliteMemory::open_in_home(Some(home))?;
         let moved = store
             .import_legacy(&sven_memory_api::SpaceId::new(sven_memory::PERSONAL_SPACE))
             .await?;

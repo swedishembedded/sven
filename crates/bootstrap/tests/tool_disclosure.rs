@@ -16,32 +16,38 @@ use std::sync::Arc;
 use serde_json::json;
 
 use sven_bootstrap::tool_discovery::index_section;
-use sven_bootstrap::{BuiltinTools, Config, Disclosure, RuntimeBuilder};
+use sven_bootstrap::{BuiltinTools, Config, Disclosure, RuntimeBuilder, RuntimeContext};
 use sven_tool_registry::{ToolCall, ToolRegistry, DISCOVERY_TOOL};
 use sven_vocab::AgentMode;
 
-/// Points the process at one private home directory, once. Skills, personas
-/// and memory come from the home directory, and tests run in parallel: a home
-/// switched per test would let one test's registry lose a tool (the semantic
-/// memory store opens under it) while another's keeps it.
-fn isolate_home() {
+/// Points the process at one private home directory, once. Skills and personas
+/// come from the home directory, and tests run in parallel: a home switched per
+/// test would let one test's registry lose a tool while another's keeps it.
+fn isolate_home() -> std::path::PathBuf {
     static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     HOME.get_or_init(|| {
         let home = tempfile::tempdir().expect("a home directory").keep();
         std::env::set_var("HOME", &home);
         std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
         home
-    });
+    })
+    .clone()
 }
 
 /// A coding session's registry under `disclosure`.
 async fn registry(disclosure: Disclosure) -> Arc<ToolRegistry> {
-    isolate_home();
+    let home = isolate_home();
     let mut config = Config::default();
     config.model.provider = "mock".into();
     config.model.name = "mock-model".into();
     config.tools.disclosure.mode = disclosure;
+    // A session with a home offers the memory tool, which is part of the
+    // listing whose size is being compared.
     let (runtime, handle, ..) = RuntimeBuilder::new(Arc::new(config), "agent")
+        .with_runtime_context(RuntimeContext {
+            memory_home: Some(home),
+            ..RuntimeContext::empty()
+        })
         .with_builtin_tools(BuiltinTools::Coding)
         .build()
         .await

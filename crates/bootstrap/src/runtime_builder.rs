@@ -578,6 +578,8 @@ impl RuntimeBuilder {
                 approval_mode: self.approval_mode,
                 approval_tx: &approval_tx,
                 config: &self.config,
+                #[cfg(feature = "memory")]
+                memory_home: self.runtime_ctx.memory_home.as_deref(),
                 near_match: crate::delegation_decision::for_session(&decision, &decision_notices),
                 chunks: context.as_ref().map(ContextWiring::session),
             })
@@ -1209,15 +1211,21 @@ mod tests {
     }
 
     /// `semantic_memory` is registered by default (no opt-in wiring required)
-    /// exactly when the `memory` feature is compiled in.
+    /// exactly when the `memory` feature is compiled in, with its store kept
+    /// below the home the session was given.
     #[tokio::test]
     async fn semantic_memory_is_present_in_the_default_registry_with_memory() {
+        let home = tempfile::tempdir().expect("a home directory");
         let mut config = Config::default();
         config.model.provider = "mock".into();
         config.model.name = "mock-model".into();
 
         let (runtime, handle, _channels, _mcp_manager, _mcp_event_rx) =
             RuntimeBuilder::new(Arc::new(config), "chat")
+                .with_runtime_context(RuntimeContext {
+                    memory_home: Some(home.path().to_path_buf()),
+                    ..RuntimeContext::empty()
+                })
                 .build()
                 .await
                 .expect("runtime should build with the default registry");

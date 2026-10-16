@@ -29,14 +29,10 @@ const CODING_CEILING: u32 = 3_055;
 /// Estimated tokens of every definition `Toolset::research()` offers.
 const RESEARCH_CEILING: u32 = 2_390;
 
-/// Tools that exist only in some builds (cargo features unify across a test
-/// run), so they are not part of the stated size.
-const FEATURE_GATED: [&str; 1] = ["semantic_memory"];
-
 /// The definitions the model was offered on its first request.
 async fn offered(toolset: Toolset, home: &std::path::Path) -> Vec<ToolSchema> {
-    // Skills, sub-agent personas and memory are read from the home directory;
-    // an empty one keeps the measurement independent of who runs it.
+    // Skills and sub-agent personas are read from the home directory; an
+    // empty one keeps the measurement independent of who runs it.
     std::env::set_var("HOME", home);
     std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
     let provider = Arc::new(ScriptedMockProvider::new(vec![vec![
@@ -51,9 +47,6 @@ async fn offered(toolset: Toolset, home: &std::path::Path) -> Vec<ToolSchema> {
     engine.agent("agent").send("hello").await.expect("a reply");
     let seen = provider.last_request.lock().unwrap().clone().unwrap();
     seen.tools
-        .into_iter()
-        .filter(|tool| !FEATURE_GATED.contains(&tool.name.as_str()))
-        .collect()
 }
 
 fn print_table(label: &str, schemas: &[ToolSchema]) {
