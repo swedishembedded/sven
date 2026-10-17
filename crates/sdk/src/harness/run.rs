@@ -25,6 +25,7 @@ use super::HarnessCheckpoint;
 use crate::engine::Engine;
 use crate::error::CallError;
 use crate::gates::{ask_through, forward};
+use crate::meter::Meter;
 use crate::run::{RunConclusion, RunOptions, Usage};
 
 /// How long a stopped run is given to report what it had before it is
@@ -322,7 +323,8 @@ impl HarnessRun {
             )));
         }
 
-        let mut usage = Usage::default();
+        let started = std::time::Instant::now();
+        let mut meter = Meter::default();
         // The first hard failure the session reports. The machine's own
         // retry and failure handling answers effect failures; what reaches
         // here is what the machine could not absorb.
@@ -371,10 +373,10 @@ impl HarnessRun {
                     () = &mut wind_down, if stopped.is_some() => break,
                     event = observations.recv() => match event {
                         Ok(event) => {
+                            meter.observe(&event, None);
                             match &event {
-                                SessionEvent::TokenUsage { input, output, .. } => {
-                                    usage.add(*input, *output);
-                                    let spent = usage.output_tokens.unwrap_or(0);
+                                SessionEvent::TokenUsage { .. } => {
+                                    let spent = meter.output_tokens();
                                     if stopped.is_none()
                                         && bounds.max_output_tokens.is_some_and(|max| spent >= max)
                                     {
@@ -490,6 +492,7 @@ impl HarnessRun {
                 run_id: self.run_id.clone(),
             });
         }
+        let (usage, _) = meter.finish(started.elapsed());
         let outcome = HarnessOutcome {
             conclusion: stopped.unwrap_or(RunConclusion::Success),
             result,
@@ -524,7 +527,7 @@ pub struct HarnessOutcome {
     /// [`HarnessRun::checkpoint`] - when a bound suspended the run before
     /// it reached one.
     pub result: Option<Result<Value, HarnessFailure>>,
-    /// Token usage across the run, children included.
+    /// What the run used, children included.
     pub usage: Usage,
     /// The structured execution trace: what the run did, in order.
     pub trace: Vec<TraceRecord>,

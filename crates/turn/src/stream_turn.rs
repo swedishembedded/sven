@@ -25,7 +25,8 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 use sven_model::{
-    CompletionRequest, Message, ModelProvider, ResponseEvent, ResponseFormat, ToolSchema,
+    CompletionRequest, Message, ModelProvider, ResponseEvent, ResponseFormat, SamplingParams,
+    ToolSchema,
 };
 use sven_tool_api::ToolCall;
 
@@ -47,7 +48,7 @@ pub fn to_model_schemas(schemas: Vec<sven_tool_registry::ToolSchema>) -> Vec<Too
 use crate::ledger_recorder::LedgerRecorder;
 use crate::stall::{StallLimits, StallWatch};
 use crate::tool_slots::attempt_json_repair;
-use sven_vocab::{ReportedUsage, SessionEvent as AgentEvent};
+use sven_vocab::{ReportedUsage, Sampled, SessionEvent as AgentEvent};
 
 /// Marker error distinguishing a deliberate abort - a user cancel (Esc,
 /// Ctrl+C, `/abort`, ACP `cancel()`) or the thinking-token/time watchdog -
@@ -77,7 +78,7 @@ pub type ModelResolver =
     std::sync::Arc<dyn Fn(&str) -> anyhow::Result<std::sync::Arc<dyn ModelProvider>> + Send + Sync>;
 
 /// Limits on one streamed model turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TurnLimits {
     /// Bounds a runaway reasoning loop - see [`ThinkingBudget`].
     pub thinking: ThinkingBudget,
@@ -93,6 +94,11 @@ pub struct TurnLimits {
     /// Most output tokens one response may ask for, below whatever the model
     /// itself allows. `None` leaves the model's own cap in place.
     pub max_output_tokens: Option<u32>,
+    /// Sampling controls sent with every request of the turn.
+    pub sampling: SamplingParams,
+    /// Ask the provider for the sampled token ids and log-probabilities;
+    /// they come back in [`AgentEvent::ResponseSampled`].
+    pub want_logprobs: bool,
 }
 
 impl Default for TurnLimits {
@@ -108,6 +114,8 @@ impl From<ThinkingBudget> for TurnLimits {
             stream_idle: None,
             stall: StallLimits::default(),
             max_output_tokens: None,
+            sampling: SamplingParams::default(),
+            want_logprobs: false,
         }
     }
 }
@@ -133,6 +141,15 @@ impl TurnLimits {
     #[must_use]
     pub fn with_max_output_tokens(mut self, tokens: Option<u32>) -> Self {
         self.max_output_tokens = tokens;
+        self
+    }
+
+    /// Sends `sampling` with every request and, when `want_logprobs`, asks
+    /// for the sampled tokens back.
+    #[must_use]
+    pub fn with_decoding(mut self, sampling: SamplingParams, want_logprobs: bool) -> Self {
+        self.sampling = sampling;
+        self.want_logprobs = want_logprobs;
         self
     }
 
@@ -400,7 +417,8 @@ pub async fn stream_turn(
         max_output_tokens_override,
         core_tool_count,
         response_format,
-        ..Default::default()
+        sampling: limits.sampling,
+        want_logprobs: limits.want_logprobs,
     };
 
     let mut ledger = LedgerRecorder::start(&req);
@@ -422,6 +440,7 @@ pub async fn stream_turn(
     let mut completed: Vec<ToolCall> = Vec::new();
     let mut completed_indices: Vec<u32> = Vec::new();
     let mut unparsed_arguments: HashMap<String, String> = HashMap::new();
+    let mut sampled = Sampled::default();
 
     loop {
         let event = match watch.next_event(&mut stream, tx).await? {
@@ -529,6 +548,14 @@ pub async fn stream_turn(
                     })
                     .await;
             }
+            ResponseEvent::Tokens { ids, logprobs } => {
+                sampled.token_ids.extend(ids);
+                sampled.logprobs.extend(logprobs);
+            }
+            ResponseEvent::Served { model, seed } => {
+                sampled.model = Some(model);
+                sampled.seed = seed;
+            }
             ResponseEvent::Done => {
                 if !thinking_buf.is_empty() {
                     let content = std::mem::take(&mut thinking_buf);
@@ -602,6 +629,9 @@ pub async fn stream_turn(
 
     if !full_text.is_empty() {
         let _ = tx.send(AgentEvent::TextComplete(full_text.clone())).await;
+    }
+    if !sampled.is_empty() {
+        let _ = tx.send(AgentEvent::ResponseSampled(sampled)).await;
     }
     // Last, so a consumer that folds events into turn-shaped steps has the
     // response's content in hand when the request's ledger record arrives.

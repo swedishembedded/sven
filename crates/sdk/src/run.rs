@@ -138,27 +138,27 @@ impl RunOptions {
     }
 }
 
-/// Tokens the provider reported for a run. `None` means the provider
-/// reported nothing for that count, never that it was zero.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// What a run used. A token or cost count of `None` means the provider
+/// reported nothing for it, never that it was zero.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Usage {
     /// Prompt tokens processed, excluding prompt-cache hits.
     pub input_tokens: Option<u64>,
     /// Tokens the model generated.
     pub output_tokens: Option<u64>,
-}
-
-impl Usage {
-    /// Adds one usage report. A zero field is the provider not reporting it.
-    pub(crate) fn add(&mut self, input: u32, output: u32) {
-        let add = |slot: &mut Option<u64>, n: u32| {
-            if n > 0 {
-                *slot = Some(slot.unwrap_or(0) + u64::from(n));
-            }
-        };
-        add(&mut self.input_tokens, input);
-        add(&mut self.output_tokens, output);
-    }
+    /// Prompt tokens served from the provider's cache.
+    pub cached_tokens: Option<u64>,
+    /// What the provider charged, in USD, when it says.
+    pub cost_usd: Option<f64>,
+    /// Tool calls that ran to a result.
+    pub tool_calls: u64,
+    /// Of those, the ones whose result was an error.
+    pub tool_errors: u64,
+    /// Model requests made.
+    pub turns: u64,
+    /// Time from the start of the run to its end.
+    pub wall_time: Duration,
 }
 
 /// A question the agent is waiting on, reported with

@@ -26,6 +26,7 @@ pub mod cost;
 pub mod harness;
 pub mod ledger;
 pub mod provenance;
+pub mod request;
 pub mod served;
 pub mod turn;
 pub mod verify;
@@ -39,6 +40,7 @@ pub use ledger::{
     STEP_METRICS_EXTRA_KEY,
 };
 
+pub use request::{RequestRecord, Sampled};
 pub use served::{describe_adapter, served_model_changed_text, AdapterRef};
 pub use turn::{RefusedCall, TurnRequest, TURN_KIND};
 pub use wait::ModelWaitPhase;
@@ -686,6 +688,9 @@ pub enum SessionEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         breakdown: Option<Box<RequestBreakdown>>,
     },
+    /// What served one model request and what it sampled, when the provider
+    /// reported either; sent just before the request's closing `TokenUsage`.
+    ResponseSampled(Sampled),
     /// The model has produced nothing real (no text, reasoning or tool-call
     /// chunk; keepalives do not count) for a while. Sent every few seconds
     /// until output arrives or the turn is aborted, so a surface can show

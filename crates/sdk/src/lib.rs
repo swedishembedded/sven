@@ -50,6 +50,7 @@ mod error;
 mod events;
 mod gates;
 mod harness;
+mod meter;
 mod method;
 mod run;
 mod run_support;

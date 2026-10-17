@@ -57,6 +57,7 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
         | SessionEvent::Warning(_)
         | SessionEvent::ContextCompacted { .. }
         | SessionEvent::TokenUsage { .. }
+        | SessionEvent::ResponseSampled(_)
         | SessionEvent::TurnComplete
         | SessionEvent::Error(_)
         | SessionEvent::TodoUpdate(_)

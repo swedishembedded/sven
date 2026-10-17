@@ -22,7 +22,16 @@ impl Agent {
     /// runs one per phase) leaves the primary thread at its seed; its folded
     /// history is kept. Compactions of the primary thread are recorded so the
     /// trajectory can say the history is not the whole conversation.
-    pub(super) fn take_history(&mut self, handle: &sven_bootstrap::RuntimeHandle, seeded: usize) {
+    ///
+    /// Returns whether the history kept lines up with the observations the
+    /// run folded: it does not once events were dropped or a compaction
+    /// reshaped the thread, and the run's requests cannot then be placed on
+    /// steps (see `AgentState::absorb_requests`).
+    pub(super) fn take_history(
+        &mut self,
+        handle: &sven_bootstrap::RuntimeHandle,
+        seeded: usize,
+    ) -> bool {
         let thread = sven_machines::mode::primary_thread(&self.state.mode);
         let state = &mut self.state;
         let (held, compactions) = handle.read_conversation(|store| {
@@ -51,9 +60,15 @@ impl Agent {
         // seeded with, so growth alone cannot tell a thread the machine used
         // from one it left at its seed.
         if held.len() > seeded || (!compactions.is_empty() && !held.is_empty()) {
+            let lined_up = held.len() == self.state.history.len() && compactions.is_empty();
+            if !compactions.is_empty() {
+                self.state.unplace_requests();
+            }
             self.state.history = held;
             self.state.compactions.extend(compactions);
+            return lined_up;
         }
+        true
     }
 
     /// Records the tools the model was offered, resolved exactly as the turn

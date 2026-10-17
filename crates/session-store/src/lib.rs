@@ -12,6 +12,7 @@ mod queue;
 pub mod reward;
 pub mod session_resolve;
 pub mod step_ledger;
+pub mod step_request;
 mod steps_view;
 pub mod title;
 mod tool_invocation;

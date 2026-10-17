@@ -9,6 +9,7 @@ use sven_hsm::Snapshot;
 use sven_model::{Message, MessageContent};
 use sven_vocab::CompactionRecord;
 
+use crate::meter::Metered;
 use crate::run::{Approval, RunId};
 
 /// A suspended agent: everything needed to resume it, and nothing that cannot
@@ -74,19 +75,22 @@ pub struct AgentState {
     /// question or an approval. The answer or decision continues that run.
     #[serde(default)]
     pub(crate) open_run: Option<RunId>,
+    /// Every model request the agent has made, oldest first.
+    #[serde(default)]
+    pub(crate) requests: Vec<Metered>,
 }
 
 impl AgentState {
     /// The format this build writes.
     ///
-    /// Version 2 added the gate decisions and memory retrievals of the agent's
+    /// Version 3 added the account of each model request; version 2 added the gate decisions and memory retrievals of the agent's
     /// calls; version 1 added the format version itself, the event sequence and
     /// the parked run. Version 0 is every state written before: it has none of
     /// those, resumes as an agent that has emitted no events and is parked
     /// nowhere, and is written back as the current version. A state with a
     /// version above this one was written by a newer build and is refused by
     /// [`Engine::resume`](crate::Engine::resume) rather than resumed wrongly.
-    pub const CURRENT_VERSION: u32 = 2;
+    pub const CURRENT_VERSION: u32 = 3;
 
     /// Creates the state of an agent that has not run yet.
     #[must_use]
@@ -95,6 +99,7 @@ impl AgentState {
             version: Self::CURRENT_VERSION,
             next_event_seq: 0,
             open_run: None,
+            requests: Vec::new(),
             mode: mode.into(),
             history: Vec::new(),
             role: None,
@@ -127,6 +132,35 @@ impl AgentState {
             }
         }
         self.memory_retrievals.extend(retrievals.iter().cloned());
+    }
+
+    /// Keeps the account of the requests a run made. `lined_up` is whether
+    /// the history still holds the run's messages where the run observed them;
+    /// when it does not, the requests count towards the totals but are on no
+    /// step.
+    pub(crate) fn absorb_requests(&mut self, mut requests: Vec<Metered>, lined_up: bool) {
+        if !lined_up {
+            requests.iter_mut().for_each(|r| r.after = None);
+        }
+        self.requests.extend(requests);
+    }
+
+    /// Takes every request off its step: a compaction replaced the front of
+    /// the history, so no earlier position in it means what it did.
+    pub(crate) fn unplace_requests(&mut self) {
+        self.requests.iter_mut().for_each(|r| r.after = None);
+    }
+
+    /// Hands `assembler` the requests whose response ended after `position`
+    /// messages of the history.
+    pub(crate) fn feed_requests_after(
+        &self,
+        position: usize,
+        assembler: &mut sven_session_store::StepAssembler,
+    ) {
+        for metered in self.requests.iter().filter(|m| m.after == Some(position)) {
+            assembler.push_request(&metered.request);
+        }
     }
 
     /// Hands the records of the calls this state holds to `assembler`, so the

@@ -22,10 +22,9 @@ use crate::engine::Engine;
 use crate::error::CallError;
 use crate::events::{EventStream, RunEvent, EVENT_CAPACITY};
 use crate::gates::{ask_through, forward, GateHandler, HumanGate};
+use crate::meter::Meter;
 use crate::method::{Method, Strategy};
-use crate::run::{
-    Approval, Decision, Question, RunConclusion, RunId, RunOptions, RunOutcome, Usage,
-};
+use crate::run::{Approval, Decision, Question, RunConclusion, RunId, RunOptions, RunOutcome};
 use crate::run_support::{parse_candidate, stop, Entry, TurnOptions};
 use crate::state::AgentState;
 
@@ -109,7 +108,11 @@ impl Agent {
     ///
     /// Built from the conversation the kernel holds, so it is complete even
     /// when progress events were dropped, and a resumed agent exports the
-    /// same document. Carries no reward: whether the work was right is for a
+    /// same document. Each step carries the tokens, cost, serving model and
+    /// seed of the model requests it covers, and the final metrics total every
+    /// request the agent has made; requests from before a compaction, or from
+    /// a run whose events were dropped, are in the totals but on no step.
+    /// Carries no reward: whether the work was right is for a
     /// verifier to say, not the agent.
     #[must_use]
     pub fn trajectory(&self) -> atif::Trajectory {
@@ -131,10 +134,15 @@ impl Agent {
             );
         }
         self.state.feed_call_records(&mut assembler);
-        for message in &self.state.history {
+        self.state.feed_requests_after(0, &mut assembler);
+        for (position, message) in self.state.history.iter().enumerate() {
             assembler.push_message(&self.state.as_sent(message));
+            self.state.feed_requests_after(position + 1, &mut assembler);
         }
         trajectory.steps = assembler.finish();
+        trajectory.final_metrics = sven_session_store::step_request::totals(
+            self.state.requests.iter().map(|metered| &metered.request),
+        );
         trajectory
     }
 
@@ -602,7 +610,8 @@ impl Agent {
         // failed is indistinguishable here from a turn that answered with an
         // empty string, and `send` returns `Ok("")` for both.
         let mut failure: Option<String> = None;
-        let mut usage = Usage::default();
+        let started = std::time::Instant::now();
+        let mut meter = Meter::default();
         // Set by the first bound that fires; the run then winds down and
         // reports it rather than `Success`.
         let mut stopped: Option<RunConclusion> = None;
@@ -630,10 +639,10 @@ impl Agent {
                             event,
                             SessionEvent::TurnComplete | SessionEvent::Aborted { .. }
                         );
+                        meter.observe(&event, Some(self.state.history.len()));
                         match &event {
-                            SessionEvent::TokenUsage { input, output, .. } => {
-                                usage.add(*input, *output);
-                                let spent = usage.output_tokens.unwrap_or(0);
+                            SessionEvent::TokenUsage { .. } => {
+                                let spent = meter.output_tokens();
                                 if stopped.is_none()
                                     && bounds.max_output_tokens.is_some_and(|max| spent >= max)
                                 {
@@ -676,7 +685,9 @@ impl Agent {
             Some(snapshot) => Some(snapshot),
             None => bundle.runtime.capture().await,
         };
-        self.take_history(&bundle.handle, seeded);
+        let lined_up = self.take_history(&bundle.handle, seeded);
+        let (usage, requests) = meter.finish(started.elapsed());
+        self.state.absorb_requests(requests, lined_up);
         self.take_offered_tools(&bundle.handle, options.no_tools);
 
         // Report the failure only after the kernel state above is stored, so a

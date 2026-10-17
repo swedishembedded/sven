@@ -505,7 +505,7 @@ pub struct ToolSchema {
 /// Every field is optional: `None` leaves the choice to the provider's own
 /// configuration. The values are recorded with the trajectory so a run can be
 /// reproduced or scored later, which is why a `seed` is carried at all.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct SamplingParams {
     /// Softmax temperature; overrides the driver's configured temperature.
     pub temperature: Option<f64>,

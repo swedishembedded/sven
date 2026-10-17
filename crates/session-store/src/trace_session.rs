@@ -37,7 +37,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
-use sven_vocab::RequestBreakdown;
+use sven_vocab::{RequestBreakdown, RequestRecord};
 
 use crate::call_records::{makes_call, CallRecords};
 use crate::chat_document;
@@ -232,6 +232,7 @@ struct PendingAgentStep {
     tool_calls: Vec<ToolInvocation>,
     observation_results: Vec<ObservationEntry>,
     metrics: Option<StepMetrics>,
+    model_name: Option<String>,
 }
 
 /// Streaming assembler that folds a flat stream of conversation events
@@ -463,6 +464,17 @@ impl StepAssembler {
         crate::step_ledger::record_request(&mut self.pending_or_new().metrics, request);
     }
 
+    /// Records one model request's account on the agent step being assembled
+    /// (see [`crate::step_request`]).
+    pub fn push_request(&mut self, request: &RequestRecord) {
+        let pending = self.pending_or_new();
+        crate::step_request::record_response(
+            &mut pending.metrics,
+            &mut pending.model_name,
+            request,
+        );
+    }
+
     /// Records the gate's decision about a call, as `extra.sven.gate` of the
     /// step that made it. May come before the call, while its step is open, or
     /// after the step closed; the step is found either way.
@@ -524,6 +536,7 @@ impl StepAssembler {
         );
         step.reasoning_content = pending.reasoning_content.clone();
         step.metrics = pending.metrics.clone();
+        step.model_name = pending.model_name.clone();
         step.tool_calls = if pending.tool_calls.is_empty() {
             None
         } else {
