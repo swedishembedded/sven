@@ -15,7 +15,7 @@
 //! The provider must send sealed `memfd`s, and these assertions on exact byte
 //! lengths are what catch a regression back to pipes.
 
-#![cfg(all(unix, feature = "dbus"))]
+#![cfg(all(target_os = "linux", feature = "dbus"))]
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

@@ -38,9 +38,9 @@ macro_rules! description {
     };
 }
 
-#[cfg(all(unix, feature = "asr"))]
+#[cfg(all(target_os = "linux", feature = "asr"))]
 const DESCRIPTION: &str = description!("otherwise transcribed to text.");
-#[cfg(not(all(unix, feature = "asr")))]
+#[cfg(not(all(target_os = "linux", feature = "asr")))]
 const DESCRIPTION: &str = description!("otherwise refused.");
 
 pub struct AttachFileTool {
@@ -54,7 +54,7 @@ pub struct AttachFileTool {
     asr: AsrConfig,
     /// A pre-built transcription client, for tests. `None` in production, where
     /// one is dialled from `asr`.
-    #[cfg(all(unix, feature = "asr"))]
+    #[cfg(all(target_os = "linux", feature = "asr"))]
     asr_client: Option<sven_model_drivers::dbus::ActionClient>,
     /// Where `path` resolves, and whether it may leave there.
     scope: PathScope,
@@ -65,7 +65,7 @@ impl AttachFileTool {
         Self {
             model,
             asr,
-            #[cfg(all(unix, feature = "asr"))]
+            #[cfg(all(target_os = "linux", feature = "asr"))]
             asr_client: None,
             scope: PathScope::default(),
         }
@@ -83,7 +83,7 @@ impl AttachFileTool {
     ///
     /// Exists for tests: a client wired to a fake `Brain1.Manager` exercises
     /// the audio path with no bus, no server and no checkpoint.
-    #[cfg(all(test, unix, feature = "asr"))]
+    #[cfg(all(test, target_os = "linux", feature = "asr"))]
     pub(crate) fn with_asr_client(
         mut self,
         client: sven_model_drivers::dbus::ActionClient,
@@ -99,7 +99,7 @@ impl AttachFileTool {
             supports_audio: self.model.as_ref().is_some_and(|m| m.supports_audio()),
             force_transcribe,
             asr: self.asr.clone(),
-            #[cfg(all(unix, feature = "asr"))]
+            #[cfg(all(target_os = "linux", feature = "asr"))]
             asr_client: self.asr_client.clone(),
         }
     }
@@ -138,7 +138,7 @@ impl Tool for AttachFileTool {
                 "description": "Note recorded with the attachment"
             }
         });
-        if cfg!(all(unix, feature = "asr")) {
+        if cfg!(all(target_os = "linux", feature = "asr")) {
             properties["force_transcribe"] = json!({
                 "type": "boolean",
                 "description":
@@ -260,7 +260,7 @@ mod tests {
         Arc::new(ScriptedMockProvider::new(vec![]))
     }
 
-    #[cfg(all(unix, feature = "asr"))]
+    #[cfg(all(target_os = "linux", feature = "asr"))]
     fn asr_cfg() -> AsrConfig {
         AsrConfig {
             model: "brain/nemotronasr".into(),
@@ -363,7 +363,7 @@ mod tests {
 
     // ── Audio: transcription fallback ─────────────────────────────────────────
 
-    #[cfg(all(unix, feature = "asr"))]
+    #[cfg(all(target_os = "linux", feature = "asr"))]
     #[tokio::test]
     async fn audio_is_transcribed_when_model_lacks_audio_support() {
         let dir = tempfile::tempdir().unwrap();
@@ -386,7 +386,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(unix, feature = "asr"))]
+    #[cfg(all(target_os = "linux", feature = "asr"))]
     #[tokio::test]
     async fn force_transcribe_bypasses_native_audio() {
         let dir = tempfile::tempdir().unwrap();
@@ -406,7 +406,7 @@ mod tests {
         assert!(out.content.contains("forced transcript"), "{}", out.content);
     }
 
-    #[cfg(all(unix, feature = "asr"))]
+    #[cfg(all(target_os = "linux", feature = "asr"))]
     #[tokio::test]
     async fn no_model_context_always_transcribes() {
         let dir = tempfile::tempdir().unwrap();
@@ -468,7 +468,7 @@ mod tests {
     /// An unreachable server must name the model it could not transcribe with,
     /// not fail anonymously: the two ASR ids are easy to confuse and the bus
     /// may simply have no brain on it.
-    #[cfg(all(unix, feature = "asr"))]
+    #[cfg(all(target_os = "linux", feature = "asr"))]
     #[tokio::test]
     async fn asr_failure_names_the_model() {
         let dir = tempfile::tempdir().unwrap();
@@ -523,7 +523,7 @@ mod tests {
         // Offered only where it can be honoured.
         assert_eq!(
             schema["properties"]["force_transcribe"].is_object(),
-            cfg!(all(unix, feature = "asr"))
+            cfg!(all(target_os = "linux", feature = "asr"))
         );
     }
 }

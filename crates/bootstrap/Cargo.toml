@@ -65,9 +65,9 @@ research = ["media"]
 # ── Capabilities ────────────────────────────────────────────────────────────
 # Image and audio decoding: `attach_file` and images in `read_file`.
 media = ["sven-tools-fs/media"]
-# Speech-to-text over brain's D-Bus action surface (Unix only).
+# Speech-to-text over brain's D-Bus action surface (Linux only).
 asr = ["media", "dbus", "sven-tools-fs/asr"]
-# `provider: dbus`, brain's D-Bus model transport (Unix only).
+# `provider: dbus`, brain's D-Bus model transport (Linux only).
 dbus = ["sven-model-drivers/dbus"]
 # Android device control: the `android` tool, the `ui-test` mode that drives
 # it (registered by `mode_registry`, never listed without it) and the

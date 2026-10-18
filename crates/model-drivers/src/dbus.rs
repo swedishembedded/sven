@@ -50,31 +50,31 @@
 //! image generation, ...), which is how the `attach_file` tool transcribes
 //! audio for a model that cannot hear.
 //!
-//! Compiled only on Unix with the `dbus` feature. Without it the provider name
+//! Compiled only on Linux with the `dbus` feature. Without it the provider name
 //! is still recognised, and refused with the reason instead of falling through
 //! to the HTTP catch-all.
 
 use crate::config::ModelConfig;
 use sven_model::ModelProvider;
 
-#[cfg(all(unix, feature = "dbus"))]
+#[cfg(all(target_os = "linux", feature = "dbus"))]
 pub mod action;
-#[cfg(all(unix, feature = "dbus"))]
+#[cfg(all(target_os = "linux", feature = "dbus"))]
 pub mod blob;
-#[cfg(all(unix, feature = "dbus"))]
+#[cfg(all(target_os = "linux", feature = "dbus"))]
 mod provider;
-#[cfg(all(unix, feature = "dbus"))]
+#[cfg(all(target_os = "linux", feature = "dbus"))]
 pub mod proxy;
 
-#[cfg(all(unix, feature = "dbus"))]
+#[cfg(all(target_os = "linux", feature = "dbus"))]
 pub use action::{ActionClient, ActionInput, ActionOutcome};
-#[cfg(all(unix, feature = "dbus"))]
+#[cfg(all(target_os = "linux", feature = "dbus"))]
 pub use provider::{extract_blob_urls, flatten_messages, DbusOptions, DbusProvider};
-#[cfg(all(unix, feature = "dbus"))]
+#[cfg(all(target_os = "linux", feature = "dbus"))]
 pub use proxy::BusKind;
 
 /// The D-Bus provider for `cfg`. It connects lazily, on the first request.
-#[cfg(all(unix, feature = "dbus"))]
+#[cfg(all(target_os = "linux", feature = "dbus"))]
 pub(crate) fn build(
     cfg: &ModelConfig,
     max_tokens: Option<u32>,
@@ -90,7 +90,7 @@ pub(crate) fn build(
 
 /// Without the transport the provider name is still recognised, and refused
 /// with the reason instead of falling through to the HTTP catch-all.
-#[cfg(not(all(unix, feature = "dbus")))]
+#[cfg(not(all(target_os = "linux", feature = "dbus")))]
 pub(crate) fn build(
     _cfg: &ModelConfig,
     _max_tokens: Option<u32>,
@@ -98,6 +98,6 @@ pub(crate) fn build(
 ) -> anyhow::Result<Box<dyn ModelProvider>> {
     anyhow::bail!(
         "the 'dbus' model provider is not available in this build \
-         (requires a Unix target and the `dbus` feature)"
+         (requires a Linux target and the `dbus` feature)"
     )
 }

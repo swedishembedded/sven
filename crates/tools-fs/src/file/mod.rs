@@ -5,9 +5,9 @@
 //!
 //! Images and audio (`attach_file`, `load_attachment`, images in `read_file`)
 //! are compiled in with the `media` feature, on by default; transcribing audio
-//! for a model that cannot hear (`asr`) needs the `asr` feature on Unix.
+//! for a model that cannot hear (`asr`) needs the `asr` feature on Linux.
 
-#[cfg(all(unix, feature = "asr"))]
+#[cfg(all(target_os = "linux", feature = "asr"))]
 pub mod asr;
 #[cfg(feature = "media")]
 pub mod attach_file;

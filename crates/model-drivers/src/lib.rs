@@ -875,7 +875,7 @@ mod tests {
     /// `provider: dbus` selects brain's D-Bus transport. It must never fall
     /// through to the OpenAI-compatible catch-all, which either refuses it
     /// for want of a base URL or - given one - silently speaks HTTP instead.
-    #[cfg(all(unix, feature = "dbus"))]
+    #[cfg(all(target_os = "linux", feature = "dbus"))]
     #[test]
     fn from_config_dbus_builds_the_dbus_provider() {
         let cfg = minimal_config("dbus", "brain/qwen3");
@@ -886,7 +886,7 @@ mod tests {
 
     /// A build without the transport still knows the provider by name and
     /// says why it cannot have it.
-    #[cfg(not(all(unix, feature = "dbus")))]
+    #[cfg(not(all(target_os = "linux", feature = "dbus")))]
     #[test]
     fn from_config_dbus_without_the_transport_is_refused_by_name() {
         let cfg = minimal_config("dbus", "brain/qwen3");
