@@ -54,6 +54,7 @@ mod meter;
 mod method;
 mod run;
 mod run_support;
+pub mod search;
 mod state;
 mod transcript;
 

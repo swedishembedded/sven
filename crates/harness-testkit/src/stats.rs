@@ -11,6 +11,7 @@
 //! email to info@swedishembedded.com.
 
 use serde::Serialize;
+use sven_sdk::search::SearchRng;
 
 /// The confidence level of every interval this crate reports.
 pub const CONFIDENCE: f64 = 0.95;
@@ -26,25 +27,6 @@ pub struct Estimate {
     pub hi: f64,
 }
 
-/// SplitMix64: a small, well-distributed generator; nothing here needs
-/// cryptographic quality, only reproducibility from a seed.
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    fn below(&mut self, n: usize) -> usize {
-        // Modulo bias is negligible for the sample sizes involved (n << 2^64).
-        usize::try_from(self.next() % n as u64).unwrap_or(0)
-    }
-}
-
 fn mean(values: &[f64]) -> f64 {
     values.iter().sum::<f64>() / values.len() as f64
 }
@@ -57,7 +39,7 @@ pub fn bootstrap_mean(values: &[f64], seed: u64, resamples: usize) -> Option<Est
         return None;
     }
     let value = mean(values);
-    let mut rng = SplitMix64(seed);
+    let mut rng = SearchRng::from_seed(seed);
     let mut means: Vec<f64> = (0..resamples.max(1))
         .map(|_| {
             let sum: f64 = (0..values.len())

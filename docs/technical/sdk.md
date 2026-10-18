@@ -424,6 +424,52 @@ This is not a second agent loop. The SDK posts messages and reads replies, the
 way any surface does; it does not stream from the model or dispatch tools. The
 one agent loop is still the kernel's.
 
+## Searching over candidates
+
+`sven_sdk::search` is a generic search facility. It is a library beside the
+state machine, not a machine in it: it owns no agent loop and no model call.
+You give it:
+
+- an initial candidate (any `Clone + Serialize` value: a harness document, a
+  prompt, a patch);
+- a `Proposer` that derives a new candidate from a parent and reports what the
+  proposal cost in tokens;
+- a `CandidateEnvironment` that provisions an isolated environment for one
+  candidate, runs it within `EvalLimits`, and returns a `SearchEvaluation`:
+  `terminal` (the verifier's `VerifierVerdict`, or none), `utility` (a finite
+  dense score), named `signals`, `tokens` and the `TrajectoryRef`s of the sven
+  runs it made. The frozen task is whatever the environment was built over;
+- a `SearchBudget` (`max_evaluations`, optional `max_tokens` and `max_wall`,
+  `stop_on_verified`) and a seed.
+
+`search(Strategy::BestOfN | Strategy::SimulatedAnnealing { initial_temperature,
+cooling }, ...)` evaluates candidates one after another. Best-of-N proposes
+every candidate from the initial one; annealing is a Metropolis walk (an
+improvement is always accepted, a worse candidate with probability
+`exp(delta / T)`, `T` cooling geometrically). The same seed reproduces the
+search when the proposer and environment are reproducible.
+
+The utility guides; the verifier decides. `SearchReport::best_verified` is the
+verified candidate with the highest utility and is `None` when nothing passed,
+however high the utility got; `best_utility` may be unverified partial credit
+and must not be reported as success. `SearchReport::trace` holds every
+candidate, its evaluation and its proposal cost in order, which is how the
+winning candidate is traced back to the trajectories that justify it.
+`SearchMetrics` reports evaluations, verified evaluations, evaluations to the
+first verified candidate, solved per evaluation, tokens, wall time and
+diversity (distinct candidates over evaluations). A candidate that crashes or
+times out is a result (a failed verdict and its floor utility); an `Err` from
+the environment or proposer, or a non-finite utility, aborts the search.
+
+Validation (`crates/sdk/tests/search.rs`): a hidden 24-bit string with the
+fraction of matching bits as partial credit and an all-bits-match verifier.
+From the all-zero candidate with single-bit-flip proposals, 20 seeds and a
+budget of 1000 evaluations, annealing (`initial_temperature` 0.05, `cooling`
+0.995) verified a solution in 20 of 20 searches, 5425 evaluations in total
+(mean 271), and best-of-N in 0 of 20 (20000 evaluations spent, utility rose
+but nothing verified). This is a check of the facility on a toy with a known
+solution, not a claim about real tasks.
+
 ## Sharing, and what is actually shared
 
 `EngineBuilder::model_provider` is what makes many agents affordable. Without
