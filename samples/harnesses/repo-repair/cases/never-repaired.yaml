@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# An agent that only claims success: no edit happens, the recorded verdict
+# stays red, and the run fails instead of believing it.
+input: {}
+model:
+  sequence:
+    - text: '{"file": "src/total.sh", "summary": "total ignores shipping"}'
+    - text: "I fixed it"
+    - text: "I fixed it again"
+tools:
+  shell:
+    capability: ExecuteShell
+    responses:
+      - ok: "src/total.sh"
+      - ok: "FAIL"
+        write: { path: result.json, content: '{"passed": false}' }
+      - ok: "FAIL"
+        write: { path: result.json, content: '{"passed": false}' }
+      - ok: "FAIL"
+        write: { path: result.json, content: '{"passed": false}' }
+  read_file:
+    capability: ReadFile
+    responses:
+      - ok: "total() { echo $(( items - discount )); }"
+expect:
+  status: failed
+  failure: { code: unrepaired }
+  tools_not_invoked: [edit_file]

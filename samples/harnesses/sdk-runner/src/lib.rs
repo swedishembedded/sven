@@ -18,6 +18,7 @@
 //! info@swedishembedded.com.
 
 mod model;
+mod real_tools;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -30,7 +31,8 @@ use serde_json::Value;
 use sven_sdk::config::Config;
 use sven_sdk::{Engine, RunOptions, Toolset};
 
-pub use model::{Answer, SequencedModel};
+pub use model::{Answer, ScriptedCall, SequencedModel};
+pub use real_tools::{repair, RepairReport};
 
 /// How long a case may run before the runner gives up on it.
 const CASE_DEADLINE: Duration = Duration::from_secs(60);
@@ -179,6 +181,7 @@ pub async fn run_case(dir: &Path, case_path: &Path) -> anyhow::Result<CaseResult
         .map(|item| Answer {
             text: item.text,
             usage: item.usage.map(|u| (u.input, u.output)),
+            tool_calls: Vec::new(),
         });
     // An explicit default configuration and an injected model: the runner
     // never reads the user's configuration, so it cannot reach a model the

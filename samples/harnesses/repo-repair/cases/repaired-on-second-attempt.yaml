@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The first edit leaves the tests red; the retry sees the new failure and the
+# second edit turns them green. Fixture tools stand in for the shell and the
+# file tools; the real-tools run is `cargo test -p sample-harnesses-sdk-runner
+# --test real_tools`.
+input: {}
+model:
+  sequence:
+    - text: '{"file": "src/total.sh", "summary": "total ignores shipping"}'
+    - tool_calls: [ { id: e1, name: edit_file, args: { path: src/total.sh, diff: "@@\n-a\n+b\n" } } ]
+    - text: "edited"
+    - tool_calls: [ { id: e2, name: edit_file, args: { path: src/total.sh, diff: "@@\n-b\n+c\n" } } ]
+    - text: "edited again"
+tools:
+  shell:
+    capability: ExecuteShell
+    responses:
+      - ok: "src/total.sh tests/test_total.sh"
+      - ok: "FAIL no_shipping"
+        write: { path: result.json, content: '{"passed": false}' }
+      - ok: "FAIL with_discount"
+        write: { path: result.json, content: '{"passed": false}' }
+      - ok: "ok no_shipping"
+        write: { path: result.json, content: '{"passed": true}' }
+  read_file:
+    capability: ReadFile
+    responses:
+      - ok: "total() { echo $(( items - discount )); }"
+  edit_file:
+    capability: WriteFile
+    responses:
+      - ok: "edited"
+      - ok: "edited"
+expect:
+  status: completed
+  output: { status: fixed, attempts: 2 }
+  steps: { diagnose: 1, fix_first: 1, fix_second: 1, fixed_second: 1, unrepaired: 0 }
+  tools_invoked: [edit_file, edit_file, read_file, shell, shell, shell, shell]

@@ -232,7 +232,7 @@ expectation is never loosened to make a run pass.
 
 ## Samples tour
 
-[samples/harnesses](../samples/harnesses/) holds seven harnesses, each a data
+[samples/harnesses](../samples/harnesses/) holds eight harnesses, each a data
 directory with its cases:
 
 | Sample | What it shows |
@@ -241,13 +241,14 @@ directory with its cases:
 | `ticket-routing` | a schema-constrained `predict` inside a `retry`, then a branch; its `live-local` case is the opt-in real-model run |
 | `scoped-agent` | delegation to a child; an `agent` step held to its tool list |
 | `repair-loop` | `retry` around a failing tool, then an independent `verify` |
+| `repo-repair` | the real shell and file tools on a repository: diagnose a failing test, edit, verify independently, retry once |
 | `parallel-research` | `parallel` branches joined in declared order; cancellation |
 | `suspend-resume` | suspend on a deadline, resume the checkpoint, replay offline |
 | `custom-helper` | a sandboxed WASM helper carried in a bundle |
 | `sdk-runner` | the same cases from an application, with the SDK alone |
 
 ```sh
-sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,parallel-research,suspend-resume,custom-helper}   # every sample, offline
+sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper}   # every sample, offline
 cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
 ```
 

@@ -3,7 +3,7 @@
 
 # Harness samples
 
-Seven programmable harnesses, each a data directory: a YAML document, the
+Eight programmable harnesses, each a data directory: a YAML document, the
 cases that state what it must do, and nothing to compile. The table lists
 them from the simplest program to the most involved; every default case runs
 offline on mock models and fixture tools.
@@ -14,6 +14,7 @@ offline on mock models and fixture tools.
 | [ticket-routing](ticket-routing/) | one schema-constrained model turn, retried, then routed; its `live-local` case is the opt-in real-model run |
 | [scoped-agent](scoped-agent/) | delegation to a child, and an agent held to its tool list |
 | [repair-loop](repair-loop/) | retry around a tool, then an independent verification |
+| [repo-repair](repo-repair/) | the real tools on a real repository: diagnose a failing test, edit, verify independently, retry once |
 | [parallel-research](parallel-research/) | `parallel` branches joined in declared order, and cancellation |
 | [suspend-resume](suspend-resume/) | suspend on a bound, resume the checkpoint, replay offline |
 | [custom-helper](custom-helper/) | a sandboxed WASM helper carried in a bundle |
@@ -47,7 +48,7 @@ and must reach the same verdict and trace.
 ## Running them
 
 ```sh
-sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,parallel-research,suspend-resume,custom-helper}   # all samples, offline
+sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper}   # all samples, offline
 cargo test -p sven-harness-testkit --test samples
 ```
 

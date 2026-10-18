@@ -63,7 +63,7 @@ check` (clippy `--workspace --all-targets`) are what actually cover samples.
 
 `samples/harnesses/` is the exception to "every sample is a directory with a
 `Cargo.toml`". Its named entries (`branching`, `ticket-routing`,
-`scoped-agent`, `repair-loop`, `parallel-research`, `suspend-resume`,
+`scoped-agent`, `repair-loop`, `repo-repair`, `parallel-research`, `suspend-resume`,
 `custom-helper`) are programmable harnesses: a YAML document, the cases that state what it must do,
 and nothing to compile. They are not workspace members and `make check/gates/samples`
 has nothing to say about them; they are judged by the harness test kit, which

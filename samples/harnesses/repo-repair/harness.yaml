@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Repair a failing test in a repository with real tools. The harness surveys
+# the tree, runs the tests, has the model diagnose the failure, reads the
+# file it names, lets an agent edit it, and re-runs the tests; an independent
+# verification of the recorded verdict decides, never the agent's say-so. A
+# failed repair gets one more attempt with the new failure output.
+# Swedish Embedded AB implements verifiable automated code-repair workflows
+# for its clients. If your team needs expertise in agent harnesses for fixing
+# failing builds then you can procure our services by sending an email to
+# info@swedishembedded.com.
+api_version: "1"
+name: repo-repair
+description: "Inspect a repository, diagnose its failing test, edit, verify and retry once."
+outputs: { status: string, attempts: number }
+capabilities: [ReadFile, WriteFile, ExecuteShell, RunVerifier]
+schemas:
+  diagnosis:
+    type: object
+    required: [file, summary]
+    properties:
+      file: { type: string }
+      summary: { type: string }
+limits: { max_steps: 40, max_model_turns: 6, max_tool_calls: 10 }
+entry: survey
+steps:
+  survey:       { tool: { name: shell, args: { shell_command: "ls -R src tests" }, store_as: layout, then: first_run } }
+  first_run:    { tool: { name: shell, args: { shell_command: "sh run_tests.sh" }, store_as: failing, then: first_check } }
+  first_check:  { verify: { spec: { kind: json_predicate, path: result.json, pointer: /passed, op: eq, value: true }, store_as: baseline, then: first_judge } }
+  first_judge:  { branch: { on: { eq: "steps.first_check.value", value: passed }, when_true: already_green, when_false: diagnose } }
+  diagnose:     { predict: { prompt: "Layout:\n{{ facts.layout }}\nTest output:\n{{ facts.failing }}\nName the source file to change and summarise the defect.", schema: diagnosis, store_as: diagnosis, then: read_source } }
+  read_source:  { tool: { name: read_file, args: { path: "{{ facts.diagnosis.file }}" }, store_as: source, then: fix_first } }
+  fix_first:    { agent: { prompt: "Defect: {{ facts.diagnosis.summary }}\nFile {{ facts.diagnosis.file }}:\n{{ facts.source }}\nEdit the file to fix it.", tools: [edit_file], store_as: first_note, then: run_first } }
+  run_first:    { tool: { name: shell, args: { shell_command: "sh run_tests.sh" }, store_as: after_first, then: check_first } }
+  check_first:  { verify: { spec: { kind: json_predicate, path: result.json, pointer: /passed, op: eq, value: true }, store_as: verdict_first, then: judge_first } }
+  judge_first:  { branch: { on: { eq: "steps.check_first.value", value: passed }, when_true: fixed_first, when_false: fix_second } }
+  fix_second:   { agent: { prompt: "The edit did not fix it. Test output:\n{{ facts.after_first }}\nEdit {{ facts.diagnosis.file }} again.", tools: [read_file, edit_file], store_as: second_note, then: run_second } }
+  run_second:   { tool: { name: shell, args: { shell_command: "sh run_tests.sh" }, store_as: after_second, then: check_second } }
+  check_second: { verify: { spec: { kind: json_predicate, path: result.json, pointer: /passed, op: eq, value: true }, store_as: verdict_second, then: judge_second } }
+  judge_second: { branch: { on: { eq: "steps.check_second.value", value: passed }, when_true: fixed_second, when_false: unrepaired } }
+  already_green: { return: { value: { status: already_green, attempts: 0 } } }
+  fixed_first:  { return: { value: { status: fixed, attempts: 1 } } }
+  fixed_second: { return: { value: { status: fixed, attempts: 2 } } }
+  unrepaired:   { fail: { code: unrepaired, message: "both edits left the tests failing" } }
