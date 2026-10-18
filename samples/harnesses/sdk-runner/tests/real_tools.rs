@@ -89,7 +89,7 @@ async fn a_wrong_first_edit_is_retried_with_the_new_failure_and_the_repository_e
         .await
         .unwrap();
 
-    assert_eq!(report.conclusion, "success", "{report:?}");
+    assert_eq!(report.status, "completed", "{report:?}");
     assert_eq!(
         report.output,
         Some(json!({"status": "fixed", "attempts": 2}))

@@ -29,12 +29,16 @@ const REPAIR_DEADLINE: Duration = Duration::from_secs(300);
 /// What a repair run did.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RepairReport {
-    /// How the run ended.
-    pub conclusion: String,
+    /// How the run ended: `completed` (the harness returned), `failed` (the
+    /// harness's own failure, or a step that could not run), or the bound
+    /// that stopped it.
+    pub status: String,
     /// The harness's returned value, when it completed.
     pub output: Option<Value>,
-    /// The harness's failure code, when it failed on its own terms.
+    /// The harness's failure code, when it failed.
     pub failure_code: Option<String>,
+    /// The failure's message.
+    pub failure_message: Option<String>,
     /// How many times each step started.
     pub steps: BTreeMap<String, u64>,
     /// Generated tokens the model reported.
@@ -67,18 +71,24 @@ pub async fn repair(
     let outcome = run
         .execute(RunOptions::new().deadline(REPAIR_DEADLINE))
         .await?;
-    let (output, failure_code) = match &outcome.result {
+    let (output, failure) = match &outcome.result {
         Some(Ok(value)) => (Some(value.clone()), None),
-        Some(Err(failure)) => (None, Some(failure.code.clone())),
+        Some(Err(failure)) => (None, Some(failure)),
         None => (None, None),
     };
-    Ok(RepairReport {
-        conclusion: serde_json::to_value(outcome.conclusion)?
+    let status = match (&output, &failure) {
+        (Some(_), _) => "completed".to_string(),
+        (_, Some(_)) => "failed".to_string(),
+        _ => serde_json::to_value(outcome.conclusion)?
             .as_str()
             .unwrap_or_default()
             .to_string(),
+    };
+    Ok(RepairReport {
+        status,
         output,
-        failure_code,
+        failure_code: failure.map(|f| f.code.clone()),
+        failure_message: failure.map(|f| f.message.clone()),
         steps: outcome.step_counts(),
         output_tokens: outcome.usage.output_tokens.unwrap_or(0),
     })

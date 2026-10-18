@@ -49,9 +49,11 @@ tests itself:
 
 ```sh
 cargo run -p sample-harnesses-sdk-runner --bin repo-repair -- \
-  --model-endpoint http://127.0.0.1:8080/v1 --model openai/qwen3-0.6b
+  --model-endpoint http://127.0.0.1:8788/v1 --model openai/Qwen/Qwen3-0.6B \
+  --api-key-file key.txt
 ```
 
-Exit code 0 means the tests pass after the run, 1 that they do not, 2 a
+`--api-key-file` is for servers that need a key (a file holding just the key);
+`--keep` leaves the repository on disk. Exit code 0 means the tests pass after the run, 1 that they do not, 2 a
 setup error. A small model is expected to fail this task often; the harness
 reports that as `unrepaired` and the exit code as 1, never as success.

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `repo-repair --model-endpoint URL [--model PROVIDER/NAME]`: runs the
+//! `repo-repair --model-endpoint URL [--model PROVIDER/NAME] [--api-key-file FILE]`: runs the
 //! `repo-repair` harness on a fresh copy of its fixture repository with the
 //! real coding tools and a model server you already run, then prints the
 //! report and whether the tests really pass afterwards. See README.md.
@@ -47,7 +47,7 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 
 async fn run(args: &[String]) -> anyhow::Result<bool> {
     let Some(endpoint) = flag(args, "--model-endpoint") else {
-        bail!("usage: repo-repair --model-endpoint URL [--model PROVIDER/NAME] [--keep]");
+        bail!("usage: repo-repair --model-endpoint URL [--model PROVIDER/NAME] [--api-key-file FILE] [--keep]");
     };
     let spec = flag(args, "--model").unwrap_or_else(|| "ollama/qwen3:8b".to_string());
     let (provider, name) = spec.split_once('/').unwrap_or(("ollama", spec.as_str()));
@@ -55,6 +55,10 @@ async fn run(args: &[String]) -> anyhow::Result<bool> {
     config.model.provider = provider.to_string();
     config.model.name = name.to_string();
     config.model.base_url = Some(endpoint);
+    if let Some(file) = flag(args, "--api-key-file") {
+        let key = std::fs::read_to_string(&file).with_context(|| format!("reading {file}"))?;
+        config.model.api_key = Some(key.trim().to_string());
+    }
     let model = sven_sdk::drivers::from_config(&config.model)
         .map_err(|e| anyhow::anyhow!("cannot build the model: {e:#}"))?;
 

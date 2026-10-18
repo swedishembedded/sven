@@ -25,11 +25,11 @@ schemas:
 limits: { max_steps: 40, max_model_turns: 6, max_tool_calls: 10 }
 entry: survey
 steps:
-  survey:       { tool: { name: shell, args: { shell_command: "ls -R src tests" }, store_as: layout, then: first_run } }
+  survey:       { tool: { name: shell, args: { shell_command: "find src tests -type f" }, store_as: layout, then: first_run } }
   first_run:    { tool: { name: shell, args: { shell_command: "sh run_tests.sh" }, store_as: failing, then: first_check } }
   first_check:  { verify: { spec: { kind: json_predicate, path: result.json, pointer: /passed, op: eq, value: true }, store_as: baseline, then: first_judge } }
   first_judge:  { branch: { on: { eq: "steps.first_check.value", value: passed }, when_true: already_green, when_false: diagnose } }
-  diagnose:     { predict: { prompt: "Layout:\n{{ facts.layout }}\nTest output:\n{{ facts.failing }}\nName the source file to change and summarise the defect.", schema: diagnosis, store_as: diagnosis, then: read_source } }
+  diagnose:     { predict: { prompt: "Layout:\n{{ facts.layout }}\nTest output:\n{{ facts.failing }}\nReply with ONLY a JSON object {\"file\": \"<path of the source file to change>\", \"summary\": \"<the defect in one sentence>\"}, no other text. /no_think", schema: diagnosis, store_as: diagnosis, then: read_source } }
   read_source:  { tool: { name: read_file, args: { path: "{{ facts.diagnosis.file }}" }, store_as: source, then: fix_first } }
   fix_first:    { agent: { prompt: "Defect: {{ facts.diagnosis.summary }}\nFile {{ facts.diagnosis.file }}:\n{{ facts.source }}\nEdit the file to fix it.", tools: [edit_file], store_as: first_note, then: run_first } }
   run_first:    { tool: { name: shell, args: { shell_command: "sh run_tests.sh" }, store_as: after_first, then: check_first } }

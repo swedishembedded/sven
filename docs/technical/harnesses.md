@@ -43,7 +43,7 @@ form is `sven harness schema`
 
 | Primitive | Fields | Meaning |
 |-----------|--------|---------|
-| `predict` | `prompt`, `schema`?, `store_as`?, `then` | one model turn; with `schema` the answer must parse as JSON and is stored parsed |
+| `predict` | `prompt`, `schema`?, `store_as`?, `then` | one model turn; with `schema` the answer must parse as JSON (a single markdown code fence around it is removed first) and is stored parsed; the `brain` driver is not sent `response_format`, which that server refuses |
 | `agent` | `prompt`, `tools`?, `store_as`?, `then` | a model/tool loop until the model answers; `tools` is an allowlist |
 | `tool` | `name`, `args`?, `store_as`?, `then` | one tool call |
 | `verify` | `spec`, `store_as`?, `then` | an independent check of an artifact; the verdict is `passed`, `failed: <reason>`, `needs_human` or `unknown` |
