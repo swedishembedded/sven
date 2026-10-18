@@ -223,7 +223,12 @@ it can be stored as JSON and resumed in another process with
 `Harness::resume`. A checkpoint under another plan or bundle is refused. The
 operation the stop interrupted did not complete; on resume it is settled
 through the step's failure path, so the step's `retry` decides what repeating
-it is worth. A resumed run keeps the run id and continues the trace.
+it is worth. A resumed run keeps the run id and continues the trace. The restored machine
+re-emits nothing for an operation in flight (model turn, tool call, child
+batch, approval question), and a completion it has already consumed - a
+repeated tool result, model turn, approval or branch completion - settles
+nothing a second time; `harness_checkpoint_interruptions.rs` holds these
+cases for each waiting state and for retries.
 
 **Recording.** `HarnessRun::with_recording()` keeps the machine's input event
 log - kickoff, model answers, tool results, child verdicts, approvals -

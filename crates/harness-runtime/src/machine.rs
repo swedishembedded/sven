@@ -492,6 +492,12 @@ impl HarnessMachine {
                     // delivery, a sibling run's child) is ignored.
                     return Reaction::Ignored;
                 };
+                if join.results[slot].is_some() {
+                    // A redelivery (an executor retry, a resumed run
+                    // receiving a completion it already consumed): the
+                    // settled slot is final.
+                    return Reaction::Ignored;
+                }
                 let mut join = join;
                 join.results[slot] = Some(result.clone());
                 run.trace.push(TraceRecord::ChildCompleted {
