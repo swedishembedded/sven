@@ -17,6 +17,19 @@ files, searches the web, and delegates subtasks to sub-agents - all
 autonomously, all in your terminal - or headless in CI, driven by markdown
 workflow files.
 
+## Three projects, one stack
+
+sven is one of three open projects that work together. Each one stands on its
+own:
+
+| Project | Its role |
+|---|---|
+| **[sven](https://github.com/swedishembedded/sven)** (this repository) | **Runs the agent.** A terminal AI agent that reads code, runs tools and works through tasks, interactively or headless in CI. |
+| **[brain](https://github.com/swedishembedded/brain)** | **Runs the models.** Inference, training, fine-tuning and serving on your own hardware; sven can use it as a local model provider ([Running on Brain](#running-on-brain)). |
+| **[Splinter](https://github.com/mkschreder/splinter)** | **Turns agent experience into better local models.** It runs sven on real tasks, checks the results, trains a model with brain, and releases it only when held-out tests show it improved. |
+
+sven works with any of its model providers; it needs neither of the other two.
+
 ## Key Features
 
 - **HSM-kernel architecture** - Control flow is a formally-specified Hierarchical State Machine; the LLM is a typed reasoning service that proposes actions but never drives execution. Deterministic, auditable, and fully testable without an API key.

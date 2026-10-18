@@ -12,6 +12,9 @@
 # brain is the exception that proves the rule: sven talks to it as a model
 # provider, so it may be named in that role. AGENTS.md states the full scope.
 #
+# README.md is exempt: its opening introduces sven's two sibling projects, so
+# that a reader of any one of the three finds the other two.
+#
 # CHANGELOG.md is history and is not rewritten.
 #
 # Usage: scripts/gates/check-repo-scope.sh [file ...]
@@ -31,7 +34,7 @@ scan=()
 for f in "${files[@]}"; do
     [ -f "$f" ] || continue
     case "$f" in
-    CHANGELOG.md | scripts/gates/check-repo-scope.sh) continue ;;
+    README.md | CHANGELOG.md | scripts/gates/check-repo-scope.sh) continue ;;
     esac
     scan+=("$f")
 done

@@ -31,8 +31,9 @@ Everything in this repository serves one of those two.
 sven depends on it. brain may be named in its one role here - a model
 provider sven talks to at runtime - and never as a build dependency (see
 `check/gates/no-brain-dependency`). A project built on sven is never named: describe the need
-generically ("an embedding application"). `make check/gates/repo-scope` enforces this;
-CHANGELOG.md is history and exempt.
+generically ("an embedding application"). The one exception is README.md, whose
+opening introduces sven's sibling projects so readers of any of the three find the
+others. `make check/gates/repo-scope` enforces this; CHANGELOG.md is history and exempt.
 
 ## For AI Agents Working on This Codebase
 
