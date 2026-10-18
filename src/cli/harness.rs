@@ -130,9 +130,18 @@ pub enum HarnessCommands {
         /// The directory of case manifests both variants run.
         #[arg(long, value_name = "DIR")]
         cases: PathBuf,
-        /// Exit 1 when a case passes in A and not in B.
+        /// Exit 1 when a case passes in A and not in B (with `--seed`: when
+        /// the paired verdict is `reject`).
         #[arg(long)]
         fail_on_regression: bool,
+        /// Run every case under this seed in both variants and compare the
+        /// matched outcomes with intervals and cost (repeatable; at least
+        /// two make an interval meaningful).
+        #[arg(long = "seed", value_name = "N", requires = "bootstrap_seed")]
+        seeds: Vec<u64>,
+        /// Seeds the interval's bootstrap; the same value reproduces it.
+        #[arg(long, value_name = "N", requires = "seeds")]
+        bootstrap_seed: Option<u64>,
         /// Print the report as JSON on stdout.
         #[arg(long)]
         json: bool,
@@ -190,6 +199,9 @@ pub struct HarnessRunArgs {
     /// kit cannot give a run the coding or research tools safely.
     #[arg(long, value_enum, default_value = "none")]
     pub toolset: ToolsetArg,
+    /// The run's seed: selects the behaviour of a `by_seed` fixture model.
+    #[arg(long, value_name = "N")]
+    pub seed: Option<u64>,
     /// Suspend the run (leaving a checkpoint) after this many seconds.
     #[arg(long, value_name = "SECS")]
     pub timeout: Option<u64>,

@@ -14,6 +14,7 @@
 //! autonomous workflows without a live model then you can procure our
 //! services by sending an email to info@swedishembedded.com.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -37,6 +38,11 @@ pub enum ModelFixture {
     File(String),
     /// Every call fails with this message.
     Fail(String),
+    /// One fixture per run seed: a deterministic stand-in for a stochastic
+    /// model, so a paired comparison can give both variants the same
+    /// per-seed behaviour. Running without a seed, or with a seed the block
+    /// does not name, is an error.
+    BySeed(BTreeMap<u64, ModelFixture>),
     /// A real local model, e.g. `ollama/qwen3:8b`. Opt-in only.
     Live {
         /// `provider/name` of a model the caller is already serving.
@@ -101,6 +107,8 @@ struct RawModel {
     fail: Option<String>,
     #[serde(default)]
     live: Option<RawLive>,
+    #[serde(default)]
+    by_seed: Option<BTreeMap<u64, ModelFixture>>,
 }
 
 #[derive(Deserialize)]
@@ -119,10 +127,11 @@ impl TryFrom<RawModel> for ModelFixture {
             raw.file.is_some(),
             raw.fail.is_some(),
             raw.live.is_some(),
+            raw.by_seed.is_some(),
         ];
         if named.iter().filter(|set| **set).count() != 1 {
             return Err(
-                "a model block names exactly one of `sequence`, `rules`, `file`, `fail` or `live`"
+                "a model block names exactly one of `sequence`, `rules`, `file`, `fail`, `by_seed` or `live`"
                     .to_string(),
             );
         }
@@ -134,6 +143,8 @@ impl TryFrom<RawModel> for ModelFixture {
             Self::File(path)
         } else if let Some(message) = raw.fail {
             Self::Fail(message)
+        } else if let Some(by_seed) = raw.by_seed {
+            Self::BySeed(by_seed)
         } else {
             Self::Live {
                 model: raw.live.map(|l| l.model).unwrap_or_default(),
@@ -241,8 +252,12 @@ impl ModelFixture {
     ///
     /// A message naming the flag that is missing.
     pub fn live_gate(&self, opt_in: &OptIn) -> Result<(), String> {
-        if !matches!(self, Self::Live { .. }) {
-            return Ok(());
+        match self {
+            Self::Live { .. } => {}
+            Self::BySeed(by_seed) => {
+                return by_seed.values().try_for_each(|f| f.live_gate(opt_in));
+            }
+            _ => return Ok(()),
         }
         if !opt_in.is_live_ready() {
             return Err(
@@ -259,6 +274,7 @@ pub(crate) fn build(
     fixture: Option<&ModelFixture>,
     dir: &HarnessDir,
     opt_in: &OptIn,
+    seed: Option<u64>,
 ) -> Result<BuiltModel, TestkitError> {
     let unbounded = |provider: Arc<dyn ModelProvider>| BuiltModel {
         provider,
@@ -310,7 +326,30 @@ pub(crate) fn build(
                     path.display()
                 )));
             }
-            build(Some(&inner), dir, opt_in)
+            build(Some(&inner), dir, opt_in, seed)
+        }
+        ModelFixture::BySeed(by_seed) => {
+            let seed = seed.ok_or_else(|| {
+                TestkitError::Manifest(
+                    "the model fixture is `by_seed` but the run has no seed: pass --seed".into(),
+                )
+            })?;
+            let inner = by_seed.get(&seed).ok_or_else(|| {
+                TestkitError::Manifest(format!(
+                    "the model fixture names no behaviour for seed {seed} (has: {})",
+                    by_seed
+                        .keys()
+                        .map(u64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
+            if matches!(inner, ModelFixture::BySeed(_)) {
+                return Err(TestkitError::Manifest(
+                    "a `by_seed` block cannot nest another `by_seed`".into(),
+                ));
+            }
+            build(Some(inner), dir, opt_in, Some(seed))
         }
         ModelFixture::Fail(message) => Ok(unbounded(Arc::new(FailingMockProvider::new(
             message.clone(),

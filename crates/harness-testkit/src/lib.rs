@@ -30,10 +30,12 @@ mod expect;
 mod fixture_model;
 mod fixture_tool;
 mod inspect;
+mod paired;
 mod report;
 mod run;
 mod runner;
 mod source;
+mod stats;
 
 pub use case::{
     Bounds, CaseManifest, Expect, FailureExpect, ResumePhase, ToolFixture, ToolResponse, Write,
@@ -47,6 +49,10 @@ pub use inspect::{
     inspect, io_schema, validate, ChildInfo, HelperInfo, InspectReport, StepInfo, ValidateReport,
     ValidatedHarness,
 };
+pub use paired::{
+    compare_paired, CostComparison, CostTotals, Decision, PairedOptions, PairedReport, TaskPairing,
+    Verdict,
+};
 pub use report::{
     CaseComparison, CaseReport, CaseStatus, Change, ComparisonReport, FailureSummary, JsonDiff,
     Mismatch, RunStatus, RunSummary, SuiteReport, VariantSummary,
@@ -55,3 +61,4 @@ pub use run::{
     replay_once, resume_once, run_once, ReplaySummary, RunRequest, RunResult, Workspace,
 };
 pub use runner::{run_case, run_suite, RunnerOptions};
+pub use stats::{bootstrap_mean, Estimate, CONFIDENCE};

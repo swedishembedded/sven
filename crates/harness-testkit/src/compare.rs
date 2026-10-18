@@ -67,7 +67,7 @@ pub async fn compare(
 }
 
 /// One variant's totals, and its suite when it ran.
-async fn run_variant(
+pub(crate) async fn run_variant(
     path: &Path,
     cases: &Path,
     options: &RunnerOptions,

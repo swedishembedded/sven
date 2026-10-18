@@ -40,6 +40,8 @@ pub struct RunnerOptions {
     pub replay_check: bool,
     /// Run only the case with this name.
     pub case_filter: Option<String>,
+    /// The seed every run in the suite uses (see [`RunRequest::seed`]).
+    pub seed: Option<u64>,
 }
 
 impl Default for RunnerOptions {
@@ -48,6 +50,7 @@ impl Default for RunnerOptions {
             opt_in: OptIn::none(),
             replay_check: true,
             case_filter: None,
+            seed: None,
         }
     }
 }
@@ -151,6 +154,7 @@ async fn execute(dir: &HarnessDir, case: &CaseManifest, options: &RunnerOptions)
             tools: tools.clone(),
             workspace: Workspace::Dir(workspace.path().to_path_buf()),
             opt_in: options.opt_in.clone(),
+            seed: options.seed,
             record: replay_on,
             ..RunRequest::default()
         };

@@ -12,8 +12,9 @@
 use std::path::{Path, PathBuf};
 
 use sven_harness_testkit::{
-    compare as compare_variants, run_suite, validate as validate_harness, CaseManifest, CaseStatus,
-    Change, ComparisonReport, HarnessDir, OptIn, RunnerOptions, SuiteReport, VariantSummary,
+    compare as compare_variants, compare_paired, run_suite, validate as validate_harness,
+    CaseManifest, CaseStatus, Change, ComparisonReport, HarnessDir, OptIn, PairedOptions,
+    PairedReport, RunnerOptions, SuiteReport, VariantSummary, Verdict,
 };
 
 use super::{kit, print_json, usage, Outcome};
@@ -69,6 +70,7 @@ pub(super) async fn test(
         opt_in,
         replay_check: replay,
         case_filter: case.map(str::to_string),
+        seed: None,
     };
     let mut reports = Vec::new();
     for dir in &opened {
@@ -131,24 +133,54 @@ fn print_suite(report: &SuiteReport) {
     );
 }
 
+/// What `sven harness compare` was asked.
+pub(super) struct CompareArgs<'a> {
+    pub dir_a: &'a Path,
+    pub dir_b: &'a Path,
+    pub cases: &'a Path,
+    pub fail_on_regression: bool,
+    /// Seeds and the bootstrap seed of a paired comparison.
+    pub paired_seeds: Option<(Vec<u64>, u64)>,
+    pub json: bool,
+}
+
 /// Runs one case set over two variants. Exit 2 for an invalid variant; 1
-/// for a regression under `--fail-on-regression`.
-pub(super) async fn compare(
-    dir_a: &Path,
-    dir_b: &Path,
-    cases: &Path,
-    fail_on_regression: bool,
-    json: bool,
-    opt_in: OptIn,
-) -> Outcome {
+/// for a regression under `--fail-on-regression` (with seeds: a `reject`
+/// verdict).
+pub(super) async fn compare(args: CompareArgs<'_>, opt_in: OptIn) -> Outcome {
     let options = RunnerOptions {
         opt_in,
         ..RunnerOptions::default()
     };
-    let report = compare_variants(dir_a, dir_b, cases, &options)
+    if let Some((seeds, bootstrap_seed)) = args.paired_seeds {
+        let paired = PairedOptions {
+            seeds,
+            bootstrap_seed,
+            resamples: PAIRED_RESAMPLES,
+        };
+        let report = compare_paired(args.dir_a, args.dir_b, args.cases, &options, &paired)
+            .await
+            .map_err(kit)?;
+        if args.json {
+            print_json(&report)?;
+        } else {
+            print_paired(&report);
+        }
+        if let Some(bad) = [&report.a, &report.b].into_iter().find(|v| !v.valid) {
+            eprintln!(
+                "error: {} is not a valid harness: {}",
+                bad.path.display(),
+                bad.error.as_deref().unwrap_or("unknown")
+            );
+            return Ok(2);
+        }
+        let rejected = report.decision.verdict == Verdict::Reject;
+        return Ok(i32::from(args.fail_on_regression && rejected));
+    }
+    let report = compare_variants(args.dir_a, args.dir_b, args.cases, &options)
         .await
         .map_err(kit)?;
-    if json {
+    if args.json {
         print_json(&report)?;
     } else {
         print_comparison(&report);
@@ -162,7 +194,38 @@ pub(super) async fn compare(
         return Ok(2);
     }
     let regressed = report.cases.iter().any(|c| c.change == Change::Regressed);
-    Ok(i32::from(fail_on_regression && regressed))
+    Ok(i32::from(args.fail_on_regression && regressed))
+}
+
+/// Bootstrap resamples behind a paired report's intervals.
+const PAIRED_RESAMPLES: usize = 2000;
+
+fn print_paired(report: &PairedReport) {
+    for (label, v) in [("A", &report.a), ("B", &report.b)] {
+        print_variant(label, v);
+    }
+    for task in &report.tasks {
+        println!(
+            "{}: {:+.3} (A {:?}, B {:?})",
+            task.task, task.delta, task.passed_a, task.passed_b
+        );
+    }
+    let delta = &report.mean_delta;
+    println!(
+        "mean pass-rate change {:+.3} [{:+.3}, {:+.3}] at {:.0}% over {} tasks x {} seeds",
+        delta.value,
+        delta.lo,
+        delta.hi,
+        report.confidence * 100.0,
+        report.tasks.len(),
+        report.seeds.len()
+    );
+    println!("cost A {:?} B {:?}", report.cost.a, report.cost.b);
+    println!(
+        "{:?}: {}",
+        report.decision.verdict,
+        report.decision.reasons.join("; ")
+    );
 }
 
 fn print_comparison(report: &ComparisonReport) {

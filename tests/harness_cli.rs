@@ -436,6 +436,51 @@ fn compare_reports_a_regression() {
 }
 
 #[test]
+fn compare_with_seeds_pairs_runs_and_rejects_a_regression() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let variant = tmp.path().join("variant");
+    copy_dir(&fixtures().join("decide"), &variant);
+    let text = std::fs::read_to_string(variant.join("harness.yaml")).expect("read");
+    std::fs::write(
+        variant.join("harness.yaml"),
+        text.replace("tier: paid", "tier: gold"),
+    )
+    .expect("write");
+    let compare = |extra: &[&str]| {
+        run(sven(tmp.path())
+            .arg("compare")
+            .arg(fixtures().join("decide"))
+            .arg(&variant)
+            .arg("--cases")
+            .arg(fixtures().join("decide/cases"))
+            .args(["--seed", "1", "--seed", "2", "--bootstrap-seed", "5"])
+            .args(extra))
+    };
+    let out = compare(&["--json"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let report = stdout_json(&out);
+    assert_eq!(report["decision"]["verdict"], "reject", "{report}");
+    assert_eq!(report["regressions"], serde_json::json!(["pro"]));
+    assert_eq!(report["seeds"], serde_json::json!([1, 2]));
+    assert_eq!(report["cost"]["a"]["runs"], 4);
+    assert_eq!(compare(&["--fail-on-regression"]).status.code(), Some(1));
+
+    let out = run(sven(tmp.path())
+        .arg("compare")
+        .arg(fixtures().join("decide"))
+        .arg(&variant)
+        .arg("--cases")
+        .arg(fixtures().join("decide/cases"))
+        .args(["--seed", "1"]));
+    assert_eq!(
+        code(&out),
+        2,
+        "seeds need an explicit --bootstrap-seed: {}",
+        stderr(&out)
+    );
+}
+
+#[test]
 fn run_without_a_model_source_fails_a_model_step_cleanly() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let out = run(sven(tmp.path())

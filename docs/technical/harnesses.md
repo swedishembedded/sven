@@ -292,8 +292,10 @@ and the registry and nothing else.
 `sven-harness-testkit` is the library behind `sven harness test`, `compare`,
 `run` and `replay`. Its entry points are `HarnessDir::open`, `validate`,
 `inspect`, `io_schema`, `run_once`, `resume_once`, `replay_once`, `run_case`,
-`run_suite` and `compare`, with `RunnerOptions { opt_in, replay_check,
-case_filter }`. Every case runs on a new engine with `Config::default()`, no
+`run_suite`, `compare` and `compare_paired` (matched seeds, per-task
+pass rates, a seeded percentile bootstrap, cost totals, a promote / reject /
+inconclusive verdict), with `RunnerOptions { opt_in, replay_check,
+case_filter, seed }`. Every case runs on a new engine with `Config::default()`, no
 built-in tools, an injected provider and automatic approval; it never reads
 the user's configuration. A live model is built only under `OptIn::live(model, endpoint)`,
 which the command line constructs from `--model` and `--model-endpoint`; the

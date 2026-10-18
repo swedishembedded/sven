@@ -507,6 +507,7 @@ pub enum Commands {
     ///   sven harness test DIR... [--case NAME] [--no-replay] [--json]
     ///                     [--model SPEC --model-endpoint URL]
     ///   sven harness run DIR --input '{"k": "v"}' [--case FILE] [--json]
+    ///   sven harness compare A B --cases DIR [--seed N]... --bootstrap-seed N
     ///   sven harness schema (optional output PATH)
     ///
     /// Exit codes. run, resume: 0 returned, 1 the plan failed, 2 usage or

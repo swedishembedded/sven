@@ -76,6 +76,7 @@ sven harness resume   <PATH> --checkpoint FILE [the flags of run]
 sven harness replay   <PATH> --recording FILE [--expect-trace FILE] [--json]
 sven harness test     <DIR>... [--case NAME] [--no-replay] [--json]
 sven harness compare  <DIR_A> <DIR_B> --cases DIR [--fail-on-regression] [--json]
+                      [--seed N]... [--bootstrap-seed N]
 ```
 
 - **validate** compiles the main document and its children; nothing runs. It
@@ -98,6 +99,15 @@ sven harness compare  <DIR_A> <DIR_B> --cases DIR [--fail-on-regression] [--json
   nothing. With `--expect-trace` the replayed trace must equal a trace file.
 - **test** runs every case of each directory; **compare** runs one set of
   cases over two variants of a harness and reports what changed.
+  With `--seed N` (repeatable) and `--bootstrap-seed N` the comparison is
+  **paired**: both variants run every case under every seed, a case passes or
+  not per seed, and the report gives each task's pass rates, the mean
+  pass-rate change with a 95% bootstrap interval over tasks (reproducible
+  from `--bootstrap-seed`), the tokens, steps and time each variant spent,
+  and a verdict. `reject`: a task passes under fewer seeds than the baseline
+  (also an invalid candidate); `promote`: no task regressed and the interval
+  excludes zero; otherwise `inconclusive`. `--fail-on-regression` exits 1 on
+  `reject`. A case skipped by either variant is listed and left out.
 
 `--timeout` and `--max-output-tokens` do not fail a run: they **suspend** it
 and leave a checkpoint. `--toolset` accepts only `none`: the tools a run sees
@@ -128,7 +138,7 @@ without `--checkpoint-out` prints a note saying its checkpoint was dropped.
 | `run`, `resume` | the plan returned | the plan `fail`ed | usage, invalid harness, input or file | suspended by a bound | cancelled | infrastructure |
 | `validate`, `inspect` | valid | invalid | unreadable path | | | |
 | `test` | all passed or skipped | a case failed | usage, invalid harness or manifest | | | |
-| `compare` | report produced | regression under `--fail-on-regression` | invalid variant or usage | | | |
+| `compare` | report produced | regression (paired: `reject`) under `--fail-on-regression` | invalid variant or usage | | | |
 | `replay` | matched | trace mismatch | recording refused or usage | | | |
 
 ### Files written
@@ -149,7 +159,7 @@ coherent case.
 ```yaml
 name: bug                          # default: the file stem
 input: { ticket: "The app crashes on start" }
-model:                             # exactly one of sequence | rules | file | fail | live
+model:                             # exactly one of sequence | rules | file | fail | by_seed | live
   sequence:                        # one item per model call, in order
     - text: '{"label": "bug"}'
       usage: { input: 20, output: 6 }
@@ -157,6 +167,7 @@ model:                             # exactly one of sequence | rules | file | fa
   # rules: [ { match_type: contains, pattern: "history:", reply: "..." } ]
   # file: fixtures/model.yaml      # another model block, inside the directory
   # fail: "provider down"
+  # by_seed: { 1: { sequence: [...] }, 2: { sequence: [...] } }  # one block per run --seed
   # live: { model: "ollama/qwen3:8b" }
 tools:
   read_notes:

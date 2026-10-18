@@ -96,11 +96,21 @@ pub(crate) async fn run_harness_command(command: &HarnessCommands) -> i32 {
             dir_b,
             cases,
             fail_on_regression,
+            seeds,
+            bootstrap_seed,
             json,
             live,
         } => {
             let opt_in = request::live_opt_in(live);
-            suites::compare(dir_a, dir_b, cases, *fail_on_regression, *json, opt_in).await
+            let compare = suites::CompareArgs {
+                dir_a,
+                dir_b,
+                cases,
+                fail_on_regression: *fail_on_regression,
+                paired_seeds: bootstrap_seed.map(|bootstrap| (seeds.clone(), bootstrap)),
+                json: *json,
+            };
+            suites::compare(compare, opt_in).await
         }
     };
     outcome.unwrap_or_else(|failure| {

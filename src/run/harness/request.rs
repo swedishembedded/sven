@@ -105,6 +105,7 @@ pub(super) fn build(args: &HarnessRunArgs) -> Result<RunRequest, Failure> {
         workspace,
         bounds,
         opt_in: opt_in(args),
+        seed: args.seed,
         record: args.record.is_some(),
         trajectory: args.trajectory.is_some(),
     })

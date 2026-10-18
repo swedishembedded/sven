@@ -63,6 +63,8 @@ pub struct RunRequest {
     pub bounds: Bounds,
     /// Permission to build a live model.
     pub opt_in: OptIn,
+    /// The run's seed: selects the behaviour of a `by_seed` model fixture.
+    pub seed: Option<u64>,
     /// Keep a recording of the machine's input events.
     pub record: bool,
     /// Build an ATIF trajectory after the run.
@@ -219,7 +221,8 @@ struct Prepared {
 
 impl Prepared {
     fn new(dir: &HarnessDir, request: &RunRequest) -> Result<Self, TestkitError> {
-        let model = fixture_model::build(request.model.as_ref(), dir, &request.opt_in)?;
+        let model =
+            fixture_model::build(request.model.as_ref(), dir, &request.opt_in, request.seed)?;
         let (root, keep) = match &request.workspace {
             Workspace::Fresh(files) => {
                 let tmp = tempfile::tempdir().map_err(|source| TestkitError::Io {
