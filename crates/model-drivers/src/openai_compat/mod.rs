@@ -520,7 +520,15 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         // for `json_schema`, to a specific schema).  Callers still post-parse,
         // so this is a best-effort optimisation.  Placed before the extra_body
         // merge so users can still override it via driver_options.
-        if let Some(rf) = &req.response_format {
+        // The `brain` server answers 400 to any `response_format` that is
+        // not plain text (it has no constrained decoding), so it is not sent
+        // there: the caller's post-parse and retry carry the contract.
+        let server_refuses_response_format = self.driver_name == "brain";
+        if let Some(rf) = req
+            .response_format
+            .as_ref()
+            .filter(|_| !server_refuses_response_format)
+        {
             body["response_format"] = match rf {
                 sven_model::ResponseFormat::JsonObject => json!({ "type": "json_object" }),
                 sven_model::ResponseFormat::JsonSchema { name, schema } => json!({
