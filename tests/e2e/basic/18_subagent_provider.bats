@@ -15,7 +15,8 @@ load helpers
 
 setup() {
     if [[ ! -x "${BIN}" ]]; then
-        skip "Binary not found: ${BIN} - run 'cargo build' first"
+        echo "Binary not found: ${BIN} - run 'cargo build' first" >&2
+        return 1
     fi
     # helpers.bash points every test at the shared mock script; this test's
     # responses must come from the named provider entry instead.

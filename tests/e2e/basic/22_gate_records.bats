@@ -15,7 +15,8 @@ load helpers
 
 setup() {
     if [[ ! -x "${BIN}" ]]; then
-        skip "Binary not found: ${BIN} - run 'make build' first"
+        echo "Binary not found: ${BIN} - run 'make build' first" >&2
+        return 1
     fi
     WORKDIR="$(mktemp -d)"
     cat > "${WORKDIR}/responses.yaml" <<EOF

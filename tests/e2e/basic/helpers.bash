@@ -4,7 +4,8 @@
 # Source this from each .bats file:
 #   load helpers
 #
-# All tests assume the binary has been built:
+# All tests need the binary built; a missing binary FAILS the test (a skipped
+# suite would report success without testing anything):
 #   cargo build   (or `make build`)
 
 # ── Binary path ──────────────────────────────────────────────────────────────
@@ -16,8 +17,10 @@ export _REPO_ROOT
 # Prefer the newest binary so tests always run against the most recently built
 # code.  In CI the release build is preferred; in development the debug build
 # may be newer after an incremental `cargo build`.
-_release="${_REPO_ROOT}/target/release/sven"
-_debug="${_REPO_ROOT}/target/debug/sven"
+# cargo writes under CARGO_TARGET_DIR when that is set (shared build trees).
+_target="${CARGO_TARGET_DIR:-${_REPO_ROOT}/target}"
+_release="${_target}/release/sven"
+_debug="${_target}/debug/sven"
 
 if [[ -x "${_release}" && -x "${_debug}" ]]; then
     # Both exist - use whichever was modified more recently.
@@ -146,6 +149,7 @@ tmp_file() {
 setup() {
     # Verify binary exists
     if [[ ! -x "${BIN}" ]]; then
-        skip "Binary not found: ${BIN} - run 'cargo build' first"
+        echo "Binary not found: ${BIN} - run 'cargo build' first" >&2
+        return 1
     fi
 }
