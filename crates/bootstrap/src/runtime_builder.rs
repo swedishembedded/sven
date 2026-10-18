@@ -95,6 +95,7 @@ pub struct RuntimeBuilder {
     /// Shared abort slot wired into the `TurnExecutor`. The TUI drops
     /// the sender (via `send_abort_signal`) to cancel an in-flight LLM turn.
     cancel_handle: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
+    decoding: sven_turn::Decoding,
     /// When set, this executor replaces the default [`CompositeExecutor`]
     /// entirely (see [`Self::with_effect_executor`]).
     effect_executor: Option<Box<dyn EffectExecutor>>,
@@ -174,6 +175,7 @@ impl RuntimeBuilder {
             initial_history: Vec::new(),
             permission_requester: None,
             cancel_handle: None,
+            decoding: sven_turn::Decoding::default(),
             effect_executor: None,
             tool_executor_override: None,
             principal: None,
@@ -326,6 +328,13 @@ impl RuntimeBuilder {
     /// before executing any tool that has `ApprovalPolicy::Ask`.
     pub fn with_permission_requester(mut self, requester: Arc<dyn PermissionRequester>) -> Self {
         self.permission_requester = Some(requester);
+        self
+    }
+
+    /// Sampling controls and sampled-token capture for every model request
+    /// of the session and of the children it spawns.
+    pub fn with_decoding(mut self, decoding: sven_turn::Decoding) -> Self {
+        self.decoding = decoding;
         self
     }
 
@@ -750,7 +759,10 @@ impl RuntimeBuilder {
             &self.config,
             &tool_registry,
             &gates,
-            self.runtime_ctx.project_root.as_deref(),
+            session_executor::ChildSetup {
+                project_root: self.runtime_ctx.project_root.as_deref(),
+                decoding: self.decoding,
+            },
         );
 
         // The default composite wires every effect kind; a caller-supplied
@@ -766,6 +778,7 @@ impl RuntimeBuilder {
                 call_id_to_thread: Arc::clone(&call_id_to_thread),
                 cancel_handle,
                 no_tools: runtime.no_tools,
+                decoding: self.decoding,
                 decision_telemetry: Arc::clone(decision.telemetry()),
                 context,
                 instructions: InstructionWiring::new(&runtime, &self.mode),

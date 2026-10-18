@@ -49,6 +49,14 @@ fn verify_root(project_root: Option<&Path>) -> PathBuf {
     project_root.map_or_else(|| PathBuf::from("."), Path::to_path_buf)
 }
 
+/// What a session hands every child run it may start, beyond the terms the
+/// kernel gives it: the root their verifier is jailed to and how they decode.
+#[derive(Default)]
+pub(crate) struct ChildSetup<'a> {
+    pub project_root: Option<&'a Path>,
+    pub decoding: sven_turn::Decoding,
+}
+
 /// Parallel-execution fan-out: in SDLC mode, and in a session with
 /// registered harness documents, the kernel can service
 /// `Effect::InstantiateSubmachine` by running each child as an isolated
@@ -61,11 +69,15 @@ pub(crate) fn child_spawner(
     config: &Arc<Config>,
     tool_registry: &Arc<sven_tool_registry::ToolRegistry>,
     gates: &UserGates,
-    project_root: Option<&Path>,
+    setup: ChildSetup<'_>,
 ) -> Option<Arc<dyn ChildSpawner>> {
     if mode != "sdlc" && harnesses.is_empty() {
         return None;
     }
+    let ChildSetup {
+        project_root,
+        decoding,
+    } = setup;
     Some(Arc::new(
         SdlcChildSpawner::new(
             Arc::clone(model),
@@ -73,6 +85,7 @@ pub(crate) fn child_spawner(
             Arc::clone(tool_registry),
         )
         .with_harnesses(Arc::clone(harnesses))
+        .with_decoding(decoding)
         .with_verify_root(verify_root(project_root))
         .with_gates(
             gates.questions.clone(),
@@ -94,6 +107,8 @@ pub(crate) struct ExecutorParts {
     pub call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
     pub cancel_handle: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
     pub no_tools: bool,
+    /// Sampling and sampled-token capture for every request of the session.
+    pub decoding: sven_turn::Decoding,
     /// Where the turn executor accounts for the session's decision calls.
     pub decision_telemetry: Arc<sven_decision::telemetry::DecisionTelemetry>,
     /// The session's addressable context, when it is on.
@@ -147,7 +162,7 @@ pub(crate) fn compose(
     )
     .with_no_tools(parts.no_tools)
     .with_compaction_config(parts.config.agent.compaction())
-    .with_turn_limits(parts.config.agent.turn_limits())
+    .with_turn_limits(parts.config.agent.turn_limits().with_decoding(parts.decoding))
     .with_decision_telemetry(parts.decision_telemetry)
     .with_context_assembler(assembler)
     .with_instructions(Some(parts.instructions.activator()));

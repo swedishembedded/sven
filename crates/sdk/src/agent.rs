@@ -363,6 +363,7 @@ impl Agent {
                 max_output_tokens: bounds
                     .max_output_tokens
                     .map(|max| max.saturating_sub(spent)),
+                decoding: bounds.decoding,
             };
             let outcome = self
                 .run(Entry::Message(message.clone()), &options, &attempt_bounds)
@@ -534,6 +535,7 @@ impl Agent {
         let abort_slot = Arc::new(tokio::sync::Mutex::new(None));
         let mut builder = RuntimeBuilder::new(self.engine.config(), self.state.mode.clone())
             .with_cancel_handle(Arc::clone(&abort_slot))
+            .with_decoding(bounds.decoding)
             .with_allow_interactive_oauth(false)
             .with_runtime_context(runtime_ctx)
             .with_context_facts(facts)

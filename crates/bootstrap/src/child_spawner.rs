@@ -86,6 +86,9 @@ pub struct SdlcChildSpawner {
     /// The root a child's `Effect::Verify` is jailed to; without one a child
     /// has no verifier and a verify step of it fails.
     verify_root: Option<PathBuf>,
+    /// Decoding every child request carries: the parent's, so a child's
+    /// sampling identity is recorded in its trajectory.
+    decoding: sven_turn::Decoding,
 }
 
 impl SdlcChildSpawner {
@@ -103,6 +106,7 @@ impl SdlcChildSpawner {
             gates: None,
             harnesses: Arc::new(sven_harness_runtime::HarnessRegistry::new()),
             verify_root: None,
+            decoding: sven_turn::Decoding::default(),
         }
     }
 
@@ -111,6 +115,13 @@ impl SdlcChildSpawner {
     #[must_use]
     pub fn with_verify_root(mut self, root: impl Into<PathBuf>) -> Self {
         self.verify_root = Some(root.into());
+        self
+    }
+
+    /// Makes every child decode as `decoding` says.
+    #[must_use]
+    pub fn with_decoding(mut self, decoding: sven_turn::Decoding) -> Self {
+        self.decoding = decoding;
         self
     }
 
@@ -218,7 +229,8 @@ impl SdlcChildSpawner {
             self.config
                 .agent
                 .turn_limits()
-                .with_max_output_tokens(contract.max_output_tokens),
+                .with_max_output_tokens(contract.max_output_tokens)
+                .with_decoding(self.decoding),
         );
 
         let tool_executor = ToolExecutor::with_shared_store(

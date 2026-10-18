@@ -130,6 +130,10 @@ async fn openai_compat_sends_the_request_sampling_and_logprobs_flag() {
     assert_eq!(body["top_k"], 40);
     assert_eq!(body["seed"], 7);
     assert_eq!(body["logprobs"], true);
+    assert_eq!(
+        body["return_token_ids"], true,
+        "the ids are asked for with the logprobs"
+    );
 }
 
 #[tokio::test]
@@ -155,9 +159,55 @@ async fn openai_compat_omits_sampling_fields_it_was_not_given() {
     while stream.next().await.is_some() {}
 
     let body = req_rx.await.unwrap().body;
-    for key in ["top_p", "top_k", "seed", "logprobs"] {
+    for key in ["top_p", "top_k", "seed", "logprobs", "return_token_ids"] {
         assert!(body.get(key).is_none(), "{key} must be absent: {body}");
     }
+}
+
+#[tokio::test]
+async fn openai_compat_parses_the_prompt_ids_and_the_servers_account_of_the_decode() {
+    let sse = sse_body(&[
+        r#"{"model":"served-7b","choices":[{"delta":{"content":"hi"}}]}"#,
+        r#"{"model":"served-7b","prompt_token_ids":[5,6,7],"brain":{"seed":18446744073709551615,"adapter":{"id":"tuned","digest":"sha256:aa"},"base_digest":"sha256:bb","backend":"cuda","engine":"brain 2.0.0"},"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
+    ]);
+    let (port, _req_rx) = mock_server_once(200, "text/event-stream", sse).await;
+    let cfg = ModelConfig {
+        provider: "openai".into(),
+        name: "gpt-4o-mini".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        ..ModelConfig::default()
+    };
+    let provider = from_config(&cfg).unwrap();
+    let mut stream = provider.complete(sampled_request()).await.unwrap();
+    let mut events = Vec::new();
+    while let Some(ev) = stream.next().await {
+        events.push(ev.unwrap());
+    }
+    let prompt: Vec<i64> = events
+        .iter()
+        .filter_map(|e| match e {
+            ResponseEvent::PromptTokens { ids } => Some(ids.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(prompt, vec![5, 6, 7]);
+    let identity = events
+        .iter()
+        .find_map(|e| match e {
+            ResponseEvent::Identity(i) => Some(i.clone()),
+            _ => None,
+        })
+        .expect("the identity event");
+    assert_eq!(identity.seed, Some(u64::MAX), "a full-range seed survives");
+    assert_eq!(
+        identity.adapter.as_ref().map(|a| a.id.as_str()),
+        Some("tuned")
+    );
+    assert_eq!(identity.base_digest.as_deref(), Some("sha256:bb"));
+    assert_eq!(identity.backend.as_deref(), Some("cuda"));
+    assert_eq!(identity.engine.as_deref(), Some("brain 2.0.0"));
 }
 
 #[tokio::test]

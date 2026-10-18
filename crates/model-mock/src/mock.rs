@@ -45,6 +45,19 @@ impl sven_model::ModelProvider for MockProvider {
                 model: "mock-model".into(),
                 seed: req.sampling.seed,
             }));
+            let prompt = req
+                .messages
+                .iter()
+                .filter_map(|m| m.as_text())
+                .collect::<String>();
+            events.push(Ok(ResponseEvent::PromptTokens {
+                ids: prompt.bytes().map(i64::from).collect(),
+            }));
+            events.push(Ok(ResponseEvent::Identity(sven_vocab::ServedIdentity {
+                seed: req.sampling.seed,
+                backend: Some("mock".into()),
+                ..Default::default()
+            })));
         }
         events.push(Ok(ResponseEvent::Usage {
             input_tokens: 10,

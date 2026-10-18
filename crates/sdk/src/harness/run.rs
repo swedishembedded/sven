@@ -213,6 +213,7 @@ impl HarnessRun {
         let abort_slot = Arc::new(tokio::sync::Mutex::new(None));
         let mut builder = RuntimeBuilder::new(self.engine.config(), HARNESS_MODE)
             .with_cancel_handle(Arc::clone(&abort_slot))
+            .with_decoding(bounds.decoding)
             .with_allow_interactive_oauth(false)
             .with_runtime_context(runtime_ctx)
             .with_builtin_tools(self.engine.toolset().builtin())

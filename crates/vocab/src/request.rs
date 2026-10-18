@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ledger::ReportedUsage;
+use crate::served::ServedIdentity;
 
 /// What served one request and what it sampled, as the provider reported it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -24,9 +25,17 @@ pub struct Sampled {
     /// model that was asked for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// The sampling seed in effect.
+    /// The sampling seed in effect: the one the server reports it used, else
+    /// the one the request carried.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+    /// The ids of the prompt as the model read it; empty unless the request
+    /// asked for them and the server returned them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prompt_token_ids: Vec<i64>,
+    /// What decoded the request: adapter, base checkpoint, backend, engine.
+    #[serde(default, skip_serializing_if = "ServedIdentity::is_empty")]
+    pub identity: ServedIdentity,
     /// The sampled completion tokens in generation order; empty unless the
     /// request asked for them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -44,6 +53,8 @@ impl Sampled {
             && self.seed.is_none()
             && self.token_ids.is_empty()
             && self.logprobs.is_empty()
+            && self.prompt_token_ids.is_empty()
+            && self.identity.is_empty()
     }
 }
 

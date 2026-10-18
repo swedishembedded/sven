@@ -12,6 +12,7 @@ sven-harness-spec = { path = "../harness-spec" }
 sven-hsm       = { path = "../hsm" }
 sven-machines  = { path = "../machines" }
 sven-model     = { path = "../model" }
+sven-turn      = { path = "../turn" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-tool-api  = { path = "../tool-api" }
 sven-sdk-macros = { path = "../sdk-macros" }
@@ -51,5 +52,4 @@ sven-hsm        = { path = "../hsm" }
 sven-memory     = { path = "../memory" }
 sven-memory-sqlite = { path = "../memory-sqlite" }
 sven-model-mock = { path = "../model-mock" }
-sven-turn       = { path = "../turn" }
 tempfile        = { workspace = true }

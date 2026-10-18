@@ -100,6 +100,7 @@ pub struct RunOptions {
     pub(crate) cancel: Option<CancelToken>,
     pub(crate) deadline: Option<Duration>,
     pub(crate) max_output_tokens: Option<u64>,
+    pub(crate) decoding: sven_turn::Decoding,
 }
 
 impl RunOptions {
@@ -125,6 +126,23 @@ impl RunOptions {
     #[must_use]
     pub fn deadline(mut self, after: Duration) -> Self {
         self.deadline = Some(after);
+        self
+    }
+
+    /// Sends these sampling controls (temperature, top-p, top-k, seed) with
+    /// every model request of the run, children's included. A provider that
+    /// cannot honour one refuses the request rather than ignoring it.
+    #[must_use]
+    pub fn sampling(mut self, sampling: sven_model::SamplingParams) -> Self {
+        self.decoding.sampling = sampling;
+        self
+    }
+
+    /// Asks the provider for the sampled token ids and log-probabilities, so
+    /// the trajectory can serve as a training record.
+    #[must_use]
+    pub fn want_logprobs(mut self, wanted: bool) -> Self {
+        self.decoding.want_logprobs = wanted;
         self
     }
 

@@ -600,6 +600,13 @@ pub enum ResponseEvent {
     /// reports (which may differ from the one requested, e.g. behind a router)
     /// and the sampling seed in effect, when known. Sent at most once.
     Served { model: String, seed: Option<u64> },
+    /// The ids of the prompt as the model read it, when the request asked and
+    /// the server returns them. Sent at most once.
+    PromptTokens { ids: Vec<i64> },
+    /// What the server reports about the decode that answered: the seed it
+    /// actually used (replacing the requested one in the record), the adapter
+    /// and base checkpoint, the backend and engine. Sent at most once.
+    Identity(sven_vocab::ServedIdentity),
     /// Final usage statistics
     Usage {
         input_tokens: u32,

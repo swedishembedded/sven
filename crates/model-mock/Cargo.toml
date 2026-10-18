@@ -6,6 +6,7 @@ description = "The --model mock test/dev ModelProvider implementations (MockProv
 
 [dependencies]
 sven-model  = { path = "../model" }
+sven-vocab = { path = "../vocab" }
 anyhow      = { workspace = true }
 async-trait = { workspace = true }
 futures     = { workspace = true }

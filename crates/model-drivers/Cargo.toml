@@ -7,6 +7,7 @@ description = "Concrete ModelProvider driver implementations (every provider in 
 [dependencies]
 sven-config      = { path = "../config" }
 sven-model       = { path = "../model" }
+sven-vocab = { path = "../vocab" }
 sven-model-mock  = { path = "../model-mock" }
 anyhow      = { workspace = true }
 async-trait = { workspace = true }

@@ -70,6 +70,17 @@ async fn two_request_agent() -> (Engine, sven_sdk::Agent, sven_sdk::RunOutcome) 
                 ids: vec![11, 12],
                 logprobs: vec![-0.5, -0.25],
             },
+            ResponseEvent::PromptTokens { ids: vec![1, 2, 3] },
+            ResponseEvent::Identity(sven_vocab::ServedIdentity {
+                seed: Some(99),
+                adapter: Some(sven_vocab::AdapterRef {
+                    id: "tuned".into(),
+                    digest: "sha256:aa".into(),
+                }),
+                base_digest: Some("sha256:bb".into()),
+                backend: Some("cuda".into()),
+                engine: Some("brain 2.0.0".into()),
+            }),
             ResponseEvent::ToolCall {
                 index: 0,
                 id: "w1".into(),
@@ -156,7 +167,27 @@ async fn the_served_model_seed_and_sampled_tokens_are_on_the_step() {
     let metrics = step.metrics.as_ref().expect("step metrics");
     assert_eq!(metrics.completion_token_ids, Some(vec![11, 12]));
     assert_eq!(metrics.logprobs, Some(vec![-0.5, -0.25]));
-    assert_eq!(metrics.extra.as_ref().unwrap()["sven"]["seed"], 42);
+    // The seed the server says it used wins over the one requested.
+    assert_eq!(metrics.extra.as_ref().unwrap()["sven"]["seed"], 99);
+}
+
+#[tokio::test]
+async fn the_prompt_ids_and_the_serving_identity_are_on_the_step() {
+    let (_, agent, _) = two_request_agent().await;
+    let trajectory = agent.trajectory();
+    let step = trajectory
+        .steps
+        .iter()
+        .find(|s| s.tool_calls.is_some())
+        .expect("the step that called the tool");
+    let metrics = step.metrics.as_ref().expect("step metrics");
+    assert_eq!(metrics.prompt_token_ids, Some(vec![1, 2, 3]));
+    let sven = &metrics.extra.as_ref().unwrap()["sven"];
+    assert_eq!(sven["adapter"]["id"], "tuned");
+    assert_eq!(sven["adapter"]["digest"], "sha256:aa");
+    assert_eq!(sven["base_digest"], "sha256:bb");
+    assert_eq!(sven["backend"], "cuda");
+    assert_eq!(sven["engine"], "brain 2.0.0");
 }
 
 #[tokio::test]
@@ -171,4 +202,78 @@ async fn a_resumed_agent_exports_the_same_account() {
         resumed.trajectory().final_metrics,
         agent.trajectory().final_metrics
     );
+}
+
+/// A tool call and the answer after its result are two model requests on one
+/// step. The step's own prompt ids are the first request's and its sampled ids
+/// run together, so each request's own prompt, sampled tokens and seed are kept
+/// beside them: training on the second request needs the prompt it was
+/// actually given, tool result included.
+#[tokio::test]
+async fn a_step_covering_two_requests_keeps_each_ones_own_prompt_and_tokens() {
+    let scripts = vec![
+        vec![
+            ResponseEvent::Tokens {
+                ids: vec![11, 12],
+                logprobs: vec![-0.5, -0.25],
+            },
+            ResponseEvent::PromptTokens { ids: vec![1, 2, 3] },
+            ResponseEvent::ToolCall {
+                index: 0,
+                id: "w1".into(),
+                name: "weather".into(),
+                arguments: r#"{"city":"Lund"}"#.into(),
+            },
+            usage(100, 2, 0, 0.5),
+            ResponseEvent::Done,
+        ],
+        vec![
+            ResponseEvent::Tokens {
+                ids: vec![13],
+                logprobs: vec![-0.125],
+            },
+            ResponseEvent::PromptTokens {
+                ids: vec![1, 2, 3, 11, 12, 77],
+            },
+            ResponseEvent::TextDelta("Sunny.".into()),
+            usage(150, 1, 0, 0.25),
+            ResponseEvent::Done,
+        ],
+    ];
+    let engine = Engine::builder()
+        .model_provider(Arc::new(Strict(ScriptedMockProvider::new(scripts))))
+        .tool(Arc::new(Weather))
+        .build()
+        .expect("an engine builds");
+    let mut agent = engine.agent("agent");
+    agent.send("weather in Lund?").await.expect("an outcome");
+
+    let trajectory = agent.trajectory();
+    let step = trajectory
+        .steps
+        .iter()
+        .find(|s| s.tool_calls.is_some())
+        .expect("the step that called the tool");
+    let metrics = step.metrics.as_ref().expect("step metrics");
+    assert_eq!(metrics.prompt_token_ids, Some(vec![1, 2, 3]));
+    assert_eq!(metrics.completion_token_ids, Some(vec![11, 12, 13]));
+    let requests = metrics.extra.as_ref().unwrap()["sven"]["requests"]
+        .as_array()
+        .expect("each request is kept")
+        .clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]["prompt_token_ids"],
+        serde_json::json!([1, 2, 3])
+    );
+    assert_eq!(
+        requests[0]["completion_token_ids"],
+        serde_json::json!([11, 12])
+    );
+    assert_eq!(
+        requests[1]["prompt_token_ids"],
+        serde_json::json!([1, 2, 3, 11, 12, 77])
+    );
+    assert_eq!(requests[1]["completion_token_ids"], serde_json::json!([13]));
+    assert_eq!(requests[1]["logprobs"], serde_json::json!([-0.125]));
 }

@@ -26,6 +26,37 @@ impl std::fmt::Display for AdapterRef {
     }
 }
 
+/// What a server says about the decode that answered one request: the seed it
+/// actually used (which differs from the one asked for when none was asked),
+/// the adapter and base checkpoint it ran, and what ran them. Each field is
+/// absent when the server does not report it; none is ever guessed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServedIdentity {
+    /// The sampling seed the decode used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    /// The adapter that answered, by id and content digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<AdapterRef>,
+    /// `sha256:<hex>` of the base checkpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_digest: Option<String>,
+    /// The compute backend that ran the decode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    /// The inference engine build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+}
+
+impl ServedIdentity {
+    /// Whether the server reported nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// The one-line notice for a [`SessionEvent::ServedModelChanged`](crate::SessionEvent::ServedModelChanged),
 /// shared by every surface that prints it.
 #[must_use]

@@ -10,6 +10,7 @@ use futures::{Stream, StreamExt};
 use serde_json::Value;
 
 use sven_model::ResponseEvent;
+use sven_vocab::{AdapterRef, ServedIdentity};
 
 /// The events one SSE `data:` frame carries.
 ///
@@ -245,6 +246,26 @@ pub(super) fn parse_sse_chunk_test(v: &Value) -> anyhow::Result<ResponseEvent> {
         .expect("a frame always carries at least one event"))
 }
 
+/// The server's account of a decode, from a frame's non-standard `brain`
+/// object: `seed`, `adapter {id, digest}`, `base_digest`, `backend`, `engine`.
+/// `None` when it names none of them.
+fn served_identity(brain: &Value) -> Option<ServedIdentity> {
+    let text = |key: &str| brain.get(key).and_then(Value::as_str).map(str::to_owned);
+    let identity = ServedIdentity {
+        seed: brain.get("seed").and_then(Value::as_u64),
+        adapter: brain.get("adapter").and_then(|a| {
+            Some(AdapterRef {
+                id: a.get("id")?.as_str()?.to_owned(),
+                digest: a.get("digest")?.as_str()?.to_owned(),
+            })
+        }),
+        base_digest: text("base_digest"),
+        backend: text("backend"),
+        engine: text("engine"),
+    };
+    (!identity.is_empty()).then_some(identity)
+}
+
 fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
     // Error frame - some OpenAI-compatible servers admit a streaming request
     // with `HTTP 200` + SSE headers, then discover mid-stream that it can't
@@ -268,6 +289,18 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
     let mut events = Vec::new();
     let mut terminal = false;
     let model = v.get("model").and_then(|m| m.as_str()).map(str::to_owned);
+
+    // Token-level extensions that arrive on a frame of their own or beside the
+    // choice: the prompt's token ids (`prompt_token_ids`, vLLM's name) and the
+    // server's account of the decode (`brain`, see `served_identity`).
+    if let Some(ids) = v.get("prompt_token_ids").and_then(Value::as_array) {
+        events.push(ResponseEvent::PromptTokens {
+            ids: ids.iter().filter_map(Value::as_i64).collect(),
+        });
+    }
+    if let Some(identity) = v.get("brain").and_then(served_identity) {
+        events.push(ResponseEvent::Identity(identity));
+    }
 
     // Usage (emitted when stream_options.include_usage = true). Usually a
     // frame of its own with `choices: []`, but some servers attach it to the

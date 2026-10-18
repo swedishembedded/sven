@@ -41,7 +41,7 @@ pub use ledger::{
 };
 
 pub use request::{RequestRecord, Sampled};
-pub use served::{describe_adapter, served_model_changed_text, AdapterRef};
+pub use served::{describe_adapter, served_model_changed_text, AdapterRef, ServedIdentity};
 pub use turn::{RefusedCall, TurnRequest, TURN_KIND};
 pub use wait::ModelWaitPhase;
 

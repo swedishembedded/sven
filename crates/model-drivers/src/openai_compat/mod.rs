@@ -510,6 +510,8 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         }
         if req.want_logprobs {
             body["logprobs"] = json!(true);
+            // Extension (vLLM's name): the prompt and completion token ids.
+            body["return_token_ids"] = json!(true);
         }
         if !tools.is_empty() {
             body["tools"] = json!(tools);

@@ -77,6 +77,15 @@ impl std::error::Error for AbortedError {}
 pub type ModelResolver =
     std::sync::Arc<dyn Fn(&str) -> anyhow::Result<std::sync::Arc<dyn ModelProvider>> + Send + Sync>;
 
+/// How a run asks the model to decode: the sampling controls, and whether the
+/// sampled token ids and log-probabilities are wanted back. Part of what makes
+/// a recorded trajectory reproducible and usable as training data.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Decoding {
+    pub sampling: SamplingParams,
+    pub want_logprobs: bool,
+}
+
 /// Limits on one streamed model turn.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TurnLimits {
@@ -147,9 +156,9 @@ impl TurnLimits {
     /// Sends `sampling` with every request and, when `want_logprobs`, asks
     /// for the sampled tokens back.
     #[must_use]
-    pub fn with_decoding(mut self, sampling: SamplingParams, want_logprobs: bool) -> Self {
-        self.sampling = sampling;
-        self.want_logprobs = want_logprobs;
+    pub fn with_decoding(mut self, decoding: Decoding) -> Self {
+        self.sampling = decoding.sampling;
+        self.want_logprobs = decoding.want_logprobs;
         self
     }
 
@@ -555,6 +564,14 @@ pub async fn stream_turn(
             ResponseEvent::Served { model, seed } => {
                 sampled.model = Some(model);
                 sampled.seed = seed;
+            }
+            ResponseEvent::PromptTokens { ids } => sampled.prompt_token_ids.extend(ids),
+            ResponseEvent::Identity(identity) => {
+                // The seed the server drew or used beats the one asked for.
+                if identity.seed.is_some() {
+                    sampled.seed = identity.seed;
+                }
+                sampled.identity = identity;
             }
             ResponseEvent::Done => {
                 if !thinking_buf.is_empty() {

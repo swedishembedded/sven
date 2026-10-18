@@ -159,6 +159,14 @@ $(E2E_SUITE_TARGETS): test/e2e/%: build
 $(E2E_TEST_TARGETS): test/e2e/%: build
 	bats tests/e2e/$(dir $*)[0-9]*_$(subst -,_,$(notdir $*)).bats
 
+## test/e2e/capture - a real model server answers an agent run; the ATIF record must equal the server's account
+##   Needs BRAIN_BIN (a brain binary) and MODELS_DIR (holding Qwen/Qwen3-0.6B); DEVICE is
+##   brain's device name (default cpu, which takes minutes: name a GPU for the short run).
+##   Exit 3 means a prerequisite is missing and nothing was tested, never a pass.
+test/e2e/capture:
+	$(CARGO) build -p sven-sdk --example capture_run
+	scripts/e2e/capture.sh "$(BRAIN_BIN)" "$${CARGO_TARGET_DIR:-target}/debug/examples/capture_run" "$(MODELS_DIR)" "$(or $(DEVICE),cpu)"
+
 ## test/e2e/basic/deferred - the basic suite with every invocation run under --tool-disclosure deferred (requires bats-core)
 test/e2e/basic/deferred: build
 	SVEN_E2E_TOOL_DISCLOSURE=deferred bats tests/e2e/basic/
