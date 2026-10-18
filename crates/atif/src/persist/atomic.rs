@@ -5,7 +5,7 @@
 //!
 //! Two write entry points:
 //! - [`write_trajectory`] — a plain `fs::write`, no concurrency guarantees.
-//! - [`write_trajectory_atomic`] — temp file + `flock`-guarded sidecar lock
+//! - [`write_trajectory_atomic`] — temp file + file-locked sidecar
 //!   + inode/mtime identity check + atomic `rename`.
 //!
 //! [`write_trajectory_atomic`] takes the caller's previously captured
@@ -102,8 +102,8 @@ pub fn read_trajectory_with_fingerprint(
 
 /// Write a trajectory to `path` atomically:
 ///
-/// 1. Take an exclusive `flock` on a sidecar lock file (Unix; on other
-///    platforms writers are only atomic against readers, not each other).
+/// 1. Take an exclusive advisory lock (`flock` on Unix, `LockFileEx` on
+///    Windows) on a sidecar lock file, so writers exclude each other.
 /// 2. While holding the lock, compare the target's current
 ///    [`FileFingerprint`] against `expected`. Mismatch (or an unexpected
 ///    appearance/disappearance of the file) fails with
@@ -126,27 +126,18 @@ pub fn write_trajectory_atomic(
 ) -> Result<(), PersistError> {
     let content = serialize_pretty(trajectory)?;
 
-    // Serialize writers first (Unix): the lock must be held across the
-    // fingerprint check AND the temp-write+rename, or two writers race.
-    #[cfg(unix)]
-    let _guard = {
-        use std::os::unix::io::AsRawFd;
-        let lock_path = path.with_extension("json.lock");
-        let lock_file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_path)?;
-        // SAFETY: `lock_file` stays open (and thus its fd valid) for the
-        // duration of the flock/unlock pair; `LockGuard` releases it on drop
-        // even if we return early via `?`.
-        let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX) };
-        if ret != 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        LockGuard(lock_file)
-    };
+    // Serialize writers first: the lock must be held across the fingerprint
+    // check AND the temp-write+rename, or two writers race. `File::lock` is
+    // flock(2) on Unix and LockFileEx on Windows; the lock is released when
+    // `lock_file` closes at the end of the function, also on early return.
+    let lock_path = path.with_extension("json.lock");
+    let lock_file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)?;
+    lock_file.lock()?;
 
     if let Some(expected) = expected {
         match fs::metadata(path) {
@@ -184,7 +175,7 @@ pub fn write_trajectory_atomic(
 }
 
 /// Remove a trajectory document together with its writer artifacts: the
-/// `.json.lock` flock sidecar [`write_trajectory_atomic`] creates and any
+/// `.json.lock` lock sidecar [`write_trajectory_atomic`] creates and any
 /// orphaned `.json.tmp.*` temp files a crashed writer left behind. Callers
 /// that delete trajectory files directly leak the sidecar — use this.
 ///
@@ -225,19 +216,4 @@ fn unique_temp_path(path: &Path) -> std::path::PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     path.with_extension(format!("json.tmp.{}.{}", std::process::id(), seq))
-}
-
-#[cfg(unix)]
-struct LockGuard(fs::File);
-
-#[cfg(unix)]
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        use std::os::unix::io::AsRawFd;
-        // SAFETY: `self.0` is a valid, open file descriptor for the
-        // lifetime of this guard; unlocking a lock we hold is always safe.
-        unsafe {
-            libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
-        }
-    }
 }
