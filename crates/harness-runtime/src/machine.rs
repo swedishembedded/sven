@@ -164,7 +164,9 @@ impl HarnessMachine {
         if schema.is_none() {
             return Some(Value::String(text.to_string()));
         }
-        serde_json::from_str(text).ok()
+        serde_json::from_str(text)
+            .ok()
+            .or_else(|| serde_json::from_str(unfenced(text)?).ok())
     }
 
     /// The deterministic call id of `step` (with the active retry frame's
@@ -661,4 +663,14 @@ pub(super) fn capability_by_name(name: &str) -> Option<ToolCapability> {
         "SpawnChild" => Some(ToolCapability::SpawnChild),
         _ => None,
     }
+}
+
+/// The content of `text` when it is exactly one markdown code fence (with or
+/// without a language tag) and nothing else but whitespace. Local models wrap
+/// requested JSON this way; any other surrounding text is not stripped, so an
+/// answer that talks around its object is still refused.
+fn unfenced(text: &str) -> Option<&str> {
+    let inner = text.trim().strip_prefix("```")?.strip_suffix("```")?;
+    let (_tag, body) = inner.split_once('\n')?;
+    Some(body.trim())
 }

@@ -85,6 +85,46 @@ fn a_non_json_answer_to_a_schema_turn_fails_the_step() {
     let _ = fx;
 }
 
+#[test]
+fn a_json_answer_in_a_code_fence_is_accepted_as_the_answer() {
+    // Local models routinely wrap the object in a markdown fence even when
+    // told not to; the fence is formatting, the content is the answer.
+    for text in [
+        "```json\n{\"greeting\": \"hi Ada\"}\n```",
+        "\n\n```\n{\"greeting\": \"hi Ada\"}\n```\n",
+    ] {
+        let (mut m, mut ctx, mut state) =
+            start(SCHEMA_HARNESS, serde_json::json!({ "name": "Ada" }));
+        let _ = m.step_effect().expect("effect");
+        let _ = drive(&mut m, &mut ctx, &mut state, turn("harness.shaped", text));
+        assert_ne!(state, HarnessState::Failed, "{text:?}");
+        assert_eq!(
+            ctx.fact(RUN_STATE_FACT).and_then(|v| v
+                .get("steps")
+                .and_then(|s| s.get("ask"))
+                .map(|s| s["value"].clone())),
+            Some(serde_json::json!({"greeting": "hi Ada"})),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn text_around_a_fenced_answer_is_not_an_answer() {
+    let (mut m, mut ctx, mut state) = start(SCHEMA_HARNESS, serde_json::json!({ "name": "Ada" }));
+    let _ = m.step_effect().expect("effect");
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        turn(
+            "harness.shaped",
+            "Sure!\n```json\n{\"greeting\": \"hi\"}\n```",
+        ),
+    );
+    assert_eq!(state, HarnessState::Failed);
+}
+
 const CALLER: &str = r#"
 api_version: "1"
 name: caller
