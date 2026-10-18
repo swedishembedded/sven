@@ -18,8 +18,8 @@ use atif::{GateAuthority, GateDecision, GateOutcome, MemoryRetrieval};
 use sven_hsm::{ProposedToolCall, ToolCallId, ToolCapability};
 use sven_tool_registry::ToolRegistry;
 
-use sven_model::{Message, MessageContent};
-use sven_vocab::CompactionRecord;
+use sven_model::{Message, MessageContent, Role};
+use sven_vocab::{CompactionRecord, RequestRecord};
 
 /// Stable string identifier for a conversation thread (e.g. `"intake"`).
 pub type ThreadId = String;
@@ -46,6 +46,17 @@ pub struct ThreadStore {
     gate_decisions: HashMap<String, GateDecision>,
     /// What each memory retrieval a tool made returned, oldest first.
     memory_retrievals: Vec<MemoryRetrieval>,
+    /// Every message ever appended, in order, with its thread. Unlike the
+    /// threads, which a compaction rewrites to what the model reads next, this
+    /// is never rewritten: it is the record of what happened, which a
+    /// trajectory export reads (see [`Self::transcript`]).
+    log: Vec<(ThreadId, Message)>,
+    /// The thread's transcript length at each entry of `compactions`.
+    compaction_positions: Vec<usize>,
+    /// Each model request's account, with the thread and the transcript
+    /// length when its response was complete (before the response's own
+    /// messages were appended).
+    requests: Vec<(ThreadId, usize, RequestRecord)>,
 }
 
 impl ThreadStore {
@@ -77,6 +88,7 @@ impl ThreadStore {
 
     /// Append a single turn to a thread (creating the thread if needed).
     pub fn append(&mut self, id: &str, message: Message) {
+        self.log.push((id.to_string(), message.clone()));
         self.threads
             .entry(id.to_string())
             .or_default()
@@ -113,13 +125,12 @@ impl ThreadStore {
             .into_iter()
             .map(|(call, _)| call.to_string())
             .collect();
-        let thread = self.thread(id);
         for call in &open {
             let reason = reasons.get(call).map_or("it was refused", String::as_str);
-            thread.push(Message::tool_result(
-                call,
-                format!("The call was not run: {reason}."),
-            ));
+            self.append(
+                id,
+                Message::tool_result(call, format!("The call was not run: {reason}.")),
+            );
         }
         open.len()
     }
@@ -245,7 +256,78 @@ impl ThreadStore {
     /// Notes that a thread was compacted. Call alongside
     /// [`replace_thread`](Self::replace_thread) with the compacted history.
     pub fn record_compaction(&mut self, record: CompactionRecord) {
+        let position = self.transcript_len(&record.thread);
+        self.compaction_positions.push(position);
         self.compactions.push(record);
+    }
+
+    /// Every message ever appended to `id`, in order, whatever a compaction
+    /// later did to the thread. Messages installed with
+    /// [`replace_thread`](Self::replace_thread) (seeding, compaction) are not
+    /// in it: they are not new events.
+    #[must_use]
+    pub fn transcript(&self, id: &str) -> Vec<Message> {
+        self.log
+            .iter()
+            .filter(|(thread, _)| thread == id)
+            .map(|(_, message)| message.clone())
+            .collect()
+    }
+
+    /// The threads that have a transcript, in the order each first received a
+    /// message.
+    #[must_use]
+    pub fn transcript_threads(&self) -> Vec<ThreadId> {
+        let mut seen = Vec::new();
+        for (thread, _) in &self.log {
+            if !seen.contains(thread) {
+                seen.push(thread.clone());
+            }
+        }
+        seen
+    }
+
+    fn transcript_len(&self, id: &str) -> usize {
+        self.log.iter().filter(|(thread, _)| thread == id).count()
+    }
+
+    /// The compactions of `id` and where in its [`transcript`](Self::transcript)
+    /// each fired, oldest first.
+    #[must_use]
+    pub fn transcript_compactions(&self, id: &str) -> Vec<(usize, CompactionRecord)> {
+        self.compactions
+            .iter()
+            .zip(&self.compaction_positions)
+            .filter(|(record, _)| record.thread == id)
+            .map(|(record, position)| (*position, record.clone()))
+            .collect()
+    }
+
+    /// Keeps the account of one model request on `id`. Call when the response
+    /// is complete and before its messages are appended.
+    pub fn record_request(&mut self, id: &str, request: RequestRecord) {
+        let before = self.transcript_len(id);
+        self.requests.push((id.to_string(), before, request));
+    }
+
+    /// The requests made on `id`, oldest first, each with the number of
+    /// transcript messages up to and including its response's: the run of
+    /// assistant messages that follows where the response began.
+    #[must_use]
+    pub fn transcript_requests(&self, id: &str) -> Vec<(usize, RequestRecord)> {
+        let transcript = self.transcript(id);
+        self.requests
+            .iter()
+            .filter(|(thread, _, _)| thread == id)
+            .map(|(_, before, request)| {
+                let answered = transcript
+                    .iter()
+                    .skip(*before)
+                    .take_while(|m| m.role == Role::Assistant)
+                    .count();
+                (before + answered, request.clone())
+            })
+            .collect()
     }
 
     /// Every compaction recorded so far, oldest first.
@@ -416,6 +498,54 @@ pub(crate) fn append_messages(store: &Mutex<ThreadStore>, thread_id: &str, messa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A compaction rewrites a thread to what the model reads next; the
+    /// transcript is what happened, including the answer the store itself gave
+    /// to a call that was never run.
+    #[test]
+    fn the_transcript_keeps_what_a_compaction_replaced_and_the_answers_to_open_calls() {
+        let mut store = ThreadStore::new();
+        store.append("t", Message::user("one"));
+        store.append("t", Message::assistant("two"));
+        store.replace_thread("t", vec![Message::assistant("a summary")]);
+        store.record_compaction(CompactionRecord {
+            thread: "t".into(),
+            tokens_before: 100,
+            tokens_after: 10,
+            strategy: sven_hsm::CompactionStrategyUsed::Emergency,
+            turn: 0,
+        });
+        store.append(
+            "t",
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: "c1".into(),
+                    function: sven_model::FunctionCall {
+                        name: "x".into(),
+                        arguments: "{}".into(),
+                    },
+                },
+            },
+        );
+        store.answer_open_calls("t", &HashMap::new());
+
+        let transcript = store.transcript("t");
+        assert_eq!(transcript.len(), 4, "{transcript:?}");
+        assert_eq!(transcript[0].as_text(), Some("one"));
+        assert!(matches!(
+            &transcript[3].content,
+            MessageContent::ToolResult { tool_call_id, .. } if tool_call_id == "c1"
+        ));
+        assert_eq!(
+            store.snapshot("t").len(),
+            3,
+            "the thread is the compacted view"
+        );
+        let marks = store.transcript_compactions("t");
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].0, 2, "the compaction fired after two messages");
+    }
 
     #[test]
     fn store_is_append_only_and_snapshots() {

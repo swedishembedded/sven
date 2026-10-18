@@ -211,9 +211,13 @@ impl HarnessRun {
         // The turn executor parks the abort sender for the model call in
         // flight here; taking it interrupts that call.
         let abort_slot = Arc::new(tokio::sync::Mutex::new(None));
+        // The children this run starts leave their records here, for the
+        // trajectory to embed.
+        let children = sven_bootstrap::child_records::ChildRecords::default();
         let mut builder = RuntimeBuilder::new(self.engine.config(), HARNESS_MODE)
             .with_cancel_handle(Arc::clone(&abort_slot))
             .with_decoding(bounds.decoding)
+            .with_child_records(children.clone())
             .with_allow_interactive_oauth(false)
             .with_runtime_context(runtime_ctx)
             .with_builtin_tools(self.engine.toolset().builtin())
@@ -511,6 +515,7 @@ impl HarnessRun {
             &session.handle,
             &outcome,
             bundle,
+            children.finished(),
         ));
         Ok(outcome)
     }

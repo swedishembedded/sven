@@ -50,11 +50,13 @@ fn verify_root(project_root: Option<&Path>) -> PathBuf {
 }
 
 /// What a session hands every child run it may start, beyond the terms the
-/// kernel gives it: the root their verifier is jailed to and how they decode.
+/// kernel gives it: the root their verifier is jailed to, how they decode, and
+/// where finished children leave their records.
 #[derive(Default)]
 pub(crate) struct ChildSetup<'a> {
     pub project_root: Option<&'a Path>,
     pub decoding: sven_turn::Decoding,
+    pub records: Option<crate::child_records::ChildRecords>,
 }
 
 /// Parallel-execution fan-out: in SDLC mode, and in a session with
@@ -74,24 +76,30 @@ pub(crate) fn child_spawner(
     if mode != "sdlc" && harnesses.is_empty() {
         return None;
     }
+    let spawner = SdlcChildSpawner::new(
+        Arc::clone(model),
+        Arc::clone(config),
+        Arc::clone(tool_registry),
+    );
     let ChildSetup {
         project_root,
         decoding,
+        records,
     } = setup;
+    let spawner = match records {
+        Some(records) => spawner.with_records(records),
+        None => spawner,
+    };
     Some(Arc::new(
-        SdlcChildSpawner::new(
-            Arc::clone(model),
-            Arc::clone(config),
-            Arc::clone(tool_registry),
-        )
-        .with_harnesses(Arc::clone(harnesses))
-        .with_decoding(decoding)
-        .with_verify_root(verify_root(project_root))
-        .with_gates(
-            gates.questions.clone(),
-            gates.approvals.clone(),
-            gates.approval_mode,
-        ),
+        spawner
+            .with_harnesses(Arc::clone(harnesses))
+            .with_decoding(decoding)
+            .with_verify_root(verify_root(project_root))
+            .with_gates(
+                gates.questions.clone(),
+                gates.approvals.clone(),
+                gates.approval_mode,
+            ),
     ))
 }
 
@@ -162,7 +170,13 @@ pub(crate) fn compose(
     )
     .with_no_tools(parts.no_tools)
     .with_compaction_config(parts.config.agent.compaction())
-    .with_turn_limits(parts.config.agent.turn_limits().with_decoding(parts.decoding))
+    .with_turn_limits(
+        parts
+            .config
+            .agent
+            .turn_limits()
+            .with_decoding(parts.decoding),
+    )
     .with_decision_telemetry(parts.decision_telemetry)
     .with_context_assembler(assembler)
     .with_instructions(Some(parts.instructions.activator()));

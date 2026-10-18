@@ -51,6 +51,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
+use crate::child_records::{record_child, ChildRecords};
 use crate::Config;
 use sven_executors::{
     ApprovalRequest, CompositeExecutorBuilder, ThreadStore, ToolExecutor, TurnExecutor,
@@ -89,6 +90,9 @@ pub struct SdlcChildSpawner {
     /// Decoding every child request carries: the parent's, so a child's
     /// sampling identity is recorded in its trajectory.
     decoding: sven_turn::Decoding,
+    /// Where finished children leave their records, when the parent's export
+    /// wants them.
+    records: Option<ChildRecords>,
 }
 
 impl SdlcChildSpawner {
@@ -107,6 +111,7 @@ impl SdlcChildSpawner {
             harnesses: Arc::new(sven_harness_runtime::HarnessRegistry::new()),
             verify_root: None,
             decoding: sven_turn::Decoding::default(),
+            records: None,
         }
     }
 
@@ -115,6 +120,14 @@ impl SdlcChildSpawner {
     #[must_use]
     pub fn with_verify_root(mut self, root: impl Into<PathBuf>) -> Self {
         self.verify_root = Some(root.into());
+        self
+    }
+
+    /// Keeps a record of every child that finishes in `records`: its
+    /// conversation, requests and tool actions, as trajectories.
+    #[must_use]
+    pub fn with_records(mut self, records: ChildRecords) -> Self {
+        self.records = Some(records);
         self
     }
 
@@ -194,8 +207,12 @@ impl SdlcChildSpawner {
         contract: &ChildRunContract,
         run: &ChildRun,
         reconcile_capabilities: bool,
-    ) -> sven_executors::CompositeExecutor {
+    ) -> (
+        sven_executors::CompositeExecutor,
+        Arc<std::sync::Mutex<ThreadStore>>,
+    ) {
         let conv_store = Arc::new(std::sync::Mutex::new(ThreadStore::new()));
+        let record_store = Arc::clone(&conv_store);
         let call_id_to_thread = Arc::new(std::sync::Mutex::new(HashMap::<
             ToolCallId,
             (String, String),
@@ -253,7 +270,7 @@ impl SdlcChildSpawner {
         if let Some(root) = &self.verify_root {
             builder = builder.with_verify(root);
         }
-        match &self.gates {
+        let executor = match &self.gates {
             Some(gates) => builder.with_user_slot(Box::new(
                 UserExecutor::new(gates.questions.clone(), gates.approvals.clone())
                     .with_approval_mode(gates.approval_mode)
@@ -261,7 +278,8 @@ impl SdlcChildSpawner {
             )),
             None => builder,
         }
-        .build()
+        .build();
+        (executor, record_store)
     }
 }
 
@@ -352,7 +370,7 @@ impl SdlcChildSpawner {
         }
         ctx.set_fact(TaskMachine::HUMAN_GATE_FACT, self.gates.is_some());
 
-        let executor = self.executor(&contract, &run, false);
+        let (executor, store) = self.executor(&contract, &run, false);
         let rt = ErasedRuntime::spawn_child_run(
             Box::new(Hsm::new(TaskMachine::new(task.clone()))) as Box<dyn ErasedMachine>,
             ctx,
@@ -363,6 +381,8 @@ impl SdlcChildSpawner {
         );
 
         let machine_id = machine.as_uuid().to_string();
+        let records = self.records.clone();
+        let model = self.default_model.model_name().to_string();
         // Spawn-and-forget: harvest the child's result on its own task so the
         // parent loop is never blocked and siblings run concurrently.
         tokio::spawn(async move {
@@ -377,6 +397,14 @@ impl SdlcChildSpawner {
                     json!({"task": task, "summary": format!("task run failed: {e}"), "ok": false})
                 }
             };
+            if let Some(records) = records {
+                records.push(record_child(
+                    &store,
+                    &machine_id,
+                    &json!({"task": task}),
+                    &model,
+                ));
+            }
             let _ = parent
                 .emit(Event::Internal(InternalEvent::SubmachineCompleted {
                     machine: machine_id,
@@ -449,7 +477,7 @@ impl SdlcChildSpawner {
             ctx.set_fact(MAX_TOOL_ROUNDS_FACT, rounds);
         }
 
-        let executor = self.executor(&contract, &run, true);
+        let (executor, store) = self.executor(&contract, &run, true);
         let rt = ErasedRuntime::spawn_child_run(
             Box::new(Hsm::new(sven_harness_runtime::HarnessMachine::new(data)))
                 as Box<dyn ErasedMachine>,
@@ -461,6 +489,9 @@ impl SdlcChildSpawner {
         );
 
         let machine_id = machine.as_uuid().to_string();
+        let records = self.records.clone();
+        let model = self.default_model.model_name().to_string();
+        let descriptor = descriptor.clone();
         // Spawn-and-forget, the same concurrency contract as a task child.
         tokio::spawn(async move {
             // The child contract's start signal: a harness run begins on a
@@ -477,6 +508,9 @@ impl SdlcChildSpawner {
                     }),
                 Err(e) => json!({"ok": false, "error": format!("harness run failed: {e}")}),
             };
+            if let Some(records) = records {
+                records.push(record_child(&store, &machine_id, &descriptor, &model));
+            }
             let _ = parent
                 .emit(Event::Internal(InternalEvent::SubmachineCompleted {
                     machine: machine_id,

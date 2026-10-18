@@ -53,6 +53,19 @@ pub struct AgentState {
     /// that the conversation was once longer.
     #[serde(default)]
     pub(crate) compactions: Vec<CompactionRecord>,
+    /// The whole conversation as it happened, append-only: unlike `history`,
+    /// which is what the model reads next and shrinks when a compaction
+    /// replaces its front, nothing is ever removed from the record. The
+    /// trajectory is built from it, because a training or evaluation record
+    /// must hold every step the agent took, not the summary that replaced
+    /// them. Empty in a state written before the record existed; the first
+    /// run then starts it from the history.
+    #[serde(default)]
+    pub(crate) record: Vec<Message>,
+    /// Where in `record` each compaction fired: it replaced the model's view
+    /// of the messages before that position.
+    #[serde(default)]
+    pub(crate) compaction_marks: Vec<CompactionMark>,
     /// The model's raw argument text, by call id, for tool calls whose
     /// arguments were not valid JSON (the history holds those calls with
     /// `{}`).
@@ -80,17 +93,25 @@ pub struct AgentState {
     pub(crate) requests: Vec<Metered>,
 }
 
+/// A compaction and the position in the record where it fired.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CompactionMark {
+    pub(crate) at: usize,
+    pub(crate) compaction: CompactionRecord,
+}
+
 impl AgentState {
     /// The format this build writes.
     ///
-    /// Version 3 added the account of each model request; version 2 added the gate decisions and memory retrievals of the agent's
+    /// Version 4 added the record, the whole conversation the trajectory is
+    /// built from; version 3 added the account of each model request; version 2 added the gate decisions and memory retrievals of the agent's
     /// calls; version 1 added the format version itself, the event sequence and
     /// the parked run. Version 0 is every state written before: it has none of
     /// those, resumes as an agent that has emitted no events and is parked
     /// nowhere, and is written back as the current version. A state with a
     /// version above this one was written by a newer build and is refused by
     /// [`Engine::resume`](crate::Engine::resume) rather than resumed wrongly.
-    pub const CURRENT_VERSION: u32 = 3;
+    pub const CURRENT_VERSION: u32 = 4;
 
     /// Creates the state of an agent that has not run yet.
     #[must_use]
@@ -107,6 +128,8 @@ impl AgentState {
             model: None,
             tools: Vec::new(),
             compactions: Vec::new(),
+            record: Vec::new(),
+            compaction_marks: Vec::new(),
             unparsed_arguments: BTreeMap::new(),
             gate_decisions: Vec::new(),
             memory_retrievals: Vec::new(),
@@ -151,27 +174,18 @@ impl AgentState {
         self.requests.iter_mut().for_each(|r| r.after = None);
     }
 
-    /// Hands `assembler` the requests whose response ended after `position`
-    /// messages of the history.
-    pub(crate) fn feed_requests_after(
-        &self,
-        position: usize,
-        assembler: &mut sven_session_store::StepAssembler,
-    ) {
-        for metered in self.requests.iter().filter(|m| m.after == Some(position)) {
-            assembler.push_request(&metered.request);
+    /// Starts the record from the history for a state that has none (one
+    /// written before the record existed, or fresh).
+    pub(crate) fn ensure_record(&mut self) {
+        if self.record.is_empty() && !self.history.is_empty() {
+            self.record.clone_from(&self.history);
         }
     }
 
-    /// Hands the records of the calls this state holds to `assembler`, so the
-    /// steps it builds carry them.
-    pub(crate) fn feed_call_records(&self, assembler: &mut sven_session_store::StepAssembler) {
-        for decision in &self.gate_decisions {
-            assembler.push_gate_decision(decision.clone());
-        }
-        for retrieval in &self.memory_retrievals {
-            assembler.push_memory_retrieval(retrieval.clone());
-        }
+    /// Appends `message` to both what the model reads and the record.
+    pub(crate) fn push_message(&mut self, message: Message) {
+        self.record.push(message.clone());
+        self.history.push(message);
     }
 
     /// `message` as the model sent it: a tool call whose arguments were not

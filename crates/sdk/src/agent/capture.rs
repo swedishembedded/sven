@@ -27,10 +27,16 @@ impl Agent {
     /// run folded: it does not once events were dropped or a compaction
     /// reshaped the thread, and the run's requests cannot then be placed on
     /// steps (see `AgentState::absorb_requests`).
+    ///
+    /// The record is left alone when the run's own events account for every
+    /// compaction the store saw: the events then folded the whole run, and
+    /// `marks` say where each compaction fired. Otherwise (events were lost)
+    /// the store's thread is the best account left and becomes the record.
     pub(super) fn take_history(
         &mut self,
         handle: &sven_bootstrap::RuntimeHandle,
         seeded: usize,
+        marks: Vec<crate::state::CompactionMark>,
     ) -> bool {
         let thread = sven_machines::mode::primary_thread(&self.state.mode);
         let state = &mut self.state;
@@ -60,13 +66,24 @@ impl Agent {
         // seeded with, so growth alone cannot tell a thread the machine used
         // from one it left at its seed.
         if held.len() > seeded || (!compactions.is_empty() && !held.is_empty()) {
-            let lined_up = held.len() == self.state.history.len() && compactions.is_empty();
-            if !compactions.is_empty() {
+            let events_intact = if compactions.is_empty() {
+                held.len() == self.state.history.len()
+            } else {
+                marks.len() == compactions.len()
+            };
+            self.state.compaction_marks.extend(
+                marks
+                    .into_iter()
+                    .filter(|_| events_intact && !compactions.is_empty()),
+            );
+            if !events_intact {
+                // The record is no better than the thread the store holds.
                 self.state.unplace_requests();
+                self.state.record.clone_from(&held);
+                self.state.compactions.extend(compactions);
             }
             self.state.history = held;
-            self.state.compactions.extend(compactions);
-            return lined_up;
+            return events_intact;
         }
         true
     }

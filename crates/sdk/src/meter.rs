@@ -9,7 +9,7 @@
 //! Folds a run's observations into the account it reports: [`Usage`] for the
 //! run as a whole and one [`RequestRecord`] per model request.
 
-use sven_vocab::{ledger::ReportedUsage, RequestRecord, SessionEvent};
+use sven_vocab::{ledger::ReportedUsage, RequestFold, RequestRecord, SessionEvent};
 
 use crate::run::Usage;
 
@@ -27,7 +27,7 @@ pub(crate) struct Metered {
 #[derive(Debug, Default)]
 pub(crate) struct Meter {
     usage: Usage,
-    open: RequestRecord,
+    fold: RequestFold,
     closed: Vec<Metered>,
 }
 
@@ -53,24 +53,30 @@ impl Meter {
                     cache_write: *cache_write,
                 };
                 self.usage.add_report(report, *cost_usd);
-                self.open.add_usage(report, *cost_usd);
                 // The ledger record closes the request, by contract the last
                 // event of its response.
                 if breakdown.is_some() {
                     self.usage.turns += 1;
-                    self.closed.push(Metered {
-                        after: history_len,
-                        request: std::mem::take(&mut self.open),
-                    });
                 }
             }
-            SessionEvent::ResponseSampled(sampled) => self.open.sampled = sampled.clone(),
             SessionEvent::ToolCallFinished { is_error, .. } => {
                 self.usage.tool_calls += 1;
                 self.usage.tool_errors += u64::from(*is_error);
             }
             _ => {}
         }
+        if let Some(request) = self.fold.observe(event) {
+            self.closed.push(Metered {
+                after: history_len,
+                request,
+            });
+        }
+    }
+
+    /// The requests completed so far, for a caller that records the run as it
+    /// happens.
+    pub(crate) fn closed(&self) -> &[Metered] {
+        &self.closed
     }
 
     /// The tokens the model has generated so far.

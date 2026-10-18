@@ -96,6 +96,7 @@ pub struct RuntimeBuilder {
     /// the sender (via `send_abort_signal`) to cancel an in-flight LLM turn.
     cancel_handle: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
     decoding: sven_turn::Decoding,
+    child_records: Option<crate::child_records::ChildRecords>,
     /// When set, this executor replaces the default [`CompositeExecutor`]
     /// entirely (see [`Self::with_effect_executor`]).
     effect_executor: Option<Box<dyn EffectExecutor>>,
@@ -176,6 +177,7 @@ impl RuntimeBuilder {
             permission_requester: None,
             cancel_handle: None,
             decoding: sven_turn::Decoding::default(),
+            child_records: None,
             effect_executor: None,
             tool_executor_override: None,
             principal: None,
@@ -328,6 +330,14 @@ impl RuntimeBuilder {
     /// before executing any tool that has `ApprovalPolicy::Ask`.
     pub fn with_permission_requester(mut self, requester: Arc<dyn PermissionRequester>) -> Self {
         self.permission_requester = Some(requester);
+        self
+    }
+
+    /// Keeps a record of every child run that finishes under this session:
+    /// its conversation, requests and tool actions, as trajectories. See
+    /// [`crate::child_records`].
+    pub fn with_child_records(mut self, records: crate::child_records::ChildRecords) -> Self {
+        self.child_records = Some(records);
         self
     }
 
@@ -762,6 +772,7 @@ impl RuntimeBuilder {
             session_executor::ChildSetup {
                 project_root: self.runtime_ctx.project_root.as_deref(),
                 decoding: self.decoding,
+                records: self.child_records.clone(),
             },
         );
 

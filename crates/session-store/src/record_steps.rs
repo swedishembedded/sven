@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Swedish Embedded AB implements agent trajectory capture for its clients. If
+// your team needs expertise in turning agent runs into training data then you
+// can procure our services by sending an email to info@swedishembedded.com.
+//! One conversation record as ATIF steps.
+//!
+//! An agent's run, a harness's plan thread and a child run's thread are all
+//! the same thing to a trajectory: messages in order, each model request's
+//! account at the message its response ended on, the compactions where they
+//! fired, and what the permission gate and memory tools recorded about the
+//! calls. This is the one place that turns them into steps, so every export
+//! of a conversation says the same things the same way.
+
+use atif::{GateDecision, MemoryRetrieval, TraceStep};
+use sven_model::Message;
+use sven_vocab::{CompactionRecord, RequestRecord};
+
+use crate::trace_session::StepAssembler;
+
+/// What is known about one conversation.
+pub struct ConversationFacts<'a> {
+    /// Every message, in the order it happened.
+    pub messages: &'a [Message],
+    /// Compactions, each with the number of `messages` before it fired.
+    pub compactions: &'a [(usize, CompactionRecord)],
+    /// Requests, each with the number of `messages` up to and including its
+    /// response.
+    pub requests: &'a [(usize, RequestRecord)],
+    /// What the permission gate decided about calls.
+    pub gate_decisions: &'a [GateDecision],
+    /// What memory retrievals returned.
+    pub memory_retrievals: &'a [MemoryRetrieval],
+}
+
+/// The steps of `facts`. `as_sent` gives a call's raw argument text when the
+/// model's arguments were not valid JSON, so the step keeps and flags it.
+pub fn conversation_steps(
+    facts: &ConversationFacts<'_>,
+    as_sent: &dyn Fn(&Message) -> Message,
+) -> Vec<TraceStep> {
+    let mut assembler = StepAssembler::new();
+    let marks = |assembler: &mut StepAssembler, position: usize| {
+        for (_, c) in facts.compactions.iter().filter(|(at, _)| *at == position) {
+            assembler.push_context_compacted(
+                c.tokens_before,
+                c.tokens_after,
+                Some(&c.strategy.to_string()),
+                Some(c.turn),
+            );
+        }
+    };
+    let requests = |assembler: &mut StepAssembler, position: usize| {
+        for (_, request) in facts.requests.iter().filter(|(at, _)| *at == position) {
+            assembler.push_request(request);
+        }
+    };
+    marks(&mut assembler, 0);
+    for decision in facts.gate_decisions {
+        assembler.push_gate_decision(decision.clone());
+    }
+    for retrieval in facts.memory_retrievals {
+        assembler.push_memory_retrieval(retrieval.clone());
+    }
+    requests(&mut assembler, 0);
+    for (position, message) in facts.messages.iter().enumerate() {
+        if position > 0 {
+            marks(&mut assembler, position);
+        }
+        assembler.push_message(&as_sent(message));
+        requests(&mut assembler, position + 1);
+    }
+    // A compaction after the last message (the run ended right after it).
+    if !facts.messages.is_empty() {
+        marks(&mut assembler, facts.messages.len());
+    }
+    assembler.finish()
+}

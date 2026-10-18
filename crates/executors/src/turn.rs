@@ -481,7 +481,12 @@ impl EffectExecutor for TurnExecutor {
         // actual reply.
         let partial_text = Arc::new(Mutex::new(String::new()));
         let partial_text_fwd = Arc::clone(&partial_text);
+        // The store keeps each request's account beside the conversation it
+        // belongs to, so a run's record survives a lagging observation stream.
+        let request_store = Arc::clone(&self.store);
+        let request_thread = thread_id.clone();
         let forwarder = tokio::spawn(async move {
+            let mut requests = sven_vocab::RequestFold::default();
             while let Some(mut ev) = rx.recv().await {
                 if let UiEvent::TextDelta(delta) = &ev {
                     if let Ok(mut buf) = partial_text_fwd.lock() {
@@ -512,6 +517,11 @@ impl EffectExecutor for TurnExecutor {
                     );
                     *max_tokens = catalog_context_window as usize;
                     *max_output_tokens = catalog_max_output as usize;
+                }
+                if let Some(request) = requests.observe(&ev) {
+                    if let Ok(mut store) = request_store.lock() {
+                        store.record_request(&request_thread, request);
+                    }
                 }
                 obs_fwd.emit(ev);
             }

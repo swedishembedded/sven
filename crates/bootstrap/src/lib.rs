@@ -20,6 +20,7 @@
 //! `sven-sdk`) depend on this crate instead of inlining their own
 //! registry-building loops.
 
+pub mod child_records;
 pub mod child_spawner;
 pub mod config;
 pub mod context;

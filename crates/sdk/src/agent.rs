@@ -29,6 +29,8 @@ use crate::run_support::{parse_candidate, stop, Entry, TurnOptions};
 use crate::state::AgentState;
 
 mod capture;
+mod export;
+mod journal;
 
 /// A live agent: a conversation in progress against an [`Engine`].
 ///
@@ -42,6 +44,9 @@ pub struct Agent {
     events: broadcast::Sender<RunEvent>,
     /// This agent's own gate handler, which takes the place of the engine's.
     gates: Option<GateHandler>,
+    /// Where the trajectory is being written as the run happens, if anywhere.
+    /// See [`Agent::journal_to`].
+    journal: Option<journal::Journal>,
 }
 
 impl Agent {
@@ -52,6 +57,7 @@ impl Agent {
             state,
             events,
             gates: None,
+            journal: None,
         }
     }
 
@@ -92,58 +98,6 @@ impl Agent {
     #[must_use]
     pub fn state(&self) -> &AgentState {
         &self.state
-    }
-
-    /// What the agent did, as an ATIF trajectory: every message, every tool
-    /// call with its result, the model and the tools it was offered.
-    ///
-    /// Each context compaction is a `System` step carrying
-    /// `extra.context_management`, ahead of the conversation that survived
-    /// it; the steps before a compaction are not in the history and so not in
-    /// the document. `tool_definitions` are the schemas the last step's model
-    /// requests carried, not every tool the engine has registered. A tool call
-    /// whose arguments the model sent as invalid JSON has `{}` arguments and
-    /// `extra.raw_arguments` with the text, flagged by
-    /// `extra.unparsed_arguments`.
-    ///
-    /// Built from the conversation the kernel holds, so it is complete even
-    /// when progress events were dropped, and a resumed agent exports the
-    /// same document. Each step carries the tokens, cost, serving model and
-    /// seed of the model requests it covers, and the final metrics total every
-    /// request the agent has made; requests from before a compaction, or from
-    /// a run whose events were dropped, are in the totals but on no step.
-    /// Carries no reward: whether the work was right is for a
-    /// verifier to say, not the agent.
-    #[must_use]
-    pub fn trajectory(&self) -> atif::Trajectory {
-        let mut agent = sven_session_store::default_agent_profile();
-        agent.model_name.clone_from(&self.state.model);
-        if !self.state.tools.is_empty() {
-            agent.tool_definitions = Some(self.state.tools.clone());
-        }
-        let mut trajectory = atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
-        // The history holds only what survived each compaction, so the
-        // markers lead it: everything after them replaced what came before.
-        let mut assembler = sven_session_store::StepAssembler::new();
-        for compaction in &self.state.compactions {
-            assembler.push_context_compacted(
-                compaction.tokens_before,
-                compaction.tokens_after,
-                Some(&compaction.strategy.to_string()),
-                Some(compaction.turn),
-            );
-        }
-        self.state.feed_call_records(&mut assembler);
-        self.state.feed_requests_after(0, &mut assembler);
-        for (position, message) in self.state.history.iter().enumerate() {
-            assembler.push_message(&self.state.as_sent(message));
-            self.state.feed_requests_after(position + 1, &mut assembler);
-        }
-        trajectory.steps = assembler.finish();
-        trajectory.final_metrics = sven_session_store::step_request::totals(
-            self.state.requests.iter().map(|metered| &metered.request),
-        );
-        trajectory
     }
 
     /// Suspends the agent, yielding the state needed to resume it later.
@@ -505,8 +459,7 @@ impl Agent {
                 answer,
             } => {
                 self.state
-                    .history
-                    .push(Message::tool_result(call_ref, answer.clone()));
+                    .push_message(Message::tool_result(call_ref, answer.clone()));
                 (
                     Event::HumanAnswered {
                         question_id,
@@ -582,7 +535,13 @@ impl Agent {
         // The history as seeded, so the store can be checked for this turn's
         // messages once it ends (see `take_history`).
         let seeded = self.state.history.len();
-        self.state.history.extend(prompt);
+        self.state.ensure_record();
+        if let Some(message) = prompt {
+            self.state.push_message(message);
+        }
+        // Compactions this run's events announced, and where in the record.
+        let thread = sven_machines::mode::primary_thread(&self.state.mode).to_string();
+        let mut run_marks: Vec<crate::state::CompactionMark> = Vec::new();
 
         if !bundle.handle.sink().emit(event).await {
             return Err(CallError::Infrastructure(anyhow::anyhow!(
@@ -644,7 +603,7 @@ impl Agent {
                             event,
                             SessionEvent::TurnComplete | SessionEvent::Aborted { .. }
                         );
-                        meter.observe(&event, Some(self.state.history.len()));
+                        meter.observe(&event, Some(self.state.record.len()));
                         match &event {
                             SessionEvent::TokenUsage { .. } => {
                                 let spent = meter.output_tokens();
@@ -662,7 +621,41 @@ impl Agent {
                             }
                             _ => {}
                         }
+                        if let SessionEvent::ContextCompacted {
+                            tokens_before,
+                            tokens_after,
+                            strategy,
+                            turn,
+                        } = &event
+                        {
+                            run_marks.push(crate::state::CompactionMark {
+                                at: self.state.record.len(),
+                                compaction: sven_vocab::CompactionRecord {
+                                    thread: thread.clone(),
+                                    tokens_before: *tokens_before,
+                                    tokens_after: *tokens_after,
+                                    strategy: strategy.clone(),
+                                    turn: *turn,
+                                },
+                            });
+                        }
                         reduce_history(&event, &mut self.state.history);
+                        reduce_history(&event, &mut self.state.record);
+                        if matches!(
+                            event,
+                            SessionEvent::ToolCallFinished { .. } | SessionEvent::TurnComplete
+                        ) {
+                            if let Some(why) =
+                                self.flush_journal(meter.closed(), &run_marks, false)
+                            {
+                                self.publish(
+                                    run_id,
+                                    SessionEvent::Warning(format!(
+                                        "trajectory journal stopped: {why}"
+                                    )),
+                                );
+                            }
+                        }
                         self.publish(run_id, event);
                         if done {
                             break;
@@ -690,10 +683,22 @@ impl Agent {
             Some(snapshot) => Some(snapshot),
             None => bundle.runtime.capture().await,
         };
-        let lined_up = self.take_history(&bundle.handle, seeded);
+        let lined_up = self.take_history(&bundle.handle, seeded, run_marks);
         let (usage, requests) = meter.finish(started.elapsed());
         self.state.absorb_requests(requests, lined_up);
         self.take_offered_tools(&bundle.handle, options.no_tools);
+        // A run parked on a question or an approval continues its last step in
+        // the next run, so that step is not settled yet.
+        let parked = self.state.kernel.as_ref().is_some_and(|snapshot| {
+            snapshot.context.pending_question.is_some()
+                || snapshot.context.pending_approval.is_some()
+        });
+        if let Some(why) = self.flush_journal(&[], &[], !parked) {
+            self.publish(
+                run_id,
+                SessionEvent::Warning(format!("trajectory journal stopped: {why}")),
+            );
+        }
 
         // Report the failure only after the kernel state above is stored, so a
         // caller that retries or inspects the agent resumes from where the

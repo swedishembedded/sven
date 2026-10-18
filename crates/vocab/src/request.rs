@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ledger::ReportedUsage;
 use crate::served::ServedIdentity;
+use crate::SessionEvent;
 
 /// What served one request and what it sampled, as the provider reported it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -55,6 +56,52 @@ impl Sampled {
             && self.logprobs.is_empty()
             && self.prompt_token_ids.is_empty()
             && self.identity.is_empty()
+    }
+}
+
+/// Folds a stream of observations into one [`RequestRecord`] per model
+/// request.
+///
+/// A request's observations end with its ledger record (the `TokenUsage`
+/// carrying a breakdown), by contract the last event of its response; the
+/// fold hands the finished record back at that event. One definition for
+/// every consumer that keeps the account of a conversation (an agent's run, a
+/// child run's store), so they cannot disagree about where a request ends.
+#[derive(Debug, Clone, Default)]
+pub struct RequestFold {
+    open: RequestRecord,
+}
+
+impl RequestFold {
+    /// Folds in one observation; returns the request it completes, if any.
+    pub fn observe(&mut self, event: &SessionEvent) -> Option<RequestRecord> {
+        match event {
+            SessionEvent::ResponseSampled(sampled) => {
+                self.open.sampled = sampled.clone();
+                None
+            }
+            SessionEvent::TokenUsage {
+                input,
+                output,
+                cache_read,
+                cache_write,
+                cost_usd,
+                breakdown,
+                ..
+            } => {
+                self.open.add_usage(
+                    ReportedUsage {
+                        input: *input,
+                        output: *output,
+                        cache_read: *cache_read,
+                        cache_write: *cache_write,
+                    },
+                    *cost_usd,
+                );
+                breakdown.is_some().then(|| std::mem::take(&mut self.open))
+            }
+            _ => None,
+        }
     }
 }
 

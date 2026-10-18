@@ -9,6 +9,7 @@ pub mod frontmatter;
 mod markdown;
 pub mod question_ledger;
 mod queue;
+pub mod record_steps;
 pub mod reward;
 pub mod session_resolve;
 pub mod step_ledger;

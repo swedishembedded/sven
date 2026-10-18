@@ -114,6 +114,63 @@ async fn a_compaction_is_marked_in_the_trajectory_and_the_history_is_the_compact
     assert_eq!(compaction_markers(&resumed), compaction_markers(&agent));
 }
 
+/// A compaction shrinks what the model reads, not what happened: the exported
+/// trajectory is the record of the run, so every exchange stays in it, in
+/// order, with the compaction marked where it fired. A training record that
+/// lost the steps a compaction replaced would teach from a conversation the
+/// agent never had.
+#[tokio::test]
+async fn a_compaction_does_not_drop_the_steps_it_replaced_from_the_trajectory() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut config = Config::default();
+    config.agent.compaction_keep_recent = 2;
+    let engine = Engine::builder()
+        .config(config)
+        .model_provider(Arc::new(SmallWindow {
+            requests: Arc::clone(&requests),
+        }))
+        .build()
+        .expect("an engine builds");
+    let mut agent = engine.agent("agent");
+
+    let mut sent = 0;
+    while compaction_markers(&agent).is_empty() || sent < 8 {
+        assert!(sent < 14, "no compaction after {sent} long messages");
+        agent
+            .send(&format!("{} message {sent}", "word ".repeat(450)))
+            .await
+            .expect("an outcome");
+        sent += 1;
+    }
+
+    let json = serde_json::to_value(agent.trajectory()).unwrap();
+    let steps = json["steps"].as_array().unwrap();
+    let user_steps: Vec<&serde_json::Value> =
+        steps.iter().filter(|s| s["source"] == "user").collect();
+    assert_eq!(user_steps.len(), sent, "every message sent is a user step");
+    for (i, step) in user_steps.iter().enumerate() {
+        assert!(
+            step["message"]
+                .as_str()
+                .unwrap()
+                .ends_with(&format!("message {i}")),
+            "user step {i} is in order: {step}"
+        );
+    }
+    assert_eq!(
+        steps.iter().filter(|s| s["source"] == "agent").count(),
+        sent,
+        "and so is every answer"
+    );
+    // The marker stands where the compaction fired, not at the front.
+    let first_marker = steps
+        .iter()
+        .position(|s| s["extra"]["context_management"]["type"] == "compaction")
+        .expect("a marker");
+    assert!(first_marker > 2, "marker at step {first_marker}");
+    sven_sdk::atif::validate_trajectory(&agent.trajectory()).expect("a valid ATIF document");
+}
+
 struct Echo {
     name: &'static str,
     modes: &'static [sven_vocab::AgentMode],
