@@ -144,11 +144,24 @@ by `sven_tool_api::PathScope`, which the verifier also uses.
 command starts; it does not confine what a command does. `cat ../secret`
 works, and so does anything else the process may do. An application that
 needs containment runs the agent in a sandbox (a container, a VM, a
-restricted user) and points the root at the directory inside it. The check is
+restricted user) and points the root at the directory inside it, or
+substitutes a confined `shell` (below). The check is
 also a point-in-time one: a process that swaps a directory for a symlink
 between the check and the write is not defended against. Tools the
 application registers with `EngineBuilder::tool` are its own and are not
 confined.
+
+**Delegated children inherit the root and the execution capability.** A
+child (a `task` sub-agent, or a harness `delegate` or `parallel` child) runs
+on the tool registry of the agent that started it, so the same scope binds
+every path-taking tool it calls and it cannot be pointed at a path the parent
+cannot reach. A tool registered with `EngineBuilder::tool` under the name of a
+built-in (for example a `shell` that runs commands inside a kernel sandbox the
+application controls) replaces that built-in for the agent and for all its
+children. This is the contract for containment: the root confines the
+in-process tools, and the application's own tool confines the process-spawning
+ones; neither relies on detecting a violation afterwards. Both are pinned by
+`crates/sdk/tests/project_root_children.rs`.
 
 Without a root, paths resolve against the process working directory as they
 always have, the audit log is written beneath it, and nothing is discovered.
