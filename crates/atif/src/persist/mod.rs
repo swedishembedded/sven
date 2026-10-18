@@ -6,6 +6,7 @@
 
 mod atomic;
 mod header;
+mod journal;
 mod ndjson;
 
 pub use atomic::{
@@ -14,5 +15,9 @@ pub use atomic::{
 };
 pub use header::{
     read_trajectory_header, read_trajectory_header_fast, HeaderReadError, TrajectoryHeader,
+};
+pub use journal::{
+    read_journal, FlushPolicy, JournalError, JournalLimits, JournalRead, JournalWriter,
+    CAPTURE_STATUS_KEY,
 };
 pub use ndjson::{read_steps_ndjson, write_steps_ndjson, NdjsonError};
