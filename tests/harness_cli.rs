@@ -377,7 +377,7 @@ fn the_committed_samples_pass_offline_and_the_live_case_is_skipped() {
         .filter(|p| p.join("cases").is_dir())
         .collect();
     dirs.sort();
-    assert_eq!(dirs.len(), 7, "the seven named samples: {dirs:?}");
+    assert_eq!(dirs.len(), 8, "the eight named samples: {dirs:?}");
 
     let out = run(sven(tmp.path()).arg("test").args(&dirs).arg("--json"));
     assert_eq!(code(&out), 0, "{}", stderr(&out));
