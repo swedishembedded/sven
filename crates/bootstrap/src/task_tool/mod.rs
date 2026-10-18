@@ -169,6 +169,11 @@ pub struct TaskTool {
     near_match: Option<Arc<dyn NearMatch>>,
     /// Whether a subtask a sub-agent would not pay for is declined.
     delegation: crate::config::DelegationConfig,
+    /// Whether this process is itself a sub-agent (its parent set
+    /// [`SUBAGENT_DEPTH_ENV`]); a sub-agent never spawns another. Read once
+    /// when the tool is built, so no call depends on the process environment
+    /// at the moment it runs.
+    is_subagent: bool,
 }
 
 impl TaskTool {
@@ -198,6 +203,7 @@ impl TaskTool {
             subgoals: Arc::default(),
             near_match: None,
             delegation: crate::config::DelegationConfig::default(),
+            is_subagent: std::env::var(SUBAGENT_DEPTH_ENV).is_ok(),
         }
     }
 
@@ -612,8 +618,7 @@ impl Tool for TaskTool {
         let model_override =
             effective_model(requested_model, resolved.model, self.default_model.clone());
 
-        // Subagents (SUBAGENT_DEPTH_ENV set) cannot spawn further sub-agents.
-        if std::env::var(SUBAGENT_DEPTH_ENV).is_ok() {
+        if self.is_subagent {
             return ToolOutput::err(&call.id, "sub-agents cannot spawn further sub-agents");
         }
 
@@ -1144,11 +1149,9 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_blocked_when_subagent() {
-        let _env = std::env::var(super::SUBAGENT_DEPTH_ENV).ok();
-        std::env::set_var(super::SUBAGENT_DEPTH_ENV, "0");
-        let t = make_task();
+        let mut t = make_task();
+        t.is_subagent = true;
         let out = t.execute(&call(json!({"prompt": "do something"}))).await;
-        std::env::remove_var(super::SUBAGENT_DEPTH_ENV);
         assert!(
             out.is_error,
             "spawn should be blocked when running as subagent: {}",

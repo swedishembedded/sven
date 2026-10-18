@@ -2,7 +2,6 @@ crates/acp/src/cli.rs	SVEN_MODEL
 crates/acp/src/cli.rs	SVEN_PROVIDER
 crates/bootstrap/src/context.rs	<crate::task_tool::SUBAGENT_DEPTH_ENV>
 crates/bootstrap/src/task_tool/mod.rs	<SUBAGENT_DEPTH_ENV>
-crates/bootstrap/src/task_tool/mod.rs	<super::SUBAGENT_DEPTH_ENV>
 crates/bootstrap/src/ui_test_dispatch.rs	SVEN_ANDROID_SERIAL
 crates/bootstrap/tests/live_ui_test_dispatch.rs	SVEN_UI_TEST_LIVE
 crates/chain/tests/processes.rs	<WRITER_LOG>
