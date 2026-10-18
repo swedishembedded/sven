@@ -844,8 +844,10 @@ mod tests {
         const RETURNER: &str = r#"
 api_version: "1"
 name: returner
-entry: done
+entry: pick
 steps:
+  pick:
+    branch: { on: "{{ inputs.first }}", when_true: done, when_false: branch }
   done:
     return: { value: { which: "entry" } }
   branch:
@@ -882,7 +884,7 @@ steps:
         spawner
             .spawn_child(
                 MachineId::new(),
-                json!({"harness": "returner", "input": {}}),
+                json!({"harness": "returner", "input": {"first": true}}),
                 child_run(&parent),
                 parent.sink(),
             )

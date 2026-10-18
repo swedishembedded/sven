@@ -561,3 +561,69 @@ steps:
     let declared = body.replace("entry: split", "entry: split\ncapabilities: [SpawnChild]");
     let _ = doc(&declared).expect("declaring SpawnChild admits the fan-out");
 }
+
+// ---- unknown fields -------------------------------------------------------
+
+#[test]
+fn an_unknown_top_level_key_is_rejected_by_name() {
+    let yaml = MINIMAL.replace("name: minimal", "name: minimal\nentrypoint: done");
+    let err = doc(&yaml).expect_err("a misspelled top-level key must not be ignored");
+    let text = err.to_string();
+    assert!(text.contains("unknown field `entrypoint`"), "{text}");
+}
+
+#[test]
+fn an_unknown_field_inside_a_step_names_the_primitive_and_the_field() {
+    let yaml = r#"
+api_version: "1"
+name: typo
+entry: act
+steps:
+  act:
+    tool:
+      name: read_file
+      arguments: { path: x }
+      then: done
+  done:
+    return: { value: 1 }
+"#;
+    let text = doc(yaml)
+        .expect_err("`arguments` is not a tool field")
+        .to_string();
+    assert!(text.contains("`tool`"), "{text}");
+    assert!(text.contains("unknown field `arguments`"), "{text}");
+}
+
+#[test]
+fn an_unknown_limit_is_rejected() {
+    let yaml = MINIMAL.replace("entry: done", "entry: done\nlimits:\n  max_stepz: 3");
+    let text = doc(&yaml).expect_err("misspelled limit").to_string();
+    assert!(text.contains("unknown field `max_stepz`"), "{text}");
+}
+
+#[test]
+fn an_unknown_field_in_a_declared_io_value_is_rejected() {
+    let yaml = MINIMAL.replace("result: string", "result: { type: string, descripton: x }");
+    assert!(doc(&yaml).is_err(), "misspelled io value field");
+}
+
+#[test]
+fn a_step_no_path_from_entry_reaches_is_rejected_by_name() {
+    let yaml = r#"
+api_version: "1"
+name: orphan
+entry: done
+steps:
+  done:
+    return: { value: 1 }
+  stray:
+    return: { value: 2 }
+"#;
+    let text = doc(yaml)
+        .expect_err("an orphan step is dead code")
+        .to_string();
+    assert!(
+        text.contains("stray") && text.contains("unreachable"),
+        "{text}"
+    );
+}

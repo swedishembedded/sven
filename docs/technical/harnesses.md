@@ -19,8 +19,11 @@ reasons behind the design see [ADR 0004](../adr/0004-programmable-harnesses.md).
 
 ## The language
 
-A document has these top-level keys. Unknown keys are ignored, as serde does
-(the JSON Schema is equally lenient); a few shapes are stricter.
+A document has these top-level keys. An unknown key is an error at every level
+(document, `limits`, each primitive's body, declared inputs and outputs), named
+in the message (`unknown field \`entrypoint\``, with the primitive for a step
+body); the JSON Schema forbids them too. Every step must be reachable from
+`entry`: an orphan step is rejected by name.
 
 | Key | |
 |-----|---|

@@ -49,6 +49,7 @@ pub fn validate(spec: &HarnessSpec) -> Result<(), HarnessError> {
     validate_structure(spec)?;
     validate_schemas(spec)?;
     validate_references(spec)?;
+    validate_entry_reaches_every_step(spec)?;
     validate_reachability(spec)?;
     validate_capabilities(spec)?;
     validate_limits(spec)?;
@@ -140,6 +141,36 @@ fn validate_references(spec: &HarnessSpec) -> Result<(), HarnessError> {
         validate_step_paths(id, step)?;
     }
     Ok(())
+}
+
+/// Every step must be reachable from `entry`: an orphan is dead code whose
+/// capability and limit requirements would still bind the plan, and in a
+/// generated document it usually marks a mistyped `then`.
+fn validate_entry_reaches_every_step(spec: &HarnessSpec) -> Result<(), HarnessError> {
+    let mut reached = std::collections::BTreeSet::new();
+    let mut frontier = vec![spec.entry.clone()];
+    while let Some(id) = frontier.pop() {
+        if !reached.insert(id.clone()) {
+            continue;
+        }
+        if let Some(step) = spec.steps.get(&id) {
+            frontier.extend(successors(step));
+        }
+    }
+    let orphans: Vec<&str> = spec
+        .steps
+        .keys()
+        .filter(|id| !reached.contains(*id))
+        .map(String::as_str)
+        .collect();
+    if orphans.is_empty() {
+        return Ok(());
+    }
+    Err(HarnessError::Invalid(format!(
+        "unreachable step(s) [{}]: no path from entry `{}` leads to them",
+        orphans.join(", "),
+        spec.entry
+    )))
 }
 
 /// The document's declared schemas: `(name, value)` pairs, sorted by name.

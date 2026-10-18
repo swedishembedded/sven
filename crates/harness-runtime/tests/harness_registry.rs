@@ -11,8 +11,10 @@ use sven_harness_runtime::{HarnessRegistry, HarnessRunData, HarnessRunError};
 const RETURNER: &str = r#"
 api_version: "1"
 name: returner
-entry: done
+entry: pick
 steps:
+  pick:
+    branch: { on: "{{ inputs.first }}", when_true: done, when_false: branch }
   done:
     return: { value: { which: "entry" } }
   branch:
@@ -55,7 +57,7 @@ fn a_run_starts_from_a_registered_plan_without_re_parsing() {
     let _ = registry.register(RETURNER).expect("registers");
     let plan = registry.resolve("returner").expect("resolves");
     let run = HarnessRunData::from_parts((*plan).clone(), serde_json::json!({}));
-    assert_eq!(run.plan().entry, "done");
+    assert_eq!(run.plan().entry, "pick");
 }
 
 #[test]

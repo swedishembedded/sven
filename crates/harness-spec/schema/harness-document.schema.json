@@ -1,11 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://swedishembedded.com/sven/schema/harness-document.schema.json",
-  "$comment": "Copyright (c) 2026 Martin Schroder <info@swedishembedded.com>. SPDX-License-Identifier: Apache-2.0. Swedish Embedded AB implements editor-checkable, data-defined agent harnesses for its clients. If your team needs expertise in declarative agent workflow languages then you can procure our services by sending an email to info@swedishembedded.com. Strictness: the compiler's typed parser ignores unknown fields, so this schema does not forbid them either; it does require every step to hold exactly one known primitive key. The set of primitive keys is held to sven_harness_spec::PRIMITIVES by a test.",
+  "$comment": "Copyright (c) 2026 Martin Schroder <info@swedishembedded.com>. SPDX-License-Identifier: Apache-2.0. Swedish Embedded AB implements editor-checkable, data-defined agent harnesses for its clients. If your team needs expertise in declarative agent workflow languages then you can procure our services by sending an email to info@swedishembedded.com. Strictness: like the compiler's typed parser, this schema forbids unknown fields everywhere except inside free-form values, and requires every step to hold exactly one known primitive key. The set of primitive keys is held to sven_harness_spec::PRIMITIVES by a test.",
   "title": "sven harness document",
   "description": "A sven agent-harness program: a map of steps, each exactly one primitive, compiled ahead of run time into a content-hashed plan.",
   "type": "object",
   "required": ["api_version", "name", "entry", "steps"],
+  "additionalProperties": false,
   "properties": {
     "api_version": {
       "const": "1",
@@ -76,6 +77,7 @@
         {
           "type": "object",
           "required": ["type"],
+          "additionalProperties": false,
           "properties": {
             "type": { "$ref": "#/$defs/io_type" },
             "description": { "type": "string" }
@@ -89,6 +91,7 @@
     },
     "limits": {
       "type": "object",
+      "additionalProperties": false,
       "description": "Upper bounds the runtime enforces. Required whenever the steps can run away (model, tool, verify, retry, parallel, delegate).",
       "properties": {
         "max_steps": { "$ref": "#/$defs/count" },
@@ -144,6 +147,7 @@
     },
     "predict": {
       "type": "object",
+      "additionalProperties": false,
       "description": "One constrained model turn.",
       "required": ["prompt", "then"],
       "properties": {
@@ -155,6 +159,7 @@
     },
     "agent": {
       "type": "object",
+      "additionalProperties": false,
       "description": "A model turn with a tool loop. An explicit tools list is also a name allowlist.",
       "required": ["prompt", "then"],
       "properties": {
@@ -166,6 +171,7 @@
     },
     "tool": {
       "type": "object",
+      "additionalProperties": false,
       "description": "One tool call; args may hold templates.",
       "required": ["name", "then"],
       "properties": {
@@ -177,6 +183,7 @@
     },
     "verify": {
       "type": "object",
+      "additionalProperties": false,
       "description": "One declarative verification; spec is the kernel's verifier vocabulary.",
       "required": ["spec", "then"],
       "properties": {
@@ -187,6 +194,7 @@
     },
     "assign": {
       "type": "object",
+      "additionalProperties": false,
       "description": "Store values into run facts.",
       "required": ["set", "then"],
       "properties": {
@@ -196,6 +204,7 @@
     },
     "branch": {
       "type": "object",
+      "additionalProperties": false,
       "description": "Choose between two successors on a condition.",
       "required": ["on", "when_true", "when_false"],
       "properties": {
@@ -206,6 +215,7 @@
     },
     "retry": {
       "type": "object",
+      "additionalProperties": false,
       "description": "Run a body step with a bounded attempt count.",
       "required": ["attempts", "body", "then", "on_exhausted"],
       "properties": {
@@ -217,6 +227,7 @@
     },
     "parallel": {
       "type": "object",
+      "additionalProperties": false,
       "description": "Run several child steps concurrently and join. Needs the SpawnChild capability.",
       "required": ["branches", "join"],
       "properties": {
@@ -226,6 +237,7 @@
     },
     "delegate": {
       "type": "object",
+      "additionalProperties": false,
       "description": "Start a child run: another harness or a registered machine.",
       "required": ["target", "then"],
       "properties": {
@@ -238,6 +250,7 @@
     },
     "transform": {
       "type": "object",
+      "additionalProperties": false,
       "description": "Run a sandboxed bundle helper over a value.",
       "required": ["helper", "then"],
       "properties": {
@@ -249,6 +262,7 @@
     },
     "return": {
       "type": "object",
+      "additionalProperties": false,
       "description": "Finish successfully with a value that satisfies the declared outputs.",
       "properties": {
         "value": {}
@@ -256,6 +270,7 @@
     },
     "fail": {
       "type": "object",
+      "additionalProperties": false,
       "description": "Finish with an explicit failure.",
       "properties": {
         "code": { "type": "string" },

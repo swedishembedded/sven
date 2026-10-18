@@ -263,3 +263,28 @@ fn the_schema_rejects_what_the_typed_parser_rejects() {
         );
     }
 }
+
+#[test]
+fn the_schema_rejects_unknown_fields_like_the_typed_parser() {
+    let validator = validator();
+    let cases = [
+        (
+            "a top-level typo",
+            "api_version: \"1\"\nname: n\nentrypoint: a\nentry: a\nsteps: { a: { fail: {} } }\n",
+        ),
+        (
+            "a step-body typo",
+            "api_version: \"1\"\nname: n\nentry: a\nsteps: { a: { tool: { name: x, arguments: {}, then: a } } }\n",
+        ),
+        (
+            "a limits typo",
+            "api_version: \"1\"\nname: n\nentry: a\nlimits: { max_stepz: 1 }\nsteps: { a: { fail: {} } }\n",
+        ),
+    ];
+    for (what, yaml) in cases {
+        assert!(
+            !validator.is_valid(&yaml_to_json(yaml)),
+            "{what} must fail the schema"
+        );
+    }
+}

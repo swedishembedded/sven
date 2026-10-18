@@ -152,7 +152,7 @@ pub struct InputValue {
 }
 
 #[derive(serde::Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 enum InputValueRepr {
     /// `result: string`
     Shorthand(IOType),
@@ -204,6 +204,7 @@ impl Serialize for InputValue {
 
 /// The typed harness specification a YAML document deserializes into.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HarnessSpec {
     /// The language version. Only [`SUPPORTED_API_VERSION`] compiles.
     #[serde(rename = "api_version")]
@@ -241,6 +242,7 @@ pub struct HarnessSpec {
 /// Run limits. Every field is an upper bound the runtime enforces; the
 /// compiler requires the block whenever the step set can run away.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LimitsSpec {
     /// The most steps one run may advance through (internal events
     /// included). Bounds every cycle that pure primitives could spin in.
@@ -310,6 +312,7 @@ pub enum StepSpec {
 
 /// `predict`: one constrained model turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PredictStepSpec {
     /// What to ask. A template over run data.
     pub prompt: String,
@@ -327,6 +330,7 @@ pub struct PredictStepSpec {
 
 /// `agent`: a model turn with a tool loop.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentStepSpec {
     /// The instruction for the agent.
     pub prompt: String,
@@ -345,6 +349,7 @@ pub struct AgentStepSpec {
 
 /// `tool`: one tool call.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolStepSpec {
     /// The tool's registered name.
     pub name: String,
@@ -360,6 +365,7 @@ pub struct ToolStepSpec {
 
 /// `verify`: one declarative verification.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VerifyStepSpec {
     /// The verifier spec, as typed data (the same vocabulary the kernel's
     /// `Effect::Verify` carries).
@@ -374,6 +380,7 @@ pub struct VerifyStepSpec {
 
 /// `assign`: store values into run facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AssignStepSpec {
     /// Values to store, by fact name. Values may be templates or literals.
     #[serde(rename = "set")]
@@ -384,6 +391,7 @@ pub struct AssignStepSpec {
 
 /// `branch`: choose between two successors.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BranchStepSpec {
     /// The condition. A path string, `!path`, or an object form.
     pub on: serde_json::Value,
@@ -397,6 +405,7 @@ pub struct BranchStepSpec {
 
 /// `retry`: run a body with bounded attempts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RetryStepSpec {
     /// The most attempts (>= 1). This is what makes the cycle bounded.
     pub attempts: u64,
@@ -411,6 +420,7 @@ pub struct RetryStepSpec {
 
 /// `parallel`: run children concurrently and join.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ParallelStepSpec {
     /// The steps to run concurrently. Each is entered once; the step waits
     /// at a join until every branch reaches a terminal or rejoins.
@@ -421,6 +431,7 @@ pub struct ParallelStepSpec {
 
 /// `delegate`: start a child run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DelegateStepSpec {
     /// What to run: a harness name in the same bundle, or a registered
     /// machine mode.
@@ -452,6 +463,7 @@ pub enum DelegateTarget {
 
 /// `transform`: run a sandboxed helper over a value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TransformStepSpec {
     /// The transform helper's name in the bundle.
     pub helper: String,
@@ -467,6 +479,7 @@ pub struct TransformStepSpec {
 
 /// `return`: finish successfully.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReturnStepSpec {
     /// The harness's output value. Must satisfy the declared `outputs`
     /// contract.
@@ -476,6 +489,7 @@ pub struct ReturnStepSpec {
 
 /// `fail`: finish with a failure.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FailStepSpec {
     /// A machine-readable failure code.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -171,8 +171,7 @@ The user guide is [docs/12-harnesses.md](../12-harnesses.md) and the reference
 primitive key, its successor named by `then` (`branch` has `when_true` and
 `when_false`, `retry` a `body` and `on_exhausted`, `parallel` a `join`). The
 JSON Schema (`harness-document.schema.json`, printed by `sven harness
-schema`) is lenient about unknown fields like serde, and stricter in a few
-places; a test holds its primitive set to `PRIMITIVES`. Conditions have no
+schema`) forbids unknown fields like the typed parser; a test holds its primitive set to `PRIMITIVES`. Conditions have no
 ordering comparison or arithmetic, so a threshold is a helper's business.
 
 **Helpers are WASM only, carried in a bundle.** A bundle is the document plus
