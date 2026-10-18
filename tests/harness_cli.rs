@@ -480,6 +480,102 @@ fn compare_with_seeds_pairs_runs_and_rejects_a_regression() {
     );
 }
 
+/// The sample bundle's `reshape` helper as a `.wasm` file in `dir`.
+fn extract_sample_helper(dir: &Path) -> PathBuf {
+    use base64::Engine as _;
+    let bundle: Value = serde_yaml::from_str(
+        &std::fs::read_to_string(sample("custom-helper").join("bundle.yaml")).expect("read"),
+    )
+    .expect("bundle yaml");
+    let encoded = bundle["helpers"]["reshape"]["content"]
+        .as_str()
+        .expect("helper content");
+    let path = dir.join("reshape.wasm");
+    std::fs::write(
+        &path,
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("base64"),
+    )
+    .expect("write wasm");
+    path
+}
+
+#[test]
+fn helper_run_executes_a_module_in_the_bounded_runtime() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let wasm = extract_sample_helper(tmp.path());
+    let out = run(sven(tmp.path())
+        .args(["helper", "run"])
+        .arg(&wasm)
+        .args(["--input", r#"{"customer": "acme", "total": 3}"#]));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        stdout_json(&out),
+        serde_json::json!({"customer": "acme", "total": 3}),
+        "the sample helper is the identity"
+    );
+
+    let out = run(sven(tmp.path())
+        .args(["helper", "run"])
+        .arg(&wasm)
+        .args(["--input", "{}", "--fuel", "1"]));
+    assert_eq!(
+        code(&out),
+        1,
+        "a helper out of fuel is a result, not a crash"
+    );
+    assert!(stderr(&out).contains("fuel"), "{}", stderr(&out));
+
+    let out = run(sven(tmp.path())
+        .args(["helper", "run"])
+        .arg(tmp.path().join("missing.wasm"))
+        .args(["--input", "{}"]));
+    assert_eq!(code(&out), 2);
+}
+
+#[test]
+fn bundle_composes_a_document_and_its_helpers_into_the_committed_sample_bundle() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let wasm = extract_sample_helper(tmp.path());
+    let built = tmp.path().join("bundle.yaml");
+    let out = run(sven(tmp.path())
+        .arg("bundle")
+        .arg(sample("custom-helper").join("document.yaml"))
+        .arg("--helper")
+        .arg(format!("reshape={}", wasm.display()))
+        .arg("--output")
+        .arg(&built));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+
+    let parse = |path: &Path| -> Value {
+        serde_yaml::from_str(&std::fs::read_to_string(path).expect("read")).expect("yaml")
+    };
+    assert_eq!(
+        parse(&built),
+        parse(&sample("custom-helper").join("bundle.yaml")),
+        "the CLI builds what the sample ships"
+    );
+    let out = run(sven(tmp.path()).arg("validate").arg(&built));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+
+    // A helper the document does not use, or one that is not WASM, is refused.
+    let out = run(sven(tmp.path())
+        .arg("bundle")
+        .arg(sample("custom-helper").join("document.yaml"))
+        .arg("--helper")
+        .arg(format!("unused={}", wasm.display())));
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let junk = tmp.path().join("junk.wasm");
+    std::fs::write(&junk, b"not wasm").expect("write");
+    let out = run(sven(tmp.path())
+        .arg("bundle")
+        .arg(sample("custom-helper").join("document.yaml"))
+        .arg("--helper")
+        .arg(format!("reshape={}", junk.display())));
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+}
+
 #[test]
 fn run_without_a_model_source_fails_a_model_step_cleanly() {
     let tmp = tempfile::tempdir().expect("tempdir");

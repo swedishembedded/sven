@@ -33,7 +33,11 @@ back as `facts.shaped`, which the branch then reads. A real helper
 would compute something (a total, a threshold, a reshaped record) between the
 same two boundaries.
 
-## Authoring without a toolchain
+## Authoring a helper
+
+The commands in [Writing a helper](../../../docs/12-harnesses.md#writing-a-helper) (`sven harness helper run`, `sven harness bundle`) take a module you built with any toolchain through the same three steps this sample ships: try, bundle, test.
+
+## Authoring this sample without a toolchain
 
 The module is hand-encoded by the WASM test encoder in `sven-harness-transform`.
 `crates/harness-runtime/tests/sample_bundle.rs` builds it, composes the bundle

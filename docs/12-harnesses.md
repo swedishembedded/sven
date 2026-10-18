@@ -75,6 +75,8 @@ sven harness run      <PATH> [--input JSON | --input-file FILE] [--case FILE]
 sven harness resume   <PATH> --checkpoint FILE [the flags of run]
 sven harness replay   <PATH> --recording FILE [--expect-trace FILE] [--json]
 sven harness test     <DIR>... [--case NAME] [--no-replay] [--json]
+sven harness bundle   <DOCUMENT> --helper NAME=FILE.wasm... [-o FILE]
+sven harness helper run <FILE.wasm | BUNDLE --helper NAME> --input JSON [--fuel N] [--max-pages N]
 sven harness compare  <DIR_A> <DIR_B> --cases DIR [--fail-on-regression] [--json]
                       [--seed N]... [--bootstrap-seed N]
 ```
@@ -138,6 +140,8 @@ without `--checkpoint-out` prints a note saying its checkpoint was dropped.
 | `run`, `resume` | the plan returned | the plan `fail`ed | usage, invalid harness, input or file | suspended by a bound | cancelled | infrastructure |
 | `validate`, `inspect` | valid | invalid | unreadable path | | | |
 | `test` | all passed or skipped | a case failed | usage, invalid harness or manifest | | | |
+| `bundle` | bundle written | | usage, helper not usable, bundle does not compile | | | |
+| `helper run` | output printed | helper broke a bound or its contract | usage, unusable module | | | |
 | `compare` | report produced | regression (paired: `reject`) under `--fail-on-regression` | invalid variant or usage | | | |
 | `replay` | matched | trace mismatch | recording refused or usage | | | |
 
@@ -229,6 +233,41 @@ Notes:
 
 A run that disagrees with a case is a question about which one is wrong. The
 expectation is never loosened to make a run pass.
+
+## Writing a helper
+
+A `transform` step runs a helper: a WebAssembly module for the `helper-run/1`
+ABI. It exports one memory and `run(input_ptr: i32, input_len: i32) -> i64`;
+the host writes the input as JSON at `input_ptr` and the helper returns
+`(out_ptr << 32) | out_len`, the range of its JSON output. The module imports
+nothing (an import, a table, indirect calls, a start section or a second
+memory is refused when the module is loaded), a fresh instance serves every
+call, and each call is capped by fuel (`limits.max_helper_fuel`, one unit per
+instruction) and memory (`limits.max_helper_pages`). Build the module with any
+toolchain that emits such a module (for example a `no_std` Rust `cdylib` for
+`wasm32-unknown-unknown`, or WebAssembly text assembled with a WAT assembler);
+the loader says which feature it refuses if the module uses more than the
+runtime implements.
+
+The workflow, each step runnable on its own:
+
+1. **Try the module** on inputs, under the bounds a harness would give it:
+   `sven harness helper run reshape.wasm --input '{"customer": "acme"}' --fuel 100000`.
+   Exit 0 prints the JSON output; exit 1 names the boundary that broke
+   (`fuel`, `memory`, a trap, an output that is not JSON).
+2. **Bundle** it with the document that uses it:
+   `sven harness bundle document.yaml --helper reshape=reshape.wasm -o bundle.yaml`.
+   The bundle is refused when a `transform` step names a helper you did not
+   give, when you give one no step uses, or when a module does not load.
+3. **Validate and test** the bundle directory like any harness:
+   `sven harness validate DIR`, `sven harness test DIR` (cases state what the
+   helper's output must make the harness do).
+
+The [custom-helper](../samples/harnesses/custom-helper/) sample runs through
+all three; its helper is the identity module, so
+`sven harness helper run samples/harnesses/custom-helper/bundle.yaml --helper reshape --input '{"a": 1}'`
+prints `{"a": 1}`. A changed helper is a changed program: the bundle digest,
+and with it any checkpoint taken under the old bundle, changes.
 
 ## Samples tour
 
