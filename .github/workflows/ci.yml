@@ -90,7 +90,11 @@ jobs:
         run: cross build -p sven --no-default-features --features minimal --target aarch64-unknown-linux-musl
 
   # Cross-platform compilation checks.  These catch ungated Unix-specific code
-  # before it blocks a Windows or macOS release build.
+  # before it blocks a Windows or macOS release build.  Both jobs stay
+  # non-blocking until each has one green run on main: the platform gating
+  # (D-Bus transport Linux-only, writer lock on every platform) was checked by
+  # cross-compiling only, and a failure here is a finding, not noise.  Make a
+  # job blocking by deleting its `continue-on-error`.
   check-macos:
     name: cargo check (macOS)
     runs-on: macos-latest
