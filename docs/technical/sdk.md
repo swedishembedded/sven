@@ -604,20 +604,26 @@ subscriber: the application's own subscriber, whatever it is, receives them.
 
 `Agent::trajectory()` exports what the agent did as an ATIF document
 (`sven_sdk::atif`): every message, every tool call with its result, the model
-and the tool definitions it was offered. It is built from the conversation the
-kernel holds, so it is complete even when progress events were dropped, and a
-resumed agent exports the same document. It carries no reward: whether the
-work was right is for a verifier to decide.
+and the tool definitions it was offered. It is built from the agent's record of
+the whole conversation, checked against the conversation the kernel holds, so it
+is complete even when progress events were dropped, and a resumed agent exports
+the same document. It carries no reward: whether the work was right is for a
+verifier to decide. What each step records about how it was decoded (prompt and
+sampled token ids, log-probabilities, seed, adapter and checkpoint digests) and
+how a run is journaled, reproduced and embedded under a parent is in
+[Training-grade trajectories](training-trajectories.md).
 
 What the document says about the model's view of the run:
 
 - **Compaction.** When the conversation outgrows the model's context the
-  kernel replaces its front with a summary. Each compaction is a `System` step
-  with `extra.context_management` (`type: "compaction"`, `boundary:
-  "replace"`) and the token counts under `extra.sven`, placed ahead of the
-  conversation that survived it. The steps the compaction replaced are not in
-  the document: a trajectory with such a step is not the whole conversation, and
-  a consumer that trains on whole conversations excludes it.
+  kernel replaces its front with a summary. The record keeps every message the
+  compaction replaced, and each compaction is a `System` step with
+  `extra.context_management` (`type: "compaction"`, `boundary: "replace"`) and
+  the token counts under `extra.sven`, placed where it fired. A trajectory with
+  such a step is not what the model saw as one conversation, and a consumer that
+  trains on whole conversations excludes it. (A run whose observation events
+  were dropped falls back to the kernel's thread, which holds only what survived
+  each compaction; its compaction markers then lead the document.)
 - **Tools.** `agent.tool_definitions` are the schemas the model's requests
   carried in the agent's last step: the machine's named tools, else the tools
   registered for its mode. A tool the mode filters out, or that `Toolset` or
