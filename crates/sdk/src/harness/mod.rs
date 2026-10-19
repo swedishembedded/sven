@@ -48,6 +48,19 @@ mod trajectory;
 pub use record::{HarnessRecording, HarnessReplay};
 pub use run::{HarnessFailure, HarnessOutcome, HarnessRun};
 
+/// Compiles a bare harness document offline, exactly as
+/// [`Engine::load_harness_from_str`] would, without an engine or a
+/// registration: for checking a document a program wrote before anything
+/// depends on it.
+///
+/// # Errors
+///
+/// [`CallError::Precondition`] naming the parse, validation or compile
+/// failure.
+pub fn compile_harness(yaml: &str) -> Result<HarnessPlan, CallError> {
+    sven_harness_spec::compile_str(yaml).map_err(|e| CallError::Precondition(e.to_string()))
+}
+
 impl Engine {
     /// Loads a harness from a YAML file and registers it on this engine.
     ///

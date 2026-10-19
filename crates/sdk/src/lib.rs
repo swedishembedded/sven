@@ -66,8 +66,8 @@ pub use error::CallError;
 pub use events::{EventStream, RunEvent};
 pub use gates::HumanGate;
 pub use harness::{
-    Harness, HarnessCheckpoint, HarnessFailure, HarnessOutcome, HarnessRecording, HarnessReplay,
-    HarnessRun,
+    compile_harness, Harness, HarnessCheckpoint, HarnessFailure, HarnessOutcome, HarnessRecording,
+    HarnessReplay, HarnessRun,
 };
 pub use method::{Method, Strategy};
 pub use run::{

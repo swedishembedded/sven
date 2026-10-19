@@ -102,6 +102,13 @@ pub struct SearchBudget {
     /// End the search as soon as a candidate is verified. Turn off to keep
     /// spending the budget (for diversity or best-utility studies).
     pub stop_on_verified: bool,
+    /// Candidates evaluated at once; at least 1. Only best-of-N, whose
+    /// candidates do not depend on each other, may exceed 1. Proposals are
+    /// still drawn one after another in index order, so the candidates and
+    /// the trace do not depend on how evaluations interleave; the token and
+    /// wall budgets are checked between batches, so a batch may overshoot
+    /// them by what its members spend.
+    pub parallelism: usize,
 }
 
 /// What an environment may spend on one evaluation: what is left of the

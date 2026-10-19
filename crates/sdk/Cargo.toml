@@ -31,6 +31,7 @@ thiserror      = { workspace = true }
 uuid           = { workspace = true }
 tokio          = { workspace = true }
 tokio-stream   = { workspace = true }
+futures        = { workspace = true }
 
 [features]
 # The presets mirror `Toolset::coding()` / `Toolset::research()`: each compiles
@@ -46,7 +47,6 @@ android = ["sven-bootstrap/android"]
 
 [dev-dependencies]
 async-trait     = { workspace = true }
-futures         = { workspace = true }
 schemars        = { workspace = true }
 sven-hsm        = { path = "../hsm" }
 sven-memory     = { path = "../memory" }

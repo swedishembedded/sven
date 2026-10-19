@@ -103,6 +103,12 @@ fn validate(strategy: &Strategy, budget: &SearchBudget) -> Result<(), SearchErro
     if budget.max_evaluations == 0 {
         return invalid("max_evaluations must be at least 1");
     }
+    if budget.parallelism == 0 {
+        return invalid("parallelism must be at least 1");
+    }
+    if budget.parallelism > 1 && !matches!(strategy, Strategy::BestOfN) {
+        return invalid("only best-of-N evaluates candidates in parallel: annealing's next candidate depends on the last");
+    }
     if let Strategy::SimulatedAnnealing {
         initial_temperature,
         cooling,
@@ -141,6 +147,11 @@ where
     validate(&strategy, budget)?;
     let started = Instant::now();
     let mut rng = SearchRng::from_seed(seed);
+    if budget.parallelism > 1 {
+        let (trace, tokens, stop) =
+            best_of_n_batches(&initial, proposer, environment, budget, &mut rng, started).await?;
+        return report(trace, stop, tokens, started.elapsed());
+    }
     let mut trace: Vec<TraceEntry<C>> = Vec::new();
     let mut tokens = 0u64;
     let mut current: Option<usize> = None;
@@ -223,6 +234,97 @@ where
         }
     };
     report(trace, stop, tokens, started.elapsed())
+}
+
+/// Best-of-N with `budget.parallelism` candidates in flight: each batch is
+/// proposed in index order from the initial candidate, then evaluated
+/// concurrently, and its entries join the trace in index order.
+async fn best_of_n_batches<C, P, E>(
+    initial: &C,
+    proposer: &P,
+    environment: &E,
+    budget: &SearchBudget,
+    rng: &mut SearchRng,
+    started: Instant,
+) -> Result<(Vec<TraceEntry<C>>, u64, StopReason), SearchError>
+where
+    C: Clone + Send + Sync + Serialize,
+    P: Proposer<C>,
+    E: CandidateEnvironment<C>,
+{
+    let mut trace: Vec<TraceEntry<C>> = Vec::new();
+    let mut tokens = 0u64;
+    let stop = loop {
+        let first = trace.len() as u64;
+        if let Some(reason) = exhausted(budget, first, tokens, started.elapsed()) {
+            break reason;
+        }
+        let size = budget
+            .parallelism
+            .min(usize::try_from(budget.max_evaluations - first).unwrap_or(usize::MAX));
+        let mut batch = Vec::with_capacity(size);
+        for offset in 0..size {
+            let index = first + offset as u64;
+            if index == 0 {
+                batch.push((initial.clone(), None, 0, Vec::new()));
+                continue;
+            }
+            let step = ProposalStep {
+                index,
+                temperature: None,
+            };
+            let proposal = proposer
+                .propose(initial, &step, rng)
+                .await
+                .map_err(|e| e.at(index))?;
+            tokens += proposal.tokens;
+            batch.push((
+                proposal.candidate,
+                Some(0),
+                proposal.tokens,
+                proposal.trajectories,
+            ));
+        }
+        let limits = EvalLimits {
+            tokens_remaining: budget.max_tokens.map(|m| m.saturating_sub(tokens)),
+            wall_remaining: budget.max_wall.map(|m| m.saturating_sub(started.elapsed())),
+        };
+        let evaluations = futures::future::join_all(
+            batch
+                .iter()
+                .map(|(candidate, ..)| environment.evaluate(candidate, &limits)),
+        )
+        .await;
+        let mut verified = false;
+        for (offset, ((candidate, parent, proposal_tokens, trajectories), evaluation)) in
+            batch.into_iter().zip(evaluations).enumerate()
+        {
+            let index = first + offset as u64;
+            let evaluation = evaluation.map_err(|e| e.at(index))?;
+            if !evaluation.utility.is_finite() {
+                return Err(SearchError::NonFiniteUtility {
+                    index,
+                    utility: evaluation.utility,
+                });
+            }
+            tokens += evaluation.tokens;
+            verified |= evaluation.verified();
+            trace.push(TraceEntry {
+                index,
+                parent,
+                candidate,
+                evaluation,
+                accepted: true,
+                temperature: None,
+                proposal_tokens,
+                proposal_trajectories: trajectories,
+            });
+        }
+        if verified && budget.stop_on_verified {
+            break StopReason::Verified;
+        }
+    };
+    Ok((trace, tokens, stop))
 }
 
 fn exhausted(

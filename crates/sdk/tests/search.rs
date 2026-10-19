@@ -89,6 +89,7 @@ fn budget(evaluations: u64) -> SearchBudget {
         max_tokens: None,
         max_wall: None,
         stop_on_verified: true,
+        parallelism: 1,
     }
 }
 
@@ -371,4 +372,128 @@ async fn over_many_seeds_annealing_solves_what_best_of_n_cannot() {
         sa_evals < bon_evals,
         "solving stops annealing early; best-of-n always spends the budget"
     );
+}
+
+/// An environment that records how many evaluations overlap.
+struct Overlapping {
+    inner: BitEnvironment,
+    in_flight: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
+}
+
+impl CandidateEnvironment<Bits> for Overlapping {
+    async fn evaluate(
+        &self,
+        candidate: &Bits,
+        limits: &EvalLimits,
+    ) -> Result<SearchEvaluation, SearchError> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let now = self.in_flight.fetch_add(1, SeqCst) + 1;
+        self.peak.fetch_max(now, SeqCst);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let result = self.inner.evaluate(candidate, limits).await;
+        self.in_flight.fetch_sub(1, SeqCst);
+        result
+    }
+}
+
+#[tokio::test]
+async fn parallel_best_of_n_overlaps_evaluations_up_to_its_bound_and_changes_nothing_else() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let run = |parallelism: usize| async move {
+        let environment = Overlapping {
+            inner: BitEnvironment,
+            in_flight: 0.into(),
+            peak: 0.into(),
+        };
+        let bounded = SearchBudget {
+            parallelism,
+            ..budget(25)
+        };
+        let report = search(
+            Strategy::BestOfN,
+            vec![false; BITS],
+            &FlipOne,
+            &environment,
+            &bounded,
+            9,
+        )
+        .await
+        .unwrap();
+        (report, environment.peak.load(SeqCst))
+    };
+    let (sequential, sequential_peak) = run(1).await;
+    let (parallel, parallel_peak) = run(5).await;
+
+    assert_eq!(sequential_peak, 1);
+    assert!(
+        (2..=5).contains(&parallel_peak),
+        "evaluations overlapped, within the bound: {parallel_peak}"
+    );
+    // The candidates drawn, their order and their evaluations are the same:
+    // parallelism changes when evaluations run, not what the search is.
+    assert_eq!(sequential.trace, parallel.trace);
+    assert_eq!(sequential.best_utility, parallel.best_utility);
+    assert_eq!(parallel.metrics.evaluations, 25);
+}
+
+#[tokio::test]
+async fn a_batch_that_verifies_a_candidate_stops_the_search_after_the_batch() {
+    // Every candidate of this environment is verified, so the first batch
+    // ends the search: its members are all in the trace, none after.
+    struct Always;
+    impl CandidateEnvironment<Bits> for Always {
+        async fn evaluate(
+            &self,
+            _: &Bits,
+            _: &EvalLimits,
+        ) -> Result<SearchEvaluation, SearchError> {
+            Ok(SearchEvaluation {
+                terminal: Some(VerifierVerdict::Passed),
+                utility: 1.0,
+                signals: BTreeMap::new(),
+                tokens: 0,
+                trajectories: Vec::new(),
+            })
+        }
+    }
+    let bounded = SearchBudget {
+        parallelism: 4,
+        ..budget(100)
+    };
+    let report = search(
+        Strategy::BestOfN,
+        vec![false; BITS],
+        &FlipOne,
+        &Always,
+        &bounded,
+        1,
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.stop, StopReason::Verified);
+    assert_eq!(report.metrics.evaluations, 4);
+}
+
+#[tokio::test]
+async fn parallelism_is_refused_for_annealing_and_at_zero() {
+    for (strategy, parallelism) in [(ANNEALING, 2), (Strategy::BestOfN, 0)] {
+        let bounded = SearchBudget {
+            parallelism,
+            ..budget(10)
+        };
+        let result = search(
+            strategy,
+            vec![false; BITS],
+            &FlipOne,
+            &BitEnvironment,
+            &bounded,
+            1,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(SearchError::Invalid(_))),
+            "{parallelism}"
+        );
+    }
 }

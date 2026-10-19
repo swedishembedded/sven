@@ -443,7 +443,12 @@ You give it:
   `stop_on_verified`) and a seed.
 
 `search(Strategy::BestOfN | Strategy::SimulatedAnnealing { initial_temperature,
-cooling }, ...)` evaluates candidates one after another. Best-of-N proposes
+cooling }, ...)` evaluates candidates one after another, or, for best-of-N with
+`SearchBudget::parallelism` above 1, that many at once: proposals are still drawn
+in index order, so the trace does not depend on how evaluations interleave, and
+the token and wall budgets are checked between batches. Annealing is sequential
+(its next candidate depends on the last). `sven_sdk::compile_harness(yaml)` checks
+a harness document a program wrote, as loading it would, without an engine. Best-of-N proposes
 every candidate from the initial one; annealing is a Metropolis walk (an
 improvement is always accepted, a worse candidate with probability
 `exp(delta / T)`, `T` cooling geometrically). The same seed reproduces the
