@@ -253,7 +253,9 @@ pub async fn run_reduce(opts: ReduceOptions, stdin_data: String) -> anyhow::Resu
         &opts.prompt,
         opts.model.as_deref(),
         &opts.output_format,
-        &[],
+        // A prompted run reads stdin only when asked to; without the flag the
+        // child never sees the collected sections.
+        &["--stdin".to_string()],
         Some(&context),
     )
     .await

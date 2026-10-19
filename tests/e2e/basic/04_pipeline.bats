@@ -179,3 +179,16 @@ EOF'
     [ "${status}" -eq 0 ]
     [ -n "${output}" ]
 }
+
+# ── Structured stdin and reduce ───────────────────────────────────────────────
+
+@test "04.22 reduce hands the collected stdin to the synthesis agent" {
+    work="$(mktemp -d)"
+    cd "${work}"
+    run_split_output bash -c \
+        'echo "write a file for me" | "$BIN" reduce --model mock "please"'
+    cd - >/dev/null
+    rm -rf "${work}"
+    [ "${EXIT_CODE}" -eq 0 ]
+    [[ "${STDERR_OUT}" == *'name="write_file"'* ]]
+}
