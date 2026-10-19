@@ -210,8 +210,14 @@ mod tests {
         assert!(check_requested_tools(Some("read_file, grep")).is_ok());
         for bad in ["all", "read_file,nonexistent_tool"] {
             let err = check_requested_tools(Some(bad)).unwrap_err().to_string();
-            assert!(err.contains("default"), "error should offer `default`: {err}");
-            assert!(err.contains("read_file"), "error should list the names: {err}");
+            assert!(
+                err.contains("default"),
+                "error should offer `default`: {err}"
+            );
+            assert!(
+                err.contains("read_file"),
+                "error should list the names: {err}"
+            );
         }
     }
 

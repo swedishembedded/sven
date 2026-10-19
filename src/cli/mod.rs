@@ -772,7 +772,10 @@ mod tests {
     /// An explicit `--mode` wins; without one the configured default applies.
     #[test]
     fn mode_falls_back_to_the_configured_default() {
-        assert_eq!(cli(&["fix it"]).agent_mode(AgentMode::Plan), AgentMode::Plan);
+        assert_eq!(
+            cli(&["fix it"]).agent_mode(AgentMode::Plan),
+            AgentMode::Plan
+        );
         assert_eq!(
             cli(&["--mode", "research", "fix it"]).agent_mode(AgentMode::Plan),
             AgentMode::Research

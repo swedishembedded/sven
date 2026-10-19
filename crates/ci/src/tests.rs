@@ -708,7 +708,9 @@ mod tests {
         assert!(crate::is_trace_input("{\n  \"steps\": []\n}\n"));
         assert!(!crate::is_trace_input("## User\nhi\n"));
         assert!(!crate::is_trace_input("plain text\n"));
-        assert!(!crate::is_trace_input("{\n  \"not\": \"a trajectory\"\n}\n"));
+        assert!(!crate::is_trace_input(
+            "{\n  \"not\": \"a trajectory\"\n}\n"
+        ));
     }
 
     // ── Edge cases ────────────────────────────────────────────────────────────

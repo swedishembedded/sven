@@ -220,31 +220,6 @@ pub(super) fn normalize_label(label: &str) -> String {
     result
 }
 
-#[cfg(test)]
-mod normalize_tests {
-    use super::normalize_label;
-
-    #[test]
-    fn spaces_become_underscores() {
-        assert_eq!(normalize_label("Gather Information"), "gather_information");
-    }
-
-    #[test]
-    fn numbers_preserved() {
-        assert_eq!(normalize_label("Step 01: List Files"), "step_01_list_files");
-    }
-
-    #[test]
-    fn parens_stripped() {
-        assert_eq!(normalize_label("(unlabelled)"), "unlabelled");
-    }
-
-    #[test]
-    fn already_snake_case() {
-        assert_eq!(normalize_label("my_step"), "my_step");
-    }
-}
-
 /// The model a workflow step switches to, if any.
 ///
 /// Precedence, highest first: the step's own `model` (with `provider`)
@@ -269,5 +244,30 @@ pub(crate) fn step_model_spec(
                 .or_else(|| models.get("agent"))
                 .cloned()
         }
+    }
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use super::normalize_label;
+
+    #[test]
+    fn spaces_become_underscores() {
+        assert_eq!(normalize_label("Gather Information"), "gather_information");
+    }
+
+    #[test]
+    fn numbers_preserved() {
+        assert_eq!(normalize_label("Step 01: List Files"), "step_01_list_files");
+    }
+
+    #[test]
+    fn parens_stripped() {
+        assert_eq!(normalize_label("(unlabelled)"), "unlabelled");
+    }
+
+    #[test]
+    fn already_snake_case() {
+        assert_eq!(normalize_label("my_step"), "my_step");
     }
 }
