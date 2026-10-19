@@ -179,8 +179,7 @@ the declared files are unchanged.
 A writing child (`agent` mode, a persona that is not read-only) keeps every
 rule it had. It runs in the parent's tree under the parent's contract, a
 read-only parent cannot start one, its permission requests go to the parent's
-approval gate, and teammates of an agent team keep their own worktrees and
-task claims. Deduplication does not touch it: a writing subgoal is never
+approval gate, and teammates of an agent team keep their own task claims. Deduplication does not touch it: a writing subgoal is never
 answered from another call, never put to the decision model, and never
 served to a read-only twin or the reverse, whatever its scope overlaps.
 

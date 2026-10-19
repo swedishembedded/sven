@@ -111,9 +111,7 @@ Work gets onto the board in one of two ways:
   `--team-name`, `--team-role` and `--teammate-name` (alias `--agent-name`),
   hidden from `--help`; `sven team start` passes them for you.
 
-Hosts that embed sven can register the team tools listed below so a lead agent
-manages the board itself. The stock `sven` binary does not register them, so
-the interactive agent has no `create_team`, `create_task` or similar tool.
+Work is put on the board by a person or a script; no agent tool edits it.
 
 ---
 
@@ -173,48 +171,14 @@ A member started by `sven team start` with an unrecognised role runs as
 
 ---
 
-## Team tools
-
-The `sven-team` crate provides these as `sven_tool_api::Tool` implementations
-for hosts that register them. The first group is for the lead.
-
-| Tool | What it does |
-|---|---|
-| `create_team` | Initialise a team (or restore it if it exists) and become its lead |
-| `load_team` | Re-attach to a team that exists on disk |
-| `list_team` | Members with role, status and current task; `show_closed` includes closed members |
-| `spawn_teammate` | Start a member process (`name`, `role`, `model`, `task_prompt`, `use_worktree`); lead only |
-| `shutdown_teammate` | Mark a member `closed` by `name` or `peer_id`; it finishes its current task and exits |
-| `register_teammate` | Register an already-running process as a member |
-| `read_teammate_log` | Tail a spawned member's log, `~/.config/sven/teams/<team>/<name>.log` |
-| `merge_teammate_branch` | Merge a member's worktree branch into the current branch with `git merge --no-ff` |
-| `cleanup_team` | Remove the team directory; refuses while members are active unless `force` is true; lead only |
-| `create_task` | Add a task (`title`, `description`, `assigned_to`, `depends_on`) |
-| `list_tasks` | Show tasks with status, assignee, summaries and `[blocked: n/m deps done]` markers; optional status filter |
-| `assign_task` | Direct a task to a member |
-| `claim_task` | Mark a task `in_progress` for the caller |
-| `complete_task` | Mark a task `completed` with a summary |
-| `update_task` | Replace a task's description |
-
-### Git worktree isolation
-
-`spawn_teammate` with `use_worktree: true` creates the branch
-`sven/team-<team>/<role>-<name>` from `HEAD` and a worktree at
-`<repo>/.sven-worktrees/<team>/<role>-<name>` for that member, so concurrent
-edits do not collide. The current directory must be inside a Git repository.
-`merge_teammate_branch` merges the branch back. Members started with
-`sven team start` share the directory they are started in.
-
----
-
 ## Recursion and safety
 
 sven enforces hard limits to prevent runaway agent chains:
 
 - **Subprocess depth** - a sub-agent started by the `task` tool cannot itself
   start further sub-agents.
-- **`spawn_teammate`** - the library tool refuses unless the caller is the
-  team lead, so a teammate cannot spawn sub-teams.
+- **Teams** - a member runs the coding toolset, which has no team tools, so a
+  teammate cannot start further teams or members.
 
 A `task` sub-agent never holds more than the session that started it:
 

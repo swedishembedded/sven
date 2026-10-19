@@ -83,7 +83,7 @@ tiers unless an edge is listed there.
 | `sven-tools-gdb` | GDB/MI debugging tools and the compound `gdb` tool (Unix only) |
 | `sven-tools-android` | Typed Android device control over ADB |
 | `sven-memory` | The `semantic_memory` tool over the `MemoryStore` contract |
-| `sven-team` | Agent team coordination: shared task lists, team config, lifecycle tools |
+| `sven-team` | Agent team coordination: shared task lists, team config and definitions, `sven team` commands |
 | `sven-mcp-client` | MCP client: external MCP servers as a tool/prompt/resource source |
 | `sven-mcp` | MCP server exposing sven tools |
 | `sven-acp` | ACP (Agent Client Protocol) server |

@@ -139,11 +139,11 @@ differ in effect classes each call by its arguments (`Tool::call_capability`).
 | Capability | Read-only? | Used by (examples) |
 |------------|------------|--------------------|
 | `ReadFile` | Yes | `read_file`, `find_file`, `grep`, `read_lints`, `buf_read`, `buf_grep`, `buf_status`, `todo`, `ask_question`, `skill`, `task`, `context` open/read/grep/expand, `memory` get/list/search_knowledge/list_knowledge, `semantic_memory` recall/list/get, `system` switch_mode/switch_model, `list_tasks`, `list_team` |
-| `WriteFile` | No | `write_file`, `edit_file`, `memory` set/delete, `semantic_memory` remember/forget, `system` remove_mcp_server, team task and roster tools (`create_task`, `claim_task`, `complete_task`, `assign_task`, `update_task`, `create_team`, ...) |
-| `DeleteFile` | No | `cleanup_team` |
-| `ExecuteShell` | No | `shell`, the `gdb` tools, `system` add_mcp_server, `spawn_teammate` |
+| `WriteFile` | No | `write_file`, `edit_file`, `memory` set/delete, `semantic_memory` remember/forget, `system` remove_mcp_server |
+| `DeleteFile` | No | no built-in tool; the model deletes through `shell` |
+| `ExecuteShell` | No | `shell`, the `gdb` tools, `system` add_mcp_server |
 | `NetworkAccess` | No | `web_fetch`, `web_search`, `context` query/reduce, `context_query`, `context_reduce`, MCP tools |
-| `GitOperation` | No | `merge_teammate_branch` (there are no `git_*` tools; the model runs git through `shell`) |
+| `GitOperation` | No | no built-in tool (there are no `git_*` tools; the model runs git through `shell`) |
 | `ControlDevice` | No | `android` |
 | `RunVerifier` | Yes | Granted by `VerifiedTaskMachine` in `Verifying`; no tool or effect currently requires it |
 | `SpawnChild` | Yes | `InstantiateSubmachine` (the `task` tool's sub-agent is admitted as a read) |

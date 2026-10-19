@@ -96,7 +96,7 @@ configuration file; see [Configuration](configuration.md#toolsdisclosure).
 | `-h, --help` | | Print help. |
 
 Hidden options `--team-name`, `--team-role` and `--teammate-name` (alias
-`--agent-name`) are set by `spawn_teammate` when sven starts a team member and
+`--agent-name`) are set by `sven team start` when it starts a team member and
 are not for direct use.
 
 ### Headless detection

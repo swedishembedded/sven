@@ -109,58 +109,12 @@ fn is_default_status(s: &MemberStatus) -> bool {
     matches!(s, MemberStatus::Unknown)
 }
 
-/// Returns `true` when an OS process with `pid` is currently running.
-///
-/// Uses `kill(pid, 0)` on Unix - sends no signal but returns success only if
-/// the process exists and we have permission to signal it.
-pub fn is_process_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        let ret = unsafe { libc::kill(pid as libc::pid_t, 0) };
-        ret == 0
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        true // on non-Unix, assume alive; no crash detection
-    }
-}
-
-/// Scan `~/.config/sven/teams/` and return all `TeamConfig`s where
-/// `lead_peer_id == lead_peer`.
-///
-/// Used on node startup to restore the active team after a restart.
-pub fn find_teams_by_lead(lead_peer: &str) -> Vec<TeamConfig> {
-    let teams_dir = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
-        .join("sven")
-        .join("teams");
-    let Ok(entries) = std::fs::read_dir(&teams_dir) else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-        .filter_map(|e| {
-            let cfg_path = e.path().join("config.json");
-            let data = std::fs::read_to_string(&cfg_path).ok()?;
-            let cfg: TeamConfig = serde_json::from_str(&data).ok()?;
-            if cfg.lead_peer_id == lead_peer {
-                Some(cfg)
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
 /// Derive a stable, deterministic synthetic peer ID for a locally spawned
 /// teammate process.
 ///
-/// This ID is computed identically by both the `spawn_teammate` tool (which
-/// pre-registers the entry with the OS PID) and the running teammate process
-/// (which re-uses the same ID on registration).  Using the same ID prevents
-/// duplicate roster entries when the process starts.
+/// The team definition pre-registers each member under this ID and the
+/// running teammate process re-uses it on registration, so the roster never
+/// holds the same member twice.
 ///
 /// The format is intentionally different from a base58-encoded network peer id
 /// so it can be identified at a glance in logs and the team config.
@@ -239,11 +193,6 @@ impl TeamConfig {
     /// Find a member by peer ID.
     pub fn find_member(&self, peer_id: &str) -> Option<&TeamMember> {
         self.members.iter().find(|m| m.peer_id == peer_id)
-    }
-
-    /// Check whether `peer_id` is the lead.
-    pub fn is_lead(&self, peer_id: &str) -> bool {
-        self.lead_peer_id == peer_id
     }
 
     /// Returns `true` if the token budget is exhausted.
@@ -454,13 +403,6 @@ mod tests {
         cfg.members[0].peer_id = "peer-lead".to_string();
         assert!(cfg.find_member("peer-lead").is_some());
         assert!(cfg.find_member("peer-unknown").is_none());
-    }
-
-    #[test]
-    fn is_lead_check() {
-        let cfg = lead_config();
-        assert!(cfg.is_lead("peer-lead"));
-        assert!(!cfg.is_lead("peer-bob"));
     }
 
     // ── budget_exhausted ──────────────────────────────────────────────────────

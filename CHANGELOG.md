@@ -81,6 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A run waiting on live child runs was judged quiescent, so a deadline or cancellation could surface as a stall; a run's tool calls, now bound to its cancel scope, also end with the run.
 
 ### Removed
+- **sven-team**: the lead-agent tool layer (`CreateTeamTool`, `LoadTeamTool`, `ListTeamTool`, `SpawnTeammateTool`, `ShutdownTeammateTool`, `RegisterTeammateTool`, `ReadTeammateLogTool`, `MergeTeammateBranchTool`, `CleanupTeamTool`, the six task tools, `TeamConfigHandle`), the orchestrator prompts and the teammate worktree helpers, together with `find_teams_by_lead`, `is_process_alive` and `TeamConfig::is_lead`. No agent of the stock binary registered them: teams run through `sven team` and the member process, which share the task board directly. **Migration**: an embedding application that registered these tools drives the board through `TaskStore` and `TeamConfigStore`.
 - `sven mcp serve --tools all`: the keyword is now `default`, and an unknown tool name is an error rather than ignored.
 
 ### Changed (BREAKING, harness documents)

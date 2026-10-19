@@ -7,40 +7,19 @@
 //!
 //! - [`task`]: Shared task list data model and file-locked storage.
 //! - [`config`]: Team configuration (members, roles, metadata).
-//! - [`tools`]: LLM-callable tools for the task list (`create_task`, `claim_task`, ...).
-//! - [`spawn`]: LLM-callable tools for team lifecycle (`create_team`, `list_team`, ...).
-//! - [`prompts`]: Orchestrator system prompt fragments.
 //! - [`definition`]: Declarative team definition files (`.sven/teams/*.yaml`).
 //! - [`cli`]: Implementations for the `sven team` CLI subcommands.
 
-mod branch_tools;
 pub mod cli;
 pub mod config;
 pub mod definition;
 pub mod limits;
-pub mod prompts;
-pub mod spawn;
 pub mod task;
-pub mod tools;
-pub mod worktree;
 
 // Re-export the most commonly used types.
 pub use config::{
-    find_teams_by_lead, is_process_alive, teammate_stable_peer_id, MemberStatus, TeamConfig,
-    TeamConfigStore, TeamMember, TeamRole,
+    teammate_stable_peer_id, MemberStatus, TeamConfig, TeamConfigStore, TeamMember, TeamRole,
 };
 pub use definition::{TeamDefinition, TeamMemberDef};
 pub use limits::{MemberLimits, TokenAllowance};
-pub use spawn::{
-    CleanupTeamTool, CreateTeamTool, ListTeamTool, LoadTeamTool, MergeTeammateBranchTool,
-    ReadTeammateLogTool, RegisterTeammateTool, ShutdownTeammateTool, SpawnTeammateTool,
-    TeamConfigHandle,
-};
 pub use task::{default_team_dir, Task, TaskList, TaskStatus, TaskStore, TaskStoreError};
-pub use tools::{
-    AssignTaskTool, ClaimTaskTool, CompleteTaskTool, CreateTaskTool, ListTasksTool, UpdateTaskTool,
-};
-pub use worktree::{
-    create_teammate_worktree, find_repo_root, list_team_worktrees, merge_teammate_branch,
-    remove_worktree, teammate_branch_name, teammate_worktree_path, WorktreeGuard,
-};
