@@ -90,7 +90,7 @@ members = [
 # so every ATIF trajectory sven writes carries the real release version with
 # no runtime plumbing required.
 [workspace.package]
-version = "3.0.0"
+version = "4.0.0"
 
 [workspace.dependencies]
 libc         = "0.2"
