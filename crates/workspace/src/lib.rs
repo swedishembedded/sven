@@ -39,6 +39,9 @@ pub use project::{
     find_project_context_file, find_project_root, find_workspace_root, resolve_auto_log_path,
 };
 
+pub mod identity;
+pub use identity::{workspace_identity, WorkspaceIdentity};
+
 pub mod git;
 pub use git::{collect_git_context, GitContext};
 

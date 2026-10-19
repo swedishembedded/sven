@@ -10,6 +10,7 @@ chrono     = { workspace = true }
 serde      = { workspace = true }
 serde_yaml = { workspace = true }
 dirs       = { workspace = true }
+sha2       = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
