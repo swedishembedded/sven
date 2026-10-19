@@ -21,6 +21,14 @@ use crate::{
 /// this crate (feature `conformance`).
 #[async_trait]
 pub trait MemoryStore: Send + Sync {
+    /// The identity of the frozen snapshot this store reads, if it is one.
+    /// A trajectory's memory record carries it so that an evaluation can say
+    /// which memory its answers came from. A store that is not a snapshot has
+    /// none.
+    fn frozen_snapshot(&self) -> Option<String> {
+        None
+    }
+
     /// Records `request.source_id` in `request.space`.
     ///
     /// Idempotent by content: a source already recorded at the same revision

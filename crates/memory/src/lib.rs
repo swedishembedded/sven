@@ -29,7 +29,9 @@
 //! our services by sending an email to info@swedishembedded.com.
 
 mod embed;
+mod frozen;
 mod tool;
 
 pub use embed::HashingEmbedder;
+pub use frozen::{memory_snapshot_id, FrozenMemory};
 pub use tool::{SemanticMemoryTool, NOTES_SEGMENTER, PERSONAL_SPACE};

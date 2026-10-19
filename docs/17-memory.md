@@ -188,3 +188,16 @@ agents on one engine and one store see only what each was granted.
 belongs to (the same for every worktree of it and for clones of one `origin`) and
 its checkout, so memory about a codebase can be kept under the repository and not
 under the path it was checked out in; it reads only the directory it is given.
+
+## Freezing memory for an evaluation
+
+What a retrieval-assisted agent answers depends on what its memory held, so an
+evaluation reads a frozen snapshot. `memory_snapshot_id` names the content a
+caller can read in some spaces (every source's space, id and content revision,
+sorted, and the index generation when one is named): the same memory built twice
+has the same name, and an added, changed or removed source changes it.
+`FrozenMemory::freeze` pins a store to that name: it reads through, refuses every
+write, and refuses to answer once the store it wraps has moved (the name no
+longer matches). Every recall through a frozen memory carries the snapshot id in
+the trajectory's memory record (`snapshot_id`), so the units an answer was built
+from, and the memory they came from, are in the record.

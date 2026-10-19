@@ -303,11 +303,9 @@ impl SemanticMemoryTool {
         };
 
         // Every hit is shown, so every hit was put into the context.
-        record_memory_retrieval(to_trajectory(RetrievalRecord::new(
-            &request,
-            &response,
-            |_| true,
-        )));
+        let mut record = RetrievalRecord::new(&request, &response, |_| true);
+        record.snapshot_id = self.store.frozen_snapshot();
+        record_memory_retrieval(to_trajectory(record));
 
         if response.hits.is_empty() {
             return ToolOutput::ok(&call.id, "No memories found for that query.");
