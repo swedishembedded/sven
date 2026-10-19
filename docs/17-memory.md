@@ -219,11 +219,15 @@ model. On sven's own documentation (38 files):
 
 | mode | hit@1 | hit@3 | hit@10 | MRR |
 |------|------:|------:|-------:|----:|
-| words only (BM25) | 0.47 | 0.57 | 0.80 | 0.546 |
-| words + hashing embedder | 0.40 | 0.50 | 0.77 | 0.486 |
+| words only (BM25) | 0.47 | 0.57 | 0.80 | 0.545 |
+| words + hashing embedder | 0.37 | 0.50 | 0.77 | 0.470 |
+| words + Qwen3-Embedding-0.6B (served by brain) | 0.40 | 0.77 | 0.87 | 0.569 |
 
 The hashing embedder is a fixed lexical hash, so it adds no meaning and costs a
 little ranking quality here; it exists to make the semantic path testable
 without a model, not to improve search. The queries are few and hand-labelled,
-so these numbers compare modes on this corpus and are not a benchmark. A served
-embedding model has not been measured yet (see the roadmap).
+so these numbers compare modes on this corpus and are not a benchmark. The served
+model finds the right document in the top three far more often (0.77 against 0.57)
+but puts it first less often (0.40 against 0.47); passages and queries were embedded
+alike, without the model's query instruction. Embedding the 38 documents took about
+10 minutes because the client sends one request per batch of units.
