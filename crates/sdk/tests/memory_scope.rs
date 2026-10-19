@@ -111,3 +111,67 @@ async fn an_agent_remembers_and_recalls_only_in_the_space_its_host_granted() {
         "{seen_by_a}"
     );
 }
+
+#[tokio::test]
+async fn a_frozen_scope_reads_what_was_there_records_its_snapshot_and_cannot_write() {
+    let store = Arc::new(SqliteMemory::open_in_memory().expect("an in-memory store"));
+    let writer = grant("kb");
+    let seed = vec![
+        call(
+            "w",
+            r#"{"action":"remember","content":"the deploy key rotates on fridays"}"#,
+        ),
+        done(),
+    ];
+    let engine = Engine::builder()
+        .model_provider(Arc::new(ScriptedMockProvider::new(seed)))
+        .build()
+        .expect("an engine builds");
+    let mut author = engine
+        .agent("agent")
+        .with_memory(MemoryScope::new(store.clone(), writer.clone(), "kb"))
+        .await
+        .expect("a scope");
+    author.send("remember").await.expect("author ran");
+
+    let scope = MemoryScope::new(store.clone(), writer, "kb")
+        .frozen()
+        .await
+        .expect("freezing lists the space");
+    let snapshot = scope
+        .snapshot_id()
+        .expect("a frozen scope has one")
+        .to_owned();
+    let scripts = vec![
+        call("r", r#"{"action":"recall","query":"deploy key"}"#),
+        done(),
+        call(
+            "w2",
+            r#"{"action":"remember","content":"a note written during the evaluation"}"#,
+        ),
+        done(),
+    ];
+    let engine = Engine::builder()
+        .model_provider(Arc::new(ScriptedMockProvider::new(scripts)))
+        .build()
+        .expect("an engine builds");
+    let mut reader = engine
+        .agent("agent")
+        .with_memory(scope)
+        .await
+        .expect("a scope");
+    reader.send("recall").await.expect("reader ran");
+    reader.send("write").await.expect("reader ran again");
+
+    let seen = serde_json::to_string(&reader.trajectory()).unwrap();
+    assert!(seen.contains("the deploy key rotates on fridays"), "{seen}");
+    assert!(
+        seen.contains(&snapshot),
+        "the retrieval names the frozen snapshot: {seen}"
+    );
+    let sources = store
+        .list_sources(&grant("kb"), &SpaceId::new("kb"), None)
+        .await
+        .expect("lists");
+    assert_eq!(sources.len(), 1, "the evaluation wrote nothing");
+}

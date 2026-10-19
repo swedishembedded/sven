@@ -10,7 +10,9 @@
 
 use std::sync::Arc;
 
-use sven_memory::SemanticMemoryTool;
+use std::collections::BTreeSet;
+
+use sven_memory::{FrozenMemory, SemanticMemoryTool};
 use sven_memory_api::{AccessContext, Embedder, MemoryError, MemoryStore, SpaceId};
 
 use crate::agent::Agent;
@@ -27,6 +29,7 @@ pub struct MemoryScope {
     access: AccessContext,
     space: SpaceId,
     embedder: Option<Arc<dyn Embedder>>,
+    snapshot: Option<String>,
 }
 
 impl MemoryScope {
@@ -42,7 +45,37 @@ impl MemoryScope {
             access,
             space: SpaceId::new(space),
             embedder: None,
+            snapshot: None,
         }
+    }
+
+    /// Pins the scope to the content its space has now, read-only: the agent
+    /// recalls from exactly this memory however the store changes meanwhile
+    /// (a recall of a store that moved is refused, never answered from newer
+    /// content), cannot write to it, and every retrieval it makes records
+    /// [`snapshot_id`](Self::snapshot_id). An evaluation freezes the memory
+    /// so that a result is about one memory.
+    ///
+    /// # Errors
+    /// The store's refusal to list the space.
+    pub async fn frozen(mut self) -> Result<Self, MemoryError> {
+        let frozen = FrozenMemory::freeze(
+            self.store,
+            &self.access,
+            BTreeSet::from([self.space.clone()]),
+            None,
+        )
+        .await?;
+        self.snapshot = Some(frozen.snapshot_id().to_owned());
+        self.store = Arc::new(frozen);
+        Ok(self)
+    }
+
+    /// The identity of the content a [`frozen`](Self::frozen) scope is pinned
+    /// to; `None` for a live scope.
+    #[must_use]
+    pub fn snapshot_id(&self) -> Option<&str> {
+        self.snapshot.as_deref()
     }
 
     /// Searches by meaning as well as by word, with vectors from `embedder`.

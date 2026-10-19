@@ -201,3 +201,7 @@ write, and refuses to answer once the store it wraps has moved (the name no
 longer matches). Every recall through a frozen memory carries the snapshot id in
 the trajectory's memory record (`snapshot_id`), so the units an answer was built
 from, and the memory they came from, are in the record.
+
+An embedding application gets the same through the SDK:
+`MemoryScope::new(store, access, space).frozen().await?` pins the agent's scope,
+and `snapshot_id()` names what it was pinned to.
