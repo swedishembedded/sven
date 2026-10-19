@@ -15,7 +15,7 @@ const FEATURES: Feature[] = [
     icon: <TerminalIcon />,
     title: 'Terminal-First TUI',
     description:
-      'A full-screen, keyboard-driven interface that stays out of your way. Vim-style navigation, live streaming output, three operating modes. No browser, no Electron - just your terminal.',
+      'A full-screen, keyboard-driven interface that stays out of your way. Vim-style navigation, live streaming output, five operating modes. No browser, no Electron - just your terminal.',
   },
   {
     icon: <PipeIcon />,
@@ -27,17 +27,13 @@ const FEATURES: Feature[] = [
     icon: <ChipIcon />,
     title: 'Native GDB Integration',
     description:
-      'The first AI agent that connects to real hardware. Start debug servers, set breakpoints, inspect memory and registers - all from the same session where you wrote the code.',
-    tag: 'Industry First',
-    tagColor: '#e6b428',
+      'An agent that connects to real hardware. Start debug servers, set breakpoints, inspect memory and registers - all from the same session where you wrote the code.',
   },
   {
     icon: <NetworkIcon />,
     title: 'Teams of Agents',
     description:
-      'Spin up a team of agents from one session, break work into tasks on a shared board, and let each teammate claim, execute, and report back. One agent coordinates, others execute.',
-    tag: 'Unique',
-    tagColor: '#5b8dee',
+      'Start a team of agents with sven team: work sits on a shared task board and each member claims a task, executes it in its own git worktree, and reports back.',
   },
   {
     icon: <WorkflowIcon />,
@@ -47,7 +43,7 @@ const FEATURES: Feature[] = [
   },
   {
     icon: <ProvidersIcon />,
-    title: '35+ Model Providers',
+    title: '30+ Model Providers',
     description:
       'OpenAI, Anthropic, Google, Azure, AWS Bedrock, Groq, Ollama, and more. One config line to switch. No rewiring your workflow, no new tools to learn.',
   },

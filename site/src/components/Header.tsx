@@ -4,7 +4,7 @@ import Logo from './Logo'
 const NAV_LINKS = [
   { label: 'Features', href: '#features' },
   { label: 'Install', href: '#install' },
-  { label: 'Docs', href: 'https://github.com/swedishembedded/sven/tree/main/docs', external: true },
+  { label: 'Docs', href: 'https://swedishembedded.com/docs/sven', external: true },
   { label: 'GitHub', href: 'https://github.com/swedishembedded/sven', external: true },
 ]
 

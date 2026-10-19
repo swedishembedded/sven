@@ -52,7 +52,7 @@ Thumbs.db
 /.todo/
 /site/dist/
 /site/package-lock.json
-/site/public/install
+/site/public/install.sh
 
 # Local runtime/IDE artefacts
 .claude/

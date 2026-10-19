@@ -2,7 +2,7 @@
 # install.sh - Install sven from the latest GitHub release.
 #
 # One-liner usage:
-#   curl -fsSL https://agentsven.com/install | sh
+#   curl -fsSL https://agentsven.com/install.sh | sh
 #
 # Options (set as env vars before piping):
 #   SVEN_VERSION   - install a specific version (e.g. "0.2.1"), default: latest
@@ -140,4 +140,4 @@ fi
 printf "Get started:\n"
 printf "  sven --help\n"
 printf "  sven --version\n\n"
-printf "Documentation: https://agentsven.com/docs\n\n"
+printf "Documentation: https://swedishembedded.com/docs/sven\n\n"

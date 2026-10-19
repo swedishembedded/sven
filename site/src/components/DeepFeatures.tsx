@@ -8,16 +8,18 @@ export function TUIFeature() {
       body={
         <>
           Sven's keyboard-driven TUI keeps your hands on the keyboard and your mind on the problem.
-          Three modes - <strong className="text-text-primary">research</strong>,{' '}
-          <strong className="text-text-primary">plan</strong>, and{' '}
-          <strong className="text-text-primary">agent</strong> - let you dial in exactly how much
+          Five modes - <strong className="text-text-primary">research</strong>,{' '}
+          <strong className="text-text-primary">plan</strong>,{' '}
+          <strong className="text-text-primary">chat</strong>,{' '}
+          <strong className="text-text-primary">agent</strong>, and{' '}
+          <strong className="text-text-primary">sdlc</strong> - let you dial in exactly how much
           autonomy sven has. Watch it work live, steer mid-task, or let it run unattended while you
           think.
         </>
       }
       bullets={[
         { text: 'Vim-style navigation: j/k to scroll, / to search, q to quit' },
-        { text: 'Cycle modes live with F4 - from read-only research to full agent access' },
+        { text: 'Cycle modes live with F4 - from research and plan to full agent access' },
         { text: 'Streaming output: tool calls, thinking, and responses appear as they happen' },
         { text: 'Session resume with --resume: pick up any conversation right where you left off' },
         { text: 'Skills system: encode domain knowledge as files, loaded on demand' },
@@ -34,13 +36,13 @@ export function TUIFeature() {
 export function GDBFeature() {
   return (
     <FeatureSection
-      tag="Industry First · Embedded Debugging"
+      tag="Embedded Debugging"
       tagColor="#e6b428"
       accentColor="#e6b428"
       heading="Debug hardware without switching tools."
       body={
         <>
-          Sven is the first AI coding agent with{' '}
+          Sven has{' '}
           <strong className="text-text-primary">native GDB integration</strong>. You wrote the
           firmware in sven - now debug it there too. Sven auto-detects your configuration from{' '}
           <span className="code-inline">.gdbinit</span>,{' '}
@@ -97,7 +99,7 @@ export function CIFeature() {
     >
       <div className="flex flex-col sm:flex-row gap-3">
         <a
-          href="https://github.com/swedishembedded/sven/tree/main/docs/04-ci-pipeline.md"
+          href="https://swedishembedded.com/docs/sven/guides/headless"
           target="_blank"
           rel="noopener noreferrer"
           className="btn-secondary text-sm"

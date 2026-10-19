@@ -3,9 +3,9 @@ import Logo from './Logo'
 const PRODUCT_LINKS = [
   { label: 'Features', href: '#features' },
   { label: 'Install', href: '#install' },
-  { label: 'Documentation', href: 'https://github.com/swedishembedded/sven/tree/main/docs', external: true },
-  { label: 'Configuration', href: 'https://github.com/swedishembedded/sven/blob/main/docs/05-configuration.md', external: true },
-  { label: 'CI Pipelines', href: 'https://github.com/swedishembedded/sven/blob/main/docs/04-ci-pipeline.md', external: true },
+  { label: 'Documentation', href: 'https://swedishembedded.com/docs/sven', external: true },
+  { label: 'Configuration', href: 'https://swedishembedded.com/docs/sven/reference/configuration', external: true },
+  { label: 'CI Pipelines', href: 'https://swedishembedded.com/docs/sven/guides/headless', external: true },
 ]
 
 const COMMUNITY_LINKS = [
