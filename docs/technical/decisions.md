@@ -264,3 +264,15 @@ identical; a writing subgoal never reaches it. The question has two options
 (`same`, `different`), is asked in both orders, and needs a confidence of 0.9
 and a margin of 0.7. Abstention, a disagreement between the orders, a failure
 and shadow mode all mean the subgoal launches.
+
+## Quality per decision point
+
+`sven_decision::quality::point_quality(traces, labels)` groups
+`DecisionTraceRecord`s by policy and reports, per decision point, how many
+decisions were accepted, abstained (by reason) and applied, and how many inputs
+digests got different answers on repeat. With `Labels` (correct option by inputs
+digest, supplied by an oracle or a verifier, never invented here) it adds
+accuracy on accepted answers, coverage of labelled work, and a ten-bin
+calibration curve with its expected calibration error. Accepted traces carry the
+stated `probability` for this. Latency is not per decision: the provider
+reports it per request.

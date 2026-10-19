@@ -32,6 +32,7 @@ mod error;
 mod mock;
 pub mod policy;
 mod provider;
+pub mod quality;
 mod question;
 mod result;
 mod runtime;

@@ -182,6 +182,16 @@ pub enum Selected {
 }
 
 impl Selected {
+    /// The probability the model gave the selected answer.
+    #[must_use]
+    pub fn probability(&self) -> f32 {
+        match self {
+            Self::Candidate { probability, .. } | Self::Proposition { probability, .. } => {
+                *probability
+            }
+        }
+    }
+
     /// What was selected, as a string for traces: the option id, or whether
     /// the proposition holds.
     #[must_use]

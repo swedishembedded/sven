@@ -37,7 +37,7 @@ pub struct CallRecord {
 }
 
 /// What has accumulated since the last [`DecisionTelemetry::drain`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Drained {
     /// `None` when no inference ran.
     pub inference: Option<DecisionInference>,
@@ -132,6 +132,7 @@ pub fn trace_record(
         Verdict::Accept(accepted) => DecisionTraceRecord {
             verdict: "accept".into(),
             selected: Some(accepted.selected.describe()),
+            probability: Some(accepted.selected.probability()),
             advisory_only: accepted.advisory_only,
             applied,
             ..base

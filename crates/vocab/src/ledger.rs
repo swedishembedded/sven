@@ -201,7 +201,7 @@ pub struct DecisionInference {
 /// What one decision point did with a decision model's answer: accepted it,
 /// or abstained and why. Recorded for every decision, so a tool that was
 /// picked or a chunk that was left out can be explained from the trajectory.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DecisionTraceRecord {
     /// The decision point's policy label.
     pub policy: String,
@@ -219,6 +219,10 @@ pub struct DecisionTraceRecord {
     /// The model that answered, when one did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
+    /// The probability the model gave the accepted answer, when it gave one:
+    /// what a calibration is measured against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probability: Option<f32>,
     /// An accepted answer could only advise.
     #[serde(default)]
     pub advisory_only: bool,
