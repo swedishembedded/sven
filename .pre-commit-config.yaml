@@ -81,7 +81,9 @@ repos:
         entry: bash scripts/normalize-ascii.sh
         language: system
         types: [text]
-        exclude: '\.min\.(js|css)$'
+        # The vendored docs publisher reproduces third-party license texts
+        # verbatim and is pinned by sha256.
+        exclude: '(\.min\.(js|css)$|^tools/docs-publisher/)'
         pass_filenames: true
 
       - id: cargo-fmt
