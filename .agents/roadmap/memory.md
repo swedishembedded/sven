@@ -32,5 +32,5 @@ evaluation (`MemoryScope::frozen`), and the bundled `SqliteMemory` behind the
 - [ ] Re-embed existing units when an embedder is added (the contract has no unit
   listing yet; today a unit is embedded when it is ingested).
 - [ ] A model override per agent.
-- [x] Measure retrieval quality with a served embedding model (docs/17-memory.md).
+- [x] Measure retrieval quality with a served embedding model (docs/concepts/memory.md).
 - [ ] Embed in parallel batches and offer the query instruction, then re-measure.
