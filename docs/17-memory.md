@@ -207,3 +207,23 @@ An embedding application gets the same through the SDK:
 and `snapshot_id()` names what it was pinned to.
 The bundled store is `sven_sdk::memory::SqliteMemory` (feature `sqlite-memory`,
 on by default; the minimal SDK leaves it out and takes any `MemoryStore`).
+
+## Measuring retrieval
+
+`cargo run --release -p sven-memory --example retrieval_quality -- --docs docs
+--queries crates/memory/examples/retrieval_quality_queries.json` ingests every
+markdown file under `--docs` as one source and scores 30 hand-labelled paraphrase
+queries by whether a unit of the labelled file is in the top `k`. Adding
+`--embed-url`, `--embed-model` (and `--api-key`) also scores a served embedding
+model. On sven's own documentation (38 files):
+
+| mode | hit@1 | hit@3 | hit@10 | MRR |
+|------|------:|------:|-------:|----:|
+| words only (BM25) | 0.47 | 0.57 | 0.80 | 0.546 |
+| words + hashing embedder | 0.40 | 0.50 | 0.77 | 0.486 |
+
+The hashing embedder is a fixed lexical hash, so it adds no meaning and costs a
+little ranking quality here; it exists to make the semantic path testable
+without a model, not to improve search. The queries are few and hand-labelled,
+so these numbers compare modes on this corpus and are not a benchmark. A served
+embedding model has not been measured yet (see the roadmap).

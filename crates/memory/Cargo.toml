@@ -15,4 +15,6 @@ uuid         = { workspace = true }
 
 [dev-dependencies]
 sven-memory-sqlite = { path = "../memory-sqlite" }
+sven-model-drivers = { path = "../model-drivers" }
+sven-sources = { path = "../sources" }
 tokio    = { workspace = true }

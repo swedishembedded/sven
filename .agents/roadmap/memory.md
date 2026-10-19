@@ -21,7 +21,9 @@ Hybrid retrieval behind the store contract with three conformance cases, the
 `Embedder` seam with a local fixed model and an OpenAI-compatible one, the
 `sven-sources` crate (segmentation, explicit reanchoring, redaction, BM25,
 reciprocal rank fusion), stable repository/worktree identity, and a scoped store
-per agent (`Agent::with_memory`).
+per agent (`Agent::with_memory`), freezing a scope on a named snapshot for an
+evaluation (`MemoryScope::frozen`), and the bundled `SqliteMemory` behind the
+`sqlite-memory` feature of the SDK.
 
 ## Left to do
 
@@ -30,5 +32,8 @@ per agent (`Agent::with_memory`).
 - [ ] Re-embed existing units when an embedder is added (the contract has no unit
   listing yet; today a unit is embedded when it is ingested).
 - [ ] A model override per agent.
-- [ ] Measure retrieval quality with a brain embedding model against the local fixed
-  model on a real memory.
+- [ ] Measure retrieval quality with a served embedding model. The example
+  `retrieval_quality` runs it; a served model needs the server to expose the
+  checkpoint's embed action on `/v1/embeddings` (the brain build used for the
+  first run lists Qwen3-Embedding-0.6B as a chat model and has no `embed`
+  action for it, so the run could not be made).
