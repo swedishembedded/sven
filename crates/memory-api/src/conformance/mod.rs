@@ -29,7 +29,8 @@ mod retrieval;
 
 pub use annotations::annotation_with_a_stale_expected_revision_gets_conflict_with_current;
 pub use generations::{
-    embeddings_must_match_the_generation_spec,
+    a_query_vector_finds_by_meaning_what_no_word_matches, a_query_vector_must_fit_the_generation,
+    a_query_vector_stays_inside_the_callers_spaces, embeddings_must_match_the_generation_spec,
     query_against_a_retired_or_foreign_generation_is_refused,
 };
 pub use isolation::{
@@ -61,6 +62,9 @@ macro_rules! memory_conformance_tests {
             unchanged_reingest_creates_no_new_work,
             query_against_a_retired_or_foreign_generation_is_refused,
             embeddings_must_match_the_generation_spec,
+            a_query_vector_finds_by_meaning_what_no_word_matches,
+            a_query_vector_stays_inside_the_callers_spaces,
+            a_query_vector_must_fit_the_generation,
             delete_of_a_source_removes_its_units_from_every_read_path,
             retrieved_text_is_quoted_as_untrusted_and_never_becomes_instructions
         );

@@ -26,6 +26,7 @@
 
 mod access;
 mod annotation;
+mod embedder;
 mod error;
 mod generation;
 mod ids;
@@ -41,6 +42,7 @@ pub mod conformance;
 
 pub use access::{AccessContext, Budget, Permission};
 pub use annotation::{Annotation, AnnotationKind, Evidence, NewAnnotation};
+pub use embedder::Embedder;
 pub use error::MemoryError;
 pub use generation::{EmbeddingSpec, GenerationState, IndexGeneration, PromptStyle};
 pub use ids::{sha256_hex, AnnotationId, GenerationId, RevisionId, SourceId, SpaceId, UnitId};

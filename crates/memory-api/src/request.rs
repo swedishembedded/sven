@@ -158,7 +158,7 @@ pub struct SourceSummary {
 }
 
 /// A search over the caller's spaces.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RetrievalRequest {
     /// Free text. Never interpreted as query syntax.
     pub query: String,
@@ -172,6 +172,13 @@ pub struct RetrievalRequest {
     /// The index generation the query reads. It must be active in the store;
     /// otherwise the query is refused.
     pub generation: Option<GenerationId>,
+    /// The query as a vector of the active `generation`'s embedding model.
+    /// With a generation it makes the search hybrid: the lexical and the
+    /// vector ranking are fused by reciprocal rank, so a unit that shares no
+    /// word with the query can be found by meaning. Without a generation it
+    /// is refused, because a vector means nothing outside the model that made
+    /// it.
+    pub query_embedding: Option<Vec<f32>>,
 }
 
 impl RetrievalRequest {
@@ -184,7 +191,16 @@ impl RetrievalRequest {
             tag: None,
             limit,
             generation: None,
+            query_embedding: None,
         }
+    }
+
+    /// The same query read by meaning as well as by word, under `generation`.
+    #[must_use]
+    pub fn with_embedding(mut self, generation: GenerationId, embedding: Vec<f32>) -> Self {
+        self.generation = Some(generation);
+        self.query_embedding = Some(embedding);
+        self
     }
 
     /// Checks the request independently of stored state.
@@ -196,6 +212,18 @@ impl RetrievalRequest {
             return Err(MemoryError::InvalidInput(format!(
                 "query exceeds {MAX_QUERY_BYTES} bytes"
             )));
+        }
+        if let Some(embedding) = &self.query_embedding {
+            if self.generation.is_none() {
+                return Err(MemoryError::InvalidInput(
+                    "a query embedding needs the generation of the model that made it".into(),
+                ));
+            }
+            if embedding.is_empty() || embedding.iter().any(|v| !v.is_finite()) {
+                return Err(MemoryError::InvalidInput(
+                    "a query embedding must be non-empty and finite".into(),
+                ));
+            }
         }
         Ok(())
     }

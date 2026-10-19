@@ -149,3 +149,142 @@ pub async fn embeddings_must_match_the_generation_spec<S: MemoryStore>(store: &S
         Err(MemoryError::GenerationRefused { .. })
     ));
 }
+
+/// Registers and activates a generation for `spec("w")`.
+async fn active_generation<S: MemoryStore>(store: &S) -> GenerationId {
+    let id = store
+        .register_generation(spec("w"), "seg-1")
+        .await
+        .expect("register")
+        .generation_id;
+    store
+        .set_generation_state(&id, GenerationState::Active)
+        .await
+        .expect("activate");
+    id
+}
+
+/// With a query vector the search reads by meaning: a unit that shares no word
+/// with the query is found by its embedding, one that does share words keeps
+/// its place, and the order is the same every time.
+pub async fn a_query_vector_finds_by_meaning_what_no_word_matches<S: MemoryStore>(store: &S) {
+    let ctx = owner_of(&["s"]);
+    let units = store
+        .ingest(
+            &ctx,
+            source("s", "doc", "alpha unit\n\nbeta unit\n\ngamma unit"),
+        )
+        .await
+        .expect("ingest")
+        .units()
+        .to_vec();
+    let generation = active_generation(store).await;
+    store
+        .put_embeddings(
+            &ctx,
+            &space("s"),
+            &generation,
+            vec![
+                (units[0].clone(), vec![1.0, 0.0, 0.0]),
+                (units[1].clone(), vec![0.0, 1.0, 0.0]),
+                (units[2].clone(), vec![0.0, 0.0, 1.0]),
+            ],
+        )
+        .await
+        .expect("embed");
+
+    // No unit contains this word; the vector points at the second.
+    let query =
+        RetrievalRequest::new("zzzz", 3).with_embedding(generation.clone(), vec![0.1, 0.9, 0.0]);
+    let first = store.retrieve(&ctx, query.clone()).await.expect("hybrid");
+    assert_eq!(first.hits[0].unit.unit_id, units[1], "found by meaning");
+    assert_eq!(first.hits[0].rank, 1);
+    let again = store.retrieve(&ctx, query).await.expect("hybrid again");
+    let order = |r: &crate::RetrievalResponse| -> Vec<crate::UnitId> {
+        r.hits.iter().map(|h| h.unit.unit_id.clone()).collect()
+    };
+    assert_eq!(order(&first), order(&again), "the same order every time");
+
+    // A word that does match still counts: it outranks a weak vector match.
+    let query =
+        RetrievalRequest::new("gamma", 3).with_embedding(generation.clone(), vec![1.0, 0.0, 0.0]);
+    let hits = store.retrieve(&ctx, query).await.expect("hybrid").hits;
+    assert!(
+        hits.iter().any(|h| h.unit.unit_id == units[2]),
+        "the lexical hit is in the fused list"
+    );
+    assert!(
+        hits.iter().any(|h| h.unit.unit_id == units[0]),
+        "and so is the nearest vector"
+    );
+}
+
+/// A query vector reads only what the caller may read, and what it may not
+/// read cannot crowd out what it may.
+pub async fn a_query_vector_stays_inside_the_callers_spaces<S: MemoryStore>(store: &S) {
+    let owner = owner_of(&["mine", "theirs"]);
+    let mine = store
+        .ingest(&owner, source("mine", "doc", "ordinary note"))
+        .await
+        .expect("ingest")
+        .units()[0]
+        .clone();
+    let theirs = store
+        .ingest(&owner, source("theirs", "doc", "secret note"))
+        .await
+        .expect("ingest")
+        .units()[0]
+        .clone();
+    let generation = active_generation(store).await;
+    // The unit the caller may not read is the nearest to the query.
+    store
+        .put_embeddings(
+            &owner,
+            &space("mine"),
+            &generation,
+            vec![(mine.clone(), vec![0.6, 0.8, 0.0])],
+        )
+        .await
+        .expect("embed mine");
+    store
+        .put_embeddings(
+            &owner,
+            &space("theirs"),
+            &generation,
+            vec![(theirs, vec![1.0, 0.0, 0.0])],
+        )
+        .await
+        .expect("embed theirs");
+
+    let reader = owner_of(&["mine"]);
+    let query = RetrievalRequest::new("zzzz", 1).with_embedding(generation, vec![1.0, 0.0, 0.0]);
+    let hits = store.retrieve(&reader, query).await.expect("hybrid").hits;
+    assert_eq!(
+        hits.len(),
+        1,
+        "the unreadable nearer unit did not take the only place"
+    );
+    assert_eq!(hits[0].unit.unit_id, mine);
+}
+
+/// A query vector must fit the generation it names.
+pub async fn a_query_vector_must_fit_the_generation<S: MemoryStore>(store: &S) {
+    let ctx = owner_of(&["s"]);
+    store
+        .ingest(&ctx, source("s", "doc", "alpha"))
+        .await
+        .expect("ingest");
+    let generation = active_generation(store).await;
+    let wrong_size =
+        RetrievalRequest::new("alpha", 3).with_embedding(generation.clone(), vec![1.0, 0.0]);
+    assert!(matches!(
+        store.retrieve(&ctx, wrong_size).await,
+        Err(MemoryError::InvalidInput(_))
+    ));
+    let mut no_generation = RetrievalRequest::new("alpha", 3);
+    no_generation.query_embedding = Some(vec![1.0, 0.0, 0.0]);
+    assert!(matches!(
+        store.retrieve(&ctx, no_generation).await,
+        Err(MemoryError::InvalidInput(_))
+    ));
+}

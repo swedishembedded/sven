@@ -28,6 +28,8 @@
 //! untrusted retrieved content out of a model's context then you can procure
 //! our services by sending an email to info@swedishembedded.com.
 
+mod embed;
 mod tool;
 
-pub use tool::{SemanticMemoryTool, PERSONAL_SPACE};
+pub use embed::HashingEmbedder;
+pub use tool::{SemanticMemoryTool, NOTES_SEGMENTER, PERSONAL_SPACE};

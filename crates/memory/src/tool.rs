@@ -15,9 +15,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use sven_memory_api::{
-    quote_untrusted, AccessContext, MemoryError, MemoryStore, Note, Origin, Permission, Provenance,
-    RetrievalRecord, RetrievalRequest, SourceId, SourceSummary, SpaceId, TrainingUse, UnitId,
-    ENTITY_TAG_PREFIX,
+    quote_untrusted, AccessContext, Embedder, GenerationId, GenerationState, MemoryError,
+    MemoryStore, Note, Origin, Permission, Provenance, RetrievalRecord, RetrievalRequest, SourceId,
+    SourceSummary, SpaceId, TrainingUse, UnitId, ENTITY_TAG_PREFIX,
 };
 use sven_tool_api::{
     call_records::record_memory_retrieval,
@@ -48,7 +48,20 @@ pub struct SemanticMemoryTool {
     space: SpaceId,
     /// Names this tool instance as the author of what it writes.
     run_id: String,
+    /// Embeds what is remembered and what is asked, when the host gave one,
+    /// with the active generation of its model.
+    semantic: Option<Semantic>,
 }
+
+/// An embedder and the index generation its vectors belong to.
+struct Semantic {
+    embedder: Arc<dyn Embedder>,
+    generation: GenerationId,
+}
+
+/// The segmenter version the tool's notes are cut by, part of the identity of
+/// the index generation its vectors belong to.
+pub const NOTES_SEGMENTER: &str = "sven-segmenter-notes-1";
 
 impl SemanticMemoryTool {
     /// A tool that reads and writes `space` of `store` as `access` allows.
@@ -62,7 +75,32 @@ impl SemanticMemoryTool {
             access,
             space,
             run_id: uuid::Uuid::new_v4().to_string(),
+            semantic: None,
         }
+    }
+
+    /// Makes the tool search by meaning as well as by word: what it remembers
+    /// from now on is embedded with `embedder`, and a recall reads the vectors
+    /// of the generation of that model, which is registered and activated here.
+    /// Notes remembered before are found by word only until they are
+    /// remembered again.
+    ///
+    /// # Errors
+    /// The store's refusal to register or activate the generation.
+    pub async fn with_embedder(mut self, embedder: Arc<dyn Embedder>) -> Result<Self, MemoryError> {
+        let generation = self
+            .store
+            .register_generation(embedder.spec(), NOTES_SEGMENTER)
+            .await?
+            .generation_id;
+        self.store
+            .set_generation_state(&generation, GenerationState::Active)
+            .await?;
+        self.semantic = Some(Semantic {
+            embedder,
+            generation,
+        });
+        Ok(self)
     }
 
     /// A tool over the [`PERSONAL_SPACE`] of `store`, with full rights in it
@@ -219,11 +257,21 @@ impl SemanticMemoryTool {
                 training_use: TrainingUse::Unspecified,
             },
         };
-        match self.store.ingest(&self.access, note.into_request()).await {
-            Ok(_) => ToolOutput::ok(
-                &call.id,
-                format!("Remembered (ID={id}): {}", truncate(content, 80)),
-            ),
+        let request = note.into_request();
+        let texts: Vec<String> = request.units.iter().map(|u| u.text.clone()).collect();
+        match self.store.ingest(&self.access, request).await {
+            Ok(outcome) => {
+                if let Err(e) = self.embed_units(outcome.units(), &texts).await {
+                    return ToolOutput::err(
+                        &call.id,
+                        format!("remembered (ID={id}) but not embedded, so it is found by word only: {e}"),
+                    );
+                }
+                ToolOutput::ok(
+                    &call.id,
+                    format!("Remembered (ID={id}): {}", truncate(content, 80)),
+                )
+            }
             Err(e) => ToolOutput::err(&call.id, format!("remember failed: {e}")),
         }
     }
@@ -233,7 +281,22 @@ impl SemanticMemoryTool {
             return ToolOutput::err(&call.id, "recall requires 'query'");
         };
         let limit = usize_arg(call, "limit", 10);
-        let request = RetrievalRequest::new(query, limit);
+        let mut request = RetrievalRequest::new(query, limit);
+        if let Some(semantic) = &self.semantic {
+            match semantic.embedder.embed(&[query.to_owned()]).await {
+                Ok(mut vectors) if vectors.len() == 1 => {
+                    request =
+                        request.with_embedding(semantic.generation.clone(), vectors.remove(0));
+                }
+                Ok(_) => {
+                    return ToolOutput::err(
+                        &call.id,
+                        "recall failed: the embedder answered the wrong number of vectors",
+                    )
+                }
+                Err(e) => return ToolOutput::err(&call.id, format!("recall failed: {e}")),
+            }
+        }
         let response = match self.store.retrieve(&self.access, request.clone()).await {
             Ok(response) => response,
             Err(e) => return ToolOutput::err(&call.id, format!("recall failed: {e}")),
@@ -258,6 +321,27 @@ impl SemanticMemoryTool {
             ));
         }
         ToolOutput::ok(&call.id, lines.join("\n"))
+    }
+
+    /// Stores the embeddings of freshly ingested units of the tool's space.
+    async fn embed_units(&self, units: &[UnitId], texts: &[String]) -> Result<(), MemoryError> {
+        let Some(semantic) = &self.semantic else {
+            return Ok(());
+        };
+        let vectors = semantic.embedder.embed(texts).await?;
+        if vectors.len() != units.len() {
+            return Err(MemoryError::Unavailable(
+                "the embedder answered the wrong number of vectors".into(),
+            ));
+        }
+        self.store
+            .put_embeddings(
+                &self.access,
+                &self.space,
+                &semantic.generation,
+                units.iter().cloned().zip(vectors).collect(),
+            )
+            .await
     }
 
     async fn forget(&self, call: &ToolCall) -> ToolOutput {

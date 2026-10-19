@@ -54,6 +54,10 @@ impl UnitRow {
         })
     }
 
+    pub(crate) fn unit_id(&self) -> &str {
+        &self.unit_id
+    }
+
     pub(crate) fn into_unit(self) -> Result<Unit, MemoryError> {
         Ok(Unit {
             unit_id: UnitId::new(self.unit_id),

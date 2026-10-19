@@ -34,7 +34,7 @@ pub(super) fn generation_state(
     .transpose()
 }
 
-fn load(
+pub(super) fn load(
     conn: &Connection,
     generation: &GenerationId,
 ) -> Result<Option<IndexGeneration>, MemoryError> {
