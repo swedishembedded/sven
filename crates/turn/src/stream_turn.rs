@@ -457,6 +457,14 @@ pub async fn stream_turn(
             Some(e) => e?,
         };
 
+        if matches!(
+            event,
+            ResponseEvent::ThinkingDelta(_)
+                | ResponseEvent::TextDelta(_)
+                | ResponseEvent::ToolCall { .. }
+        ) {
+            ledger.note_first_token();
+        }
         match event {
             // Provider-side output-token ceiling hit: this is genuinely
             // worth surfacing (was previously silently discarded - the

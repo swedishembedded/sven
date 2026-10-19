@@ -44,6 +44,7 @@ records read each other.
 | `context_view` | how the history was assembled into this request when addressable context is on: `mode`, `demoted` results, `tokens_saved`, `saved_by_reason` (those tokens by why the result was demoted: `age`, `superseded`, `duplicate`, `passing_test`) and `new_demotions` (chunk id, digest, tool, from, to, tokens saved, reason); absent when it is off |
 | `decision` | the decision-model inference the request's context was shaped by, since the previous request: `calls` (cache hits are not calls), `latency_ms` (wall time waited), `model_id`, `batch_size` (the most questions one call carried); `load_time_ms` stays empty because the provider does not report it. Absent when no decision ran. See [decisions](decisions.md) |
 | `wall_ms` | time from sending the request to the end of its response |
+| `first_token_ms` | time from sending the request to the first thinking, text or tool-call content of its response; absent when the response had none |
 
 Three notions of prompt size are kept apart. The **logical prompt** is
 everything the model read: `input + cache_read + cache_write`, and it is what

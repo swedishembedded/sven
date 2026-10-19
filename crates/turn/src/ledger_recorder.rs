@@ -18,6 +18,7 @@ pub struct LedgerRecorder {
     breakdown: sven_vocab::RequestBreakdown,
     reported: ReportedUsage,
     started: std::time::Instant,
+    first_token_ms: Option<u64>,
 }
 
 impl LedgerRecorder {
@@ -28,7 +29,16 @@ impl LedgerRecorder {
             breakdown: estimate_request(request),
             reported: ReportedUsage::default(),
             started: std::time::Instant::now(),
+            first_token_ms: None,
         }
+    }
+
+    /// Notes that response content arrived; only the first call counts.
+    pub fn note_first_token(&mut self) {
+        let started = self.started;
+        self.first_token_ms.get_or_insert_with(|| {
+            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+        });
     }
 
     /// Add one usage report. Providers split a request's usage over several
@@ -49,6 +59,7 @@ impl LedgerRecorder {
     pub fn into_event(self) -> SessionEvent {
         let mut breakdown = self.breakdown;
         breakdown.reconcile(self.reported);
+        breakdown.first_token_ms = self.first_token_ms;
         breakdown.wall_ms =
             Some(u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX));
         SessionEvent::TokenUsage {
@@ -113,6 +124,33 @@ mod tests {
         );
         assert_eq!(b.residual, Some(20));
         assert!(b.wall_ms.is_some());
+    }
+
+    #[test]
+    fn time_to_first_token_is_the_first_content_and_not_later_than_the_whole_response() {
+        let mut recorder = LedgerRecorder::start(&request(vec![Message::user("hi")]));
+        recorder.note_first_token();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        recorder.note_first_token();
+        let SessionEvent::TokenUsage {
+            breakdown: Some(b), ..
+        } = recorder.into_event()
+        else {
+            panic!("expected a breakdown");
+        };
+        let (first, wall) = (b.first_token_ms.unwrap(), b.wall_ms.unwrap());
+        assert!(first < 20 && first <= wall, "{first} {wall}");
+    }
+
+    #[test]
+    fn a_response_without_content_has_no_time_to_first_token() {
+        let SessionEvent::TokenUsage {
+            breakdown: Some(b), ..
+        } = LedgerRecorder::start(&request(vec![Message::user("hi")])).into_event()
+        else {
+            panic!("expected a breakdown");
+        };
+        assert_eq!(b.first_token_ms, None);
     }
 
     #[test]

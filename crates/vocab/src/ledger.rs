@@ -304,6 +304,10 @@ pub struct RequestBreakdown {
     /// Wall time from sending the request to the end of the response.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wall_ms: Option<u64>,
+    /// Wall time from sending the request to the first thinking, text or
+    /// tool-call content of the response; absent when the response had none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_token_ms: Option<u64>,
 }
 
 impl RequestBreakdown {
