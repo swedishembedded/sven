@@ -159,32 +159,30 @@ fn ranked(found: Vec<Found>) -> Result<Vec<RetrievalHit>, MemoryError> {
     Ok(hits)
 }
 
-/// Reciprocal rank fusion of two rankings: a unit scores the sum of
-/// `1 / (RRF_K + rank)` over the rankings that hold it. Ties break on the
-/// unit id, so the order is the same every time.
+/// The two rankings fused by reciprocal rank ([`sven_sources::reciprocal_rank_fusion`]),
+/// cut to `limit`. Ties fall to the unit id, so the order is the same every time.
 fn fuse(first: Vec<Found>, second: Vec<Found>, limit: usize) -> Vec<Found> {
-    let mut fused: std::collections::BTreeMap<String, Found> = std::collections::BTreeMap::new();
-    for ranking in [first, second] {
-        for (index, mut f) in ranking.into_iter().enumerate() {
-            let share = 1.0 / (RRF_K + (index + 1) as f64);
-            let id = f.unit.unit_id().to_owned();
-            match fused.get_mut(&id) {
-                Some(seen) => seen.score += share,
-                None => {
-                    f.score = share;
-                    fused.insert(id, f);
-                }
-            }
-        }
+    let ids = |ranking: &[Found]| -> Vec<String> {
+        ranking
+            .iter()
+            .map(|f| f.unit.unit_id().to_owned())
+            .collect()
+    };
+    let fused = sven_sources::reciprocal_rank_fusion(&[ids(&first), ids(&second)], RRF_K);
+    let mut by_id: std::collections::BTreeMap<String, Found> = std::collections::BTreeMap::new();
+    for f in first.into_iter().chain(second) {
+        by_id.entry(f.unit.unit_id().to_owned()).or_insert(f);
     }
-    let mut all: Vec<Found> = fused.into_values().collect();
-    all.sort_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.unit.unit_id().cmp(b.unit.unit_id()))
-    });
-    all.truncate(limit);
-    all
+    fused
+        .into_iter()
+        .take(limit)
+        .filter_map(|(id, score)| {
+            by_id.remove(&id).map(|mut f| {
+                f.score = score;
+                f
+            })
+        })
+        .collect()
 }
 
 fn found_columns(row: &rusqlite::Row<'_>) -> rusqlite::Result<(UnitRow, String, ProvenanceRow)> {

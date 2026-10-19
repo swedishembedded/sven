@@ -1,0 +1,9 @@
+[package]
+name    = "sven-sources"
+version.workspace = true
+edition = "2021"
+description = "Deterministic segmentation of text, markdown and code into memory units with anchors that survive edits, explicit reanchoring, redaction, BM25 and reciprocal rank fusion"
+license = "Apache-2.0"
+
+[dependencies]
+sven-memory-api = { path = "../memory-api" }

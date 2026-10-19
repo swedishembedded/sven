@@ -53,6 +53,7 @@ atif             = "foundation"
 
 # kernel
 sven-model  = "kernel"
+sven-sources = "kernel"
 sven-model-catalog = "kernel"
 sven-control = "kernel"
 sven-session-model = "kernel"
