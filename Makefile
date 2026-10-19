@@ -404,30 +404,50 @@ benchmark/ablation: build
 
 # ---------------------------------------------------------------------------
 ##@ Documentation
-## The user guide and the papers.
+## The documentation publication, the user manual and the papers.
 
-## docs - default: build the single-file markdown user guide (target/docs/sven-user-guide.md)
-docs:
-	@mkdir -p target/docs
-	@printf '' > target/docs/sven-user-guide.md
-	@for f in docs/[0-9][0-9]-*.md docs/providers.md; do \
-		if [ -f "$$f" ]; then \
-			cat "$$f" >> target/docs/sven-user-guide.md; \
-			printf '\n---\n\n' >> target/docs/sven-user-guide.md; \
-		fi; \
-	done
-	@echo "User guide written to target/docs/sven-user-guide.md"
+NODE ?= node
+DOCS_PUBLISHER ?= tools/docs-publisher/docs-publisher.mjs
+# The publication in build/docs is what the website imports. The manual and the
+# PDF are cut from it, in the navigation order of docs/manifest.yaml.
+DOCS_OUT := build/docs
+MANUAL_SECTIONS ?= Getting started,Guides,Concepts,Reference,Examples
+MANUAL_MD := target/docs/sven-user-guide.md
 
-## docs/pdf - build PDF user guide (requires pandoc + a LaTeX distribution)
+# The vendored publisher is pinned by its checksum unless DOCS_PUBLISHER is
+# overridden on the command line (to try a newer build of it).
+_docs-publisher-pin:
+	@$(if $(filter command line,$(origin DOCS_PUBLISHER)),true,\
+	  cd tools/docs-publisher && sha256sum -c docs-publisher.mjs.sha256 >/dev/null)
+
+## docs - default: build the single-file user manual (target/docs/sven-user-guide.md); MANUAL_SECTIONS selects the navigation sections it contains
+docs: docs/build
+	@$(NODE) scripts/docs-manual.mjs --dir $(DOCS_OUT) --out $(MANUAL_MD) --sections "$(MANUAL_SECTIONS)"
+
+## docs/build - build the documentation publication in build/docs (offline; no Rust build, no downloads)
+docs/build: _docs-publisher-pin
+	@$(NODE) $(DOCS_PUBLISHER) build --root . --manifest docs/manifest.yaml --out $(DOCS_OUT)
+	@$(NODE) $(DOCS_PUBLISHER) verify --dir $(DOCS_OUT)
+
+## docs/check - build twice and compare, check coverage, links and anchors, then cut the manual from the result
+docs/check: _docs-publisher-pin
+	@$(NODE) $(DOCS_PUBLISHER) check --root . --manifest docs/manifest.yaml
+	@$(MAKE) --no-print-directory docs
+
+## docs/clean - remove the generated documentation output
+docs/clean:
+	rm -rf $(DOCS_OUT) target/docs/sven-user-guide.md target/docs/sven-user-guide.pdf
+
+## docs/pdf - build the PDF user manual (requires pandoc + a LaTeX distribution)
 docs/pdf: docs
 	@command -v pandoc >/dev/null 2>&1 || { \
 		echo "Error: pandoc is not installed."; \
 		echo "Install it with: sudo apt install pandoc texlive-xetex texlive-fonts-recommended"; \
 		exit 1; \
 	}
-	pandoc target/docs/sven-user-guide.md \
+	pandoc $(MANUAL_MD) \
 		--metadata-file=docs/metadata.yaml \
-		--resource-path=docs \
+		--resource-path=$(DOCS_OUT) \
 		--pdf-engine=xelatex \
 		--toc \
 		--toc-depth=2 \
@@ -678,7 +698,7 @@ generate/config/golden:
         check/gates $(GATE_TARGETS) \
         fmt clean help \
         package package/dist package/deb package/deb/debug package/deb/release \
-        docs docs/pdf papers papers/pdf $(PAPER_DIRS) $(PAPER_TARGETS) \
+        docs docs/build docs/check docs/clean docs/pdf _docs-publisher-pin papers papers/pdf $(PAPER_DIRS) $(PAPER_TARGETS) \
         samples hooks hooks/install $(SAMPLE_CATEGORY_TARGETS) $(SAMPLE_NAME_TARGETS) \
         $(SAMPLE_BUILD_TARGETS) $(SAMPLE_RUN_TARGETS) \
         release release/tag release/publish release/patch release/minor release/major \
