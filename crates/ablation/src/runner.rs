@@ -21,6 +21,7 @@ use sven_decision::DecisionProvider;
 use sven_vocab::LedgerSummary;
 use tokio::process::Command;
 
+use crate::answer::score_answer;
 use crate::evidence::RequestLog;
 use crate::matrix::{Decisions, Endpoints, Variant};
 use crate::mockscript::{render_conversation, render_mock, render_recovering_mock};
@@ -36,7 +37,7 @@ use crate::record::{
 };
 use crate::score::{score, RunEvidence};
 use crate::task::{Generated, Task};
-use crate::trajectory::decision_record;
+use crate::trajectory::{decision_record, final_reply};
 
 /// Exit status of a run that finished but had a tool call fail. The scripted
 /// attempts of the security suite are refused on purpose, so it is an outcome
@@ -375,6 +376,9 @@ impl Runner {
         record.decisions = decision_record(&last_trajectory);
         record.decisions.served_requests =
             served.server.as_ref().map_or(0, |s| s.stats().decisions());
+        if self.options.model != ModelChoice::Scripted {
+            record.answer = final_reply(&last_trajectory).map(|reply| score_answer(task, &reply));
+        }
         if self.options.model == ModelChoice::Scripted {
             let evidence = RunEvidence {
                 segments: logs,

@@ -113,6 +113,16 @@ pub struct TokenRecord {
     pub by_source: BTreeMap<String, u64>,
     pub tool_calls: u64,
     pub duplicate_tool_calls: u64,
+    /// Provider-reported input tokens, cache reads and writes, and wall time of
+    /// the requests: what a real model reported (zero for a scripted one).
+    #[serde(default)]
+    pub input: u64,
+    #[serde(default)]
+    pub cache_read: u64,
+    #[serde(default)]
+    pub cache_write: u64,
+    #[serde(default)]
+    pub wall_ms: u64,
     /// Expansions of demoted context: calls that recovered what had been
     /// hidden.
     pub recovery_expansions: u64,
@@ -133,6 +143,10 @@ impl TokenRecord {
             record.total += s.estimated_total;
             record.requests += s.requests;
             record.trajectories += s.trajectories;
+            record.input += s.input;
+            record.cache_read += s.cache_read;
+            record.cache_write += s.cache_write;
+            record.wall_ms += s.wall_ms;
             record.tool_calls += s.tool_calls;
             record.duplicate_tool_calls += s.duplicate_tool_calls;
             record.recovery_expansions += s.expansions;
@@ -244,6 +258,9 @@ pub struct RunRecord {
     pub tokens: Option<TokenRecord>,
     pub decisions: DecisionRecord,
     pub score: Option<Score>,
+    /// What the final answer of a real-model run cited; scripted runs have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<crate::answer::AnswerScore>,
 }
 
 fn one_attempt() -> u32 {
@@ -278,7 +295,15 @@ impl RunRecord {
             tokens: None,
             decisions: DecisionRecord::default(),
             score: None,
+            answer: None,
         }
+    }
+
+    /// Whether the run ran to the end, scored or not (a real-model run has no
+    /// scripted score).
+    #[must_use]
+    pub fn finished(&self) -> bool {
+        self.status == RunStatus::Completed
     }
 
     /// Whether the run completed and was scored.

@@ -27,6 +27,21 @@ fn extra<'a>(step: &'a Value, key: &str) -> impl Iterator<Item = &'a Value> {
         .flatten()
 }
 
+/// The last message the agent sent in `trajectory`: the answer to the final
+/// question.
+#[must_use]
+pub fn final_reply(trajectory: &Value) -> Option<String> {
+    trajectory
+        .get("steps")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|s| s.get("source").and_then(Value::as_str) == Some("agent"))?
+        .get("message")?
+        .as_str()
+        .map(str::to_owned)
+}
+
 /// The decision account of one trajectory: the inference calls and the time
 /// waited on them, and every verdict as recorded. Sub-agent trajectories are
 /// not folded in.

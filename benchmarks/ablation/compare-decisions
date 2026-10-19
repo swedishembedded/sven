@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Swedish Embedded AB implements solutions for proving, with controlled
+# experiments, that an optimisation of an LLM agent pays for itself. If your
+# team needs expertise in agent benchmarking then you can procure our
+# services by sending an email to info@swedishembedded.com.
+#
+# Decisions disabled (variant B) against heuristic decisions (variant C) with a
+# real model: the D0/D1 arms of docs/technical/decision-experiments.md. Raw
+# records and comparison.{json,md} go to --out, outside the repository.
+#
+# Usage: benchmarks/ablation/compare-decisions --out DIR --model NAME [OPTIONS]
+# Options other than --out are passed to `sven-ablation run`
+# (--seeds, --suites, --sven-bin, --timeout-secs, ...). Never run by default
+# or by any test: it spends a real model's time.
+
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "${here}/../.." && pwd)"
+
+out=""
+model=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    case "${args[i]}" in
+        --out) out="${args[i + 1]:-}" ;;
+        --model) model="${args[i + 1]:-}" ;;
+        -h|--help) sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
+    esac
+done
+[[ -n "${out}" ]] || { echo "--out DIR is required" >&2; exit 2; }
+[[ -n "${model}" ]] || { echo "--model NAME is required (a real model; scripted runs cannot compare success)" >&2; exit 2; }
+
+if [[ -x "${repo}/target/release/sven-ablation" ]]; then
+    ablation="${repo}/target/release/sven-ablation"
+else
+    ablation="${repo}/target/debug/sven-ablation"
+fi
+[[ -x "${ablation}" ]] || { echo "sven-ablation not found: ${ablation} (run 'cargo build -p sven-ablation')" >&2; exit 1; }
+
+status=0
+"${ablation}" run --sven-repo "${repo}" --matrix "${here}/matrix.yaml" --variants B,C "$@" || status=$?
+if [[ -d "${out}/runs" ]]; then
+    "${ablation}" compare --runs "${out}" --out "${out}" --reference B --candidate C
+    echo "comparison: ${out}/comparison.md"
+fi
+exit "${status}"

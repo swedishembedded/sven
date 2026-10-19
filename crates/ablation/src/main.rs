@@ -21,6 +21,7 @@ use sven_ablation::markdown;
 use sven_ablation::matrix::Matrix;
 use sven_ablation::mcp_stub;
 use sven_ablation::plan::{AssemblySettings, ModelChoice};
+use sven_ablation::real_report;
 use sven_ablation::report;
 use sven_ablation::runner::{Probe, Runner, RunnerOptions};
 use sven_ablation::score::{score, RunEvidence};
@@ -71,6 +72,20 @@ enum Command {
         runs: PathBuf,
         #[arg(long)]
         out: PathBuf,
+    },
+    /// Compare two variants of a real-model run (see `run --model`): verified
+    /// success and cost per verified success, written to --out.
+    Compare {
+        #[arg(long)]
+        runs: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        /// The variant measured against, for example B (decisions disabled).
+        #[arg(long, default_value = "B")]
+        reference: String,
+        /// The variant under test, for example C (heuristic decisions).
+        #[arg(long, default_value = "C")]
+        candidate: String,
     },
     /// Write the decisions of the runs under --runs as training examples.
     ExportFixtures {
@@ -194,6 +209,27 @@ fn run(command: Command) -> Result<ExitCode, String> {
             runtime.block_on(run_command(*args))
         }
         Command::Report { runs, out } => report_command(&runs, &out),
+        Command::Compare {
+            runs,
+            out,
+            reference,
+            candidate,
+        } => {
+            let report = real_report::build_real(&load_runs(&runs)?, &reference, &candidate);
+            if report.variants.iter().all(|v| v.runs == 0) {
+                return Err(format!(
+                    "no answered real-model runs of {reference} or {candidate} under {}",
+                    runs.display()
+                ));
+            }
+            std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+            let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+            std::fs::write(out.join("comparison.json"), json + "\n").map_err(|e| e.to_string())?;
+            std::fs::write(out.join("comparison.md"), real_report::render_real(&report))
+                .map_err(|e| e.to_string())?;
+            println!("{}", out.display());
+            Ok(ExitCode::SUCCESS)
+        }
         Command::ExportFixtures {
             runs,
             out,

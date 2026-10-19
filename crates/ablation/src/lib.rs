@@ -20,6 +20,7 @@
 //!   verdict on a run.
 //! * [`mcp_stub`]: the tool catalog server of the tool-selection suite.
 
+pub mod answer;
 pub mod evidence;
 pub mod export;
 pub mod gates;
@@ -31,6 +32,7 @@ pub mod mockscript;
 pub mod plan;
 pub mod provider_server;
 pub mod providers;
+pub mod real_report;
 pub mod record;
 pub mod recovery;
 pub mod report;

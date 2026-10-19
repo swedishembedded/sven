@@ -42,8 +42,11 @@ scorer requires".
 the conversation file is replayed, no script is used, trajectories and ledgers
 are recorded, and the record says `scripted: false` with no scripted verdict.
 It is never run by default, never by `make benchmark/ablation` unless asked, and
-never in a test. Scoring end-to-end task success on those trajectories is not
-implemented; the tasks are what is reusable.
+never in a test. A real run is verified by its final answer: the tasks ask the
+model to cite the evidence, and the run succeeded when the answer cites every
+critical piece (`answer` in the record; citing a distractor is counted, not
+failed). That is a check of the answer, not of the work behind it. See
+"Decisions disabled against heuristics, with a real model".
 
 ## Variants
 
@@ -419,3 +422,25 @@ no suite re-reads or edits a file. A real-session measurement needs the
 `superseded` and `duplicate` columns of the report ("Tokens saved by reason").
 
 None of this says anything about task success.
+
+## Decisions disabled against heuristics, with a real model
+
+Scripted runs cannot say whether decisions help a model succeed. The D0/D1
+comparison of the decision experiments is variant B (architecture, decisions
+off) against C (the same, heuristic decisions); everything else is held equal.
+
+```
+benchmarks/ablation/compare-decisions --out DIR --model brain/<id> [--seeds 5] [--suites a,b]
+```
+
+It runs B and C with the real model (`sven --model`; a Brain server on the
+default port serves `brain/<id>`), then `sven-ablation compare` writes
+`DIR/comparison.{json,md}`: per variant the runs, verified successes and success
+rate; tokens, uncached input and wall time **per verified success**; the share
+of input served from the provider cache; and the decision calls, verdicts and
+applied verdicts. For the pair it counts the tasks only one of them answered
+correctly and the token ratio on the tasks both completed. Counts are small and
+no interval is claimed; extend `--seeds` before reading a difference. The
+D2/D3 arms, with a Brain decision model in place of the heuristic, are the
+variants D and E of the same matrix; the plan is in
+[decision-experiments.md](decision-experiments.md).
