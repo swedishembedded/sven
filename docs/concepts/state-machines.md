@@ -393,7 +393,8 @@ under `--approval manual` they go to the user. Headless runs are always auto.
 
 Other events (tool results, `UserMessage`, the remaining `status` values) behave
 as in the standard phases. A task list entry in the plan's `payload.tasks` is a
-string or an object with a `title` or `task` field. Fan-out is described in
+string or an object with a `title`, `task` or `description` field (the planning
+prompt asks for `{"id", "description"}` objects). Fan-out is described in
 [Parallel Submachine Fan-out](../internals/parallel-submachines.md).
 
 #### `Recovery`

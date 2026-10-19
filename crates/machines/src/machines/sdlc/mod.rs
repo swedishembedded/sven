@@ -274,6 +274,9 @@ fn store_phase_result(ctx: &mut Context, key: &str, decision: &Value) {
 }
 
 /// Extract a plan's parallelisable task list from its payload.
+///
+/// An entry is a string, or an object whose text is read from `title`, `task`
+/// or `description` (the planning prompt asks for `{"id", "description"}`).
 fn tasks_of(payload: &Value) -> Vec<String> {
     payload
         .get("tasks")
@@ -285,6 +288,7 @@ fn tasks_of(payload: &Value) -> Vec<String> {
                     Value::Object(o) => o
                         .get("title")
                         .or_else(|| o.get("task"))
+                        .or_else(|| o.get("description"))
                         .and_then(Value::as_str)
                         .map(str::to_string),
                     _ => None,

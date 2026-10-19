@@ -386,6 +386,26 @@ fn execution_fans_out_when_plan_decomposes_and_spawner_present() {
 }
 
 #[test]
+fn execution_fans_out_over_the_task_shape_the_planning_prompt_asks_for() {
+    let mut m = SdlcMachine::new();
+    let mut ctx = Context::new();
+    ctx.set_fact("parallel_execution", json!(true));
+    ctx.set_fact(
+        "plan_payload",
+        json!({ "tasks": [
+            {"id": "t1", "description": "add the parser"},
+            {"id": "t2", "description": "wire the CLI flag"},
+        ] }),
+    );
+    let r = m.dispatch_state(
+        SdlcState::Execution,
+        &Event::Internal(InternalEvent::Entry),
+        &mut ctx,
+    );
+    assert_eq!(count_instantiate(&r), 2, "one child per described task");
+}
+
+#[test]
 fn execution_stays_single_track_without_spawner_flag() {
     let mut m = SdlcMachine::new();
     let mut ctx = Context::new();
