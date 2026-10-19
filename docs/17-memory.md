@@ -3,8 +3,9 @@
 Sven's semantic memory stores facts, notes, decisions and any information worth
 remembering across sessions. It uses SQLite with FTS5 full-text search
 (BM25 ranking), making it fast and fully local - no external vector database
-needed. Search is lexical: it matches words, not meaning. The store can hold an
-embedding per index generation, but nothing computes or ranks by one yet.
+needed. By default search is lexical: it matches words, not meaning. Given an
+embedder (see [Search by meaning](#search-by-meaning)) it is hybrid: the word
+ranking and the vector ranking are fused, inside the caller's scope.
 
 ## How It Works
 
@@ -135,3 +136,55 @@ Two crates define what a memory store is, apart from the tool above:
 The `semantic_memory` tool (crate `sven-memory`) runs on `MemoryStore`: it
 holds an `AccessContext` and one space, and knows nothing of SQLite. The CLI
 opens `sven-memory-sqlite` for it.
+
+## Search by meaning
+
+A retrieval request may carry the query as a vector of an active index
+generation (`RetrievalRequest::with_embedding`). The store ranks the units of the
+caller's spaces that have a vector under that generation by cosine similarity,
+ranks the lexical hits as before, and fuses the two by reciprocal rank
+(`sven_sources::reciprocal_rank_fusion`, k = 60); ties fall to the unit id, so the
+order is the same every time. A vector without its generation, of the wrong
+length or non-finite is refused. Three conformance cases hold every adapter to
+this: a unit that shares no word with the query is found by its vector, the
+caller's scope applies and the unreadable cannot crowd out the readable, and a
+vector must fit its generation.
+
+What computes vectors is the host's choice, behind `sven_memory_api::Embedder`:
+
+- `HashingEmbedder` (crate `sven-memory`) is the local fixed model: words and
+  letter trigrams hashed into signed buckets, scaled to unit length. It needs no
+  server, gives the same vectors everywhere and sees spelling, not meaning.
+- `OpenAiEmbedder` (crate `sven-model-drivers`) calls `/v1/embeddings` of any
+  OpenAI-compatible server, `brain serve` with an embedding model among them. A
+  different checkpoint behind the same model name is not noticed.
+
+A change of embedder is a new index generation (its id derives from the embedding
+spec and the segmenter version), not a migration: units are embedded when they
+are ingested, so notes made before an embedder was given are found by word only
+until they are remembered again. `SemanticMemoryTool::with_embedder` registers
+and activates the generation, embeds what is remembered and the query that
+recalls, and the trajectory's memory record names the generation that answered.
+
+## Segmentation and anchors
+
+`sven-sources` cuts a source into units deterministically (`segment`: text,
+markdown with heading paths and whole fenced blocks, code by top-level item), each
+a verbatim slice by byte and character range. An anchor is a heading path, an
+ordinal and a fingerprint of the text; after an edit `reanchor` answers
+`Unambiguous` only for a unique verbatim match, `NeedsReview` for a unit in the
+same place with other words or a passage that occurs twice, and `Gone`; it never
+guesses. `redact` removes what looks like a credential before text is stored.
+`SEGMENTER_VERSION` is part of the identity of an index generation.
+
+## Hosting memory
+
+An embedding application gives each agent its own scoped store:
+`agent.with_memory(MemoryScope::new(store, access, "space"))`, optionally
+`.with_embedder(..)`. The agent's `semantic_memory` tool then reads and writes
+exactly that space under exactly that access, in place of any other memory; two
+agents on one engine and one store see only what each was granted.
+`sven_workspace::workspace_identity(dir)` names the repository a directory
+belongs to (the same for every worktree of it and for clones of one `origin`) and
+its checkout, so memory about a codebase can be kept under the repository and not
+under the path it was checked out in; it reads only the directory it is given.

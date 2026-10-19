@@ -15,18 +15,20 @@ a change of embedding model starts a new index generation. Sven owns the
 memory semantics. Hosts implement storage behind the same traits, and one
 conformance suite checks every implementation.
 
+## Done (docs/17-memory.md)
+
+Hybrid retrieval behind the store contract with three conformance cases, the
+`Embedder` seam with a local fixed model and an OpenAI-compatible one, the
+`sven-sources` crate (segmentation, explicit reanchoring, redaction, BM25,
+reciprocal rank fusion), stable repository/worktree identity, and a scoped store
+per agent (`Agent::with_memory`).
+
 ## Left to do
 
 - [ ] Add annotation tools (`NewAnnotation`, already defined by the contract)
   to the tool surface.
-- [ ] Add a `sven-sources` crate for deterministic segmentation of text,
-  markdown and code.
-  - Anchors are a heading path plus a content fingerprint.
-  - Reanchoring is explicit: it returns unambiguous or needs-review.
-  - It also holds redaction, BM25 and reciprocal-rank fusion.
-  - Re-export it through `sven-sdk`.
-- [ ] Add workspace identity: a worktree resolves to its main repository's
-  identity, and no library code reads the current directory.
-- [ ] Add the remaining `sven-sdk` host seams:
-  - an injectable memory store;
-  - a model override per agent.
+- [ ] Re-embed existing units when an embedder is added (the contract has no unit
+  listing yet; today a unit is embedded when it is ingested).
+- [ ] A model override per agent.
+- [ ] Measure retrieval quality with a brain embedding model against the local fixed
+  model on a real memory.
