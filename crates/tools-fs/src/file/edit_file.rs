@@ -18,6 +18,10 @@ use sven_tool_api::PathScope;
 /// Minimum similarity ratio (0-1) for a fuzzy window to be accepted.
 const FUZZY_THRESHOLD: f64 = 0.85;
 
+/// Minimum similarity of each hunk line to the file line it is aligned with in
+/// a fuzzy match (a typo in a line passes; a different line does not).
+const LINE_FLOOR: f64 = 0.7;
+
 // ── Hunk data structures ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -224,6 +228,59 @@ fn find_hunk_position(
     search_lines: &[&str],
     hint: Option<usize>,
 ) -> Result<(usize, i64), String> {
+    find_hunk_window(file_lines, search_lines, hint).map(|(pos, delta)| (pos, usable_delta(delta)))
+}
+
+/// An indent offset of exactly one column is the signature of a diff whose
+/// context lines lack their leading space (the parser then strips one column
+/// of indentation), not of a real re-indentation: the added lines were written
+/// in the file's own frame and must not gain the column.
+fn usable_delta(delta: i64) -> i64 {
+    if delta.abs() == 1 {
+        0
+    } else {
+        delta
+    }
+}
+
+/// How many columns the file's lines sit right of the hunk's, when every
+/// non-blank aligned pair is the same text up to a similarity floor and they
+/// agree on that offset to within one column; `None` when a line does not belong where it
+/// landed or the lines disagree (a hunk written on another indentation scale).
+fn aligned_indent_delta(search: &[&str], window: &[&str]) -> Option<i64> {
+    let mut offsets: Option<(i64, i64)> = None;
+    for (hunk_line, file_line) in search.iter().zip(window) {
+        if hunk_line.trim().is_empty() && file_line.trim().is_empty() {
+            continue;
+        }
+        if similarity_ratio(hunk_line.trim(), file_line.trim()) < LINE_FLOOR {
+            return None;
+        }
+        let offset = indent_of(file_line) as i64 - indent_of(hunk_line) as i64;
+        offsets = Some(offsets.map_or((offset, offset), |(lo, hi)| {
+            (lo.min(offset), hi.max(offset))
+        }));
+    }
+    // Context lines that lack their prefix space sit one column off while the
+    // lines written with `-` do not: a spread of one column is that mix, and
+    // the smaller offset is the real one.
+    match offsets {
+        None => Some(0),
+        Some((lo, hi)) if hi - lo <= 1 => Some(if lo.abs() <= hi.abs() { lo } else { hi }),
+        Some(_) => None,
+    }
+}
+
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// Rename of the position search proper; see [`find_hunk_position`].
+fn find_hunk_window(
+    file_lines: &[String],
+    search_lines: &[&str],
+    hint: Option<usize>,
+) -> Result<(usize, i64), String> {
     // Pure insertion - no context/del lines to locate
     if search_lines.is_empty() {
         let pos = hint
@@ -282,17 +339,20 @@ fn find_hunk_position(
     }
 
     // ── Strategy 3: fuzzy ────────────────────────────────────────────────────
+    // A window qualifies only when it is similar as a whole AND every hunk
+    // line is similar to the file line it lands on. Whole-window similarity
+    // alone accepts a hunk that lacks one context line: it then lines up a
+    // line late and rewrites the wrong lines.
     let search_joined = search_lines.join("\n");
     let fuzzy_hits: Vec<(f64, usize, i64)> = (0..=(file_refs.len() - n))
         .filter_map(|i| {
             let win = &file_refs[i..i + n];
             let ratio = similarity_ratio(&search_joined, &win.join("\n"));
-            if ratio >= FUZZY_THRESHOLD {
-                let file_ind = common_indent(win) as i64;
-                Some((ratio, i, file_ind - hunk_indent))
-            } else {
-                None
+            if ratio < FUZZY_THRESHOLD {
+                return None;
             }
+            let delta = aligned_indent_delta(search_lines, win)?;
+            Some((ratio, i, delta))
         })
         .collect();
 
@@ -545,6 +605,13 @@ impl Tool for EditFileTool {
         let mut new_content = file_lines.join("\n");
         if had_trailing_newline {
             new_content.push('\n');
+        }
+        if new_content == content {
+            return ToolOutput::err(
+                &call.id,
+                "The edit changes nothing: the lines it adds equal the lines it removes. \
+                 The file was not modified. Re-read the file and give the lines that must differ.",
+            );
         }
 
         if let Some(parent) = target.parent() {
@@ -1493,6 +1560,111 @@ mod tests {
         let lines: &[&str] = &["    foo", "        bar"];
         let result = strip_indent(lines, 4);
         assert_eq!(result, vec!["foo", "    bar"]);
+    }
+
+    // ── Misaligned or malformed hunks (recorded model edits that corrupted code) ─
+
+    /// Runs one edit and returns the tool output and the file afterwards.
+    async fn edit(content: &str, diff: &str) -> (sven_tool_api::tool::ToolOutput, String) {
+        let path = tmp_file(content);
+        let out = EditFileTool::default()
+            .execute(&call(json!({"path": path, "diff": diff})))
+            .await;
+        let result = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        (out, result)
+    }
+
+    #[tokio::test]
+    async fn hunk_missing_a_context_line_is_refused_not_applied_a_line_late() {
+        // The model left out `check(table)`; the hunk would line up one line
+        // late and rewrite the wrong lines, indenting the added line by four.
+        let file = concat!(
+            "def mdr_sort_rows(table, column, descending=False):\n",
+            "    \"\"\"Sort body rows by a column: numerically when every cell is an integer, else as text.\"\"\"\n",
+            "    _check_column(table, column)\n",
+            "    numeric = all(_INTEGER.match(row[column]) for row in table[\"rows\"])\n",
+            "    key = (lambda row: int(row[column])) if numeric else (lambda row: row[column])\n",
+            "    return dict(table, rows=sorted(table[\"rows\"], key=key, reverse=descending))\n",
+        );
+        let diff = concat!(
+            "@@ -136,7 +136,7 @@\n",
+            " def mdr_sort_rows(table, column, descending=False):\n",
+            "     \"\"\"Sort body rows by a column: numerically when every cell is an integer, else as text.\"\"\"\n",
+            "-    numeric = all(_INTEGER.match(row[column]) for row in table[\"rows\"])\n",
+            "+    numeric = any(_INTEGER.match(row[column]) for row in table[\"rows\"])\n",
+            "     key = (lambda row: int(row[column])) if numeric else (lambda row: row[column])\n",
+            "     return dict(table, rows=sorted(table[\"rows\"], key=key, reverse=descending))\n",
+        );
+        let (out, result) = edit(file, diff).await;
+        assert!(out.is_error, "{}", out.content);
+        assert_eq!(result, file, "a refused edit must leave the file alone");
+    }
+
+    #[tokio::test]
+    async fn context_lines_missing_their_prefix_space_do_not_shift_added_lines() {
+        // Context lines written without the leading space come out one column
+        // short; the added line, written in the file's own indentation, must
+        // not gain that column.
+        let file = "class Hunk:\n    a_start: int\n    b_count: int\n    lines: tuple\n";
+        let diff =
+            "@@ @@\n    a_start: int\n    b_count: int\n+    context: int\n    lines: tuple\n";
+        let (out, result) = edit(file, diff).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(
+            result,
+            "class Hunk:\n    a_start: int\n    b_count: int\n    context: int\n    lines: tuple\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn recorded_list_block_edit_keeps_valid_indentation() {
+        let file = concat!(
+            "def _parse_list(lines, start, first):\n",
+            "    loose = loose or after > scan\n",
+            "    scan = after\n",
+            "    block = {\"type\": \"list\", \"start\": first[\"number\"],\n",
+            "             \"tight\": not loose, \"items\": items}\n",
+            "    return block, scan\n",
+        );
+        let diff = concat!(
+            "@@ -2,5 +2,5 @@\n",
+            "    loose = loose or after > scan\n",
+            "    scan = after\n",
+            "-    block = {\"type\": \"list\", \"start\": first[\"number\"],\n",
+            "+    block = {\"type\": \"list\", \"start\": first[\"number\"], \"x\": 1,\n",
+            "             \"tight\": not loose, \"items\": items}\n",
+            "    return block, scan\n",
+        );
+        let (out, result) = edit(file, diff).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(
+            result.contains(
+                "\n    block = {\"type\": \"list\", \"start\": first[\"number\"], \"x\": 1,\n"
+            ),
+            "{result}"
+        );
+        assert!(result.contains("\n    return block, scan\n"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn hunk_indented_on_another_scale_than_the_file_is_refused() {
+        // Four-space hunk against a two-space file: the lines do not agree on
+        // one indentation offset, so the added lines cannot be placed.
+        let file = "function f(b)\n  if ok then\n    success(b)\n    return true\n  end\n  failure(b)\nend\n";
+        let diff = "@@ @@\n     if ok then\n         success(b)\n         return true\n-    end\n+    end -- done\n     failure(b)\n";
+        let (out, result) = edit(file, diff).await;
+        assert!(out.is_error, "{}", out.content);
+        assert_eq!(result, file);
+    }
+
+    #[tokio::test]
+    async fn edit_that_changes_nothing_is_an_error() {
+        let file = "a = 1\nb = 2\n";
+        let (out, result) = edit(file, "@@ @@\n-b = 2\n+b = 2\n").await;
+        assert!(out.is_error, "{}", out.content);
+        assert!(out.content.contains("nothing"), "{}", out.content);
+        assert_eq!(result, file);
     }
 }
 

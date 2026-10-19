@@ -130,8 +130,14 @@ Write a whole file, creating missing parent directories. Overwrites unless
 ### `edit_file`
 
 Edit an existing file by applying unified diff hunks. Every hunk starts with an
-`@@` line; context lines must match the file (indentation differences are
-corrected).
+`@@` line; context lines must match the file. A hunk is located by an exact
+match, then by a match that differs only in one common indentation offset, then
+by a fuzzy match in which every line must resemble the file line it lands on
+(a typo passes; a missing context line does not, because the hunk would line up
+a line late). The offset found is applied to the added lines; an offset of one
+column is taken for context lines that lack their leading space and is not
+applied, and a hunk whose lines disagree on the offset is refused. An edit
+that leaves the file unchanged is an error, not a success.
 
 | Parameter | Description |
 |-----------|-------------|
