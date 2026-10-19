@@ -47,6 +47,9 @@ pub struct Agent {
     /// Where the trajectory is being written as the run happens, if anywhere.
     /// See [`Agent::journal_to`].
     journal: Option<journal::Journal>,
+    /// This agent's own memory tool (see [`Agent::with_memory`]); it takes the
+    /// place of one of the same name that the engine registers.
+    memory_tool: Option<Arc<dyn sven_tool_api::Tool>>,
 }
 
 impl Agent {
@@ -58,7 +61,20 @@ impl Agent {
             events,
             gates: None,
             journal: None,
+            memory_tool: None,
         }
+    }
+
+    pub(crate) fn set_memory_tool(&mut self, tool: Arc<dyn sven_tool_api::Tool>) {
+        self.memory_tool = Some(tool);
+    }
+
+    /// The tools this agent's runs register on top of the built-in set: the
+    /// engine's, then the agent's own memory.
+    fn extra_tools(&self) -> Vec<Arc<dyn sven_tool_api::Tool>> {
+        let mut tools = self.engine.tools();
+        tools.extend(self.memory_tool.clone());
+        tools
     }
 
     /// Subscribes to everything this agent emits while it works.
@@ -493,7 +509,7 @@ impl Agent {
             .with_runtime_context(runtime_ctx)
             .with_context_facts(facts)
             .with_builtin_tools(self.engine.toolset().builtin())
-            .with_extra_tools(self.engine.tools())
+            .with_extra_tools(self.extra_tools())
             .with_initial_history(self.state.history.clone())
             .with_approval_mode(self.engine.approvals().into());
         if self.engine.parks_questions() {

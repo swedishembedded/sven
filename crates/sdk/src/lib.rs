@@ -50,6 +50,7 @@ mod error;
 mod events;
 mod gates;
 mod harness;
+mod memory_scope;
 mod meter;
 mod method;
 mod run;
@@ -69,6 +70,7 @@ pub use harness::{
     compile_harness, Harness, HarnessCheckpoint, HarnessFailure, HarnessOutcome, HarnessRecording,
     HarnessReplay, HarnessRun,
 };
+pub use memory_scope::MemoryScope;
 pub use method::{Method, Strategy};
 pub use run::{
     Approval, CancelToken, Decision, Question, RunConclusion, RunId, RunOptions, RunOutcome, Usage,
@@ -210,3 +212,15 @@ pub mod model {
 pub mod drivers {
     pub use sven_model_drivers::{from_config, from_config_probed};
 }
+
+/// Agent memory: the store contract an embedding application implements or
+/// borrows, the bundled embedders, and the tool an agent reaches memory through.
+/// Give an agent a scoped store with [`Agent::with_memory`].
+pub mod memory {
+    pub use sven_memory::{HashingEmbedder, SemanticMemoryTool, NOTES_SEGMENTER, PERSONAL_SPACE};
+    pub use sven_memory_api::*;
+}
+
+/// Deterministic segmentation of sources into memory units, anchors that
+/// survive edits, redaction, BM25 and reciprocal rank fusion.
+pub use sven_sources as sources;

@@ -13,6 +13,9 @@ sven-hsm       = { path = "../hsm" }
 sven-machines  = { path = "../machines" }
 sven-model     = { path = "../model" }
 sven-turn      = { path = "../turn" }
+sven-memory     = { path = "../memory" }
+sven-memory-api = { path = "../memory-api" }
+sven-sources    = { path = "../sources" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-tool-api  = { path = "../tool-api" }
 sven-sdk-macros = { path = "../sdk-macros" }
@@ -49,7 +52,6 @@ android = ["sven-bootstrap/android"]
 async-trait     = { workspace = true }
 schemars        = { workspace = true }
 sven-hsm        = { path = "../hsm" }
-sven-memory     = { path = "../memory" }
 sven-memory-sqlite = { path = "../memory-sqlite" }
 sven-model-mock = { path = "../model-mock" }
 tempfile        = { workspace = true }
