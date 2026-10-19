@@ -370,6 +370,21 @@ broke the tool's parameter schema, carries `extra.sven.gate`; a step that read
 from memory carries `extra.sven.memory`. Their fields are listed in
 **[docs/technical/sdk.md](technical/sdk.md)**, section "Trajectories".
 
+### Under Harbor
+
+`benchmarks/sven_agent.py` runs sven as a Harbor installed agent (`make
+benchmark/terminal-bench`). It passes `--output-trace /logs/agent/trajectory.json`, so
+the trial's `agent/` directory holds sven's ATIF trajectory next to Harbor's own
+result, and it fills the trial context's token and cost totals from the trajectory's
+final metrics (a total the trajectory does not state is left unset). The adapter is
+written against the agent base class of harbor 0.1.45, which is the version
+`benchmarks/requirements.txt` pins: harbor 0.24.0 replaced that base class, so the
+adapter does not import there. It has not been run against a Harbor job on this
+repository's hosts (no container daemon); `make test/benchmarks` tests the trajectory
+reader. An embedding application reads the trial directories back (an application
+that turns Harbor trials into training experiences reads `agent/trajectory.json`
+and `result.json`).
+
 Every headless run also writes an automatic trajectory to `.sven/logs/` when a
 `.sven/` project directory exists, whether or not `--output-trace` was given —
 a flat directory of `*.json` documents an RL or SFT pipeline can ingest

@@ -11,6 +11,11 @@ via:
 The binary is installed inside each sandbox by install_sven.sh.j2, which
 copies the pre-built release binary from a bind-mount path on the host.
 
+The adapter targets the base-class API of harbor 0.1.45 (`ExecInput`,
+`create_run_agent_commands`, `populate_context_post_run`); later releases
+replaced it (0.24.0 has no `ExecInput` in the base class), so the version is
+pinned in requirements.txt.
+
 Environment variables (read at run time, forwarded into each sandbox):
 
     SVEN_MODEL            - model string passed to sven --model
@@ -34,6 +39,12 @@ from pathlib import Path
 from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+
+from .trajectory_context import context_from_trajectory
+
+# Where the run writes its ATIF trajectory inside the sandbox: Harbor's agent
+# log directory, which it mounts from the trial's `agent/` directory.
+_CONTAINER_TRAJECTORY = "/logs/agent/trajectory.json"
 
 _API_KEY_VARS = (
     "ANTHROPIC_API_KEY",
@@ -113,6 +124,7 @@ class SvenInstalledAgent(BaseInstalledAgent):
             ExecInput(
                 command=(
                     f"sven --headless --model {shlex.quote(model)} --output-format compact"
+                    f" --output-trace {_CONTAINER_TRAJECTORY}"
                     f" {shlex.quote(instruction)}"
                 ),
                 # cwd=None → use the container's WORKDIR from its Dockerfile.
@@ -129,10 +141,12 @@ class SvenInstalledAgent(BaseInstalledAgent):
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         # Harbor captures stdout/stderr automatically from the container.
-        # Sven writes its final answer to stdout and diagnostics to stderr,
-        # which matches what Harbor expects from a headless installed agent.
+        # Sven writes its final answer to stdout and diagnostics to stderr.
         #
-        # For richer trajectory capture, add --output-jsonl to the run command
-        # above, download that file here, parse each JSON line into ATIF Steps,
-        # build a Trajectory, and set context.n_input_tokens / context.cost_usd.
-        pass
+        # The run also leaves its ATIF trajectory in /logs/agent, which Harbor
+        # mounts from the trial's agent directory: it stays there for whoever
+        # reads the trial (splinter ingests it), and its final metrics fill the
+        # context. A total the trajectory does not state is left unset.
+        stated = context_from_trajectory(self.logs_dir / "trajectory.json")
+        for field, value in (stated or {}).items():
+            setattr(context, field, value)

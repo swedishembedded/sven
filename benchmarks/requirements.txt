@@ -1,2 +1,4 @@
-harbor>=0.1.45
+# The adapter in sven_agent.py is written against this release's agent base
+# class; harbor 0.24.0 replaced it (no ExecInput), so do not float the version.
+harbor==0.1.45
 jinja2>=3.1

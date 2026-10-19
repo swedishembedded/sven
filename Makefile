@@ -362,6 +362,10 @@ benchmark/terminal-bench: benchmark/build
 	    -k 1 \
 	    $(HARBOR_FLAGS)
 
+## test/benchmarks - the Harbor adapter's pure helpers (python3 unittest; imports no harbor)
+test/benchmarks:
+	python3 -I -m unittest discover -s benchmarks -p 'test_*.py'
+
 ## benchmark/report - regenerate report from existing result files
 benchmark/report:
 	@[ -d target/benchmark ] || { \
@@ -650,7 +654,7 @@ generate/config/golden:
 # Declared last so every generated list above is already defined.
 .PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
         test test/features test/gates test/e2e test/e2e/basic/deferred test/e2e/basic/instructions-deferred test/e2e/basic/demote $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
-        test/harness test/harness/local-model $(HARNESS_TARGETS) \
+        test/benchmarks test/harness test/harness/local-model $(HARNESS_TARGETS) \
         generate generate/harness generate/harness/sample-bundle \
         generate/config generate/config/golden \
         test/crate $(TEST_CRATE_TARGETS) test/formal \
