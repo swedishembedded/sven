@@ -136,7 +136,7 @@ these built-in tools by default: `edit_file`, `find_file`, `grep`,
 
 | Flag | Meaning |
 |------|---------|
-| `--tools a,b,...` | serve only these tools; `all` or no flag serves the default set; a name outside the default set is ignored |
+| `--tools a,b,...` | serve only these tools; `default` or no flag serves the nine above; a name outside that set (including a stale `all`) is an error. The set is deliberately smaller than the agent's tools: those that need a live session (`ask_question`, `todo`, `switch_mode`) or change agent state are not offered to MCP clients |
 | `--brave-api-key KEY` | key for `web_search` (also read from `BRAVE_API_KEY`) |
 
 Every served tool runs when the host calls it; the host applies its own

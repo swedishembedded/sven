@@ -80,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `retry` body's every attempt is a step start and counted as such, exhaustion continues at `on_exhausted`, and the retry frame ends with its body.
 - A run waiting on live child runs was judged quiescent, so a deadline or cancellation could surface as a stall; a run's tool calls, now bound to its cancel scope, also end with the run.
 
+### Removed
+- `sven mcp serve --tools all`: the keyword is now `default`, and an unknown tool name is an error rather than ignored.
+
 ### Changed (BREAKING, harness documents)
 - **sven-harness-spec**: an unknown field anywhere in a harness document (top level, `limits`, a step body, a declared input or output) is an error naming the field, and the JSON Schema forbids it; a step no path from `entry` reaches is rejected as unreachable. **Migration**: remove or correct the misspelled keys, delete orphan steps (or make them reachable). **sven-harness-runtime**: a parallel branch whose completion is delivered a second time keeps its first result.
 

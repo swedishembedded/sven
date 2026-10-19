@@ -31,10 +31,13 @@ pub enum McpCommands {
     Serve {
         /// Comma-separated list of tool names to expose.
         ///
-        /// Defaults to all MCP-safe built-in tools (see `sven_mcp::DEFAULT_TOOL_NAMES`).
-        /// Pass `all` to include every registered tool explicitly.
+        /// Defaults to the MCP-safe built-in tools (see
+        /// `sven_mcp::DEFAULT_TOOL_NAMES`); pass `default` to say so
+        /// explicitly. Tools that need a live session (`ask_question`,
+        /// `todo`) or change agent state are not offered over MCP. An
+        /// unknown name is an error.
         ///
-        /// Example: --tools read_file,write_file,grep,run_terminal_command
+        /// Example: --tools read_file,write_file,grep
         #[arg(long, value_name = "TOOL,...")]
         tools: Option<String>,
 
@@ -53,6 +56,7 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             tools,
             brave_api_key,
         } => {
+            crate::check_requested_tools(tools.as_deref())?;
             let config = sven_bootstrap::Config::load(None)?;
             let root = std::env::current_dir()?;
             let scope = sven_tool_api::PathScope::confined(&root)

@@ -52,7 +52,9 @@ pub mod cli;
 pub mod registry;
 pub mod server;
 
-pub use registry::{build_mcp_registry, DEFAULT_TOOL_NAMES};
+pub use registry::{
+    build_mcp_registry, check_requested_tools, DEFAULT_KEYWORD, DEFAULT_TOOL_NAMES,
+};
 pub use server::SvenMcpServer;
 
 use std::sync::Arc;

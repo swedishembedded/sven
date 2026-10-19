@@ -40,6 +40,28 @@ pub const DEFAULT_TOOL_NAMES: &[&str] = &[
     "write_file",
 ];
 
+/// The `--tools` value that selects [`DEFAULT_TOOL_NAMES`].
+pub const DEFAULT_KEYWORD: &str = "default";
+
+/// Reject a `--tools` selection naming something the server does not offer,
+/// so a typo or a stale `all` fails at startup instead of serving no tools.
+pub fn check_requested_tools(requested: Option<&str>) -> anyhow::Result<()> {
+    let Some(list) = requested.filter(|list| list.trim() != DEFAULT_KEYWORD) else {
+        return Ok(());
+    };
+    let unknown: Vec<&str> = list
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !DEFAULT_TOOL_NAMES.contains(name))
+        .collect();
+    anyhow::ensure!(
+        unknown.is_empty(),
+        "--tools: unknown tool {unknown:?}; the server offers {} (or `{DEFAULT_KEYWORD}` for all of them)",
+        DEFAULT_TOOL_NAMES.join(", ")
+    );
+    Ok(())
+}
+
 /// Build a [`ToolRegistry`] populated with the default MCP-safe tool set.
 ///
 /// `web_search_api_key` is forwarded to [`WebSearchTool`].  When `None` the
@@ -48,10 +70,12 @@ pub const DEFAULT_TOOL_NAMES: &[&str] = &[
 /// variable.
 ///
 /// `allowed_names` is an optional comma-separated list of tool names to
-/// include.  Pass `"all"` (or `None`) to include all default tools.
-/// Any name not in [`DEFAULT_TOOL_NAMES`] is silently ignored - this guards
-/// against clients accidentally requesting internal tools that were never
-/// registered.
+/// include.  Pass `"default"` (or `None`) to include [`DEFAULT_TOOL_NAMES`].
+/// That set is deliberately smaller than the agent's own registry: the tools
+/// that need a live session or change agent state are not offered to MCP
+/// clients (see the module docs).  Any name not in [`DEFAULT_TOOL_NAMES`] is
+/// silently ignored here; [`check_requested_tools`] is the loud check the
+/// command line applies first.
 ///
 /// The file tools and the shell's working directory are confined to `scope`,
 /// and the shell refuses a command matching `tools.deny_patterns`.
@@ -62,7 +86,7 @@ pub fn build_mcp_registry(
     scope: PathScope,
 ) -> ToolRegistry {
     let filter: Option<std::collections::HashSet<&str>> = match allowed_names {
-        None | Some("all") => None,
+        None | Some(DEFAULT_KEYWORD) => None,
         Some(list) => Some(list.split(',').map(|s| s.trim()).collect()),
     };
 
@@ -166,15 +190,29 @@ mod tests {
     }
 
     #[test]
-    fn all_keyword_includes_all_default_tools() {
+    fn default_keyword_selects_the_default_set() {
         let reg = build_mcp_registry(
             None,
-            Some("all"),
+            Some("default"),
             &ToolsConfig::default(),
             PathScope::default(),
         );
-        let names = reg.names();
-        assert_eq!(names.len(), DEFAULT_TOOL_NAMES.len());
+        assert_eq!(reg.names().len(), DEFAULT_TOOL_NAMES.len());
+    }
+
+    /// `all` once named the default set, which is a curated subset of the
+    /// agent's tools; a stale `--tools all` must fail loudly rather than serve
+    /// nothing.
+    #[test]
+    fn requested_tools_must_be_known_names_or_the_default_keyword() {
+        assert!(check_requested_tools(None).is_ok());
+        assert!(check_requested_tools(Some("default")).is_ok());
+        assert!(check_requested_tools(Some("read_file, grep")).is_ok());
+        for bad in ["all", "read_file,nonexistent_tool"] {
+            let err = check_requested_tools(Some(bad)).unwrap_err().to_string();
+            assert!(err.contains("default"), "error should offer `default`: {err}");
+            assert!(err.contains("read_file"), "error should list the names: {err}");
+        }
     }
 
     #[test]
