@@ -275,8 +275,9 @@ pub(crate) async fn run_tui(mut cli: Cli, settings: Settings) -> anyhow::Result<
     let trace_load_path = cli.effective_load_trace()?.cloned();
     let trace_save_path = cli.effective_output_trace().cloned();
 
+    let mode = cli.agent_mode(settings.runtime.agent.default_mode);
     let opts = AppOptions {
-        mode: cli.mode,
+        mode,
         approval: cli.approval,
         initial_prompt: cli.prompt,
         no_nvim: !cli.nvim,

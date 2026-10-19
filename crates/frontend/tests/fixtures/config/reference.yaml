@@ -112,7 +112,7 @@ model:
 # ── Agent ──────────────────────────────────────────────────────────────────
 
 agent:
-  # Accepted but not read: the mode of a run comes from --mode (default agent).
+  # Mode of a run without --mode: research, plan, agent, chat or sdlc.
   default_mode: agent
 
   # Maximum number of tool-call rounds before sven stops and reports.

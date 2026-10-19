@@ -56,6 +56,7 @@ pub(crate) async fn run_ci(
 ) -> anyhow::Result<()> {
     // ── Detect project root ──────────────────────────────────────────────────
     let project_root = find_project_root().ok();
+    let mode = cli.agent_mode(config.agent.default_mode);
 
     // ── --resume in headless mode ────────────────────────────────────────────
     // Maps onto the same semantics as an explicit `--trace PATH`: the
@@ -146,7 +147,7 @@ pub(crate) async fn run_ci(
     // A run that uses any of those workflow features falls through to `CiRunner`
     // to preserve them; everything else takes the `RuntimeRunner` path.
     // `sdlc`/`chat` modes always use `RuntimeRunner` (no `CiRunner` path exists).
-    let mode_forces_runtime_runner = matches!(cli.mode, AgentMode::Sdlc | AgentMode::Chat);
+    let mode_forces_runtime_runner = matches!(mode, AgentMode::Sdlc | AgentMode::Chat);
 
     // Piped stdin that itself looks like a prior sven conversation document is
     // replayed as history (parsed into prior messages + a trailing pending
@@ -183,7 +184,7 @@ pub(crate) async fn run_ci(
 
     if load_trace.is_none() && (mode_forces_runtime_runner || workflow_features_absent) {
         let kernel_mode = std::env::var("SVEN_MODE").unwrap_or_else(|_| {
-            match cli.mode {
+            match mode {
                 AgentMode::Chat => "chat",
                 AgentMode::Sdlc => "sdlc",
                 _ => "agent",
@@ -264,7 +265,7 @@ pub(crate) async fn run_ci(
         let code = runner
             .run(sven_ci::RuntimeRunnerOptions {
                 mode: kernel_mode,
-                agent_mode: cli.mode,
+                agent_mode: mode,
                 prompt,
                 history,
                 project_root: project_root.clone(),
@@ -304,7 +305,7 @@ pub(crate) async fn run_ci(
     let input_from_file = cli.file.is_some() && !file_is_trace;
 
     let opts = CiOptions {
-        mode: cli.mode,
+        mode,
         model_override: cli.model,
         input,
         extra_prompt,

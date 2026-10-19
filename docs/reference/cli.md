@@ -38,7 +38,7 @@ both for that step and the steps after it.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-m, --mode MODE` | `agent` | What the agent may do at all: `research` and `plan` never write; `agent` has the read and write tools; `chat` and `sdlc` select those machines. A per-step `mode=` directive in a workflow accepts `research`, `plan` and `agent`. The `agent.default_mode` configuration key is accepted but not read. |
+| `-m, --mode MODE` | `agent.default_mode` (`agent`) | What the agent may do at all: `research` and `plan` never write; `agent` has the read and write tools; `chat` and `sdlc` select those machines. A per-step `mode=` directive in a workflow accepts `research`, `plan` and `agent`. |
 | `-M, --model MODEL` | configuration | Model for this run: `provider/name`, a named `providers:` entry, a catalog model or a bare name. Also read from `SVEN_MODEL`. |
 | `--approval MODE` | `auto` | `auto` runs every call the mode allows, shell and file writes included, without asking. `manual` shows each call that is not read-only and runs it only after you approve; a `task` sub-agent's and an SDLC task's calls come to the same prompt. `manual` needs the interactive TUI: sven refuses to start it with a subcommand, headless, in a pipe or as a team member. |
 | `--tool-disclosure MODE` | `tools.disclosure.mode` | `full` or `deferred`: whether every request carries every tool definition or only the core tools' and those the model loaded. |

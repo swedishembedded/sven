@@ -255,7 +255,7 @@ model:
 # ── Agent ──────────────────────────────────────────────────────────────────
 
 agent:
-  # Accepted but not read: the mode of a run comes from --mode (default agent).
+  # Mode of a run without --mode: research, plan, agent, chat or sdlc.
   default_mode: agent
 
   # Maximum number of tool-call rounds before sven stops and reports.
@@ -685,7 +685,7 @@ Controls the agent's autonomy and defaults.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `default_mode` | `"agent"` | Accepted but not read: the mode of a run is `--mode`, which defaults to `agent` |
+| `default_mode` | `"agent"` | The mode of an interactive or headless run that gets no `--mode`: `research`, `plan`, `agent`, `chat` or `sdlc` |
 | `max_tool_rounds` | `200` | Maximum autonomous tool-call rounds before stopping |
 | `compaction_threshold` | `0.85` | Fraction of the input budget that triggers compaction |
 | `compaction_keep_recent` | `6` | Recent non-system messages preserved verbatim during compaction |

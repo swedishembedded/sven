@@ -97,9 +97,10 @@ pub struct Cli {
     #[arg(long, short = 'H')]
     pub headless: bool,
 
-    /// Agent mode: what the agent may do at all (research and plan never write)
-    #[arg(long, short = 'm', value_enum, default_value = "agent")]
-    pub mode: AgentMode,
+    /// Agent mode: what the agent may do at all (research and plan never
+    /// write). Default: `agent.default_mode` of the configuration, else agent.
+    #[arg(long, short = 'm', value_enum)]
+    pub mode: Option<AgentMode>,
 
     /// Whether tool calls wait for your approval.
     ///
@@ -722,6 +723,12 @@ impl Cli {
         self.stdin || (self.prompt.is_none() && !std::io::stdin().is_terminal())
     }
 
+    /// The mode of this run: `--mode` when given, else the configured
+    /// `agent.default_mode`.
+    pub fn agent_mode(&self, configured_default: AgentMode) -> AgentMode {
+        self.mode.unwrap_or(configured_default)
+    }
+
     /// Resolve the effective trace input path: --load-trace takes priority, then --trace.
     ///
     /// `--trace` on a missing file starts a fresh session there, but
@@ -760,6 +767,20 @@ mod tests {
     fn cli(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("sven").chain(args.iter().copied()))
             .expect("the arguments parse")
+    }
+
+    /// An explicit `--mode` wins; without one the configured default applies.
+    #[test]
+    fn mode_falls_back_to_the_configured_default() {
+        assert_eq!(cli(&["fix it"]).agent_mode(AgentMode::Plan), AgentMode::Plan);
+        assert_eq!(
+            cli(&["--mode", "research", "fix it"]).agent_mode(AgentMode::Plan),
+            AgentMode::Research
+        );
+        assert_eq!(
+            cli(&["-m", "agent", "fix it"]).agent_mode(AgentMode::Plan),
+            AgentMode::Agent
+        );
     }
 
     /// Manual approval with nobody at a terminal to answer is refused before
