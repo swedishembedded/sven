@@ -145,7 +145,7 @@ class SvenInstalledAgent(BaseInstalledAgent):
         #
         # The run also leaves its ATIF trajectory in /logs/agent, which Harbor
         # mounts from the trial's agent directory: it stays there for whoever
-        # reads the trial (splinter ingests it), and its final metrics fill the
+        # reads the trial, and its final metrics fill the
         # context. A total the trajectory does not state is left unset.
         stated = context_from_trajectory(self.logs_dir / "trajectory.json")
         for field, value in (stated or {}).items():

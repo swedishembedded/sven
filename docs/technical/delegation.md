@@ -82,6 +82,37 @@ every child and the total. The child's own requests are still charged to the
 session through the existing token accounting; this account adds the per-child
 view and the saving, which is an estimate of context size, not of money.
 
+## A child on another model endpoint
+
+A sub-agent runs on the parent's model unless the `task` call (or a persona)
+names another: `model` takes `provider/name` or a named `providers:` entry,
+and is passed to the child as `--model`. The child is a separate process that
+reads the same configuration, so an entry's endpoint and key apply to it. No
+new protocol is involved: the child speaks ACP to the parent as always, and
+reaches its model through the driver the entry names.
+
+A DeepSeek-compatible (or brain) endpoint is such an entry:
+
+```yaml
+providers:
+  compat:
+    name: deepseek                       # the driver that speaks the endpoint's protocol
+    base_url: https://api.deepseek.com/v1   # or a brain server: http://127.0.0.1:8788/v1
+    api_key: ...                         # or api_key_env
+    models:
+      deepseek-chat: {}
+```
+
+and `task` with `model: compat/deepseek-chat` runs the child there. The default
+base URL of the `deepseek` driver is DeepSeek's own, so an entry that only
+names the driver and a key reaches it. `tests/e2e/basic/23_delegated_model.bats`
+holds the offline specification (the child answers from the entry the `model`
+argument names, not from the parent's provider);
+`make test/e2e/delegation/local-model ENDPOINT=<url> MODEL=<name> [KEY_FILE=<file>]`
+runs a real delegated coding task against a server you already run: a scripted
+parent delegates the repair of a failing test to a child on that endpoint, and
+the repository's own tests judge the result.
+
 ## Deduplication
 
 Before it launches a child, a `task` call registers a subgoal in the session's

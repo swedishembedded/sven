@@ -229,6 +229,22 @@ test/harness/local-model:
 	@test -n "$(ENDPOINT)" || { echo "test/harness/local-model: pass ENDPOINT=<url> of a model server you are already running (optional MODEL=<provider/name>); nothing is pulled or started"; exit 2; }
 	$(CARGO) run --jobs $(HARNESS_JOBS) -p sven -- harness test $(LOCAL_MODEL_SAMPLE) --case live-local --model $(MODEL) --model-endpoint $(ENDPOINT)
 
+## test/e2e/delegation - lists the delegation checks; runs nothing
+test/e2e/delegation:
+	@bash scripts/make-help.sh test/e2e/delegation
+
+## test/e2e/delegation/local-model - OPT-IN: a real delegated coding task on a model server you already run
+##   A scripted parent delegates the repair of a failing test, through the task tool, to a sub-agent on a
+##   DeepSeek-compatible or brain endpoint; the repository's own tests judge the result. Needs
+##   ENDPOINT=<url> and MODEL=<name> (and optionally KEY_FILE=<file>, DRIVER=<id>, default deepseek, and
+##   NO_THINKING=1 for a Qwen3 behind brain); refuses
+##   with exit 2 without them. Nothing is pulled or started. Not part of any default target.
+DRIVER ?= deepseek
+KEY_FILE ?=
+test/e2e/delegation/local-model: build
+	@test -n "$(ENDPOINT)" || { echo "test/e2e/delegation/local-model: pass ENDPOINT=<url> MODEL=<name> of a model server you are already running"; exit 2; }
+	bash tests/e2e/delegation/local-model.sh --endpoint $(ENDPOINT) --model $(MODEL) --driver $(DRIVER) $(if $(KEY_FILE),--key-file $(KEY_FILE)) $(if $(NO_THINKING),--no-thinking)
+
 ## test/formal - machine-check the TLA+ models of the HSM kernel (needs a JRE; not part of `make test`)
 # Not part of `make check`: the models need a JRE and a pinned 2 MB download,
 # and `check` is the inner loop. Several of them are EXPECTED to fail -- they
@@ -654,7 +670,7 @@ generate/config/golden:
 # Declared last so every generated list above is already defined.
 .PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
         test test/features test/gates test/e2e test/e2e/basic/deferred test/e2e/basic/instructions-deferred test/e2e/basic/demote $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
-        test/benchmarks test/harness test/harness/local-model $(HARNESS_TARGETS) \
+        test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness test/harness/local-model $(HARNESS_TARGETS) \
         generate generate/harness generate/harness/sample-bundle \
         generate/config generate/config/golden \
         test/crate $(TEST_CRATE_TARGETS) test/formal \

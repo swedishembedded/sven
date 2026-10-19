@@ -381,8 +381,7 @@ written against the agent base class of harbor 0.1.45, which is the version
 `benchmarks/requirements.txt` pins: harbor 0.24.0 replaced that base class, so the
 adapter does not import there. It has not been run against a Harbor job on this
 repository's hosts (no container daemon); `make test/benchmarks` tests the trajectory
-reader. An embedding application reads the trial directories back (an application
-that turns Harbor trials into training experiences reads `agent/trajectory.json`
+reader. An embedding application reads the trial directories back (`agent/trajectory.json`
 and `result.json`).
 
 Every headless run also writes an automatic trajectory to `.sven/logs/` when a
