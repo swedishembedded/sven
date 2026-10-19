@@ -219,6 +219,8 @@ pub mod drivers {
 pub mod memory {
     pub use sven_memory::{HashingEmbedder, SemanticMemoryTool, NOTES_SEGMENTER, PERSONAL_SPACE};
     pub use sven_memory_api::*;
+    #[cfg(feature = "sqlite-memory")]
+    pub use sven_memory_sqlite::SqliteMemory;
 }
 
 /// Deterministic segmentation of sources into memory units, anchors that

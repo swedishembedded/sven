@@ -205,3 +205,5 @@ from, and the memory they came from, are in the record.
 An embedding application gets the same through the SDK:
 `MemoryScope::new(store, access, space).frozen().await?` pins the agent's scope,
 and `snapshot_id()` names what it was pinned to.
+The bundled store is `sven_sdk::memory::SqliteMemory` (feature `sqlite-memory`,
+on by default; the minimal SDK leaves it out and takes any `MemoryStore`).

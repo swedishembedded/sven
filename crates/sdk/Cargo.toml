@@ -15,6 +15,7 @@ sven-model     = { path = "../model" }
 sven-turn      = { path = "../turn" }
 sven-memory     = { path = "../memory" }
 sven-memory-api = { path = "../memory-api" }
+sven-memory-sqlite = { path = "../memory-sqlite", optional = true }
 sven-sources    = { path = "../sources" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-tool-api  = { path = "../tool-api" }
@@ -42,16 +43,18 @@ futures        = { workspace = true }
 # `android` the `android` tool and the `ui-test` mode that drives it.
 # `default-features = false` is the minimal SDK: no D-Bus, no image or audio
 # decoding, no Android device control, and no `ui-test` mode.
-default = ["coding", "research", "dbus", "android"]
+default = ["coding", "research", "dbus", "android", "sqlite-memory"]
 coding = ["sven-bootstrap/coding"]
 research = ["sven-bootstrap/research"]
 dbus = ["sven-bootstrap/dbus"]
 android = ["sven-bootstrap/android"]
+# `memory::SqliteMemory`, the bundled store; the minimal SDK brings its own
+# `MemoryStore` or none.
+sqlite-memory = ["dep:sven-memory-sqlite"]
 
 [dev-dependencies]
 async-trait     = { workspace = true }
 schemars        = { workspace = true }
 sven-hsm        = { path = "../hsm" }
-sven-memory-sqlite = { path = "../memory-sqlite" }
 sven-model-mock = { path = "../model-mock" }
 tempfile        = { workspace = true }
