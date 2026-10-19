@@ -1,41 +1,68 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+-->
+
 # Working with Large Content
 
 sven can analyse files and directory trees that are far too large to read
 in full - build logs, entire codebases, generated output files, firmware
-images - without ever running out of context window.  This section explains
-how to get the most out of that capability.
+images - without filling the context window. This page explains when that
+capability is available and how to get the most out of it.
 
 ---
 
 ## The problem with large files
 
-Every AI model has a context window: a hard limit on how many tokens it can
-hold at once.  When a file exceeds that limit, a naïve agent has to choose
-between truncating the file (losing information) or refusing to analyse it
-at all.
+Every model has a context window: a hard limit on how many tokens it can hold
+at once. When a file exceeds that limit, an agent has to choose between
+truncating the file (losing information) or refusing to analyse it.
 
-sven takes a different approach.  Large content is kept in memory **outside**
-the model's context window and accessed on demand through a set of structured
-tools.  The model sees only a small summary - a _handle_ - and then retrieves
-exactly the parts it needs.
+sven's `context` tool takes a different approach. Large content is kept in
+memory **outside** the model's context window and accessed on demand. The model
+sees only a small summary - a _handle_ - and then retrieves exactly the parts it
+needs.
+
+---
+
+## When the `context` tool is available
+
+The `context` tool is part of sven's **full** tool set, which a session gets when
+the project root contains GDB configuration (`.gdbinit`, `openocd.cfg`, a
+`debugging/` directory and similar; see [Debugging](debugging.md#when-the-gdb-tool-is-offered)).
+It works in `agent` mode, and not in `task` sub-agents. In other projects the
+default coding tool set has no `context` tool, and large content is handled with
+`read_file` (line ranges with `offset` and `limit`), `grep`, and `shell` output,
+which keeps its first and last 100 lines when it exceeds about 20 KB. A `task`
+sub-agent can also be given the large reading and return only its conclusion.
+
+Under the default deferred tool disclosure the model loads `context` with the
+`tools` tool the first time it needs it; you do not need to do anything. See
+[Tools and approvals](../reference/tools.md#context).
 
 ---
 
 ## How it works (from the user's perspective)
 
-When sven encounters a large file or directory, it follows a four-step pattern
-automatically:
+When the model decides a file or directory is too large to read, it follows a
+four-step pattern on its own:
 
 1. **Open** - map the content into memory and get back a handle and a
    structural summary (size, line count, file types).
 2. **Search** - run a regex search across the entire content to find the
    relevant sections, without loading anything into the model context.
 3. **Inspect** - read the specific line ranges that were found.
-4. **Analyse** - for questions that require reading many sections in parallel,
-   dispatch sub-agent queries over chunks of the content simultaneously.
+4. **Analyse** - for questions that require reading many sections, dispatch
+   sub-queries over chunks of the content in parallel (`query`), then combine
+   the per-chunk answers into one (`reduce`).
 
-The model manages this loop itself.  You do not need to break up your
-questions or pre-process the input.
+You do not need to break up your questions or pre-process the input. Each
+sub-query is a single model completion over one chunk plus the model's prompt:
+it has no tools and no access to the conversation.
+
+`query` and `reduce` send the content to the model provider of the session. For
+that reason they are network calls: under `--approval manual` you are asked
+before each one, while `open`, `read` and `grep` are read-only and are not.
 
 ---
 
@@ -48,8 +75,8 @@ Analyse /var/log/kern.log and find all USB disconnect errors from the last boot.
 Summarise each unique error message, its frequency, and the first timestamp it appeared.
 ```
 
-sven will open the log, search for `usb.*disconnect` and related patterns,
-read the matching sections, and return a structured summary - even if the log
+The model opens the log, searches for `usb.*disconnect` and related patterns,
+reads the matching sections, and returns a structured summary, even if the log
 is hundreds of megabytes.
 
 ### Review a large codebase for a specific concern
@@ -60,10 +87,11 @@ return value is not checked.  For each finding, report the file, line number,
 function name, and the unchecked call.
 ```
 
-sven chunks the source tree, sends each chunk to a parallel sub-agent, collects
-all findings, and then synthesises a deduplicated final report.
+The tree is split into chunks, each chunk is analysed by a separate sub-query
+(four at a time by default), and the findings are combined into a deduplicated
+final report.
 
-### Compare behaviour across a large generated file
+### Summarise a generated file
 
 ```
 I have a build log at /tmp/build.log (2 MB). Find all compiler warnings, group them
@@ -77,27 +105,24 @@ Open the drivers/spi/ directory and explain how the STM32 SPI DMA transfer is
 initiated. Focus on the interrupt handlers and the DMA callback chain.
 ```
 
-sven will index all source files in the directory, grep for DMA-related
-symbols, read the relevant code, and produce a coherent explanation - without
-running out of context.
-
 ---
 
 ## Tips for getting the best results
 
 **Be specific about what you're looking for.**
-The analysis is most effective when you give sven a clear target.  Instead of
+The analysis is most effective when you give sven a clear target. Instead of
 _"analyse this log"_, try _"find all ERROR-level messages after timestamp
 14:22:00 and group them by subsystem"_.
 
 **You don't need to split large tasks manually.**
-sven handles chunking and parallelism internally.  Asking about a 50 000-line
+Chunking and parallelism are handled by the tool. Asking about a 50 000-line
 file is no harder than asking about a 500-line file.
 
 **Chain follow-up questions naturally.**
-Once a handle is open it persists for the entire conversation.  You can ask
-follow-up questions that drill into sections found in earlier answers without
-re-opening the file.
+A handle stays open for the rest of the running session, so follow-up questions
+can drill into sections found in earlier answers without re-opening the file.
+Handles are not saved with the session: after a restart or a resume the content
+is opened again.
 
 > **Example session:**
 > ```
@@ -119,40 +144,44 @@ Open drivers/ but only include *.c files, and find all calls to k_mutex_lock
 that are not paired with a k_mutex_unlock in the same function.
 ```
 
+The pattern is a file-name wildcard (`*` and `?`). Directory handles skip
+`.git`, `target`, `node_modules`, `.cache`, `__pycache__`, `.venv`, `venv`,
+empty files, binary files and symbolic links.
+
 ---
 
 ## Configuration
 
-The default settings work well for most use cases.  If you need to tune them,
-add a `tools.context` section to your sven config file:
+The defaults work well for most use cases. To tune them, add a `tools.context`
+section to your sven config file:
 
 ```yaml
 tools:
   context:
-    max_parallel: 4          # concurrent sub-agent queries (default: 4)
-    default_chunk_lines: 500 # lines per chunk when not specified (default: 500)
+    max_parallel: 4              # concurrent sub-queries (default: 4)
+    default_chunk_lines: 500     # lines per chunk when not specified (default: 500)
     sub_query_max_chars: 120000  # character cap per sub-query prompt (default: 120000)
+    sub_query_timeout_secs: 120  # per sub-query timeout, 0 for none (default: 120)
 ```
 
 Increase `max_parallel` on fast hardware to reduce wall-clock time for large
-directory scans.  Reduce it if you hit provider rate limits.
+directory scans. Reduce it if you hit provider rate limits.
 
-Reduce `default_chunk_lines` for dense files (e.g. minified JavaScript) where
-500 lines would still be too large for a meaningful sub-query.
+Reduce `default_chunk_lines` for dense files (for example minified JavaScript)
+where 500 lines would still be too large for a meaningful sub-query.
 
 ---
 
-## When sven falls back to read_file
+## Small files
 
-For files under roughly 500 lines, sven uses `read_file` directly - it is
-simpler and faster.  The large-content tools activate automatically when the
-file or task exceeds that threshold.  You never need to choose between them
-explicitly.
+The system prompt tells the model to reserve `context` for files over roughly
+500 lines, build logs and large codebases; smaller files are read directly with
+`read_file`, which is simpler and faster.
 
 ---
 
 ## See also
 
-- [Configuration reference](../reference/configuration.md) - full list of `tools.context` options
+- [Configuration reference](../reference/configuration.md#toolscontext) - the `tools.context` options
 - [Technical reference](../internals/rlm-context-tools.md) - implementation details
   for contributors and integrators

@@ -57,7 +57,7 @@ The screen is divided into three areas:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ gpt-4o  agent  ctx:12%                          │  ← status bar
+│ ⬡ sven │ gpt-4o │ agent │ ctx ██░░░ 12%         │  ← status bar
 ├─────────────────────────────────────────────────┤
 │                                                  │
 │  (conversation and tool output appears here)     │  ← chat pane
@@ -67,10 +67,13 @@ The screen is divided into three areas:
 └─────────────────────────────────────────────────┘
 ```
 
-- **Status bar** - shows the active model, current mode, and how much of the
-  context window is used.
-- **Chat pane** - the conversation history and streaming agent output.
-- **Input box** - where you type your messages.
+- **Status bar** - shows the active model, the current mode, how much of the
+  context window is used, token counts and cost once a turn has run, and the tool
+  that is currently running.
+- **Chat pane** - the conversation history and streaming agent output. Tool calls
+  and thinking blocks are collapsed to a summary.
+- **Input box** - where you type your messages. Messages you send while the agent
+  is working wait in a queue panel shown above the input box.
 
 Focus switches between the chat pane and the input box. When the input box has
 focus (the default), your keystrokes go to the text field. When the chat pane
@@ -85,8 +88,8 @@ has focus, vim-style navigation keys let you scroll through the history.
 | Key | Action |
 |-----|--------|
 | `Enter` | Send message |
-| `Shift+Enter` | Insert a newline (multi-line message) |
-| `Ctrl+C` | Interrupt a running agent turn |
+| `Alt+Enter` | Insert a newline (multi-line message); `Shift+Enter` and `Ctrl+J` also work |
+| `Ctrl+C` / `Esc` | Interrupt a running agent turn (`Esc` on an idle box clears it) |
 | `Ctrl+U` | Delete from cursor to start of line |
 | `Ctrl+K` | Delete from cursor to end of line |
 | `Ctrl+←` / `Ctrl+→` | Jump word left / right |
@@ -94,72 +97,79 @@ has focus, vim-style navigation keys let you scroll through the history.
 ### Chat pane
 
 Switch focus from the input box to the chat pane with `Ctrl+W` then `K`.
-Switch back with `Ctrl+W` then `J` (or just click the input box).
+Switch back with `Ctrl+W` then `J`.
 
 | Key | Action |
 |-----|--------|
-| `j` / `↓` | Scroll down one line |
-| `k` / `↑` | Scroll up one line |
-| `Ctrl+D` | Scroll down half a page |
-| `Ctrl+U` | Scroll up half a page |
-| `g` | Jump to top |
-| `G` | Jump to bottom |
+| `j` / `↓` | Move the highlight to the next entry |
+| `k` / `↑` | Move the highlight to the previous entry |
+| `Ctrl+D` / `Ctrl+U` | Scroll half a page down / up |
+| `g` / `G` | Jump to top / bottom |
 | `/` | Open search |
 | `n` / `N` | Next / previous search match |
-| `e` | Edit the message under the cursor |
+| `e` | Edit the message under the highlight |
+
+`PgUp` and `PgDn` scroll the chat pane a full page from either pane.
 
 ### Global shortcuts
 
 | Key | Action |
 |-----|--------|
 | `F1` | Toggle help overlay |
-| `F4` | Cycle through agent modes (research → plan → agent) |
+| `F4` | Cycle the agent mode: research → plan → agent → chat → sdlc |
 | `Ctrl+T` | Open the full-screen pager (review chat history) |
 
-To quit, type `/quit` in the input box, or use `:q` in the Neovim buffer.
+To quit, type `/quit` in the input box, or use `:q` in the Neovim buffer
+(started with `--nvim`). The full key and command lists are in
+[Interactive use](../guides/interactive.md).
 
 ---
 
 ## Starting with a prompt
 
-Pass a prompt directly on the command line to skip the empty input box:
+A prompt on the command line runs one task without the TUI and prints the result:
 
 ```sh
 sven "List the ten largest files in this repository."
 ```
 
-sven opens the TUI, pre-fills the prompt, and submits it immediately.
+To work interactively, start `sven` with no prompt and type into the input box.
 
 ---
 
 ## Headless mode (no TUI)
 
-Sven runs headlessly - without a TUI - in two situations:
+Sven runs without the TUI whenever any of these holds:
 
-- **Piped stdin**: when stdin is not a terminal, sven auto-detects this and
-  skips the TUI automatically.  Without a positional prompt, stdin is the
-  task.  With one, stdin is read only when you pass `--stdin` (e.g.
+- **A prompt is given** on the command line.
+- **stdin is not a terminal** (a pipe or redirect). Without a positional prompt,
+  stdin is the task. With one, stdin is read only when you pass `--stdin` (e.g.
   `cmd | sven --stdin "fix these errors"`): it is then appended to the prompt
   with a blank line and sent as one user message.  Without `--stdin`, a run
   that has a prompt never reads or waits on stdin.
-- **`--headless` flag**: required when invoking sven directly from a terminal
-  prompt without piping, so that sven writes its response to stdout instead of
-  opening the interactive TUI.
+- **stdout is not a terminal** (`sven ... > out.txt`, or the left side of a pipe).
+- **`--headless`** is passed. It is only needed when none of the above applies,
+  for example `sven --headless --file review.md` from a terminal.
 
 ```sh
+# Prompt - headless is automatic
+sven "Summarise the README in three bullet points."
+
 # Piped - headless is automatic
 echo "Summarise the README in three bullet points." | sven
-
-# Terminal prompt - --headless is mandatory to avoid the TUI
-sven --headless "Summarise the README in three bullet points."
 ```
 
 The output is plain text - easy to pipe into other tools or save to a file:
 
 ```sh
 echo "Summarise the README." | sven > summary.txt
-sven --headless "Summarise the README." > summary.txt
+sven "Summarise the README." > summary.txt
 ```
+
+Headless runs are unattended: every call the mode permits runs without a prompt
+and a question the agent asks is answered with "no user is available".
+`--approval manual` is refused in a headless run. See
+[Agents and modes](../concepts/agents.md#approval).
 
 ### Suppressing formatting with `--output-format compact`
 
@@ -168,18 +178,18 @@ By default headless output is conversation-format markdown (with `## User` /
 raw response text with no surrounding markup - useful when you want to capture
 or execute the result directly.
 
-Combine `--headless`, `--output-format compact`, and `2>/dev/null` to get
-output that can be used directly in a shell pipeline:
+Combine `--output-format compact` and `2>/dev/null` to get output that can be
+used directly in a shell pipeline:
 
 ```sh
 # Ask sven for a shell command and execute it immediately
-CMD=$(sven --headless --output-format compact \
+CMD=$(sven --output-format compact \
       "Generate a one-liner for CPU usage. Reply with the shell command only." \
       2>/dev/null)
 eval "$CMD"
 
 # Or pipe the command text to sh
-sven --headless --output-format compact \
+sven --output-format compact \
      "Generate a one-liner for CPU usage. Reply with the shell command only." \
      2>/dev/null | sh
 ```
@@ -204,16 +214,18 @@ Describe the overall structure of this project.
 Run sven on it:
 
 ```sh
-sven --file work.md
+sven --headless --file work.md
 ```
 
-sven reads the `## User` section, executes it, and writes the exchange - your
-message and the answer as a new `## Sven` section - to stdout. The file itself
-is not changed. Redirect the output to keep the answer, add a follow-up, and
+Without `--headless`, `sven --file work.md` from a terminal opens the TUI with the
+file's steps queued for you to review and send. With `--headless`, sven reads the
+`## User` section, executes it, and writes the exchange - your message and the
+answer as a new `## Sven` section - to stdout. The file itself is not changed.
+Redirect the output to keep the answer, add a follow-up, and
 run it again:
 
 ```sh
-sven --file work.md > work.answered.md
+sven --file work.md > work.answered.md   # stdout is redirected, so this is headless
 
 # Append a follow-up question
 printf '\n## User\nWhich files have the most technical debt?\n' >> work.answered.md
@@ -230,18 +242,25 @@ flag is needed. To keep one session across runs without juggling files, use
 
 ## Choosing a mode
 
-Add `--mode` to limit what sven is allowed to do:
+Add `--mode` to choose what sven is allowed to do:
 
 ```sh
-# Research only - no changes to your files
+# Research - read-only tools, no shell, no file writes
 sven --mode research "What does the auth module do?"
 
-# Plan - produces a written plan but makes no changes
+# Plan - produces a plan; the file-write tools are refused
 sven --mode plan "Design a caching layer for the database module."
 
 # Agent (default) - full read/write access
 sven "Implement the caching layer we just designed."
+
+# SDLC - phased Intake to Delivery workflow
+sven --mode sdlc "Add a caching layer to the database module."
 ```
+
+By default every call a mode permits runs without asking. Start the TUI with
+`sven --approval manual` to approve each call that is not read-only. See
+[Agents and modes](../concepts/agents.md).
 
 ---
 
@@ -270,7 +289,7 @@ Produce a constructive code review.
 Run it:
 
 ```sh
-sven --file review.md
+sven --headless --file review.md
 ```
 
 Output is valid conversation markdown that can be piped or loaded later:

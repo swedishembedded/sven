@@ -1,23 +1,31 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+-->
+
 # RLM Context Tools - Technical Reference
 
 This document describes the internal architecture of sven's memory-mapped
 context tools, which implement the inference paradigm introduced in
 [_Recursive Language Models_](https://arxiv.org/abs/2512.24601) (RLM, 2025).
+The user-facing description is [Working with large content](../guides/large-content.md).
 
 ---
 
 ## Motivation
 
-A language model's context window is finite.  When an agent needs to reason
-over a large file, a build log, or an entire directory tree, naïvely reading
-the content consumes most or all of the available token budget - leaving little
-room for tool calls, chain-of-thought, and the model's own response.  The RLM
-paper's core insight is that **large content should live outside the context
-window**; the model instead receives a symbolic handle and interacts with the
-content through structured read, search, and recursive sub-query operations.
+A language model's context window is finite. When an agent needs to reason
+over a large file, a build log, or an entire directory tree, reading the
+content consumes most or all of the available token budget, leaving little
+room for tool calls, reasoning and the model's own response. The RLM paper's
+core insight is that **large content should live outside the context window**;
+the model instead receives a symbolic handle and interacts with the content
+through structured read, search, and recursive sub-query operations.
 
-sven implements this pattern with Rust-native, zero-copy memory-mapped tools
-whose descriptions encode the RLM workflow so that the model uses them
+sven implements this pattern with memory-mapped files and a single compound
+tool, `context`, whose actions are `open`, `read`, `grep`, `query` and `reduce`
+(plus `expand`, see [Expanding demoted results](#expanding-demoted-results)).
+The tool's description encodes the RLM workflow so that the model uses it
 correctly without external orchestration.
 
 ---
@@ -34,12 +42,12 @@ correctly without external orchestration.
 │  │  ContextHandle.kind                                           │   │
 │  │    SingleFile  { path, Mmap, line_index: Vec<usize> }        │   │
 │  │    Directory   { root, Vec<FileEntry { path, Mmap, ... }> }  │   │
-│  │    Results     { path, Mmap, line_index, entry_count }        │   │
+│  │    Results     { data: Vec<u8>, line_index, entry_count }    │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                      │
-│  context_open  ──► ContextStore::open_file / open_directory          │
-│  context_read  ──► ContextStore::read_range                          │
-│  context_grep  ──► ContextStore::grep                                │
+│  ContextOpenTool  ──► ContextStore::open_file / open_directory       │
+│  ContextReadTool  ──► ContextStore::read_range                       │
+│  ContextGrepTool  ──► ContextStore::grep                             │
 │                                                                      │
 │  SubQueryRunner trait                                                │
 └─────────────────────────────────────────────────────────────────────┘
@@ -49,17 +57,25 @@ correctly without external orchestration.
 │  sven-bootstrap crate                                                │
 │                                                                      │
 │  ModelSubQueryRunner (impl SubQueryRunner)                           │
-│    └─► ModelProvider::complete (stateless 2-msg completion)          │
+│    └─► sven_turn::complete_text over the session's ModelProvider     │
 │                                                                      │
-│  context_query  ──► chunk → parallel sub-queries → Results handle   │
-│  context_reduce ──► read_all → tree-reduce → plain text              │
+│  ContextQueryTool  ──► chunk → parallel sub-queries → Results handle │
+│  ContextReduceTool ──► read_all → tree-reduce → plain text           │
+│  ContextTool       ──► the one registered `context` tool, which      │
+│                        dispatches `action` to the five above         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Dependency rule**: `sven-tools-ctx` never imports `sven-model`.  The
-`SubQueryRunner` trait is the boundary that keeps the crates decoupled.  The
-concrete `ModelSubQueryRunner` implementation lives in `sven-bootstrap`
-alongside `TaskTool`, which follows the same pattern.
+**Dependency rule**: `sven-tools-ctx` never imports `sven-model`. The
+`SubQueryRunner` trait is the boundary that keeps the crates decoupled. The
+concrete `ModelSubQueryRunner` lives in `sven-bootstrap` alongside `TaskTool`,
+which follows the same pattern.
+
+The five operation tools (`context_open`, `context_read`, `context_grep`,
+`context_query`, `context_reduce`) are not registered individually. The model
+sees one `context` definition; each action delegates to the operation tool of
+that name, so their argument handling and messages are the ones described
+below.
 
 ---
 
@@ -67,22 +83,25 @@ alongside `TaskTool`, which follows the same pattern.
 
 **Source**: `crates/tools-ctx/src/context/store.rs`
 
-One instance is created per agent session in `build_tool_registry` and wrapped
-in `Arc<Mutex<ContextStore>>`.  All five tools share the same pointer.
+One instance is created per agent session when the full tool set is built and
+wrapped in `Arc<Mutex<ContextStore>>`. All actions share the same pointer.
 
 ### Handle kinds
 
-| Kind | When created | Backing storage |
-|------|-------------|-----------------|
-| `SingleFile` | `context_open` on a regular file | One `Mmap` + `Vec<usize>` line index |
-| `Directory` | `context_open` on a directory | `Vec<FileEntry>`, each with its own `Mmap` + line index |
-| `Results` | `context_query` collects sub-query results; `register_results` stores them in memory | `Vec<u8>` + `Vec<usize>` line index |
+| Kind | When created | Backing storage | Handle id |
+|------|-------------|-----------------|-----------|
+| `SingleFile` | `open` on a regular file | One `Mmap` + `Vec<usize>` line index | `ctx_0001`, `ctx_0002`, ... |
+| `Directory` | `open` on a directory | `Vec<FileEntry>`, each with its own `Mmap` + line index | `ctx_NNNN` |
+| `Results` | `query` collects sub-query results | `Vec<u8>` in memory + line index | `res_NNNN` |
+
+Ids are a per-store counter in four lowercase hex digits, prefixed `ctx_` for
+opened content and `res_` for query results.
 
 ### Line index
 
-For every mapped file sven builds a `Vec<usize>` of byte offsets - one entry
-per line start.  Line 0 always starts at byte 0; subsequent entries are
-recorded immediately after each `\n`.
+For every mapped file sven builds a `Vec<usize>` of byte offsets, one entry per
+line start. Line 0 always starts at byte 0; subsequent entries are recorded
+immediately after each `\n` (a trailing newline does not start an empty line).
 
 ```
 content: "alpha\nbeta\ngamma\n"
@@ -90,37 +109,41 @@ content: "alpha\nbeta\ngamma\n"
 index:   [0,   6,    11]
 ```
 
-Reading line range `[start, end]` (1-indexed, inclusive) becomes a single
-seek-and-slice operation:
-
-```rust
-let byte_start = line_index[start - 1];
-let byte_end   = line_index[end]; // or mmap.len() at EOF
-&mmap[byte_start..byte_end]
-```
-
-No heap allocation, no syscall beyond the initial `mmap(2)`.
+Reading line range `[start, end]` (1-indexed, inclusive) becomes a slice per
+line between consecutive index entries; nothing outside the range is copied.
 
 ### Directory traversal
 
-`open_directory` recursively walks the tree with `fs::read_dir`, skipping
-`.git`, `target`, `node_modules`, `.cache`, `__pycache__`, `.venv`, and
-`venv`.  Each regular text file is individually mmapped.  Binary files are
-detected by a null-byte check and a >30% non-printable-byte heuristic (the
-same heuristic used by `read_file`); they are skipped and counted in the
-summary.
+`open_directory` walks the tree with `fs::read_dir`, skipping `.git`, `target`,
+`node_modules`, `.cache`, `__pycache__`, `.venv` and `venv`. Only regular files
+are mapped: symbolic links are not followed, to files or to directories. Empty
+files are skipped. A file is treated as binary and skipped, and counted in the
+summary, when its first 4096 bytes contain a null byte or more than 30% bytes
+below 0x20 other than tab, line feed, carriage return and the other whitespace
+controls. Files are sorted by path.
 
-An optional include pattern is applied using a small wildcard matcher (supports
-`*` and `?`) so that no external crate is required.
+An optional `include_pattern` is matched against the **file name** with a small
+wildcard matcher (`*` and `?`), and `recursive` (default `true`) controls
+whether subdirectories are walked.
 
 ---
 
-## context_open
+## Actions
+
+All actions are classified under the kernel capability of their kind: `open`,
+`read`, `grep` and `expand` are reads; `query` and `reduce` send content to the
+model provider and are network calls. The `context` tool is offered in `agent`
+mode (with expansion also in `plan` and `research`).
+
+### open
 
 **Source**: `crates/tools-ctx/src/context/open.rs`
 
-Accepts a `path` (file or directory), an optional `include_pattern`, and an
-optional `recursive` flag (default `true`).
+Accepts a `path` (file or directory), an optional `include_pattern` and an
+optional `recursive` flag (default `true`). The two optional arguments are
+accepted by the implementation but are not part of the `context` tool's
+published schema. The path resolves through the session's path scope, so a
+confined session cannot open a path outside its root.
 
 Returns only metadata to the model:
 
@@ -137,58 +160,35 @@ Use context_read(handle="ctx_0001", start_line=N, end_line=M) to inspect ranges.
 Use context_query(handle="ctx_0001", prompt="...") for semantic analysis.
 ```
 
-The `OutputCategory` is `Generic` so the standard `smart_truncate` applies (no
-special head/tail treatment - the output is already bounded by design).
+A directory handle's summary lists the file count (and how many were skipped as
+binary), the total size, a per-extension count and up to ten directories.
 
----
-
-## context_read
+### read
 
 **Source**: `crates/tools-ctx/src/context/read.rs`
 
-Accepts a handle ID, `start_line`, `end_line` (1-indexed, inclusive), and an
-optional `file` path-substring for directory handles.
+Accepts a handle id, `start_line`, `end_line` (1-indexed, inclusive) and an
+optional `file` path substring for directory handles. For a `Directory` handle
+without `file`, the files are treated as concatenated and lines are numbered
+globally; ranges are joined with `--- /path/to/file ---` headers. With `file`,
+the first file whose path contains the substring is read with its own line
+numbers.
 
-Delegates to `ContextStore::read_range`, which:
+Output lines are formatted as `L{n}:content`, so a following `edit_file` can
+reference them. The output category is `FileContent`.
 
-1. Validates the handle exists.
-2. For `SingleFile` handles: slices the mmap using the line index.
-   For `Results` handles: slices the in-memory byte buffer using the line index.
-3. For `Directory` handles without a `file` hint: iterates files in order,
-   tracking a global line offset, and concatenates matching ranges separated by
-   `--- /path/to/file ---` headers.
-4. For `Directory` handles with a `file` hint: filters to the first file whose
-   path contains the hint string.
-
-Output lines are formatted as `L{n}:content` matching the `read_file` contract
-so that subsequent `edit_file` calls can reference them directly.
-
-`OutputCategory` is `FileContent`, which means the standard 4000-token cap and
-head-only truncation applies.
-
----
-
-## context_grep
+### grep
 
 **Source**: `crates/tools-ctx/src/context/grep.rs`
 
-Accepts a handle ID, a Rust-regex `pattern`, an optional `file` hint, a
-`context_lines` count (default 2), and a `limit` (default 50).
+Accepts a handle id, a Rust-regex `pattern`, an optional `file` hint (directory
+handles), `context_lines` (default 2) and `limit` (default 50). Each line is
+tested as lossily decoded UTF-8; matches carry their source path (`<results>`
+for a results handle) and the surrounding lines. Directory files are searched in
+sorted path order until the limit is reached. The output category is
+`MatchList`.
 
-`ContextStore::grep` iterates the line index, converts each byte slice to
-UTF-8 (lossily), and tests it against the compiled `regex::Regex`.  For
-matches it collects `context_lines` surrounding lines using the same index
-arithmetic.
-
-For directory handles, files are iterated in sorted path order.  Each match
-carries its source `PathBuf` so that file context appears in the output.
-
-`OutputCategory` is `MatchList`, applying the standard ripgrep-style
-truncation.
-
----
-
-## SubQueryRunner trait
+### SubQueryRunner trait
 
 **Source**: `crates/tools-ctx/src/context/query_runner.rs`
 
@@ -199,60 +199,58 @@ pub trait SubQueryRunner: Send + Sync {
 }
 ```
 
-A two-message stateless LLM call.  The model receives no conversation history,
-no tools, and no session context - only the system message and the user
-message.  This is the `llm_query()` function from the RLM paper.
+A two-message stateless LLM call. The model receives no conversation history,
+no tools, and no session context, only the system message and the user message.
+This is the `llm_query()` function from the RLM paper.
 
-### ModelSubQueryRunner
+`ModelSubQueryRunner` (`crates/bootstrap/src/context_query.rs`) wraps the
+session's `ModelProvider`. Each call:
 
-**Source**: `crates/bootstrap/src/context_query.rs`
+1. Truncates a prompt longer than `sub_query_max_chars` (default 120,000
+   characters) and appends a note of how many bytes were omitted.
+2. Sends a streaming completion with the two messages and no tools, through
+   `sven_turn::complete_text`, which applies the agent's stall limits (first
+   byte, first token, stream idle; `agent.turn_limits()`).
+3. Bounds the whole call by `sub_query_timeout_secs` (default 120; 0 disables
+   the total timeout but not the stall limits). A timed-out or failed
+   sub-query returns an error string.
 
-Wraps `Arc<dyn ModelProvider>`.  Each call:
-
-1. Optionally truncates the prompt to `sub_query_max_chars` (default 120 000
-   characters ≈ 30 000 tokens) with a notice.
-2. Builds a two-message `CompletionRequest` with `stream: true` and an empty
-   tools list.
-3. Drives the provider's stream via `futures::StreamExt`, collecting
-   `ResponseEvent::TextDelta` fragments.
-4. Returns the full assembled text string.
-
----
-
-## context_query
+### query
 
 **Source**: `crates/bootstrap/src/context_query.rs`
 
-The **map** step.  Accepts a handle, a `prompt` template (supporting
-`{chunk}`, `{chunk_index}`, `{total_chunks}` placeholders), optional explicit
-`ranges`, a `chunk_lines` size, and a `max_parallel` concurrency limit.
+The **map** step. Accepts a handle, a `prompt` (supporting `{chunk}`,
+`{chunk_index}` and `{total_chunks}` placeholders), optional explicit `ranges`,
+`chunk_lines` and `max_parallel`.
 
-### Execution flow
+The chunk's text reaches the sub-agent only through the `{chunk}` placeholder in
+`prompt`; the runner prefixes the message with `[Chunk N/M: label]` but appends
+nothing else, so a prompt without `{chunk}` sends no content.
 
 ```
-1. Acquire store lock → build chunk list
-   a. If ranges provided: each range is one chunk (store.read_range).
-   b. Else: call store.chunks(chunk_lines) to generate all chunks.
+1. Lock the store; fail if the handle is unknown.
+   a. If ranges were given: each range is one chunk (read_range).
+   b. Otherwise: split the handle into chunk_lines-line chunks
+      (default tools.context.default_chunk_lines).
 
-2. Release store lock.
+2. Release the store lock.
 
-3. For each batch of min(max_parallel, remaining) chunks:
-   a. Spawn tokio task: ModelSubQueryRunner::query(SYSTEM, prompt_with_chunk).
-   b. Collect JoinHandles.
-   c. Await all handles; failures are recorded as error strings (not panics).
+3. For each batch of max_parallel chunks (default tools.context.max_parallel):
+   a. Spawn one task per chunk: ModelSubQueryRunner::query(SYSTEM, prompt).
+   b. Await the batch; a failed sub-query becomes the text
+      "[chunk N sub-query failed: <error>]" instead of failing the call.
 
 4. Sort results by chunk index.
 
-5. Serialize results to a string (format: `=== chunk N of M ===\n<text>\n`).
+5. Format as "=== chunk N of M ===\n<text>\n" entries and register them in
+   memory as a Results handle (res_NNNN).
 
-6. Acquire store lock → ContextStore::register_results(results_text, entry_count)
-   → new in-memory Results handle with its own Vec<u8> + line index.
-
-7. Return: handle ID, byte count, entry count, preview of chunk 0 result,
-   and usage instructions.
+6. Return the handle id, byte count, entry count, the first line of chunk 1's
+   result, and usage instructions.
 ```
 
-The sub-query system prompt is hardcoded:
+Batches run one after another, so a batch is as slow as its slowest sub-query.
+The sub-query system prompt is fixed:
 
 ```
 You are a focused analysis sub-agent. Answer the question or perform the
@@ -260,54 +258,51 @@ analysis described in the user prompt using only the provided content. Be
 concise and structured. Do not ask for clarification.
 ```
 
-Each user message is prefixed with `[Chunk N/M: label]` so the model knows its
-position in the overall scan.
+Progress is reported through the tool-event channel as `context_query: chunk
+N/M`.
 
-### Configuration
-
-```yaml
-tools:
-  context:
-    max_parallel: 4          # default concurrent sub-queries
-    default_chunk_lines: 500 # lines per chunk when chunk_lines not specified
-    sub_query_max_chars: 120000
-```
-
----
-
-## context_reduce
+### reduce
 
 **Source**: `crates/bootstrap/src/context_query.rs`
 
-The **reduce** step.  Accepts a handle and a synthesis `prompt`.
-
-Calls `ContextStore::read_all` to get the full content of the handle as a
-string, then delegates to `tree_reduce`.
-
-### Tree reduction algorithm
+The **reduce** step. Accepts a handle and a synthesis `prompt`. It reads the
+whole handle (`read_all`) and runs `tree_reduce` with the reduce system prompt
+(a synthesis sub-agent that aggregates, deduplicates and summarizes).
 
 ```
-tree_reduce(runner, system, content, prompt, max_chars, chunk_lines, depth=0):
-  if depth >= MAX_REDUCE_DEPTH (4):
-    truncate content to max_chars + notice; send directly.
-  if content.len() <= max_chars:
-    send as single call: content + "\n\n" + prompt.
+tree_reduce(content, prompt, depth=0):
+  if depth >= 4 (MAX_REDUCE_DEPTH):
+    truncate content to sub_query_max_chars with a notice; send content + prompt.
+  if len(content) <= sub_query_max_chars:
+    send content + "\n\n" + prompt as one call.
   else:
-    split content into lines, chunk by chunk_lines.
-    for each chunk:
-      intermediate = runner.query(system, chunk + "\n\n" + reduce_prompt)
+    split content into default_chunk_lines-line chunks
+    for each chunk (sequentially):
+      intermediate = query(chunk + intermediate-step prompt)
     combined = join intermediates with "---" separators
-    return tree_reduce(runner, system, combined, prompt, ..., depth+1)
+    return tree_reduce(combined, prompt, depth+1)
 ```
 
-The `reduce_prompt` used for intermediate levels asks the sub-agent to
-summarize while preserving specific values (line numbers, severity labels,
-etc.).  This is critical for use cases like security audits where losing a
-specific finding during intermediate reduction would silently drop signal.
+The intermediate prompt asks the sub-agent to summarize and extract key
+findings, preserving details, line numbers and specific values, as a step
+toward the user's prompt. The maximum depth is 4 levels.
 
-The maximum recursion depth is 4 levels.  At each level the intermediate
-results are typically an order of magnitude smaller than the input, so
-convergence is fast in practice.
+---
+
+## Expanding demoted results
+
+With addressable context on (`context.assembly.mode` other than `off`, see
+[Context assembly](context-assembly.md)), older tool results can be sent in a
+shorter form with a chunk id (`c-` and 16 hex digits). The `context` tool then
+carries a sixth action, `expand`, which returns the raw text of a chunk,
+optionally limited by `first_line` and `last_line`, and says whether the file the
+chunk came from has changed since (a stale chunk is what the file contained
+then). Expansion is also available in `plan` and `research`.
+
+Where the full `context` tool is not registered (the coding, research and
+sub-agent tool sets), a session with addressable context, or briefed with a
+delegating session's evidence, gets a `context` tool that offers `expand`
+alone (`ChunkExpandTool`).
 
 ---
 
@@ -315,23 +310,25 @@ convergence is fast in practice.
 
 **Source**: `crates/bootstrap/src/registry.rs`
 
-Both `Full` (interactive TUI) and `SubAgent` (spawned by `TaskTool`) profiles
-receive all five tools.  The `ContextStore` and `SubQueryRunner` are
-constructed fresh per registry call:
+The `context` tool belongs to the **full** tool set only, which a session gets
+when the project root holds GDB configuration (see
+[Tools and approvals](../reference/tools.md)). The coding, research and sub-agent
+tool sets do not have it: sub-agents spawned by `TaskTool` get neither the
+parent's store nor the large-content actions.
 
 ```rust
 let context_store = Arc::new(Mutex::new(ContextStore::new()));
-reg.register(ContextOpenTool::new(context_store.clone()));
-reg.register(ContextReadTool::new(context_store.clone()));
-reg.register(ContextGrepTool::new(context_store.clone()));
-let (ctx_query, ctx_reduce) = build_context_query_tools(context_store, model, cfg, limits, None);
-reg.register(ctx_query);
-reg.register(ctx_reduce);
+let context = ContextTool::new(context_store, model, &cfg.tools.context, limits, Some(tool_event_tx))
+    .with_scope(path_scope);
+reg.register(context);   // with_expansion(expander) when addressable context is on
 ```
 
-Each session thus has its own isolated store.  Handles from one session are not
-accessible to another.  Sub-agents spawned by `TaskTool` get their own store
-and can open independent contexts.
+Each session thus has its own isolated store. Handles from one session are not
+accessible to another.
+
+Configuration is the `tools.context` section (`max_parallel` 4,
+`default_chunk_lines` 500, `sub_query_max_chars` 120000, `sub_query_timeout_secs`
+120); see the [configuration reference](../reference/configuration.md#toolscontext).
 
 ---
 
@@ -339,14 +336,10 @@ and can open independent contexts.
 
 **Source**: `crates/turn/src/prompts.rs`, function `build_guidelines_section`
 
-A `### Large Content Analysis` section is injected into every system prompt
-via the `guidelines::large_content()` static string.  It states when to
-prefer the compound `context` tool over `read_file` and describes the
-recommended workflow (`context(action=open)` → `grep` → `read` → `query` →
-`reduce`).
-
-This ensures the model selects the correct tool chain proactively, without
-relying solely on the individual tool descriptions.
+A `### Large Content Analysis` paragraph is part of the Guidelines section of
+every system prompt (`guidelines::large_content()`). It states when to prefer
+the `context` tool over `read_file` and describes the workflow
+(`context(action=open)` → `grep` → `read` → `query` → `reduce`).
 
 ---
 
@@ -359,25 +352,29 @@ crates/tools-ctx/src/context/
   open.rs            ContextOpenTool
   read.rs            ContextReadTool
   grep.rs            ContextGrepTool
+  expand.rs          ChunkExpander, ChunkExpandTool
   query_runner.rs    SubQueryRunner trait
 
 crates/bootstrap/src/
-  context_query.rs   ModelSubQueryRunner, ContextQueryTool, ContextReduceTool,
-                     build_context_query_tools, tree_reduce
+  context_tool.rs    ContextTool, the compound `context` tool
+  context_query.rs   ContextConfig, ModelSubQueryRunner, ContextQueryTool,
+                     ContextReduceTool, build_context_query_tools, tree_reduce
 ```
 
 ---
 
 ## Security and safety notes
 
-- **No path traversal beyond the provided root**: `open_directory` canonicalises
-  the root before walking.  Symlinks are followed by `fs::read_dir`, which is
-  consistent with the rest of sven's filesystem tools.
-- **Temp files**: `context_query` writes results to `/tmp/sven_ctx_results_*.txt`.
-  These are named with nanosecond timestamp + PID.  They are not cleaned up at
-  session end; users on shared machines should treat `/tmp` as world-readable.
+- **Path scope**: `open` resolves its path through the session's path scope and
+  refuses anything outside a confined root. A directory walk does not follow
+  symbolic links, so a link inside the project cannot lead it out. Content that
+  was opened is read through its handle, not by path.
+- **Where content goes**: `query` and `reduce` send chunks of the opened content
+  to the session's own model provider, and to no other. Query results live in
+  memory only; sven writes no temporary files for them.
 - **Binary content**: files detected as binary are silently skipped in
-  directory handles.  The summary reports a count of skipped files.
-- **Mmap lifetime**: the `Mmap` struct is `!Clone`.  Handles are stored by
-  value inside the `ContextStore`; the store is the sole owner.  Dropping
-  the store unmaps all content.
+  directory handles. The summary reports a count of skipped files. A single
+  file opened directly is mapped as it is.
+- **Mmap lifetime**: the mapped files are read-only views owned by the store.
+  Dropping the store unmaps all content. A file that is truncated or rewritten
+  while it is open can change what later reads return.

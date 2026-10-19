@@ -79,7 +79,7 @@ them. See [tool-disclosure.md](../internals/tool-disclosure.md).
 
 What a preset can offer, and which modes an engine can run, is decided when
 the application is compiled. `sven-sdk`'s default features are `coding`,
-`research`, `dbus` and `android`:
+`research`, `dbus`, `android` and `sqlite-memory`:
 
 | Feature | Compiles in |
 |---------|-------------|
@@ -87,6 +87,7 @@ the application is compiled. `sven-sdk`'s default features are `coding`,
 | `research` | images in `read_file` |
 | `dbus` | `provider: dbus`, brain's D-Bus model transport (Unix) |
 | `android` | the `android` tool and the `ui-test` mode that drives it |
+| `sqlite-memory` | `memory::SqliteMemory`, the bundled SQLite memory store |
 
 `default-features = false` is the minimal SDK: the kernel, every HTTP model
 provider and the plain-text tools, with no D-Bus, image, audio or Android code
@@ -98,7 +99,7 @@ given the `android` tool (and `ask_question`, answered as the engine answers
 questions) whatever its `Toolset`. Enable a preset on top of it:
 
 ```toml
-sven-sdk = { version = "2", default-features = false, features = ["research"] }
+sven-sdk = { version = "3", default-features = false, features = ["research"] }
 ```
 
 ## Project root
@@ -475,6 +476,20 @@ budget of 1000 evaluations, annealing (`initial_temperature` 0.05, `cooling`
 but nothing verified). This is a check of the facility on a toy with a known
 solution, not a claim about real tasks.
 
+## Memory
+
+`sven_sdk::memory` re-exports the store contract (`MemoryStore`, `AccessContext`,
+`Embedder` and the rest of `sven-memory-api`), the bundled `HashingEmbedder`
+and `SemanticMemoryTool`, and, with the `sqlite-memory` feature,
+`SqliteMemory`. `MemoryScope::new(store, access, space)` binds one agent to one
+space of a store as an `AccessContext` allows; the store applies the grant
+inside its own queries, so one store can serve many agents without them seeing
+each other's memory. `MemoryScope::frozen` pins the scope to the content the
+space has now, read-only, so an evaluation recalls from one memory.
+`Agent::with_memory` gives an agent its scope; its `semantic_memory` tool
+replaces one of the same name the engine registers. See
+[Memory](../concepts/memory.md).
+
 ## Sharing, and what is actually shared
 
 `EngineBuilder::model_provider` is what makes many agents affordable. Without
@@ -774,6 +789,7 @@ language, the authorization model and the full API are in
 | `verified_workflow.rs` | Deterministic orchestration around model judgement, where a code-level check can reject the model's claim |
 | `declared_agent.rs` | An agent declared as a trait, with the deterministic/model-driven split |
 | `custom_tool.rs` | Giving an agent a capability the kernel has never heard of |
+| `capture_run.rs` | Prompts run against an OpenAI-compatible endpoint with sampling and sampled-token capture on, writing the ATIF trajectory |
 
 ## The CLI on the SDK
 

@@ -31,7 +31,7 @@ Knowledge documents serve three roles:
 
 Each knowledge document is a plain Markdown file with YAML frontmatter:
 
-```markdown
+````markdown
 ---
 subsystem: HSM Kernel
 files:
@@ -68,7 +68,7 @@ Always derive an approval id from the call it guards:
 ```rust
 let approval_id = approval_id_for(&tool_call);
 ```
-```
+````
 
 ### Frontmatter fields
 
@@ -79,7 +79,7 @@ let approval_id = approval_id_for(&tool_call);
 | `updated`   | No       | ISO date (YYYY-MM-DD) when the doc was last reviewed         |
 
 `files:` and `updated:` enable drift detection.  Without them, the document
-is still discoverable via `list_knowledge` and `search_knowledge`, but drift
+is still discoverable through the `memory` tool's `list_knowledge` and `search_knowledge` actions, but drift
 warnings are never emitted for it.
 
 ---
@@ -102,7 +102,17 @@ without it the document is listed always. See
 
 ## Tools
 
+The knowledge base is read through the compound `memory` tool, which is
+registered in every mode. It takes an `action`: `list_knowledge` and
+`search_knowledge` read `.sven/knowledge/`; `set`, `get`, `delete` and `list`
+keep unrelated key-value notes (see [Semantic Memory](memory.md#the-memory-tool)).
+Both knowledge actions are reads, so a read-only mode can use them.
+
 ### `list_knowledge`
+
+```json
+{ "action": "list_knowledge" }
+```
 
 Enumerates all knowledge documents with their subsystem name, covered file
 patterns, last-updated date, and filename:
@@ -124,12 +134,15 @@ are unsure which subsystem covers your topic.
 
 ### `search_knowledge`
 
-Keyword search across all knowledge document bodies.  Returns matching
-excerpts with context lines, sorted by match count:
+Case-insensitive keyword search across all knowledge document bodies (the
+`query` parameter).  Returns matching excerpts with context lines, sorted by
+match count:
+
+```json
+{ "action": "search_knowledge", "query": "effect" }
+```
 
 ```
-search_knowledge("effect")
-
 ## Knowledge Search: `effect`
 Found 3 match(es) in 1 of 2 document(s):
 
@@ -149,8 +162,8 @@ creating one after your changes.
 
 ### `read_file`
 
-To load a complete knowledge document, use `read_file` with the absolute path
-(which `list_knowledge` displays in the file column):
+To load a complete knowledge document, use `read_file` with its path under
+`.sven/knowledge/` (`list_knowledge` shows the file name in the file column):
 
 ```
 read_file(".sven/knowledge/sven-hsm.md")

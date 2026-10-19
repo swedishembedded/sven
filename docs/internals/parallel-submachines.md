@@ -24,10 +24,10 @@ the parent's single run-to-completion consumer loop, each task gets its **own
 and conversation store. The parent stays responsive and the tasks make progress
 simultaneously.
 
-`Effect::InstantiateSubmachine` was previously a no-op. It is now genuinely
-implemented at the runtime layer, and `InternalEvent::SubmachineCompleted`
-carries a `result` payload so a finished child can hand its structured output
-back to the parent for append-only aggregation.
+The runtime services `Effect::InstantiateSubmachine` through an installed
+`ChildSpawner`, and `InternalEvent::SubmachineCompleted` carries a `result`
+payload so a finished child can hand its structured output back to the parent
+for append-only aggregation.
 
 ---
 
@@ -104,11 +104,12 @@ optional `Arc<dyn ChildSpawner>`. Inside the consumer loop:
   `cancel`, `abort`, the handle being dropped - the registry is dropped and
   cancels every child still live, so no child outlives its parent.
 
-If **no** spawner is configured, `InstantiateSubmachine` effects are left in
-place and flow to the `EffectExecutor` - preserving the historical no-op so every
-existing caller behaves unchanged. (The `CompositeExecutor` then merely logs a
-warning for them.) Aggregation itself lives in the *parent machine*, which owns
-the append-only thread; the kernel only tracks liveness.
+If **no** spawner is configured, `InstantiateSubmachine` effects flow to the
+`EffectExecutor`, and the `CompositeExecutor` answers them with `EffectFailed`.
+The SDLC machine avoids this by fanning out only when the `parallel_execution`
+fact is set, which the session builder does exactly when it installs a spawner.
+Aggregation itself lives in the *parent machine*, which owns the append-only
+thread; the kernel only tracks liveness.
 
 ### Isolated child `Context` and the `result` payload
 
@@ -182,8 +183,9 @@ kernel**:
 - a fresh `Context`,
 - a `TurnExecutor` with its own isolated `ThreadStore` and
   `call_id → thread` registry, its output tokens capped by the contract,
-- a `CompositeExecutor` with `TurnExecutor` + `ToolExecutor` + timers, and a
-  `UserExecutor` on the parent's gate channels when the parent has them,
+- a `CompositeExecutor` with `TurnExecutor` + `ToolExecutor` + timers (and a
+  verifier jailed to the session's project root), and a `UserExecutor` on the
+  parent's gate channels when the parent has them,
 - a one-shot `TaskMachine` (using `loop_core` state handlers) started with
   `ErasedRuntime::spawn_child_run`,
 - the inherited contract narrowed by the spawner's terms for a task: `ReadFile`,
@@ -203,9 +205,21 @@ it wrote `out` reports `ok: false` with the reason: its wall-clock budget ran
 out, or it was cancelled with its parent. Because the harvest runs on its own
 task, the parent loop is never blocked and siblings run concurrently.
 
-`RuntimeBuilder` installs an `SdlcChildSpawner` only in `sdlc` mode, and only
-then seeds the parent's `parallel_execution` fact - so a runtime without a
-spawner never emits orphaned `InstantiateSubmachine` effects.
+`RuntimeBuilder` installs an `SdlcChildSpawner` in `sdlc` mode and in a session
+with registered harness documents, and seeds the parent's `parallel_execution`
+fact when it does - so a runtime without a spawner never emits orphaned
+`InstantiateSubmachine` effects.
+
+### What a descriptor names
+
+`spawn_child` decides what to start from the effect's `descriptor`:
+
+| Descriptor field | Child |
+|------------------|-------|
+| `task` (string) | A one-shot `TaskMachine` for that task. This is the SDLC fan-out path |
+| `harness` (name, with optional `entry`, `input`, `depth`) | A registered harness document run as an isolated child kernel; this is how a harness's `delegate` and `parallel` steps start children (see [Harnesses](../reference/harnesses.md)) |
+| `mode: "task"` with `input` | The same as a `task` child |
+| any other `mode`, or none of these | The child fails immediately with `ok: false` and says why, rather than hanging |
 
 ---
 

@@ -126,6 +126,7 @@ chance to act on it.
 | `budget_tokens` | 12,000 | estimated tokens of the whole conversation above which demotion starts; a history within it is returned unchanged |
 | `keep_recent_rounds` | 2 | a round is the tool calls the model made in one response; the results of this many newest rounds are never demoted |
 | `min_demote_tokens` | 64 | a smaller result is not worth a reference |
+| `resident_bytes` | 16 MiB | bytes of evidence the chunk store keeps in memory; the rest is read back from disk |
 
 Only results of `read_file`, `shell`, `grep`, `find_file`, `web_fetch`,
 `web_search`, `read_lints` and `task` have a representation. Results of the
@@ -135,8 +136,8 @@ failure is never demoted below `long`.
 
 The form of a result depends only on the result, its call, what the conversation
 had pointed at when the result left the recent rounds and how far it was asked
-to go, so a result demoted for one request has the same text in the next and the provider's prompt cache is invalidated only from the first
-result that changes.
+to go, so a result demoted for one request has the same text in the next and the
+provider's prompt cache is invalidated only from the first result that changes.
 
 ### Advisors
 
@@ -285,12 +286,11 @@ records 0 expansions.
 ([ablation-benchmarks.md](../contributing/ablation-benchmarks.md#demotion-and-recall-what-was-measured)).
 With the defaults the final request keeps 100% of the critical evidence of
 `relevant_file` and `noisy_output` with a model that never asks, and the tokens
-over the whole task fall by 1.42x and 1.19x. Before the forms kept what the
-conversation points at, the same fixtures kept 0% and 92%. Lowering the budget
+over the whole task fall by 1.42x and 1.19x. Lowering the budget
 saves more (up to 1.96x and 1.54x with `budget_tokens` 1,500 and
 `keep_recent_rounds` 0) but `noisy_output` then keeps 69% unless the model
 expands, and an expansion costs a further request that replays the history.
-Still failing:
+Limits:
 
 - no setting reaches the 2x token gate on every targeted suite, with or without
   recovery;

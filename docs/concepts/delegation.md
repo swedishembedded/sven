@@ -8,11 +8,25 @@ delegate or what a child may do: a child never holds more than its parent,
 and none of the mechanisms below overrides a permission, an approval or a
 conflict rule.
 
+## The `task` tool
+
+`action` is one of `spawn` (the default), `status`, `read`, `grep` and `agents`;
+sessions with addressable context also offer `ledger`. The tool asks for
+approval by default. `spawn` takes `prompt`
+(required), `description` (a short label), `mode` (`research`, `plan`, `agent`
+or the name of a discovered persona), `workdir` and `model`. `status`, `read`
+and `grep` inspect the buffer of a finished or running child by `handle`;
+`agents` lists the personas.
+
 ## Briefs
 
 A bare `task` call gives the child its `prompt` and nothing else. A call may
-instead name the evidence the child starts from. All three fields are optional
-and additive; without them the child's first request is exactly `prompt`.
+instead name the evidence the child starts from. The fields below, and `paths`
+(files or globs, at most 64, used by deduplication and the cost policy), are
+optional and additive; without them the child's first request is exactly
+`prompt`. All of them, and the `ledger` action, are in the tool's schema only
+in sessions with addressable context (`context.assembly.mode` other than
+`off`).
 
 | argument | meaning |
 |----------|---------|
@@ -37,8 +51,7 @@ The child's first request is then, in this order:
 The parent's conversation is not part of it.
 
 An id that is not a chunk id, or that the parent's store never recorded, is an
-error before anything starts. `evidence` needs addressable context
-(`context.assembly.mode` other than `off`); `deliverable` does not.
+error before anything starts. `evidence` needs addressable context.
 
 ### Sharing the store
 
@@ -205,25 +218,11 @@ ever declines to delegate; it cannot start a child, widen one, or override a
 permission, an approval or the concurrency rules, and the deduplication above
 is decided first.
 
-## Measured
+## Measurement
 
-`make benchmark/ablation SUITES=delegation SEEDS=3 VARIANTS=A,B` (scripted
-model; the suite's five sub-agents are scripted with a bare `prompt`, so none
-of the mechanisms above is exercised by it):
-
-| | tokens, variant A | tokens, variant B |
-|---|---:|---:|
-| before | 81,080 | 81,341 |
-| with `evidence`, `deliverable`, `paths` and `ledger` always in the `task` schema | 81,536 | 81,645 |
-
-The difference is the tool definition alone (the `tool_schemas` source grew by
-456 tokens over the run); results, recall (100%) and duplicate reads are
-unchanged, which is what "byte-identical without the new fields" predicts. The
-fields are therefore offered only in sessions with addressable context, where
-the schema is 484 estimated tokens instead of about 460.
-
-Not measured: that briefs or deduplication save tokens in the suite. The suite
-would need scripted `task` calls that carry `evidence` ids (the parent's chunk
-ids, the digest of the exact tool result), a `finding` block in each scripted
-child reply, and an identical prompt with the same `paths` for the repeated
-subgoal. No model-quality or task-success claim follows from any figure here.
+`make benchmark/ablation SUITES=delegation SEEDS=3 VARIANTS=A,B` runs the
+delegation suite with a scripted model. Its five sub-agents are scripted with a
+bare `prompt`, so none of the mechanisms above is exercised by it; it measures
+only the cost of offering the extra fields in the `task` schema, which are
+offered only in sessions with addressable context. No claim that briefs or
+deduplication save tokens, and no model-quality claim, follows from it.

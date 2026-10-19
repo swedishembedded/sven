@@ -42,6 +42,7 @@ records read each other.
 | `tool_activity` | `calls` and `duplicate_calls` over the tool calls in the history sent with this request; `retries` and `errors` are reserved and absent |
 | `context_recovery` | `expansions`, `stale_expansions`, `expanded_bytes` and `expanded_tokens` over the expansions of demoted context in the history sent with this request (see [context-assembly.md](context-assembly.md)); absent when none |
 | `context_view` | how the history was assembled into this request when addressable context is on: `mode`, `demoted` results, `tokens_saved`, `saved_by_reason` (those tokens by why the result was demoted: `age`, `superseded`, `duplicate`, `passing_test`) and `new_demotions` (chunk id, digest, tool, from, to, tokens saved, reason); absent when it is off |
+| `cost` | what the cache-aware gate weighed for this request and did, as a `RebuildRecord` per demotion considered (see [cost-model.md](cost-model.md)); absent when `cost.cache_aware` is `off` or nothing was weighed |
 | `decision` | the decision-model inference the request's context was shaped by, since the previous request: `calls` (cache hits are not calls), `latency_ms` (wall time waited), `model_id`, `batch_size` (the most questions one call carried); `load_time_ms` stays empty because the provider does not report it. Absent when no decision ran. See [decisions](decisions.md) |
 | `wall_ms` | time from sending the request to the end of its response |
 | `first_token_ms` | time from sending the request to the first thinking, text or tool-call content of its response; absent when the response had none |
@@ -188,10 +189,6 @@ system prompt lists every discovered skill, subagent and knowledge document
 (see [the instruction catalog](#the-instruction-catalog)); the `skill` tool's
 description does not repeat the skills, so each is paid for once. MCP tools add
 their own schemas, charged to their own names.
-
-These replace the earlier planning figures of about 350 tokens per tool and
-about 1,400 system tokens, which were taken on a 19-tool chat session; the
-ledger measures what the headless runner actually sends.
 
 ## Deferred tool disclosure
 

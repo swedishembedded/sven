@@ -41,6 +41,7 @@ navigation:
       - docs/reference/tools.md
       - docs/reference/harnesses.md
       - docs/reference/sdk.md
+      - docs/reference/mcp.md
       - docs/reference/acp.md
   - title: Examples
     pages:

@@ -40,9 +40,9 @@ echo 'export OPENAI_API_KEY="sk-..."' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-The default variable name is `OPENAI_API_KEY` for the OpenAI provider and
-`ANTHROPIC_API_KEY` for Anthropic. You can change which variable is read in the
-config file:
+The default variable name is `OPENAI_API_KEY` for the OpenAI provider,
+`ANTHROPIC_API_KEY` for Anthropic and `OPENROUTER_API_KEY` for OpenRouter. You can
+change which variable is read in the config file, or give the key as `api_key`:
 
 ```yaml
 model:
@@ -90,15 +90,6 @@ tui:
 - The default mode is plain ratatui (no Neovim embed).  If you launched with
   `--nvim`, try omitting that flag to rule out Neovim as the source of the issue.
 
-### Colours look wrong or washed out
-
-Set the theme to match your terminal background:
-
-```yaml
-tui:
-  theme: light    # or "dark", "solarized"
-```
-
 ---
 
 ## Neovim integration issues
@@ -109,7 +100,7 @@ The embedded Neovim requires `nvim` to be available on your `PATH`.
 
 ```sh
 which nvim     # should print a path
-nvim --version # should show Neovim 0.9 or later
+nvim --version # should print the Neovim version
 ```
 
 If Neovim is not installed, either install it or simply omit `--nvim` (the
@@ -160,8 +151,12 @@ tools:
 
 ### The agent keeps running commands I did not expect
 
-Consider running in `research` or `plan` mode for tasks that do not require
-writes. This restricts the agent to read-only tools by design.
+Use `--mode research` for tasks that do not require changes: it has no `shell`
+tool and the kernel refuses every file write. `--mode plan` also refuses the file
+tools (`write_file`, `edit_file`), but keeps `shell`, so a command can still change
+files. To be asked about every write, shell command, network call and git
+operation, start with `--approval manual`. See
+[Agents and modes](../concepts/agents.md).
 
 ---
 
@@ -190,19 +185,21 @@ agent:
   tool_result_token_cap: 2000   # trim tool outputs to ~2000 tokens each
 ```
 
-To see how full the context is at any time, check the status bar: `ctx:X%`.
+To see how full the context is at any time, check the status bar's `ctx` gauge.
 When emergency compaction fires (session was too large to compact normally),
 the TUI shows `⚠ Context emergency-compacted` and the CI log shows
 `[sven:context:compacted:emergency]`.
 
-### "max tool rounds reached"
+### The agent stops calling tools and wraps up early
 
-sven stopped because it hit the configured limit on autonomous tool calls per
-turn. Increase the limit if your tasks legitimately require more steps:
+A turn is limited to `agent.max_tool_rounds` autonomous tool-call rounds (200 by
+default). When the budget runs out, sven asks the model for a final answer
+instead of letting it continue. Increase the limit if your tasks legitimately
+require more steps:
 
 ```yaml
 agent:
-  max_tool_rounds: 100
+  max_tool_rounds: 400
 ```
 
 ---
@@ -211,20 +208,23 @@ agent:
 
 ### sven opens the TUI instead of running headlessly
 
-Headless mode is enabled automatically when stdin is a pipe.  When invoking
-sven directly from a terminal prompt you **must** pass `--headless` explicitly:
+sven runs headless when any of these holds: a PROMPT is given, stdin is not a
+terminal, stdout is not a terminal, or `--headless` is passed. Without any of
+them, in a terminal, it opens the TUI. The case that surprises people is
+`--file`, which on its own queues the workflow's steps in the TUI:
 
 ```sh
-echo "my task" | sven           # headless - auto-detected from pipe
-sven "my task"                   # opens TUI (stdin is a TTY, no --headless)
-sven --headless "my task"        # headless - explicit flag required here
+sven "my task"                   # headless - a prompt was given
+echo "my task" | sven            # headless - stdin is a pipe
+sven --headless --file plan.md   # headless - explicit flag needed here
+sven --file plan.md              # opens the TUI with the steps queued
 ```
 
 To also suppress conversation-format markdown and get only the agent's plain
 response text, add `--output-format compact`:
 
 ```sh
-sven --headless --output-format compact "my task" 2>/dev/null
+sven --output-format compact "my task" 2>/dev/null
 ```
 
 ### Output contains ANSI colour codes in a CI log
@@ -234,8 +234,21 @@ seeing colour codes, check whether another tool in the pipeline is adding them.
 
 ### The pipeline exits non-zero even though the task completed
 
-Check standard error for error messages. A non-zero exit means at least one
-step failed. Add `--verbose` to get more detail:
+Check standard error for error messages, and match the exit code against this
+table:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | The agent run failed |
+| `2` | Invalid workflow, arguments or input |
+| `3` | The run completed, but at least one tool call returned an error |
+| `4` | The `--max-tokens` budget was exhausted |
+| `5` | A question is parked waiting for a human answer (see `sven questions`) |
+| `124` | A step or run timeout expired |
+| `130` | Interrupted (Ctrl+C) |
+
+Add `--verbose` to get more detail:
 
 ```sh
 sven --file plan.md --verbose 2>&1 | less
@@ -245,17 +258,19 @@ sven --file plan.md --verbose 2>&1 | less
 
 ## Mock provider
 
-### "no mock responses matched"
+### The mock model replies "[no mock rule matched]"
 
-sven fell through all your rules without finding a match. Add a catch-all rule
-at the end of your YAML file:
+The responses file had no rule that matches the last user message. Rules are
+tried in order; add a catch-all `default` rule at the end:
 
 ```yaml
-rules:
-  - match: ".*"
-    match_type: regex
+responses:
+  - match_type: default
     reply: "No mock rule matched this input."
 ```
+
+`match_type` is one of `contains`, `equals`, `starts_with`, `regex` or `default`;
+all but `default` also need a `pattern`.
 
 ### Mock responses are not being used
 
@@ -274,15 +289,17 @@ model:
   mock_responses_file: /path/to/responses.yaml
 ```
 
+Without a responses file the mock provider replies `MOCK: ` followed by your last message.
+
 ---
 
 ## Headless / CI mode issues
 
 ### Agent uses wrong paths or "directory does not exist"
 
-Sven automatically detects the project root by walking up to the nearest `.git`
-directory and injects it into the system prompt.  If you see path-related
-failures:
+Sven detects the project root by walking up to the nearest `.git` directory
+(falling back to the current directory) and injects it into the system prompt.
+If you see path-related failures:
 
 1. Make sure you are running sven from within the project (or a subdirectory).
 2. Check that a `.git` directory exists at or above your working directory.
@@ -317,12 +334,13 @@ By default, headless runs produce conversation-format markdown.  If you
 see raw text without `## User` / `## Sven` headers, check that you are not
 using `--output-format compact`.
 
-If a step fails mid-way, the partial conversation is saved to history and
-you can inspect it:
+To keep a headless run's conversation for later, give it a trace file with
+`--trace session.json` (loads it if present, writes it back after the run), or
+resume a session saved by the TUI:
 
 ```bash
-sven chats          # list recent conversations
-sven --resume <id>  # resume in the TUI or headless mode
+sven chats          # list saved sessions
+sven --resume <id>  # resume in the TUI, or headless with an explicit id
 ```
 
 ### Validate a workflow file before running
@@ -344,34 +362,32 @@ Prints each step label, mode, and timeout without running anything.
 
 ### Exit code 130 (interrupted)
 
-The run was stopped by Ctrl+C.  Any partial conversation has been saved to
-history and can be resumed.
+The run was stopped by Ctrl+C.
 
 ---
 
 ## Conversation history
 
-### sven chats returns "No saved conversations found"
+### sven chats returns "No saved sessions found"
 
-Conversations are only saved when you run the interactive TUI. Headless runs do
-not write history files. The history directory is:
-
-```sh
-ls ~/.local/share/sven/history/
-```
+`sven chats` lists the sessions the TUI saves, and prints the directory it looked
+in (`~/.local/share/sven/sessions/` on Linux). Headless runs do not write there.
+A headless run is recorded only when you ask for it with `--trace` or
+`--output-trace`, or when a `.sven/` project directory exists, in which case each
+run also writes a trajectory to `.sven/logs/<timestamp>.atif.json`.
 
 ### I lost a conversation
 
-Conversations are written to disk on exit. If sven crashed before writing, the
-session may be incomplete. Conversation files are stored as markdown:
+The TUI saves a session after each turn, so a crash loses at most the turn in
+progress. Saved sessions are ATIF trajectory files (JSON):
 
 ```sh
-ls -t ~/.local/share/sven/history/ | head -5
-cat ~/.local/share/sven/history/<timestamp>_<slug>.md
+ls -t ~/.local/share/sven/sessions/ | head -5
 ```
 
-To capture the complete trajectory for debugging or fine-tuning, use
-`--output-trace` (writes a single ATIF trajectory document):
+Open one with `sven --resume <id>` or `/resume`. To capture the complete
+trajectory of a headless run for debugging, use `--output-trace` (writes a single
+ATIF trajectory document):
 
 ```sh
 sven --file workflow.md --output-trace trace.json
@@ -386,7 +402,7 @@ jq . trace.json | less
 
 If the OAuth flow completes successfully (you see "Authentication successful" in
 the browser) but the browser keeps opening again, the server is rejecting your
-credentials. Sven now stops after the first failure instead of retrying
+credentials. Sven stops after the first failure instead of retrying
 indefinitely.
 
 **Atlassian MCP:** Custom clients must be allowlisted by an Atlassian admin.

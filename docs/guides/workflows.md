@@ -1,5 +1,10 @@
 # Workflow files
 
+A workflow file is a markdown document whose `##` sections are sent to the
+agent one after another, in one conversation. Run it with
+`sven --headless --file workflow.md` (see [Headless and CI](headless.md)); in a
+terminal, `sven --file workflow.md` queues the steps in the TUI instead.
+
 ## Workflow Files
 
 **Workflow structure (H1, preamble, `##` steps) applies only when you pass a
@@ -13,8 +18,14 @@ Workflow files are plain markdown with a defined structure:
 |---------|---------|
 | `#` H1 heading | Conversation title (not sent to the model) |
 | Text between H1 and first `##` | Appended to the agent system prompt |
-| `##` H2 heading | Starts a new step (user message) |
-| `<!-- sven: key=value ... -->` | Per-step options; stripped from body |
+| `##` H2 heading | Starts a new step; the heading is its label, the section is the user message |
+| `<!-- sven: key=value ... -->` | Per-step options; stripped from the body |
+
+A file with no `##` heading is one unlabelled step holding the whole text. A
+step with a heading and no body is sent as its heading. `#` and `###` or deeper
+headings inside a step stay in its text. Other HTML comments are dropped. A
+positional prompt on the command line runs first, as an extra step before the
+file's steps.
 
 ```markdown
 # Codebase Improvement
@@ -33,15 +44,14 @@ Implement only the first improvement from your proposal.
 
 ### YAML Frontmatter
 
-Add optional metadata between `---` delimiters at the top of the file:
+Add optional metadata between `---` delimiters at the very top of the file:
 
 ```markdown
 ---
 title: Code Refactoring Workflow
-mode: agent
-model: anthropic/claude-opus-4-5
-step_timeout_secs: 300
-run_timeout_secs: 1800
+models:
+  agent: anthropic/claude-sonnet-4-5
+  research: anthropic/claude-opus-4-5
 vars:
   branch: main
   ticket: PROJ-123
@@ -54,21 +64,32 @@ Find all TODO comments related to {{ticket}}.
 Resolve each TODO found in the previous step.
 ```
 
-Supported frontmatter fields:
+Frontmatter is a small YAML subset, not full YAML: top-level `key: value`
+lines, and two sections (`vars:` and `models:`) whose entries are indented
+`key: value` lines. Values may be wrapped in single or double quotes. The
+supported fields are:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `title` | string | Conversation title (used in history and artifacts) |
-| `mode` | string | Default agent mode for all steps |
-| `model` | string | Model override (e.g. `anthropic/claude-opus-4-5`) |
-| `step_timeout_secs` | integer | Per-step timeout (0 = no limit) |
-| `run_timeout_secs` | integer | Total run timeout (0 = no limit; default `agent.max_run_timeout_secs`) |
+| `title` | string | Conversation title; overrides the H1 and names the saved trajectory |
+| `models` | map | Model per agent mode (`agent`, `research`, `plan`), see below |
 | `vars` | map | Template variables (`{{key}}` substitution) |
 
-### Per-Step Configuration
+Any other key is ignored without a warning. The mode, the model and the
+timeouts are not frontmatter fields: set them with `--mode`, `--model`,
+`--step-timeout` and `--run-timeout`, in the configuration file, or per step
+with a directive.
 
-Use `<!-- sven: ... -->` directives immediately after the `##` heading to
-override settings for that step:
+Each step runs on the first of these that applies: the step's own `model` (or
+`provider` and `model`) directive; the `models` entry for the step's `mode`
+directive, else the `models` entry `agent`; the model from `--model` or the
+configuration. A `models` entry therefore takes effect for every step of its
+mode, including when `--model` is given.
+
+### Per-step directives
+
+Put `<!-- sven: ... -->` anywhere inside a step to override settings for that
+step:
 
 ```markdown
 ## Deep research
@@ -80,56 +101,104 @@ Read and summarise every file in the codebase.
 Apply the changes identified in the research phase.
 ```
 
-Supported directive options:
+The `sven:` prefix may be left out when every word of the comment is a
+`key=value` pair and at least one key is known: `<!-- mode=plan -->`.
 
 | Option | Values | Description |
 |--------|--------|-------------|
-| `mode` | `research`, `plan`, `agent` | Agent mode for this step only |
-| `model` | e.g. `anthropic/claude-opus-4-5` | Model override for this step |
-| `timeout` | integer (seconds) | Step-level timeout override |
-| `cache_key` | string | Cache key for step result reuse (future) |
+| `mode` | `research`, `plan`, `agent` | Agent mode, from this step on. Another value is ignored with a warning |
+| `model` | `anthropic/claude-sonnet-4-5`, or a bare name with `provider` | Model, from this step on |
+| `provider` | e.g. `anthropic` | Provider for `model=`; use with a bare model name |
+| `timeout` | seconds | Time limit of this step only; overrides `--step-timeout`; `0` removes the step limit |
+| `cache_key` | string | Reuse the step's stored answer, see [Caching a step](#caching-a-step) |
+
+`mode` and `model` are not reset after the step: later steps keep them until a
+step sets another. A model that cannot be built is reported and the current one
+stays in use.
 
 ### Template Variables
 
-Variables from frontmatter `vars`, CLI `--var`, or environment are
-substituted as `{{key}}` in step content.
+`{{key}}` in a step's text is replaced before the step is sent. The text of the
+title and the preamble is not substituted. Keys are matched exactly:
+`{{ key }}` with spaces is left as written.
+
+Sources, from lowest to highest priority:
+
+1. **CI variables**, set when sven runs under a recognised CI provider:
+   `branch`, `commit`, `repo` and `pr` (pull or merge request number), and
+   `CI_<name>` for each provider variable that is set, with the name in
+   lowercase (`{{CI_github_sha}}`, `{{CI_ci_commit_ref_name}}`, ...). The
+   covered variables are those of GitHub Actions, GitLab CI, CircleCI, Travis
+   CI, Azure Pipelines and Bitbucket Pipelines, plus `GIT_COMMIT`, `GIT_BRANCH`,
+   `BUILD_NUMBER` and `BRANCH_NAME`.
+2. **Built-ins**: `PROJECT_ROOT` (the nearest ancestor with `.git`, else the
+   working directory) and `WORKSPACE_ROOT`.
+3. **Frontmatter `vars`.**
+4. **`--var KEY=VALUE`** on the command line. A value may itself contain `=`.
+
+A `{{NAME}}` that is still unresolved is looked up in the process environment
+(only when `NAME` is letters, digits and underscores). One that is still
+unresolved after that is sent unchanged.
+
+After each step finishes, its answer is available to the steps after it as
+`{{step.<label>.output}}`, where `<label>` is the heading in lowercase with each
+run of other characters replaced by one `_` (`Gather Information` becomes
+`{{step.gather_information.output}}`), and as `{{step.<N>.output}}` by step
+number from 1.
 
 ```bash
 # CLI variables take precedence over frontmatter
-sven --file deploy.md --var env=staging --var version=1.2.3
+sven --headless --file deploy.md --var env=staging --var version=1.2.3
 ```
 
-CLI format: `--var KEY=VALUE`
+### Caching a step
 
-## Validation and Dry-Run
+A step with `cache_key=NAME` is answered from `.sven/cache/NAME.md` under the
+project root when that file exists, without calling the model (stderr shows
+`[sven:cache:hit]`). Otherwise it runs, and a successful non-empty answer is
+written to that file (`[sven:cache:write]`). Characters of `NAME` other than
+letters, digits, `-` and `_` become `_`. A cached step uses no tools and nothing
+invalidates the file: change the key or delete it to run the step again.
 
-Check a workflow file for syntax errors without running it:
+## Validation and dry-run
+
+Check a workflow file without running it:
 
 ```bash
-# Full validation report
+# Print what the file contains and exit
 sven validate --file workflow.md
 
-# Dry-run: show what would execute and exit
-sven --file workflow.md --dry-run
+# Dry-run: the same parse, reported on stderr, in the context of a run
+sven --headless --file workflow.md --dry-run
 ```
 
-Example output:
+Neither calls the model. `sven validate` fails (exit `1`) only when the file
+cannot be read: the parser accepts any text, so a typo in a directive or an
+unknown frontmatter key is not an error. Check the printed modes and models
+instead. It prints the title (frontmatter first, then H1), the frontmatter,
+the preamble size and every step, with the text of templates unexpanded:
 
 ```
+Title: Code Refactoring Workflow
 Frontmatter: OK
-  title: My Workflow
-  mode: agent
-  step_timeout_secs: 300
-Steps: 3
-  Step 1/3: "Analyse codebase"  mode=(inherit)  timeout=300s
-    Read and summarise the project structure...
-  Step 2/3: "Propose improvements"  mode=(inherit)  timeout=(inherit)
-    Based on the analysis, suggest improvements...
-  Step 3/3: "Implement"  mode=agent  timeout=300s
-    Implement the first improvement...
+  models (2):
+    agent: anthropic/claude-sonnet-4-5
+    research: anthropic/claude-opus-4-5
+  vars (2):
+    branch = main
+    ticket = PROJ-123
+Steps: 2
+  Step 1/2: "Analyse {{branch}} branch"  mode=(inherit)  provider=(inherit)  model=(inherit)  timeout=(inherit)
+    Find all TODO comments related to {{ticket}}.
+  Step 2/2: "Fix the issues"  mode=agent  provider=(inherit)  model=(inherit)  timeout=300s
+    Resolve each TODO found in the previous step.
 
 Workflow is valid.
 ```
+
+`--dry-run` prints `[sven:dry-run] Workflow validated - 2 step(s)`, the title
+and one `[sven:dry-run] Step i/N: label=... mode=... provider=... model=...
+timeout=...` line per step on stderr, then exits `0`.
 
 ---
 
@@ -140,11 +209,11 @@ conversation; no flag is needed. Continue one like this:
 
 ```bash
 # Run a workflow and save output as a conversation
-sven --file workflow.md > my-conversation.md
+sven --headless --file workflow.md > my-conversation.md
 
 # Add a follow-up and run it
 printf '\n## User\nExplain step 2 in more detail.\n' >> my-conversation.md
-sven --file my-conversation.md
+sven --headless --file my-conversation.md
 ```
 
 sven:
@@ -166,9 +235,13 @@ When sven reads stdin (no positional prompt, or `--stdin` alongside one), it aut
 
 | stdin content | Detected as | Effect |
 |---------------|-------------|--------|
-| Plain text / no `##` headings | Workflow / plain text | Entire input becomes a single step |
+| Plain text / no `##` headings | Plain text | Entire input becomes a single message |
 | Contains `## User`, `## Sven`, `## Tool`, or `## Tool Result` | Conversation markdown | History seeded; step = CLI prompt or pending user turn |
-| Every non-empty line starts with `{` | JSONL conversation | History seeded from full-fidelity JSONL |
+| Every non-empty line starts with `{` | JSONL steps | History seeded from full-fidelity JSONL |
+| One JSON object with a `steps` array | JSON trajectory | History seeded from the steps |
+
+JSONL and trajectory input are recognised by the workflow runner; see
+[Pipe composition](pipe-composition.md#which-runner-reads-which-format).
 
 ### Step content when a conversation is piped
 
@@ -201,7 +274,7 @@ sven 'stage 1' --output-trace /tmp/run.json
 sven 'stage 2' --load-trace  /tmp/run.json
 
 # Pending-user relay: last ## User in output drives the next agent
-sven --file plan-and-relay.md | sven
+sven --headless --file plan-and-relay.md | sven
 ```
 
 See **[Pipe Composition](pipe-composition.md)** for

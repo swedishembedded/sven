@@ -45,17 +45,23 @@ loaded only when actually needed, keeping each turn's token usage minimal.
 
 ### Where to put skills
 
-Sven looks for skills in the following locations, with later sources taking
-precedence when the same command exists in multiple places:
+Sven collects skills from the system directories and from every ancestor of
+your project and of your home directory. When the same command exists in more
+than one place, the one nearer the project wins, and within one directory
+`.sven/` wins over the others:
 
 | Location | When to use |
 |----------|-------------|
+| `/usr/share/sven/skills/`, `/usr/local/share/sven/skills/` | Skills installed for every user (lowest precedence) |
 | `~/.sven/skills/` | Your personal skills, available in every project |
-| `~/.agents/skills/` | Cross-agent skills shared with other agents |
-| `<project>/.sven/skills/` | Skills specific to this project |
-| `<project>/.agents/skills/` | Project skills shared with other agents |
+| `~/.agents/skills/`, `~/.claude/skills/`, `~/.codex/skills/`, `~/.cursor/skills/` | Skills shared with other agents, personal |
+| `<project>/.agents/skills/`, `.claude/skills/`, `.codex/skills/`, `.cursor/skills/` | Project skills shared with other agents |
+| `<project>/.sven/skills/` | Skills specific to this project (highest precedence) |
 
-Project-level skills always win over global ones.
+A skills directory in a parent of the project (for example a workspace that
+holds several checkouts) is found too, with lower precedence than the project's
+own. `/refresh` in the TUI re-scans without a restart; `/skills` opens the
+inspector.
 
 ---
 
@@ -106,11 +112,11 @@ Nest sub-skill directories inside the parent:
 ```
 .sven/skills/
 └── deploy/
-    ├── SKILL.md              /deploy
+    ├── SKILL.md              command: deploy
     ├── pre-flight/
-    │   └── SKILL.md          /deploy/pre-flight
+    │   └── SKILL.md          command: deploy/pre-flight
     └── rollback/
-        └── SKILL.md          /deploy/rollback
+        └── SKILL.md          command: deploy/rollback
 ```
 
 In the parent `SKILL.md`, tell the model to load sub-skills at the right time:
@@ -145,9 +151,20 @@ you do not need to declare them in the frontmatter.  Just create the directory.
 | `version` | string | no | Semver version string for your own tracking. |
 | `sven.always` | bool | no | Always include this skill's metadata in the system prompt, regardless of the token budget. Useful for a project-wide coding-style skill. Default: `false`. |
 | `sven.requires_bins` | list | no | Skip this skill if any of the listed binaries are absent from `PATH` (e.g. `[docker, kubectl]`). |
-| `sven.requires_env` | list | no | Skip this skill if any of the listed environment variables are unset (e.g. `[AWS_PROFILE]`). |
+| `sven.requires_env` | list | no | Skip this skill if any of the listed environment variables is unset or empty (e.g. `[AWS_PROFILE]`). |
 | `sven.user_invocable_only` | bool | no | Hide the skill from the model's skill listings, so it is loaded only when you name it. Use for skills you always want to invoke deliberately. Default: `false`. |
 | `sven.activation` | map | no | List the skill to the model only once it applies: `paths` (globs of files touched or named), `modes`, `states`, or `always`. Absent means always. See [instruction disclosure](../internals/instruction-disclosure.md). |
+
+The `sven.*` keys are fields of a `sven:` block:
+
+```yaml
+sven:
+  always: true
+  requires_bins: [docker]
+```
+
+A file with no frontmatter fence is accepted as plain Markdown: its first
+non-heading line becomes the description.
 
 ---
 
@@ -181,17 +198,17 @@ useful than `"Deployment skill"`.
 and tell the model *when* to call each sub-skill.  Put the detailed instructions
 in the sub-skills.
 
-**Use `always: true` sparingly.**  Skills marked `always` are included in every
+**Use `sven.always` sparingly.**  Skills marked `always` are included in every
 system prompt.  Reserve this for genuinely project-wide rules (e.g. a coding
 style guide) rather than task-specific workflows.
 
-**Use `user_invocable_only: true` for personal workflows.**  If a skill
+**Use `sven.user_invocable_only` for personal workflows.**  If a skill
 contains steps you always want to review before running (e.g. a production
 deployment), mark it `user_invocable_only` so the model never triggers it
 automatically.
 
 **Override globals with project skills.**  A project-level skill at
-`.sven/skills/deploy/` silently replaces any global skill with the same command.
+`.sven/skills/deploy/` replaces any global skill with the same command.
 This lets you tailor shared skills for a specific repository.
 
 ---
@@ -237,7 +254,7 @@ touching matching files.
 - **Cross-reference with knowledge docs.** If a subsystem has a knowledge doc,
   note it in the routing table:
   ```markdown
-  | crates/hsm/**  | search_knowledge "HSM Kernel" before changes |
+  | crates/hsm/**  | `memory` action `search_knowledge` for "HSM Kernel" before changes |
   ```
 - **Combine with skills.** Skills can themselves contain routing sub-tables
   for their own sub-components.

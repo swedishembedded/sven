@@ -16,10 +16,14 @@ pub struct Snapshot {
 }
 ```
 
-That is the whole of it, and deliberately so. Every machine in this workspace
-holds only a `MachineId` in its own fields - all durable state lives in
+That is the whole of it, and deliberately so. Every machine the `ModeRegistry`
+builds holds only a `MachineId` in its own fields - all durable state lives in
 `Context` - so the active state plus the context is complete. A snapshot holds
 no connections, channels or executors; those belong to whatever resumes it.
+
+The `Context` carries the facts, tool results, retry counters, the pending
+approval and pending question, the granted capabilities, the loaded tools and
+active instructions, and the audit trails.
 
 ## Suspending and resuming
 
@@ -40,9 +44,29 @@ Where the concrete machine type is not nameable - a `Box<dyn ErasedMachine>` out
 of the `ModeRegistry`, which is the usual case - use the in-place form:
 
 ```rust
-let mut machine = registry.get("agent").unwrap()();
+let registration = registry.get("agent").unwrap();
+let mut machine = (registration.factory)();
 machine.restore_state(&snap.state)?;
 ```
+
+(`Hsm::restore_in_place` is the same operation on an `Hsm`.)
+
+## Suspending and resuming a live session
+
+`ErasedRuntime::capture()` returns a `Snapshot` of a running session without
+stopping it. It is served only once the event queue has drained, so the snapshot
+shows the machine at rest rather than part-way through a turn. To resume,
+`RuntimeBuilder::with_kernel_snapshot(snapshot)` starts the new session in the
+snapshotted state with the snapshotted context instead of the machine's initial
+state; building fails if the mode's machine does not enumerate that state. The
+SDK's agents use this pair to carry a conversation across calls and processes
+([SDK reference](../reference/sdk.md)).
+
+A session built with `RuntimeBuilder::with_parked_approvals` (under manual
+approval) ends with its own approval pending in `Context::pending_approval`
+instead of asking on a channel. A later session built from that snapshot decides
+it by posting `HumanApproved` or `HumanRejected`. A parked question
+(`pending_question`) is resumed the same way, by `HumanAnswered`.
 
 ## Resuming versus replaying
 
@@ -55,7 +79,7 @@ Both reconstruct a machine; they answer different questions.
 | Rebuilds context | From the snapshot | By re-dispatching every event |
 | Use for | Advancing a session one step | Auditing, and verifying determinism |
 
-`replay` returns `(Hsm<M>, Context)`. The context is the point of replaying -
+`sven_hsm::replay(factory, &events)` returns `(Hsm<M>, Context)`. The context is the point of replaying -
 the audit trail, granted capabilities and accumulated facts - so it is returned
 rather than discarded.
 
@@ -65,7 +89,9 @@ rather than discarded.
 state label is mapped back to a state value. A machine that leaves it at the
 empty default cannot be resumed: `restore` fails with
 `RestoreError::UnknownState`, naming the state it could not resolve and the
-states it does know.
+states it does know. A snapshot that names a composite state (one other states
+live under, such as `Session` in the reactive machine) is refused with
+`RestoreError::CompositeState`: a running machine always rests in a leaf.
 
 Failing is the point. Resuming a machine that cannot resolve its own state would
 silently drop it back to its initial state and re-run work that has already
@@ -73,8 +99,8 @@ happened - a corruption that would surface much later, as a duplicated action
 rather than as an error.
 
 `crates/machines/tests/restorable.rs` asserts this for every mode in
-`ModeRegistry::default_registry()`, so a new mode that omits `all_states()`
-fails the suite rather than failing in production.
+`ModeRegistry::default_registry()` and for `ui-test`, so a new mode that omits
+`all_states()` fails the suite rather than failing in production.
 
 **A machine must keep durable state in `Context`, not in its own fields.** A
 field is not captured by a snapshot and will silently revert on resume.

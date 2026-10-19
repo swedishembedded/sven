@@ -1,447 +1,209 @@
 # Teams and Tasks
 
-When a task is too large for one agent to handle cleanly - or when you want
-different parts of a problem to run in parallel - sven supports **teams**: a
-lead agent that creates and assigns work, and one or more teammate agents that
-pick up and complete tasks independently.
+A **team** is a set of sven processes that share a task board on disk. Each
+member polls the board, claims the tasks addressed to it (or to nobody), runs
+each as a headless agent, and writes the outcome back. Teams are a feature of
+the `network` cargo feature, which is on by default; the surface is the
+`sven team` subcommand and the member process it starts.
 
-This page explains the team model from the ground up: what a team is, how to
-create one, how tasks flow through it, and how to prompt the agent effectively
-at each step.
-
----
-
-## The mental model
-
-Think of a sven team like a small software contractor arrangement:
-
-- The **lead** is you at your desk, breaking a project into tickets.
-- Each **teammate** is a developer who takes a ticket, does the work, and
-  reports back.
-- The **task list** is a shared board that everyone reads from and writes to.
-
-The key difference from a real team: every conversation, decision, and action
-is captured in the agent's tool calls and responses, so you can inspect exactly
-what happened at any point.
+Use a team when parts of a problem can run in parallel, or when different
+parts want different models, instructions or tool restrictions. For a single
+focused sub-task inside one session, use the `task` tool instead (see
+[delegation](../concepts/delegation.md)).
 
 ---
 
-## How tasks work
+## Tasks
 
 A task is a unit of work with:
 
-- A **title** (short, one line)
-- A **description** (full context: what to do, how to know it is done)
-- A **status**: `pending` → `in_progress` → `completed` (or `failed`)
-- An optional **assigned agent** (if omitted, any teammate can claim it)
-- Optional **dependencies** on other tasks (a task cannot be claimed until its
-  dependencies are all completed)
+- a **title** and a **description** (the full context and the definition of
+  done),
+- a **status**: `pending`, `in_progress`, `completed`, `failed` or
+  `cancelled`,
+- an optional **assignee**: a member name. A task with no assignee can be
+  claimed by any member,
+- optional **dependencies** on other task ids: a task cannot be claimed until
+  all of them are `completed`.
 
-Tasks are stored on disk under `~/.config/sven/teams/<team-name>/tasks.json`.
-They survive restarts and can be inspected by hand.
-
-### Task lifecycle
+The board is `~/.config/sven/teams/<team>/tasks.json` (the platform config
+directory; `~/.config` on Linux): `{"tasks": [...]}`, with each task carrying
+`id`, `title`, `description`, `status` (`{"state": "pending"}`, or
+`in_progress`/`completed`/`failed` with their fields), `assigned_to`,
+`depends_on`, `created_by`, `created_at` and `updated_at`. Every mutation by a
+sven process takes an exclusive file lock, so members claim tasks without
+races. Edit the file by hand only while no member is running.
 
 ```
-create_task  →  pending
-                   │
-          assign_task (optional)
-          claim_task  →  in_progress
-                              │
-                       complete_task  →  completed
-                       (or mark failed if something went wrong)
+pending --claim--> in_progress --run succeeds--> completed
+                        |
+                        +-------run ends otherwise or errors--> failed
 ```
 
-The lead typically creates all the tasks upfront.  Teammates then either
-self-claim the next available task (`claim_task` with no `task_id`) or are
-directed to a specific one.  When a teammate finishes, it calls `complete_task`
-with a summary.  The lead can call `list_tasks` at any time to see the board.
+A member claims the first pending task whose dependencies are done and that is
+assigned to it or to nobody. The member (not the model) marks the task:
+`completed` with the agent's final reply as the summary, or `failed` with the
+reason when the run did not conclude successfully or errored.
 
 ---
 
-## What you actually do
+## Defining and starting a team
 
-Teams work best when you let the agent manage the process.  Your job is to
-write one good prompt.  The agent handles everything else - creating the team,
-spawning teammates, creating tasks, assigning them, tracking completion, and
-reporting results back to you.
-
-### The simplest approach: one prompt
-
-```
-sven "Refactor the auth module in src/auth/ to use PASETO instead of JWT.
-
-Use a team:
-1. Create a team called 'auth-refactor'.
-2. Spawn an explorer teammate to read the current auth code and write a
-   migration plan to plan.md.
-3. Spawn an implementer teammate to carry out the plan once it exists.
-4. Use list_tasks to monitor progress.
-5. When both tasks are complete, summarise what changed."
-```
-
-The agent will:
-- Call `create_team` to initialise the shared task store
-- Call `spawn_teammate` twice - once for the explorer, once for the implementer
-- Call `create_task` for each piece of work
-- Monitor with `list_tasks` until everything is completed
-- Report back to you
-
----
-
-## Interactive walkthrough
-
-The following prompts show how to drive a team step by step, as you would type
-them into an interactive sven session.
-
-### Step 1: Create the team
-
-```
-Create a team called 'release-prep' with the goal of preparing version 2.0 for
-release. You are the lead.
-```
-
-The agent calls `create_team` and confirms:
-
-```
-Team 'release-prep' created. You are the lead.
-Next steps:
-  1. Use spawn_teammate to add teammates with specific roles
-  2. Use create_task to define work items
-  ...
-```
-
-### Step 2: Spawn teammates
-
-```
-Spawn two teammates:
-- An 'explorer' named 'changelog-writer' whose job is to read git log and
-  write a CHANGELOG.md entry for v2.0.
-- A 'tester' named 'test-runner' whose job is to run the full test suite and
-  report failures.
-```
-
-The agent calls `spawn_teammate` for each.  Each spawned agent starts as a
-separate process and connects to the same team.  They will appear in
-`list_team` once connected.
-
-### Step 3: Create tasks
-
-```
-Create the following tasks:
-1. Title: 'Write CHANGELOG entry'
-   Description: Read git log since v1.9.0, extract meaningful changes,
-   write a CHANGELOG.md entry under '## 2.0.0'. Assign to changelog-writer.
-
-2. Title: 'Run test suite'
-   Description: Run 'cargo test --workspace'. If any tests fail, list the
-   test names and the error messages. Assign to test-runner.
-```
-
-The agent calls `create_task` twice.  Both tasks appear on the shared board
-immediately.
-
-### Step 4: Monitor progress
-
-```
-Check the team status - who is working on what and how far along are the tasks?
-```
-
-The agent calls `list_team` and `list_tasks` and reports back:
-
-```
-Team 'release-prep' - 3 members | tasks: pending=0, in_progress=2, completed=0, failed=0
-
-● changelog-writer [Explorer] - working on: "Write CHANGELOG entry"
-● test-runner      [Tester]   - working on: "Run test suite"
-○ you              [Lead]
-```
-
-### Step 5: Wait for completion and synthesise
-
-```
-Wait until all tasks are completed or failed, then summarise the results.
-```
-
-The agent polls `list_tasks` and, when all tasks are done, reads the summaries
-and assembles them into a report.
-
-### Step 6: Clean up
-
-```
-All tasks are done. Shut down the teammates and clean up the team.
-```
-
-The agent calls `shutdown_teammate` for each teammate and then `cleanup_team`
-to remove the team directory.
-
----
-
-## Roles
-
-When spawning teammates, you assign each one a **role**.  The role is a hint to
-the LLM about what the agent should focus on - it is injected into the system
-prompt.
-
-| Role | Typical use |
-|---|---|
-| `explorer` | Investigate a codebase area, gather information, write notes |
-| `implementer` | Write or change code based on a specification |
-| `reviewer` | Read code and produce a review report, suggest improvements |
-| `tester` | Run tests, analyse failures, suggest fixes |
-| `teammate` | General purpose - no specific focus |
-
-You can also use any custom string: `role: "documentation-writer"` or
-`role: "security-auditor"` work fine.
-
----
-
-## How to direct teammate work
-
-The **only** correct way to give a teammate work is through the task system.
-
-| What you want | Correct tool |
-|---|---|
-| Give a teammate a specific piece of work | `create_task` with `assigned_to` |
-| Re-point a task to a different teammate | `assign_task` |
-| See what everyone is working on | `list_tasks` + `list_team` |
-
-Prompt pattern that reliably works:
-
-```
-Create a task titled 'Write the CHANGELOG entry' with the description:
-"Read git log since the last tag. Write a new section under '## 2.0.0'
-in CHANGELOG.md covering only user-facing changes."
-Assign it to changelog-writer.
-Then call list_team and list_tasks to monitor progress.
-```
-
-The teammate picks up the task by calling `claim_task`, does the work, then
-calls `complete_task` with a summary. You see the result in `list_tasks`.
-
----
-
-## Working directories and Git isolation
-
-By default all teammates work in the same directory as the lead.  For tasks
-that involve editing files, you may want each teammate to work in its own Git
-branch so changes do not conflict.
-
-```
-Spawn an implementer called 'auth-impl', use a Git worktree so it works in
-its own isolated branch.
-```
-
-The agent calls `spawn_teammate` with `use_worktree: true`.  sven creates a
-branch named `sven/team-<team>/<role>-<name>` and a worktree at
-`.sven-worktrees/<name>`.  When the teammate finishes, the lead can merge the
-branch:
-
-```
-Merge the auth-impl teammate's branch.
-```
-
-This calls `merge_teammate_branch` with a non-fast-forward merge commit.
-
----
-
-## Task dependencies
-
-When one task cannot start until another finishes, declare a dependency:
-
-```
-Create a task 'Deploy to staging' that depends on the 'Run test suite' task.
-The deployment should only proceed once all tests pass.
-```
-
-The agent creates the deployment task with `depends_on: ["<test-suite-id>"]`.
-When a teammate tries to claim it, sven automatically blocks it until the test
-suite task is completed.  `list_tasks` shows blocked tasks clearly:
-
-```
-○ [d8f3] Deploy to staging [blocked: 0/1 deps done]
-```
-
----
-
-## Defining teams in YAML
-
-For work you repeat often, define the team structure in a YAML file and start
-it with a single command.  sven reads `.sven/teams/*.yaml`:
+Team definitions are YAML files in `.sven/teams/` of the project:
 
 ```yaml
 # .sven/teams/release.yaml
 name: release-prep
 goal: Prepare the project for a version release
-max_active: 4
+max_active: 4              # default 8
 
 members:
   - role: explorer
     name: changelog-writer
+    model: anthropic/claude-sonnet-4-5   # optional; default: the configured model
     instructions: |
       Read the git log since the last tag and write a CHANGELOG.md entry.
       Focus on user-facing changes only.
-
-  - role: tester
-    name: test-runner
-    instructions: |
-      Run the full test suite. Report any failures with test names and
-      error messages. Do not attempt fixes - only report.
 
   - role: reviewer
     name: pr-reviewer
     deny_tools: [write_file, edit_file]
     instructions: |
-      Read the diff since the last tag. Write a review covering correctness,
-      edge cases, and any potential regressions.
+      Read the diff since the last tag and write a review covering
+      correctness, edge cases and regressions.
 
-token_budget: 500000   # tokens across the whole team; 0 = unlimited
+token_budget: 500000   # tokens across the whole team; 0 = unlimited (default)
 max_iterations: 40     # tool rounds per task run; 0 = the configured default
 ```
 
-Start it:
+`role` is one of `implementer`, `reviewer`, `explorer`, `tester`, `teammate`
+(the default) or any other string, which is kept as a label. The role appears
+in the roster and in the member's prompt; it does not change what the member
+may do. `model` and `instructions` apply to every task the member runs;
+`deny_tools` lists tools the member never sees nor runs.
 
-```sh
-sven team start --file .sven/teams/release.yaml
-```
+### The `sven team` subcommands
 
-This creates the team (or updates it, if it exists) and spawns all members
-automatically.  No prompting needed.
+| Command | What it does |
+|---|---|
+| `sven team init --name N [--goal G]` | Write a starter `.sven/teams/N.yaml` |
+| `sven team definitions` | List the definition files found in the project |
+| `sven team start --file F [--sven-bin PATH] [--dry-run]` | Create the team (or update it from the file) and start one `sven` process per member; `--dry-run` prints the commands without writing the team or starting anything |
+| `sven team create --name N [--goal G] [--max-active 8] [--token-budget 0]` | Create the team directory and config without starting members; the name is alphanumeric, `-` and `_` |
+| `sven team list` | Teams on disk with member and active counts |
+| `sven team status NAME` | Members, their status and current task, token budget use, task counts |
+| `sven team watch NAME [--interval 3] [--timeout 0]` | Poll a team; status lines go to stderr and JSON event lines (`member_status`, `task_summary`, `token_budget_warning` at 90% of the budget, `team_complete`) to stdout. Exits once every task is completed, or after `--timeout` seconds (0 = never) |
+| `sven team cleanup NAME [--force]` | Remove the team directory; without `--force` it only prints the status and removes nothing |
 
-The limits are written to the team config before any member starts, and each
-member reads its own before every task:
+`sven team start` writes the goal and the limits (`max_active`, `token_budget`,
+`max_iterations`, each member's `deny_tools` and `model`) to the team config
+before any member starts. Re-running it on an existing team updates the
+config and keeps the members' runtime state.
+
+### Putting work on the board
+
+`sven team start` creates the members and an empty board; members then wait.
+Work gets onto the board in one of two ways:
+
+- Write tasks into `tasks.json` (see above) before starting members.
+- Start a member with a prompt: the prompt is recorded once as a task titled
+  `Initial task`, assigned to that member. The member flags are
+  `--team-name`, `--team-role` and `--teammate-name` (alias `--agent-name`),
+  hidden from `--help`; `sven team start` passes them for you.
+
+Hosts that embed sven can register the team tools listed below so a lead agent
+manages the board itself. The stock `sven` binary does not register them, so
+the interactive agent has no `create_team`, `create_task` or similar tool.
+
+---
+
+## What a member does
+
+A member process runs headless and never waits for a person. It registers
+itself in the team config, then loops:
+
+1. Stop if its status in the team config is `closed`, if it was removed from
+   the config, or if the team directory is gone.
+2. Read its terms (denied tools, tool-round limit) from the team config.
+3. Reserve its share of the remaining token budget; stop if the budget is
+   spent.
+4. Claim the next task. With none available, sleep five seconds and look
+   again. A member does not exit when the board is empty; it exits on one of
+   the conditions in step 1 or 3.
+5. Run the task as an agent with the coding toolset and the member's model and
+   instructions, settle the token reservation with what the run used, and
+   mark the task `completed` or `failed`.
+
+If the team config stays unreadable across several retries with growing
+delays, the member exits with an error.
+
+The limits are enforced per member from the team config:
 
 - `deny_tools` - tools the member's task runs never see nor run.
 - `max_iterations` - the tool-round limit of each task run (it replaces
   `agent.max_tool_rounds` for the member).
 - `token_budget` - input and output tokens across every member's task runs
   and their sub-agents. Before each task a member reserves its share of what
-  is left - split evenly between the members working, under the team-config
-  lock, so members running at once never overshoot together. The run's
-  output is held to that share, everything it used (input and output, its
-  sub-agents' included) replaces the reservation afterwards, whether or not
-  it succeeded, and once the budget is spent a member claims no further task
-  and exits.
+  is left, split evenly between the members working, under the team-config
+  lock, so members running at once never overshoot together. The run's output
+  is held to that share, everything it used (input and output, its
+  sub-agents' included) replaces the reservation afterwards, whether or not it
+  succeeded, and once the budget is spent a member claims no further task and
+  exits.
 
-A member never waits for a person: it runs under auto approval, so every
-call its terms allow runs without a prompt (a denied tool is never offered),
-its sub-agents' included, and a question it asks is answered at once with
-"No user is available to answer this question. Proceed on your best
-judgement and state the assumption you made."
-
-A member's `model` and `instructions` apply to every task it runs. The
-limits live in the team config, so they hold for every member however it was
-started, including one started with `spawn_teammate`; `sven team create
---token-budget` sets the budget of a team built that way.
-
-List available team definitions in the current project:
-
-```sh
-sven team definitions
-```
+A member runs under auto approval: every call its terms allow runs without a
+prompt (a denied tool is never offered), its sub-agents' included, and a
+question it asks is answered at once with "No user is available to answer this
+question. Proceed on your best judgement and state the assumption you made."
 
 ---
 
-## Prompting the lead agent effectively
+## Roles
 
-The lead agent is your interactive sven session.  It has access to all team
-tools plus the full standard toolset.
-
-### Be explicit about the outcome
-
-Vague instructions lead the agent to interpret liberally.  Be specific:
-
-| Vague | Specific |
+| Role | Typical use |
 |---|---|
-| "Do the refactor" | "Refactor src/auth/ to replace all JWT usage with PASETO.  Write the new token structure in src/auth/token.rs." |
-| "Test the thing" | "Run cargo test --workspace.  List every failing test and its error.  Do not fix anything." |
-| "Check the code" | "Review src/api/ for missing error handling.  Write a markdown report listing each function with its issue." |
+| `explorer` | Investigate a codebase area, gather information, write notes |
+| `implementer` | Write or change code based on a specification |
+| `reviewer` | Read code and produce a review report |
+| `tester` | Run tests, analyse failures |
+| `teammate` | General purpose |
 
-### Tell the agent what to do with the results
-
-If you want a summary, ask for one:
-
-```
-After all teammates finish, read their completion summaries and write a
-consolidated 'release-notes.md'. Do not summarise the tool calls - only
-the actual changes made.
-```
-
-If you want the agent to stop and wait for your next instruction:
-
-```
-After spawning the teammates and creating the tasks, stop and wait.
-Do not poll or summarise until I ask.
-```
-
-### Limit the scope when in doubt
-
-Start with a single task and one teammate to verify the workflow before
-scaling up:
-
-```
-Spawn one explorer teammate.  Ask it to list every function in src/auth/
-that takes a token parameter.  Report back when done.
-```
-
-Once that works, add more teammates and tasks.
+A member started by `sven team start` with an unrecognised role runs as
+`teammate`.
 
 ---
 
-## Prompt examples
+## Team tools
 
-These are prompts you type into an interactive sven session (or pass on the
-command line as `sven "..."`).
+The `sven-team` crate provides these as `sven_tool_api::Tool` implementations
+for hosts that register them. The first group is for the lead.
 
-```sh
-# Create a team and start a multi-step workflow in one shot
-sven "
-Create a team called 'audit' with goal 'Security audit of the authentication module'.
-Spawn two teammates:
-  - explorer named 'code-reader' to read src/auth/ and list every place that
-    handles passwords or tokens.
-  - reviewer named 'sec-reviewer' to review those findings and rate each one
-    low/medium/high risk.
-Create a 'Read auth module' task for code-reader and a 'Review findings' task
-for sec-reviewer that depends on the first.
-Monitor with list_tasks until both are complete, then write a summary to
-security-report.md.
-"
+| Tool | What it does |
+|---|---|
+| `create_team` | Initialise a team (or restore it if it exists) and become its lead |
+| `load_team` | Re-attach to a team that exists on disk |
+| `list_team` | Members with role, status and current task; `show_closed` includes closed members |
+| `spawn_teammate` | Start a member process (`name`, `role`, `model`, `task_prompt`, `use_worktree`); lead only |
+| `shutdown_teammate` | Mark a member `closed` by `name` or `peer_id`; it finishes its current task and exits |
+| `register_teammate` | Register an already-running process as a member |
+| `read_teammate_log` | Tail a spawned member's log, `~/.config/sven/teams/<team>/<name>.log` |
+| `merge_teammate_branch` | Merge a member's worktree branch into the current branch with `git merge --no-ff` |
+| `cleanup_team` | Remove the team directory; refuses while members are active unless `force` is true; lead only |
+| `create_task` | Add a task (`title`, `description`, `assigned_to`, `depends_on`) |
+| `list_tasks` | Show tasks with status, assignee, summaries and `[blocked: n/m deps done]` markers; optional status filter |
+| `assign_task` | Direct a task to a member |
+| `claim_task` | Mark a task `in_progress` for the caller |
+| `complete_task` | Mark a task `completed` with a summary |
+| `update_task` | Replace a task's description |
 
-# Check team status on a running team
-sven "List the current team status and show all tasks with their statuses."
+### Git worktree isolation
 
-# Shutdown and clean up a team
-sven "Shut down all teammates in team 'audit' and clean up the team."
-
-# Assign a specific task to a named teammate
-sven "
-Find the task titled 'Review findings' in the task list and assign it to
-sec-reviewer using assign_task."
-```
-
----
-
-## What happens inside a teammate
-
-When a teammate starts, it receives:
-
-- Its team name and role from command-line arguments
-- A system prompt that tells it to claim tasks from the shared list, work on
-  them, and mark them complete with a summary
-- The same standard toolset as the lead agent (file read/write, terminal,
-  search, web, GDB, etc.)
-
-A teammate's loop typically looks like this:
-
-1. Call `claim_task` to pick up the next available task assigned to it
-2. Read any relevant files, run any necessary commands
-3. Complete the work
-4. Call `complete_task` with a summary of what was done
-5. Poll for the next available task, or exit if none remain and the team lead
-   has marked it for shutdown
-
-The lead can observe this in real time by calling `list_tasks` and `list_team`.
+`spawn_teammate` with `use_worktree: true` creates the branch
+`sven/team-<team>/<role>-<name>` from `HEAD` and a worktree at
+`<repo>/.sven-worktrees/<team>/<role>-<name>` for that member, so concurrent
+edits do not collide. The current directory must be inside a Git repository.
+`merge_teammate_branch` merges the branch back. Members started with
+`sven team start` share the directory they are started in.
 
 ---
 
@@ -451,8 +213,8 @@ sven enforces hard limits to prevent runaway agent chains:
 
 - **Subprocess depth** - a sub-agent started by the `task` tool cannot itself
   start further sub-agents.
-- **SpawnTeammateTool** - only the team lead can spawn teammates.  A teammate
-  cannot spawn sub-teams.
+- **`spawn_teammate`** - the library tool refuses unless the caller is the
+  team lead, so a teammate cannot spawn sub-teams.
 
 A `task` sub-agent never holds more than the session that started it:
 
@@ -496,78 +258,39 @@ can override them.
 
 ## Monitoring without a running session
 
-The task store and team config are plain files on disk.  You can inspect them
-at any time without a running session:
+The board and the team config are plain files:
 
 ```sh
-# See all tasks for team 'release-prep'
-cat ~/.config/sven/teams/release-prep/tasks.json | python3 -m json.tool
-
-# See all registered team members
-cat ~/.config/sven/teams/release-prep/config.json | python3 -m json.tool
+python3 -m json.tool ~/.config/sven/teams/release-prep/tasks.json
+python3 -m json.tool ~/.config/sven/teams/release-prep/config.json
 ```
 
-Team definitions (YAML files) live in `.sven/teams/` inside your project.
+`sven team status` and `sven team watch` read the same files.
 
 ---
 
-## Troubleshooting teams
+## Troubleshooting
 
-### Teammate appears in logs but not in `list_team`
+### A member is running but claims nothing
 
-The teammate process has started but has not yet registered itself in the
-shared team config.  Wait a few seconds and call `list_team` again.
+A member claims only tasks that are pending, whose dependencies are completed,
+and that are assigned to its name or to nobody. Check `tasks.json` for the
+assignee spelling and for dependency ids that are not `completed`.
 
-### Task stuck in `in_progress` with no activity
+### A task stays `in_progress`
 
-The teammate that claimed the task may have crashed or been killed.  Check
-with `list_team` to see if it is still marked Active.  You can update the task
-description to re-clarify requirements, then wait to see if it recovers - or
-shut down the stuck teammate with `shutdown_teammate` and respawn it.
+The member that claimed it may have been killed. `sven team status` shows the
+member's status. There is no command to release the claim; edit the task back
+to `{"state": "pending"}` in `tasks.json` while no member is running.
 
-### `cleanup_team` refuses to run
+### A member exits at once
 
-By default, `cleanup_team` refuses if any teammates are still marked Active,
-to prevent data loss.  Shut down all teammates first with `shutdown_teammate`,
-then call `cleanup_team`.  If a teammate process has already been killed by the
-OS, pass `force: true` to force cleanup anyway.
+It exits when the team's token budget is spent, when the team directory
+or its entry in the team config is gone, or when its status is `closed`. Its
+output goes nowhere when started by `sven team start`; run the same command
+that `--dry-run` prints in a terminal to see its log lines.
 
-### Team directory already exists after a crash
+### A team directory is left behind
 
-If a previous run did not clean up properly, the team directory may already
-exist on disk.  Either delete it manually:
-
-```sh
-rm -rf ~/.config/sven/teams/<team-name>
-```
-
-Or call `cleanup_team` with `force: true` from the lead agent.
-
----
-
-## Reference - team and task tools
-
-These tools are available to the interactive (lead) agent.
-
-### Team lifecycle
-
-| Tool | What it does |
-|---|---|
-| `create_team` | Initialise a new team.  You become the lead.  Creates the shared task store. |
-| `list_team` | Show all members with their role, status, and current task. |
-| `spawn_teammate` | Start a new sven process as a teammate.  Only the lead can do this. |
-| `shutdown_teammate` | Signal a teammate to finish its current task and exit. |
-| `register_teammate` | Register an already-running sven process as a team member (for manually started teammates). |
-| `merge_teammate_branch` | Merge a teammate's Git worktree branch into the current branch. |
-| `cleanup_team` | Remove the team directory.  Requires all teammates to be shut down first. |
-
-### Task management
-
-| Tool | What it does |
-|---|---|
-| `create_task` | Add a task to the shared board. |
-| `list_tasks` | Show all tasks with status, assignee, and summaries. |
-| `assign_task` | Direct a task to a specific teammate. |
-| `claim_task` | Mark a task as in-progress (called by teammates, not usually the lead). |
-| `complete_task` | Mark a task done and record a summary of what was accomplished. |
-| `update_task` | Edit a task description after creation. |
+`sven team cleanup NAME --force`, or remove
+`~/.config/sven/teams/<team>` by hand.

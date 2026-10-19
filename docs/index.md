@@ -2,69 +2,65 @@
 
 ## What is sven?
 
-sven is an AI coding agent that lives in your terminal. You give it a task - in
-plain English - and it works autonomously: reading files, running commands,
-writing code, and reporting back as it goes. When the task is done, sven stops
-and hands control back to you.
+sven is an AI coding agent for the terminal and for CI, and the agent execution
+framework it is built on. You give it a task in plain English; it reads files,
+runs commands, edits code and reports back, then stops and hands control back to
+you.
 
-It works in two ways:
+It runs in two ways:
 
-- **Interactive** - a full-screen terminal interface where you chat with the
-  agent, watch it work in real time, and steer it mid-task.
-- **Headless** - reads instructions from a file or standard input, writes clean
-  text to standard output, and exits. Fits naturally into shell scripts, CI
-  pipelines, and automated workflows.
+- **Interactive**: a full-screen terminal interface (`sven`) where you chat with
+  the agent, watch it work, and steer it mid-task.
+- **Headless**: `sven "task"`, a piped task, or `--headless` run without the
+  interface, write text to standard output, and exit. This fits shell scripts, CI
+  pipelines and workflow files.
 
-Both modes use the same agent core, so a workflow you develop interactively can
-be run unattended without any changes.
+Both use the same agent core, so a task you develop interactively runs unattended
+unchanged.
 
 ---
 
 ## What can sven do?
 
-sven can perform any task that involves reading and writing files, searching
-code, and running shell commands. Common uses include:
-
-- Analysing an unfamiliar codebase and producing a summary
-- Implementing a feature based on a description
-- Refactoring code to meet a style guide
-- Writing and running tests
-- Reviewing a pull request diff and suggesting improvements
-- Automating multi-step CI tasks that normally require manual intervention
-- **Autonomous embedded hardware debugging** via native GDB integration - sven
-  is the first AI agent that can start a GDB server, connect to a physical
-  device, set breakpoints, inspect memory and variables, and report findings
-  entirely on its own
-- **Agent-to-agent task routing** - multiple sven instances can find each other
-  on a local network (or across the internet via a relay), delegate subtasks to
-  each other, and assemble the results - no human in the loop required
+- Analyse an unfamiliar codebase and summarise it
+- Implement, refactor and test code from a description
+- Review a diff and suggest changes
+- Run multi-step workflow files in CI
+- Debug embedded targets through GDB tools: start a GDB server, connect to a
+  device, set breakpoints and inspect memory and variables
+- Split work across several agents: sub-agents inside a session (`task`) and
+  teams of sven processes sharing a task board
+- Serve other tools as an MCP server or an ACP agent for IDEs
+- Be embedded in your own program through the SDK
 
 ---
 
 ## Agent modes
 
-Every sven session runs in a mode that controls the machine driving it and what
-tools it is allowed to use.
+Every session runs in a mode, chosen with `--mode` (`-m`), `/mode` or `F4`. The
+mode decides which state machine drives the session and what the kernel lets it
+do.
 
 | Mode | What the agent can do |
 |------|----------------------|
-| `chat` | Conversational coding assistant. A streaming, native-tool-calling agent (the same engine as `agent`/`reactive`) for questions, analysis, code review, and edits. **Default.** |
-| `sdlc` | Full software-development lifecycle. Formally structured: Intake → Discovery → Planning → Execution → Verification → Delivery, with a Recovery path. Each phase runs a scoped LLM↔tool deliberation; with `--approval manual` it pauses for your approval at scope, plan, and delivery. |
-| `research` | Read files and run read-only commands. No writes. |
-| `plan` | Reads freely, produces structured plans, no file writes. |
-| `agent` | Full read/write access. Use for general-purpose agentic tasks. |
+| `agent` | Read and write files, run shell commands, use the network. **Default.** |
+| `chat` | The same machine and permissions as `agent`, prompted as a conversational assistant; its sub-agents are read-only. |
+| `research` | Read-only tools: no shell, no file writes. |
+| `plan` | Reads and runs commands, produces a plan; the file-write tools are refused. |
+| `sdlc` | A phased lifecycle: Intake, Discovery, Planning, Execution, Verification, Delivery, with a Recovery path. Writes and shell are available only in the phases that need them. |
 
-Set with `--mode <name>` on the command line, or via `SVEN_MODE=<name>` in the
-environment. Cycle the legacy read/plan/agent trio inside the TUI with `F4`.
+Approval is a separate switch. By default (`--approval auto`) every call a mode
+permits runs without asking; `--approval manual` asks you before each call that
+is not read-only. [Agents and modes](concepts/agents.md) has the exact rules.
 
 ---
 
 ## How sven works
 
-Sven's agent runtime is built on a formally-specified **Hierarchical State
-Machine (HSM)** kernel, not a free-running LLM loop. The distinction matters:
-the kernel owns control flow deterministically and auditably, while the LLM does
-its reasoning and tool use *inside* a well-defined step.
+Sven's runtime is a formally specified **hierarchical state machine (HSM)**
+kernel, not a free-running model loop. The kernel owns control flow
+deterministically and auditably; the model reasons and calls tools inside a
+well-defined step.
 
 ```
   Your message
@@ -85,46 +81,36 @@ its reasoning and tool use *inside* a well-defined step.
   (back to HSM kernel)
 ```
 
-**What the kernel does.** A machine reacts to a typed `Event`, updates its
-state, and *returns* `Effect`s describing the side effects it wants. The kernel
-itself never performs I/O. It validates every effect against a permission policy,
-hands each to an executor, and records every transition to an append-only audit
-log so any session can be replayed exactly - useful for debugging and for tests
-that assert on whole session traces without a real LLM or network.
+A machine reacts to a typed `Event`, updates its state, and returns `Effect`s
+describing the side effects it wants. The kernel never performs I/O: it checks
+every effect against the session's permission policy, hands it to an executor, and
+records every transition to an append-only audit log, so a session can be replayed
+exactly and tests can assert on whole traces without a model or network.
 
-**What the LLM does.** This depends on the mode. In the default chat/agent modes
-and in each SDLC phase, an executor runs a real model↔tool agentic loop: the
-model streams reasoning and makes **native tool calls** (read, search, edit,
-shell, …) that are executed and fed back, exactly like a modern coding agent.
-The kernel stays the authority over *transitions* - the loop runs inside a single
-`CallLlm` effect and reports back exactly one completion event when the step
-settles. In `sdlc` mode that completion is a structured **decision** whose status
-(proceed / need user input / need approval / re-deliberate / failed) drives the
-next transition.
+Executors are the only code that performs I/O. In `agent`, `chat` and each `sdlc`
+phase, an executor runs a model and tool loop: the model streams text and makes
+native tool calls that are executed and fed back. The loop runs inside one
+`CallLlm` effect and reports a single completion event when the step settles; in
+`sdlc` that completion is a structured decision (proceed, need user input, need
+approval, re-deliberate, failed) which drives the next transition.
 
-**What executors do.** Executors are the only code that performs I/O. They stream
-live progress (text, thinking, tool starts/finishes, token usage) outward for
-the UI to render, then post one result event back into the kernel queue. A
-`UserExecutor` surfaces a question - and, under `--approval manual`, an
-approval prompt - and waits for your decision.
+When a question or approval needs a person, the user executor asks in the TUI. With
+nobody there (headless), a question is answered at once with "no user is
+available" and the run continues; manual approval is refused at start-up.
 
-By default every call the mode allows runs without a prompt. In headless / CI
-mode nobody is there to answer, so the same kernel answers every gate at once
-- a question gets "No user is available; proceed on your best judgement and
-state the assumption" - and writes final output to stdout. For the full technical design see
-**[HSM Architecture](internals/hsm-architecture.md)**, the **[Deliberation
-Engine](concepts/deliberation.md)**, and **[Parallel Submachine
-Fan-out](internals/parallel-submachines.md)**.
+For the design, see the [HSM architecture](internals/hsm-architecture.md), the
+[Deliberation engine](concepts/deliberation.md) and
+[Parallel submachine fan-out](internals/parallel-submachines.md).
 
 ---
 
 ## Where to go next
 
-- **[Installation](getting-started/installation.md)** and **[Quick start](getting-started/quickstart.md)** - get sven running and complete a first session
-- **[Interactive use](guides/interactive.md)** - the terminal interface, conversations and slash commands
-- **[Headless and CI](guides/headless.md)** and **[Workflow files](guides/workflows.md)** - run sven in scripts and pipelines
-- **[Teams](guides/teams.md)** and **[Harnesses](guides/harnesses.md)** - orchestrate several agents, or write an agent as a YAML program
-- **[Agents and modes](concepts/agents.md)** - what each mode may do and how approvals apply
-- **[Configuration](reference/configuration.md)**, **[Providers](reference/providers.md)** and **[Tools](reference/tools.md)** - the reference
-- **[SDK](reference/sdk.md)** - embed the agent kernel in your own application
-- **[Troubleshooting](guides/troubleshooting.md)** - common problems and fixes
+- **[Installation](getting-started/installation.md)** and **[Quick start](getting-started/quickstart.md)**: get sven running and complete a first session
+- **[Interactive use](guides/interactive.md)**: the terminal interface, sessions and slash commands
+- **[Headless and CI](guides/headless.md)** and **[Workflow files](guides/workflows.md)**: run sven in scripts and pipelines
+- **[Teams](guides/teams.md)** and **[Harnesses](guides/harnesses.md)**: orchestrate several agents, or write an agent as a YAML program
+- **[Agents and modes](concepts/agents.md)**: what each mode may do and how approvals apply
+- **[Configuration](reference/configuration.md)**, **[Providers](reference/providers.md)** and **[Tools](reference/tools.md)**: the reference
+- **[SDK](reference/sdk.md)**: embed the agent kernel in your own application
+- **[Troubleshooting](guides/troubleshooting.md)**: common problems and fixes

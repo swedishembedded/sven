@@ -68,17 +68,18 @@ sven harness inspect  <PATH> [--json]
 sven harness schema   [<PATH>]
 sven harness run      <PATH> [--input JSON | --input-file FILE] [--case FILE]
                       [--model-fixture FILE] [--tool-fixture FILE]... [--workspace DIR]
-                      [--model SPEC [--model-endpoint URL]] [--toolset none]
+                      [--model SPEC [--model-endpoint URL]] [--toolset none] [--seed N]
                       [--timeout SECS] [--max-output-tokens N]
                       [--trace FILE] [--record FILE] [--trajectory FILE]
                       [--checkpoint-out FILE] [--json] [--quiet]
 sven harness resume   <PATH> --checkpoint FILE [the flags of run]
 sven harness replay   <PATH> --recording FILE [--expect-trace FILE] [--json]
 sven harness test     <DIR>... [--case NAME] [--no-replay] [--json]
+                      [--model SPEC --model-endpoint URL]
 sven harness bundle   <DOCUMENT> --helper NAME=FILE.wasm... [-o FILE]
 sven harness helper run <FILE.wasm | BUNDLE --helper NAME> --input JSON [--fuel N] [--max-pages N]
 sven harness compare  <DIR_A> <DIR_B> --cases DIR [--fail-on-regression] [--json]
-                      [--seed N]... [--bootstrap-seed N]
+                      [--seed N]... [--bootstrap-seed N] [--model SPEC --model-endpoint URL]
 ```
 
 - **validate** compiles the main document and its children; nothing runs. It
@@ -94,6 +95,7 @@ sven harness compare  <DIR_A> <DIR_B> --cases DIR [--fail-on-regression] [--json
   model block (`sequence`, `rules`, `fail`) and `--tool-fixture` the `tools:`
   block of a case, both as YAML files. `--workspace` is an existing directory
   used as the project root; by default each run gets a fresh empty one.
+  `--seed` selects the block a `by_seed` fixture model uses.
 - **resume** continues a suspended run from the checkpoint `run
   --checkpoint-out` wrote. The checkpoint carries the inputs; a checkpoint
   taken under another program, or a changed bundle, is refused.

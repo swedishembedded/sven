@@ -76,15 +76,16 @@ into the last of these.
 ## The Brain transport
 
 `sven_decision::brain::BrainProvider` is the one `DecisionProvider` that
-reaches a model over a wire: a Brain server, which serves the model. Sven
-depends on no Brain crate; it speaks HTTP and nothing else, and everything
-that knows the shape of the JSON is in `crates/decision/src/brain/wire.rs`.
-The recorded exchanges the contract tests pin are in
-`crates/decision/tests/fixtures/brain/`.
+reaches a model over a wire: a [brain](https://swedishembedded.com/docs/brain)
+server, which serves the decision model. Sven depends on no brain crate; it
+speaks HTTP and nothing else, and everything that knows the shape of the JSON
+is in `crates/decision/src/brain/wire.rs`. The recorded exchanges the contract
+tests pin are in `crates/decision/tests/fixtures/brain/`.
 
-The base URL defaults to `http://127.0.0.1:8788`, where `brain serve
---openai` listens; a trailing `/v1` or `/` is accepted. A key, when the server
-was started with one, is sent as `Authorization: Bearer`.
+The base URL defaults to `http://127.0.0.1:8788`; a trailing `/v1` or `/` is
+accepted. A key, when the server requires one, is sent as
+`Authorization: Bearer`. Requests ignore proxy environment variables: they go
+to the configured URL only.
 
 Calls are `POST /v1/run` with `{model, action, params}`:
 
@@ -95,14 +96,14 @@ Calls are `POST /v1/run` with `{model, action, params}`:
 | `decide` | the chosen model id | `state`, `state_format: "text"`, `questions` (a JSON document, as a string), `deadline_ms` | yes, on first use |
 
 ```json
-{"model": "convaiinnovations/laya", "action": "decide",
+{"model": "<model id>", "action": "decide",
  "params": {"state": "The user asks to rename a function.", "state_format": "text",
             "deadline_ms": 500,
             "questions": "[{\"id\":\"tool\",\"type\":\"choice\",\"instruction\":\"Which tool?\",\"options\":[{\"id\":\"edit_file\",\"description\":\"Edit a file in place.\"},{\"id\":\"grep\"}]}]"}}
 ```
 
 ```json
-{"outputs": {"model": "convaiinnovations/laya", "latency_ms": 41.2, "max_input_tokens": 512,
+{"outputs": {"model": "<model id>", "latency_ms": 41.2, "max_input_tokens": 512,
              "flags": {"state_truncated": false, "unsupported_question_types": []},
              "answers": [{"id": "tool", "type": "choice", "confidence": 0.91,
                           "ranked": [{"id": "edit_file", "index": 0, "probability": 0.98},
@@ -115,7 +116,7 @@ A proposition is a `noul` question on the wire (candidates `true` and
 `false`). `models` answers one record per model with `state` (`ready`,
 `not-installed`, `incompatible`), `validated` and a `manifest` carrying
 `weights_sha256`, `max_input_tokens` and `question_types`; a model that is not
-installed carries the provider's own remedy in `hint`.
+installed may carry the provider's own remedy in `hint`, which sven repeats.
 
 **Failures.** The error body's `code` decides, the HTTP status otherwise:
 
@@ -169,8 +170,8 @@ The message names the state and the remedy:
 
 | state | remedy named |
 |-------|--------------|
-| provider unreachable | start the provider, correct `decision.brain.url`, or set `decision.enabled: false` |
-| model not installed | the provider's own `brain pull <id>` for the id it reported; never an id the provider did not report; otherwise `sven decisions models` |
+| provider unreachable | start the provider (`brain serve --openai`), correct `decision.brain.url`, or set `decision.enabled: false` |
+| model not installed | the provider's own remedy when its `hint` names one; otherwise install a validated model on the provider or name an installed one in `decision.model`; never an id the provider did not report (`sven decisions models` lists them) |
 | model failed to load | check the model on the provider, or name another in `decision.model` |
 | model not usable (for example not validated) | `decision.policy.minimum_model_quality: any` to accept an unvalidated model |
 | timeout | raise `decision.timeout_ms` (a first decision may be loading the model) |
@@ -185,6 +186,13 @@ and every decision point with whether it is active and why not. It contacts the
 provider even when decisions are off, and exits non-zero when decisions are
 unavailable. `sven decisions models [--json]` lists the models the provider
 knows without loading any.
+
+`decision.features` has seven flags. Only `tool_routing`
+([tool search](#tool-search-re-ranking)), `skill_selection`
+([skill search](#skill-search-re-ranking)) and `delegation`
+([near-identical subgoals](#delegation-near-identical-subgoals)) have a decision
+point; the other four are read and change nothing. All but `model_routing` and
+`permission_advisory` default to `true`.
 
 ## Tool search re-ranking
 

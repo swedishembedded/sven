@@ -1,129 +1,94 @@
 # Interactive use
 
-The terminal interface, conversations, slash commands and the keys that drive them.
+The terminal interface, sessions, slash commands and the keys that drive them.
 
 ## The TUI in depth
 
 ### Layout
 
-The TUI has four visual regions. The chat list sidebar on the right is optional
-and can be toggled with `Ctrl+B`:
+The TUI has a status bar, the chat pane, an input box, and a queue panel that
+appears above the input box while messages are waiting. The chat pane always spans
+the full terminal width.
 
 ```
-┌─────────────────────────────────────────┬───────────────────┐
-│ gpt-4o  agent  ctx:18%  ⠿ run_terminal │ ● New chat        │  status bar
-├─────────────────────────────────────────┤ ○ Rate limiter    │
-│                                         │ ○ Codebase review │
-│   chat pane                             │ ✓ Auth redesign   │
-│   (scrollable conversation history)     │                   │
-│                                         │ n:new d:del a:arch│
-├─────────────────────────────────────────┤                   │
-│ > type here and press Enter             │                   │
-└─────────────────────────────────────────┴───────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│ ⬡ sven │ ⠿ gpt-4o │ agent │ ctx ██░░░ 18%  in: 32k out: 1k  │  status bar
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│   chat pane                                                  │
+│   (scrollable conversation history)                          │
+│                                                              │
+├─────────────────────────────────────────────────────────────┤
+│ > type here and press Enter                                  │  input box
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Status bar** - always visible at the top. Shows:
-- Model name (e.g. `gpt-4o`)
-- Current agent mode (`research`, `plan`, or `agent`)
-- Context usage as a percentage (`ctx:18%`)
-- A spinner and the name of any tool currently running
+**Status bar** - always visible at the top. From left to right:
+- A spinner while the agent is working
+- The model name
+- The current agent mode (`research`, `plan`, `agent`, `chat` or `sdlc`)
+- Context usage as a bar and a percentage
+- Cumulative input and output token counts, the cache-hit rate and the cost in
+  USD once the provider has reported them
+- The name of any tool currently running
+- Team name, role and task progress when a team is active
+- On the right, a hint for the focused pane
 
 **Chat pane** - the conversation history. User messages, agent responses, and
-collapsed tool calls are all shown here. Scrolls independently of the input box.
+tool calls are shown here. Tool calls, tool results and thinking blocks start
+collapsed to a summary; click one to cycle how much of it is shown, and press
+`Space` on a sub-agent summary to expand or collapse it. The pane scrolls
+independently of the input box.
 
-**Input box** - a multi-line text field. Press `Enter` to send, `Shift+Enter`
-to insert a newline.
+**Input box** - a multi-line text field. `Enter` sends the message, `Alt+Enter`
+inserts a newline (`Shift+Enter` and `Ctrl+J` also work). `Ctrl+Up` / `Ctrl+Down`
+walk through the history of messages you sent.
 
-**Chat list sidebar** - shows all open sessions. The active session is
-highlighted. Sessions running a background agent task show a spinner. Toggle
-with `Ctrl+B`.
+**Queue panel** - a message sent while the agent is working is queued and sent
+when the turn ends. See [the queue panel](#the-queue-panel).
+
+Press `F1` for an overlay that lists the key bindings.
 
 ---
 
 ### Focus and pane switching
 
-The TUI has two focusable panes: the chat pane and the input box. Focus starts
-on the input box.
-
-Switch focus with the `Ctrl+W` chord:
+The chat pane and the input box can each have focus; focus starts on the input
+box. Switch with the `Ctrl+W` chord:
 
 | Sequence | Effect |
 |----------|--------|
 | `Ctrl+W` then `K` or `↑` | Focus the chat pane |
 | `Ctrl+W` then `J` or `↓` | Focus the input box |
+| `Ctrl+W` then `+` / `-` | Grow / shrink the input box |
 
-When the chat pane has focus, navigation keys work as described below. When the
-input box has focus, all printable characters go to the text field.
-
----
-
-### Chat list sidebar
-
-The chat list sidebar lets you manage multiple concurrent conversations without
-leaving the TUI. Each session runs its own independent agent task - you can
-have one session researching a problem while another is implementing a fix.
-
-**Opening and navigating the sidebar**
-
-Press `Ctrl+B` to show the sidebar and give it keyboard focus. Press `Ctrl+B`
-again (or `Esc`, `q`, `h`, or `←`) to return focus to the input box.
-
-| Key | Action |
-|-----|--------|
-| `Ctrl+B` | Toggle sidebar visibility / focus |
-| `j` / `↓` | Move selection down |
-| `k` / `↑` | Move selection up |
-| `Enter` / `l` / `→` | Switch to the selected session |
-| `n` | Create a new empty session |
-| `d` / `Delete` | Delete the selected session (cannot delete the active one) |
-| `a` | Archive the selected session |
-| `+` / `=` | Widen the sidebar |
-| `-` | Narrow the sidebar |
-
-**Session status icons**
-
-| Icon | Meaning |
-|------|---------|
-| `⣾` (spinner) | Agent is currently running in this session |
-| `●` | Active session, idle |
-| `○` | Inactive session, idle |
-| `✓` | Session completed |
-
-**Per-session model and mode**
-
-Each session keeps its own model and mode. Running `/model` or `/mode` in one
-session does not affect any other session. New sessions always start with the
-default model and mode from your configuration.
-
-**Background sessions**
-
-When you switch away from a session that has an agent running, it keeps running
-in the background. The spinner in the sidebar shows which sessions are still
-active. You can switch back at any time to see the results.
+When the input box has focus, printable characters go to the text field.
 
 ---
 
 ### Scrolling and navigation (chat pane)
 
-First switch focus to the chat pane with `Ctrl+W K`.
+First move focus to the chat pane with `Ctrl+W K`.
 
 | Key | Action |
 |-----|--------|
-| `j` / `↓` | Scroll down one line |
-| `k` / `↑` | Scroll up one line |
-| `J` | Scroll down one line (shift variant) |
-| `K` | Scroll up one line (shift variant) |
-| `Ctrl+D` | Scroll down half a page |
-| `Ctrl+U` | Scroll up half a page |
-| `g` | Jump to the very top |
-| `G` | Jump to the very bottom |
+| `j` / `↓` | Move the highlight to the next entry |
+| `k` / `↑` | Move the highlight to the previous entry |
+| `J` / `K` | Scroll down / up one line |
+| `Ctrl+D` / `Ctrl+U` | Scroll half a page down / up |
+| `g` / `G` | Jump to the very top / bottom |
+| `y` / `Y` | Copy the highlighted entry / the whole chat to the clipboard |
+| `?` | Show the chat-pane shortcuts |
+
+`PgUp` and `PgDn` scroll the chat pane a full page whichever pane has focus.
+Dragging with the mouse selects text, which is copied when you release.
 
 ---
 
 ### Search
 
-Press `/` while the chat pane has focus to open the search bar at the bottom
-of the screen. Type to filter the conversation in real time.
+Press `/` in the chat pane to open the search bar at the bottom of the screen.
+Type a query; the view jumps to the match.
 
 | Key | Action |
 |-----|--------|
@@ -134,102 +99,128 @@ of the screen. Type to filter the conversation in real time.
 
 ---
 
-### Editing a past message
+### Editing, removing and rerunning messages
 
-If you want to correct or rephrase a message you already sent, navigate to it
-in the chat pane and press `e`. The message text appears in the input box for
-editing. When you are happy with the change, press `Enter` to re-submit it as
-if it were a new message. Press `Esc` to cancel and restore the original.
+With an entry highlighted in the chat pane:
+
+| Key | Action |
+|-----|--------|
+| `e`, `Enter` or `F2` | Edit it: its text moves to the input box. `Enter` confirms, `Esc` cancels and restores the original. |
+| `d` or `F8` | Truncate the chat from this entry onward |
+| `x` | Remove only this entry (and its paired tool call or result) |
+| `r` | Truncate to just before this entry and send the conversation to the agent again |
+
+Confirming an edit of one of your messages replaces it, drops everything after it,
+and runs the agent from the edited message.
+
+---
+
+### The queue panel
+
+A message you send while the agent is working appears in a panel above the input
+box and is sent when the turn ends. Press `q` in the chat pane to focus the panel.
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` or `k` / `j` | Select a queued message |
+| `e` | Edit the selected message |
+| `Enter` or `f` | Send it now, aborting the running turn |
+| `s` | Send it when the agent is idle |
+| `d` or `Delete` | Delete it |
+| `Esc` or `q` | Return to the input box |
 
 ---
 
 ### Full-screen pager
 
-Press `Ctrl+T` to open the full-screen pager. This expands the chat history to
-fill the whole terminal, which is useful for reading long responses or code
-blocks without the input box taking up space. Press `Esc` or `q` to close the
-pager.
-
----
-
-### Help overlay
-
-Press `F1` to toggle the in-app help overlay, which lists all key bindings.
+Press `Ctrl+T` to open the chat history full screen, which is useful for reading
+long responses or code blocks. It scrolls like `less`: `j` / `k`, `Ctrl+D` /
+`Ctrl+U`, `Space`, `PgUp` / `PgDn`, `gg` / `G`, and `/` to search. `Esc` or `q`
+closes it. The inspector commands (`/skills`, `/tools` and the others below) show
+their output in the same pager.
 
 ---
 
 ### Neovim integration
 
-By default, sven embeds a headless Neovim instance and uses it as the chat
-buffer. This gives the chat pane full Neovim editing capabilities:
-
-- Navigate and scroll the chat with all standard Neovim motions
-- Use `:q` or `:qa` to quit sven
-- Press `Ctrl+Enter` from the chat pane to submit the buffer content as a
-  message
-
-Sven defaults to the plain ratatui view.  To enable the embedded Neovim chat
-pane instead, pass `--nvim`:
+By default the chat pane is plain ratatui. Pass `--nvim` to embed a Neovim
+instance as the chat buffer instead:
 
 ```sh
 sven --nvim
 ```
 
-In the default ratatui mode, tool calls and thinking blocks in the history are
-collapsed by default to keep the view compact.
+This needs `nvim` on your `PATH`. The chat pane then has full Neovim editing
+and motions, `:q` or `:qa` quits sven, and `Ctrl+Enter` in the chat pane submits
+the buffer content as a message.
 
-## Conversation management
+---
 
-### Multiple sessions inside the TUI
+### Teams
 
-You can run several conversations simultaneously without restarting sven. Open
-the chat list sidebar with `Ctrl+B` and press `n` to create a new session, or
-use the `/new` command from the input box. Switch between sessions by selecting
-one and pressing `Enter`.
+When a team is active, `Ctrl+A` opens the team picker (also `/agents`),
+`Shift+Down` / `Shift+Up` cycle between teammate views, and `Alt+T` shows the task
+list (also `/tasks`). See [Teams](teams.md).
 
-Each session has its own:
-- Conversation history
-- Agent task (background sessions keep running while you work elsewhere)
-- Model and mode settings (changed with `/model` and `/mode`)
+---
 
-All sessions are automatically saved to `~/.config/sven/history/` as YAML files
-and restored the next time you launch sven.
+## Modes and approval
 
-### Starting and continuing conversations from the CLI
+The status bar shows the current mode. `F4` cycles
+`research → plan → agent → chat → sdlc`; `/mode <name>` sets one directly. The
+change applies from the next message. Start with a mode using `--mode`.
 
-To list saved conversations:
+By default every call the mode allows runs without a prompt. Start the TUI with
+`--approval manual` and each call that is not read-only opens a `yes` / `no` modal
+first. The full rules for both are in [Agents and modes](../concepts/agents.md).
+
+---
+
+## Sessions
+
+Each conversation is a **session**: its own history, agent task, model and mode.
+`/new` starts an empty session using the model from your configuration and the
+`agent` mode. The previous session is saved and keeps running in the background if
+a turn was in progress. `/resume` opens a full-screen list of saved sessions
+(newest first); `↑` / `↓` or `j` / `k` select, `Enter` loads one, `Esc` or `q`
+closes the list.
+
+Changing the model or mode with `/model` or `/mode` affects only the current
+session, and takes effect on the next message you send.
+
+Sessions are saved automatically after each turn as ATIF trajectory files
+(`.json`) in the sven data directory, `~/.local/share/sven/sessions/` on Linux.
+`sven chats` prints the exact directory.
+
+### Resuming from the command line
+
+List saved sessions:
 
 ```sh
-sven chats
+sven chats            # the 20 most recent; -n N for a different count
 ```
 
-Output:
-
 ```
-ID (use with --resume)                          DATE              TURNS  TITLE
+ID (use with --resume)                  UPDATED           STATUS     TITLE
 -----------------------------------------------------------------------------------------------
-3f4a...                                         2025-01-15 10:42  12     Codebase analysis
-a1b2...                                         2025-01-14 09:11  5      Rate limiter design
+3f4a...                                 2026-01-15 10:42  Completed  Codebase analysis
+a1b2...                                 2026-01-14 09:11  Active     Rate limiter design
 ```
 
-To resume a session, pass its ID (or a unique prefix) to `--resume`:
+Pass an ID, a unique prefix of one, or a path to `--resume`:
 
 ```sh
 sven --resume 3f4a
 ```
 
-If you omit the ID entirely, sven opens an interactive fuzzy-finder (requires
-`fzf`) so you can pick the session visually:
-
-```sh
-sven --resume
-```
+`--resume` with no ID opens the TUI with the session list showing. Headless runs
+need an explicit ID, and a headless resume appends to the same session.
 
 ### Conversation files
 
-For longer-running work, a conversation file gives you a plain-text record that
-you can edit directly. See [Quick Start](../getting-started/quickstart.md) for an introduction,
-and [CI and Pipelines](headless.md) for the full file format.
+A conversation file is a plain-text record of a session that you can edit. See
+[Quick Start](../getting-started/quickstart.md) for an introduction and
+[CI and Pipelines](headless.md) for the full file format.
 
 ---
 
@@ -251,14 +242,14 @@ open between turns.
 | Flag | Meaning |
 |------|---------|
 | `--state <file>` | Load from and write back to this file. Omit it for a one-off step that keeps nothing. |
-| `--mode <mode>` | Which machine to run. Only used when starting fresh; a resumed agent keeps its own. |
+| `--mode <machine>` | Which machine to run (default `agent`; `chat`, `sdlc` and the other registered machines are accepted). Only used when starting fresh; a resumed agent keeps its own. |
 | `--role <text>` | A stable system prompt for the agent. |
 
-A step runs unattended, like every non-interactive run: every tool call its
-mode allows runs without a prompt, and a question the agent asks is answered
+A step runs unattended, like every non-interactive run: every tool call the
+agent makes runs without a prompt, and a question the agent asks is answered
 at once ("No user is available to answer this question. Proceed on your best
-judgement and state the assumption you made."). Pick a read-only `--mode`
-where the agent must not change anything.
+judgement and state the assumption you made."). `--mode` here names a machine;
+the read-only `research` and `plan` modes of the main command are not available.
 
 A state file that exists but cannot be read is an error rather than a fresh
 start: silently discarding a conversation would only show up later, as an agent
@@ -274,45 +265,52 @@ conversation context. Language models have a finite context window, and when
 the conversation grows long enough, older messages must be summarised to make
 room for new ones.
 
-sven tracks context usage and shows it in the status bar (`ctx:X%`). When usage
-reaches the configured threshold (85% by default), sven automatically compacts
-the oldest part of the conversation into a short summary before sending the
-next message. This happens transparently in the background.
+sven tracks context usage and shows it in the status bar. Before each turn, when
+usage reaches `agent.compaction_threshold` of the usable input budget (0.85 by
+default, less a 10% reserve for tool schemas and estimation error), sven
+compacts the older part of the conversation into a structured checkpoint and keeps
+the most recent messages (`agent.compaction_keep_recent`, 6 by default) verbatim.
+This happens transparently.
 
-You will not lose any information that sven has already used; compaction only
-affects how much raw history the model can see at once.
+Compaction changes how much raw history the model sees at once; the checkpoint
+carries the tasks, decisions, files and constraints forward. The full conversation
+stays in the saved session.
 
 ---
 
 ## Interrupting the agent
 
-If the agent is in the middle of a long task and you want to stop it, press
-`Ctrl+C` from the input box. The current tool call is cancelled and sven
-returns to idle, ready for your next message.
+To stop a turn in progress, press `Ctrl+C` or `Esc` in the input box, or run
+`/abort`. The current turn is cancelled, partial output is kept, queued messages
+stay queued, and sven returns to idle. `Ctrl+C` does not quit sven; use `/quit`.
 
 ---
 
 ## Slash commands
 
-Type `/` in the input box to see all available commands. Tab-completion works
-for both command names and their arguments.
+Type `/` in the input box to see all available commands. Tab completes command
+names and arguments, and `Shift+Tab` cycles backwards.
 
 ### Built-in commands
 
 | Command | Description |
 |---------|-------------|
-| `/new` | Start a new chat session. A fresh tab appears in the sidebar with its own isolated agent, model, and mode. |
-| `/clear` | Clear the current session's message history. The session itself stays open; only the visible conversation is erased. |
-| `/model <provider/name>` | Switch the model for this session (e.g. `/model anthropic/claude-opus-4-6`). Tab-completes over your configured models. The switch takes effect on the next message you send. |
-| `/mode <research\|plan\|agent>` | Switch the agent mode for this session. Tab-completes all three modes. |
-| `/provider <name>` | Switch provider while keeping the current model name. |
-| `/abort` | Abort the current agent turn. Queued messages stay queued; partial output is preserved. |
-| `/refresh` | Re-scan skill directories and register any newly added skills as commands. |
-| `/skills` | Open the skills inspector - a browsable tree of all loaded skills. |
-| `/subagents` | Show all configured subagents with their descriptions, models, and paths. |
-| `/peers` | Show active subagent subprocess buffers and configured team agents. |
-| `/context` | Show the current agent context: project root, skill and agent counts, output buffer handles. |
+| `/new` | Start a new session. |
+| `/resume` | Browse saved sessions and load one. |
+| `/clear` | Clear the current session's chat history. The session stays open. |
+| `/model <provider/name>` | Switch the model (e.g. `/model anthropic/claude-opus-4-6`). Tab-completes over the configured providers and the built-in model catalog. Takes effect on the next message. |
+| `/provider <name>` | Switch provider, keeping the current model name. Takes effect on the next message. |
+| `/mode <research\|plan\|agent\|chat\|sdlc>` | Switch the agent mode for this session. Takes effect on the next message. |
+| `/abort` | Abort the current agent turn. Queued messages stay queued; partial output is kept. |
+| `/think-limit [<max_tokens> [<timeout_secs>]] \| off` | Show or set the watchdog that stops a model stuck in a thinking loop. With no argument, shows the current limit. |
+| `/refresh` | Re-apply the MCP server configuration and refresh skills. |
+| `/skills` | Open the skills inspector, a browsable tree of loaded skills. |
+| `/subagents` | Show configured subagents with their descriptions, models and paths. |
+| `/peers` | Show configured subagents and active subprocess buffers. |
+| `/context` | Show the agent context: project root, skill and agent counts, output buffer handles. |
 | `/tools` | Show all available tools with descriptions and parameter counts. |
+| `/mcp [list\|enable\|disable\|auth] [name]` | Show and manage MCP servers; `auth` starts OAuth sign-in for a server. |
+| `/architect [request]` | Send a message that asks the agent to plan and specify changes and delegate the implementation to an editor agent. |
 | `/approve [task_id]` | Approve a teammate's pending plan (team mode). |
 | `/reject [task_id] [reason]` | Reject a plan with feedback (team mode). |
 | `/agents` | Show the team members overlay (also `Ctrl+A`). |
@@ -333,5 +331,10 @@ file's content as your message; any text after the command is appended as
 ```
 /sven/plan analyse the authentication module
 ```
+
+Each subagent definition is also a command named after the agent (lowercased).
+It sends the agent's instructions with your text appended as `Task: <text>`, and
+switches to the agent's model when it names one. Prompts exposed by connected MCP
+servers appear as commands too.
 
 Skills are not slash commands - see the [Skills](skills.md) section.

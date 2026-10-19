@@ -1,20 +1,32 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+-->
+
 # Configuration
 
-sven is configured through a YAML file. Most options have sensible defaults, so
-the config file is optional - you only need it when you want to change something.
+sven is configured through YAML files. Every option has a default, so a
+configuration file is optional: write one only to change something.
 
 ---
 
 ## Config file location
 
-sven looks for its config file in the following locations, merging them from
-lowest to highest priority (later files override earlier ones):
+sven reads every file it finds below and merges them from lowest to highest
+priority; a later file overrides an earlier one. Each name is also tried with
+the extension `.yml`, which then overrides the `.yaml` file beside it.
 
-1. `/etc/sven/config.yaml` (system-wide)
-2. `~/.config/sven/config.yaml` (user-level)
-3. `.sven/config.yaml` (workspace-local)
-4. `sven.yaml` (project root)
-5. The path given with `--config /path/to/config.yaml` (highest priority)
+1. `/etc/sven/config.yaml` (Linux only; system-wide)
+2. `~/.config/sven/config.yaml` (user)
+3. `sven/config.yaml` in the platform configuration directory, when that is not
+   `~/.config` (`~/Library/Application Support` on macOS, `%APPDATA%` on
+   Windows)
+4. `.sven/config.yaml`, `.sven.yaml`, `sven.yaml`, in that order, relative to
+   the **current working directory** (not the project root)
+5. The file named by `--config FILE`, which overrides all of the above
+
+A file that exists but is not valid YAML, and a `--config` file that cannot be
+read, stop sven with an error. Files are YAML only.
 
 ---
 
@@ -45,32 +57,34 @@ logged as a warning naming its path (``Unrecognised config field
 is reported once. A value of the wrong type is different: the file cannot be
 read, so sven logs `config could not be decoded and is being IGNORED IN FULL`
 and runs on the defaults rather than refusing to start. Read the warnings after
-editing the file; `sven show-config` prints what was actually loaded.
+editing the file; `sven show-config` prints what was actually loaded. The
+contents of `tools.context` are accepted as written and not checked for
+misspelt keys.
 
 **The model is chosen for you when the file names none.** With no `model:`
 section, sven picks a locally served brain model if one is detectable, then
 OpenRouter, Anthropic or OpenAI according to which API key is set
-(`SVEN_DISABLE_BRAIN_AUTODETECT=1` turns the brain check off). With no key
-for any of them, sven looks for a local server (see
-[Local model discovery](#local-model-discovery)). A
-`model.provider` that names an entry of `providers:` is expanded into that
+(setting `SVEN_DISABLE_BRAIN_AUTODETECT`, to any value, turns the brain check
+off). With no key for any of them, sven looks for a local server (see
+[Local model discovery](#local-model-discovery)). The order and the models
+chosen are listed in [Providers](providers.md#default-provider-auto-detection).
+A `model.provider` that names an entry of `providers:` is expanded into that
 entry's endpoint, key and the model's own overrides when the file is loaded.
 
 **Who reads what.** Each section is defined, defaulted and checked by the part
 of sven that uses it, so a section's keys are documented with the feature they
 configure:
 
-| Section | Read by |
-|---------|---------|
-| `model`, `providers` | the model drivers (`sven-model-drivers`) |
-| `agent`, `tools` (patterns, `disabled`, `timeout_secs`, `context`, `disclosure`) | the session assembly (`sven-bootstrap`) |
-| `context` | the session assembly (`sven-bootstrap`) |
-| `tools.web`, `tools.lints` | the web tools (`sven-tools-web`) |
-| `tools.memory` | the memory tool (`sven-tools-ctx`) |
-| `tools.asr` | `attach_file` (`sven-tools-fs`) |
-| `tools.gdb` | the GDB tools (`sven-tools-gdb`), in every build |
-| `mcp_servers` | the MCP client (`sven-mcp-client`) |
-| `tui` | the interactive UI (`sven-frontend`) |
+| Section | Configures |
+|---------|------------|
+| `model`, `providers` | the active model and the named endpoints a model can be reached through |
+| `agent` | the loop's bounds, compaction, timeouts and stall limits |
+| `tools` | shell patterns, `disabled`, `timeout_secs`, `disclosure` and the settings of the web, memory, lint, GDB, context and speech-to-text tools |
+| `mcp_servers` | external MCP servers |
+| `context`, `cost`, `delegation` | context assembly, the cache-aware cost gate and the delegation policy |
+| `decision` | the decision model that advises the harness |
+| `skills`, `subagents`, `knowledge` | how much of each catalog the system prompt lists |
+| `tui` | the interactive UI (default build only) |
 
 ---
 
@@ -117,24 +131,31 @@ Output as JSON:
 sven list-models --json
 ```
 
+`sven list-providers` prints the provider ids that `model.provider` accepts.
+
 ---
 
 ## Full annotated example
 
-The following example shows every available option with its default value and
-an explanation. You do not need to include options you are not changing.
+The following example shows every available option. Values are the defaults
+unless a comment says otherwise; options that have no default, or whose default
+depends on the model or environment, are commented out. You do not need to
+include options you are not changing.
 
 ```yaml
 # ── Model ──────────────────────────────────────────────────────────────────
 
 model:
-  # Provider to use. Supported values: "openai", "anthropic", "mock"
+  # Provider id. Run `sven list-providers` for the supported values.
+  # With no model: section sven picks one from the environment (see above);
+  # the built-in fallback is openrouter / openrouter/auto.
   provider: openai
 
   # Model name forwarded to the provider.
   name: gpt-4o
 
-  # Environment variable that holds the API key.
+  # Environment variable that holds the API key. Unset: the provider's
+  # standard variable (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...).
   # The variable is read at runtime so it never needs to be in this file.
   api_key_env: OPENAI_API_KEY
 
@@ -145,12 +166,34 @@ model:
   # Useful for local proxies (e.g. LiteLLM) or self-hosted models.
   # base_url: http://localhost:4000/v1
 
-  # Maximum tokens to request in a single response.
-  # When unset, the model's max output tokens from the built-in catalog is used.
-  # max_tokens: 4096
+  # Total context window in tokens (input + output). Used for compaction.
+  # Unset: the window the built-in catalog or the local server reports.
+  # With max_output_tokens unset it also limits the output of one response.
+  # max_tokens: 128000
+
+  # Output tokens per response, and an optional cap on the input side.
+  # When more than one of the three is set, max_tokens must be at least
+  # max_input_tokens + max_output_tokens (a warning is logged otherwise).
+  # max_output_tokens: 4096
+  # max_input_tokens: 100000
 
   # Sampling temperature (0.0 = deterministic, 2.0 = very random).
   temperature: 0.2
+
+  # Provider-specific options forwarded as-is to the driver.
+  # driver_options: {}
+
+  # Input modalities the model accepts: any of text, image, audio. Declare
+  # them for a self-hosted endpoint the catalog does not know.
+  # input_modalities: [text, image, audio]
+
+  # Azure OpenAI (provider: azure)
+  # azure_resource: my-resource
+  # azure_deployment: my-deployment      # default: model.name
+  # azure_api_version: "2024-02-01"
+
+  # AWS Bedrock (provider: aws)
+  # aws_region: us-east-1
 
   # Path to a YAML file of scripted mock responses (provider: "mock" only).
   # Can also be set with the SVEN_MOCK_RESPONSES environment variable.
@@ -158,59 +201,61 @@ model:
 
   # ── Anthropic prompt caching ─────────────────────────────────────────────
   #
-  # Sven uses all four of Anthropic's available cache breakpoints, making it
-  # the most cache-efficient agent available:
+  # sven places up to four of Anthropic's cache breakpoints:
   #
   #   Breakpoint 1 (tools)        - tool definitions, stable per session
   #   Breakpoint 2 (system)       - system prompt, stable per session
   #   Breakpoint 3 (images/tools) - oldest image or large tool result in history
   #   Breakpoint 4 (conversation) - automatic, advances each turn
   #
-  # Reading from cache costs 10% of base input-token price; writing costs 125%.
-  # For a 50-turn session caching 10,000 tokens: ~88% savings on those tokens.
+  # Cache reads are billed below the base input price and cache writes above
+  # it; see Anthropic's pricing for the current rates. Other providers cache
+  # automatically and ignore these flags.
 
-  # Cache the stable system prompt (Anthropic only).  DEFAULT: true
-  # Saves ~90% on system prompt tokens after the first request.
-  # Charges a one-time 25% write premium, then 10% per read.
-  # cache_system_prompt: true
+  # Cache the stable system prompt (Anthropic only).
+  cache_system_prompt: true
 
-  # Cache tool definitions (Anthropic only).  DEFAULT: true
-  # All tool definitions are cached as a prefix when true.
-  # Ideal for saving 5,000-10,000+ tokens per request when many tools are in use.
-  # cache_tools: true
+  # Cache tool definitions (Anthropic only).
+  cache_tools: true
 
-  # Enable automatic conversation caching (Anthropic only).  DEFAULT: true
-  # Adds a top-level cache_control marker so Anthropic automatically caches
-  # conversation history up to the last message.  The cache breakpoint advances
-  # with each turn - no manual management required.
-  # Delivers the largest savings for multi-turn agent sessions.
-  # cache_conversation: true
+  # Automatic conversation caching (Anthropic only). Adds a top-level
+  # cache_control marker so the cache breakpoint advances with each turn.
+  cache_conversation: true
 
-  # Cache image content blocks in conversation history (Anthropic only).  DEFAULT: true
-  # Images cost hundreds of tokens each, every single turn.  Marking them
-  # with cache_control once reduces that cost by ~90% for all following turns.
-  # The oldest images are cached first; the budget is bounded to 4 total slots.
-  # cache_images: true
+  # Cache image content blocks in conversation history (Anthropic only).
+  # The oldest images are cached first; the budget is bounded to 4 slots.
+  cache_images: true
 
-  # Cache large tool results in conversation history (Anthropic only).  DEFAULT: true
-  # File reads, command output, and fetched documents that remain in context
-  # for many turns are cached once their content exceeds 4096 characters.
-  # Saves ~90% on those tokens every subsequent turn.
-  # cache_tool_results: true
+  # Cache large tool results in conversation history (Anthropic only).
+  # Eligible once a result exceeds 4096 characters.
+  cache_tool_results: true
 
-  # Use 1-hour cache TTL instead of the default 5-minute window.  DEFAULT: false
-  # Applies to system prompt, tool definitions, images, and tool results when
-  # their respective caching flags are enabled.  Sends the
-  # extended-cache-ttl-2025-04-11 beta header automatically.  Best for
-  # workflows where requests are spaced more than 5 minutes apart (e.g. CI).
-  # extended_cache_time: false
+  # Use the 1-hour cache TTL instead of 5 minutes (Anthropic only). Applies to
+  # the system prompt, tool definitions, images and tool results when their
+  # flags are on. Sends the extended-cache-ttl-2025-04-11 beta header. Best
+  # for workflows whose requests are more than 5 minutes apart (e.g. CI).
+  extended_cache_time: false
+
+
+# ── Named endpoints ────────────────────────────────────────────────────────
+#
+# Reference one by name in model.provider and one of its models in model.name.
+# An entry takes the model keys above (name is the driver id) plus a models:
+# map of per-model overrides.
+#
+# providers:
+#   local_vllm:
+#     name: openai
+#     base_url: http://localhost:8000/v1
+#     models:
+#       my-model:
+#         max_tokens: 54272
 
 
 # ── Agent ──────────────────────────────────────────────────────────────────
 
 agent:
-  # Default mode when --mode is not given on the command line.
-  # Values: "research", "plan", "agent"
+  # Accepted but not read: the mode of a run comes from --mode (default agent).
   default_mode: agent
 
   # Maximum number of tool-call rounds before sven stops and reports.
@@ -227,15 +272,15 @@ agent:
   compaction_threshold: 0.85
 
   # Number of recent non-system messages to keep verbatim after compaction.
-  # The oldest messages beyond this tail are summarised. Default: 6.
-  # Set to 0 to summarise the full history (original behaviour).
+  # The oldest messages beyond this tail are summarised.
+  # Set to 0 to summarise the full history.
   compaction_keep_recent: 6
 
   # Compaction checkpoint format.
-  # "structured" (default): produces a typed Markdown checkpoint with fixed
+  # "structured": produces a typed Markdown checkpoint with fixed
   #   sections (Active Task, Key Decisions, Files & Artifacts, Constraints,
   #   Pending Items, Session Narrative). Easier for the model to navigate.
-  # "narrative": uses the original free-form summarisation prompt.
+  # "narrative": uses a free-form summarisation prompt.
   compaction_strategy: structured
 
   # Maximum tokens allowed for a single tool result before it is
@@ -243,8 +288,8 @@ agent:
   # Truncation is content-aware:
   #   shell                         : keeps first 60 + last 40 lines
   #   grep                          : keeps leading matches
-  #   read_file                      : keeps head + tail lines
-  #   everything else                : hard-truncates at the character limit
+  #   read_file                     : keeps head + tail lines
+  #   everything else               : hard-truncates at the character limit
   # A truncation notice is always appended so the model knows more exists.
   # Set to 0 to disable per-result truncation entirely.
   tool_result_token_cap: 4000
@@ -261,6 +306,28 @@ agent:
   # Override the system prompt sent to the model.
   # Leave unset to use the built-in prompt.
   # system_prompt: "You are a careful coding assistant..."
+
+  # Wall-clock limit of one headless workflow step, in seconds (0 = no limit).
+  max_step_timeout_secs: 0
+
+  # Wall-clock limit of a whole headless run, in seconds (0 = no limit).
+  # The run ends with exit code 124. The default is four hours.
+  max_run_timeout_secs: 14400
+
+  # Wall-clock budget of each child agent run (a `task` sub-agent, a parallel
+  # SDLC task), in seconds (0 = no limit).
+  child_run_timeout_secs: 3600
+
+  # Thinking-loop watchdog. Defaults: 10% of the context window, 600 seconds.
+  # max_thinking_tokens: 20000
+  # thinking_timeout_secs: 600
+
+  # Stalled-server limits, in seconds (unset or 0 = the default; the first
+  # value is for a hosted API, the second for a server on your own hardware).
+  # stream_idle_timeout_secs: 300       # 1200
+  # first_byte_timeout_secs: 120        # 600
+  # first_token_timeout_secs: 300       # 900
+  # no_progress_timeout_secs: 600
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────
@@ -282,12 +349,16 @@ tools:
     - "rm -rf /*"
     - "dd if=*"
 
+  # Tools, by name, a session never offers the model and never runs.
+  disabled: []
+
   # Timeout for a single tool call, in seconds.
   timeout_secs: 30
 
   # How much of each tool's definition every request carries: "full" sends all
   # of them; "deferred" sends the core tools and the ones the model has loaded
   # through the `tools` tool, and describes the rest in one line each.
+  # (Deferred is the default of a program that reads a configuration file.)
   disclosure:
     mode: deferred
 
@@ -296,7 +367,7 @@ tools:
 
   web:
     # Maximum number of characters fetched from a URL.
-    fetch_max_chars: 50000
+    fetch_max_chars: 20000
 
     search:
       # API key for the Brave Search backend.
@@ -308,7 +379,8 @@ tools:
 
   memory:
     # Path to the persistent memory JSON file.
-    # Defaults to ~/.config/sven/memory.json
+    # Defaults to memory.json in sven's configuration directory
+    # (~/.config/sven/memory.json on Linux).
     # memory_file: /path/to/memory.json
 
 
@@ -324,6 +396,123 @@ tools:
 
     # Override the lint command for Python projects.
     # python_command: ruff check --output-format json .
+
+
+# ── GDB ────────────────────────────────────────────────────────────────────
+
+  gdb:
+    gdb_path: gdb-multiarch
+    command_timeout_secs: 10
+    connect_timeout_secs: 30
+    server_startup_wait_ms: 500
+
+
+# ── Large-content (context) tools ──────────────────────────────────────────
+
+  context:
+    max_parallel: 4
+    default_chunk_lines: 500
+    sub_query_max_chars: 120000
+    sub_query_timeout_secs: 120
+
+
+# ── Speech-to-text for attached audio ──────────────────────────────────────
+
+  asr:
+    model: brain/nemotronasr
+    # D-Bus address of the brain server; unset = the session bus.
+    # bus_address: unix:path=/run/brain/bus
+    timeout_secs: 120
+
+
+# ── MCP servers ────────────────────────────────────────────────────────────
+#
+# mcp_servers:
+#   github:
+#     transport:
+#       type: stdio
+#       command: npx
+#       args: ["-y", "@modelcontextprotocol/server-github"]
+#     env:
+#       GITHUB_TOKEN: ${GITHUB_TOKEN}
+#     enabled: true
+#     timeout_secs: 30
+
+
+# ── Context assembly ───────────────────────────────────────────────────────
+
+context:
+  assembly:
+    mode: off                   # off | demote | reconstruct
+    budget_tokens: 12000
+    keep_recent_rounds: 2
+    min_demote_tokens: 64
+    resident_bytes: 16777216
+
+
+# ── Cache-aware cost gate ──────────────────────────────────────────────────
+
+cost:
+  cache_aware: off              # off | advise | enforce
+  # remaining_requests: 20
+  # prices:
+  #   openai/gpt-4o:
+  #     input_per_mtok: 2.5
+  #     output_per_mtok: 10.0
+
+
+# ── Delegation policy ──────────────────────────────────────────────────────
+
+delegation:
+  policy: off                   # off | advise | enforce
+  child_overhead_tokens: 4000
+  report_tokens: 400
+  min_samples: 2
+  unknown_work_tokens: 6000
+  replay_rounds: 3
+  parallel_credit_tokens: 1500
+  write_surcharge_tokens: 1000
+  context_window_tokens: 128000
+  assumed_parent_context_tokens: 8000
+
+
+# ── Decision model ─────────────────────────────────────────────────────────
+
+decision:
+  enabled: false
+  mode: auto                    # auto | required | off
+  provider: brain
+  model: auto
+  timeout_ms: 500
+  warn_if_unavailable: true
+  brain:
+    url: http://127.0.0.1:8788
+    # api_key: ${BRAIN_API_KEY:-}
+    max_concurrent_requests: 2
+    cache_entries: 256
+  features:
+    context_selection: true
+    tool_routing: true
+    skill_selection: true
+    delegation: true
+    model_routing: false
+    cache_routing: true
+    permission_advisory: false
+  policy:
+    mode: apply                 # apply | shadow
+    # max_decision_input_tokens: 512
+    minimum_model_quality: validated   # validated | any
+
+
+# ── Instruction catalogs ───────────────────────────────────────────────────
+# full | deferred (deferred is the default of a program that reads a file)
+
+skills:
+  disclosure: deferred
+subagents:
+  disclosure: deferred
+knowledge:
+  disclosure: deferred
 
 
 # ── TUI appearance ─────────────────────────────────────────────────────────
@@ -354,20 +543,30 @@ Controls which language model sven talks to and how.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `provider` | `"openai"` | Provider name: `"openai"`, `"anthropic"`, or `"mock"` |
-| `name` | `"gpt-4o"` | Model identifier sent to the provider |
-| `api_key_env` | `"OPENAI_API_KEY"` | Environment variable containing the API key |
+| `provider` | `"openrouter"` | Provider id (`sven list-providers`) or the name of a `providers:` entry |
+| `name` | `"openrouter/auto"` | Model identifier sent to the provider. Empty on a local server: the model the server serves |
+| `api_key_env` | the provider's standard variable | Environment variable containing the API key |
 | `api_key` | - | Inline API key (use `api_key_env` instead when possible) |
-| `base_url` | - | Override the API endpoint (for proxies) |
-| `max_tokens` | catalog max | Maximum tokens per response (defaults to model catalog value) |
+| `base_url` | provider default | Override the API endpoint (proxies, gateways, local servers) |
+| `max_tokens` | catalog or server value | Total context window in tokens (input plus output), used for compaction. With `max_output_tokens` unset it also limits one response |
+| `max_output_tokens` | catalog or server value | Output tokens per response |
+| `max_input_tokens` | - | Cap on the input side of the window before compaction is forced |
 | `temperature` | `0.2` | Sampling temperature (0.0-2.0) |
-| `mock_responses_file` | - | Path to YAML mock responses (mock provider only) |
+| `driver_options` | - | Provider-specific options forwarded to the driver |
+| `input_modalities` | the driver's answer | Any of `text`, `image`, `audio`; declares what a self-hosted endpoint accepts |
+| `azure_resource`, `azure_deployment`, `azure_api_version` | - | Azure OpenAI endpoint; the deployment defaults to `name` |
+| `aws_region` | - | AWS Bedrock region (also `AWS_DEFAULT_REGION`) |
+| `mock_responses_file` | - | Path to YAML mock responses (mock provider only; also `SVEN_MOCK_RESPONSES`) |
 | `cache_system_prompt` | `true` | **(Anthropic)** Cache the stable system prompt prefix - breakpoint 2 |
 | `cache_tools` | `true` | **(Anthropic)** Cache all tool definitions as a prefix - breakpoint 1 |
 | `cache_conversation` | `true` | **(Anthropic)** Automatically cache full conversation history each turn - breakpoint 4 |
 | `cache_images` | `true` | **(Anthropic)** Cache the oldest image blocks in conversation history - breakpoint 3 |
 | `cache_tool_results` | `true` | **(Anthropic)** Cache large (>4 096 chars) tool results in conversation history - breakpoint 3 |
-| `extended_cache_time` | `false` | **(Anthropic)** Use 1-hour TTL for system, tools, images, and tool-result caches instead of 5 minutes |
+| `extended_cache_time` | `false` | **(Anthropic)** Use 1-hour TTL for system, tools, images, and tool-result caches instead of 5 minutes; conversation caching always uses 5 minutes |
+
+When `max_tokens`, `max_input_tokens` and `max_output_tokens` are set together,
+`max_tokens` must be at least the sum of the other two; sven logs a warning
+naming the section when it is not.
 
 #### Provider caching behaviour
 
@@ -381,11 +580,10 @@ Controls which language model sven talks to and how.
 
 #### Supported providers
 
-| Provider | `provider` value | API key variable |
-|----------|-----------------|-----------------|
-| OpenAI | `"openai"` | `OPENAI_API_KEY` |
-| Anthropic | `"anthropic"` | `ANTHROPIC_API_KEY` |
-| Mock (offline) | `"mock"` | - |
+`sven list-providers` prints every provider id, and `-v` adds each one's
+default API-key variable and base URL; [Providers](providers.md) walks through
+the setup of each. A key is read from `api_key_env`, else `api_key`, else the
+provider's standard variable.
 
 To use a proxy or local model that has an OpenAI-compatible API (such as
 LiteLLM or Ollama), set `provider: openai` and override `base_url`:
@@ -446,12 +644,40 @@ in the file. There are no extra keys for it.
   discovery call is bounded; failure leaves the configuration as written.
 
 Optional fields a server may add to each `/models` entry, all ignored when
-absent: `context_length` (or `max_model_len`), `max_output_tokens`,
+absent: `context_length` (or `max_model_len`, `context_window`), `max_output_tokens`,
 `capabilities` (a list; tool calling is recognised from `tools`, `tool_use`,
 `tool_calls` or `function_calling`) and `adapter`. The bundled catalog is used
 only for what a server leaves out.
 
 ---
+
+### `providers`
+
+Named endpoints. Set `model.provider` to an entry's name and `model.name` to
+one of its models; the entry is expanded into the active model when the file is
+loaded, so a second sven process started with the same files reaches the same
+endpoint.
+
+| Key | Description |
+|-----|-------------|
+| `name` | Driver id that speaks the endpoint's protocol (default `openai`) |
+| `base_url`, `api_key_env`, `api_key` | As for `model` |
+| `max_tokens`, `max_output_tokens`, `max_input_tokens`, `temperature`, `driver_options`, `input_modalities` | Defaults for every model on the endpoint |
+| `azure_resource`, `azure_deployment`, `azure_api_version`, `aws_region`, `mock_responses_file` | As for `model` |
+| `models.<name>` | Per-model overrides: `max_tokens`, `max_output_tokens`, `max_input_tokens`, `temperature`, `driver_options`, `input_modalities`, `mock_responses_file` and the `cache_*` flags with `extended_cache_time` |
+
+```yaml
+model:
+  provider: local_vllm
+  name: my-model
+providers:
+  local_vllm:
+    name: openai
+    base_url: http://localhost:8000/v1
+    models:
+      my-model:
+        max_tokens: 54272
+```
 
 ### `agent`
 
@@ -459,7 +685,7 @@ Controls the agent's autonomy and defaults.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `default_mode` | `"agent"` | Mode used when `--mode` is not passed |
+| `default_mode` | `"agent"` | Accepted but not read: the mode of a run is `--mode`, which defaults to `agent` |
 | `max_tool_rounds` | `200` | Maximum autonomous tool-call rounds before stopping |
 | `compaction_threshold` | `0.85` | Fraction of the input budget that triggers compaction |
 | `compaction_keep_recent` | `6` | Recent non-system messages preserved verbatim during compaction |
@@ -634,7 +860,7 @@ allows without a prompt; `sven --approval manual` shows you each call that is
 not read-only - with the tool and its command, path or arguments - before it
 runs, sub-agents' calls included. Manual approval needs the interactive TUI;
 sven refuses to start it headless, in a pipe, or as a team member. The mode
-(`--mode`, `agent.default_mode`) still decides what may run at all.
+(`--mode`) still decides what may run at all.
 
 A question the agent asks reaches you only in the interactive TUI. Everywhere
 else it is answered at once: "No user is available to answer this question.
@@ -804,6 +1030,7 @@ Configures the integrated GDB debugging support.
 |-----|---------|-------------|
 | `gdb_path` | `"gdb-multiarch"` | GDB executable name or absolute path |
 | `command_timeout_secs` | `10` | Seconds to wait for a GDB command response |
+| `connect_timeout_secs` | `30` | Seconds allowed for the initial connect handshake, which includes loading symbols; keep it at least `command_timeout_secs` |
 | `server_startup_wait_ms` | `500` | Milliseconds to wait after spawning the GDB server |
 
 **Example:**
@@ -832,6 +1059,7 @@ too large to fit in the model's context window.  See
 | `max_parallel` | `4` | Maximum concurrent sub-agent queries in a `context_query` call |
 | `default_chunk_lines` | `500` | Lines per chunk when `chunk_lines` is not specified |
 | `sub_query_max_chars` | `120000` | Character cap on the prompt sent to each sub-query (≈ 30 000 tokens) |
+| `sub_query_timeout_secs` | `120` | Seconds before one sub-query is cancelled and recorded as an error for its chunk; `0` = no limit |
 
 **Example:**
 
@@ -886,7 +1114,7 @@ does not accept changes nothing. How it works, the policy table and the wire:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `mode` | `apply` | `apply` lets an accepted verdict change behaviour. `shadow` asks and records every decision in the trajectory but always behaves as without decisions. |
-| `max_decision_input_tokens` | the served model's limit | Most tokens of state one decision sends. Unset, the limit the model reports in its manifest (512 for Laya), or 256 when it reports none; set, the smaller of the two. |
+| `max_decision_input_tokens` | the served model's limit | Most tokens of state one decision sends. Unset, the limit the model reports in its manifest, or 256 when it reports none; set, the smaller of the two. |
 | `minimum_model_quality` | `validated` | `validated` refuses a model with no recorded validation. `any` accepts any model that can answer. |
 
 ```yaml
@@ -985,11 +1213,27 @@ and resources. Each server is identified by its key in the map (e.g. `atlassian`
 
 | Key | Description |
 |-----|-------------|
-| `transport` | How to connect: `stdio` (subprocess) or `http` (Streamable HTTP) |
-| `enabled` | Whether the server is active (default: `true`) |
-| `env` | Environment variables for stdio servers |
+| `transport` | How to connect, selected by `type`: `stdio` (a subprocess; `command` and `args`) or `http` (Streamable HTTP; `url` and `headers`, e.g. a static bearer token) |
+| `enabled` | Whether the server is active (default: `true`); a disabled server is not connected and its tools are not offered |
+| `env` | Environment variables for stdio servers; values accept `${VAR}` and `${VAR:-default}` |
 | `oauth` | OAuth 2.0 config for HTTP servers that require authentication |
 | `timeout_secs` | Longest a single call to the server may take, in seconds (default: `30`, also for `0`). It bounds the whole call - connecting, the response and, for HTTP, the response body - so a tool that needs longer needs a larger value. A call that exceeds it fails with an error naming the method |
+
+A server's tools are named `<server>-<tool>` (server `github`, tool
+`list_repos`: `github-list_repos`).
+
+**Stdio transport:**
+
+```yaml
+mcp_servers:
+  github:
+    transport:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+```
 
 **HTTP transport:**
 
@@ -1082,7 +1326,7 @@ model:
   api_key_env: ANTHROPIC_API_KEY
 ```
 
-**Use Anthropic Claude - all four cache breakpoints are on by default:**
+**Use Anthropic Claude - all cache layers are on by default:**
 
 ```yaml
 model:
@@ -1093,11 +1337,6 @@ model:
   # Add extended_cache_time: true for CI or any workflow with gaps > 5 minutes:
   extended_cache_time: true    # 1-hour TTL for system/tools/images/tool-results
 ```
-
-> **Cost note**: On a 10-turn agent session with 30 000 tokens of stable context,
-> full caching reduces per-turn input cost from ~$0.09 to ~$0.003 - roughly a 97%
-> reduction after the first (cache-write) request.  To opt out of a specific
-> layer, set the corresponding flag to `false` (e.g. `cache_images: false`).
 
 **Disable all caching (e.g. for cost-sensitive one-shot runs):**
 
@@ -1146,18 +1385,20 @@ tui:
 
 ---
 
-## Migration from TOML
+## Environment variables
 
-If you have an existing `config.toml`, convert it to YAML and rename it to
-`config.yaml`. Below is a quick reference for the most common changes:
+| Variable | Effect |
+|----------|--------|
+| `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and the other providers' standard variables (`sven list-providers -v`) | API keys; with no `model:` section the first of these that is set picks the provider |
+| `BRAIN_API_KEY`, `BRAIN_API_KEYS_FILE` | Key (or key file) of a local brain model server; their presence makes brain the detected model |
+| `SVEN_DISABLE_BRAIN_AUTODETECT` | Any value: do not detect or probe a local brain |
+| `SVEN_MODEL` | Default for `--model` |
+| `SVEN_MOCK_RESPONSES` | Responses file for the mock provider |
+| `BRAVE_API_KEY` | Key of the `web_search` tool when `tools.web.search.api_key` is unset |
+| `AWS_DEFAULT_REGION`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | Credentials and region of the Bedrock provider |
+| `SVEN_ASCII_BORDERS=1` | Same as `tui.ascii_borders: true` |
+| `SVEN_LOG_FILE`, `RUST_LOG` | Logging; see the [command-line reference](cli.md#environment) |
+| `SVEN_NO_PATH_ASCENT` | Any value: `read_file` reads exactly the path asked for instead of resolving a near miss |
 
-| TOML | YAML equivalent |
-|------|----------------|
-| `[model]` section header | `model:` key |
-| `provider = "openai"` | `provider: openai` |
-| `name = "gpt-4o"` | `name: gpt-4o` |
-| `max_tokens = 4096` | `max_tokens: 4096` |
-| `auto_approve_patterns = ["cat *"]` | `auto_approve_patterns:\n  - "cat *"` |
-
-Online converters such as [transform.tools/toml-to-yaml](https://transform.tools/toml-to-yaml)
-can convert a full config file automatically.
+Any string in a configuration file may also read the environment with
+`${VAR}`; see [How the file is read](#how-the-file-is-read).

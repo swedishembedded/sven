@@ -78,9 +78,13 @@ input ceiling: the model's context window minus a minimal output reserve
 output limit actually requested for a call is computed separately by
 `dynamic_output_budget`, scaled to whatever room the real prompt leaves.
 
-When the context window is not known at all (a hosted provider with no catalog
-entry and no live probe result), the budget is `None` and both the compaction
-trigger and the hard gate are skipped rather than guessing.
+The window comes from the provider: the smaller of the configured
+`model.max_tokens` and the figure a local server reports (see
+[Local model discovery](../reference/configuration.md#local-model-discovery)),
+else the bundled catalog's entry for the model. When it is not known at all (a
+hosted provider with no catalog entry and no live probe result), the budget is
+`None` and both the compaction trigger and the hard gate are skipped rather
+than guessing.
 
 ### The request estimate
 
@@ -283,8 +287,9 @@ The TUI displays this in the chat pane. CI logs it to stderr as:
 
 ## Configuration reference
 
-All fields live under the `agent` section of the sven configuration
-(`.sven.yaml`, `.sven/config.yaml`, or `~/.config/sven/config.yaml`).
+All fields live under the `agent` section of the sven configuration (see
+[Configuration](../reference/configuration.md#config-file-location) for the
+files that are read).
 
 | Key | Default | Description |
 |---|---|---|

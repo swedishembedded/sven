@@ -8,7 +8,8 @@ statistics. A deterministic heuristic is allowed to win; the suite decides.
 `crates/ablation` (`sven-ablation`) is development tooling: nothing in the
 product depends on it, and nothing in the product exists only for it. Every
 variant is realized through configuration the product already reads and,
-for decisions, a provider served to it over the wire a Brain server speaks.
+for decisions, a provider served to it over the HTTP interface a
+[brain](https://swedishembedded.com/docs/brain) server exposes.
 
 ## What a scripted run does and does not establish
 
@@ -136,13 +137,14 @@ Notes on what the suites do and do not test:
 - **Where the variants differ.** Disclosure changes what every request carries
   (A sends every tool definition; B to G send core tools and a summary of
   the rest). Context assembly changes how old tool results are replayed.
-  Decisions change only what a decision point asks a model: today that is
-  the order of `tools search` results. On every other suite C to G are
-  therefore identical to B by construction, and the report shows exactly zero
-  difference; a decision model can only show a contribution on
-  `tool_selection` until more decision points act.
-- **Delegation.** No decision point acts on delegation yet, so the
-  `delegation` suite shows the architecture's effect on a delegated task and
+  Decisions change only what a decision point asks a model. The scripted
+  tasks reach one decision point, the ordering of `tools search` results, so
+  on every other suite C to G are identical to B by construction and the
+  report shows exactly zero difference; a decision model can only show a
+  contribution on `tool_selection`.
+- **Delegation.** The `delegation` suite's scripted subgoals do not make the
+  near-identical-subgoal decision point ask (0 decision calls in the sample
+  report), so it shows the architecture's effect on a delegated task and
   nothing else: C to G equal B. The delegation is scripted.
 - **Approvals.** Manual approval needs the interactive TUI and is not reachable
   from a headless run, so approval behaviour is not tested. The security suite
@@ -161,8 +163,11 @@ make benchmark/ablation OUT=/tmp/ablation SEEDS=5
 benchmarks/ablation/run --out /tmp/ablation --seeds 5 --fallback-probe
 ```
 
-Both build `sven-ablation`, run every suite under every variant for the seeds
-`1..=SEEDS`, and write to `--out`, which must be **outside** the repository.
+Both run every suite under every variant for the seeds `1..=SEEDS` and write to
+`--out`, which must be **outside** the repository. The make target builds
+`sven-ablation` first and adds `--fallback-probe` and `--recovery`; the script
+needs a built `sven-ablation`. `SUITES=a,b`, `VARIANTS=A,B`, `BRAIN_URL` and
+`TRAINED_MODEL` are the make variables for the matching options.
 `sven-ablation run --help` lists every option; the ones that matter:
 
 | option | meaning |
@@ -170,7 +175,7 @@ Both build `sven-ablation`, run every suite under every variant for the seeds
 | `--sven-bin PATH` | the binary to measure (default: the release build, else debug) |
 | `--suites a,b`, `--variants A,B` | narrow the run |
 | `--seeds N`, `--first-seed S` | `N` seeds counting up from `S` |
-| `--brain-url URL` | the Brain server for variants D and E |
+| `--brain-url URL` | the brain server for variants D and E |
 | `--stock-model ID`, `--trained-model ID` | the models of D and E |
 | `--brain-commit SHA` | recorded as the server's commit; the wire does not report one |
 | `--assembly-budget N`, `--keep-recent-rounds N` | the `context.assembly` settings of the variants that assemble context (default: the product's); the report header states the settings the runs used |
@@ -313,24 +318,24 @@ few pairs a wide interval is the honest answer.
 5. Add the suite to `TARGETED_SUITES` in `report.rs` only if a token claim is
    made on it.
 
-## Evaluating a trained decision model (variant E)
+## Evaluating a served decision model (variant E)
 
-1. Serve the model from Brain and note its model id.
+1. Serve the model on a brain server and note its model id.
 2. `make benchmark/ablation BRAIN_URL=http://127.0.0.1:8788 TRAINED_MODEL=<id>`
    (add the stock model with `--stock-model` when comparing). E runs the same
    tasks as B, C, F and G; its row in the report and its verdict say whether
    it beats the architecture alone, the heuristic and the random control.
 3. Read the verdict, not the tokens: a model that does not beat C has not
    earned its inference cost, and one that does not beat F is not contributing.
-4. Keep the evaluation held out. Training examples come from
-   `sven-ablation export-fixtures` (below). Hold out by **repository** (every
+4. Keep the evaluation held out. Fixtures exported with
+   `sven-ablation export-fixtures` (below) are what a model is fitted on. Hold out by **repository** (every
    seed generates a different repository and catalog), by **task family**
    (`--holdout-suite tool_selection` makes a whole family test only) and by
    **seed** (the default split puts different seeds in train, validation and
    test). Evaluate E on seeds that were never exported for training: run it
    with `--first-seed` past the exported range.
 
-## Training fixtures
+## Fixtures
 
 `sven-ablation export-fixtures --runs OUT --out fixtures.jsonl` writes the
 choice decisions of the runs under OUT as JSON lines, schema
@@ -374,8 +379,7 @@ says so). What it shows about the harness, with the model fixed (defaults:
   `tool_selection` clears it, and not at the lower bound of its interval.
 - Critical evidence in the final request, model that never asks: 100% on every
   suite, including the odd seeds of `relevant_file` where the defect is in a
-  helper the question does not name. The same fixtures lost the defect lines
-  entirely before the forms kept what the conversation points at (below).
+  helper the question does not name.
 - With recovery (second table): the same recall, with one expansion per
   `relevant_file` run (476 tokens fetched) and none on `noisy_output`. The
   expansion is not free: the fetch needs one more request, which replays the
@@ -385,8 +389,7 @@ says so). What it shows about the harness, with the model fixed (defaults:
 - Tokens saved by reason: all `age`. The fixtures never re-read or edit a file
   and repeat no result, so the superseded and duplicate rules save nothing here;
   they are covered by unit tests only.
-- Tool search: unchanged from the tool-selection work; the heuristic and the
-  random control change nothing.
+- Tool search: the heuristic and the random control change nothing.
 - Security: 0 leaks and 0 bypasses in every variant; the permitted read arrives.
 - Gates: `FAIL` for token reduction of every architecture variant (also in the
   recovery-aware measurement), `FAIL` for success regression (one
@@ -441,6 +444,6 @@ of input served from the provider cache; and the decision calls, verdicts and
 applied verdicts. For the pair it counts the tasks only one of them answered
 correctly and the token ratio on the tasks both completed. Counts are small and
 no interval is claimed; extend `--seeds` before reading a difference. The
-D2/D3 arms, with a Brain decision model in place of the heuristic, are the
+D2/D3 arms, with a decision model served by brain in place of the heuristic, are the
 variants D and E of the same matrix; the plan is in
 [decision-experiments.md](decision-experiments.md).

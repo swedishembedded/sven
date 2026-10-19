@@ -72,8 +72,8 @@ domain-agnostic.
 | `InstructionsActivated { ids }` | Skills, subagents or knowledge documents whose activation holds; applied to `Context::active_instructions` by `Hsm::dispatch`, ahead of the machine ([instruction-disclosure.md](instruction-disclosure.md)) |
 | `ToolApprovalRequired { call_id, capability, description }` | A tool call needs human approval before executing |
 | `HumanApproved { approval_id }` | A human approved a pending request |
-| `HumanRejected { approval_id }` | A human rejected a pending request |
-| `QuestionAsked { call_id, prompt, options }` / `HumanAnswered { .. }` | A tool parked a question for the human, and its answer |
+| `HumanRejected { approval_id, reason }` | A human rejected a pending request; `reason` is optional |
+| `QuestionAsked { call_id, call_ref, prompt, options }` / `HumanAnswered { question_id, answer }` | A tool parked a question for the human, and its answer |
 | `Timeout { timer_id }` | A scheduled timer elapsed |
 | `VerificationComplete { verdict }` | An `Effect::Verify` finished evaluating |
 | `EffectFailed { kind, error }` | An effect was refused or had no executor, and no more specific failure event exists for it (see below) |
@@ -86,6 +86,10 @@ domain-agnostic.
 | `Entry` / `Exit` / `Init` | Reserved HSM lifecycle signals (dispatched to a single handler by the engine, never propagated to a superstate) |
 | `SubmachineCompleted { machine, result }` | A child submachine reached a terminal state; `result` carries the child's structured result payload for the parent to aggregate |
 | `Custom { name, payload }` | A generic domain-internal signal |
+
+`LlmProposedResponse`, `LlmProposedToolCall`, `LlmProposedPlan`,
+`LlmProposedAssessment` and `DeliberationComplete` are also defined, but no
+built-in machine or executor produces them.
 
 Every event also has a payload-free `EventKind` discriminant used for audit
 records and transition-coverage assertions.
@@ -133,8 +137,8 @@ For `CallTool` effects the gate is **per-call** (not batch-wide). Each effect
 independently receives one of three verdicts:
 
 - `Allowed` → `ToolExecutor` executes the call (spawned concurrently).
-- `Forbidden` → `Event::ToolFailed { call_id, error: "denied" }` is emitted
-  immediately; the call never reaches the registry.
+- `Forbidden` → `Event::ToolFailed { call_id, error: "permission denied: ..." }`
+  is emitted immediately; the call never reaches the registry.
 - `NeedsApproval` → the policy asks a person to approve this call and nobody
   has yet: `Event::ToolApprovalRequired` is emitted, the machine emits
   `Effect::RequestHumanApproval { approval_id, capability, description, call }`,
@@ -175,12 +179,18 @@ Only a session with a person answering its approval channel may run manual:
 the CLI refuses `--approval manual` without an interactive terminal, and the
 SDK refuses a manual engine without an approval handler.
 
-In production, `RuntimeBuilder` uses each machine's own `permission_policy()`
-(`SdlcMachine::permission_policy()` / `ReactiveAgentMachine::permission_policy()`)
-rather than a blanket open policy, giving each mode the minimum-required
-capability set. This means the kernel permission gate is now **fully exercised**
-for every tool call in every mode - there is no longer a separate
-`ToolRegistry::ApprovalPolicy` / `PermissionRequester` path for kernel sessions.
+In production, `RuntimeBuilder` uses the policy registered with the mode in the
+`ModeRegistry` (each machine's own `permission_policy()`), narrowed by the host
+for the read-only `plan` and `research` session modes and put under the
+session's approval mode (`bootstrap/src/mode_policy.rs`). The kernel gate is
+therefore exercised for every tool call in every mode.
+
+The tool registry has a second, narrower layer that the kernel gate does not
+replace. A tool's `ApprovalPolicy` is checked when the registry executes it:
+`Deny` (for `shell`, a command matching `tools.deny_patterns`) refuses the call,
+and `Ask` is put to the `PermissionRequester` that a host such as an ACP client
+installs, so the IDE can approve the call. Whether a *person* approves a call
+in an agent session is the kernel's decision, through the approval mode above.
 
 ---
 
@@ -200,8 +210,10 @@ regression tests that assert on whole session traces without a real LLM or
 network.
 
 The runtime mirrors the in-`Context` audit trail into a shared snapshot
-(`audit_snapshot()`) and, when an `AuditExecutor` is wired, persists records to
-an append-only JSONL log on the `PersistAudit` effect.
+(`audit_snapshot()`). `ErasedRuntime` executes `Effect::PersistAudit` itself
+after every dispatch, so machines never emit it; when an `AuditExecutor` is
+wired, it appends the new records to a hash-chained, append-only JSONL log
+(`sven_chain`).
 
 ---
 
@@ -246,8 +258,10 @@ There are two runtime flavours:
 Both expose `spawn` and `spawn_with_children` (the latter installs an optional
 `ChildSpawner`), plus `post`, `status`/`status_watch`, `subscribe_observations`,
 `wait_for_state`, `wait_done`, `audit_snapshot`, `abort`, `cancel`/`cancel_scope`
-and `join`. `ErasedRuntime::spawn_child_run` starts a machine as the child run
-of another (see [Child runs](#child-runs)).
+and `join`. `ErasedRuntime` also offers `capture()`, which returns a `Snapshot`
+of a machine at rest (see [Resumable agents](resumable-agents.md)), and
+`spawn_child_run`, which starts a machine as the child run of another (see
+[Child runs](#child-runs)).
 
 Every runtime owns a `CancelScope`. Cancelling it stops the consumer loop
 between events or in the middle of a dispatch's effects - the effects in
@@ -315,25 +329,32 @@ is preserved because streaming output never re-enters the inward queue: an
 executor streams many `UiEvent`s while an effect is in flight, then posts
 exactly one completion `Event` back inward.
 
-`UiEvent` variants:
+`UiEvent` is `sven_vocab::SessionEvent`, the one typed event the TUI, headless
+runner, ACP bridge and SDK all consume. It is non-exhaustive, so a consumer
+outside the workspace matches with a wildcard arm. Its variants:
 
 ```
 TextDelta / TextComplete            // streamed + final assistant text
 ThinkingDelta / ThinkingComplete    // extended thinking
-ToolStarted { call_id, name, args }
+ToolCallStarted(ToolCall)           // the model requested a call
 ToolProgress { call_id, message }
+ToolCallFinished { call_id, tool_name, output, is_error }
+ContextCompacted { tokens_before, tokens_after, strategy, turn }
+TokenUsage { input, output, cache_read, cache_write, ..., cost_usd, breakdown }
+ResponseSampled(Sampled)            // what served a request and what it sampled
+ModelWaiting { elapsed_secs, phase }  // model silent: no text/reasoning/tool-call chunk yet (keepalives excluded)
 ServedModelChanged { model, from, to, context_window }  // the server swapped the model's adapter (not a switch of model: that is ModelChanged)
 Warning(text)                       // notice that does not stop the run, e.g. the served model lacks tool calling
-ModelWaiting { elapsed_secs, phase }  // model silent: no text/reasoning/tool-call chunk yet (keepalives excluded)
-ToolFinished { call_id, name, output, is_error }
-TokenUsage { input, output, cache_read, cache_write, ... , cost_usd }
-ContextCompacted { tokens_before, tokens_after, strategy, turn }
-TodoUpdate(Value)
-ModeChanged(String) / ModelChanged(String)
-Transition { from, to, event }      // full transition trace, emitted after every dispatch
-Error(String)
+EventsDropped { count }             // inserted by a stream that dropped events; never by the kernel
 TurnComplete
 Aborted { partial_text }            // run aborted; carries streamed-but-uncommitted text
+Error(String)
+TodoUpdate(items) / ModeChanged(mode) / ModelChanged(model)
+Question { id, questions } / QuestionAnswer { id, answer }
+TitleGenerated / CollabEvent / DelegateSummary / PeerList
+SubagentStarted / SubagentEvent     // `task` sub-agents
+Transition { from, to, event }      // full transition trace, emitted after every dispatch
+Harness { run_id, event }           // harness lifecycle events
 ```
 
 There is also a coarse `MachineProjection`-style snapshot published on a `watch`
@@ -349,26 +370,39 @@ A `Machine` (`hsm/src/machine.rs`) describes a state hierarchy: its states
 (`type State`), each state's `superstate`, and a single `dispatch_state`
 handler. The kernel's `Hsm<M>` drives any `Machine` generically.
 
-`ModeRegistry` (`machines/src/mode.rs`) maps a mode **string** to a machine
-factory. This is the authoritative wiring; `RuntimeBuilder` looks up the machine
-by the mode string and builds an `ErasedRuntime` around it.
+`ModeRegistry` (`machines/src/mode.rs`) maps a mode **string** to a
+`MachineRegistration`: a factory that builds a fresh machine, and the
+`PermissionPolicy` every session in that mode enforces. A mode the registry does
+not hold has no policy and cannot run. `RuntimeBuilder` looks the machine up by
+mode string and builds an `ErasedRuntime` around it.
 
-| Mode string | Machine | Engine |
-|-------------|---------|--------|
-| `"agent"` | `ReactiveAgentMachine` | `TurnExecutor` + `loop_core` in-state tool loop |
-| `"reactive"` | `ReactiveAgentMachine` | `TurnExecutor` + `loop_core` in-state tool loop |
-| `"chat"` | `ReactiveAgentMachine` | `TurnExecutor` + `loop_core` in-state tool loop |
-| `"sdlc"` | `SdlcMachine` | `TurnExecutor` + `loop_core`; per-phase in-state tool loops + structured JSON decisions |
+| Mode string | Machine | Registered by |
+|-------------|---------|---------------|
+| `"agent"`, `"reactive"`, `"chat"` | `ReactiveAgentMachine` | `ModeRegistry::default_registry()` |
+| `"sdlc"` | `SdlcMachine` | `default_registry()` |
+| `"verified-task"` | `VerifiedTaskMachine` | `default_registry()` |
+| `"predict"` | `PredictMachine` | `default_registry()` |
+| `"ui-test"` | `UiTestMachine` | `sven_bootstrap::mode_registry()`, with the `android` feature |
+
+A machine that drives one specific tool is registered by the assembly that
+compiles the tool in, so no registry offers a mode whose steps would call a tool
+that does not exist. The full state and transition tables of every machine are in
+the [State Machine Reference](../concepts/state-machines.md).
 
 All modes use `TurnExecutor` (`kind: "turn"`) as the single LLM call engine.
-`SdlcMachine` routes each phase's decision parsing through its own `loop_core`
-state handlers (parsing structured JSON from the final tool-free text).
+`SdlcMachine` parses a structured JSON decision from the final tool-free text of
+each phase.
 
-Mode selection at startup (see `src/main.rs`) is, in priority order:
+How a mode string is chosen:
 
-1. `SVEN_MODE` environment variable,
-2. the `--mode` CLI flag (mapped into kernel vocabulary; e.g. `plan` → `sdlc`),
-3. default `chat`.
+1. `--mode` takes `research`, `plan`, `agent` (default), `chat` or `sdlc`. The
+   frontend maps it to a kernel mode (`chat` runs `chat`, `sdlc` runs `sdlc`,
+   the other three run `agent`); `plan` and `research` differ from `agent` only
+   in that the host removes `WriteFile` from the policy.
+2. A headless run reads the `SVEN_MODE` environment variable as the kernel mode
+   name instead, so it can select any registered mode.
+3. `sven task run` selects `verified-task`, `sven agent-dispatch` selects
+   `ui-test`, and the SDK selects `predict` or `agent` from a method's strategy.
 
 ### `ReactiveAgentMachine` (modes `agent` / `reactive` / `chat`)
 
@@ -431,9 +465,9 @@ effects, streaming `UiEvent`s outward and posting result `Event`s inward. The
 |----------|-----------------|
 | `TurnExecutor` | `CallLlm` with `kind: "turn"` - single-pass model streaming; accumulates tool proposals; posts `LlmTurnComplete` |
 | `ToolExecutor` | `CallTool` - kernel-gated, spawn-and-forget; the **only** executor that calls `registry.execute` |
-| `UserExecutor` | `AskUser`, `RequestHumanApproval`, `RequestHumanAnswer` |
+| `UserExecutor` | `AskUser`, `RequestHumanApproval` (approved at once under auto approval), `RequestHumanAnswer` (parked) |
 | `TimerExecutor` | `ScheduleTimeout`, `CancelTimeout` |
-| `AuditExecutor` | `PersistAudit` |
+| `AuditExecutor` | `PersistAudit` - hash-chained JSONL log |
 | `InternalExecutor` | `EmitInternal` |
 | `VerifyExecutor` | `Verify` - jailed to the project root; posts `VerificationComplete` |
 
@@ -556,10 +590,11 @@ to keep provider cache breakpoints stable. `execute` honours an optional
 `RuntimeBuilder` (`bootstrap/src/runtime_builder.rs`) is the per-session
 factory. It looks up the machine from the `ModeRegistry`, builds the model
 provider, tool registry, and MCP manager, assembles the `CompositeExecutor`
-(wiring `TurnExecutor` for all modes; for `sdlc` also installs `SdlcChildSpawner`),
-and spawns an `ErasedRuntime` via `spawn_with_children`. For `sdlc` it seeds the
-`parallel_execution` fact so the machine only fans out when a spawner is actually
-installed.
+(wiring `TurnExecutor` for all modes), and spawns an `ErasedRuntime` via
+`spawn_with_children`. It installs an `SdlcChildSpawner` in `sdlc` mode and in a
+session with registered harness documents. When a spawner is installed it seeds
+the `parallel_execution` fact so the SDLC machine only fans out when a spawner is
+actually present.
 
 ```rust,ignore
 let bundle = RuntimeBuilder::new(config, "sdlc")
@@ -573,9 +608,10 @@ let bundle = RuntimeBuilder::new(config, "sdlc")
 
 `build_session` returns a `SessionBundle` holding the `ErasedRuntime`, a cheap
 `RuntimeHandle` (sink + observation + status), and the `KernelChannels`
-(question/approval receivers). All modes drive the model through `TurnExecutor`. A
+(question/approval receivers), plus the session's MCP manager. A
 `SessionSupervisor` manages a registry of such bundles keyed by `SessionId`,
-sharing reference-counted skills and knowledge across sessions.
+optionally attributing each to a `Principal` (tenant) so one tenant's sessions
+can be told from another's.
 
 ---
 
@@ -596,8 +632,8 @@ event source:
 
 `RuntimeRunner` (`ci/src/runner/runtime_runner.rs`) drives the kernel with
 no UI. It builds a `SessionBundle` (mapping the caller's mode to a registered
-kernel mode - coding/plan/research all resolve to `agent`, `chat`→`chat`,
-`sdlc`→`sdlc`), **answers every human gate at once** - nobody is there to ask
+kernel mode - `chat`→`chat`, `sdlc`→`sdlc`, `verified-task`→`verified-task`,
+every other mode, including plan and research, resolves to `agent`), **answers every human gate at once** - nobody is there to ask
 (`KernelChannels::answer_unattended`: a question gets `NO_USER_ANSWER`, "no user
 is available; proceed on your best judgement and state the assumption"; a
 decision approval was already given by the `UserExecutor` under auto approval,
@@ -636,6 +672,7 @@ E2E bats tests use `--model mock` so no real API key is required.
 |-------|------|
 | `sven-hsm` | HSM kernel vocabulary and pure dispatch: `Machine` trait, `Hsm`, permissions, audit/replay, snapshots, `Submachine`, `ObservationSink`/`UiEvent` |
 | `sven-kernel` | Active Object runtime: `Runtime`/`ErasedRuntime`, `EffectExecutor`, `EventSink`, `ChildSpawner`, `Clock`/timers |
+| `sven-vocab` | Shared wire types with no behaviour: `TurnRequest`, `SessionEvent` (re-exported as `UiEvent` / `AgentEvent`), `AgentMode`, `ApprovalMode`, verifier specs |
 | `sven-model` | Stateless provider abstraction: `ModelProvider`, `CompletionRequest` (incl. `response_format`), `Message`, `ResponseEvent`, `ResponseFormat` |
 | `sven-tool-api` | `Tool` trait, `ToolCall` / `ToolOutput`, approval policy / `PermissionRequester`, tool events and display |
 | `sven-tool-registry` | `ToolRegistry` (incl. tool-subset API), `ToolSchema`, `SharedTools`, `ToolPolicy` |

@@ -17,11 +17,15 @@ request a step covers:
 | `metrics.prompt_token_ids` | the prompt as the model read it | server echo (`prompt_token_ids`) |
 | `metrics.completion_token_ids` | the sampled tokens, in order | server echo (`token_ids`) |
 | `metrics.logprobs` | the log-probability of each sampled token under the distribution it was decoded from | server echo (`logprobs.content[].logprob`) |
-| `metrics.extra.sven.seed` | the seed the server reports it used (the requested one when it reports none) | `brain.seed`, else the request |
-| `metrics.extra.sven.adapter` | `{id, digest}` of the adapter that answered | `brain.adapter` |
-| `metrics.extra.sven.base_digest` | `sha256:` of the base checkpoint | `brain.base_digest` |
-| `metrics.extra.sven.backend`, `engine` | the compute backend and engine build that decoded | `brain.backend`, `brain.engine` |
+| `metrics.extra.sven.seed` | the seed the server reports it used (the requested one when it reports none) | the `seed` of the response's `brain` object, else the request |
+| `metrics.extra.sven.adapter` | `{id, digest}` of the adapter that answered | `adapter` of the `brain` object |
+| `metrics.extra.sven.base_digest` | `sha256:` of the base checkpoint | `base_digest` of the `brain` object |
+| `metrics.extra.sven.backend`, `engine` | the compute backend and engine build that decoded | `backend`, `engine` of the `brain` object |
 | `metrics.extra.sven.requests` | each request's own prompt ids, sampled ids, log-probabilities, seed and token counts, when the step covers more than one request | the same |
+
+The `brain` object is a non-standard member of the streamed response frames that a
+[brain](https://swedishembedded.com/docs/brain) server adds; `prompt_token_ids`, `token_ids` and
+`logprobs` are read from any OpenAI-compatible server that echoes them.
 
 A step covers more than one request when a tool call and the answer after its result
 share a step: the step's own `prompt_token_ids` are then the first request's and the
@@ -90,14 +94,11 @@ the transcript like any other. Nested children are listed flat, each with its de
 - With a scripted mock provider a run is exactly reproducible: the same scripts, tools and
   sampling give the same event stream and the same trajectory (`crates/sdk/tests/reproduce.rs`),
   and a trajectory alone holds what is needed to rebuild the model's side of the stream.
-- With brain on the CPU backend a seeded decode is a pure function of the seed and the
-  request; the server echoes the seed it used, so an unseeded request can be repeated.
 - The seed recorded is the one the server reports it used, also for a request that
   carried none (the server draws one and echoes it); only a server that reports none
   leaves the step with the requested seed or none.
-- On a GPU, a decode is **not** guaranteed to repeat bit for bit: reductions run in an order
-  that depends on the device and the kernel selected, a request batched with others sees
-  different batch shapes, and speculative decoding changes which kernels run. The trajectory
-  therefore records what lets a difference be explained rather than prevented (measured once: the same seed and prompt gave different text on two cards of one machine, while the CPU backend repeated exactly): the seed, the
-  sampled token ids and their log-probabilities, the answering model, the base checkpoint and
-  adapter digests, the backend and the engine build.
+- Whether a decode repeats for the same seed is a property of the server, not of sven.
+  The trajectory therefore records what lets a difference be explained rather than
+  prevented: the seed, the sampled token ids and their log-probabilities, the answering
+  model, the base checkpoint and adapter digests, the backend and the engine build, each
+  when the server reports it.

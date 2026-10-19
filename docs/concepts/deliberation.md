@@ -57,8 +57,8 @@ SdlcMachine ──────────────────────�
      ▼
      kernel permission gate (PermissionPolicy)
      │  Allowed → ToolExecutor.execute (spawn-and-forget)
-     │  Forbidden → Event::ToolFailed { reason: "denied" }
-     │  NeedsApproval → Effect::RequestHumanApproval
+     │  Forbidden → Event::ToolFailed { error: "permission denied: ..." }
+     │  NeedsApproval → Event::ToolApprovalRequired → Effect::RequestHumanApproval
      ▼
      Event::ToolSucceeded / ToolFailed → machine re-prompts or parses decision
 ```
@@ -78,6 +78,8 @@ own conversation history, owned for the lifetime of the runtime by a
 ```rust,ignore
 pub struct ThreadStore {
     threads: HashMap<ThreadId, Vec<Message>>,
+    // ...plus the records kept for the run's trajectory: compactions,
+    // requests, gate decisions and unparsed tool arguments
 }
 ```
 
@@ -120,6 +122,7 @@ A state asks for a model turn by emitting `Effect::CallLlm` whose opaque
 | `dynamic_suffix` | Volatile context sent as an uncached system block where supported |
 | `max_tool_rounds` | Maximum model↔tool rounds before a forced wrap-up |
 | `refused_calls` | Tool calls refused before they ran; answered in the thread before the model is called |
+| `active_tools`, `active_instructions`, `state` | Stamped by the kernel on every turn request: the tools the model has loaded, the active instructions, and the label of the emitting state. Machines leave them empty |
 
 `TurnRequest::is_turn` checks the `kind` tag; the `CompositeExecutor` uses it to
 route the effect to the `TurnExecutor`.
@@ -158,41 +161,41 @@ flowchart TD
     F --> G[same phase state<br/>machine emits Effect::CallTool per call]
     G --> H[kernel permission gate]
     H -- Allowed --> I[ToolExecutor spawns task]
-    H -- Forbidden --> J[Event::ToolFailed reason=denied]
+    H -- Forbidden --> J[Event::ToolFailed permission denied]
     H -- NeedsApproval --> K[Effect::RequestHumanApproval]
     I --> L[Event::ToolSucceeded / ToolFailed]
     J --> L
     K --> M{HumanApproved / Rejected}
     M -- Approved --> I
-    M -- Rejected --> J
+    M -- Rejected --> L
     L --> N{all calls done?}
     N -- no --> N
-    N -- yes --> O{rounds > max_tool_rounds?}
-    O -- yes --> P[append wrap-up turn] --> A
-    O -- no --> A
+    N -- yes --> A
 ```
 
 Key behaviours:
 
 - **Streaming.** Each `TurnExecutor` pass streams `TextDelta`/`ThinkingDelta` and
-  tool progress as `UiEvent`s on the outward observation plane. The **final
-  tool-free text is *not* forwarded** as `TextComplete` when it is the raw
-  structured decision - the machine parses it internally.
+  tool progress as `UiEvent`s on the outward observation plane.
 - **Parallel tools.** All `Effect::CallTool`s emitted by the machine for one
   model turn are handed concurrently to the `ToolExecutor`'s
   spawn-and-forget tasks. Results arrive back as `ToolSucceeded` / `ToolFailed`
   events in whatever order the tasks finish.
 - **Kernel-gated.** Every tool call passes through the `PermissionPolicy` before
-  `ToolExecutor` sees it. Forbidden calls produce `ToolFailed{reason:"denied"}`
-  without touching the registry. The kernel is the single policy evaluator.
+  `ToolExecutor` sees it. Forbidden calls produce `ToolFailed` with a
+  `permission denied: ...` error without touching the registry. The kernel is the
+  single policy evaluator.
 - **Append-only.** `TurnExecutor` appends the assistant turn (text + tool-call
   messages) to the thread. `ToolExecutor` appends tool-result messages when a
   `call_id → thread` mapping exists. Neither ever mutates prior messages.
-- **Round budget.** The machine's `loop_core` tracks a round counter; when
-  `rounds` exceeds `max_tool_rounds`, it appends a wrap-up user turn
-  instructing the model to stop calling tools and emit its final decision.
-- **Cancellation.** A shared cancel slot allows the TUI to abort an in-flight
-  turn; the machine transitions to `Idle` / `Cancelled` on `UserCancelled`.
+- **Round budget.** The machine's `loop_core` counts rounds; when the count
+  exceeds the phase's budget and the model still proposes tools, the machine
+  emits a wrap-up turn without tools that tells the model to stop and report
+  faithfully what it did. The reply is then parsed as the phase decision.
+  A model that returns several empty turns in a row gets the same wrap-up.
+- **Cancellation.** A shared cancel slot lets the frontend abort an in-flight
+  turn; the aborted turn is reported as `UserCancelled` (not as a failure), and the
+  `SdlcMachine` moves to `Cancelled`.
 
 When the final tool-free turn arrives, the machine parses the accumulated text
 into the decision JSON and drives its phase transition. On a model error it routes
@@ -236,6 +239,10 @@ Each state restricts what the model can touch:
   - `WRITE_TOOLS` - the read tools plus `write_file`, `edit_file` and `shell`
     (Execution and execution follow-ups, and each fan-out task).
   - `BUILD_TOOLS` - read tools plus `shell` for build/test (Verification).
+
+  Each phase also has its own tool-round budget (6 for Intake up to 40 for
+  Execution); the table is in the
+  [State Machine Reference](state-machines.md#threads-tools-and-round-budgets-per-phase).
 - **Per-state model.** The request's `model` field may name a model; the executor
   resolves it via the `ModelResolver` and falls back to the default model on
   error. (The shipped prompts leave it null, so every phase uses the session
@@ -244,8 +251,8 @@ Each state restricts what the model can touch:
 Tool calls flow through the kernel as `Effect::CallTool` and are fully gated
 by the per-state `PermissionPolicy` before `ToolExecutor` executes them; the
 kernel permission gate is the single enforcer for SDLC tool use.
-`AskUser` and `RequestHumanApproval` effects continue to gate phase-level
-decisions (scope confirmation, plan approval, delivery sign-off).
+`AskUser` and `RequestHumanApproval` effects gate phase-level decisions
+(scope confirmation, plan approval, delivery sign-off).
 
 ---
 
@@ -272,9 +279,11 @@ Parsing is deliberately **tolerant and fail-safe**: an unknown or missing
 `status` is treated as `failed`, so a malformed decision routes to recovery
 rather than silently advancing.
 
-The machine stores each phase's `summary` and `payload` as facts (e.g.
-`scope_summary`, `discovery_summary`, `plan_payload`) so the next phase's
-instruction can reference them.
+The machine stores each phase's result as facts, `<key>_summary` (the
+decision's `message`, falling back to `summary`) and `<key>_payload`, under the
+keys `scope`, `discovery`, `plan`, `execution`, `verification` and `delivery`
+(for example `scope_summary`, `plan_payload`), so the next phase's instruction
+can reference them.
 
 ---
 
@@ -324,10 +333,12 @@ subset, and instruction:
   tasks in `payload.tasks`, and returns `need_approval`; `HumanApproved` →
   Execution.
 - **Execution** (write/build tools) implements the plan. If the approved plan
-  decomposes into ≥2 tasks **and** a child spawner is installed (the
+  lists ≥2 tasks **and** a child spawner is installed (the
   `parallel_execution` fact is set), Execution **fans out** one child submachine
   per task and runs them concurrently, then merges their summaries back into the
-  execution thread append-only before re-deliberating. Otherwise it runs a single
+  execution thread append-only before re-deliberating. A task is an entry of
+  `payload.tasks` that is a string or an object with a `title` or `task` field;
+  other entries are not counted. Otherwise Execution runs a single
   deliberation. `proceed` → Verification. (Fan-out details:
   [Parallel Submachine Fan-out](../internals/parallel-submachines.md).)
 - **Verification** (build/test tools) independently builds, tests, and checks the
@@ -345,9 +356,10 @@ and `failure_context` facts. Recovery deliberates a diagnosis:
 - `need_user_input` → ask the developer,
 - anything else → `Failed`.
 
-A retry counter (`bump_retry("recovery")`) caps attempts at `MAX_RECOVERY` (3);
-exceeding it transitions to the terminal `Failed` state. `Done`, `Failed`, and
-`Cancelled` are terminal.
+A retry counter (`bump_retry("recovery")`) counts entries into `Recovery` over the
+whole session and is never reset. Entering `Recovery` a fourth time
+(`MAX_RECOVERY` is 3) transitions to the terminal `Failed` state. `Done`,
+`Failed`, and `Cancelled` are terminal.
 
 ---
 
@@ -362,10 +374,12 @@ not loop-internal prompts:
   follow-up deliberation on the current thread.
 - **Approvals** (`need_approval`) record a `PendingApproval` in the context and
   emit `Effect::RequestHumanApproval { approval_id, capability, description }`
-  (capability `GitOperation`). The `UserExecutor` surfaces it on the approval
-  channel; `HumanApproved` advances the phase (and grants the capability via
-  `ctx.approve`), while `HumanRejected` either revises (Intake, Planning,
-  Delivery re-deliberate with a `revise_request`) or routes to Recovery.
+  (capability `GitOperation`). Under the default `--approval auto` the
+  `UserExecutor` approves it at once; under `--approval manual` it surfaces the
+  request on the approval channel and waits. `HumanApproved` advances the phase
+  (and records the approval via `ctx.approve`), while `HumanRejected` either
+  revises (Intake, Planning and Delivery re-deliberate with a revision
+  instruction) or routes to Recovery (Discovery, Verification and Execution).
 
 In **CI / headless** mode nobody is there to answer, so the `RuntimeRunner`
 answers every gate at once: a question gets the no-user answer ("No user is

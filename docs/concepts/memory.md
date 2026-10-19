@@ -19,6 +19,16 @@ Agent: semantic_memory.recall({ query: "firmware build toolchain" })
        → Returns memories whose words match, ranked by BM25
 ```
 
+## Two memory tools
+
+A session offers two tools that keep things across sessions:
+
+- `semantic_memory` stores notes in a SQLite store and searches them by words
+  (and, with an embedder, by meaning). It is the subject of this page.
+- `memory` is a plain key-value store plus read access to the project
+  [knowledge base](knowledge-base.md). It is described under
+  [The `memory` tool](#the-memory-tool).
+
 ## semantic_memory tool
 
 | Action | Description |
@@ -30,7 +40,12 @@ Agent: semantic_memory.recall({ query: "firmware build toolchain" })
 | `get` | Retrieve a specific memory by ID |
 
 IDs are opaque text. The tool hands one out when it remembers and expects it
-back unchanged in `forget` and `get`.
+back unchanged in `forget` and `get`. `recall` returns at most `limit` results
+(default 10) and `list` at most 20 unless `limit` says otherwise.
+
+`remember` and `forget` count as writes and `recall`, `list` and `get` as reads
+for the permission gate, so a read-only mode can search memory but not change
+it. The tool needs no approval of its own.
 
 ### remember
 
@@ -85,13 +100,33 @@ generation (`lexical` while no embeddings are used) and every returned unit
 with its revision, anchor, score and rank. See
 [SDK](../reference/sdk.md#trajectories).
 
+## The `memory` tool
+
+`memory` keeps string values under string keys in one JSON file. Its `action`
+is one of:
+
+| Action | Parameters | Effect |
+|--------|------------|--------|
+| `set` | `key`, `value` | store or replace a value |
+| `get` | `key` | return the value; an unknown key is an error |
+| `delete` | `key` | remove a key; an unknown key is an error |
+| `list` | | the keys, sorted, one per line |
+| `list_knowledge`, `search_knowledge` | `query` for search | read `.sven/knowledge/` ([Knowledge Base](knowledge-base.md#tools)) |
+
+The file is `memory.json` in the sven directory of the platform config
+directory (`~/.config/sven/memory.json` on Linux). `tools.memory.memory_file`
+in the configuration file sets another path
+([configuration](../reference/configuration.md#toolsmemory)). `set` and `delete` are
+writes for the permission gate; the other actions are reads. The tool needs no
+approval of its own.
+
 ## Storage Location
 
-`~/.config/sven/memory/memory.sqlite`. It is not configurable; no
-`tools.memory` key selects a backend or a path. The location is an input of the
+`~/.config/sven/memory/memory.sqlite`. It is not configurable;
+`tools.memory.memory_file` only moves the `memory` tool's JSON file. The location is an input of the
 session, not something it looks up: runtime detection
 (`RuntimeContext::auto_detect*`, which every CLI, TUI and ACP session goes
-through) supplies the user's home as `memory_home`, and a session built without
+through; it needs the default `memory` cargo feature) supplies the user's home as `memory_home`, and a session built without
 one - `RuntimeContext::empty()`, or any session of the embedded SDK - opens no
 store and is not offered the tool, rather than writing into the current
 directory. A test gives the session a temporary directory as `memory_home` and
@@ -180,8 +215,8 @@ guesses. `redact` removes what looks like a credential before text is stored.
 ## Hosting memory
 
 An embedding application gives each agent its own scoped store:
-`agent.with_memory(MemoryScope::new(store, access, "space"))`, optionally
-`.with_embedder(..)`. The agent's `semantic_memory` tool then reads and writes
+`agent.with_memory(MemoryScope::new(store, access, "space")).await?`, with
+`MemoryScope::with_embedder(..)` to give the scope an embedder. The agent's `semantic_memory` tool then reads and writes
 exactly that space under exactly that access, in place of any other memory; two
 agents on one engine and one store see only what each was granted.
 `sven_workspace::workspace_identity(dir)` names the repository a directory

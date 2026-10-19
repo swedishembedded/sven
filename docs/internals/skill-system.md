@@ -51,21 +51,34 @@ it is not registered as a sub-skill.
 
 ## Discovery sources
 
-`discover_skills()` in `sven-workspace` scans six directories in order of
-increasing precedence.  When two sources contain a skill with the same command,
-the later (higher-precedence) source wins:
+`discover_skills()` in `sven-workspace` loads skills from the system
+directories, then from an ancestor walk. When two sources contain a skill with
+the same command, the later (higher-precedence) one wins.
 
-| Priority | Directory | Scope |
-|----------|-----------|-------|
-| 1 (lowest) | `~/.sven/skills/` | User-global sven skills |
-| 2 | `~/.agents/skills/` | User-global cross-agent skills |
-| 3 | `~/.claude/skills/` | User-global Claude Code compatibility |
-| 4 | `<project>/.agents/skills/` | Project cross-agent skills |
-| 5 | `<project>/.claude/skills/` | Project Claude Code compatibility |
-| 6 (highest) | `<project>/.sven/skills/` | Project sven skills |
+1. System directories, lowest precedence: `/usr/share/sven/skills/` and
+   `/usr/local/share/sven/skills/`.
+2. The ancestor walk. Two chains of directories are collected, one from the
+   project root (the current directory when there is none) up to `/` and one
+   from the home directory up to `/`; they are merged without duplicates and
+   ordered by depth, shallowest first. In each directory these skill roots are
+   checked, in this order:
 
-Each source is scanned with `scan_skills_dir`, which calls `scan_recursive`
-to walk the directory tree.
+   | Root | Precedence within a directory |
+   |------|-------------------------------|
+   | `.agents/skills/` | lowest |
+   | `.claude/skills/` | |
+   | `.codex/skills/` | |
+   | `.cursor/skills/` | |
+   | `.sven/skills/` | highest |
+
+   A directory closer to the project root overrides one farther away, and so
+   `<project>/.sven/skills/` beats everything else; `~/.sven/skills/` is found
+   because the home directory is a root of the walk, and a skills directory in
+   a parent that holds several checkouts is found too.
+
+Each root is scanned with `scan_skills_dir`, which calls `scan_recursive`
+to walk the directory tree. The `SKILL.md` file name is matched
+case-insensitively.
 
 ---
 
@@ -118,9 +131,13 @@ Instructions the model will follow when this skill is loaded.
 Reference sub-skills by command; the model loads them with the `skill` tool.
 ```
 
-Only `description` is required.  `name` defaults to the directory name when
-omitted.  The old `sven.skills:` list (manual sub-skill declaration) has been
-removed; relationships are now derived structurally from the directory tree.
+Only `description` is required.  `name` defaults to the last segment of the
+command when omitted.  Sub-skill relationships are derived from the directory
+tree; there is no frontmatter list of them. A `SKILL.md` without a frontmatter
+fence is accepted as plain Markdown: its description is its first non-heading
+line and the whole file is the body. A skill whose frontmatter is malformed, or
+whose `activation` block has an unknown key, is not loaded. `requires_env` is
+satisfied by a variable that is set and non-empty.
 
 ---
 
@@ -182,7 +199,7 @@ keeps the system prompt lean and token usage proportional to what the session
 actually needs.
 
 **Character budget**: `MAX_SKILLS_PROMPT_CHARS` (30 000 characters) caps the
-total size of the `<available_skills>` block.  Skills with `always: true`
+total size of the `<available_skills>` block.  Skills with `sven.always`
 bypass the cap; the remaining candidates are packed in discovery order until the
 budget would be exceeded.  A truncation notice is appended when any skills are
 left out.
@@ -197,7 +214,10 @@ named it).
 
 ## On-demand loading: `SkillTool` (`sven-tools-agent`)
 
-When the model decides a skill is relevant it calls the `skill` tool:
+The `skill` tool has three actions: `load` (a skill's body, by command as
+`name`), `list` (skills whose command, name or description matches a `regex`;
+empty lists all) and `search` (the skills that best match a `query`, ranked like
+tool search). When the model decides a skill is relevant it calls:
 
 ```
 skill({"action": "load", "name": "sven/plan"})

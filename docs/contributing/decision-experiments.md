@@ -1,4 +1,4 @@
-# Decision experiments: the arms and the GPU run plan
+# Decision experiments: the arms and the run plan
 
 <!--
 Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
@@ -18,11 +18,11 @@ adding one thing to the one before. They are runs of the
 |-----|----------------|-----------|---------------|
 | D0 | B `architecture` | off | the cost and success of the architecture alone: the reference |
 | D1 | C `heuristic` | deterministic rules | what a model has to beat |
-| D2 | D `stock-model` | a stock Brain decision model | whether any small model earns its inference |
-| D3 | E `trained-model` | the trained Brain decision model | whether training earned more than D2 |
+| D2 | D `stock-model` | a decision model served by brain (`--stock-model`, default `auto`) | whether any small model earns its inference |
+| D3 | E `trained-model` | a second decision model served by brain, named with `--trained-model` | whether it earns more than D2 |
 
 The random control (F) and the oracle (G) bracket the arms in scripted runs;
-they are not part of the GPU plan.
+they are not part of the real-model plan.
 
 ## What is measured
 
@@ -60,12 +60,13 @@ result.
    measured against D0 only.
 2. **Decision model in isolation**, no task model. Run the scripted matrix with
    variants D and E and read the per-point quality (accuracy against the oracle
-   labels, coverage, calibration) before spending GPU time on end-to-end runs.
+   labels, coverage, calibration) before spending time on end-to-end runs.
    Gate: accuracy on accepted answers above the heuristic's (variant C) and the
    random control's (F), calibration error reported.
 3. **D2 and D3 end to end**, real task model, the seeds of step 1 plus
-   held-out seeds (`--first-seed` past the seeds exported for training), so the
-   trained model is never judged on what it trained on.
+   held-out seeds (`--first-seed` past the seeds exported with
+   `sven-ablation export-fixtures`), so a model fitted on exported fixtures is
+   never judged on them.
 
    ```
    benchmarks/ablation/run --out OUT/d2-d3 --variants B,C,D,E --seeds 5 \
@@ -77,18 +78,17 @@ result.
    Gate: D3 beats D1 and D0 on verified success or on tokens per verified
    success without losing the other, and beats the random control.
 
-## Hardware
+## Setup
 
-Two models are served: the task model and the decision model. Brain serves
-both from one process on one card; the decision model is small, and the task
-model sets the card's memory. Wrap each run in the shared GPU lock, keep VRAM
-under the card's limit with both loaded, and record the card, the Brain commit
-(`--brain-commit`) and the model checkpoints. GPU nondeterminism across cards is
-real: compare arms on the same card, and repeat a surprising difference on
-another before believing it.
+Two models are served: the task model and the decision model, both reached
+through the brain server given with `--brain-url`. Record the model
+checkpoints and the server commit (`--brain-commit`; the wire does not report
+one). Run the arms of a comparison on the same server and hardware, and repeat
+a surprising difference elsewhere before believing it: sampling is not
+guaranteed to repeat across devices.
 
-Profile each run against the card's ceiling before reading its numbers. A run
-that waits on one unbatched decision call per request is measuring the wait.
+Check what a run waits on before reading its numbers. A run that waits on one
+unbatched decision call per request is measuring the wait.
 
 ## What would make this inconclusive
 

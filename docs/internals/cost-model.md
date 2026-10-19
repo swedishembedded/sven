@@ -10,9 +10,9 @@ it again.
 
 Everything here is **advisory and off by default**. A cost figure never
 overrides a permission, an approval, a context-window limit or a data-egress
-rule, and nothing in this page runs unless a `cost` or `routing` key turns it
-on (see [Configuration](../reference/configuration.md#cost)). Where a price is not declared the
-figure is `unknown`, and an unknown figure is never chosen.
+rule, and nothing in this page runs unless `cost.cache_aware` is set to `advise` or
+`enforce` (see [Configuration](../reference/configuration.md#cost)). Where a price
+is not declared the figure is `unknown`, and an unknown figure is never chosen.
 
 ## Where the inputs come from
 
@@ -20,10 +20,10 @@ figure is `unknown`, and an unknown figure is never chosen.
 |-------|--------|
 | token counts of a request | the request ledger's estimate ([token-ledger.md](token-ledger.md)), reconciled with what the provider reported |
 | cache hits and writes | the provider's own usage report of the previous request (`reported.cache_read`, `reported.cache_write`) |
-| prices, cache prices, cache time-to-live | declared: the `cost.prices` configuration, else `sven-model-catalog`'s `prices.yaml`; a model with neither has an unknown price |
+| prices, cache prices, cache time-to-live | declared: the `cost.prices` configuration (keyed `<driver id>/<model name>`), else `sven-model-catalog`'s `prices.yaml`; a model with neither has an unknown price |
 | time since the last request | the wall clock at the request boundary, owned by the executor |
 
-`sven-model-catalog` ships `prices.yaml` **empty**. A price is a fact about a
+`sven-model-catalog` ships `prices.yaml` **empty** (`prices: []`). A price is a fact about a
 contract and goes stale silently; declare the ones you pay. Prices are per
 million tokens in one currency that the declarer chooses; sven does not convert
 or label it.
@@ -50,9 +50,8 @@ model whose price is not declared is therefore never chosen on cost.
 
 `CacheState::expected` treats the cache as all or nothing: the prefix is warm
 when the last request was at most the time-to-live ago and cold otherwise. An
-idle time that is not known counts as expired. When a previous request exists
-`CacheState::after` uses what the provider reported it cached
-(`cache_read + cache_write`) instead of an estimate.
+idle time that is not known counts as expired. `CacheState::after` is the same expectation computed from what the provider
+reported the last request cached (`cache_read + cache_write`).
 
 ### Assumptions and limits
 
@@ -61,8 +60,9 @@ idle time that is not known counts as expired. When a previous request exists
 - Tokens are the ledger's estimate (`bytes_div_4`) unless the provider
   reported a figure; the residual of that estimate carries into every term.
 - A price that is declared wrongly is wrong in every decision made from it.
-- `cache_read_per_mtok` above `cache_write_per_mtok` is rejected: a cache hit
-  priced above a miss is not a cache.
+- A price must be a finite number of at least 0, and `cache.read_per_mtok`
+  above `cache.write_per_mtok` is rejected: a cache hit priced above a miss is
+  not a cache.
 
 ## Rebuild or keep
 
@@ -90,7 +90,8 @@ so far (capped); this is a heuristic, not a measurement.
 
 `CacheAware` (`off`, `advise`, `enforce`) and `gate` turn an assessment into an
 action. Only `enforce` skips, only a rebuild that is not needed to fit the
-model's window, and only on a known comparison that favours keeping. Each
+model's window, and only on a known comparison that favours keeping; an
+undeclared price rebuilds. Each
 decision is a `RebuildRecord` in the request's ledger record under `cost`.
 
 ### Where it is wired
@@ -103,7 +104,7 @@ holds, plus the tokens kept) and the one with them - with the model's declared
 price (`cost.prices` by `provider/model`, else the catalog's), the cache the
 previous request is expected to have left (`CacheState::expected` from what it
 reported reading and writing, and the idle time against the declared
-time-to-live) and the requests still expected (`cost.remaining_requests`, else
+time-to-live; without a declared cache time-to-live the cache counts as cold) and the requests still expected (`cost.remaining_requests`, else
 as many as the session has made, capped at 200). `advise` records the comparison
 and demotes anyway; `enforce` leaves the new demotions undone when they do not
 break even. Demotions an earlier request sent are never undone, so the gate
@@ -129,5 +130,6 @@ cost:
       cache: { read_per_mtok: 0.3, write_per_mtok: 3.75, ttl_secs: 300 }
 ```
 
-A price that is not usable (negative, or a cache read above a cache write) is
-reported and the gate stays off.
+A price that is not usable (negative, not finite, or a cache read above a cache
+write) is logged as a warning naming `cost.prices.<model>` and the gate stays
+off.

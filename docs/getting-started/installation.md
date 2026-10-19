@@ -2,18 +2,20 @@
 
 ## Requirements
 
-- A 64-bit Linux system (x86_64 or arm64)
+- Linux (x86_64 or aarch64) or macOS; the install script supports both
 - A terminal emulator that supports 256 colours (almost all modern terminals do)
-- An API key for at least one supported model provider (OpenAI or Anthropic)
+- A model to talk to: an API key for a hosted provider (OpenRouter, Anthropic,
+  OpenAI and others, see [Providers](../reference/providers.md)) or a local model server
 
 ---
 
 ## Option 0 - Install script (quickest)
 
-Downloads the latest release binary for your platform and installs it:
+Downloads the release binary for your platform from GitHub, checks that it runs,
+and installs it:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://agentsven.com/install | sh
+curl --proto '=https' --tlsv1.2 -sSf https://agentsven.com/install.sh | sh
 ```
 
 Environment variables:
@@ -24,16 +26,23 @@ Environment variables:
 | `SVEN_INSTALL_DIR` | `/usr/local/bin` | Where to put the binary |
 | `SVEN_NO_SUDO` | unset | Set to `1` to never use sudo (fails if the directory is not writable) |
 
+If the install directory is not writable and `sudo` is not available, the binary
+goes to `~/.local/bin` instead. The script tells you when the install directory
+is not on your `PATH`.
+
 ## Option 1 - Debian/Ubuntu package
 
-If a `.deb` package is available for your version, this is the simplest route.
+Each release attaches a `.deb` for x86_64 (`sven-linux-x86_64.deb`) and aarch64
+(`sven-linux-aarch64.deb`) on the
+[releases page](https://github.com/swedishembedded/sven/releases).
 
 ```sh
-sudo dpkg -i sven_0.1.0_amd64.deb
+sudo dpkg -i sven-linux-x86_64.deb
 ```
 
-The package places the `sven` binary at `/usr/bin/sven` and installs shell
-completion scripts for bash, zsh, and fish automatically.
+The package places the `sven` binary at `/usr/bin/sven`, installs shell
+completion scripts for bash, zsh, and fish, and registers the `sven://` URL
+handler used by [MCP OAuth](../guides/troubleshooting.md#mcp-oauth-authentication) sign-in.
 
 ---
 
@@ -48,7 +57,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 ```
 
-A recent stable toolchain (1.75 or later) is recommended.
+A recent stable toolchain is required.
 
 ### 2. Clone and build
 
@@ -78,7 +87,8 @@ export PATH="$PWD/target/release:$PATH"
 
 ## Shell completions
 
-sven can generate completion scripts for bash, zsh, and fish.
+`sven completions <shell>` prints a completion script for bash, zsh, fish, elvish
+or powershell. The common ones:
 
 **bash**
 
@@ -115,26 +125,22 @@ file for the change to take effect.
 sven --version
 ```
 
-You should see output like:
-
-```
-sven 0.1.0
-```
+It prints `sven` followed by the version number.
 
 ---
 
 ## Set your API key
 
-sven needs an API key to talk to a language model. The simplest way is to set
-an environment variable. Add one of these lines to your shell profile
-(`~/.bashrc`, `~/.zshrc`, or similar):
+sven needs a model to talk to. With no model configured, it picks a provider
+from the environment: a local brain server, then OpenRouter, Anthropic, OpenAI,
+and finally a local model server found on localhost. See
+[Default provider auto-detection](../reference/providers.md#default-provider-auto-detection).
 
-Sven defaults to OpenRouter (`openrouter/auto`), and auto-detects in the
-order brain → OpenRouter → Anthropic → OpenAI when a key is present.
-See [providers.md](../reference/providers.md#default-provider-auto-detection).
+For a hosted provider the simplest way is an environment variable. Add one of
+these lines to your shell profile (`~/.bashrc`, `~/.zshrc`, or similar):
 
 ```sh
-# OpenRouter (the default)
+# OpenRouter
 export OPENROUTER_API_KEY="sk-or-..."
 
 # OpenAI
@@ -151,7 +157,13 @@ You can also put the key in the sven config file - see
 
 ## Quick smoke test
 
-With your API key set, run:
+With a model available, check that sven can reach it:
+
+```sh
+sven doctor provider
+```
+
+then run a task:
 
 ```sh
 echo "Say hello in one sentence." | sven --headless

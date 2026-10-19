@@ -4,7 +4,7 @@ Sven implements the [Agent Client Protocol (ACP)](https://agentclientprotocol.or
 
 ## Architecture
 
-The server runs in-process, mirroring the existing MCP integration:
+The server runs in-process, as a single stdio JSON-RPC 2.0 endpoint:
 
 ```mermaid
 flowchart TD
@@ -19,7 +19,7 @@ flowchart TD
 
 ### `sven acp serve`
 
-The process reads the sven configuration (`~/.config/sven/config.yaml`), opens a fresh kernel session per ACP session through the shared `sven_frontend::SessionController` (which assembles it with `sven_bootstrap::RuntimeBuilder` and wraps it in a `KernelAgentSession`), and drives it directly. A mode change, or a model the agent switched to, rebuilds the session through the controller with the conversation and the MCP servers carried over.  Notifications (text deltas, tool calls, plan updates, mode changes) are streamed back to the client as `session/notification` messages.
+The process reads the sven configuration (`~/.config/sven/config.yaml`), opens a fresh kernel session per ACP session through the shared `sven_frontend::SessionController` (which assembles it with `sven_bootstrap::RuntimeBuilder` and wraps it in a `KernelAgentSession`), and drives it directly. A mode change, or a model the agent switched to, rebuilds the session through the controller with the conversation and the MCP servers carried over.  Notifications (text deltas, tool calls, plan updates, mode changes, usage) are streamed back to the client as `session/update` notifications.
 
 ## Running
 
@@ -28,9 +28,14 @@ The process reads the sven configuration (`~/.config/sven/config.yaml`), opens a
 sven acp serve
 ```
 
-`--model` and `--provider` override the configured model. Three flags bound
-the server, each only lowering what the configuration allows; the `task`
-tool passes its sub-agent's budgets through them:
+The same server is built as the standalone binary `sven-acp` (`sven-acp serve`,
+same flags). `-v` and `-vv` raise the log level; logs go to stderr because
+stdout is the transport.
+
+`--model MODEL` (bare name or `provider/model`; also read from `SVEN_MODEL`) and
+`--provider PROVIDER` (also `SVEN_PROVIDER`) override the configured model. The
+flags below bound the server, each only lowering what the configuration
+allows; the `task` tool passes its sub-agent's budgets through them:
 
 | Flag | Effect |
 |------|--------|
@@ -41,6 +46,7 @@ tool passes its sub-agent's budgets through them:
 | `--permission-timeout-secs SECS` | a tool call waits `SECS` for the client's permission answer before it is denied (default 60, at least 1) |
 | `--approval auto\|manual` | whose policy decides which calls go to the client (see below; default `auto`) |
 | `--command-patterns JSON` | replaces `tools.deny_patterns` and `tools.auto_approve_patterns` with `{"deny": [...], "auto_approve": [...]}` |
+| `--evidence-store DIR` | opens the chunk store of the delegating session, read-only (see [delegation](../concepts/delegation.md#sharing-the-store)); only `<root>/.sven/context/<session id>` is accepted |
 
 Under `--approval auto` (the default) the agent's own gate asks nobody, and
 a tool whose policy is `Ask` (`shell`, `write_file`, `edit_file`, MCP tools,
@@ -119,7 +125,7 @@ Add to `~/.config/zed/settings.json`:
 
 ## Session modes
 
-Each session advertises three modes that map 1-to-1 to sven's internal `AgentMode`:
+A new session starts in `agent`. Each session advertises three modes that map 1-to-1 to sven's internal `AgentMode`:
 
 | ACP mode ID  | Sven `AgentMode` | Behaviour                                               |
 |-------------|------------------|---------------------------------------------------------|
@@ -127,7 +133,7 @@ Each session advertises three modes that map 1-to-1 to sven's internal `AgentMod
 | `plan`      | `Plan`           | Proposes changes without writing files                  |
 | `research`  | `Research`       | Reads and searches; no file writes                      |
 
-Clients can switch modes at any time using the `session/setMode` RPC call.  Sven acknowledges the switch and reflects it back via a `CurrentModeUpdate` notification.
+Clients switch modes with the `session/set_mode` request, which rebuilds the session as described above; an unknown mode id selects `agent`. A mode change the agent makes itself is reported with a `CurrentModeUpdate` notification.
 
 ## Event mapping
 
@@ -135,18 +141,19 @@ The bridge layer in `crates/acp/src/bridge.rs` translates sven's internal `Agent
 
 | `sven_machines::AgentEvent`      | ACP `SessionUpdate`             |
 |----------------------------------|---------------------------------|
-| `TextDelta(s)` / `TextComplete(s)` | `AgentMessageChunk`           |
-| `ThinkingDelta(s)` / `ThinkingComplete(s)` | `AgentThoughtChunk`  |
+| `TextDelta(s)`                   | `AgentMessageChunk`             |
+| `ThinkingDelta(s)`               | `AgentThoughtChunk`             |
 | `ToolCallStarted(tc)`            | `ToolCall` (status: InProgress) |
 | `ToolCallFinished { ... }`         | `ToolCall` (status: Completed/Failed) |
 | `TodoUpdate(todos)`              | `Plan`                          |
 | `ModeChanged(mode)`              | `CurrentModeUpdate`             |
 | `Error(msg)`                     | `AgentMessageChunk` (prefixed `[error]`) |
 | `ToolProgress` / `ModelWaiting { ... }` | `Plan` (empty heartbeat; resets the client's inactivity timer) |
-| `ServedModelChanged { ... }` / `Warning(msg)` | `AgentThoughtChunk` (`[sven] ...`; a notice, not answer text) |
+| `ServedModelChanged { ... }` / `Warning(msg)` | `AgentThoughtChunk` (`[sven] ...`, a warning prefixed `warning:`; a notice, not answer text) |
+| `TokenUsage { ... }`             | `UsageUpdate` (the request's prompt size against the context window, its ledger under `_meta`; or the reported cost in USD when the provider gives one) |
 | `TurnComplete` / `Aborted`       | *(no notification; closes prompt response)* |
 
-Events not listed above (e.g. `TokenUsage`, `ContextCompacted`, collab events) are silently dropped; they carry no information that ACP clients currently consume.
+`TextComplete` and `ThinkingComplete` carry nothing the deltas did not. Events not listed above (e.g. `ContextCompacted`, collab, harness and sub-agent events) are not sent; they carry no information that ACP clients currently consume.
 
 ## Concurrency model
 

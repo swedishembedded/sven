@@ -30,10 +30,13 @@ When the stream ends, every slot that never parsed is finalized:
 2. Otherwise run `attempt_json_repair` (`crates/turn/src/tool_slots.rs`):
    fix invalid escape sequences, split fused keys, and close an open string
    and object.
-3. If every repair fails, substitute `{}` and log a warning.
+3. If every repair fails, substitute `{}` and log a warning. The model's raw
+   argument text is kept in the `ThreadStore` (`unparsed_arguments`), because the
+   thread holds the call with `{}` arguments.
 
-A slot with an empty name is dropped (it cannot be dispatched); a slot with an
-empty id gets a synthetic `tc_synthetic_N` id.
+A slot whose buffer is empty also gets `{}`. A slot with an empty name is
+dropped (it cannot be dispatched); a slot with an empty id gets a synthetic
+`tc_synthetic_N` id, where `N` is the number of slots in the response.
 
 ### `<invoke>` fallback
 
@@ -55,29 +58,52 @@ After the stream finishes, `TurnExecutor`:
    each result to the right thread under the exact id the model assigned.
 3. Posts `Event::LlmTurnComplete { thread, text, tool_calls }` to the machine.
 
-The machine's loop (`loop_core::on_llm_turn_complete`) emits one
-`Effect::CallTool` per proposed call, records them in its pending set, and
-stays in its current state while they run. The kernel classifies each
-`CallTool` individually against the session's permission policy; allowed calls
-go straight to the executor.
+`TurnExecutor` also annotates every proposed call with the capability of its tool
+(`ToolRegistry::capability_of_call`). The machine's loop
+(`loop_core::on_llm_turn_complete`) emits one `Effect::CallTool` per proposed
+call, records them in its pending set, and stays in its current state while they
+run. The kernel classifies each `CallTool` individually against the session's
+permission policy: allowed calls go straight to the executor, forbidden calls are
+answered with `ToolFailed`, and calls that need a person's approval wait for it
+(see [HSM Architecture](hsm-architecture.md#permission-policy---the-single-choke-point)).
 
 ---
 
 ## Execution - `ToolExecutor`
 
-Every `CallTool` effect is spawned on its own tokio task (spawn-and-forget), so
-the kernel's consumer loop returns immediately and all calls from one response
-run concurrently. Each invocation is bounded by a wall-clock watchdog (600 s by
-default) so a hung or panicking tool still produces a result instead of
-leaving the call pending forever.
+Before spawning, `ToolExecutor` fails the call at once (with `ToolFailed`) when
+tools are disabled for the session (`--no-tools`), when its capability is not in
+the executor's allow-list, when its registered tool exercises a different
+capability than the call was authorized as (harness `tool` steps), or when the
+model has not loaded the tool under deferred disclosure (the error tells it to
+call the discovery tool with `action=load`).
+
+Every other `CallTool` effect is spawned on its own tokio task
+(spawn-and-forget), so the kernel's consumer loop returns immediately and all
+calls from one response run concurrently. Each invocation is bounded by a
+wall-clock watchdog (600 s) so a hung or panicking tool still produces a result
+instead of leaving the call pending forever, and it is aborted if the run is
+cancelled. The call's arguments are checked against the tool's parameter schema
+and any violations are filed with the call's record in the trajectory; the call
+still runs, and the tool answers a bad argument in its own words.
 
 When a task finishes, `ToolExecutor`:
 
 1. Emits `UiEvent::ToolCallFinished` with the full, untruncated output.
-2. Appends the result to the call's thread, truncated by
-   `sven_turn::smart_truncate` according to the tool's `OutputCategory` (see
+2. Appends the result to the call's thread under the id the model assigned,
+   truncated by `sven_turn::smart_truncate` according to the tool's
+   `OutputCategory` to `agent.tool_result_token_cap` tokens (default 4000, 0
+   disables; see
    [prompt-compaction.md](prompt-compaction.md#layer-3---smart-tool-result-truncation)).
-3. Posts `Event::ToolSucceeded` or `Event::ToolFailed` to the machine.
+   An error result is stored with an `error: ` prefix.
+3. Posts `Event::ToolSucceeded` or `Event::ToolFailed` to the machine. On
+   success it first posts `ToolsActivated` and `InstructionsActivated` when the
+   call loaded tools or touched files that activate instructions, so the next
+   turn already offers them.
+
+A tool that parks a question instead of answering emits no result: the executor
+posts `Event::QuestionAsked`, and the call stays unresolved until a
+`HumanAnswered` arrives.
 
 Results arrive in completion order, not call order. The machine removes each
 call from its pending set; once the set is empty it emits the next
@@ -97,13 +123,18 @@ in the thread has a result when the model sees it again.
 
 ## Event ordering
 
-`AgentEvent` consumers (TUI, CI runner, ACP) see, per turn:
+`AgentEvent` consumers (TUI, CI runner, ACP) see, per model pass that proposed
+tool calls:
 
 ```
-ToolCallStarted(call A)      ← as soon as A's arguments parse, mid-stream
+ToolCallStarted(call A)      <- as soon as A's arguments parse, mid-stream
 ToolCallStarted(call B)
-  ... TurnComplete for the model turn ...
-  ... tool progress events (TodoUpdate, ModeChanged, ...) ...
+  ... tool progress events (ToolProgress, TodoUpdate, ModeChanged, ...) ...
 ToolCallFinished(whichever call finishes first)
 ToolCallFinished(the other)
 ```
+
+`TurnComplete` is not emitted after such a pass: the machine stays in its state
+and starts another pass once every call has a result. It is emitted only after a
+pass that ends with a non-empty, tool-free answer, and `Aborted` is emitted
+instead when the turn is cancelled.
