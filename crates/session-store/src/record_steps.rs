@@ -14,7 +14,7 @@
 //! calls. This is the one place that turns them into steps, so every export
 //! of a conversation says the same things the same way.
 
-use atif::{GateDecision, MemoryRetrieval, TraceStep};
+use atif::{CallTiming, GateDecision, MemoryRetrieval, TraceStep};
 use sven_model::Message;
 use sven_vocab::{CompactionRecord, RequestRecord};
 
@@ -33,6 +33,8 @@ pub struct ConversationFacts<'a> {
     pub gate_decisions: &'a [GateDecision],
     /// What memory retrievals returned.
     pub memory_retrievals: &'a [MemoryRetrieval],
+    /// How long tool calls ran.
+    pub call_timings: &'a [CallTiming],
 }
 
 /// The steps of `facts`. `as_sent` gives a call's raw argument text when the
@@ -63,6 +65,9 @@ pub fn conversation_steps(
     }
     for retrieval in facts.memory_retrievals {
         assembler.push_memory_retrieval(retrieval.clone());
+    }
+    for timing in facts.call_timings {
+        assembler.push_call_timing(timing.clone());
     }
     requests(&mut assembler, 0);
     for (position, message) in facts.messages.iter().enumerate() {

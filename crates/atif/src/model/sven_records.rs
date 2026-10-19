@@ -11,13 +11,16 @@
 //!
 //! ATIF leaves `extra` to its producer. A producer that records something
 //! other consumers must be able to rely on files it under a namespace; sven's
-//! is `sven`, and this module defines the two records a reader can depend on:
+//! is `sven`, and this module defines the three records a reader can depend on:
 //!
 //! - `extra.sven.gate` ([`GateRecord`]): what the permission gate decided
 //!   about each tool call the step made, who decided it, and any
 //!   tool-argument violations a schema pre-check found.
 //! - `extra.sven.memory` ([`MemoryRecord`]): what each memory retrieval the
 //!   step made returned, and which results were put into the model's context.
+//!
+//! - `extra.sven.timing` ([`TimingRecord`]): how long each tool call the step
+//!   made took to run, in wall-clock milliseconds.
 //!
 //! A step can make several calls, so each record is an envelope holding one
 //! entry per call, and carries a `schema` string naming its version. A reader
@@ -249,6 +252,62 @@ impl MemoryRecord {
     }
 
     /// The record at `extra.sven.memory`, if present and well-formed.
+    #[must_use]
+    pub fn from_extra(extra: &Value) -> Option<Self> {
+        let value = extra.get(SVEN_EXTRA_KEY)?.get(Self::NAME)?;
+        serde_json::from_value(value.clone()).ok()
+    }
+}
+
+// ── extra.sven.timing ────────────────────────────────────────────────────────
+
+/// How long one tool call took.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallTiming {
+    /// The `tool_call_id` of the call; it names a call of the same step.
+    pub call_id: String,
+    /// Wall-clock milliseconds from the moment the executor started the tool
+    /// to the moment it had an outcome (a result, a failure, the watchdog's
+    /// abort). Time spent waiting for approval is not part of it. Finite and
+    /// not negative.
+    pub duration_ms: f64,
+}
+
+/// `extra.sven.timing`: the durations of the calls one step made.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimingRecord {
+    /// Always [`TimingRecord::SCHEMA`] for a record this crate writes.
+    pub schema: String,
+    /// One entry per call that ran, in call order. A call that never ran (the
+    /// gate refused it, the run was cancelled first) has none.
+    pub calls: Vec<CallTiming>,
+}
+
+impl TimingRecord {
+    /// The version string of the shape defined here.
+    pub const SCHEMA: &'static str = "sven.timing.v1";
+    /// The name this record is filed under inside `extra.sven`.
+    pub const NAME: &'static str = "timing";
+
+    /// A record of `calls`.
+    #[must_use]
+    pub fn new(calls: Vec<CallTiming>) -> Self {
+        Self {
+            schema: Self::SCHEMA.to_string(),
+            calls,
+        }
+    }
+
+    /// Files this record at `extra.sven.timing`, replacing any earlier one.
+    pub fn insert_into_extra(&self, extra: &mut Option<Value>) {
+        insert_record(
+            extra,
+            Self::NAME,
+            serde_json::to_value(self).expect("TimingRecord always serializes"),
+        );
+    }
+
+    /// The record at `extra.sven.timing`, if present and well-formed.
     #[must_use]
     pub fn from_extra(extra: &Value) -> Option<Self> {
         let value = extra.get(SVEN_EXTRA_KEY)?.get(Self::NAME)?;

@@ -29,9 +29,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use atif::{
-    AgentProfile, ContextManagement, FinalMetrics, GateDecision, MemoryRetrieval, MessageBody,
-    ObservationEntry, StepMetrics, StepObservation, StepOrigin, SubagentRef, ToolInvocation,
-    TraceStep, Trajectory,
+    AgentProfile, CallTiming, ContextManagement, FinalMetrics, GateDecision, MemoryRetrieval,
+    MessageBody, ObservationEntry, StepMetrics, StepObservation, StepOrigin, SubagentRef,
+    ToolInvocation, TraceStep, Trajectory,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -489,6 +489,14 @@ impl StepAssembler {
     pub fn push_memory_retrieval(&mut self, retrieval: MemoryRetrieval) {
         let call_id = retrieval.call_id.clone();
         self.records.add_retrieval(retrieval);
+        self.reannotate_closed_step_of(&call_id);
+    }
+
+    /// Records how long a tool call ran, as `extra.sven.timing` of the step
+    /// that made the call. Timing is as for [`Self::push_gate_decision`].
+    pub fn push_call_timing(&mut self, timing: CallTiming) {
+        let call_id = timing.call_id.clone();
+        self.records.add_timing(timing);
         self.reannotate_closed_step_of(&call_id);
     }
 

@@ -191,11 +191,13 @@ fn scripts_from(trajectory: &atif::Trajectory) -> Vec<Vec<ResponseEvent>> {
     scripts
 }
 
-/// Drops the fields that name when something happened, not what.
+/// Drops the fields that measure when or for how long something happened, not
+/// what: a timestamp and a tool call's wall-clock duration.
 fn without_timestamps(mut value: Value) -> Value {
     match &mut value {
         Value::Object(map) => {
             map.remove("timestamp");
+            map.remove("duration_ms");
             for v in map.values_mut() {
                 *v = without_timestamps(v.take());
             }

@@ -276,6 +276,12 @@ impl RuntimeHandle {
         read_store(&self.conv_store, |store| store.memory_retrievals().to_vec())
     }
 
+    /// How long each tool call the session ran took, ordered by call id.
+    #[must_use]
+    pub fn call_timings(&self) -> Vec<atif::CallTiming> {
+        read_store(&self.conv_store, ThreadStore::call_timings)
+    }
+
     /// Notes in the conversation store that a person decided the approval
     /// `approval_id` for a call needing `capability`, from outside the run
     /// (a parked approval decided by whoever picked it up). A decision made

@@ -36,6 +36,7 @@ pub(super) struct Evidence {
     requests: Vec<(usize, sven_vocab::RequestRecord)>,
     gate_decisions: Vec<atif::GateDecision>,
     memory_retrievals: Vec<atif::MemoryRetrieval>,
+    call_timings: Vec<atif::CallTiming>,
     unparsed_arguments: std::collections::HashMap<String, String>,
     children: Vec<ChildRecord>,
     model: String,
@@ -57,7 +58,15 @@ impl Evidence {
         // The store's transcript, not its thread: a compaction rewrites the
         // thread to what the model reads next, the transcript is what
         // happened.
-        let (messages, compactions, requests, gate_decisions, memory_retrievals, unparsed) = handle
+        let (
+            messages,
+            compactions,
+            requests,
+            gate_decisions,
+            memory_retrievals,
+            call_timings,
+            unparsed,
+        ) = handle
             .conversation_store()
             .lock()
             .map(|store| {
@@ -71,6 +80,7 @@ impl Evidence {
                     store.transcript_requests(&thread),
                     store.gate_decisions(),
                     store.memory_retrievals().to_vec(),
+                    store.call_timings(),
                     store.unparsed_arguments().clone(),
                 )
             })
@@ -91,6 +101,7 @@ impl Evidence {
             requests,
             gate_decisions,
             memory_retrievals,
+            call_timings,
             unparsed_arguments: unparsed,
             children,
             model,
@@ -126,6 +137,7 @@ impl HarnessRun {
                 requests: &evidence.requests,
                 gate_decisions: &evidence.gate_decisions,
                 memory_retrievals: &evidence.memory_retrievals,
+                call_timings: &evidence.call_timings,
             },
             &|message| {
                 let mut message = message.clone();

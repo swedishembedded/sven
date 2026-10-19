@@ -325,7 +325,8 @@ run leaves a valid partial document.
 
 A step whose tool call the permission gate decided about, or whose arguments
 broke the tool's parameter schema, carries `extra.sven.gate`; a step that read
-from memory carries `extra.sven.memory`. Their fields are listed in
+from memory carries `extra.sven.memory`; a step whose tool calls ran carries
+`extra.sven.timing` (milliseconds per call). Their fields are listed in
 **[The Sven SDK](../reference/sdk.md)**, section "Trajectories".
 
 Every headless run also writes a trajectory to `.sven/logs/<timestamp>.atif.json`

@@ -370,6 +370,7 @@ impl EffectExecutor for ToolExecutor {
             // pending set forever and the session wedges holding its whole
             // object graph — with no error surfaced anywhere.
             let recorder = CallRecorder::new();
+            let started = std::time::Instant::now();
             let output = {
                 // Shadowed inside this block only; the outer `registry` is
                 // still used below for `output_category`.
@@ -419,6 +420,8 @@ impl EffectExecutor for ToolExecutor {
                 }
             };
 
+            let ran_for = started.elapsed();
+
             // What the tool says it retrieved belongs to this call, whatever
             // came of the call.
             if mapping.is_some() {
@@ -456,6 +459,15 @@ impl EffectExecutor for ToolExecutor {
                     })
                     .await;
                 return;
+            }
+
+            // The call concluded: how long it took goes to the trajectory,
+            // whatever came of it (a failure and the watchdog's abort took
+            // time too). A parked call returned above has not concluded.
+            if mapping.is_some() {
+                if let Ok(mut s) = store.lock() {
+                    s.record_call_timing(&tool_call.id, ran_for);
+                }
             }
 
             // Emit the outward completion observation so headless / UI observers

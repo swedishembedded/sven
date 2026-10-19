@@ -74,6 +74,7 @@ pub(crate) fn record_child(
     let threads = store.transcript_threads();
     let single = threads.len() == 1;
     let gate_decisions = store.gate_decisions();
+    let call_timings = store.call_timings();
     let trajectories = threads
         .iter()
         .map(|thread| {
@@ -96,6 +97,7 @@ pub(crate) fn record_child(
                     requests: &requests,
                     gate_decisions: &gate_decisions,
                     memory_retrievals: store.memory_retrievals(),
+                    call_timings: &call_timings,
                 },
                 &|message| {
                     let mut message = message.clone();

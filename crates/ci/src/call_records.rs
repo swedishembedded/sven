@@ -10,20 +10,21 @@
 //! The records of what happened to a run's calls, carried from the sessions
 //! that made them into the trajectory the runner writes.
 //!
-//! The gate's decisions and the memory a call read are kept in the session's
+//! The gate's decisions, the memory a call read and how long it ran are kept in the session's
 //! conversation store, not announced as events a surface might miss, so a
 //! runner reads them from the session once its turn has run. A session lasts
 //! one turn, so the runner keeps what each turn left.
 
-use atif::{GateDecision, MemoryRetrieval};
+use atif::{CallTiming, GateDecision, MemoryRetrieval};
 use sven_bootstrap::RuntimeHandle;
 use sven_session_store::StepAssembler;
 
-/// Gate decisions and memory retrievals of the calls a run has made.
+/// Gate decisions, memory retrievals and durations of the calls a run has made.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct CallRecords {
     decisions: Vec<GateDecision>,
     retrievals: Vec<MemoryRetrieval>,
+    timings: Vec<CallTiming>,
 }
 
 impl CallRecords {
@@ -32,6 +33,7 @@ impl CallRecords {
         Self {
             decisions: handle.gate_decisions(),
             retrievals: handle.memory_retrievals(),
+            timings: handle.call_timings(),
         }
     }
 
@@ -49,6 +51,16 @@ impl CallRecords {
             }
         }
         self.retrievals.extend(later.retrievals);
+        for timing in later.timings {
+            match self
+                .timings
+                .iter_mut()
+                .find(|known| known.call_id == timing.call_id)
+            {
+                Some(known) => *known = timing,
+                None => self.timings.push(timing),
+            }
+        }
     }
 
     /// Hands the records to `assembler`, which files each under the step that
@@ -59,6 +71,9 @@ impl CallRecords {
         }
         for retrieval in &self.retrievals {
             assembler.push_memory_retrieval(retrieval.clone());
+        }
+        for timing in &self.timings {
+            assembler.push_call_timing(timing.clone());
         }
     }
 }

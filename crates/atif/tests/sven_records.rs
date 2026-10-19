@@ -7,13 +7,13 @@
 // expertise in agent audit trails you can procure our services by sending an
 // email to info@swedishembedded.com.
 
-//! The `extra.sven.gate` and `extra.sven.memory` records: their wire shape,
+//! The `extra.sven.gate`, `extra.sven.memory` and `extra.sven.timing` records: their wire shape,
 //! and the rules `validate_trajectory` enforces on them.
 
 use atif::{
-    validate_trajectory, AgentProfile, ArgumentViolation, GateAuthority, GateDecision, GateOutcome,
-    GateRecord, MemoryAnchor, MemoryRecord, MemoryResult, MemoryRetrieval, StepOrigin,
-    ToolInvocation, TraceStep, Trajectory, ValidationError,
+    validate_trajectory, AgentProfile, ArgumentViolation, CallTiming, GateAuthority, GateDecision,
+    GateOutcome, GateRecord, MemoryAnchor, MemoryRecord, MemoryResult, MemoryRetrieval, StepOrigin,
+    TimingRecord, ToolInvocation, TraceStep, Trajectory, ValidationError,
 };
 use serde_json::{json, Value};
 
@@ -197,6 +197,59 @@ fn a_memory_result_missing_its_unit_id_is_refused() {
             e,
             ValidationError::InvalidSvenRecord {
                 record: "sven.memory",
+                ..
+            }
+        )),
+        "{errs:?}"
+    );
+}
+
+fn timing(call_id: &str, duration_ms: f64) -> CallTiming {
+    CallTiming {
+        call_id: call_id.to_string(),
+        duration_ms,
+    }
+}
+
+#[test]
+fn a_timing_record_is_written_under_extra_sven_timing_and_validates() {
+    let t = trajectory_with(|step| {
+        TimingRecord::new(vec![timing("call_1", 12.5)]).insert_into_extra(&mut step.extra);
+        GateRecord::new(vec![decision("call_1")]).insert_into_extra(&mut step.extra);
+    });
+    let extra = t.steps[0].extra.as_ref().unwrap();
+    assert_eq!(extra["sven"]["timing"]["schema"], "sven.timing.v1");
+    assert_eq!(extra["sven"]["timing"]["calls"][0]["call_id"], "call_1");
+    assert_eq!(extra["sven"]["timing"]["calls"][0]["duration_ms"], 12.5);
+    assert_eq!(extra["sven"]["gate"]["schema"], "sven.gate.v1");
+    assert_eq!(validate_trajectory(&t), Ok(()));
+    let back = TimingRecord::from_extra(extra).unwrap();
+    assert_eq!(back.calls, vec![timing("call_1", 12.5)]);
+}
+
+#[test]
+fn a_timing_naming_a_call_the_step_did_not_make_or_a_negative_duration_is_refused() {
+    let dangling = trajectory_with(|step| {
+        TimingRecord::new(vec![timing("call_9", 1.0)]).insert_into_extra(&mut step.extra);
+    });
+    let errs = validate_trajectory(&dangling).unwrap_err();
+    assert!(
+        errs.iter().any(|e| matches!(
+            e,
+            ValidationError::DanglingSvenCallId { record: "sven.timing", call_id, .. }
+                if call_id == "call_9"
+        )),
+        "{errs:?}"
+    );
+    let negative = trajectory_with(|step| {
+        TimingRecord::new(vec![timing("call_1", -1.0)]).insert_into_extra(&mut step.extra);
+    });
+    let errs = validate_trajectory(&negative).unwrap_err();
+    assert!(
+        errs.iter().any(|e| matches!(
+            e,
+            ValidationError::InvalidSvenRecord {
+                record: "sven.timing",
                 ..
             }
         )),

@@ -80,6 +80,9 @@ pub struct AgentState {
     /// first.
     #[serde(default)]
     pub(crate) memory_retrievals: Vec<atif::MemoryRetrieval>,
+    /// How long each tool call the agent made ran, by call id.
+    #[serde(default)]
+    pub(crate) call_timings: Vec<atif::CallTiming>,
     /// The sequence number the agent's next event will carry. Kept here so the
     /// numbering of an agent's events carries on across a resume.
     #[serde(default)]
@@ -103,7 +106,7 @@ pub(crate) struct CompactionMark {
 impl AgentState {
     /// The format this build writes.
     ///
-    /// Version 4 added the record, the whole conversation the trajectory is
+    /// Version 5 added how long each tool call ran; version 4 added the record, the whole conversation the trajectory is
     /// built from; version 3 added the account of each model request; version 2 added the gate decisions and memory retrievals of the agent's
     /// calls; version 1 added the format version itself, the event sequence and
     /// the parked run. Version 0 is every state written before: it has none of
@@ -111,7 +114,7 @@ impl AgentState {
     /// nowhere, and is written back as the current version. A state with a
     /// version above this one was written by a newer build and is refused by
     /// [`Engine::resume`](crate::Engine::resume) rather than resumed wrongly.
-    pub const CURRENT_VERSION: u32 = 4;
+    pub const CURRENT_VERSION: u32 = 5;
 
     /// Creates the state of an agent that has not run yet.
     #[must_use]
@@ -133,6 +136,7 @@ impl AgentState {
             unparsed_arguments: BTreeMap::new(),
             gate_decisions: Vec::new(),
             memory_retrievals: Vec::new(),
+            call_timings: Vec::new(),
         }
     }
 
@@ -143,6 +147,7 @@ impl AgentState {
         &mut self,
         decisions: Vec<atif::GateDecision>,
         retrievals: &[atif::MemoryRetrieval],
+        timings: Vec<atif::CallTiming>,
     ) {
         for decision in decisions {
             match self
@@ -155,6 +160,16 @@ impl AgentState {
             }
         }
         self.memory_retrievals.extend(retrievals.iter().cloned());
+        for timing in timings {
+            match self
+                .call_timings
+                .iter_mut()
+                .find(|known| known.call_id == timing.call_id)
+            {
+                Some(known) => *known = timing,
+                None => self.call_timings.push(timing),
+            }
+        }
     }
 
     /// Keeps the account of the requests a run made. `lined_up` is whether

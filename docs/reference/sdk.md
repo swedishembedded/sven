@@ -688,6 +688,18 @@ What the document says about the model's view of the run:
   `rank` and `inserted` (whether it was put into the model's context). The
   executor fills in `call_id`. The tool must record before it hands work to a
   task of its own.
+- **Tool durations.** The step that made a call that ran carries
+  `extra.sven.timing`: `{"schema": "sven.timing.v1", "calls": [...]}`, each
+  entry with `call_id` and `duration_ms`, the wall-clock time in milliseconds
+  (fractional, finite, not negative) from the executor starting the tool to the
+  tool's outcome: a result, a failure, or the executor's watchdog aborting it.
+  Time spent waiting for an approval is not part of it. A call that never ran
+  (the gate refused it) and a call still parked on a question have no entry.
+  `validate_trajectory` refuses an entry that names a call of another step or
+  carries a negative or non-finite duration. ATIF itself stays at v1.7: the
+  figure lives under sven's `extra` namespace like the other records, and a
+  record's `schema` string versions its shape, so a reader refuses a version it
+  does not know.
 - **Guarantees.** Both records are filed from the kernel's conversation store,
   not from progress events, so a subscriber that lagged cannot lose them; they
   persist in `AgentState`, so a resumed agent exports them again. A reader
@@ -737,7 +749,7 @@ let agents = sven_sdk::workspace::discover_agents(Some(&project_root));
 An `AgentState` names the format it was written in (`AgentState::version`,
 `AgentState::CURRENT_VERSION`). A state written before states were versioned
 reads as version 0 and resumes: the fields a newer format added start from
-their defaults (the event numbering at zero, no parked run), and it is written
+their defaults (the event numbering at zero, no parked run, no call durations), and it is written
 back as the current version. A state from a newer format than the build
 reads is refused by `Engine::resume` with `CallError::Precondition` instead
 of being resumed wrongly.

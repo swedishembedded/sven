@@ -35,6 +35,10 @@ none is guessed. Sampling that was asked for goes on every request: `RunOptions:
 (temperature, top-p, top-k, seed) and `RunOptions::want_logprobs` for the SDK, the same
 for every child the run starts.
 
+What each tool call cost in time is on the step that made it: `extra.sven.timing` holds the
+wall-clock milliseconds of each call's execution (see the SDK reference, "Tool durations"). A
+call that never ran has no entry.
+
 The log-probability is the sampler's: the temperature-scaled, top-k and top-p truncated
 softmax a token was drawn from, and `0.0` under greedy decoding. It is not the untruncated
 model distribution; a consumer that needs that scores the tokens with a forward pass.
@@ -94,6 +98,8 @@ the transcript like any other. Nested children are listed flat, each with its de
 - With a scripted mock provider a run is exactly reproducible: the same scripts, tools and
   sampling give the same event stream and the same trajectory (`crates/sdk/tests/reproduce.rs`),
   and a trajectory alone holds what is needed to rebuild the model's side of the stream.
+  The two measurements of a run, its timestamps and each tool call's `duration_ms`, differ from
+  run to run and are the only fields that do.
 - The seed recorded is the one the server reports it used, also for a request that
   carried none (the server draws one and echoes it); only a server that reports none
   leaves the step with the requested seed or none.

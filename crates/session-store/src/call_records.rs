@@ -13,17 +13,20 @@
 //! The facts arrive on their own schedule. A decision can be made before the
 //! model's call is complete, or after the step that holds the call has closed,
 //! so they are kept by call id and written onto whichever step holds the call
-//! as `extra.sven.gate` and `extra.sven.memory`, whenever either appears.
+//! as `extra.sven.gate`, `extra.sven.memory` and `extra.sven.timing`, whenever either appears.
 
 use std::collections::BTreeMap;
 
-use atif::{GateDecision, GateRecord, MemoryRecord, MemoryRetrieval, TraceStep};
+use atif::{
+    CallTiming, GateDecision, GateRecord, MemoryRecord, MemoryRetrieval, TimingRecord, TraceStep,
+};
 
-/// Gate decisions and memory retrievals, by the id of the call they concern.
+/// Gate decisions, memory retrievals and durations, by the id of the call they concern.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct CallRecords {
     decisions: BTreeMap<String, GateDecision>,
     retrievals: BTreeMap<String, Vec<MemoryRetrieval>>,
+    timings: BTreeMap<String, CallTiming>,
 }
 
 impl CallRecords {
@@ -38,6 +41,12 @@ impl CallRecords {
             .entry(retrieval.call_id.clone())
             .or_default()
             .push(retrieval);
+    }
+
+    /// Keeps `timing` for its call, replacing an earlier one: a call runs
+    /// once, and a record read back after a resume restates it.
+    pub(crate) fn add_timing(&mut self, timing: CallTiming) {
+        self.timings.insert(timing.call_id.clone(), timing);
     }
 
     /// Writes the records of the calls `step` made into its `extra`, in the
@@ -58,11 +67,18 @@ impl CallRecords {
             .flatten()
             .cloned()
             .collect();
+        let timings: Vec<CallTiming> = ids
+            .iter()
+            .filter_map(|id| self.timings.get(*id).cloned())
+            .collect();
         if !decisions.is_empty() {
             GateRecord::new(decisions).insert_into_extra(&mut step.extra);
         }
         if !retrievals.is_empty() {
             MemoryRecord::new(retrievals).insert_into_extra(&mut step.extra);
+        }
+        if !timings.is_empty() {
+            TimingRecord::new(timings).insert_into_extra(&mut step.extra);
         }
     }
 }

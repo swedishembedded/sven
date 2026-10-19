@@ -58,7 +58,11 @@ impl Agent {
                     .iter()
                     .map(|(id, raw)| (id.clone(), raw.clone())),
             );
-            state.absorb_call_records(store.gate_decisions(), store.memory_retrievals());
+            state.absorb_call_records(
+                store.gate_decisions(),
+                store.memory_retrievals(),
+                store.call_timings(),
+            );
             (held, compactions)
         });
 

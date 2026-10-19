@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use atif::{GateAuthority, GateDecision, GateOutcome, MemoryRetrieval};
+use atif::{CallTiming, GateAuthority, GateDecision, GateOutcome, MemoryRetrieval};
 use sven_hsm::{ProposedToolCall, ToolCallId, ToolCapability};
 use sven_tool_registry::ToolRegistry;
 
@@ -46,6 +46,8 @@ pub struct ThreadStore {
     gate_decisions: HashMap<String, GateDecision>,
     /// What each memory retrieval a tool made returned, oldest first.
     memory_retrievals: Vec<MemoryRetrieval>,
+    /// How long each tool call ran, by the model's call id.
+    call_timings: HashMap<String, CallTiming>,
     /// Every message ever appended, in order, with its thread. Unlike the
     /// threads, which a compaction rewrites to what the model reads next, this
     /// is never rewritten: it is the record of what happened, which a
@@ -251,6 +253,26 @@ impl ThreadStore {
     #[must_use]
     pub fn memory_retrievals(&self) -> &[MemoryRetrieval] {
         &self.memory_retrievals
+    }
+
+    /// Keeps how long the tool call the model named `call_id` ran, replacing
+    /// an earlier figure for the same call.
+    pub fn record_call_timing(&mut self, call_id: &str, duration: std::time::Duration) {
+        self.call_timings.insert(
+            call_id.to_string(),
+            CallTiming {
+                call_id: call_id.to_string(),
+                duration_ms: duration.as_secs_f64() * 1000.0,
+            },
+        );
+    }
+
+    /// Every call duration recorded so far, ordered by call id.
+    #[must_use]
+    pub fn call_timings(&self) -> Vec<CallTiming> {
+        let mut timings: Vec<_> = self.call_timings.values().cloned().collect();
+        timings.sort_by(|a, b| a.call_id.cmp(&b.call_id));
+        timings
     }
 
     /// Notes that a thread was compacted. Call alongside

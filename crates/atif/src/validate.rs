@@ -22,7 +22,9 @@ use thiserror::Error;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::model::{GateRecord, MemoryRecord, StepOrigin, TraceStep, Trajectory, SVEN_EXTRA_KEY};
+use crate::model::{
+    GateRecord, MemoryRecord, StepOrigin, TimingRecord, TraceStep, Trajectory, SVEN_EXTRA_KEY,
+};
 
 /// A single ATIF v1.7 rule violation, as collected by [`validate_trajectory`].
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -363,6 +365,25 @@ fn validate_sven_records(step: &TraceStep, errors: &mut Vec<ValidationError>) {
         &|value| {
             parse::<MemoryRecord>(value)
                 .map(|r| r.retrievals.into_iter().map(|d| d.call_id).collect())
+        },
+    );
+    check(
+        "sven.timing",
+        TimingRecord::NAME,
+        TimingRecord::SCHEMA,
+        &|value| {
+            let record = parse::<TimingRecord>(value)?;
+            if let Some(bad) = record
+                .calls
+                .iter()
+                .find(|c| !c.duration_ms.is_finite() || c.duration_ms < 0.0)
+            {
+                return Err(format!(
+                    "call `{}` has duration_ms {}, which is not a finite, non-negative number",
+                    bad.call_id, bad.duration_ms
+                ));
+            }
+            Ok(record.calls.into_iter().map(|c| c.call_id).collect())
         },
     );
 }
