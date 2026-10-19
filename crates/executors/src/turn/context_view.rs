@@ -89,7 +89,12 @@ impl TurnExecutor {
 
     fn assemble_view(&mut self, history: &[Message]) -> Option<View> {
         let assembler = self.context.as_mut()?;
-        Some(assembler.assemble(history.to_vec()))
+        let Some(cache) = &self.cache_ctx else {
+            return Some(assembler.assemble(history.to_vec()));
+        };
+        let assembled = assembler.assemble_with(history.to_vec(), cache);
+        self.rebuilds.extend(assembled.rebuilds);
+        Some((assembled.messages, assembled.view))
     }
 }
 

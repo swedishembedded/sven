@@ -21,6 +21,7 @@
 
 mod agent;
 mod context;
+mod cost;
 mod delegation;
 mod disclosure;
 mod listing;
@@ -36,6 +37,7 @@ use sven_model_drivers::{providers_schema, ModelConfig, Providers};
 
 pub use agent::AgentConfig;
 pub use context::{AssemblyConfig, AssemblyMode, ContextSettings};
+pub use cost::CostSettings;
 pub use delegation::{DelegationConfig, DelegationPolicy};
 pub use disclosure::DisclosureConfig;
 pub use listing::ListingConfig;
@@ -75,6 +77,10 @@ pub struct Config {
     /// How the context of a request is assembled from the conversation. See
     /// `docs/technical/context-assembly.md`.
     pub context: ContextSettings,
+    /// Whether a rewrite of the prompt is weighed against the provider's
+    /// prompt cache, and the prices that uses. See
+    /// `docs/technical/cost-model.md`.
+    pub cost: CostSettings,
     /// Whether `task` declines a sub-agent that would cost more than it
     /// saves. See `docs/technical/delegation.md`.
     pub delegation: DelegationConfig,
@@ -99,6 +105,7 @@ impl Config {
             ("mcp_servers", mcp_servers_schema()),
             ("decision", DecisionConfig::schema()),
             ("context", ContextSettings::schema()),
+            ("cost", CostSettings::schema()),
             ("delegation", DelegationConfig::schema()),
             ("skills", ListingConfig::schema()),
             ("subagents", ListingConfig::schema()),

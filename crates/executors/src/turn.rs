@@ -74,6 +74,9 @@ use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
 mod compaction;
 mod context_view;
+mod cost_gate;
+
+pub use cost_gate::CostPolicy;
 mod instructions;
 
 use crate::chunks::ContextAssembler;
@@ -129,6 +132,14 @@ pub struct TurnExecutor {
     decisions: Option<Arc<DecisionTelemetry>>,
     /// Builds the context view of each request when addressable context is on.
     context: Option<ContextAssembler>,
+    /// How a demotion is weighed against the provider's prompt cache.
+    cost: CostPolicy,
+    /// What the previous requests left in that cache.
+    cache_usage: Arc<Mutex<cost_gate::CacheUsage>>,
+    /// The gate's view of the request being built.
+    cache_ctx: Option<crate::CacheContext>,
+    /// The rebuild decisions made for the request being built, for its record.
+    rebuilds: Vec<sven_vocab::cost::RebuildRecord>,
     /// Activates and announces conditional instructions each turn.
     instructions: Option<Arc<sven_turn::instructions::Activator>>,
 }
@@ -194,6 +205,10 @@ impl TurnExecutor {
             warned_without_tools: std::collections::HashSet::new(),
             decisions: None,
             context: None,
+            cost: CostPolicy::default(),
+            cache_usage: Arc::new(Mutex::new(cost_gate::CacheUsage::default())),
+            cache_ctx: None,
+            rebuilds: Vec::new(),
             instructions: None,
             no_tools: false,
             compaction: CompactionConfig::default(),
@@ -322,6 +337,8 @@ impl EffectExecutor for TurnExecutor {
         // the model never sees a single tool definition. The context view is
         // decided with them: a request that carries a reference offers the tool
         // that expands it (see `context_view`).
+        self.cache_ctx = self.cache_context(model.as_ref());
+        self.rebuilds.clear();
         let planned = self.plan_request(&req, &messages);
         let expandable = context_view::offers_expansion(&planned.offered);
         let mut view = planned.view;
@@ -472,6 +489,8 @@ impl EffectExecutor for TurnExecutor {
         let catalog_context_window = context_window.unwrap_or(0);
         let catalog_max_output = configured_max_output.unwrap_or(0);
         let decisions = self.decisions.clone();
+        let cache_usage = Arc::clone(&self.cache_usage);
+        let rebuilds = std::mem::take(&mut self.rebuilds);
         // Teed copy of the assistant text streamed so far. `stream_turn`'s
         // own return value is unreachable on cancellation (its future is
         // dropped mid-poll by the `select!` below), so this is the only
@@ -509,6 +528,17 @@ impl EffectExecutor for TurnExecutor {
                             notices::charge_decisions(decisions, breakdown);
                         }
                         breakdown.context_view.clone_from(&context_view);
+                        if !rebuilds.is_empty() {
+                            breakdown.cost = Some(sven_vocab::cost::CostRecord {
+                                rebuilds: rebuilds.clone(),
+                            });
+                        }
+                        // What this request read and wrote is what the cache
+                        // is expected to hold for the next.
+                        cache_usage
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .finished(cache_read.saturating_add(*cache_write));
                     }
                     (*cache_read_total, *cache_write_total) = notices::add_cache_totals(
                         &cache_totals,

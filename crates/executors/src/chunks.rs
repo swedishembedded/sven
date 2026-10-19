@@ -28,11 +28,14 @@ use sven_chunks::{
     indicates_failure, ChunkDraft, ChunkId, Lifetime, Provenance, Sensitivity, SharedChunkStore,
     SourceProbe,
 };
+use sven_cost::{CacheAware, CacheState, Necessity, RebuildCandidate};
 use sven_model::{Message, MessageContent};
+use sven_model_catalog::Pricing;
 use sven_turn::assembly::{
     classify, path_argument, AssembledView, ContextPolicy, DeterministicAdvisor, Evidence,
     VisibilityAdvisor,
 };
+use sven_vocab::cost::{RebuildKind, RebuildRecord};
 use sven_vocab::{ContextView, DemotionRecord};
 use tracing::warn;
 
@@ -149,6 +152,38 @@ fn args_canonical(arguments: &str) -> String {
     sven_turn::ledger::canonical_json(arguments)
 }
 
+/// What the cache-aware gate needs to know about the request being built.
+#[derive(Debug, Clone)]
+pub struct CacheContext {
+    /// Whether to weigh a demotion against the cache it discards, and whether
+    /// to act on the answer.
+    pub mode: CacheAware,
+    /// The declared price of the model; `None` is unknown, never free.
+    pub pricing: Option<Pricing>,
+    /// Prefix tokens the provider's cache is expected to still hold.
+    pub warm_tokens: u32,
+    /// Requests made in this session so far.
+    pub requests_so_far: u32,
+    /// Requests still expected, when the configuration declares them.
+    pub declared_remaining: Option<u32>,
+    /// The most input tokens the model's window admits, when known: a
+    /// demotion needed to get under it is never skipped for cost.
+    pub input_budget: Option<usize>,
+}
+
+/// The most requests a rebuild is weighed over when none is declared.
+const MAX_ASSUMED_REMAINING: u32 = 200;
+
+/// The context view of a request, and the cache-aware decisions made on the way.
+#[derive(Debug, Clone)]
+pub struct Assembled {
+    pub messages: Vec<Message>,
+    pub view: ContextView,
+    /// The demotions that were weighed against the cache, with the numbers.
+    /// Empty when the gate is off or there was nothing new to weigh.
+    pub rebuilds: Vec<RebuildRecord>,
+}
+
 /// Builds the context view of each request from the thread's history.
 pub struct ContextAssembler {
     policy: ContextPolicy,
@@ -183,6 +218,11 @@ impl ContextAssembler {
     /// [`mark_sent`](Self::mark_sent) once it is the record of a request that
     /// is really sent.
     pub fn assemble(&mut self, messages: Vec<Message>) -> (Vec<Message>, ContextView) {
+        let (view, record) = self.assemble_parts(messages);
+        (view.messages, record)
+    }
+
+    fn assemble_parts(&mut self, messages: Vec<Message>) -> (AssembledView, ContextView) {
         self.session.begin_turn();
         let original = messages.clone();
         let pinned = self.session.pinned();
@@ -218,7 +258,100 @@ impl ContextAssembler {
                 })
                 .collect(),
         };
-        (view.messages, record)
+        (view, record)
+    }
+
+    /// [`assemble`](Self::assemble), with the demotions that are new in this
+    /// request weighed against the provider's prompt cache.
+    ///
+    /// A result demoted for the first time changes the prompt from that point
+    /// on, so the cached prefix behind it is lost and written again. When
+    /// `cache.mode` is `Enforce` and the saving over the requests still to come
+    /// does not earn that back, the new demotions are left undone and the
+    /// results stay whole; what earlier requests demoted stays demoted, so the
+    /// gate never disturbs a prefix that is already cached. A demotion the
+    /// window needs, or one whose cost is unknown, is never skipped.
+    pub fn assemble_with(&mut self, messages: Vec<Message>, cache: &CacheContext) -> Assembled {
+        let original = messages.clone();
+        let (parts, view) = self.assemble_parts(messages);
+        let assembled = parts.messages;
+        let new: Vec<String> = parts
+            .demotions
+            .iter()
+            .filter(|d| !self.reported.contains(&d.chunk_id))
+            .map(|d| d.tool_call_id.clone())
+            .collect();
+        if cache.mode == CacheAware::Off || new.is_empty() {
+            return Assembled {
+                messages: assembled,
+                view,
+                rebuilds: Vec::new(),
+            };
+        }
+
+        // The prompt as it would be sent with the new demotions undone.
+        let mut kept = assembled.clone();
+        for call in &new {
+            restore(&mut kept, &original, call);
+        }
+        let tokens = |m: &[Message]| tokens_of(m);
+        let (keep_tokens, rebuild_tokens) = (tokens(&kept), tokens(&assembled));
+        let first_changed = kept
+            .iter()
+            .zip(&assembled)
+            .position(|(a, b)| result_differs(a, b))
+            .unwrap_or(kept.len());
+        let candidate = RebuildCandidate {
+            kind: RebuildKind::Demotion,
+            prompt_tokens: keep_tokens,
+            tokens_saved: keep_tokens.saturating_sub(rebuild_tokens),
+            first_changed_token: tokens(&kept[..first_changed]),
+            generation: sven_cost::Generation::default(),
+        };
+        let state = CacheState {
+            warm_tokens: cache.warm_tokens,
+        };
+        let remaining = sven_cost::expected_remaining_requests(
+            cache.requests_so_far,
+            cache.declared_remaining,
+            MAX_ASSUMED_REMAINING,
+        );
+        let assessment = sven_cost::assess(cache.pricing.as_ref(), state, &candidate, remaining);
+        let necessity = match cache.input_budget {
+            Some(budget) if keep_tokens as usize > budget => Necessity::RequiredToFit,
+            _ => Necessity::Discretionary,
+        };
+        let decision = sven_cost::gate(cache.mode, necessity, assessment.recommendation);
+        let record = sven_cost::record(&candidate, &assessment, &decision, state, remaining);
+
+        if decision.action != sven_vocab::cost::GateAction::Skipped {
+            return Assembled {
+                messages: assembled,
+                view,
+                rebuilds: vec![record],
+            };
+        }
+        // Skipped: the view with the new demotions undone. Only the new ones
+        // leave the record; the older ones are still in the prompt.
+        let mut view = view;
+        let undone: usize = view.new_demotions.len();
+        let saved: u32 = view.new_demotions.iter().map(|d| d.tokens_saved).sum();
+        for d in &view.new_demotions {
+            if let Some(reason) = view.saved_by_reason.get_mut(&d.reason) {
+                *reason = reason.saturating_sub(d.tokens_saved);
+            }
+        }
+        view.saved_by_reason.retain(|_, v| *v > 0);
+        view.new_demotions.clear();
+        view.demoted = view
+            .demoted
+            .saturating_sub(u32::try_from(undone).unwrap_or(u32::MAX));
+        view.tokens_saved = view.tokens_saved.saturating_sub(saved);
+        Assembled {
+            messages: kept,
+            view,
+            rebuilds: vec![record],
+        }
     }
 
     /// Note that `record` went out with a request: its demotions are not
@@ -267,5 +400,26 @@ fn restore(messages: &mut [Message], original: &[Message], tool_call_id: &str) {
         {
             *slot = src.clone();
         }
+    }
+}
+
+/// Estimated tokens of `messages` as a prompt.
+fn tokens_of(messages: &[Message]) -> u32 {
+    u32::try_from(sven_model::budget::estimate_request_tokens(
+        messages,
+        &[],
+        None,
+    ))
+    .unwrap_or(u32::MAX)
+}
+
+/// Whether the tool results of `a` and `b` differ.
+fn result_differs(a: &Message, b: &Message) -> bool {
+    match (&a.content, &b.content) {
+        (
+            MessageContent::ToolResult { content: x, .. },
+            MessageContent::ToolResult { content: y, .. },
+        ) => x != y,
+        _ => false,
     }
 }

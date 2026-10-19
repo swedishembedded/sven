@@ -49,6 +49,15 @@ fn verify_root(project_root: Option<&Path>) -> PathBuf {
     project_root.map_or_else(|| PathBuf::from("."), Path::to_path_buf)
 }
 
+/// The cost policy the configuration declares. A price that is not usable
+/// is reported and the gate stays off rather than weighing with it.
+fn cost_policy(config: &Config) -> sven_executors::CostPolicy {
+    config.cost.policy().unwrap_or_else(|why| {
+        tracing::warn!(%why, "cost.cache_aware stays off");
+        sven_executors::CostPolicy::default()
+    })
+}
+
 /// What a session hands every child run it may start, beyond the terms the
 /// kernel gives it: the root their verifier is jailed to, how they decode, and
 /// where finished children leave their records.
@@ -177,6 +186,7 @@ pub(crate) fn compose(
             .turn_limits()
             .with_decoding(parts.decoding),
     )
+    .with_cost_policy(cost_policy(&parts.config))
     .with_decision_telemetry(parts.decision_telemetry)
     .with_context_assembler(assembler)
     .with_instructions(Some(parts.instructions.activator()));

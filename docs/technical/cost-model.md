@@ -93,7 +93,41 @@ action. Only `enforce` skips, only a rebuild that is not needed to fit the
 model's window, and only on a known comparison that favours keeping. Each
 decision is a `RebuildRecord` in the request's ledger record under `cost`.
 
-**Status:** the decision functions and the record exist and are tested; the
-`cost.cache_aware` configuration key and the executor wiring that calls the
-gate in front of demotion, compaction and reconstruction are not implemented,
-so nothing consults them in a running session yet.
+### Where it is wired
+
+`cost.cache_aware` (`off` by default) turns the gate on for **demotion**
+([context-assembly.md](context-assembly.md)). When a request's assembly would
+demote results for the first time, `ContextAssembler::assemble_with` prices the
+two prompts - the one with the new demotions undone (what the cache already
+holds, plus the tokens kept) and the one with them - with the model's declared
+price (`cost.prices` by `provider/model`, else the catalog's), the cache the
+previous request is expected to have left (`CacheState::expected` from what it
+reported reading and writing, and the idle time against the declared
+time-to-live) and the requests still expected (`cost.remaining_requests`, else
+as many as the session has made, capped at 200). `advise` records the comparison
+and demotes anyway; `enforce` leaves the new demotions undone when they do not
+break even. Demotions an earlier request sent are never undone, so the gate
+cannot disturb the prefix the cache holds, and a demotion that is needed to get
+under the window, or one whose price is undeclared, always goes ahead. A session's
+first request has no cache to lose, so a demotion there pays whatever remains.
+
+Compaction and reconstruction are **not** gated. Compaction fires when the
+conversation reaches the window's threshold, that is when it is needed to fit; a
+resumed session starts from a cold cache unless it was resumed within the
+time-to-live, a case the gate does not weigh.
+
+Configuration:
+
+```yaml
+cost:
+  cache_aware: enforce          # off | advise | enforce
+  remaining_requests: 40        # optional
+  prices:
+    "anthropic/claude-sonnet-4": # per million tokens, one currency of your choice
+      input_per_mtok: 3.0
+      output_per_mtok: 15.0
+      cache: { read_per_mtok: 0.3, write_per_mtok: 3.75, ttl_secs: 300 }
+```
+
+A price that is not usable (negative, or a cache read above a cache write) is
+reported and the gate stays off.

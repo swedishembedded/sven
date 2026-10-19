@@ -901,6 +901,19 @@ decision:
 
 ---
 
+### `cost`
+
+Whether a demotion of old tool results is weighed against the provider's prompt
+cache. Off unless turned on; advisory unless `enforce`.
+
+| key | default | meaning |
+|-----|---------|---------|
+| `cache_aware` | `off` | `off`, `advise` (record the comparison, demote anyway) or `enforce` (leave a demotion undone that does not pay) |
+| `remaining_requests` | unset | requests still expected in a session; unset means about as many as it has made |
+| `prices` | none | per million tokens by `provider/model`: `input_per_mtok`, `output_per_mtok`, optional `cache` with `read_per_mtok`, `write_per_mtok`, `ttl_secs` |
+
+See [docs/technical/cost-model.md](technical/cost-model.md#where-it-is-wired).
+
 ### `context.assembly`
 
 How the context of a request is assembled from the conversation. With `off` the
