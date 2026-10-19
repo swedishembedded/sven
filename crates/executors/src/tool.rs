@@ -318,6 +318,19 @@ impl EffectExecutor for ToolExecutor {
             return;
         }
 
+        // The call passed the gate as the tool it names, but the model's
+        // arguments were garbled beyond repair: running the tool on `{}` would
+        // act on something it never asked for, so tell it instead.
+        if let Some(reason) = self.registry.take_refusal(call_id) {
+            let _ = sink
+                .emit(Event::ToolFailed {
+                    call_id,
+                    error: reason,
+                })
+                .await;
+            return;
+        }
+
         let registry = Arc::clone(&self.registry);
         let call_id_to_thread = Arc::clone(&self.call_id_to_thread);
         let store = Arc::clone(&self.store);

@@ -81,6 +81,9 @@ pub struct ToolRegistry {
     /// Calls the model made to tools it had not loaded; see
     /// [`ToolRegistry::hold_back`].
     pub(crate) held_back: std::sync::Mutex<crate::disclosure::HeldBack>,
+    /// Calls whose arguments the model garbled beyond repair, with the reason
+    /// each is not run; see [`ToolRegistry::refuse_unparsed`].
+    refused: std::sync::Mutex<crate::refusal::Refused>,
     /// Shared so the TUI can hold a clone for chat rendering without owning the registry.
     display_registry: Arc<RwLock<ToolDisplayRegistry>>,
     /// Optional permission requester wired up by the ACP server layer.
@@ -96,6 +99,7 @@ impl ToolRegistry {
             tools: Arc::new(RwLock::new(HashMap::new())),
             disclosure: crate::Disclosure::default(),
             held_back: std::sync::Mutex::default(),
+            refused: std::sync::Mutex::default(),
             display_registry: Arc::new(RwLock::new(ToolDisplayRegistry::new())),
             permission_requester: None,
         }
@@ -336,6 +340,22 @@ impl ToolRegistry {
         mcp.sort_by(|a, b| a.name.cmp(&b.name));
         core.extend(mcp);
         core
+    }
+}
+
+impl ToolRegistry {
+    /// Records that the model's `call` to `tool` carried arguments that were
+    /// not valid JSON even after repair (`raw` is what it sent), so the
+    /// executor refuses it instead of running the tool on `{}`.
+    pub fn refuse_unparsed(&self, call: sven_hsm::ToolCallId, tool: &str, raw: &str) {
+        if let Ok(mut refused) = self.refused.lock() {
+            refused.insert(call, crate::refusal::unparsed_reason(tool, raw));
+        }
+    }
+
+    /// The reason `call` is refused, forgetting it: the answer is `Some` once.
+    pub fn take_refusal(&self, call: sven_hsm::ToolCallId) -> Option<String> {
+        self.refused.lock().ok()?.take(call)
     }
 }
 

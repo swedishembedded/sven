@@ -649,10 +649,12 @@ What the document says about the model's view of the run:
   registered for its mode. A tool the mode filters out, or that `Toolset` or
   configuration disabled, is absent.
 - **Malformed tool calls.** A call whose arguments were not valid JSON, even
-  after repair, still runs with `{}` and has `{}` as its `arguments`, but the
-  step's tool call also carries the model's text in `extra.raw_arguments` and
-  `extra.unparsed_arguments: true`. The conversation replayed to the model keeps
-  `{}`; only the exported record has the raw text.
+  after repair, is not run: the model receives an error result saying so. Its
+  `arguments` are `{}`, and the step's tool call also carries the model's text
+  in `extra.raw_arguments` and `extra.unparsed_arguments: true`. The
+  conversation replayed to the model keeps `{}`; only the exported record has
+  the raw text. Only the call that failed is marked, even when the server gave
+  several parallel calls the same id (they are made distinct).
 - **Gate decisions.** A step that made a call the permission gate decided
   about carries `extra.sven.gate`: `{"schema": "sven.gate.v1", "decisions":
   [...]}`, one entry per such call. An entry has `decision_id` (the id of the

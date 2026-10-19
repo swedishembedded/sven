@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **sven-tools-fs**: `edit_file` no longer applies a hunk that lacks a context line one line late, and no longer shifts the added lines by the one column that a missing diff-prefix space causes; a hunk whose lines disagree on indentation is refused, and an edit that changes nothing is an error instead of "Edit successfully applied". Recorded model edits had turned into Python IndentationErrors.
+- **sven-turn**, **sven-tool-registry**, **sven-executors**: a tool call whose arguments were not valid JSON is no longer run on `{}`; the model receives an error naming the parse failure. Parallel calls that the server sent with one id now get distinct ids, so one garbled call no longer marks its siblings unparsed and results pair with the right call. `ToolRegistry::{refuse_unparsed, take_refusal}`.
+
 ### Added
 - **sven-sdk**: `sven_sdk::search`, a generic candidate search beside the state machine. `search(Strategy::BestOfN | Strategy::SimulatedAnnealing { .. }, initial, &proposer, &environment, &budget, seed)` evaluates candidates through a `CandidateEnvironment` that returns a `SearchEvaluation` (terminal verifier verdict, dense utility, signals, tokens, trajectory references); the `SearchReport` holds the best verified candidate (never a partial-credit one), the full trace and `SearchMetrics` (evaluations to first verified, solved per evaluation, tokens, wall, diversity). See docs/technical/sdk.md.
 - `benchmarks/sven_agent.py` (Harbor): the run writes its ATIF trajectory to `/logs/agent/trajectory.json` and the trial context's token and cost totals come from it; `benchmarks/requirements.txt` pins `harbor==0.1.45`, the release whose agent base class the adapter is written against (0.24.0 removed `ExecInput`, so a floating `harbor>=0.1.45` installed an adapter that could not import). `make test/benchmarks` tests the trajectory reader.

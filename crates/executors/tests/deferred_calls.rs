@@ -9,6 +9,8 @@
 //! Spec: a call to a tool the model has not loaded is refused with an
 //! instruction to load it, and is refused only after the permission gate has
 //! judged it as the tool it names. Loading is never a way around the gate.
+//! A call whose arguments the model garbled beyond repair is refused the same
+//! way, with a message naming the parse failure, and its tool never runs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -142,6 +144,7 @@ impl Machine for Caller {
 async fn call_web_fetch(
     allowed: &[ToolCapability],
     held_back: bool,
+    unparsed: Option<&str>,
 ) -> (String, bool, Vec<sven_hsm::ToolAuditRecord>) {
     let ran = Arc::new(AtomicBool::new(false));
     let mut registry = ToolRegistry::new();
@@ -153,6 +156,9 @@ async fn call_web_fetch(
     let call = ToolCallId::new();
     if held_back {
         registry.hold_back(call);
+    }
+    if let Some(raw) = unparsed {
+        registry.refuse_unparsed(call, "web_fetch", raw);
     }
     let policy = PermissionPolicy::builder()
         .allow_globally(allowed.iter().copied())
@@ -181,7 +187,7 @@ async fn call_web_fetch(
 
 #[tokio::test]
 async fn an_unloaded_tool_is_not_run_and_the_model_is_told_to_load_it() {
-    let (outcome, ran, audit) = call_web_fetch(&[ToolCapability::NetworkAccess], true).await;
+    let (outcome, ran, audit) = call_web_fetch(&[ToolCapability::NetworkAccess], true, None).await;
 
     assert!(!ran, "the tool body must not run");
     assert!(
@@ -200,7 +206,7 @@ async fn an_unloaded_tool_is_not_run_and_the_model_is_told_to_load_it() {
 
 #[tokio::test]
 async fn an_unloaded_call_the_policy_forbids_is_denied_by_the_gate_not_by_the_loader() {
-    let (outcome, ran, audit) = call_web_fetch(&[ToolCapability::ReadFile], true).await;
+    let (outcome, ran, audit) = call_web_fetch(&[ToolCapability::ReadFile], true, None).await;
 
     assert!(!ran);
     assert!(outcome.contains("permission denied"), "{outcome}");
@@ -211,11 +217,33 @@ async fn an_unloaded_call_the_policy_forbids_is_denied_by_the_gate_not_by_the_lo
 
 #[tokio::test]
 async fn a_loaded_tool_runs_under_the_same_gate() {
-    let (outcome, ran, _) = call_web_fetch(&[ToolCapability::NetworkAccess], false).await;
+    let (outcome, ran, _) = call_web_fetch(&[ToolCapability::NetworkAccess], false, None).await;
     assert_eq!(outcome, "succeeded");
     assert!(ran);
 
-    let (outcome, ran, _) = call_web_fetch(&[ToolCapability::ReadFile], false).await;
+    let (outcome, ran, _) = call_web_fetch(&[ToolCapability::ReadFile], false, None).await;
     assert!(outcome.contains("permission denied"), "{outcome}");
     assert!(!ran, "loading never widens what the policy allows");
+}
+
+#[tokio::test]
+async fn a_call_with_unparsable_arguments_is_not_run_and_the_model_is_told_why() {
+    let (outcome, ran, audit) = call_web_fetch(
+        &[ToolCapability::NetworkAccess],
+        false,
+        Some("{\"url\": \"http://x\", "),
+    )
+    .await;
+
+    assert!(!ran, "a call with garbled arguments must not run as `{{}}`");
+    assert!(
+        outcome.contains("not valid JSON") && outcome.contains("web_fetch"),
+        "{outcome}"
+    );
+    assert!(
+        audit
+            .iter()
+            .any(|r| r.name == "web_fetch" && r.outcome == ToolAuditOutcome::Started),
+        "the gate judged the call before it was refused: {audit:?}"
+    );
 }

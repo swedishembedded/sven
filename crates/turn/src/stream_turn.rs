@@ -282,6 +282,21 @@ pub fn thinking_budget_override() -> Option<ThinkingBudget> {
         .and_then(|cell| cell.lock().ok().and_then(|guard| *guard))
 }
 
+/// `id` if no call of this turn has it yet, else `id` with a numeric suffix
+/// that no call has. Some servers send the same id (`call_0`) for every
+/// parallel call; ids are how results are paired with calls and how a call is
+/// marked unparsed, so two calls sharing one would answer for each other.
+fn unique_call_id(issued: &mut std::collections::HashSet<String>, id: &str) -> String {
+    if !id.is_empty() && issued.insert(id.to_owned()) {
+        return id.to_owned();
+    }
+    let stem = if id.is_empty() { "call" } else { id };
+    (1..)
+        .map(|n| format!("{stem}_{n}"))
+        .find(|candidate| issued.insert(candidate.clone()))
+        .expect("an unbounded range always yields a free id")
+}
+
 // ─── Accumulation-only slot ───────────────────────────────────────────────────
 
 struct AccumSlot {
@@ -449,6 +464,7 @@ pub async fn stream_turn(
     let mut completed: Vec<ToolCall> = Vec::new();
     let mut completed_indices: Vec<u32> = Vec::new();
     let mut unparsed_arguments: HashMap<String, String> = HashMap::new();
+    let mut issued_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut sampled = Sampled::default();
 
     loop {
@@ -529,8 +545,9 @@ pub async fn stream_turn(
                     name: String::new(),
                     args_buf: String::new(),
                 });
-                if let Some(tc) = slot.feed(&id, &name, &arguments) {
+                if let Some(mut tc) = slot.feed(&id, &name, &arguments) {
                     if !tc.name.is_empty() {
+                        tc.id = unique_call_id(&mut issued_ids, &tc.id);
                         let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
                         completed_indices.push(index);
                         completed.push(tc);
@@ -628,6 +645,7 @@ pub async fn stream_turn(
                 "tool call had empty id; generated synthetic id"
             );
         }
+        tc.id = unique_call_id(&mut issued_ids, &tc.id);
         if let Some(raw) = unparsed {
             unparsed_arguments.insert(tc.id.clone(), raw);
         }

@@ -32,7 +32,14 @@ When the stream ends, every slot that never parsed is finalized:
    and object.
 3. If every repair fails, substitute `{}` and log a warning. The model's raw
    argument text is kept in the `ThreadStore` (`unparsed_arguments`), because the
-   thread holds the call with `{}` arguments.
+   thread holds the call with `{}` arguments. The call is **not run**: the
+   executor answers it with an error naming the parse failure (the first 120
+   characters of what the model sent), so the model sees it and can repeat the
+   call (`ToolRegistry::refuse_unparsed`, `take_refusal`).
+
+Every call of a turn has an id of its own. A server that sends the same id for
+all parallel calls (`call_0` each) gets `call_0`, `call_0_1`, `call_0_2`, ...:
+results are paired with calls, and a call is marked unparsed, by id.
 
 A slot whose buffer is empty also gets `{}`. A slot with an empty name is
 dropped (it cannot be dispatched); a slot with an empty id gets a synthetic

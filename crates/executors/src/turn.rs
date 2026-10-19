@@ -610,12 +610,13 @@ impl EffectExecutor for TurnExecutor {
             }
         }
 
-        let (text, tool_calls) = match result {
+        let (text, tool_calls, unparsed) = match result {
             Ok(turn) => {
+                let unparsed = turn.unparsed_arguments.clone();
                 if let Ok(mut store) = self.store.lock() {
                     store.record_unparsed_arguments(turn.unparsed_arguments);
                 }
-                (turn.text, turn.tool_calls)
+                (turn.text, turn.tool_calls, unparsed)
             }
             Err(e) => {
                 let msg = format!("{e:#}");
@@ -694,6 +695,14 @@ impl EffectExecutor for TurnExecutor {
         // then answers it with an instruction to load the tool.
         for call in proposed.iter().filter(|c| withheld_tools.contains(&c.name)) {
             self.tools.hold_back(call.call_id);
+        }
+
+        // A call whose arguments the model garbled beyond repair carries `{}`;
+        // it is refused with the reason rather than run on those arguments.
+        for (tc, call) in tool_calls.iter().zip(&proposed) {
+            if let Some(raw) = unparsed.get(&tc.id) {
+                self.tools.refuse_unparsed(call.call_id, &tc.name, raw);
+            }
         }
 
         let has_tool_calls = !proposed.is_empty();
