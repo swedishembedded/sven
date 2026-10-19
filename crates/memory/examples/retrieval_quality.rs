@@ -66,17 +66,28 @@ type Error = Box<dyn std::error::Error>;
 async fn build(
     files: &[(String, String)],
     embedder: Option<&Arc<dyn Embedder>>,
-) -> Result<(SqliteMemory, AccessContext, SpaceId, Option<sven_memory_api::GenerationId>), Error> {
+) -> Result<
+    (
+        SqliteMemory,
+        AccessContext,
+        SpaceId,
+        Option<sven_memory_api::GenerationId>,
+    ),
+    Error,
+> {
     let store = SqliteMemory::open_in_memory()?;
     let space = SpaceId::new("docs");
-    let access = AccessContext::new("eval").writing(
-        space.clone(),
-        &[Permission::Ingest, Permission::Delete],
-    );
+    let access = AccessContext::new("eval")
+        .writing(space.clone(), &[Permission::Ingest, Permission::Delete]);
     let generation = match embedder {
         Some(e) => {
-            let g = store.register_generation(e.spec(), "eval-md").await?.generation_id;
-            store.set_generation_state(&g, GenerationState::Active).await?;
+            let g = store
+                .register_generation(e.spec(), "eval-md")
+                .await?
+                .generation_id;
+            store
+                .set_generation_state(&g, GenerationState::Active)
+                .await?;
             Some(g)
         }
         None => None,
@@ -110,7 +121,12 @@ async fn build(
             for (ids, texts) in ids.chunks(16).zip(texts.chunks(16)) {
                 let vectors = e.embed(texts).await?;
                 store
-                    .put_embeddings(&access, &space, g, ids.iter().cloned().zip(vectors).collect())
+                    .put_embeddings(
+                        &access,
+                        &space,
+                        g,
+                        ids.iter().cloned().zip(vectors).collect(),
+                    )
                     .await?;
             }
         }
@@ -132,7 +148,7 @@ async fn evaluate(
         let mut request = RetrievalRequest::new(query.clone(), 10);
         request.spaces = Some(BTreeSet::from([space.clone()]));
         if let (Some(e), Some(g)) = (&embedder, &generation) {
-            let vector = e.embed(&[query.clone()]).await?.remove(0);
+            let vector = e.embed(std::slice::from_ref(query)).await?.remove(0);
             request = request.with_embedding(g.clone(), vector);
         }
         let response = store.retrieve(&access, request).await?;
@@ -173,13 +189,23 @@ async fn main() -> Result<(), Error> {
             Ok((name, std::fs::read_to_string(p)?))
         })
         .collect::<Result<_, Error>>()?;
-    let raw: Vec<serde_json::Value> = serde_json::from_str(&std::fs::read_to_string(queries_path)?)?;
+    let raw: Vec<serde_json::Value> =
+        serde_json::from_str(&std::fs::read_to_string(queries_path)?)?;
     let queries: Vec<(String, String)> = raw
         .iter()
-        .filter_map(|q| Some((q["query"].as_str()?.to_owned(), q["doc"].as_str()?.to_owned())))
+        .filter_map(|q| {
+            Some((
+                q["query"].as_str()?.to_owned(),
+                q["doc"].as_str()?.to_owned(),
+            ))
+        })
         .filter(|(_, doc)| files.iter().any(|(name, _)| name == doc))
         .collect();
-    println!("{} documents, {} labelled queries", files.len(), queries.len());
+    println!(
+        "{} documents, {} labelled queries",
+        files.len(),
+        queries.len()
+    );
 
     evaluate("words only (BM25)", &files, &queries, None).await?;
     let hashing: Arc<dyn Embedder> = Arc::new(HashingEmbedder::default());
