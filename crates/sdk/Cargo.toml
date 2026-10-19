@@ -58,3 +58,11 @@ schemars        = { workspace = true }
 sven-hsm        = { path = "../hsm" }
 sven-model-mock = { path = "../model-mock" }
 tempfile        = { workspace = true }
+
+[[test]]
+name = "memory_scope"
+required-features = ["sqlite-memory"]
+
+[[test]]
+name = "memory_recall"
+required-features = ["sqlite-memory"]

@@ -14,10 +14,10 @@
 use std::sync::Arc;
 
 use sven_memory::{SemanticMemoryTool, PERSONAL_SPACE};
-use sven_memory_sqlite::SqliteMemory;
 use sven_model::ResponseEvent;
 use sven_model_mock::ScriptedMockProvider;
 use sven_sdk::atif::{validate_trajectory, MemoryRecord};
+use sven_sdk::memory::SqliteMemory;
 use sven_sdk::Engine;
 
 fn call(id: &str, arguments: &str) -> Vec<ResponseEvent> {
