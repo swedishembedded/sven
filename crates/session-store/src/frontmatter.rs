@@ -26,7 +26,8 @@ use std::collections::HashMap;
 /// The default agent mode is `agent` and the default model is `claude-haiku-4-5`.
 /// Per-mode model overrides (from the `models:` map) take effect when a step
 /// uses `<!-- sven: mode=research -->` or similar inline directives.
-/// CLI `--model` always takes the highest priority.
+/// An explicit CLI `--model` wins over this map; only a step's own `model=`
+/// directive overrides it.
 ///
 /// Fields removed compared to the original schema (use CLI flags or config instead):
 /// - `mode` (was: override default agent mode)

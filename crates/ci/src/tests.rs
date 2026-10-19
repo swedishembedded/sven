@@ -745,4 +745,54 @@ mod tests {
             "detection only checks first 10 lines; rest must be ignored"
         );
     }
+    // ── Per-step model precedence ─────────────────────────────────────────────
+
+    fn models(entries: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn explicit_model_flag_wins_over_frontmatter_models() {
+        let fm = models(&[("agent", "fm-agent"), ("research", "fm-research")]);
+        for mode in [None, Some("research")] {
+            assert_eq!(
+                crate::runner::step_model_spec(None, None, mode, Some("cli/model"), Some(&fm)),
+                None,
+                "the run already started on --model; the frontmatter must not replace it"
+            );
+        }
+    }
+
+    #[test]
+    fn frontmatter_models_apply_per_mode_without_model_flag() {
+        let fm = models(&[("agent", "fm-agent"), ("research", "fm-research")]);
+        let spec = |mode| crate::runner::step_model_spec(None, None, mode, None, Some(&fm));
+        assert_eq!(spec(Some("research")).as_deref(), Some("fm-research"));
+        assert_eq!(spec(Some("plan")).as_deref(), Some("fm-agent"));
+        assert_eq!(spec(None).as_deref(), Some("fm-agent"));
+    }
+
+    #[test]
+    fn step_model_directive_wins_over_flag_and_frontmatter() {
+        let fm = models(&[("agent", "fm-agent")]);
+        assert_eq!(
+            crate::runner::step_model_spec(
+                Some("anthropic"),
+                Some("sonnet"),
+                None,
+                Some("cli/model"),
+                Some(&fm)
+            )
+            .as_deref(),
+            Some("anthropic/sonnet")
+        );
+        assert_eq!(
+            crate::runner::step_model_spec(None, Some("m"), None, Some("cli/model"), Some(&fm))
+                .as_deref(),
+            Some("m")
+        );
+    }
 }

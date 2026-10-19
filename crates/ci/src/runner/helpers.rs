@@ -4,6 +4,8 @@
 //! Utility functions: format detection, artifact writing, JSON serialisation,
 //! agent mode parsing, cache key sanitisation, and label normalisation.
 
+use std::collections::HashMap;
+
 use anyhow::Context;
 use sven_model::Message;
 use sven_session_store::serialize_conversation_turn;
@@ -233,5 +235,32 @@ mod normalize_tests {
     #[test]
     fn already_snake_case() {
         assert_eq!(normalize_label("my_step"), "my_step");
+    }
+}
+
+/// The model a workflow step switches to, if any.
+///
+/// Precedence, highest first: the step's own `model` (with `provider`)
+/// directive; the explicit `--model` flag, which the run already started on
+/// and so leaves nothing to switch; the frontmatter `models` entry for the
+/// step's mode, else its `agent` entry. `None` keeps the current model.
+pub(crate) fn step_model_spec(
+    provider: Option<&str>,
+    model: Option<&str>,
+    mode: Option<&str>,
+    cli_model: Option<&str>,
+    frontmatter_models: Option<&HashMap<String, String>>,
+) -> Option<String> {
+    match (provider, model) {
+        (Some(prov), Some(model)) => Some(format!("{prov}/{model}")),
+        (Some(prov), None) => Some(prov.to_string()),
+        (None, Some(model)) => Some(model.to_string()),
+        (None, None) if cli_model.is_some() => None,
+        (None, None) => {
+            let models = frontmatter_models?;
+            mode.and_then(|m| models.get(m))
+                .or_else(|| models.get("agent"))
+                .cloned()
+        }
     }
 }

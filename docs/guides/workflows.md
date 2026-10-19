@@ -81,10 +81,10 @@ timeouts are not frontmatter fields: set them with `--mode`, `--model`,
 with a directive.
 
 Each step runs on the first of these that applies: the step's own `model` (or
-`provider` and `model`) directive; the `models` entry for the step's `mode`
-directive, else the `models` entry `agent`; the model from `--model` or the
-configuration. A `models` entry therefore takes effect for every step of its
-mode, including when `--model` is given.
+`provider` and `model`) directive; the model from `--model`; the `models` entry
+for the step's `mode` directive, else the `models` entry `agent`; the model from
+the configuration. An explicit `--model` therefore wins over the `models` map,
+and only a step directive overrides it.
 
 ### Per-step directives
 

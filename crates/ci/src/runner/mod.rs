@@ -14,7 +14,7 @@ use attachment::build_attachment_parts;
 use event::{handle_event, stream_new_steps, StepState, SubagentChildState};
 pub(crate) use helpers::{
     is_conversation_format, is_json_summary_format, is_jsonl_format, parse_json_summary,
-    parse_jsonl_trace_steps,
+    parse_jsonl_trace_steps, step_model_spec,
 };
 use helpers::{
     normalize_label, parse_agent_mode, sanitize_cache_key, write_conversation_artifact,
@@ -813,24 +813,15 @@ impl CiRunner {
                 }
             }
 
-            // Apply per-step provider and/or model override.
-            // Priority: explicit step model/provider > frontmatter models[mode] > current model.
-            let fm_mode_model: Option<String> = step
-                .options
-                .mode
-                .as_deref()
-                .and_then(|m| frontmatter.models.as_ref()?.get(m).cloned())
-                .or_else(|| frontmatter.models.as_ref()?.get("agent").cloned());
-
-            let effective_model_str: Option<String> = match (
+            // Apply per-step provider and/or model override (see
+            // `step_model_spec` for the precedence).
+            let effective_model_str = step_model_spec(
                 step.options.provider.as_deref(),
                 step.options.model.as_deref(),
-            ) {
-                (Some(prov), Some(model)) => Some(format!("{prov}/{model}")),
-                (Some(prov), None) => Some(prov.to_string()),
-                (None, Some(model)) => Some(model.to_string()),
-                (None, None) => fm_mode_model,
-            };
+                step.options.mode.as_deref(),
+                opts.model_override.as_deref(),
+                frontmatter.models.as_ref(),
+            );
             if let Some(model_str) = &effective_model_str {
                 let step_model_cfg = self.config.resolve_model(model_str);
                 // Validate the override builds before switching; on failure keep
