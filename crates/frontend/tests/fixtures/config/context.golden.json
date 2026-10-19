@@ -22,6 +22,11 @@
         "resident_bytes": 1048576
       }
     },
+    "cost": {
+      "cache_aware": "off",
+      "prices": {},
+      "remaining_requests": null
+    },
     "decision": {
       "brain": {
         "cache_entries": 256,
