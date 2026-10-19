@@ -12,6 +12,7 @@ mod ui_output;
 
 use attachment::build_attachment_parts;
 use event::{handle_event, stream_new_steps, StepState, SubagentChildState};
+pub use helpers::is_trace_input;
 pub(crate) use helpers::{
     is_conversation_format, is_json_summary_format, is_jsonl_format, parse_json_summary,
     parse_jsonl_trace_steps, step_model_spec,

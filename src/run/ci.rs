@@ -164,8 +164,9 @@ pub(crate) async fn run_ci(
     // document replayed as history (`sven '…' | sven --stdin 'next task'`). Genuine
     // multi-step workflow features (workflow `--file`, `--var` templating,
     // `--artifacts-dir`, `--dry-run`, JSON/JSONL/compact output, chat I/O,
-    // `--system-prompt-file`, `--output-last-message`) live in `CiRunner`; a run
-    // using any of them falls through to preserve those features. `sdlc`/`chat`
+    // `--system-prompt-file`, `--output-last-message`, piped JSONL steps or a
+    // piped JSON trajectory) live in `CiRunner`; a run using any of them falls
+    // through to preserve those features. `sdlc`/`chat`
     // modes always use `RuntimeRunner`.
     let workflow_features_absent = cli.file.is_none()
         && matches!(cli.output_format, OutputFormatArg::Conversation)
@@ -180,6 +181,9 @@ pub(crate) async fn run_ci(
         // the model received a bare prompt. Treat it like every other feature
         // only `CiRunner` implements.
         && cli.attach.is_empty()
+        // JSONL steps and a JSON trajectory are history only the workflow runner
+        // reads; the single-prompt runner would hand them to the model as text.
+        && !sven_ci::is_trace_input(&input)
         && cli.effective_output_trace().is_none();
 
     if load_trace.is_none() && (mode_forces_runtime_runner || workflow_features_absent) {

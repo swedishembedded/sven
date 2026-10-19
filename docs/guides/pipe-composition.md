@@ -49,14 +49,13 @@ writes.
 
 ### Which runner reads which format
 
-A headless run is served by one of two runners, chosen by its options (see
-[Single-prompt and workflow runs](headless.md#single-prompt-and-workflow-runs)).
-The **single-prompt runner**, used by a plain `sven --stdin 'task'`, recognises
-priority 2 and 4 only: a piped JSONL stream or trajectory reaches the model as
-plain text. The **workflow runner** recognises all four. To read JSONL or a JSON
-trajectory from stdin, make the receiving stage a workflow-runner run by giving
-it any workflow-only option, for example `--output-format compact` or
-`--output-trace PATH`.
+A headless run is served by one of two runners, chosen by its options and its
+input (see [Single-prompt and workflow runs](headless.md#single-prompt-and-workflow-runs)).
+The **single-prompt runner**, used by a plain `sven --stdin 'task'`, reads
+plain text and conversation markdown. The **workflow runner** reads all four
+formats. Piped NDJSON trace steps or a JSON trajectory select the workflow
+runner on their own, so `sven 'task1' --output-format jsonl | sven --stdin
+'task2'` seeds the second run with the first run's history.
 
 ---
 
@@ -66,8 +65,8 @@ it any workflow-only option, for example `--output-format compact` or
 |-------------------|---------------|-----------------|-------------|
 | `conversation` (default) | Full `## User` / `## Sven` / `## Tool` / `## Tool Result` markdown, streamed | Detected as *conversation*, history seeded | Archiving, context passing, continuation |
 | `compact` | The final response text of each step | Detected as *plain text*, becomes user message | Relay / transform chains |
-| `json` | The full ATIF `Trajectory` document, pretty-printed, written at the end | Detected as *JSON trajectory* (workflow runner), history reconstructed from `steps` | CI dashboards, parsing with `jq`, feeding a fine-tuning pipeline |
-| `jsonl` | One ATIF `TraceStep` JSON object per line, streamed as each step closes | Detected as *NDJSON trace steps* (workflow runner), history reconstructed from steps | Piping between sven instances with full fidelity (tool calls, thinking) |
+| `json` | The full ATIF `Trajectory` document, pretty-printed, written at the end | Detected as *JSON trajectory*, history reconstructed from `steps` | CI dashboards, parsing with `jq`, feeding a fine-tuning pipeline |
+| `jsonl` | One ATIF `TraceStep` JSON object per line, streamed as each step closes | Detected as *NDJSON trace steps*, history reconstructed from steps | Piping between sven instances with full fidelity (tool calls, thinking) |
 
 Everything except `conversation` runs on the workflow runner.
 
@@ -208,8 +207,8 @@ sven 'stage 2' --load-trace "$TMP"
 ```
 
 The same history can travel on the pipe. Every non-empty line of
-`--output-format jsonl` output is a standalone `TraceStep`; a receiving stage on
-the workflow runner (see [Which runner reads which format](#which-runner-reads-which-format))
+`--output-format jsonl` output is a standalone `TraceStep`; the receiving stage
+(on the workflow runner, see [Which runner reads which format](#which-runner-reads-which-format))
 seeds its history from it:
 
 ```bash

@@ -699,6 +699,18 @@ mod tests {
         assert_eq!(history[1].as_text(), Some("result1"));
     }
 
+    // ── is_trace_input ────────────────────────────────────────────────────────
+
+    #[test]
+    fn trace_input_is_jsonl_or_a_trajectory_document_not_prose() {
+        let step = r#"{"step_id":1,"source":"user","message":"hi"}"#;
+        assert!(crate::is_trace_input(&format!("{step}\n{step}\n")));
+        assert!(crate::is_trace_input("{\n  \"steps\": []\n}\n"));
+        assert!(!crate::is_trace_input("## User\nhi\n"));
+        assert!(!crate::is_trace_input("plain text\n"));
+        assert!(!crate::is_trace_input("{\n  \"not\": \"a trajectory\"\n}\n"));
+    }
+
     // ── Edge cases ────────────────────────────────────────────────────────────
 
     #[test]

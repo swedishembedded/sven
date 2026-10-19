@@ -192,3 +192,19 @@ EOF'
     [ "${EXIT_CODE}" -eq 0 ]
     [[ "${STDERR_OUT}" == *'name="write_file"'* ]]
 }
+
+@test "04.23 --output-format jsonl piped into a prompted --stdin run is history, not prompt text" {
+    # The first stage asks for a file write, so its steps contain the words
+    # "write a file". Read as plain text they would be the new task and the
+    # second stage would call write_file; read as history only "ping" is the task.
+    work="$(mktemp -d)"
+    cd "${work}"
+    run_split_output bash -c \
+        '"$BIN" --headless --model mock --output-format jsonl "write a file for me" 2>/dev/null \
+           | "$BIN" --headless --model mock --stdin "ping"'
+    cd - >/dev/null
+    rm -rf "${work}"
+    [ "${EXIT_CODE}" -eq 0 ]
+    [[ "${STDOUT_OUT}" == *"pong"* ]]
+    [[ "${STDERR_OUT}" != *'name="write_file"'* ]]
+}

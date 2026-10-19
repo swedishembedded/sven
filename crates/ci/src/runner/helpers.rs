@@ -56,6 +56,13 @@ pub(crate) fn is_jsonl_format(s: &str) -> bool {
     checked > 0
 }
 
+/// Whether piped input is a prior run's structured record: NDJSON trace steps
+/// (`--output-format jsonl`) or a whole `Trajectory` document
+/// (`--output-format json`).  Only the workflow runner reads these as history.
+pub fn is_trace_input(s: &str) -> bool {
+    is_jsonl_format(s) || is_json_summary_format(s)
+}
+
 /// Parse an NDJSON stream of ATIF `TraceStep` objects (as detected by
 /// [`is_jsonl_format`] / produced by `--output-format jsonl`) into a message
 /// history and any trailing pending user turn.

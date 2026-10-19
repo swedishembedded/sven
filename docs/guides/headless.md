@@ -47,21 +47,23 @@ follows from the options.
 
 The **single-prompt runner** drives one agent turn to completion. It handles a
 fresh prompt and a prior conversation piped on stdin, and it is used when none
-of the workflow-only options below is present. It also serves `--mode chat` and
+of the workflow-only options below is present and stdin is not JSONL steps or
+a JSON trajectory. It also serves `--mode chat` and
 `--mode sdlc`.
 
 The **workflow runner** runs the steps of a [workflow file](workflows.md) one
 after another and implements everything else. A run uses it as soon as any of
 these is given: `--file`, `--output-format` other than `conversation`,
 `--artifacts-dir`, `--dry-run`, `--output-last-message`, `--system-prompt-file`,
-`--var`, `--attach`, `--output-trace`, `--trace`, `--load-trace` or `--resume`.
+`--var`, `--attach`, `--output-trace`, `--trace`, `--load-trace` or `--resume`,
+or when the stdin it reads is JSONL steps or a JSON trajectory.
 
 What differs:
 
 | | Single-prompt runner | Workflow runner |
 |---|---|---|
 | Steps, frontmatter, `{{var}}` templates, `cache_key` | no | yes |
-| Stdin formats understood | prompt text, conversation markdown | prompt text, conversation markdown, JSONL steps, JSON trajectory |
+| Stdin formats understood | prompt text, conversation markdown | prompt text, conversation markdown, JSONL steps, JSON trajectory (piped JSONL or JSON selects this runner) |
 | Output formats | `conversation` | `conversation`, `compact`, `json`, `jsonl` |
 | Time limit | the run limit | per-step and run limits |
 | Exit code `3` (tool errors) | never | yes |
