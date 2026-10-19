@@ -173,13 +173,15 @@ fn scripts_from(trajectory: &atif::Trajectory) -> Vec<Vec<ResponseEvent>> {
                 }
             }
             if i == last {
-                events.push(ResponseEvent::TextDelta(
-                    serde_json::to_value(&step.message)
-                        .unwrap()
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
-                ));
+                let text = serde_json::to_value(&step.message)
+                    .unwrap()
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                // A response that only called a tool said nothing.
+                if !text.is_empty() {
+                    events.push(ResponseEvent::TextDelta(text));
+                }
             }
             let prompt = request["prompt_tokens"].as_u64().unwrap_or(0) as u32;
             let completion = request["completion_tokens"].as_u64().unwrap_or(0) as u32;

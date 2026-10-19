@@ -188,7 +188,7 @@ fn simple_user_assistant_turn() {
 }
 
 #[test]
-fn thinking_tool_call_tool_result_and_text_merge_into_one_step() {
+fn thinking_call_and_result_are_one_step_and_the_final_text_is_the_next() {
     let mut a = StepAssembler::new();
     a.push_message(&Message::user("What is 2+2?"));
     a.push_thinking("The user wants 2+2. That is 4.");
@@ -208,10 +208,13 @@ fn thinking_tool_call_tool_result_and_text_merge_into_one_step() {
 
     assert_eq!(
         steps.len(),
-        2,
-        "thinking+toolcall+toolresult+text must merge into ONE agent step"
+        3,
+        "the call with its result is one response, the final text the next"
     );
     assert_eq!(steps[0].source, StepOrigin::User);
+    assert_eq!(steps[2].source, StepOrigin::Agent);
+    assert_eq!(steps[2].message.as_text(), Some("The answer is 4."));
+    assert!(steps[2].tool_calls.is_none() && steps[2].observation.is_none());
     let agent_step = &steps[1];
     assert_eq!(agent_step.step_id, 2);
     assert_eq!(agent_step.source, StepOrigin::Agent);
@@ -219,7 +222,6 @@ fn thinking_tool_call_tool_result_and_text_merge_into_one_step() {
         agent_step.reasoning_content.as_deref(),
         Some("The user wants 2+2. That is 4.")
     );
-    assert_eq!(agent_step.message.as_text(), Some("The answer is 4."));
 
     let tool_calls = agent_step.tool_calls.as_ref().unwrap();
     assert_eq!(tool_calls.len(), 1);
@@ -247,34 +249,6 @@ fn thinking_tool_call_tool_result_and_text_merge_into_one_step() {
 }
 
 #[test]
-fn tool_call_without_thinking_still_merges_with_following_text() {
-    // Matches chat_document.rs's `round_trip_tool_call` scenario shape:
-    // user -> tool_call -> tool_result -> assistant text, no thinking.
-    let mut a = StepAssembler::new();
-    a.push_message(&Message::user("List files"));
-    a.push_message(&Message {
-        role: Role::Assistant,
-        content: MessageContent::ToolCall {
-            tool_call_id: "call_001".into(),
-            function: FunctionCall {
-                name: "list_dir".into(),
-                arguments: r#"{"path":"/tmp","depth":2}"#.into(),
-            },
-        },
-    });
-    a.push_message(&Message::tool_result("call_001", "file1.rs\nfile2.rs\n"));
-    a.push_message(&Message::assistant("Found 2 Rust files."));
-    let steps = a.finish();
-
-    assert_eq!(steps.len(), 2);
-    let agent_step = &steps[1];
-    assert!(agent_step.reasoning_content.is_none());
-    assert_eq!(agent_step.message.as_text(), Some("Found 2 Rust files."));
-    assert_eq!(agent_step.tool_calls.as_ref().unwrap().len(), 1);
-    assert_eq!(agent_step.observation.as_ref().unwrap().results.len(), 1);
-}
-
-#[test]
 fn multi_turn_conversation_step_ids_sequential() {
     let mut a = StepAssembler::new();
     a.push_message(&Message::user("Hi"));
@@ -296,11 +270,12 @@ fn multi_turn_conversation_step_ids_sequential() {
     let steps = a.finish();
 
     let ids: Vec<u64> = steps.iter().map(|s| s.step_id).collect();
-    assert_eq!(ids, vec![1, 2, 3, 4]);
+    assert_eq!(ids, vec![1, 2, 3, 4, 5]);
     assert_eq!(steps[0].source, StepOrigin::User);
     assert_eq!(steps[1].source, StepOrigin::Agent);
-    assert_eq!(steps[2].source, StepOrigin::User);
-    assert_eq!(steps[3].source, StepOrigin::Agent);
+    assert_eq!(steps[2].source, StepOrigin::Agent);
+    assert_eq!(steps[3].source, StepOrigin::User);
+    assert_eq!(steps[4].source, StepOrigin::Agent);
 }
 
 #[test]
@@ -375,7 +350,7 @@ fn snapshot_including_pending_captures_in_flight_turn_without_consuming() {
     a.push_message(&Message::tool_result("c1", "result"));
     a.push_message(&Message::assistant("done"));
     let steps = a.finish();
-    assert_eq!(steps.len(), 2);
+    assert_eq!(steps.len(), 3);
     assert_eq!(steps[1].observation.as_ref().unwrap().results.len(), 1);
 }
 
@@ -445,16 +420,16 @@ fn push_subagent_embedded_attaches_to_pending_tool_call_step_without_splitting_i
     let steps = a.finish();
     assert_eq!(
         steps.len(),
-        2,
-        "everything about this turn stays in one agent step"
+        3,
+        "the call, its result and the subagent stay in one agent step; the closing text is the next"
+    );
+    assert_eq!(
+        steps[2].message.as_text(),
+        Some("The delegated subtask finished.")
     );
     let step = &steps[1];
     assert_eq!(step.source, StepOrigin::Agent);
     assert_eq!(step.tool_calls.as_ref().unwrap().len(), 1);
-    assert_eq!(
-        step.message.as_text(),
-        Some("The delegated subtask finished.")
-    );
 
     let obs = step.observation.as_ref().expect("observation present");
     assert_eq!(
@@ -825,7 +800,11 @@ fn full_round_trip_multi_turn_conversation() {
         .collect();
 
     let steps = conversation_records_to_steps(&records);
-    assert_eq!(steps.len(), 4, "user, [merged agent turn], user, assistant");
+    assert_eq!(
+        steps.len(),
+        5,
+        "user, [call and result], [final text], user, assistant"
+    );
 
     let round_tripped = steps_to_messages(&steps);
     assert_messages_eq(&round_tripped, &expected_messages);
@@ -1101,12 +1080,15 @@ fn import_tool_call_chat_document_produces_valid_trajectory() {
     let doc = legacy_doc_tool_call();
     let trajectory = import_legacy_chat_document(&doc);
 
-    // User + one merged agent step (tool_call + tool_result + text).
-    assert_eq!(trajectory.steps.len(), 2);
+    // User, the agent step of the call with its result, the closing text.
+    assert_eq!(trajectory.steps.len(), 3);
     let agent_step = &trajectory.steps[1];
     assert_eq!(agent_step.tool_calls.as_ref().unwrap().len(), 1);
     assert_eq!(agent_step.observation.as_ref().unwrap().results.len(), 1);
-    assert_eq!(agent_step.message.as_text(), Some("Found 2 Rust files."));
+    assert_eq!(
+        trajectory.steps[2].message.as_text(),
+        Some("Found 2 Rust files.")
+    );
 
     assert!(atif::validate_trajectory(&trajectory).is_ok());
 }

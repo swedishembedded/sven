@@ -163,23 +163,26 @@ async fn a_delegated_childs_conversation_and_sampling_identity_are_in_the_parent
     assert!(observed.contains("blue"), "{observed}");
 
     // And how it was sampled: the account of its model requests. The tool call
-    // and the answer after its result are one step with two requests, so each
-    // request's own prompt, tokens and seed are kept beside the run-together
-    // step fields.
+    // is one response and the answer after its result the next, so each is a
+    // step of its own with its own request's prompt, tokens and seed.
     let metrics = acted.metrics.as_ref().expect("the request's account");
-    assert_eq!(metrics.completion_token_ids, Some(vec![11, 12, 21]));
+    assert_eq!(metrics.completion_token_ids, Some(vec![11, 12]));
+    assert_eq!(metrics.logprobs, Some(vec![-0.5, -0.25]));
     assert_eq!(metrics.prompt_token_ids, Some(vec![1, 2, 3]));
     assert_eq!(metrics.extra.as_ref().unwrap()["sven"]["seed"], 5);
-    let requests = metrics.extra.as_ref().unwrap()["sven"]["requests"]
-        .as_array()
-        .expect("each request kept");
-    assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0]["completion_token_ids"], json!([11, 12]));
-    assert_eq!(requests[0]["logprobs"], json!([-0.5, -0.25]));
-    assert_eq!(requests[0]["prompt_token_ids"], json!([1, 2, 3]));
-    assert_eq!(requests[1]["completion_token_ids"], json!([21]));
-    assert_eq!(requests[1]["seed"], 5);
     assert_eq!(acted.model_name.as_deref(), Some("served-model"));
+    let answered = child
+        .steps
+        .iter()
+        .skip_while(|s| !std::ptr::eq(*s, acted))
+        .nth(1)
+        .expect("the answer after the result is the next step");
+    let answer_metrics = answered
+        .metrics
+        .as_ref()
+        .expect("the second request's account");
+    assert_eq!(answer_metrics.completion_token_ids, Some(vec![21]));
+    assert_eq!(answer_metrics.extra.as_ref().unwrap()["sven"]["seed"], 5);
 
     // The run names the program it ran: its plan's digest (the digest of a
     // bundle with helpers is in `bundle_digest` when the harness was loaded as

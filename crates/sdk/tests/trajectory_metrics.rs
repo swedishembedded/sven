@@ -210,7 +210,7 @@ async fn a_resumed_agent_exports_the_same_account() {
 /// beside them: training on the second request needs the prompt it was
 /// actually given, tool result included.
 #[tokio::test]
-async fn a_step_covering_two_requests_keeps_each_ones_own_prompt_and_tokens() {
+async fn each_response_step_keeps_its_own_requests_prompt_and_tokens() {
     let scripts = vec![
         vec![
             ResponseEvent::Tokens {
@@ -248,32 +248,22 @@ async fn a_step_covering_two_requests_keeps_each_ones_own_prompt_and_tokens() {
     let mut agent = engine.agent("agent");
     agent.send("weather in Lund?").await.expect("an outcome");
 
+    // The call and the answer after its result are two responses, so two
+    // steps; each carries its own request's prompt, tokens and logprobs.
     let trajectory = agent.trajectory();
-    let step = trajectory
+    let steps: Vec<_> = trajectory
         .steps
         .iter()
-        .find(|s| s.tool_calls.is_some())
-        .expect("the step that called the tool");
-    let metrics = step.metrics.as_ref().expect("step metrics");
-    assert_eq!(metrics.prompt_token_ids, Some(vec![1, 2, 3]));
-    assert_eq!(metrics.completion_token_ids, Some(vec![11, 12, 13]));
-    let requests = metrics.extra.as_ref().unwrap()["sven"]["requests"]
-        .as_array()
-        .expect("each request is kept")
-        .clone();
-    assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[0]["prompt_token_ids"],
-        serde_json::json!([1, 2, 3])
-    );
-    assert_eq!(
-        requests[0]["completion_token_ids"],
-        serde_json::json!([11, 12])
-    );
-    assert_eq!(
-        requests[1]["prompt_token_ids"],
-        serde_json::json!([1, 2, 3, 11, 12, 77])
-    );
-    assert_eq!(requests[1]["completion_token_ids"], serde_json::json!([13]));
-    assert_eq!(requests[1]["logprobs"], serde_json::json!([-0.125]));
+        .filter(|s| s.metrics.is_some())
+        .collect();
+    assert_eq!(steps.len(), 2);
+    assert!(steps[0].tool_calls.is_some() && steps[1].tool_calls.is_none());
+    let first = steps[0].metrics.as_ref().unwrap();
+    assert_eq!(first.prompt_token_ids, Some(vec![1, 2, 3]));
+    assert_eq!(first.completion_token_ids, Some(vec![11, 12]));
+    assert_eq!(first.logprobs, Some(vec![-0.5, -0.25]));
+    let second = steps[1].metrics.as_ref().unwrap();
+    assert_eq!(second.prompt_token_ids, Some(vec![1, 2, 3, 11, 12, 77]));
+    assert_eq!(second.completion_token_ids, Some(vec![13]));
+    assert_eq!(second.logprobs, Some(vec![-0.125]));
 }

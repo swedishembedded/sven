@@ -633,6 +633,14 @@ sampled token ids, log-probabilities, seed, adapter and checkpoint digests) and
 how a run is journaled, reproduced and embedded under a parent is in
 [Training-grade trajectories](../internals/trajectories.md).
 
+An agent step is one model response: its reasoning and text, the tool calls
+it made together, and the results of exactly those calls. The response that
+follows the results is the next step, so `user -> call A -> result A -> calls
+B, C -> results B, C -> final text` exports as one user step and three agent
+steps (A with its result, B and C with both results, the text), and each model
+request's tokens are on the step of the response it answered. A consumer that
+trains on turns reads the model's turn boundaries from the steps.
+
 What the document says about the model's view of the run:
 
 - **Compaction.** When the conversation outgrows the model's context the

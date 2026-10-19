@@ -387,7 +387,7 @@ The detection and routing live in `crates/ci/src/runner/` (`mod.rs`,
 - `parse_jsonl_trace_steps(s)` parses NDJSON into `(history, pending_user_input)` via `atif::persist::read_steps_ndjson` + `sven_session_store::trace_session::steps_to_messages`.
 - `parse_json_summary(s)` parses a whole `Trajectory` document into a flat history via the same `steps_to_messages` reconstruction.
 - Both return message history; step content = `extra_prompt` OR `pending_user_input` OR exit(2).
-- The turn-shaped assembly (folding a flat event stream - user messages, assistant text, tool calls/results, thinking, context-compaction markers - into ATIF `TraceStep`s) lives in `sven_session_store::trace_session::StepAssembler`, shared by every trace-producing/consuming path in the runner.
+- The turn-shaped assembly (folding a flat event stream - user messages, assistant text, tool calls/results, thinking, context-compaction markers - into ATIF `TraceStep`s) (one agent step per model response: an assistant message that follows a tool result opens a new step) lives in `sven_session_store::trace_session::StepAssembler`, shared by every trace-producing/consuming path in the runner.
 
 The unit tests in `crates/ci/src/tests.rs` cover the format detectors and the
 conversation round trips.

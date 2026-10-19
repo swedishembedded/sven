@@ -249,13 +249,13 @@ struct PendingAgentStep {
 /// - A `Thinking` event always closes whatever agent step was pending and
 ///   opens a *new* agent step, seeding its `reasoning_content` — a fresh
 ///   reasoning block signals a new LLM turn.
-/// - Assistant text, tool calls, and tool results never open a *new*
-///   step by themselves if one is already pending: they fold into
-///   whichever agent step is currently open (creating one with no
-///   `reasoning_content` if none was open yet). This is what makes
-///   `thinking → tool_call → tool_result → assistant_text` collapse into
-///   a single step even though the assistant text arrives *after* the
-///   tool result.
+/// - Assistant text and tool calls fold into the agent step that is
+///   currently open (creating one with no `reasoning_content` if none was
+///   open yet), unless that step already holds a tool result: then the
+///   model is answering again and the message opens a new step. One step is
+///   therefore one model response with its calls and their results:
+///   `call A → result A → call B, C → result B, C → text` is three agent
+///   steps. Tool results fold into the open step.
 /// - `ContextCompacted` always closes whatever agent step was pending and
 ///   is pushed immediately as its own `System` step.
 /// - [`Self::finish`] flushes any still-open agent step and returns the
@@ -329,7 +329,7 @@ impl StepAssembler {
                 self.push_immediate_step(StepOrigin::User, MessageBody::text(text.clone()));
             }
             (Role::Assistant, MessageContent::Text(text)) => {
-                let pending = self.pending_or_new();
+                let pending = self.pending_for_response();
                 pending.message_text = Some(match pending.message_text.take() {
                     Some(prev) => format!("{prev}\n{text}"),
                     None => text.clone(),
@@ -347,7 +347,7 @@ impl StepAssembler {
                     &function.name,
                     &function.arguments,
                 );
-                self.pending_or_new().tool_calls.push(invocation);
+                self.pending_for_response().tool_calls.push(invocation);
             }
             (
                 Role::Tool,
@@ -505,6 +505,21 @@ impl StepAssembler {
     pub fn finish(mut self) -> Vec<TraceStep> {
         self.flush_pending();
         self.steps
+    }
+
+    /// The agent step an assistant message belongs to. A step that already
+    /// holds a tool result is complete: its response's calls were answered, so
+    /// what the model says next is a new response and opens a new step. The
+    /// calls of one response (no result between them) stay in one step.
+    fn pending_for_response(&mut self) -> &mut PendingAgentStep {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|p| !p.observation_results.is_empty())
+        {
+            self.flush_pending();
+        }
+        self.pending_or_new()
     }
 
     fn pending_or_new(&mut self) -> &mut PendingAgentStep {
