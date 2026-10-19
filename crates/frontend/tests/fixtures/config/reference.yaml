@@ -3,13 +3,16 @@
 # ── Model ──────────────────────────────────────────────────────────────────
 
 model:
-  # Provider to use. Supported values: "openai", "anthropic", "mock"
+  # Provider id. Run `sven list-providers` for the supported values.
+  # With no model: section sven picks one from the environment (see above);
+  # the built-in fallback is openrouter / openrouter/auto.
   provider: openai
 
   # Model name forwarded to the provider.
   name: gpt-4o
 
-  # Environment variable that holds the API key.
+  # Environment variable that holds the API key. Unset: the provider's
+  # standard variable (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...).
   # The variable is read at runtime so it never needs to be in this file.
   api_key_env: OPENAI_API_KEY
 
@@ -20,12 +23,34 @@ model:
   # Useful for local proxies (e.g. LiteLLM) or self-hosted models.
   # base_url: http://localhost:4000/v1
 
-  # Maximum tokens to request in a single response.
-  # When unset, the model's max output tokens from the built-in catalog is used.
-  # max_tokens: 4096
+  # Total context window in tokens (input + output). Used for compaction.
+  # Unset: the window the built-in catalog or the local server reports.
+  # With max_output_tokens unset it also limits the output of one response.
+  # max_tokens: 128000
+
+  # Output tokens per response, and an optional cap on the input side.
+  # When more than one of the three is set, max_tokens must be at least
+  # max_input_tokens + max_output_tokens (a warning is logged otherwise).
+  # max_output_tokens: 4096
+  # max_input_tokens: 100000
 
   # Sampling temperature (0.0 = deterministic, 2.0 = very random).
   temperature: 0.2
+
+  # Provider-specific options forwarded as-is to the driver.
+  # driver_options: {}
+
+  # Input modalities the model accepts: any of text, image, audio. Declare
+  # them for a self-hosted endpoint the catalog does not know.
+  # input_modalities: [text, image, audio]
+
+  # Azure OpenAI (provider: azure)
+  # azure_resource: my-resource
+  # azure_deployment: my-deployment      # default: model.name
+  # azure_api_version: "2024-02-01"
+
+  # AWS Bedrock (provider: aws)
+  # aws_region: us-east-1
 
   # Path to a YAML file of scripted mock responses (provider: "mock" only).
   # Can also be set with the SVEN_MOCK_RESPONSES environment variable.
@@ -33,59 +58,61 @@ model:
 
   # ── Anthropic prompt caching ─────────────────────────────────────────────
   #
-  # Sven uses all four of Anthropic's available cache breakpoints, making it
-  # the most cache-efficient agent available:
+  # sven places up to four of Anthropic's cache breakpoints:
   #
   #   Breakpoint 1 (tools)        - tool definitions, stable per session
   #   Breakpoint 2 (system)       - system prompt, stable per session
   #   Breakpoint 3 (images/tools) - oldest image or large tool result in history
   #   Breakpoint 4 (conversation) - automatic, advances each turn
   #
-  # Reading from cache costs 10% of base input-token price; writing costs 125%.
-  # For a 50-turn session caching 10,000 tokens: ~88% savings on those tokens.
+  # Cache reads are billed below the base input price and cache writes above
+  # it; see Anthropic's pricing for the current rates. Other providers cache
+  # automatically and ignore these flags.
 
-  # Cache the stable system prompt (Anthropic only).  DEFAULT: true
-  # Saves ~90% on system prompt tokens after the first request.
-  # Charges a one-time 25% write premium, then 10% per read.
-  # cache_system_prompt: true
+  # Cache the stable system prompt (Anthropic only).
+  cache_system_prompt: true
 
-  # Cache tool definitions (Anthropic only).  DEFAULT: true
-  # All tool definitions are cached as a prefix when true.
-  # Ideal for saving 5,000-10,000+ tokens per request when many tools are in use.
-  # cache_tools: true
+  # Cache tool definitions (Anthropic only).
+  cache_tools: true
 
-  # Enable automatic conversation caching (Anthropic only).  DEFAULT: true
-  # Adds a top-level cache_control marker so Anthropic automatically caches
-  # conversation history up to the last message.  The cache breakpoint advances
-  # with each turn - no manual management required.
-  # Delivers the largest savings for multi-turn agent sessions.
-  # cache_conversation: true
+  # Automatic conversation caching (Anthropic only). Adds a top-level
+  # cache_control marker so the cache breakpoint advances with each turn.
+  cache_conversation: true
 
-  # Cache image content blocks in conversation history (Anthropic only).  DEFAULT: true
-  # Images cost hundreds of tokens each, every single turn.  Marking them
-  # with cache_control once reduces that cost by ~90% for all following turns.
-  # The oldest images are cached first; the budget is bounded to 4 total slots.
-  # cache_images: true
+  # Cache image content blocks in conversation history (Anthropic only).
+  # The oldest images are cached first; the budget is bounded to 4 slots.
+  cache_images: true
 
-  # Cache large tool results in conversation history (Anthropic only).  DEFAULT: true
-  # File reads, command output, and fetched documents that remain in context
-  # for many turns are cached once their content exceeds 4096 characters.
-  # Saves ~90% on those tokens every subsequent turn.
-  # cache_tool_results: true
+  # Cache large tool results in conversation history (Anthropic only).
+  # Eligible once a result exceeds 4096 characters.
+  cache_tool_results: true
 
-  # Use 1-hour cache TTL instead of the default 5-minute window.  DEFAULT: false
-  # Applies to system prompt, tool definitions, images, and tool results when
-  # their respective caching flags are enabled.  Sends the
-  # extended-cache-ttl-2025-04-11 beta header automatically.  Best for
-  # workflows where requests are spaced more than 5 minutes apart (e.g. CI).
-  # extended_cache_time: false
+  # Use the 1-hour cache TTL instead of 5 minutes (Anthropic only). Applies to
+  # the system prompt, tool definitions, images and tool results when their
+  # flags are on. Sends the extended-cache-ttl-2025-04-11 beta header. Best
+  # for workflows whose requests are more than 5 minutes apart (e.g. CI).
+  extended_cache_time: false
+
+
+# ── Named endpoints ────────────────────────────────────────────────────────
+#
+# Reference one by name in model.provider and one of its models in model.name.
+# An entry takes the model keys above (name is the driver id) plus a models:
+# map of per-model overrides.
+#
+# providers:
+#   local_vllm:
+#     name: openai
+#     base_url: http://localhost:8000/v1
+#     models:
+#       my-model:
+#         max_tokens: 54272
 
 
 # ── Agent ──────────────────────────────────────────────────────────────────
 
 agent:
-  # Default mode when --mode is not given on the command line.
-  # Values: "research", "plan", "agent"
+  # Accepted but not read: the mode of a run comes from --mode (default agent).
   default_mode: agent
 
   # Maximum number of tool-call rounds before sven stops and reports.
@@ -102,15 +129,15 @@ agent:
   compaction_threshold: 0.85
 
   # Number of recent non-system messages to keep verbatim after compaction.
-  # The oldest messages beyond this tail are summarised. Default: 6.
-  # Set to 0 to summarise the full history (original behaviour).
+  # The oldest messages beyond this tail are summarised.
+  # Set to 0 to summarise the full history.
   compaction_keep_recent: 6
 
   # Compaction checkpoint format.
-  # "structured" (default): produces a typed Markdown checkpoint with fixed
+  # "structured": produces a typed Markdown checkpoint with fixed
   #   sections (Active Task, Key Decisions, Files & Artifacts, Constraints,
   #   Pending Items, Session Narrative). Easier for the model to navigate.
-  # "narrative": uses the original free-form summarisation prompt.
+  # "narrative": uses a free-form summarisation prompt.
   compaction_strategy: structured
 
   # Maximum tokens allowed for a single tool result before it is
@@ -118,8 +145,8 @@ agent:
   # Truncation is content-aware:
   #   shell                         : keeps first 60 + last 40 lines
   #   grep                          : keeps leading matches
-  #   read_file                      : keeps head + tail lines
-  #   everything else                : hard-truncates at the character limit
+  #   read_file                     : keeps head + tail lines
+  #   everything else               : hard-truncates at the character limit
   # A truncation notice is always appended so the model knows more exists.
   # Set to 0 to disable per-result truncation entirely.
   tool_result_token_cap: 4000
@@ -136,6 +163,28 @@ agent:
   # Override the system prompt sent to the model.
   # Leave unset to use the built-in prompt.
   # system_prompt: "You are a careful coding assistant..."
+
+  # Wall-clock limit of one headless workflow step, in seconds (0 = no limit).
+  max_step_timeout_secs: 0
+
+  # Wall-clock limit of a whole headless run, in seconds (0 = no limit).
+  # The run ends with exit code 124. The default is four hours.
+  max_run_timeout_secs: 14400
+
+  # Wall-clock budget of each child agent run (a `task` sub-agent, a parallel
+  # SDLC task), in seconds (0 = no limit).
+  child_run_timeout_secs: 3600
+
+  # Thinking-loop watchdog. Defaults: 10% of the context window, 600 seconds.
+  # max_thinking_tokens: 20000
+  # thinking_timeout_secs: 600
+
+  # Stalled-server limits, in seconds (unset or 0 = the default; the first
+  # value is for a hosted API, the second for a server on your own hardware).
+  # stream_idle_timeout_secs: 300       # 1200
+  # first_byte_timeout_secs: 120        # 600
+  # first_token_timeout_secs: 300       # 900
+  # no_progress_timeout_secs: 600
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────
@@ -157,12 +206,16 @@ tools:
     - "rm -rf /*"
     - "dd if=*"
 
+  # Tools, by name, a session never offers the model and never runs.
+  disabled: []
+
   # Timeout for a single tool call, in seconds.
   timeout_secs: 30
 
   # How much of each tool's definition every request carries: "full" sends all
   # of them; "deferred" sends the core tools and the ones the model has loaded
   # through the `tools` tool, and describes the rest in one line each.
+  # (Deferred is the default of a program that reads a configuration file.)
   disclosure:
     mode: deferred
 
@@ -171,7 +224,7 @@ tools:
 
   web:
     # Maximum number of characters fetched from a URL.
-    fetch_max_chars: 50000
+    fetch_max_chars: 20000
 
     search:
       # API key for the Brave Search backend.
@@ -183,7 +236,8 @@ tools:
 
   memory:
     # Path to the persistent memory JSON file.
-    # Defaults to ~/.config/sven/memory.json
+    # Defaults to memory.json in sven's configuration directory
+    # (~/.config/sven/memory.json on Linux).
     # memory_file: /path/to/memory.json
 
 
@@ -199,6 +253,123 @@ tools:
 
     # Override the lint command for Python projects.
     # python_command: ruff check --output-format json .
+
+
+# ── GDB ────────────────────────────────────────────────────────────────────
+
+  gdb:
+    gdb_path: gdb-multiarch
+    command_timeout_secs: 10
+    connect_timeout_secs: 30
+    server_startup_wait_ms: 500
+
+
+# ── Large-content (context) tools ──────────────────────────────────────────
+
+  context:
+    max_parallel: 4
+    default_chunk_lines: 500
+    sub_query_max_chars: 120000
+    sub_query_timeout_secs: 120
+
+
+# ── Speech-to-text for attached audio ──────────────────────────────────────
+
+  asr:
+    model: brain/nemotronasr
+    # D-Bus address of the brain server; unset = the session bus.
+    # bus_address: unix:path=/run/brain/bus
+    timeout_secs: 120
+
+
+# ── MCP servers ────────────────────────────────────────────────────────────
+#
+# mcp_servers:
+#   github:
+#     transport:
+#       type: stdio
+#       command: npx
+#       args: ["-y", "@modelcontextprotocol/server-github"]
+#     env:
+#       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+#     enabled: true
+#     timeout_secs: 30
+
+
+# ── Context assembly ───────────────────────────────────────────────────────
+
+context:
+  assembly:
+    mode: off                   # off | demote | reconstruct
+    budget_tokens: 12000
+    keep_recent_rounds: 2
+    min_demote_tokens: 64
+    resident_bytes: 16777216
+
+
+# ── Cache-aware cost gate ──────────────────────────────────────────────────
+
+cost:
+  cache_aware: off              # off | advise | enforce
+  # remaining_requests: 20
+  # prices:
+  #   openai/gpt-4o:
+  #     input_per_mtok: 2.5
+  #     output_per_mtok: 10.0
+
+
+# ── Delegation policy ──────────────────────────────────────────────────────
+
+delegation:
+  policy: off                   # off | advise | enforce
+  child_overhead_tokens: 4000
+  report_tokens: 400
+  min_samples: 2
+  unknown_work_tokens: 6000
+  replay_rounds: 3
+  parallel_credit_tokens: 1500
+  write_surcharge_tokens: 1000
+  context_window_tokens: 128000
+  assumed_parent_context_tokens: 8000
+
+
+# ── Decision model ─────────────────────────────────────────────────────────
+
+decision:
+  enabled: false
+  mode: auto                    # auto | required | off
+  provider: brain
+  model: auto
+  timeout_ms: 500
+  warn_if_unavailable: true
+  brain:
+    url: http://127.0.0.1:8788
+    # api_key: ${BRAIN_API_KEY:-}
+    max_concurrent_requests: 2
+    cache_entries: 256
+  features:
+    context_selection: true
+    tool_routing: true
+    skill_selection: true
+    delegation: true
+    model_routing: false
+    cache_routing: true
+    permission_advisory: false
+  policy:
+    mode: apply                 # apply | shadow
+    # max_decision_input_tokens: 512
+    minimum_model_quality: validated   # validated | any
+
+
+# ── Instruction catalogs ───────────────────────────────────────────────────
+# full | deferred (deferred is the default of a program that reads a file)
+
+skills:
+  disclosure: deferred
+subagents:
+  disclosure: deferred
+knowledge:
+  disclosure: deferred
 
 
 # ── TUI appearance ─────────────────────────────────────────────────────────

@@ -434,7 +434,7 @@ tools:
 #       command: npx
 #       args: ["-y", "@modelcontextprotocol/server-github"]
 #     env:
-#       GITHUB_TOKEN: ${GITHUB_TOKEN}
+#       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
 #     enabled: true
 #     timeout_secs: 30
 

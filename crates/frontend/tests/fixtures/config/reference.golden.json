@@ -141,7 +141,7 @@
       },
       "timeout_secs": 30,
       "web": {
-        "fetch_max_chars": 50000,
+        "fetch_max_chars": 20000,
         "search": {
           "api_key": null
         }
