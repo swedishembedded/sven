@@ -36,7 +36,7 @@ Measured on this tree against a `mock` provider in a minimal `chat` session
 `gdb` 1,950 · `assimilate_fact` 1,896 · `system` 1,552 · `edit_file` 1,533 ·
 `grep` 1,468 · `shell` 1,392.
 
-Re-measured with the token ledger ([docs/technical/token-ledger.md](../../docs/technical/token-ledger.md))
+Re-measured with the token ledger ([docs/internals/token-ledger.md](../../docs/internals/token-ledger.md))
 on the default headless tool set — 15 tools, because `context`, `gdb` and
 `assimilate_fact` above are not in it: 1,291 system tokens and 4,253 schema
 tokens, **284 per tool**, the heaviest `task` 591 · `grep` 399 · `system` 395 ·
@@ -205,7 +205,7 @@ cache invalidator. A sub-agent, by contrast, starts its own short prefix and
 pays nothing.
 
 Two mechanisms follow from that, and the first is built
-([docs/technical/tool-disclosure.md](../../docs/technical/tool-disclosure.md)):
+([docs/internals/tool-disclosure.md](../../docs/internals/tool-disclosure.md)):
 
 - **Deferred disclosure inside a session.** A request carries the full
   definitions of the core tools only; every other tool is a one-line

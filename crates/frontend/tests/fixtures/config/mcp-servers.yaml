@@ -1,4 +1,4 @@
-# docs/05-configuration.md: MCP servers over HTTP with OAuth, and over stdio.
+# docs/reference/configuration.md: MCP servers over HTTP with OAuth, and over stdio.
 mcp_servers:
   atlassian:
     transport:

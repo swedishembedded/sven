@@ -204,7 +204,8 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
 | `make test/e2e/basic/deferred` | The same suite with `--tool-disclosure deferred` on every invocation |
 | `make test/e2e/basic/instructions-deferred` | The same suite with the skill, subagent and knowledge listings deferred on every invocation |
 | `make test/formal` | TLA+ models of the HSM kernel (needs a JRE; see `formal/README.md`) |
-| `make docs` | Single-file user guide → `target/docs/sven-user-guide.md` |
+| `make docs` | Documentation publication in `build/docs` and the single-file manual → `target/docs/sven-user-guide.md` |
+| `make docs/check` | Publisher check: coverage, links, anchors, deterministic output |
 
 ## Binaries and cargo features
 
@@ -333,7 +334,7 @@ session task and `SessionEvent` consumption)
 ### sdk
 `sven-sdk` (the public framework surface: `Engine`, `Agent`, `AgentState`,
 `Method<T>` - what an application depends on to run agents; see
-[docs/technical/sdk.md](docs/technical/sdk.md)) · `sven-sdk-macros`
+[docs/reference/sdk.md](docs/reference/sdk.md)) · `sven-sdk-macros`
 (foundation tier: the `#[agent]` attribute, re-exported as `sven_sdk::agent`)
 
 ### surface
@@ -342,7 +343,7 @@ session task and `SessionEvent` consumption)
 
 `sven-harness-testkit` (offline case manifests, fixture models and tools,
 runner and comparer for harnesses; mock models unless explicitly opted in -
-behind `sven harness`, see [docs/12-harnesses.md](docs/12-harnesses.md)).
+behind `sven harness`, see [docs/guides/harnesses.md](docs/guides/harnesses.md)).
 
 ### composite
 `sven-acp` (ACP server for IDEs)
@@ -424,7 +425,7 @@ and `sven-tool-registry` the registry; neither holds a concrete tool.
    `modes`) and `ToolDisplay`. A new tool is *deferred* by default; only
    `sven_tool_registry::CORE_TOOLS` is sent in full with every request, and
    adding to it needs a measured reason (see
-   [docs/technical/tool-disclosure.md](docs/technical/tool-disclosure.md)).
+   [docs/internals/tool-disclosure.md](docs/internals/tool-disclosure.md)).
 2. Register it: `sven-bootstrap`'s tool-registry assembly
    (`crates/bootstrap/src/registry.rs`).
 3. If exposed over MCP: `mcp/src/registry.rs`'s `DEFAULT_TOOL_NAMES` -
@@ -444,7 +445,7 @@ as it leaves a dispatch; never keep it in a machine, an executor or a tool.
 record of a turn and the turn cannot disagree.
 
 ### Add a decision point
-A decision model only advises; see [docs/technical/decisions.md](docs/technical/decisions.md).
+A decision model only advises; see [docs/internals/decisions.md](docs/internals/decisions.md).
 1. Declare its `DecisionPolicy` (`sven-decision::policy`): the one question
    shape, input budget, thresholds, impact (anything but `routine` is
    advisory-only by construction) and fallback. Thresholds belong to the
@@ -455,7 +456,7 @@ A decision model only advises; see [docs/technical/decisions.md](docs/technical/
 3. Record `DecisionTelemetry::record_call` and `record_trace` for every ask,
    and report a failure with `DecisionRuntime::diagnose` (once per session).
 4. Gate it on a `decision.features.*` flag (`Feature`, `sven-decision::config`)
-   and document the key in `docs/05-configuration.md`.
+   and document the key in `docs/reference/configuration.md`.
 5. Test it with `MockDecisionProvider`: an abstention, a failure and a
    promotion must each be proven.
 
@@ -476,7 +477,7 @@ A decision model only advises; see [docs/technical/decisions.md](docs/technical/
    the machine owns is not captured by a snapshot and silently reverts on
    resume. `crates/machines/tests/restorable.rs` fails the suite if you skip
    the first; nothing catches the second but a corrupted production session.
-   See [docs/technical/resumable-agents.md](docs/technical/resumable-agents.md).
+   See [docs/internals/resumable-agents.md](docs/internals/resumable-agents.md).
 3. `machines/src/mode.rs::default_registry()` - register the mode string; a
    machine that drives one specific tool registers instead in
    `bootstrap/src/modes.rs` (`mode_registry`, behind the tool's feature) and
@@ -508,7 +509,7 @@ hatch:
    `harness-runtime/tests`, `sdk/tests/harness_*.rs`.
 7. **A runnable sample with cases** in `samples/harnesses/`, run by the
    testkit's `samples` test; document it in
-   `docs/technical/harnesses.md` and `docs/12-harnesses.md`.
+   `docs/reference/harnesses.md` and `docs/guides/harnesses.md`.
 
 ### Add a new model provider / driver
 1. `model/src/registry.rs` - the `DRIVERS` table (env var, base URL,
@@ -581,7 +582,7 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
 3. A fixture and its golden record in `crates/frontend/tests/fixtures/config/`
    if the file format changes (`make generate/config/golden`, then review the
    diff); document the key in
-   `docs/05-configuration.md`.
+   `docs/reference/configuration.md`.
 
 ### Golden rules
 - **One assembly point**: kernels are built by `RuntimeBuilder`, and the
@@ -614,41 +615,44 @@ assembly to `sven-bootstrap` (`config/`), the interactive UI to `sven-frontend`
   the emitter to match the tests, not the reverse.
 
 ## Documentation
-- [README.md](README.md), [docs/00-introduction.md](docs/00-introduction.md)
-- [docs/technical/](docs/technical/) - HSM architecture, ACP, skill system,
-  state machines, and the deliberation engine.
+- [README.md](README.md), [docs/index.md](docs/index.md)
+- [docs/internals/](docs/internals/) - HSM architecture, skill system and the
+  other engineering notes; [docs/concepts/](docs/concepts/) - state machines
+  and the deliberation engine; [docs/reference/acp.md](docs/reference/acp.md) - ACP.
+- `docs/manifest.yaml` lists every published page in navigation order; a new
+  page is added there (`make docs/check` fails on an unlisted one).
 - [docs/adr/](docs/adr/) - architecture decision records. Start with
   [0003 - agents as typed objects](docs/adr/0003-agents-as-typed-objects.md),
   which defines the framework model the workspace is moving toward.
-- [docs/technical/resumable-agents.md](docs/technical/resumable-agents.md) -
+- [docs/internals/resumable-agents.md](docs/internals/resumable-agents.md) -
   suspending and resuming a session; snapshot vs. replay.
-- [docs/technical/sdk.md](docs/technical/sdk.md) - the public framework
+- [docs/reference/sdk.md](docs/reference/sdk.md) - the public framework
   surface: engines, agents, and suspended agent state.
-- [docs/technical/harnesses.md](docs/technical/harnesses.md) and
-  [docs/12-harnesses.md](docs/12-harnesses.md) - YAML agent harnesses: the
+- [docs/reference/harnesses.md](docs/reference/harnesses.md) and
+  [docs/guides/harnesses.md](docs/guides/harnesses.md) - YAML agent harnesses: the
   language, runtime, authorization, replay and the `sven harness` CLI.
-- [docs/technical/tool-disclosure.md](docs/technical/tool-disclosure.md) -
+- [docs/internals/tool-disclosure.md](docs/internals/tool-disclosure.md) -
   deferred tool disclosure: core tools, the `tools` discovery tool, loading,
   ordering for the prompt cache, and the measured savings.
-- [docs/technical/instruction-disclosure.md](docs/technical/instruction-disclosure.md) -
+- [docs/internals/instruction-disclosure.md](docs/internals/instruction-disclosure.md) -
   skills, subagents and knowledge documents: stable ids, activation conditions,
   the active set in the kernel context, and what the system prompt lists.
-- [docs/technical/token-ledger.md](docs/technical/token-ledger.md) - the
+- [docs/internals/token-ledger.md](docs/internals/token-ledger.md) - the
   per-request token ledger: where a request's input tokens come from, the
   `--token-ledger` line, `sven ledger`, and the baseline scenarios.
-- [docs/technical/context-assembly.md](docs/technical/context-assembly.md) -
+- [docs/internals/context-assembly.md](docs/internals/context-assembly.md) -
   addressable context: chunks, representations at four visibilities, the
   assembly policy, expansion as a recovery event and how to measure it.
-- [docs/technical/delegation.md](docs/technical/delegation.md) -
+- [docs/concepts/delegation.md](docs/concepts/delegation.md) -
   the `task` tool: briefs from typed evidence, structured results,
   deduplication of subgoals, the cost policy and the measured effect.
-- [docs/technical/tool-definitions.md](docs/technical/tool-definitions.md) -
+- [docs/internals/tool-definitions.md](docs/internals/tool-definitions.md) -
   the size of the tool definitions every request carries, how it is measured
   and the ceiling that pins it.
-- [docs/technical/decisions.md](docs/technical/decisions.md) -
+- [docs/internals/decisions.md](docs/internals/decisions.md) -
   the decision runtime: typed questions for a small decision model, policy,
   failure classes and the mock provider; the model only advises.
-- [docs/technical/cost-model.md](docs/technical/cost-model.md) -
+- [docs/internals/cost-model.md](docs/internals/cost-model.md) -
   what a request costs, term by term: prices, cache state, handoff and
   recovery; advisory and off by default.
 - `architecture.toml` - authoritative crate tiers, dependency legality, file-size

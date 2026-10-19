@@ -3,7 +3,7 @@
 What a trajectory must record so that an application that trains models can learn from it
 without re-deriving anything, and so a run is reproducible. Update this file in the same
 commit that finishes or changes an item; finished items move to
-[`docs/technical/training-trajectories.md`](../../docs/technical/training-trajectories.md).
+[`docs/internals/trajectories.md`](../../docs/internals/trajectories.md).
 Nothing here makes an agent depend on any trainer: sven records, applications consume.
 
 ## Done (see the doc)

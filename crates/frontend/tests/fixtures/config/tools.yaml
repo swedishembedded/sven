@@ -1,4 +1,4 @@
-# docs/05-configuration.md: approval patterns, the GDB tools and the
+# docs/reference/configuration.md: approval patterns, the GDB tools and the
 # memory-mapped context tools.
 tools:
   auto_approve_patterns:

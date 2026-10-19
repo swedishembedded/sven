@@ -1,0 +1,91 @@
+# Navigation order is the single source of order for the published site, the
+# standalone manual and the PDF. See tools/docs-publisher for the schema.
+schema: 1
+project: sven
+title: sven
+description: An AI coding agent for the terminal and CI, and the agent execution framework it is built on.
+repository: https://github.com/swedishembedded/sven
+branch: main
+home: docs/index.md
+navigation:
+  - title: Getting started
+    pages:
+      - docs/getting-started/installation.md
+      - docs/getting-started/quickstart.md
+  - title: Guides
+    pages:
+      - docs/guides/interactive.md
+      - docs/guides/headless.md
+      - docs/guides/workflows.md
+      - docs/guides/pipe-composition.md
+      - docs/guides/teams.md
+      - docs/guides/debugging.md
+      - docs/guides/skills.md
+      - docs/guides/large-content.md
+      - docs/guides/harnesses.md
+      - docs/guides/ide-integration.md
+      - docs/guides/troubleshooting.md
+  - title: Concepts
+    pages:
+      - docs/concepts/agents.md
+      - docs/concepts/state-machines.md
+      - docs/concepts/deliberation.md
+      - docs/concepts/delegation.md
+      - docs/concepts/memory.md
+      - docs/concepts/knowledge-base.md
+  - title: Reference
+    pages:
+      - docs/reference/cli.md
+      - docs/reference/configuration.md
+      - docs/reference/providers.md
+      - docs/reference/tools.md
+      - docs/reference/harnesses.md
+      - docs/reference/sdk.md
+      - docs/reference/acp.md
+  - title: Examples
+    pages:
+      - docs/examples/index.md
+      - source: samples/harnesses/README.md
+        path: examples/harness-samples.md
+        title: Harness samples
+      - source: samples/agent/task/README.md
+        path: examples/agent-task.md
+        title: A bounded agent task
+      - source: samples/host/sessions/README.md
+        path: examples/host-sessions.md
+        title: One engine, several sessions
+      - source: samples/study/svf/README.md
+        path: examples/study-svf.md
+        title: Learning from a document
+  - title: Internals
+    pages:
+      - docs/internals/hsm-architecture.md
+      - docs/internals/parallel-submachines.md
+      - docs/internals/parallel-tool-slots.md
+      - docs/internals/resumable-agents.md
+      - docs/internals/skill-system.md
+      - docs/internals/decisions.md
+      - docs/internals/context-assembly.md
+      - docs/internals/prompt-compaction.md
+      - docs/internals/rlm-context-tools.md
+      - docs/internals/tool-definitions.md
+      - docs/internals/tool-disclosure.md
+      - docs/internals/instruction-disclosure.md
+      - docs/internals/token-ledger.md
+      - docs/internals/cost-model.md
+      - docs/internals/trajectories.md
+  - title: Contributing
+    pages:
+      - docs/contributing/index.md
+      - source: samples/README.md
+        path: contributing/samples.md
+        title: Writing a sample
+      - docs/contributing/ablation-benchmarks.md
+      - docs/contributing/decision-experiments.md
+  - title: Design history
+    pages:
+      - docs/adr/index.md
+      - docs/adr/0001-delete-graph-dsl.md
+      - docs/adr/0002-delete-trajectory-exporter.md
+      - docs/adr/0003-agents-as-typed-objects.md
+      - docs/adr/0004-programmable-harnesses.md

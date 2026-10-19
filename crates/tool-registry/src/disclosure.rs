@@ -51,7 +51,7 @@ pub const DISCOVERY_TOOL: &str = "tools";
 /// [`Disclosure::Deferred`]: the file, search and shell tools of the coding
 /// loop, the todo list, and the discovery tool that reaches everything else.
 /// Chosen by measurement: these are the tools that appear in the tool calls of
-/// the baseline scenarios (see `docs/technical/token-ledger.md`).
+/// the baseline scenarios (see `docs/internals/token-ledger.md`).
 ///
 /// An MCP tool is never core, whatever its name.
 pub const CORE_TOOLS: &[&str] = &[

@@ -164,8 +164,8 @@ effect, permission or audit planes.
 
 The design above shipped as described; this records what the implementation
 settled, what it added beyond the text, and the decisions taken on the way.
-The user guide is [docs/12-harnesses.md](../12-harnesses.md) and the reference
-[docs/technical/harnesses.md](../technical/harnesses.md).
+The user guide is [Harnesses](../guides/harnesses.md) and the reference
+[Programmable harnesses](../reference/harnesses.md).
 
 **Syntax.** A step is `id: { primitive: { ..., then: next } }`: exactly one
 primitive key, its successor named by `then` (`branch` has `when_true` and

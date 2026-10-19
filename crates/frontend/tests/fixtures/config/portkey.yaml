@@ -1,4 +1,4 @@
-# docs/providers.md: driver options forwarded as-is.
+# docs/reference/providers.md: driver options forwarded as-is.
 model:
   provider: portkey
   name: gpt-4o

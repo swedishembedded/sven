@@ -72,20 +72,20 @@ pub struct Config {
     /// nearest `.sven/config.yaml` (the last override layer).
     pub mcp_servers: McpServers,
     /// The decision model that advises the harness; off unless the file
-    /// enables it. See `docs/technical/decisions.md`.
+    /// enables it. See `docs/internals/decisions.md`.
     pub decision: DecisionConfig,
     /// How the context of a request is assembled from the conversation. See
-    /// `docs/technical/context-assembly.md`.
+    /// `docs/internals/context-assembly.md`.
     pub context: ContextSettings,
     /// Whether a rewrite of the prompt is weighed against the provider's
     /// prompt cache, and the prices that uses. See
-    /// `docs/technical/cost-model.md`.
+    /// `docs/internals/cost-model.md`.
     pub cost: CostSettings,
     /// Whether `task` declines a sub-agent that would cost more than it
-    /// saves. See `docs/technical/delegation.md`.
+    /// saves. See `docs/concepts/delegation.md`.
     pub delegation: DelegationConfig,
     /// How much of each skill the system prompt carries. See
-    /// `docs/technical/instruction-disclosure.md`.
+    /// `docs/internals/instruction-disclosure.md`.
     pub skills: ListingConfig,
     /// How much of each subagent the system prompt carries.
     pub subagents: ListingConfig,

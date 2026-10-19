@@ -1,4 +1,4 @@
-# docs/providers.md: any OpenAI-compatible endpoint.
+# docs/reference/providers.md: any OpenAI-compatible endpoint.
 model:
   provider: openai
   name: my-custom-model

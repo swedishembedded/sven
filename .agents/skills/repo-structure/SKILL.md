@@ -21,7 +21,7 @@ sven/
 │   │   └── basic/              # All bats end-to-end tests + helpers.bash
 │   ├── fixtures/               # Shared test fixtures (mock_responses.yaml, plan.md, ...)
 │   └── *.rs                    # Workspace-level integration tests
-├── docs/                       # User-facing markdown docs + technical/ + adr/
+├── docs/                       # Documentation sources (manifest.yaml, guides, concepts, reference, internals, adr)
 ├── formal/                     # TLA+ models of the HSM kernel (`make test/formal`)
 ├── benchmarks/                 # Terminal-Bench harness (`make benchmark`)
 ├── site/                       # Project website (`make site/build`)
@@ -109,7 +109,7 @@ Run `make help` for the full list.
 | `check/gates` | one `check/gates/<gate>` per `scripts/gates/check-<gate>.sh` (generated) |
 | `fmt` | `cargo fmt --all` |
 | `package/deb` | Build Debian package (`package` lists) |
-| `docs` / `docs/pdf` | Build user-guide markdown / PDF |
+| `docs` / `docs/build` / `docs/check` / `docs/pdf` | Build manual and publication / publication only / verify it / PDF manual |
 | `test/formal` | Machine-check the TLA+ models |
 | `release/patch\|minor\|major` | Bump version via cargo-release |
 | `package/dist` | Build release artifacts into `dist/` (`package` lists) |

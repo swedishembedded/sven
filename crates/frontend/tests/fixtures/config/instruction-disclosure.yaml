@@ -1,4 +1,4 @@
-# docs/05-configuration.md and docs/technical/instruction-disclosure.md:
+# docs/reference/configuration.md and docs/internals/instruction-disclosure.md:
 # the skill listing in full, the subagent and knowledge listings as the
 # default index, which the file need not state.
 skills:

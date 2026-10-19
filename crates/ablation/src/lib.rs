@@ -8,7 +8,7 @@
 // services by sending an email to info@swedishembedded.com.
 //! The ablation benchmark: controlled variants of the harness run over the
 //! same seeded tasks, scored objectively. See
-//! `docs/technical/ablation-benchmarks.md`.
+//! `docs/contributing/ablation-benchmarks.md`.
 //!
 //! * [`matrix`]: the variant definitions and how each is realized through
 //!   configuration alone.

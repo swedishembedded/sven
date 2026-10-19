@@ -12,8 +12,8 @@ Applications extend the framework through `EngineBuilder::tool` and
 `EngineBuilder::machine` without editing any crate here, and `sven agent step`
 is the in-repo consumer that keeps the surface honest.
 
-Described in [docs/technical/sdk.md](../technical/sdk.md) and
-[docs/technical/resumable-agents.md](../technical/resumable-agents.md).
+Described in [The Sven SDK](../reference/sdk.md) and
+[Resumable agents](../internals/resumable-agents.md).
 
 The surfaces (`sven-tui`, `sven-ci`, `sven-acp`) open their sessions through
 `sven-frontend`'s `SessionController`, the live-session counterpart of the

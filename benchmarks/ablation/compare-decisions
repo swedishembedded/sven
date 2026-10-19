@@ -9,7 +9,7 @@
 # services by sending an email to info@swedishembedded.com.
 #
 # Decisions disabled (variant B) against heuristic decisions (variant C) with a
-# real model: the D0/D1 arms of docs/technical/decision-experiments.md. Raw
+# real model: the D0/D1 arms of docs/contributing/decision-experiments.md. Raw
 # records and comparison.{json,md} go to --out, outside the repository.
 #
 # Usage: benchmarks/ablation/compare-decisions --out DIR --model NAME [OPTIONS]

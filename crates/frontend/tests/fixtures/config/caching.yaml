@@ -1,4 +1,4 @@
-# docs/05-configuration.md: prompt caching opted out layer by layer.
+# docs/reference/configuration.md: prompt caching opted out layer by layer.
 model:
   provider: anthropic
   name: claude-sonnet-4-5

@@ -1,4 +1,4 @@
-# docs/providers.md: whatever model a local brain is serving, and brain's
+# docs/reference/providers.md: whatever model a local brain is serving, and brain's
 # D-Bus transport as a named provider.
 model:
   provider: brain

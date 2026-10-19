@@ -15,7 +15,7 @@ a change of embedding model starts a new index generation. Sven owns the
 memory semantics. Hosts implement storage behind the same traits, and one
 conformance suite checks every implementation.
 
-## Done (docs/17-memory.md)
+## Done (docs/concepts/memory.md)
 
 Hybrid retrieval behind the store contract with three conformance cases, the
 `Embedder` seam with a local fixed model and an OpenAI-compatible one, the

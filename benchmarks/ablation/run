@@ -12,7 +12,7 @@
 # several seeds, raw records and a report in an output directory outside the
 # repository. Scripted runs: the model is a fixed script, so the numbers say
 # what the harness does with a given model behaviour, never whether a model
-# succeeds (docs/technical/ablation-benchmarks.md).
+# succeeds (docs/contributing/ablation-benchmarks.md).
 #
 # Usage: benchmarks/ablation/run --out DIR [OPTIONS]
 #   --out DIR              raw records (DIR/runs) and the report (DIR/report)

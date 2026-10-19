@@ -26,7 +26,7 @@
 //! - [`assess`] and [`gate`] decide whether rewriting the prompt (demotion,
 //!   compaction, reconstruction) pays for the cached prefix it discards.
 //!
-//! See `docs/technical/cost-model.md`.
+//! See `docs/internals/cost-model.md`.
 
 mod amount;
 mod cache;

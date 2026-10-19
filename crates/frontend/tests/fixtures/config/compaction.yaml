@@ -1,4 +1,4 @@
-# docs/05-configuration.md and docs/technical/prompt-compaction.md: tuning
+# docs/reference/configuration.md and docs/internals/prompt-compaction.md: tuning
 # compaction and the thinking and stall watchdogs.
 agent:
   compaction_threshold: 0.80

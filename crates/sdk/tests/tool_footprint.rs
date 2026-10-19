@@ -15,7 +15,7 @@
 //! same change, which makes the growth a decision rather than drift.
 //!
 //! Run with `--nocapture` to print the per-tool table that
-//! `docs/technical/tool-definitions.md` records.
+//! `docs/internals/tool-definitions.md` records.
 
 use std::sync::Arc;
 

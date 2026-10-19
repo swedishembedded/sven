@@ -359,7 +359,7 @@ impl EngineBuilder {
     /// existing mode name replaces it.
     ///
     /// The machine must implement `all_states()`, or agents running it cannot
-    /// be suspended and resumed. See `docs/technical/resumable-agents.md`.
+    /// be suspended and resumed. See `docs/internals/resumable-agents.md`.
     ///
     /// Repeatable.
     #[must_use]

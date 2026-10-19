@@ -20,7 +20,7 @@ pub struct ListingConfig {
     /// `full` lists every entry's whole metadata in the system prompt.
     /// `deferred` lists a name and a short summary per entry (counts above 50
     /// entries) and leaves the details to the tool that serves the catalog.
-    /// See `docs/technical/instruction-disclosure.md`.
+    /// See `docs/internals/instruction-disclosure.md`.
     pub disclosure: ListingDisclosure,
 }
 

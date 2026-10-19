@@ -1,4 +1,4 @@
-# docs/05-configuration.md: a local OpenAI-compatible server.
+# docs/reference/configuration.md: a local OpenAI-compatible server.
 model:
   provider: openai
   name: llama3

@@ -8,7 +8,7 @@
 // sending an email to info@swedishembedded.com.
 //! The `cost` section: whether a rewrite of the prompt is weighed against the
 //! provider's prompt cache, and the prices the weighing uses. See
-//! `docs/technical/cost-model.md`.
+//! `docs/internals/cost-model.md`.
 
 use std::collections::BTreeMap;
 

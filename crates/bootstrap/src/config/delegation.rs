@@ -8,7 +8,7 @@
 // email to info@swedishembedded.com.
 //! The `delegation` section: whether the `task` tool declines a sub-agent
 //! that would cost more than it saves, and the numbers that decision uses.
-//! See `docs/technical/delegation.md`.
+//! See `docs/concepts/delegation.md`.
 
 use serde::{Deserialize, Serialize};
 use sven_config::Schema;

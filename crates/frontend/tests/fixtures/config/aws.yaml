@@ -1,4 +1,4 @@
-# docs/providers.md: AWS Bedrock.
+# docs/reference/providers.md: AWS Bedrock.
 model:
   provider: aws
   name: us.anthropic.claude-3-5-sonnet-20241022-v2:0

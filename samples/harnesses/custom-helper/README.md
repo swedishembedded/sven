@@ -35,7 +35,7 @@ same two boundaries.
 
 ## Authoring a helper
 
-The commands in [Writing a helper](../../../docs/12-harnesses.md#writing-a-helper) (`sven harness helper run`, `sven harness bundle`) take a module you built with any toolchain through the same three steps this sample ships: try, bundle, test.
+The commands in [Writing a helper](../../../docs/guides/harnesses.md#writing-a-helper) (`sven harness helper run`, `sven harness bundle`) take a module you built with any toolchain through the same three steps this sample ships: try, bundle, test.
 
 ## Authoring this sample without a toolchain
 

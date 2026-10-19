@@ -7,7 +7,7 @@
 // agent context management then you can procure our services by sending an
 // email to info@swedishembedded.com.
 //! The `context` section: how the context of a request is assembled from the
-//! conversation. See `docs/technical/context-assembly.md`.
+//! conversation. See `docs/internals/context-assembly.md`.
 
 use serde::{Deserialize, Serialize};
 use sven_chunks::StoreLimits;

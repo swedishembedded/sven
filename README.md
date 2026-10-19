@@ -1,4 +1,4 @@
-![Sven banner](docs/banner.png)
+![Sven banner](docs/images/banner.png)
 
 # Agent Sven
 
@@ -10,7 +10,7 @@ surface.
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-informational)](CHANGELOG.md)
 
-![sven TUI showing a live chat session with streamed markdown response and vim-style navigation](docs/sven-landing.png)
+![sven TUI showing a live chat session with streamed markdown response and vim-style navigation](docs/images/sven-landing.png)
 
 Give sven a task in plain English. It reads your code, runs commands, writes
 files, searches the web, and delegates subtasks to sub-agents - all
@@ -85,7 +85,7 @@ sven --headless "hi"
 
 With several keys set, OpenRouter is used first, then Anthropic, then OpenAI. Name one
 explicitly with `-M`, for example `sven -M openai/gpt-4o --headless "hi"`, or set it in
-`~/.config/sven/config.yaml` ([providers](docs/providers.md)).
+`~/.config/sven/config.yaml` ([providers](docs/reference/providers.md)).
 
 Then use it:
 
@@ -95,7 +95,7 @@ echo "Summarise the project" | sven   # pipe a one-shot task
 sven --file plan.md                   # run a multi-step workflow file
 ```
 
-See [Installation](docs/01-installation.md) and [Quick Start](docs/02-quickstart.md) for full setup details.
+See [Installation](docs/getting-started/installation.md) and [Quick Start](docs/getting-started/quickstart.md) for full setup details.
 
 Install shell completions:
 
@@ -120,7 +120,7 @@ sven --headless "hi"
 sven detects a running brain from brain's keys file and asks it which model it serves, so
 no configuration is needed. If brain stops answering, sven falls back to a hosted provider
 when a key for one is set. For a larger model, a pinned name or a long context see
-[Brain in the provider reference](docs/providers.md#brain-local-edge-ai-server). A model
+[Brain in the provider reference](docs/reference/providers.md#brain-local-edge-ai-server). A model
 this small answers "hi" but is weak at tool use; use a larger one for real work.
 
 ## Agent modes
@@ -165,7 +165,7 @@ GDB server, connect to the target, load your firmware, set breakpoints, inspect
 registers and variables, and report its findings - all without leaving your
 terminal.
 
-![sven GDB session showing autonomous breakpoint inspection on an embedded target](docs/sven-gdb-1.png)
+![sven GDB session showing autonomous breakpoint inspection on an embedded target](docs/images/sven-gdb-1.png)
 
 | Tool | What it does |
 |------|-------------|
@@ -177,7 +177,7 @@ terminal.
 | `gdb_status` | Query the current run state and any pending stop events |
 | `gdb_stop` | Kill the debug session and free the probe |
 
-See [Example 11](docs/06-examples.md#example-11--embedded-gdb-debugging-session) and the [GDB section of the User Guide](docs/03-user-guide.md#gdb-debugging-tools).
+See [Example 11](docs/examples/index.md#example-11--embedded-gdb-debugging-session) and the [GDB section of the User Guide](docs/guides/debugging.md).
 
 ## Agent teams
 
@@ -188,7 +188,7 @@ sven team start --file .sven/teams/myteam.yaml   # spawn all team members
 sven team status myteam                           # show live task board
 ```
 
-See [docs/11-teams-and-tasks.md](docs/11-teams-and-tasks.md) for the full
+See [docs/guides/teams.md](docs/guides/teams.md) for the full
 task board, worktree isolation, and tool reference.
 
 ## Workflow files - unique to sven
@@ -222,7 +222,7 @@ Each `##` heading is a step. YAML frontmatter sets mode and model. Per-step
 sven validate --file audit.md   # parse and lint a workflow file without running it
 ```
 
-See [docs/04-ci-pipeline.md](docs/04-ci-pipeline.md) for output formats, exit codes, and CI integration.
+See [docs/guides/headless.md](docs/guides/headless.md) for output formats, exit codes, and CI integration.
 
 ## Parallel pipelines - map / tee / reduce
 
@@ -289,7 +289,7 @@ kernel stays the deterministic authority over every transition.
 - **Permission-safe** - `ToolCapability` sets are attached per state family. States that should not call shell commands architecturally cannot.
 - **Extensible** - adding a new machine is one `ModeRegistry::register` call.
 
-See [docs/technical/hsm-architecture.md](docs/technical/hsm-architecture.md) for the full design reference.
+See [docs/internals/hsm-architecture.md](docs/internals/hsm-architecture.md) for the full design reference.
 
 ## Tool suite
 
@@ -341,7 +341,7 @@ Sven supports **32 model providers** natively in Rust - no external gateway requ
 | Regional | DeepSeek, Moonshot, Qwen/DashScope, GLM, MiniMax, Baidu Qianfan |
 | Local / OSS | Ollama, vLLM, LM Studio |
 
-See [docs/providers.md](docs/providers.md) for configuration details.
+See [docs/reference/providers.md](docs/reference/providers.md) for configuration details.
 
 ## IDE integration - ACP
 
@@ -358,7 +358,7 @@ IDE API key required - sven manages its own model.
 }
 ```
 
-The same `sven acp serve` command works for VS Code (ACP extension) and JetBrains (AI Assistant plugin). See the [IDE integration guide](docs/03-user-guide.md#ide-integration-via-acp).
+The same `sven acp serve` command works for VS Code (ACP extension) and JetBrains (AI Assistant plugin). See the [IDE integration guide](docs/guides/ide-integration.md).
 
 ## MCP integration
 
@@ -393,26 +393,26 @@ mcp_servers:
 
 | Section | Topic |
 |---------|-------|
-| [Introduction](docs/00-introduction.md) | What sven is and how it works |
-| [Installation](docs/01-installation.md) | Getting sven onto your machine |
-| [Quick Start](docs/02-quickstart.md) | Your first session in five minutes |
-| [User Guide](docs/03-user-guide.md) | TUI navigation, modes, tools, conversations |
-| [CI and Pipelines](docs/04-ci-pipeline.md) | Headless mode, workflow files, and CI integration |
-| [Configuration](docs/05-configuration.md) | All config options explained |
-| [Examples](docs/06-examples.md) | Real-world use cases |
-| [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
-| [Large-Content Analysis](docs/10-large-content.md) | RLM context tools for files larger than the context window |
-| [Teams and Tasks](docs/11-teams-and-tasks.md) | Declarative agent teams, task board, git worktree isolation |
-| [Harnesses](docs/12-harnesses.md) | Agent programs in YAML: validate, run, replay and test them offline |
-| [Semantic Memory](docs/17-memory.md) | SQLite + FTS5 "second brain" knowledge store |
-| [Providers](docs/providers.md) | Model provider configuration |
+| [Introduction](docs/index.md) | What sven is and how it works |
+| [Installation](docs/getting-started/installation.md) | Getting sven onto your machine |
+| [Quick Start](docs/getting-started/quickstart.md) | Your first session in five minutes |
+| [User Guide](docs/guides/interactive.md) | TUI navigation, modes, tools, conversations |
+| [CI and Pipelines](docs/guides/headless.md) | Headless mode, workflow files, and CI integration |
+| [Configuration](docs/reference/configuration.md) | All config options explained |
+| [Examples](docs/examples/index.md) | Real-world use cases |
+| [Troubleshooting](docs/guides/troubleshooting.md) | Common issues and fixes |
+| [Large-Content Analysis](docs/guides/large-content.md) | RLM context tools for files larger than the context window |
+| [Teams and Tasks](docs/guides/teams.md) | Declarative agent teams, task board, git worktree isolation |
+| [Harnesses](docs/guides/harnesses.md) | Agent programs in YAML: validate, run, replay and test them offline |
+| [Semantic Memory](docs/concepts/memory.md) | SQLite + FTS5 "second brain" knowledge store |
+| [Providers](docs/reference/providers.md) | Model provider configuration |
 | **Technical** | |
-| [HSM Architecture](docs/technical/hsm-architecture.md) | Hierarchical state machine kernel: events, effects, permissions, audit/replay, runtime, dispatch, ModeRegistry |
-| [Deliberation Engine](docs/technical/deliberation-engine.md) | SDLC mode: per-state LLM↔tool loops, append-only threads, structured decisions, phases, and human gates |
-| [Parallel Submachine Fan-out](docs/technical/parallel-submachines.md) | Concurrent child kernels: ChildSpawner, TaskMachine, isolated contexts, Execution fan-out |
-| [Harnesses](docs/technical/harnesses.md) | Harness language, runtime states, authorization, checkpoint/recording/replay, SDK API |
-| [ACP](docs/technical/acp.md) | Agent Client Protocol reference |
-| [Skill system](docs/technical/skill-system.md) | Skill discovery, loading, and frontmatter reference |
+| [HSM Architecture](docs/internals/hsm-architecture.md) | Hierarchical state machine kernel: events, effects, permissions, audit/replay, runtime, dispatch, ModeRegistry |
+| [Deliberation Engine](docs/concepts/deliberation.md) | SDLC mode: per-state LLM↔tool loops, append-only threads, structured decisions, phases, and human gates |
+| [Parallel Submachine Fan-out](docs/internals/parallel-submachines.md) | Concurrent child kernels: ChildSpawner, TaskMachine, isolated contexts, Execution fan-out |
+| [Harnesses](docs/reference/harnesses.md) | Harness language, runtime states, authorization, checkpoint/recording/replay, SDK API |
+| [ACP](docs/reference/acp.md) | Agent Client Protocol reference |
+| [Skill system](docs/internals/skill-system.md) | Skill discovery, loading, and frontmatter reference |
 
 Build the full user guide locally:
 
@@ -440,7 +440,7 @@ make check          # clippy lints
 
 sven merges YAML config from `/etc/sven/config.yaml` → `~/.config/sven/config.yaml` → `.sven/config.yaml` → `sven.yaml` → `--config <path>`. Run `sven show-config` to inspect the resolved result.
 
-See [docs/05-configuration.md](docs/05-configuration.md) for all options.
+See [docs/reference/configuration.md](docs/reference/configuration.md) for all options.
 
 ## Contributing
 

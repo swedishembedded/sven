@@ -1,4 +1,4 @@
-# docs/05-configuration.md and docs/technical/delegation.md: `task` declines a
+# docs/reference/configuration.md and docs/concepts/delegation.md: `task` declines a
 # sub-agent whose estimated cost exceeds what it saves.
 delegation:
   policy: enforce

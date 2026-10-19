@@ -10,7 +10,7 @@
 # The ablation variant matrix. Every variant runs the same tasks; the variants
 # differ only in the configuration below and in which decision provider
 # answers. Validated offline by `sven-ablation matrix validate`; the format is
-# described in docs/technical/ablation-benchmarks.md.
+# described in docs/contributing/ablation-benchmarks.md.
 
 schema: sven.ablation.matrix/1
 

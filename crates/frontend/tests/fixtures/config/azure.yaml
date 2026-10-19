@@ -1,4 +1,4 @@
-# docs/providers.md: Azure OpenAI.
+# docs/reference/providers.md: Azure OpenAI.
 model:
   provider: azure
   name: gpt-4o

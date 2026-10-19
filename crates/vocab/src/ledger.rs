@@ -290,7 +290,7 @@ pub struct RequestBreakdown {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_view: Option<ContextView>,
     /// What the cost-aware decisions of this request concluded and did; absent
-    /// when none was weighed. See `docs/technical/cost-model.md`.
+    /// when none was weighed. See `docs/internals/cost-model.md`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost: Option<crate::cost::CostRecord>,
     /// Decision-model inference cost, see [`DecisionInference`].
