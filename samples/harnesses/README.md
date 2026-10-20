@@ -3,7 +3,7 @@
 
 # Harness samples
 
-Nine programmable harnesses, each a data directory: a YAML document, the
+Ten programmable harnesses, each a data directory: a YAML document, the
 cases that state what it must do, and nothing to compile. The table lists
 them from the simplest program to the most involved; every default case runs
 offline on mock models and fixture tools.
@@ -18,6 +18,7 @@ offline on mock models and fixture tools.
 | [parallel-research](parallel-research/) | `parallel` branches joined in declared order, and cancellation |
 | [suspend-resume](suspend-resume/) | suspend on a bound, resume the checkpoint, replay offline |
 | [custom-helper](custom-helper/) | a sandboxed WASM helper carried in a bundle |
+| [module-sweep](module-sweep/) | a v2 workflow that loops: a frozen backlog worked item by item with progress that survives a resume, and an `until` on a measured coverage figure |
 | [verified-task](verified-task/) | a v2 workflow: a task, a command gate whose exit status decides, bounded repair, a success condition with a coverage threshold |
 | [sdk-runner](sdk-runner/) | the same cases, run from an application with the SDK alone |
 
@@ -49,7 +50,7 @@ and must reach the same verdict and trace.
 ## Running them
 
 ```sh
-sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task}   # all samples, offline
+sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task,module-sweep}   # all samples, offline
 cargo test -p sven-harness-testkit --test samples
 ```
 

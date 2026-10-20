@@ -154,13 +154,44 @@ before. A checkpoint pins the plan digest; resuming against another digest is
 refused as before, and a v2 checkpoint is never reinterpreted under v1 rules
 because the format stamp is part of the digest.
 
-### Dynamic iteration (milestone 4)
+### Dynamic iteration
 
-`for_each` (a collection read from a JSON file the run wrote) and `until` (a
-metric threshold with a maximum iteration count) lower to a 14th primitive,
-`iterate`, in the same way and with the same checklist. Its machinery, the work
-item state it keeps in the run state, the snapshot rule and the resume and
-invalidation semantics are recorded in the addendum of this ADR when they land.
+`for_each` (a collection) and `until` (a metric threshold with a maximum pass
+count) lower to a 14th primitive, `iterate`, available from `api_version: "2"`
+and added through the same checklist. It is one primitive with two variants
+sharing one engine: the body is ordinary steps whose last edge returns to the
+`iterate` step, which the walk visits once per item or pass and which decides
+what runs next.
+
+* **Work-item state belongs to sven and lives in the run state**, under the step
+  id: for a `for_each`, the frozen items (id, value, SHA-256 of the value,
+  status, attempts, the plan digest whose checks the item passed) and a cursor;
+  for an `until`, the entry count. Run state is already what a checkpoint
+  carries, so resume needs no second store.
+* **Snapshot rule.** The collection is read once, on the first visit, from a run
+  input or through the harness-only `read_json_snapshot` tool, and frozen. Edits
+  to the file afterwards are not seen: they cannot add, drop or reorder an item.
+  The run does not reconcile with the file on resume; a changed backlog is a new
+  run. This is the conservative choice, taken because the alternative (merging by
+  id and digest) makes "completed" depend on a file the agent can write. Content
+  digests of items and of the file are recorded so that a later reconciliation
+  policy has what it needs.
+* **Completion.** An item is completed when its body reaches the end of its
+  checks. A failing item fails the run at that item (the checks' own failure
+  step); later items stay pending. `success.work_items.all_completed` checks
+  the loop's summary, so a loop that never ran is not completed.
+* **Resume.** A resumed run continues at the item it was on. An operation the
+  suspension interrupted proves nothing, so a workflow's interrupted gate, file
+  check, snapshot read and model turn start again without spending a step, a
+  turn or a repair attempt; completed items are not touched. (Version 1 keeps its
+  declared retry policy.)
+* **Bounds.** `max_items` (default 500, at most 10000) and `max_iterations` (at
+  most 1000) are part of the plan; the plan's default `max_steps` is computed from
+  them.
+
+Not decided here: invalidating a completed item when the code it was verified
+against changes later. A completed item records the digest of the plan it passed
+under, which is the hook for it.
 
 ## Consequences
 
@@ -168,7 +199,7 @@ invalidation semantics are recorded in the addendum of this ADR when they land.
   and the trace remain v1-shaped, so every existing tool (checkpoints,
   recordings, replay, ATIF export, `harness test`, comparison) works on v2
   without change.
-* `StepSpec` grows from twelve to thirteen primitives (fourteen with `iterate`).
+* `StepSpec` grows from twelve to fourteen primitives (`gate` and `iterate`).
   The v1 JSON Schema still names twelve and a test holds it there; the v2
   schema describes the authoring language, not steps.
 * Plans of v2 workflows are larger than the document. This is deliberate and

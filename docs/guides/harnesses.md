@@ -98,6 +98,16 @@ runs *inside the repository* is as editable by the agent as the code under test:
 pin it with an `{artifact: ..., sha256: ...}` check, or keep it outside the
 workspace.
 
+For work that has to be done many times, a task can loop. `for_each` runs it
+once per item of a collection the agent (or the caller) produced, and
+[samples/harnesses/module-sweep](../../samples/harnesses/module-sweep) shows the
+shape: a planning task leaves `backlog.json`, a `for_each` task reads it **once**,
+freezes the list and works through it, each module verified before the next
+begins (editing the file mid-run changes nothing), and an `until` task repeats
+until a freshly measured coverage figure reaches a threshold or its passes run
+out. The run state records every item, so a suspended run resumes at the module
+it was on; the finished ones are not run again.
+
 `sven harness test` runs the sample on mock models, with a fixture standing in
 for the `shell_gate` tool; a real run needs a host that provides the tool (the
 SDK's `GateCommandTool`). The full language is in the
@@ -379,7 +389,7 @@ and with it any checkpoint taken under the old bundle, changes.
 
 ## Samples tour
 
-[samples/harnesses](../../samples/harnesses) holds nine harnesses, each a data
+[samples/harnesses](../../samples/harnesses) holds ten harnesses, each a data
 directory with its cases:
 
 | Sample | What it shows |
@@ -392,11 +402,12 @@ directory with its cases:
 | `parallel-research` | `parallel` branches joined in declared order; cancellation |
 | `suspend-resume` | suspend on a deadline, resume the checkpoint, replay offline |
 | `custom-helper` | a sandboxed WASM helper carried in a bundle |
+| `module-sweep` | a v2 workflow with a `for_each` over a frozen backlog and an `until` on a coverage figure; a suspension resumes at the module it was on |
 | `verified-task` | a v2 workflow: a command gate whose exit status decides, bounded repair, a coverage threshold in the success condition |
 | `sdk-runner` | the same cases from an application, with the SDK alone |
 
 ```sh
-sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task}   # every sample, offline
+sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task,module-sweep}   # every sample, offline
 cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
 ```
 

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Work through the modules of a repository, one at a time, with progress that
+# survives a restart. A planning task leaves a backlog file; the sweep reads it
+# once and works through that frozen list (editing the file afterwards changes
+# nothing), each module verified by a test command before the next begins; a
+# last task repeats until a coverage figure, measured fresh after every pass,
+# reaches the threshold or the passes run out.
+# Swedish Embedded AB implements verifiable, declarative agent workflows for its
+# clients. If your team needs expertise in turning long-running agent work into
+# reviewable, resumable programs then you can procure our services by sending an
+# email to info@swedishembedded.com.
+api_version: "2"
+name: module-sweep
+description: "Plan, then test and simplify each module in turn, then raise coverage to a threshold."
+agent:
+  profile: coding
+  tools: [read_file, edit_file]
+execution:
+  limits: { model_turns: 40, tool_calls: 60 }
+gates:
+  test: { command: [sh, run_tests.sh, "{{ item_id }}"], timeout: 120 }
+  coverage:
+    command: [sh, run_tests.sh, --coverage]
+    metrics:
+      line_pct: { file: coverage.json, pointer: /line_pct, type: number }
+workflow:
+  - name: plan
+    task: "List the source modules into backlog.json as {\"items\": [{\"module\": \"<name>\"}, ...]}."
+    outputs: [backlog.json]
+  - name: modules
+    for_each: { source: { json: { file: backlog.json, pointer: /items } }, id: module, max_items: 50 }
+    task: "Add tests for the module {{ item.module }} (number {{ item_index }}) and simplify it without changing its behavior."
+    verify: [test]
+    repair: { attempts: 1 }
+  - name: coverage
+    until: { metric: coverage.line_pct, gte: 90, max_iterations: 3 }
+    task: "Close the largest remaining coverage gap (pass {{ iteration }})."
+success:
+  work_items: { all_completed: true }
+outputs:
+  summary: { type: string, value: "{{ tasks.coverage.output }}" }

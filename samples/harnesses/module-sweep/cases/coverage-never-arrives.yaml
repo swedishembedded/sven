@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The threshold is never met in three passes: the run fails with until_exhausted
+# instead of declaring the work done.
+input: {}
+model:
+  sequence:
+    - tool_calls: [ { id: w1, name: edit_file, args: { path: backlog.json, diff: "@@\n+{}\n" } } ]
+    - text: "planned"
+    - text: "parser done"
+    - text: "lexer done"
+    - text: "pass one"
+    - text: "pass two"
+    - text: "pass three"
+tools:
+  edit_file:
+    capability: WriteFile
+    responses:
+      - ok: "written"
+        write: { path: backlog.json, content: '{"items": [{"module": "parser"}, {"module": "lexer"}]}' }
+  read_json_snapshot:
+    capability: ReadFile
+    responses:
+      - ok: { digest: "d1", value: [ { module: "parser" }, { module: "lexer" } ] }
+  shell_gate:
+    capability: ExecuteShell
+    responses:
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+        write: { path: coverage.json, content: '{"line_pct": 40}' }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+        write: { path: coverage.json, content: '{"line_pct": 41}' }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+        write: { path: coverage.json, content: '{"line_pct": 42}' }
+expect:
+  status: failed
+  failure: { code: until_exhausted, message_contains: "within 3 pass" }
+  steps: { coverage__work: 3 }

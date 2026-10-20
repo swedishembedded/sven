@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The run is suspended while the second module's tests run. The checkpoint
+# carries the frozen list and the first module's completion: after the resume
+# the collection is not read again, the first module's work and tests are not
+# repeated, and the interrupted test run is run again.
+input: {}
+model:
+  sequence:
+    - tool_calls: [ { id: w1, name: edit_file, args: { path: backlog.json, diff: "@@\n+{}\n" } } ]
+    - text: "planned"
+    - text: "parser done"
+    - text: "lexer done"
+tools:
+  edit_file:
+    capability: WriteFile
+    responses:
+      - ok: "written"
+        write: { path: backlog.json, content: '{"items": [{"module": "parser"}, {"module": "lexer"}]}' }
+  read_json_snapshot:
+    capability: ReadFile
+    responses:
+      - ok: { digest: "d1", value: [ { module: "parser" }, { module: "lexer" } ] }
+  shell_gate:
+    capability: ExecuteShell
+    responses:
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+      - block: true
+bounds: { deadline_ms: 600 }
+expect:
+  status: suspended
+  steps: { modules__work: 2, modules__v0_test_a0: 2 }
+resume:
+  model:
+    sequence:
+      - text: "coverage raised"
+  tools:
+    shell_gate:
+      capability: ExecuteShell
+      responses:
+        - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+        - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+          write: { path: coverage.json, content: '{"line_pct": 99}' }
+  expect:
+    status: completed
+    output: { summary: "coverage raised" }
+    steps: { modules__work: 2, coverage__work: 1 }
+    tools_invoked: [shell_gate, shell_gate]

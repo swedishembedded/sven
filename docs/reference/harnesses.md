@@ -154,19 +154,50 @@ document is never retried as the other one. The JSON Schema is
 | `capabilities` | the exact grant; omitted, it is derived and shown in the plan |
 | `gates` | named checks, below |
 | `workflow` | the tasks, in order |
-| `success` | `gates: [...]` and `metrics: {<gate>.<metric>: {gte: N}}`, evaluated after the last task |
+| `success` | `gates: [...]`, `metrics: {<gate>.<metric>: {gte: N}}` and `work_items: {all_completed: true}`, evaluated after the last task |
 
 **Tasks.** `name` (the task's identity: generated step ids derive from it, so
 they survive reordering and reformatting), `task` (the prompt, a template),
 `tools`, `when` (a condition; the task is skipped when it does not hold),
 `follow_ups` (further user turns in the same conversation, each with an optional
 `when`), `outputs` (files the task must leave; each is checked to exist),
-`verify` (checks that must pass, in order) and `repair: {attempts, prompt}`.
+`verify` (checks that must pass, in order), `repair: {attempts, prompt}`, and
+at most one of the loops below.
 Templates read `inputs.<name>` and `tasks.<name>.output` (the text of that
 task's last agent turn) for tasks that have run; `facts` and `steps` are
 internal and rejected. A repair prompt also reads `failure.gate`,
 `failure.attempt`, `failure.kind`, `failure.detail`, `failure.exit_code`,
 `failure.stdout` and `failure.stderr`; a default prompt is used when none is given.
+
+**Loops.** `for_each: {source, id, max_items}` runs the task once per item of a
+collection: `source` is `{json: {file, pointer}}` (an array in a workspace file)
+or `{input: <name>}` (an input declared `json`); `id` names the field that
+identifies an item (items that are strings or numbers name themselves; ids must
+be unique and non-empty); `max_items` (default 500, at most 10000) bounds the
+collection and a larger one fails the run. In the task's templates `item` is the
+item (`{{ item.module }}`), `item_id` its id and `item_index` its position from
+0; a gate's argv and a file check's path may read them too, in a `for_each`
+task. `until: {metric: <gate>.<metric>, gte: N, max_iterations: M}` runs the task,
+then measures the metric with a fresh run of the gate's command, and repeats
+while it is not met; the task's templates read `{{ iteration }}` (the pass, from
+1), and a run that uses all `max_iterations` passes fails with `until_exhausted`.
+
+**Work items.** A `for_each` reads its collection **once**, when the loop
+begins, and freezes it in the run state: each item's id, value and SHA-256, its
+status (`pending`, `active`, `completed`), how often its body was started, and
+the digest of the plan whose checks it passed. What the workspace holds
+afterwards cannot add, drop or reorder an item (`backlog_mutation_does_not_
+skip_items`), and the file source's digest is recorded. An item is completed
+only when its body reaches the end of its checks; a failing item fails the run at
+that item, leaving the later ones `pending`. The run state carries the whole
+record, so a checkpoint resumes at the item it was on: completed items are not
+run again, the collection is not read again, and the item that was in flight
+starts its interrupted step again. The loop's summary `{total, completed,
+pending}` is what `success.work_items.all_completed` checks; a `for_each` task
+that did not run (its `when` was false) has not completed. Codes:
+`iterate_source_unreadable`, `iterate_source_malformed`, `iterate_source_not_array`,
+`iterate_missing_id`, `iterate_duplicate_id`, `iterate_too_many_items`. The trace
+records `IterationStarted`, `ItemStarted` and `ItemCompleted`.
 
 **Gates and checks.** A gate is either `command: [argv...]` (with `timeout`
 seconds, default 600, at most 3600; `cwd` inside the workspace; and `metrics`:
@@ -226,6 +257,23 @@ records a `GateEvaluated` trace record, and continues at `then` on a pass and
 `on_fail` otherwise. A host that does not provide the tool fails every gate
 closed. A gate interrupted by a suspension is run again on resume and costs
 neither a repair attempt nor a step.
+
+### The `iterate` step
+
+The fourteenth primitive, written only by the lowering and rejected in a version
+1 document: `iterate: {for_each | until, body, then, on_exhausted, store_as}`. The
+body is ordinary steps whose last edge returns to the `iterate` step, which is
+visited once per item or pass. A file source is read through the reserved tool
+`read_json_snapshot` (`sven_harness_spec::SNAPSHOT_TOOL`, capability `ReadFile`;
+`sven_tools_fs::ReadJsonSnapshotTool`, confined to the workspace, at most 8 MiB)
+that answers `{digest, value}`; like `shell_gate` no agent mode lists it and the
+runtime refuses an agent step's proposed call to it. A read interrupted by a
+suspension is read again. Because an `iterate` plan is cyclic its default
+`max_steps` is the bound computed from `max_items` and `max_iterations`; set
+`execution.limits.steps` for a tighter one.
+
+A workflow's model turns and verifications that a suspension interrupted start
+again on resume (a version 1 document keeps the retry policy it declares).
 
 A version 2 `delegate` can set `propagate_failure`: a child that returns
 `ok: false` then fails the parent step (through its retry frame, if any) with

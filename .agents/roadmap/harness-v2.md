@@ -1,8 +1,9 @@
 # harness v2
 
-**Status: in progress. M1 (contracts) landed with ADR 0005 and the v2 schema;
-M2 (tasks, gates, repair, success) and M4 (iteration) are the spec lane's;
-M3 (production execution) is another lane's.**
+**Status: in progress. M1 (contracts), M2 (tasks, gates, repair, success) and M4
+(iteration) have landed with ADR 0005, the v2 schema, the reference and guide
+sections and two samples; what is left is below. M3 (production execution) is
+another lane's.**
 
 ## Goal
 
@@ -15,17 +16,16 @@ loop, v1 documents unchanged. The design and its rationale are in
 
 ## Left to do
 
-- [ ] M2: version dispatch before deserialization; typed v2 AST with strict
-  keys; authoring validation; lowering of tasks, follow-ups, gates, repair and
-  success onto v1 steps; the `gate` primitive (spec, validator, runtime,
-  authorization, trace, tests); `shell_gate` in `sven-tools-exec`; delegate
-  `propagate_failure`; `harness-plan/2` with a source map; a fixture-mode sample
-  with cases; reference and guide pages.
-- [ ] M4: `iterate` (for_each over a frozen snapshot, until a metric
-  threshold), work-item state in the run state, resume and invalidation, the
-  100-item interrupted workload test.
-- [ ] M5/M6 (other work): `use`/`imports`, `sven harness compile|explain|
-  inspect --graph`, the hardening sample on a disposable C repository.
+- [ ] Hosts register the two harness-only tools (`shell_gate`,
+  `read_json_snapshot`) for every harness run; the fixture testkit fakes them.
+  Without them every gate fails closed and every file-backed loop fails.
+- [ ] Invalidation of completed items when the code they were verified against
+  changes (items record the plan digest they passed under).
+- [ ] A reconciliation policy for resume against a changed backlog (today: none,
+  the frozen list is authoritative).
+- [ ] M5/M6: `use`/`imports`, `sven harness compile|explain|inspect --graph`,
+  the hardening sample on a disposable C repository, durable per-item checkpoint
+  writes (`checkpoint: each_item`) from the CLI.
 - [ ] Delete this file when the docs describe the finished behaviour.
 
 ## Named regression tests
@@ -33,7 +33,7 @@ loop, v1 documents unchanged. The design and its rationale are in
 `child_failure_does_not_succeed_parent`, `coverage_gate_cannot_be_bypassed`,
 `backlog_mutation_does_not_skip_items`, `gate_command_exit_code_is_authoritative`,
 `resume_does_not_trust_interrupted_side_effect`, `v1_compiled_plan_unchanged`
-(landed), `agent_cannot_expand_capabilities` (production lane).
+(all landed), `agent_cannot_expand_capabilities` (production lane).
 
 ## Decisions taken
 
