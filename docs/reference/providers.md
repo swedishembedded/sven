@@ -660,6 +660,20 @@ What sven consumes:
   `<state dir>/brain/api-keys.json`. The file is read each time a provider is
   built, so a restarted server with a new key needs no re-export.
 
+Thinking models (the Qwen family) reason by default: sven sends no
+`enable_thinking`, so the served chat template decides. To turn reasoning off,
+set it in the configuration file (a `--model` flag that changes the provider
+clears `driver_options`, so name the model in the file as well):
+
+```yaml
+model:
+  provider: brain
+  name: <model id>
+  driver_options:
+    chat_template_kwargs:
+      enable_thinking: false
+```
+
 An explicitly named `model.name` is sent as-is and bypasses resolution.
 Auto-detection of brain is described in
 [Default provider auto-detection](#default-provider-auto-detection).
