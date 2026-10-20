@@ -67,8 +67,8 @@ steps:
   bad:      { fail: { code: nope, message: "gave up" } }
 "#;
 
-/// Every `r#"..."#` literal in a Rust source file that parses as a harness
-/// document that the compiler accepts (negative-test documents that the
+/// Every `r#"..."#` literal in a Rust source file that parses as a version 1
+/// harness document that the compiler accepts (negative-test documents that the
 /// compiler rejects are deliberately left out).
 fn parsed_documents_in(source: &str) -> Vec<String> {
     let mut found = Vec::new();
@@ -77,7 +77,7 @@ fn parsed_documents_in(source: &str) -> Vec<String> {
         let body = &rest[start + 3..];
         let Some(end) = body.find("\"#") else { break };
         let literal = &body[..end];
-        if literal.contains("api_version")
+        if literal.contains("api_version: \"1\"")
             && HarnessDocument::parse(literal)
                 .and_then(|d| d.compile())
                 .is_ok()
@@ -191,6 +191,10 @@ fn every_test_and_sample_document_validates() {
             }
             for file in files {
                 let text = std::fs::read_to_string(&file).expect("sample is readable");
+                // Version 2 workflows have their own schema (workflow_schema.rs).
+                if text.contains("api_version: \"2\"") {
+                    continue;
+                }
                 let instance = yaml_to_json(&text);
                 if let Err(error) = validator.validate(&instance) {
                     panic!(

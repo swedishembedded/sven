@@ -7,7 +7,8 @@
 //! every declared contract — because a harness must fail offline, at
 //! `validate` time, never halfway through a run. The checks:
 //!
-//! 1. `api_version` is supported.
+//! 1. `api_version` is supported, and a version 1 document uses nothing
+//!    that only version 2 has.
 //! 2. The entry step exists; every `then`/branch/retry/parallel reference
 //!    names a step in the map (no dangling targets).
 //! 3. Terminal reachability: every step can reach a terminal (`return` or
@@ -27,13 +28,10 @@
 
 use crate::error::HarnessError;
 use crate::expr::{Expr, Template};
-use crate::spec::{HarnessSpec, StepSpec, SUPPORTED_API_VERSION};
-
-/// The bounded exploration depth of the reachability check: deep enough
-/// that any acyclic path to a terminal is found, shallow enough that the
-/// check is fast. A cycle with a genuine exit reaches a terminal well within
-/// this budget; a cycle with none cannot.
-const VISIT_CAP: usize = 64;
+use crate::spec::{
+    HarnessSpec, StepSpec, GATE_TOOL, MAX_GATE_TIMEOUT_SECS, SUPPORTED_API_VERSION,
+    WORKFLOW_API_VERSION, WORKFLOW_PRIMITIVES,
+};
 
 /// The run-data namespaces a path may root at.
 const PATH_ROOTS: [&str; 4] = ["inputs", "facts", "steps", "env"];
@@ -90,11 +88,29 @@ fn validate_schemas(spec: &HarnessSpec) -> Result<(), HarnessError> {
 }
 
 fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
+    if spec.api_version == WORKFLOW_API_VERSION {
+        return Ok(());
+    }
     if spec.api_version != SUPPORTED_API_VERSION {
         return Err(HarnessError::Invalid(format!(
-            "unsupported api_version `{}` (this compiler supports `{SUPPORTED_API_VERSION}`)",
+            "unsupported api_version `{}` (this compiler supports `{SUPPORTED_API_VERSION}` and \
+             `{WORKFLOW_API_VERSION}`)",
             spec.api_version
         )));
+    }
+    for (id, step) in &spec.steps {
+        let only_v2 = match step {
+            StepSpec::Gate(_) => Some(format!("primitive `{}`", WORKFLOW_PRIMITIVES[0])),
+            StepSpec::Delegate(d) if d.propagate_failure => {
+                Some("`propagate_failure` on a delegate".to_string())
+            }
+            _ => None,
+        };
+        if let Some(what) = only_v2 {
+            return Err(HarnessError::Invalid(format!(
+                "step `{id}` uses {what}, which needs `api_version: \"{WORKFLOW_API_VERSION}\"`"
+            )));
+        }
     }
     Ok(())
 }
@@ -203,9 +219,53 @@ fn validate_step_shape(id: &str, step: &StepSpec) -> Result<(), HarnessError> {
                 "step `{id}`: parallel needs at least one branch"
             )));
         }
+        StepSpec::Agent(a) if a.tools.iter().flatten().any(|t| t == GATE_TOOL) => {
+            return Err(HarnessError::Invalid(format!(
+                "step `{id}`: `{GATE_TOOL}` is reserved to `gate` steps and cannot be an agent tool"
+            )));
+        }
+        StepSpec::Gate(g) => validate_gate_shape(id, g)?,
         _ => {}
     }
     Ok(())
+}
+
+/// A `gate` step runs a real command, so its definition is checked tightly:
+/// a non-empty argv, a bounded timeout and a working directory that stays in
+/// the workspace.
+fn validate_gate_shape(id: &str, gate: &crate::spec::GateStepSpec) -> Result<(), HarnessError> {
+    if gate
+        .command
+        .first()
+        .is_none_or(|program| program.trim().is_empty())
+    {
+        return Err(HarnessError::Invalid(format!(
+            "step `{id}`: a gate's `command` is an argv whose first element names the program"
+        )));
+    }
+    if gate.timeout == 0 || gate.timeout > MAX_GATE_TIMEOUT_SECS {
+        return Err(HarnessError::Invalid(format!(
+            "step `{id}`: gate timeout {} s is outside 1..={MAX_GATE_TIMEOUT_SECS}",
+            gate.timeout
+        )));
+    }
+    if let Some(cwd) = &gate.cwd {
+        if !is_workspace_relative(cwd) {
+            return Err(HarnessError::Invalid(format!(
+                "step `{id}`: gate cwd `{cwd}` must be a path inside the workspace (relative, no `..`)"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// `true` for a non-empty relative path with no parent-directory component.
+/// A string-level check: the tools that act on the path confine it again.
+pub(crate) fn is_workspace_relative(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path.split('/').any(|part| part == "..")
 }
 
 /// Validates every path and template in the step: well-formed, rooted in a
@@ -250,6 +310,7 @@ fn template_texts(step: &StepSpec) -> Vec<String> {
         StepSpec::Delegate(d) => template_texts_in_value(&d.input),
         StepSpec::Transform(t) => template_texts_in_value(&t.input),
         StepSpec::Fail(f) => f.message.clone().into_iter().collect(),
+        StepSpec::Gate(g) => g.command.clone(),
         StepSpec::Verify(_)
         | StepSpec::Branch(_)
         | StepSpec::Retry(_)
@@ -290,6 +351,7 @@ fn successors(step: &StepSpec) -> Vec<String> {
         }
         StepSpec::Delegate(d) => vec![d.then.clone()],
         StepSpec::Transform(t) => vec![t.then.clone()],
+        StepSpec::Gate(g) => vec![g.then.clone(), g.on_fail.clone()],
         // Terminals hand control to nobody.
         StepSpec::Return(_) | StepSpec::Fail(_) => Vec::new(),
     }
@@ -298,79 +360,53 @@ fn successors(step: &StepSpec) -> Vec<String> {
 /// Every step must be able to reach a terminal. This is what rejects
 /// unbounded cycles: a cycle in which no path exits to `return`/`fail` can
 /// only run away. Cycles *through* a bounded `retry` are fine because the
-/// retry's attempts bound them — the walk charges a `retry`'s body edge
-/// against its `attempts` budget, so a bounded cycle terminates within the
-/// exploration budget while an unbounded one cannot reach a terminal at all.
+/// retry's attempts bound them, and a loop with a branch out of it is fine
+/// because the run's step budget bounds it.
+///
+/// The check is exact: it walks the reversed edge set outward from the
+/// terminals, so a step is flagged precisely when no path from it reaches
+/// one, however long the path to the terminal is (a generated workflow is a
+/// chain of hundreds of steps).
 fn validate_reachability(spec: &HarnessSpec) -> Result<(), HarnessError> {
-    // For each step, DFS following successors within a bounded budget; a
-    // genuinely unbounded cycle never reaches a terminal within it, a path
-    // with an exit does.
-    let is_terminal = |id: &str| {
-        matches!(
-            spec.steps.get(id),
-            Some(StepSpec::Return(_)) | Some(StepSpec::Fail(_))
-        )
-    };
-    let mut unreachable: Vec<String> = Vec::new();
-    for start in spec.steps.keys() {
-        if is_terminal(start) {
-            continue;
-        }
-        let mut seen = std::collections::BTreeSet::new();
-        if !can_reach_terminal(spec, start, &is_terminal, &mut seen, VISIT_CAP) {
-            unreachable.push(start.clone());
+    let mut predecessors: std::collections::BTreeMap<&str, Vec<&str>> =
+        std::collections::BTreeMap::new();
+    for (id, step) in &spec.steps {
+        for target in successors(step) {
+            if let Some((key, _)) = spec.steps.get_key_value(&target) {
+                predecessors
+                    .entry(key.as_str())
+                    .or_default()
+                    .push(id.as_str());
+            }
         }
     }
-    if !unreachable.is_empty() {
-        return Err(HarnessError::Invalid(format!(
-            "unbounded cycle: step(s) [{}] can never reach a `return` or `fail` step",
-            unreachable.join(", ")
-        )));
-    }
-    Ok(())
-}
-
-fn can_reach_terminal(
-    spec: &HarnessSpec,
-    id: &str,
-    is_terminal: &dyn Fn(&str) -> bool,
-    seen: &mut std::collections::BTreeSet<(String, usize)>,
-    depth: usize,
-) -> bool {
-    if is_terminal(id) {
-        return true;
-    }
-    if depth == 0 {
-        return false;
-    }
-    let Some(step) = spec.steps.get(id) else {
-        return false; // dangling reference; reported elsewhere
-    };
-    // `retry`'s body edge is bounded by attempts; walking it with a decreasing
-    // budget is what keeps bounded cycles from looking unbounded.
-    let budget = match step {
-        StepSpec::Retry(r) => usize::try_from(r.attempts)
-            .unwrap_or(usize::MAX)
-            .min(VISIT_CAP),
-        _ => 1,
-    };
-    for target in successors(step) {
-        let key = (target.clone(), depth.saturating_sub(budget));
-        if seen.contains(&key) {
-            continue;
-        }
-        seen.insert(key.clone());
-        if can_reach_terminal(
-            spec,
-            &target,
-            is_terminal,
-            seen,
-            depth.saturating_sub(budget),
-        ) {
-            return true;
+    let mut reaches_terminal: std::collections::BTreeSet<&str> = spec
+        .steps
+        .iter()
+        .filter(|(_, step)| matches!(step, StepSpec::Return(_) | StepSpec::Fail(_)))
+        .map(|(id, _)| id.as_str())
+        .collect();
+    let mut frontier: Vec<&str> = reaches_terminal.iter().copied().collect();
+    while let Some(id) = frontier.pop() {
+        for before in predecessors.get(id).into_iter().flatten() {
+            if reaches_terminal.insert(before) {
+                frontier.push(before);
+            }
         }
     }
-    false
+    let stuck: Vec<&str> = spec
+        .steps
+        .keys()
+        .map(String::as_str)
+        .filter(|id| !reaches_terminal.contains(id))
+        .collect();
+    if stuck.is_empty() {
+        return Ok(());
+    }
+    Err(HarnessError::Invalid(format!(
+        "unbounded cycle: step(s) [{}] can never reach a `return` or `fail` step",
+        stuck.join(", ")
+    )))
 }
 
 /// The capability each primitive exercises.
@@ -387,6 +423,7 @@ fn required_capability(step: &StepSpec) -> Option<&'static str> {
         StepSpec::Agent(a) => a.tools.iter().flatten().map(|t| t.as_str()).collect(),
         StepSpec::Verify(_) => return Some("RunVerifier"),
         StepSpec::Delegate(_) | StepSpec::Parallel(_) => return Some("SpawnChild"),
+        StepSpec::Gate(_) => return Some("ExecuteShell"),
         StepSpec::Predict(_)
         | StepSpec::Assign(_)
         | StepSpec::Branch(_)
@@ -436,6 +473,7 @@ fn validate_limits(spec: &HarnessSpec) -> Result<(), HarnessError> {
                 | StepSpec::Retry(_)
                 | StepSpec::Parallel(_)
                 | StepSpec::Delegate(_)
+                | StepSpec::Gate(_)
         )
     });
     if !runs_away {

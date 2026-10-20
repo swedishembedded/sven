@@ -177,6 +177,42 @@ impl Template {
     }
 }
 
+/// What a hole of a template is replaced with when a document is lowered
+/// from one namespace to another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathRewrite {
+    /// The hole now reads this path.
+    Path(Path),
+    /// The hole is replaced by this literal text.
+    Text(String),
+}
+
+impl Template {
+    /// Rewrites every hole with `rewrite`, keeping the literal text around
+    /// them. Lowering uses this to move an authored template into the run's
+    /// own namespaces without touching anything else in it.
+    ///
+    /// # Errors
+    ///
+    /// The first error `rewrite` returns.
+    pub fn rewrite(
+        &self,
+        rewrite: &mut dyn FnMut(&Path) -> Result<PathRewrite, crate::HarnessError>,
+    ) -> Result<Template, crate::HarnessError> {
+        let mut parts = Vec::with_capacity(self.parts.len());
+        for part in &self.parts {
+            parts.push(match part {
+                TemplatePart::Text(text) => TemplatePart::Text(text.clone()),
+                TemplatePart::Hole(path) => match rewrite(path)? {
+                    PathRewrite::Path(path) => TemplatePart::Hole(path),
+                    PathRewrite::Text(text) => TemplatePart::Text(text),
+                },
+            });
+        }
+        Ok(Self { parts })
+    }
+}
+
 /// A branch condition: a comparison over paths and literals.
 ///
 /// Kept as an enum rather than an operator-precedence grammar: the language
@@ -312,6 +348,41 @@ impl Expr {
             Self::All(items) | Self::Any(items) => items.iter().flat_map(Self::paths).collect(),
             Self::Not(inner) => inner.paths(),
         }
+    }
+
+    /// Rewrites every path the expression reads with `rewrite`.
+    ///
+    /// # Errors
+    ///
+    /// The first error `rewrite` returns.
+    pub fn rewrite_paths(
+        &self,
+        rewrite: &mut dyn FnMut(&Path) -> Result<Path, crate::HarnessError>,
+    ) -> Result<Expr, crate::HarnessError> {
+        Ok(match self {
+            Self::Truthy(path) => Self::Truthy(rewrite(path)?),
+            Self::Eq { path, value } => Self::Eq {
+                path: rewrite(path)?,
+                value: value.clone(),
+            },
+            Self::Ne { path, value } => Self::Ne {
+                path: rewrite(path)?,
+                value: value.clone(),
+            },
+            Self::All(items) => Self::All(
+                items
+                    .iter()
+                    .map(|e| e.rewrite_paths(rewrite))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Self::Any(items) => Self::Any(
+                items
+                    .iter()
+                    .map(|e| e.rewrite_paths(rewrite))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Self::Not(inner) => Self::Not(Box::new(inner.rewrite_paths(rewrite)?)),
+        })
     }
 
     /// The always-false expression. A compile-time fallback for a condition

@@ -13,11 +13,35 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::source_map::Lowering;
+
 /// The only harness `api_version` this compiler accepts. Bumping it is a
 /// breaking change to the language, handled the way `sven_vocab::verify`
 /// handles forward compatibility: explicit, documented, and never silently
 /// reinterpreted.
 pub const SUPPORTED_API_VERSION: &str = "1";
+
+/// The `api_version` of the declarative workflow language (ADR 0005). A
+/// document of this version is authored as tasks and gates (`v2`), lowered
+/// into a [`HarnessSpec`] of this version, and compiled like any other.
+pub const WORKFLOW_API_VERSION: &str = "2";
+
+/// The primitive keys only a version 2 document may use, in documentation
+/// order. They are produced by the workflow lowering; a version 1 document
+/// that names one is rejected with a message saying so.
+pub const WORKFLOW_PRIMITIVES: [&str; 1] = ["gate"];
+
+/// The tool a `gate` step calls to run its command. Reserved to the
+/// harness: no agent step may be offered or admitted a call to it, so the
+/// model can neither run a gate nor make one pass. The tool itself lives in
+/// the process-execution crate; both sides name it through this constant.
+pub const GATE_TOOL: &str = "shell_gate";
+
+/// The longest a command gate may run, in seconds.
+pub const MAX_GATE_TIMEOUT_SECS: u64 = 3600;
+
+/// How long a command gate may run when its definition gives no timeout.
+pub const DEFAULT_GATE_TIMEOUT_SECS: u64 = 600;
 
 /// The primitive keys a step may be written under: the closed set of the
 /// language, in the order the specification documents them. The JSON Schema
@@ -237,6 +261,11 @@ pub struct HarnessSpec {
     pub entry: String,
     /// The steps, by id.
     pub steps: std::collections::BTreeMap<String, StepSpec>,
+    /// What lowering a version 2 workflow recorded about this spec. Never
+    /// read from or written to a document; `None` for every version 1
+    /// document.
+    #[serde(skip)]
+    pub lowering: Option<Lowering>,
 }
 
 /// Run limits. Every field is an upper bound the runtime enforces; the
@@ -308,6 +337,8 @@ pub enum StepSpec {
     Return(Box<ReturnStepSpec>),
     /// Finish the harness with an explicit failure.
     Fail(Box<FailStepSpec>),
+    /// Run a command and let its exit status decide. Version 2 only.
+    Gate(Box<GateStepSpec>),
 }
 
 /// `predict`: one constrained model turn.
@@ -446,6 +477,11 @@ pub struct DelegateStepSpec {
     /// Where to store the child's result value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_as: Option<String>,
+    /// Fail this step when the child reports `ok: false`, instead of
+    /// storing the result and continuing. Version 2 only (a version 1
+    /// delegate keeps its documented behavior).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub propagate_failure: bool,
     /// The next step.
     pub then: String,
 }
@@ -499,6 +535,37 @@ pub struct FailStepSpec {
     pub message: Option<String>,
 }
 
+/// `gate`: run a command; its exit status decides. Version 2 only.
+///
+/// The command is trusted workflow configuration: it is part of the compiled
+/// plan and the agent cannot redefine it. It runs without a shell. The
+/// run's machine, not the model and not the command's output, decides whether
+/// the gate passed: no error, no timeout, exit status 0.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateStepSpec {
+    /// The argv. Each element may be a template over run data.
+    pub command: Vec<String>,
+    /// The most seconds the command may run.
+    #[serde(default = "default_gate_timeout")]
+    pub timeout: u64,
+    /// The working directory, relative to the workspace root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Where to store the typed gate result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_as: Option<String>,
+    /// The step to go to when the gate passed.
+    pub then: String,
+    /// The step to go to when it did not (non-zero exit, timeout, or the
+    /// command could not be run).
+    pub on_fail: String,
+}
+
+fn default_gate_timeout() -> u64 {
+    DEFAULT_GATE_TIMEOUT_SECS
+}
+
 /// The primitive key for each variant, and the conversion between a
 /// single-key YAML map and [`StepSpec`]. serde_yaml's externally-tagged
 /// enum deserialization demands YAML tags (`!return`), which no harness
@@ -521,6 +588,7 @@ impl StepSpec {
             Self::Transform(_) => "transform",
             Self::Return(_) => "return",
             Self::Fail(_) => "fail",
+            Self::Gate(_) => "gate",
         }
     }
 }
@@ -581,9 +649,13 @@ impl TryFrom<serde_json::Value> for StepSpec {
             "fail" => serde_json::from_str(&text)
                 .map(|f| Self::Fail(Box::new(f)))
                 .map_err(|e| format!("bad `fail` step: {e}")),
+            "gate" => serde_json::from_str(&text)
+                .map(|g| Self::Gate(Box::new(g)))
+                .map_err(|e| format!("bad `gate` step: {e}")),
             other => Err(format!(
-                "unknown step primitive `{other}` (known: {})",
-                PRIMITIVES.join(", ")
+                "unknown step primitive `{other}` (known: {}; api_version 2 adds {})",
+                PRIMITIVES.join(", "),
+                WORKFLOW_PRIMITIVES.join(", ")
             )),
         }
     }
@@ -604,6 +676,7 @@ impl From<StepSpec> for serde_json::Value {
             StepSpec::Transform(t) => ("transform", serde_json::to_value(t).unwrap_or_default()),
             StepSpec::Return(r) => ("return", serde_json::to_value(r).unwrap_or_default()),
             StepSpec::Fail(f) => ("fail", serde_json::to_value(f).unwrap_or_default()),
+            StepSpec::Gate(g) => ("gate", serde_json::to_value(g).unwrap_or_default()),
         };
         serde_json::json!({ key: body })
     }

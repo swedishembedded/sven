@@ -26,7 +26,9 @@ mod bundle;
 mod error;
 mod expr;
 mod plan;
+mod source_map;
 mod spec;
+mod v2;
 mod validate;
 
 #[cfg(test)]
@@ -34,13 +36,19 @@ mod tests;
 
 pub use bundle::{CompiledBundle, HarnessBundle, Helper, BUNDLE_FORMAT_VERSION};
 pub use error::HarnessError;
-pub use expr::{Expr, Path, Template};
-pub use plan::{HarnessPlan, PlanLimits, PlanPrimitive, PlanStep, PLAN_FORMAT_VERSION};
+pub use expr::{Expr, Path, PathRewrite, Template};
+pub use plan::{
+    HarnessPlan, PlanLimits, PlanPrimitive, PlanStep, PLAN_FORMAT_VERSION,
+    WORKFLOW_PLAN_FORMAT_VERSION,
+};
+pub use source_map::{Lowering, SourceRef};
 pub use spec::{
     AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec,
-    DelegateTarget, FailStepSpec, HarnessSpec, IOType, InputValue, LimitsSpec, ParallelStepSpec,
-    PredictStepSpec, RetryStepSpec, ReturnStepSpec, StepId, StepSpec, ToolStepSpec,
-    TransformStepSpec, VerifyStepSpec, PRIMITIVES, SUPPORTED_API_VERSION,
+    DelegateTarget, FailStepSpec, GateStepSpec, HarnessSpec, IOType, InputValue, LimitsSpec,
+    ParallelStepSpec, PredictStepSpec, RetryStepSpec, ReturnStepSpec, StepId, StepSpec,
+    ToolStepSpec, TransformStepSpec, VerifyStepSpec, DEFAULT_GATE_TIMEOUT_SECS, GATE_TOOL,
+    MAX_GATE_TIMEOUT_SECS, PRIMITIVES, SUPPORTED_API_VERSION, WORKFLOW_API_VERSION,
+    WORKFLOW_PRIMITIVES,
 };
 
 /// The JSON Schema (draft 2020-12) of a harness document, for editors and
@@ -110,6 +118,27 @@ fn parse_error_with_path(err: &serde_json::Error) -> String {
     format!("typed spec: {err}")
 }
 
+/// The language version a raw document declares.
+fn api_version_of(value: &serde_json::Value) -> Result<&str, HarnessError> {
+    match value.get("api_version") {
+        Some(serde_json::Value::String(version))
+            if version == SUPPORTED_API_VERSION || version == WORKFLOW_API_VERSION =>
+        {
+            Ok(version)
+        }
+        Some(serde_json::Value::String(version)) => Err(HarnessError::Invalid(format!(
+            "unsupported api_version `{version}` (this compiler supports \
+             `{SUPPORTED_API_VERSION}` and `{WORKFLOW_API_VERSION}`)"
+        ))),
+        Some(other) => Err(HarnessError::Parse(format!(
+            "`api_version` must be a quoted string such as \"{WORKFLOW_API_VERSION}\", got {other}"
+        ))),
+        None => Err(HarnessError::Parse(
+            "the document has no `api_version` (write `api_version: \"2\"`)".into(),
+        )),
+    }
+}
+
 /// A parsed, ownership-taken harness document not yet compiled.
 #[derive(Debug, Clone)]
 pub struct HarnessDocument {
@@ -119,11 +148,17 @@ pub struct HarnessDocument {
 impl HarnessDocument {
     /// Parses `yaml` into a typed harness specification.
     ///
+    /// The `api_version` is read from the raw document first and picks the
+    /// path: `"1"` is the step-map language, `"2"` the declarative workflow
+    /// language, lowered here into the same specification. A document is
+    /// never retried as the other version after a failure.
+    ///
     /// # Errors
     ///
-    /// YAML syntax errors and any shape the deserializer cannot fit into
-    /// [`HarnessSpec`] (unknown primitive, wrong field types, missing
-    /// required fields).
+    /// YAML syntax errors, a missing or unsupported `api_version`, and any
+    /// shape the version's deserializer cannot fit (unknown primitive or key,
+    /// wrong field types, missing required fields), and for version 2 the
+    /// workflow validation and lowering errors.
     pub fn parse(yaml: &str) -> Result<Self, HarnessError> {
         // serde_yaml's untagged-enum handling loses structural errors; going
         // through serde_json::Value (a lossless round-trip for the JSON-ish
@@ -131,9 +166,16 @@ impl HarnessDocument {
         let raw: serde_yaml::Value =
             serde_yaml::from_str(yaml).map_err(|e| HarnessError::Parse(e.to_string()))?;
         let value = yaml_to_json(&raw)?;
-        let spec: HarnessSpec = serde_json::from_value(value)
-            .map_err(|e| HarnessError::Parse(parse_error_with_path(&e)))?;
-        Ok(Self { spec })
+        match api_version_of(&value)? {
+            WORKFLOW_API_VERSION => Ok(Self {
+                spec: v2::lower_document(value)?,
+            }),
+            _ => {
+                let spec: HarnessSpec = serde_json::from_value(value)
+                    .map_err(|e| HarnessError::Parse(parse_error_with_path(&e)))?;
+                Ok(Self { spec })
+            }
+        }
     }
 
     /// Parses a harness document from YAML bytes.

@@ -59,6 +59,17 @@ pub fn harness_event(record: &TraceRecord, step_duration_ms: u64) -> HarnessEven
             condition: *condition,
             selected: selected.clone(),
         },
+        TraceRecord::GateEvaluated {
+            step,
+            passed,
+            kind,
+            exit_code,
+        } => HarnessEvent::GateEvaluated {
+            step: step.clone(),
+            passed: *passed,
+            kind: kind.clone(),
+            exit_code: *exit_code,
+        },
         TraceRecord::Verified { verifier, ok } => HarnessEvent::Verified {
             verifier: verifier.clone(),
             ok: *ok,

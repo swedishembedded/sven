@@ -262,8 +262,8 @@ fn primitive_word(primitive: &PlanPrimitive) -> String {
 
 fn successors(primitive: &PlanPrimitive) -> Vec<String> {
     use PlanPrimitive::{
-        Agent, Assign, Branch, Delegate, Fail, Parallel, Predict, Retry, Return, Tool, Transform,
-        Verify,
+        Agent, Assign, Branch, Delegate, Fail, Gate, Parallel, Predict, Retry, Return, Tool,
+        Transform, Verify,
     };
     match primitive {
         Predict { then, .. }
@@ -289,6 +289,7 @@ fn successors(primitive: &PlanPrimitive) -> Vec<String> {
             .cloned()
             .chain(std::iter::once(join.clone()))
             .collect(),
+        Gate { then, on_fail, .. } => vec![then.clone(), on_fail.clone()],
         Return { .. } | Fail { .. } => Vec::new(),
     }
 }

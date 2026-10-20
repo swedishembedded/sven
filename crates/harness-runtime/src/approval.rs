@@ -24,13 +24,14 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sven_harness_spec::PlanPrimitive;
+use sven_harness_spec::{PlanPrimitive, GATE_TOOL};
 use sven_hsm::context::PendingApproval;
 use sven_hsm::ids::{ApprovalId, ToolCallId};
 use sven_hsm::{
     capability_for_tool_name, Context, Effect, Event, GatedCall, Reaction, ToolCapability,
 };
 
+use crate::command_gate::{gate_args, GATE_CAPABILITY};
 use crate::machine::HarnessMachine;
 use crate::run::{HarnessRunState, Waiting};
 use crate::state::HarnessState;
@@ -115,6 +116,16 @@ impl HarnessMachine {
                 name: name.clone(),
                 capability: capability_for_tool_name(name),
                 args: run.resolve_value(args),
+            }),
+            PlanPrimitive::Gate {
+                command,
+                timeout_secs,
+                cwd,
+                ..
+            } => Some(HeldCall {
+                name: GATE_TOOL.to_string(),
+                capability: GATE_CAPABILITY,
+                args: gate_args(run, command, *timeout_secs, cwd.as_deref()),
             }),
             _ => None,
         }

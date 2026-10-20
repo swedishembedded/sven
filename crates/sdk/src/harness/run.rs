@@ -646,8 +646,7 @@ pub(super) fn outcome_of(
 /// call id the run recorded; the model, verifier, child and join arms
 /// settle on a failed effect.
 fn interrupted_failure(state: &HarnessRunState) -> Option<Event> {
-    const SUSPENDED: &str =
-        "the run was suspended with this operation in flight; it did not complete";
+    const SUSPENDED: &str = sven_harness_runtime::INTERRUPTED_OPERATION;
     let inflight = state.inflight.as_ref()?;
     match state.awaiting? {
         Waiting::Model => Some(Event::LlmFailed {

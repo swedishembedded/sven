@@ -145,6 +145,25 @@ impl HarnessMachine {
         HarnessRunState::load(ctx)
     }
 
+    /// `true` when `step` is a `delegate` that fails when its child does.
+    pub(super) fn propagates_child_failure(&self, step: &str) -> bool {
+        matches!(
+            self.plan().step(step).map(|s| &s.primitive),
+            Some(PlanPrimitive::Delegate {
+                propagate_failure: true,
+                ..
+            })
+        )
+    }
+
+    /// `true` when `step` is a `gate` step.
+    pub(super) fn is_gate_step(&self, step: &str) -> bool {
+        matches!(
+            self.plan().step(step).map(|s| &s.primitive),
+            Some(PlanPrimitive::Gate { .. })
+        )
+    }
+
     /// Records the leaf this machine transitioned to.
     pub(super) fn set_leaf(&mut self, leaf: HarnessState) {
         self.leaf = leaf;
@@ -416,12 +435,18 @@ impl HarnessMachine {
                 call_id: done,
                 observation,
             } if Some(done) == inflight.call_id.as_ref() => {
+                if self.is_gate_step(&inflight.step) {
+                    return self.gate_settled(&mut run, &inflight.step, Ok(observation), ctx);
+                }
                 self.complete_step(&mut run, &inflight.step, observation.clone(), ctx)
             }
             Event::ToolFailed {
                 call_id: done,
                 error,
             } if Some(done) == inflight.call_id.as_ref() => {
+                if self.is_gate_step(&inflight.step) {
+                    return self.gate_settled(&mut run, &inflight.step, Err(error), ctx);
+                }
                 self.side_effect_failed(&mut run, error, ctx)
             }
             _ => self.on_gate_event(&mut run, event, ctx),
@@ -563,6 +588,20 @@ impl HarnessMachine {
                 });
                 run.child = None;
                 let step = child.step;
+                let reported_ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
+                if !reported_ok && self.propagates_child_failure(&step) {
+                    // A required child that failed fails this step (and so
+                    // its retry frame, if any): the result is kept for whoever
+                    // inspects the run, but the walk does not continue.
+                    let message = result
+                        .get("message")
+                        .or_else(|| result.get("error"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("the delegated child reported failure")
+                        .to_string();
+                    run.store_step_value(&step, result.clone(), None);
+                    return self.step_failed(&mut run, "child_failed", &message, ctx);
+                }
                 self.complete_step(&mut run, &step, result.clone(), ctx)
             }
             Event::EffectFailed { error, .. } => self.side_effect_failed(&mut run, error, ctx),
@@ -600,6 +639,7 @@ pub(super) fn primitive_word(primitive: &PlanPrimitive) -> &'static str {
         PlanPrimitive::Transform { .. } => "transform",
         PlanPrimitive::Return { .. } => "return",
         PlanPrimitive::Fail { .. } => "fail",
+        PlanPrimitive::Gate { .. } => "gate",
     }
 }
 
@@ -630,6 +670,7 @@ pub(super) fn then_of(primitive: &PlanPrimitive) -> String {
         | PlanPrimitive::Delegate { then, .. }
         | PlanPrimitive::Transform { then, .. }
         | PlanPrimitive::Parallel { join: then, .. } => then.clone(),
+        PlanPrimitive::Gate { then, .. } => then.clone(),
         PlanPrimitive::Branch { .. }
         | PlanPrimitive::Return { .. }
         | PlanPrimitive::Fail { .. } => String::new(),

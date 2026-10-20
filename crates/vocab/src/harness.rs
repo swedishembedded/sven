@@ -114,6 +114,17 @@ pub enum HarnessEvent {
         /// Whether the verdict passed.
         ok: bool,
     },
+    /// A `gate` step judged its command's report.
+    GateEvaluated {
+        /// The gate step.
+        step: String,
+        /// Whether the gate passed.
+        passed: bool,
+        /// `passed`, `failed` (non-zero exit), `timeout` or `exec_error`.
+        kind: String,
+        /// The command's exit status, when it had one.
+        exit_code: Option<i64>,
+    },
     /// A declared budget was exhausted and the run was suspended on it.
     BudgetExhausted {
         /// Which budget (`output_tokens`, `steps`, `model_turns`,
@@ -227,6 +238,23 @@ impl std::fmt::Display for HarnessEvent {
                     if *ok { "passed" } else { "did not pass" }
                 )
             }
+            Self::GateEvaluated {
+                step,
+                passed,
+                kind,
+                exit_code,
+            } => match exit_code {
+                Some(code) => write!(
+                    f,
+                    "gate `{step}` {} ({kind}, exit {code})",
+                    if *passed { "passed" } else { "failed" }
+                ),
+                None => write!(
+                    f,
+                    "gate `{step}` {} ({kind})",
+                    if *passed { "passed" } else { "failed" }
+                ),
+            },
             Self::BudgetExhausted {
                 budget,
                 consumed,

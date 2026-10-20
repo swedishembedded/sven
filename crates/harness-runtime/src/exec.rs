@@ -273,6 +273,7 @@ impl HarnessMachine {
             ),
             #[cfg(feature = "transform")]
             PlanPrimitive::Transform { .. } => self.run_transform(run, &step, ctx),
+            PlanPrimitive::Gate { .. } => self.run_gate(run, &step, ctx),
             PlanPrimitive::Parallel { ref branches, .. } => {
                 // Each branch child runs one level below this run; the
                 // depth budget bounds recursive fan-out the same way it
@@ -543,11 +544,29 @@ impl HarnessMachine {
             .plan()
             .step(step_id)
             .and_then(|step| store_as_of(&step.primitive));
+        run.store_step_value(step_id, value, store_as.as_deref());
+        let then = self
+            .run
+            .plan()
+            .step(step_id)
+            .map(|step| then_of(&step.primitive))
+            .unwrap_or_default();
+        self.settle_step(run, step_id, &then, ctx)
+    }
+
+    /// A step whose result is already stored is done: record it, end the
+    /// retry frame it was the body of, and point the walk at `next`.
+    pub(super) fn settle_step(
+        &mut self,
+        run: &mut HarnessRunState,
+        step_id: &str,
+        next: &str,
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
         run.trace.push(TraceRecord::StepCompleted {
             step: step_id.to_string(),
             call_id: run.inflight.as_ref().and_then(|inflight| inflight.call_id),
         });
-        run.store_step_value(step_id, value, store_as.as_deref());
         run.awaiting = None;
         run.inflight = None;
         // The body succeeded: the retry is over, and the steps after it are
@@ -559,18 +578,12 @@ impl HarnessMachine {
         {
             run.retry = None;
         }
-        let then = self
-            .run
-            .plan()
-            .step(step_id)
-            .map(|step| then_of(&step.primitive))
-            .unwrap_or_default();
-        run.current = then;
+        run.current = next.to_string();
         run.store(ctx);
         // The walk advances through Advancing: its entry emits the advance
         // signal, which the kernel's executor bounces back and which then
         // executes the step the walk points at. A run never rests after a
-        // stored completion waiting for an external tick — a spawned child
+        // stored completion waiting for an external tick - a spawned child
         // has no tick driver.
         Reaction::Transition {
             target: HarnessState::Advancing,

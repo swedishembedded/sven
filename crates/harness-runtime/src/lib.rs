@@ -27,6 +27,7 @@
 mod agent_loop;
 mod approval;
 mod checkpoint;
+mod command_gate;
 mod error;
 mod events;
 mod exec;
@@ -37,6 +38,7 @@ mod run;
 mod state;
 
 pub use approval::{HeldCall, HeldGate};
+pub use command_gate::INTERRUPTED_OPERATION;
 pub use error::HarnessRunError;
 pub use events::harness_event;
 pub use machine::{harness_thread, HarnessMachine};

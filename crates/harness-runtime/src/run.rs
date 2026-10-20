@@ -389,6 +389,18 @@ pub enum TraceRecord {
         /// Whether the verdict passed.
         ok: bool,
     },
+    /// A `gate` step judged its command's report.
+    GateEvaluated {
+        /// The gate step.
+        step: String,
+        /// Whether the gate passed.
+        passed: bool,
+        /// `passed`, `failed` (non-zero exit), `timeout` or `exec_error`.
+        kind: String,
+        /// The command's exit status, when it had one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i64>,
+    },
     /// A retry frame looped back; the attempt it is about to make.
     RetryAttempt {
         /// The body step re-entered.

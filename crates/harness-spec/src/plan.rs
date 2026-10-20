@@ -15,11 +15,26 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::expr::Template;
+use crate::source_map::SourceRef;
 use crate::spec::{HarnessSpec, StepSpec};
 
 /// The compiled-plan format version, stamped into the digest input so plans
 /// from different compiler generations can never collide.
 pub const PLAN_FORMAT_VERSION: &str = "harness-plan/1";
+
+/// The format stamp of plans compiled from `api_version: "2"` documents.
+/// Distinct from [`PLAN_FORMAT_VERSION`] so that a v2 plan's digest can never
+/// equal a v1 plan's, and a checkpoint of one is never resumed as the other.
+pub const WORKFLOW_PLAN_FORMAT_VERSION: &str = "harness-plan/2";
+
+/// The format stamp for plans compiled from `api_version`.
+fn format_for(api_version: &str) -> &'static str {
+    if api_version == crate::spec::WORKFLOW_API_VERSION {
+        WORKFLOW_PLAN_FORMAT_VERSION
+    } else {
+        PLAN_FORMAT_VERSION
+    }
+}
 
 /// A compiled, canonical harness program.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -46,6 +61,15 @@ pub struct HarnessPlan {
     /// Declared limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<PlanLimits>,
+    /// The tool profile a version 2 workflow declared (`none`, `coding`):
+    /// what the host must provide for the plan's agent steps. Absent in
+    /// version 1 plans.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    /// For a version 2 plan, where each generated step came from in the
+    /// authored document. Empty in version 1 plans.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub source_map: std::collections::BTreeMap<String, SourceRef>,
     /// The steps, in canonical (sorted) order.
     pub steps: std::collections::BTreeMap<String, PlanStep>,
     /// Lowercase hex SHA-256 of the canonical form.
@@ -191,6 +215,9 @@ pub enum PlanPrimitive {
         /// Where to store the result.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
+        /// Fail the step when the child reports `ok: false`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        propagate_failure: bool,
         /// Successor.
         then: String,
     },
@@ -220,6 +247,23 @@ pub enum PlanPrimitive {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<Template>,
     },
+    /// Compiled `gate` (plans of `api_version: "2"` only).
+    Gate {
+        /// The argv, one template per element.
+        command: Vec<Template>,
+        /// The most seconds the command may run.
+        timeout_secs: u64,
+        /// The working directory, relative to the workspace root.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        /// Where to store the typed gate result.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        store_as: Option<String>,
+        /// Successor when the gate passed.
+        then: String,
+        /// Successor when it did not.
+        on_fail: String,
+    },
 }
 
 impl HarnessPlan {
@@ -234,8 +278,12 @@ impl HarnessPlan {
     /// a `BTreeMap` under the hood) over a tagged envelope.
     #[must_use]
     pub fn canonical_digest(value: &serde_json::Value) -> String {
+        Self::digest_in_format(PLAN_FORMAT_VERSION, value)
+    }
+
+    fn digest_in_format(format: &str, value: &serde_json::Value) -> String {
         let envelope = serde_json::json!({
-            "format": PLAN_FORMAT_VERSION,
+            "format": format,
             "plan": value,
         });
         let mut hasher = Sha256::new();
@@ -285,6 +333,12 @@ pub fn compile(spec: &HarnessSpec) -> HarnessPlan {
         schemas: spec.schemas.clone(),
         capabilities,
         limits,
+        profile: spec.lowering.as_ref().map(|l| l.profile.clone()),
+        source_map: spec
+            .lowering
+            .as_ref()
+            .map(|l| l.source_map.clone())
+            .unwrap_or_default(),
         steps,
         // Placeholder, replaced below.
         digest: String::new(),
@@ -302,7 +356,7 @@ pub fn canonical_digest_of_plan(plan: &HarnessPlan) -> String {
     if let serde_json::Value::Object(map) = &mut value {
         map.remove("digest");
     }
-    HarnessPlan::canonical_digest(&value)
+    HarnessPlan::digest_in_format(format_for(&plan.api_version), &value)
 }
 
 /// Compiles one step. Every parse here is guaranteed to succeed: validation
@@ -361,6 +415,7 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             as_kind: d.as_kind.unwrap_or_default(),
             input: d.input.clone(),
             store_as: d.store_as.clone(),
+            propagate_failure: d.propagate_failure,
             then: d.then.clone(),
         },
         StepSpec::Transform(t) => PlanPrimitive::Transform {
@@ -375,6 +430,18 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
         StepSpec::Fail(f) => PlanPrimitive::Fail {
             code: f.code.clone(),
             message: f.message.as_deref().and_then(|m| Template::parse(m).ok()),
+        },
+        StepSpec::Gate(g) => PlanPrimitive::Gate {
+            command: g
+                .command
+                .iter()
+                .map(|arg| Template::parse(arg).unwrap_or_else(|_| Template::empty()))
+                .collect(),
+            timeout_secs: g.timeout,
+            cwd: g.cwd.clone(),
+            store_as: g.store_as.clone(),
+            then: g.then.clone(),
+            on_fail: g.on_fail.clone(),
         },
     };
     PlanStep {
