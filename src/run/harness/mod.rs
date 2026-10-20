@@ -24,6 +24,7 @@ mod production;
 mod replay;
 mod request;
 mod suites;
+mod views;
 
 use sven_harness_testkit::TestkitError;
 
@@ -63,7 +64,21 @@ pub(super) fn kit(error: TestkitError) -> Failure {
 pub(crate) async fn run_harness_command(command: &HarnessCommands) -> i32 {
     let outcome = match command {
         HarnessCommands::Validate { paths, json } => suites::validate(paths, *json),
-        HarnessCommands::Inspect { path, json } => inspect::inspect(path, *json),
+        HarnessCommands::Inspect { path, json, graph } => match graph {
+            Some(format) => views::graph(path, *format),
+            None => inspect::inspect(path, *json),
+        },
+        HarnessCommands::Compile {
+            path,
+            format,
+            output,
+        } => views::compile(path, *format, output.as_deref()),
+        HarnessCommands::Explain { path, step } => views::explain(path, step.as_deref()),
+        HarnessCommands::Status {
+            path,
+            checkpoint,
+            json,
+        } => views::status(path, checkpoint, *json),
         HarnessCommands::Schema { path } => inspect::schema(path.as_deref()),
         HarnessCommands::Bundle {
             document,

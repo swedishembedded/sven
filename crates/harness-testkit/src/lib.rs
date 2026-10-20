@@ -36,6 +36,8 @@ mod run;
 mod runner;
 mod source;
 mod stats;
+mod status;
+mod view;
 
 pub use case::{
     Bounds, CaseManifest, Expect, FailureExpect, ResumePhase, ToolFixture, ToolResponse, Write,
@@ -63,3 +65,5 @@ pub use run::{
 };
 pub use runner::{run_case, run_suite, RunnerOptions};
 pub use stats::{bootstrap_mean, Estimate, CONFIDENCE};
+pub use status::{status, CurrentStep, LoopProgress, StatusCounts, StatusReport};
+pub use view::{compile, explain_plan, explain_step, graph, CompiledHarness, GraphFormat};

@@ -28,7 +28,8 @@ pub use disclosure::DisclosureFlags;
 pub use agent::AgentCommands;
 pub use decisions::{DecisionsCommands, DoctorCommands};
 pub use harness::{
-    ApprovalsArg, HarnessCommands, HarnessRunArgs, HelperCommands, LiveModelArgs, ToolsetArg,
+    ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, HelperCommands, LiveModelArgs,
+    PlanFormatArg, ToolsetArg,
 };
 pub use index::IndexCommands;
 pub use questions::QuestionsCommands;
@@ -514,11 +515,17 @@ pub enum Commands {
     ///   sven harness bundle DOC --helper NAME=FILE.wasm [-o FILE]
     ///   sven harness helper run FILE.wasm --input JSON [--fuel N] [--max-pages N]
     ///   sven harness schema (optional output PATH)
+    ///   sven harness compile DIR [--format json|yaml] [-o FILE]
+    ///   sven harness inspect DIR [--graph dot|mermaid]
+    ///   sven harness explain DIR [--step ID]
+    ///   sven harness status DIR --checkpoint FILE [--json]
     ///
     /// Exit codes. run, resume: 0 returned, 1 the plan failed, 2 usage or
     /// invalid harness/input/file, 3 suspended by a bound, 4 cancelled,
-    /// 5 infrastructure. validate, inspect: 0 valid, 1 invalid, 2 unreadable
-    /// path. test: 0 passed or skipped, 1 a case failed, 2 usage or invalid
+    /// 5 infrastructure. validate, inspect, compile: 0 valid, 1 invalid, 2
+    /// unreadable path. explain: 0 explained, 2 unknown step or unreadable
+    /// path. status: 0 the checkpoint fits the document, 1 resume would refuse
+    /// it, 2 not a checkpoint. test: 0 passed or skipped, 1 a case failed, 2 usage or invalid
     /// harness/manifest. compare: 0 produced, 1 regression under
     /// --fail-on-regression, 2 invalid variant. replay: 0 matched, 1 trace
     /// mismatch, 2 refused recording. bundle: 0 written, 2 refused. helper run:

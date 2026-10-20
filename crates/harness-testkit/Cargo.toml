@@ -8,6 +8,7 @@ license     = "Apache-2.0"
 [dependencies]
 sven-sdk        = { path = "../sdk", default-features = false }
 sven-harness-spec = { path = "../harness-spec" }
+sven-harness-runtime = { path = "../harness-runtime" }
 sven-model-mock = { path = "../model-mock" }
 anyhow          = { workspace = true }
 async-trait     = { workspace = true }

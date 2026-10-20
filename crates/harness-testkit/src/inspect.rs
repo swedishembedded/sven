@@ -18,6 +18,7 @@ use sven_harness_spec::{DelegateTarget, HarnessPlan, IOType, InputValue, PlanPri
 use crate::dir::HarnessDir;
 use crate::error::TestkitError;
 use crate::source::Source;
+use crate::view::{edges, primitive_word};
 
 /// A harness that compiled.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -253,55 +254,8 @@ pub fn inspect(path: &Path) -> Result<InspectReport, TestkitError> {
     })
 }
 
-fn primitive_word(primitive: &PlanPrimitive) -> String {
-    serde_json::to_value(primitive)
-        .ok()
-        .and_then(|v| v.get("kind").and_then(Value::as_str).map(str::to_string))
-        .unwrap_or_default()
-}
-
 fn successors(primitive: &PlanPrimitive) -> Vec<String> {
-    use PlanPrimitive::{
-        Agent, Assign, Branch, Delegate, Fail, Gate, Iterate, Parallel, Predict, Retry, Return,
-        Tool, Transform, Verify,
-    };
-    match primitive {
-        Predict { then, .. }
-        | Agent { then, .. }
-        | Tool { then, .. }
-        | Verify { then, .. }
-        | Assign { then, .. }
-        | Delegate { then, .. }
-        | Transform { then, .. } => vec![then.clone()],
-        Branch {
-            when_true,
-            when_false,
-            ..
-        } => vec![when_true.clone(), when_false.clone()],
-        Retry {
-            body,
-            then,
-            on_exhausted,
-            ..
-        } => vec![body.clone(), then.clone(), on_exhausted.clone()],
-        Parallel { branches, join } => branches
-            .iter()
-            .cloned()
-            .chain(std::iter::once(join.clone()))
-            .collect(),
-        Gate { then, on_fail, .. } => vec![then.clone(), on_fail.clone()],
-        Iterate {
-            body,
-            then,
-            on_exhausted,
-            ..
-        } => [body, then, on_exhausted]
-            .into_iter()
-            .filter(|id| !id.is_empty())
-            .cloned()
-            .collect(),
-        Return { .. } | Fail { .. } => Vec::new(),
-    }
+    edges(primitive).into_iter().map(|e| e.to).collect()
 }
 
 fn type_words(declared: Option<&BTreeMap<String, InputValue>>) -> BTreeMap<String, String> {

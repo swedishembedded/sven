@@ -23,6 +23,24 @@ pub enum ToolsetArg {
     Coding,
 }
 
+/// How `inspect --graph` draws a plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum GraphArg {
+    /// Graphviz DOT.
+    Dot,
+    /// A Mermaid flowchart.
+    Mermaid,
+}
+
+/// How `compile` writes the plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PlanFormatArg {
+    /// Canonical JSON: sorted keys, the form the digest is taken over.
+    Json,
+    /// The same plan as YAML.
+    Yaml,
+}
+
 /// Whether the calls of a production run wait for a person.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ApprovalsArg {
@@ -52,10 +70,57 @@ pub enum HarnessCommands {
     },
 
     /// Show what a harness is: steps, capabilities, limits, digests,
-    /// helpers, children and cases.
+    /// helpers, children and cases; or with `--graph` draw its plan.
+    ///
+    /// A version 2 workflow's graph groups the generated steps by authored
+    /// task and captions them by role, check and attempt.
     Inspect {
         /// A harness file or directory.
         path: PathBuf,
+        /// Print the report as JSON on stdout.
+        #[arg(long)]
+        json: bool,
+        /// Print the plan as a graph instead of the report.
+        #[arg(long, value_enum, value_name = "FORMAT", conflicts_with = "json")]
+        graph: Option<GraphArg>,
+    },
+
+    /// Print the compiled plan: canonical JSON (the form the digest covers)
+    /// or YAML. A version 2 workflow prints its lowered plan with the
+    /// source map and profile. Exit 1 when the document does not compile.
+    Compile {
+        /// A harness file or directory.
+        path: PathBuf,
+        /// The output format.
+        #[arg(long, value_enum, value_name = "FORMAT", default_value = "json")]
+        format: PlanFormatArg,
+        /// Write the plan here instead of stdout.
+        #[arg(long, short = 'o', value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
+
+    /// Explain a harness in the author's terms: a workflow task by task,
+    /// with its checks, repairs and success condition. With `--step ID`,
+    /// explain one generated step: its origin, where it leads and from where
+    /// it is reached.
+    Explain {
+        /// A harness file or directory.
+        path: PathBuf,
+        /// A step id of the compiled plan (see `inspect`).
+        #[arg(long, value_name = "ID")]
+        step: Option<String>,
+    },
+
+    /// Say where a suspended run rests: its step (and task, check and
+    /// attempt), counters, completed steps, loop progress, and whether the
+    /// document still matches the checkpoint. Exit 1 when `resume` would
+    /// refuse the checkpoint, 2 when the file is not a checkpoint.
+    Status {
+        /// A harness file or directory.
+        path: PathBuf,
+        /// The checkpoint written by `run --checkpoint-out`.
+        #[arg(long, value_name = "FILE")]
+        checkpoint: PathBuf,
         /// Print the report as JSON on stdout.
         #[arg(long)]
         json: bool,

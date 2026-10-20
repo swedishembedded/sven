@@ -141,7 +141,10 @@ pinned by one digest covering both.
 
 ```text
 sven harness validate <PATH>... [--json]
-sven harness inspect  <PATH> [--json]
+sven harness inspect  <PATH> [--json | --graph dot|mermaid]
+sven harness compile  <PATH> [--format json|yaml] [-o FILE]
+sven harness explain  <PATH> [--step ID]
+sven harness status   <PATH> --checkpoint FILE [--json]
 sven harness schema   [<PATH>]
 sven harness run      <PATH> [--input JSON | --input-file FILE] [--case FILE]
                       [--model-fixture FILE] [--tool-fixture FILE]... [--workspace DIR]
@@ -195,6 +198,28 @@ sven harness compare  <DIR_A> <DIR_B> --cases DIR [--fail-on-regression] [--json
 
 `--timeout` and `--max-output-tokens` do not fail a run: they **suspend** it
 and leave a checkpoint.
+
+### Reading a harness and a run
+
+None of these starts a model; they work on version 1 plans and version 2
+workflows alike.
+
+- `compile` prints the canonical plan the digest is taken over, as JSON or
+  YAML (`--format`, `-o FILE`). A workflow prints its lowered plan with the
+  `profile` and the `source_map`.
+- `inspect --graph dot|mermaid` draws the plan. A workflow's generated steps
+  are grouped into one cluster (Graphviz) or subgraph (Mermaid) per task and
+  captioned by role, check and attempt; edges say which outcome takes them
+  (`passes`, `fails`, `true`, `false`). Render with `dot -Tsvg` or paste the
+  Mermaid text into any Mermaid renderer.
+- `explain` describes a workflow task by task: its work turn, checks, repair
+  attempts and the success condition. `explain --step ID` gives one generated
+  step's task, check and attempt, what it does, where it leads and from where
+  it is reached.
+- `status --checkpoint FILE` says where a suspended run rests (step, task,
+  check, attempt), its counters, the steps it completed, the progress of
+  `for_each` loops, and whether `resume` would accept the checkpoint under the
+  document as it is now (exit 1 when an edit changed the plan digest).
 
 ### Real tools: `--toolset coding`
 
@@ -267,7 +292,9 @@ where it rests, exits 3 and leaves its checkpoint for `harness resume`.
 | Command | 0 | 1 | 2 | 3 | 4 | 5 |
 |---------|---|---|---|---|---|---|
 | `run`, `resume` | the plan returned | the plan `fail`ed | usage, invalid harness, input or file | suspended by a bound | cancelled | infrastructure |
-| `validate`, `inspect` | valid | invalid | unreadable path | | | |
+| `validate`, `inspect`, `compile` | valid | invalid | unreadable path | | | |
+| `explain` | explained | | unknown step, unreadable path | | | |
+| `status` | the checkpoint fits the document | `resume` would refuse the checkpoint | not a checkpoint, unreadable path | | | |
 | `test` | all passed or skipped | a case failed | usage, invalid harness or manifest | | | |
 | `bundle` | bundle written | | usage, helper not usable, bundle does not compile | | | |
 | `helper run` | output printed | helper broke a bound or its contract | usage, unusable module | | | |
