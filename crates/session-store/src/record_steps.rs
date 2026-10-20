@@ -35,6 +35,8 @@ pub struct ConversationFacts<'a> {
     pub memory_retrievals: &'a [MemoryRetrieval],
     /// How long tool calls ran.
     pub call_timings: &'a [CallTiming],
+    /// Where user turns came from, each with its position in `messages`.
+    pub origins: &'a [(usize, String)],
     /// File each system message as a `system` step. Off for a conversation
     /// whose system prompt is the product's own; on for one whose system
     /// message a harness chose.
@@ -83,6 +85,9 @@ pub fn conversation_steps(
                 assembler.push_system(text);
             }
             _ => assembler.push_message(&as_sent(message)),
+        }
+        if let Some((_, origin)) = facts.origins.iter().find(|(at, _)| *at == position) {
+            assembler.label_last_step(origin);
         }
         requests(&mut assembler, position + 1);
     }

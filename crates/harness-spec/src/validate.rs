@@ -104,11 +104,16 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
             StepSpec::Delegate(d) if d.propagate_failure => {
                 Some("`propagate_failure` on a delegate".to_string())
             }
-            StepSpec::Agent(a) if !a.decoding.is_empty() || a.system.is_some() => {
+            StepSpec::Agent(a)
+                if !a.decoding.is_empty() || a.system.is_some() || a.origin.is_some() =>
+            {
                 Some("`decoding` or `system` on an agent step".to_string())
             }
             StepSpec::Predict(p)
-                if !p.decoding.is_empty() || p.system.is_some() || p.conversation.is_some() =>
+                if !p.decoding.is_empty()
+                    || p.system.is_some()
+                    || p.conversation.is_some()
+                    || p.origin.is_some() =>
             {
                 Some("`decoding`, `system` or `conversation` on a predict step".to_string())
             }

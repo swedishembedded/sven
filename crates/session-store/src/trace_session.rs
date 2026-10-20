@@ -321,6 +321,19 @@ impl StepAssembler {
     /// silently drops anything else), preserved here for parity rather than
     /// invented fresh; full multimodal fidelity (inline image data URLs vs.
     /// ATIF's file/path-based `ImageSourceSchema`) is a follow-up concern.
+    /// Records on the step just filed where its turn came from, under
+    /// `extra.sven.origin`.
+    pub fn label_last_step(&mut self, origin: &str) {
+        if let Some(step) = self.steps.last_mut() {
+            let extra = step.extra.get_or_insert_with(|| serde_json::json!({}));
+            if let Some(object) = extra.as_object_mut() {
+                object
+                    .entry("sven")
+                    .or_insert_with(|| serde_json::json!({}))["origin"] = serde_json::json!(origin);
+            }
+        }
+    }
+
     /// Files a system message as a step of its own (source `system`), for a
     /// conversation whose system message is part of what it did.
     pub fn push_system(&mut self, text: &str) {

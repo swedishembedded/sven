@@ -145,6 +145,7 @@ impl HarnessMachine {
                 ref schema,
                 ref conversation,
                 ref system,
+                ref origin,
                 ref decoding,
                 ..
             } => {
@@ -168,6 +169,7 @@ impl HarnessMachine {
                     TurnShape {
                         conversation: conversation.as_deref(),
                         system: system.as_ref(),
+                        origin: origin.as_deref(),
                         decoding,
                     },
                 );
@@ -184,6 +186,7 @@ impl HarnessMachine {
                 ref prompt,
                 ref tools,
                 ref system,
+                ref origin,
                 ref decoding,
                 ..
             } => {
@@ -208,7 +211,14 @@ impl HarnessMachine {
                     decoding,
                     ..AgentLoop::default()
                 });
-                let effect = self.agent_turn_effect(run, prompt, tools, system.as_ref(), decoding);
+                let effect = self.agent_turn_effect(
+                    run,
+                    prompt,
+                    tools,
+                    system.as_ref(),
+                    origin.as_deref(),
+                    decoding,
+                );
                 self.cache_effect(effect.clone());
                 self.park(run, &step, Waiting::Model);
                 run.store(ctx);

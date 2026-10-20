@@ -59,6 +59,10 @@ pub struct ThreadStore {
     /// is never rewritten: it is the record of what happened, which a
     /// trajectory export reads (see [`Self::transcript`]).
     log: Vec<(ThreadId, Message)>,
+    /// Where a user turn came from, by thread and transcript position: the
+    /// instruction a harness step sent (`task`, `follow_up`, `repair`,
+    /// `correction`).
+    origins: Vec<(ThreadId, usize, String)>,
     /// The thread's transcript length at each entry of `compactions`.
     compaction_positions: Vec<usize>,
     /// Each model request's account, with the thread and the transcript
@@ -122,6 +126,24 @@ impl ThreadStore {
         if let (Some(text), true) = (system, self.is_empty(id)) {
             self.append(id, Message::system(text));
         }
+    }
+
+    /// Appends a user turn and files where it came from.
+    pub fn append_labeled(&mut self, id: &str, message: Message, origin: &str) {
+        let position = self.transcript_len(id);
+        self.origins
+            .push((id.to_string(), position, origin.to_string()));
+        self.append(id, message);
+    }
+
+    /// The origins filed for `id`, each with its position in the transcript.
+    #[must_use]
+    pub fn transcript_origins(&self, id: &str) -> Vec<(usize, String)> {
+        self.origins
+            .iter()
+            .filter(|(thread, _, _)| thread == id)
+            .map(|(_, position, origin)| (*position, origin.clone()))
+            .collect()
     }
 
     /// Append a single turn to a thread (creating the thread if needed).

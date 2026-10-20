@@ -73,6 +73,7 @@ pub(crate) fn resolve_decoding(
 pub(crate) struct TurnShape<'a> {
     pub(crate) conversation: Option<&'a str>,
     pub(crate) system: Option<&'a Template>,
+    pub(crate) origin: Option<&'a str>,
     pub(crate) decoding: sven_vocab::TurnDecoding,
 }
 

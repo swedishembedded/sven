@@ -357,7 +357,12 @@ impl EffectExecutor for TurnExecutor {
             s.answer_open_calls(&thread_id, &reasons);
             s.open_thread(&thread_id, req.system.as_deref());
             if !req.instruction.is_empty() {
-                s.append(&thread_id, Message::user(&req.instruction));
+                match &req.origin {
+                    Some(origin) => {
+                        s.append_labeled(&thread_id, Message::user(&req.instruction), origin);
+                    }
+                    None => s.append(&thread_id, Message::user(&req.instruction)),
+                }
             }
         }
 

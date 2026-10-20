@@ -238,6 +238,7 @@ impl HarnessMachine {
             dynamic_suffix: None,
             max_tool_rounds: Some(0),
             refused_calls: Vec::new(),
+            origin: shape.origin.map(str::to_string),
             system: system_text(state, shape.system),
             decoding: shape.decoding,
         };

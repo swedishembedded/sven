@@ -379,6 +379,7 @@ fn lower_task(
                 tools: tools.clone(),
                 store_as: Some(fact.clone()),
                 system: agent_system.clone(),
+                origin: Some("follow_up".to_string()),
                 decoding: decoding.clone(),
                 then: following.clone(),
             })),
@@ -420,6 +421,7 @@ fn lower_task(
             store_as: Some(fact),
             conversation: Some(task.name.clone()),
             system: task_system.clone(),
+            origin: Some("task".to_string()),
             decoding: decoding.clone(),
             then: following,
         }))
@@ -429,6 +431,7 @@ fn lower_task(
             tools,
             store_as: Some(fact),
             system: agent_system.clone(),
+            origin: Some("task".to_string()),
             decoding: decoding.clone(),
             then: following,
         }))

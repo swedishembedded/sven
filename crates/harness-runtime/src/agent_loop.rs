@@ -36,6 +36,7 @@ impl HarnessMachine {
         prompt: &Template,
         tools: &Option<Vec<String>>,
         system: Option<&Template>,
+        origin: Option<&str>,
         decoding: sven_vocab::TurnDecoding,
     ) -> Effect {
         let instruction = state.resolve_template(prompt);
@@ -46,6 +47,7 @@ impl HarnessMachine {
             tools.is_none(),
             Vec::new(),
             system_text(state, system),
+            origin.map(str::to_string),
             decoding,
         )
     }
@@ -65,6 +67,7 @@ impl HarnessMachine {
             agent.tools.clone(),
             agent.open,
             refused,
+            None,
             None,
             agent.decoding,
         ))
@@ -208,6 +211,7 @@ fn agent_request(
     all_tools: bool,
     refused_calls: Vec<RefusedCall>,
     system: Option<String>,
+    origin: Option<String>,
     decoding: sven_vocab::TurnDecoding,
 ) -> Effect {
     let request = TurnRequest {
@@ -225,6 +229,7 @@ fn agent_request(
         max_tool_rounds: Some(0),
         refused_calls,
         system,
+        origin,
         decoding,
     };
     Effect::CallLlm {

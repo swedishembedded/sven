@@ -150,6 +150,19 @@ async fn each_tasks_settings_reach_its_request_and_the_trajectory_records_them()
         decodings(&trajectory),
         vec![json!({ "temperature": 0.7, "thinking": true })]
     );
+    // Each user turn says where it came from.
+    let origins = |t: &atif::Trajectory| -> Vec<Option<String>> {
+        t.steps
+            .iter()
+            .filter(|s| format!("{:?}", s.source) == "User")
+            .map(|s| {
+                s.extra.as_ref()?["sven"]["origin"]
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .collect()
+    };
+    assert_eq!(origins(&trajectory), [Some("task".to_string())]);
     // The planner's conversation is its own trajectory, named, embedded.
     let embedded = trajectory
         .subagent_trajectories

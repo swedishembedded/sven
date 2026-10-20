@@ -87,6 +87,7 @@ impl Agent {
                 gate_decisions: &self.state.gate_decisions,
                 memory_retrievals: &self.state.memory_retrievals,
                 call_timings: &self.state.call_timings,
+                origins: &[],
                 system_steps: false,
             },
             &|message| self.state.as_sent(message),

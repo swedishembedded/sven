@@ -100,6 +100,10 @@ pub struct TurnRequest {
     /// model is called: a history with a tool call and no result is invalid.
     #[serde(default)]
     pub refused_calls: Vec<RefusedCall>,
+    /// What the instruction is, for the record: `task`, `follow_up`,
+    /// `repair` or `correction`. Filed with the user turn it becomes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
     /// The system message to start the thread with. Used only when the thread
     /// has no turns yet; a conversation already under way keeps its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]

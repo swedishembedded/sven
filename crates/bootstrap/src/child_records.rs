@@ -98,6 +98,7 @@ pub(crate) fn record_child(
                     gate_decisions: &gate_decisions,
                     memory_retrievals: store.memory_retrievals(),
                     call_timings: &call_timings,
+                    origins: &[],
                     system_steps: false,
                 },
                 &|message| {

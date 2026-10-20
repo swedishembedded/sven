@@ -30,6 +30,7 @@ use crate::engine::Engine;
 /// One model conversation of a run: the shared agent thread or the thread of
 /// a `conversation` a model-only step opened.
 struct Conversation {
+    origins: Vec<(usize, String)>,
     messages: Vec<Message>,
     compactions: Vec<(usize, sven_vocab::CompactionRecord)>,
     requests: Vec<(usize, sven_vocab::RequestRecord)>,
@@ -42,6 +43,7 @@ pub(super) struct Evidence {
     messages: Vec<Message>,
     compactions: Vec<(usize, sven_vocab::CompactionRecord)>,
     requests: Vec<(usize, sven_vocab::RequestRecord)>,
+    origins: Vec<(usize, String)>,
     gate_decisions: Vec<atif::GateDecision>,
     memory_retrievals: Vec<atif::MemoryRetrieval>,
     call_timings: Vec<atif::CallTiming>,
@@ -72,6 +74,7 @@ impl Evidence {
             messages,
             compactions,
             requests,
+            origins,
             gate_decisions,
             memory_retrievals,
             call_timings,
@@ -84,6 +87,7 @@ impl Evidence {
                     store.transcript(&thread),
                     store.transcript_compactions(&thread),
                     store.transcript_requests(&thread),
+                    store.transcript_origins(&thread),
                     store.gate_decisions(),
                     store.memory_retrievals().to_vec(),
                     store.call_timings(),
@@ -115,6 +119,7 @@ impl Evidence {
                                 messages: store.transcript(&thread),
                                 compactions: store.transcript_compactions(&thread),
                                 requests: store.transcript_requests(&thread),
+                                origins: store.transcript_origins(&thread),
                             },
                         )
                     })
@@ -135,6 +140,7 @@ impl Evidence {
             messages,
             compactions,
             requests,
+            origins,
             gate_decisions,
             memory_retrievals,
             call_timings,
@@ -172,6 +178,7 @@ impl HarnessRun {
                 messages: &evidence.messages,
                 compactions: &evidence.compactions,
                 requests: &evidence.requests,
+                origins: &evidence.origins,
                 gate_decisions: &evidence.gate_decisions,
                 memory_retrievals: &evidence.memory_retrievals,
                 call_timings: &evidence.call_timings,
@@ -193,6 +200,7 @@ impl HarnessRun {
                         messages: &conversation.messages,
                         compactions: &conversation.compactions,
                         requests: &conversation.requests,
+                        origins: &conversation.origins,
                         gate_decisions: &[],
                         memory_retrievals: &[],
                         call_timings: &[],

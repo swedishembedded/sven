@@ -161,6 +161,9 @@ pub enum PlanPrimitive {
         /// Decoding settings (version 2 plans only).
         #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
         decoding: StepDecoding,
+        /// What the prompt is, for the record (version 2 plans only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<String>,
         /// Successor.
         then: String,
     },
@@ -180,6 +183,9 @@ pub enum PlanPrimitive {
         /// Decoding settings (version 2 plans only).
         #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
         decoding: StepDecoding,
+        /// What the prompt is, for the record (version 2 plans only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<String>,
         /// Successor.
         then: String,
     },
@@ -424,6 +430,7 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             conversation: p.conversation.clone(),
             system: p.system.as_deref().and_then(|t| Template::parse(t).ok()),
             decoding: p.decoding.clone(),
+            origin: p.origin.clone(),
             then: p.then.clone(),
         },
         StepSpec::Agent(a) => PlanPrimitive::Agent {
@@ -432,6 +439,7 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             store_as: a.store_as.clone(),
             system: a.system.as_deref().and_then(|t| Template::parse(t).ok()),
             decoding: a.decoding.clone(),
+            origin: a.origin.clone(),
             then: a.then.clone(),
         },
         StepSpec::Tool(t) => PlanPrimitive::Tool {
