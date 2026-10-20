@@ -233,13 +233,14 @@ sven harness run ./c-repair --toolset coding --workspace ./repo \
 - `--first-byte-timeout SECS` raises how long a model call waits for the
   server's first bytes, for a server that queues requests.
 
-Progress lines are printed as the run goes, not afterwards. Verification is
-not the agent's: end such a harness with a `verify` step that reads a verdict a
-tool wrote, and pin the gate files with `file_hash` verifiers so the agent
-cannot edit them. A script inside the editable repository is a weak verifier
-on its own. `tests/fixtures/harness/c-repair` is a working example: the agent
+Progress lines are printed as the run goes. Verification is not the agent's:
+declare it as gates, pin the gate files with `artifact` gates that carry a
+`sha256` so the agent cannot edit them, and list them under the task's
+`verify`. A script inside the editable repository is a weak gate on its own.
+`tests/fixtures/harness/c-repair` is a working version 2 example: the agent
 writes a C test, builds it with the real compiler and fixes the library, and
-the run completes only when a pinned gate test passes.
+the run completes only when the pinned gate (which exits non-zero unless the
+compiler and its test succeed) passes.
 
 ### Output
 

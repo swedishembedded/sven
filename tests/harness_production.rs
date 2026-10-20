@@ -297,13 +297,18 @@ fn a_coding_run_repairs_a_c_repository_and_finishes_only_when_the_gate_passes() 
 
     let report = report(&out);
     assert_eq!(report["status"], "completed", "{report}");
-    assert_eq!(report["output"], json!({"status": "fixed", "attempts": 2}));
     assert_eq!(
-        report["step_counts"]["repair"], 1,
-        "the first gate failed: {report}"
+        report["output"],
+        json!({"summary": "fixed the pop wrap-around"})
+    );
+    assert_eq!(
+        report["step_counts"]["implement__v3_independent_test_a0_repair"], 1,
+        "the first run of the gate failed: {report}"
     );
     assert!(
-        report["step_counts"].get("tampered").is_none(),
+        report["step_counts"]
+            .get("implement__v0_pinned_script_a1_fail")
+            .is_none(),
         "the gate files were intact: {report}"
     );
 
@@ -385,7 +390,7 @@ fn the_host_ceiling_narrows_what_the_harness_declares() {
 }
 
 #[test]
-fn an_agent_that_edits_the_gate_ends_the_run_as_tampered() {
+fn an_agent_that_edits_the_gate_never_passes_it() {
     let setup = setup();
     let server = serve(vec![
         Turn::Calls(vec![write(
@@ -393,10 +398,18 @@ fn an_agent_that_edits_the_gate_ends_the_run_as_tampered() {
             "int main(void) { return 0; }\n",
         )]),
         Turn::Text("done"),
+        Turn::Text("still done"),
     ]);
     let out = run(setup.command(&server).args(["--approvals", "auto"]));
     assert_eq!(code(&out), 1, "{}", stderr(&out));
-    assert_eq!(report(&out)["failure"]["code"], "gate_tampered");
+    let report = report(&out);
+    assert_eq!(report["failure"]["code"], "gate_failed", "{report}");
+    assert!(
+        report["failure"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("pinned_test")),
+        "the failure names the pinned file: {report}"
+    );
 }
 
 #[test]
