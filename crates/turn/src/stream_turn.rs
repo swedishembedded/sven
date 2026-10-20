@@ -90,6 +90,8 @@ pub struct TurnLimits {
     /// Reasoning switched on or off for every request of the turn (see
     /// `CompletionRequest::enable_thinking`).
     pub enable_thinking: Option<bool>,
+    /// The most wall-clock time one response may take, whole.
+    pub deadline: Option<Duration>,
     /// Ask the provider for the sampled token ids and log-probabilities;
     /// they come back in [`AgentEvent::ResponseSampled`].
     pub want_logprobs: bool,
@@ -110,6 +112,7 @@ impl From<ThinkingBudget> for TurnLimits {
             max_output_tokens: None,
             sampling: SamplingParams::default(),
             enable_thinking: None,
+            deadline: None,
             want_logprobs: false,
         }
     }

@@ -123,7 +123,7 @@ inputs: { seed: number, cap: number }
         .replace("seed: 7", "seed: \"{{ inputs.seed }}\"")
         .replace(
             "    thinking: { enabled: false }\n    task: Plan",
-            "    thinking: { enabled: false }\n    turn: { max_output_tokens: \"{{ inputs.cap }}\", first_response_timeout: 300 }\n    task: Plan",
+            "    thinking: { enabled: false }\n    turn: { max_output_tokens: \"{{ inputs.cap }}\", first_response_timeout: 300, deadline: 900 }\n    task: Plan",
         );
     let plan = compile(&with_inputs);
     let PlanPrimitive::Predict { decoding, .. } = &plan.steps["plan__work"].primitive else {
@@ -134,6 +134,7 @@ inputs: { seed: number, cap: number }
         decoding.first_response_timeout,
         Some(serde_json::json!(300))
     );
+    assert_eq!(decoding.deadline, Some(serde_json::json!(900)));
     let undeclared = with_inputs.replace(
         "inputs: { seed: number, cap: number }",
         "inputs: { cap: number }",

@@ -302,7 +302,8 @@
       "additionalProperties": false,
       "properties": {
         "max_output_tokens": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }] },
-        "first_response_timeout": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }], "description": "Seconds to wait for the server's first response." }
+        "first_response_timeout": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }], "description": "Seconds to wait for the server's first response." },
+        "deadline": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }], "description": "The most wall-clock seconds one turn may take, whole. Default: none." }
       }
     },
     "sampling": {

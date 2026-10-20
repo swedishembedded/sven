@@ -148,6 +148,10 @@ pub struct TurnDecoding {
     /// Seconds to wait for the server's first response before the turn fails.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_response_timeout: Option<u64>,
+    /// The most wall-clock seconds the whole turn (all its rounds of the
+    /// model's reply) may take before it is cut off. None: no bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<u64>,
 }
 
 impl TurnDecoding {

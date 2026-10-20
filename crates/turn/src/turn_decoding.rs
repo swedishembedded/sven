@@ -27,6 +27,11 @@ impl TurnLimits {
             .thinking_budget
             .or(self.thinking.max_thinking_tokens);
         self.max_output_tokens = decoding.max_output_tokens.or(self.max_output_tokens);
+        self.deadline = decoding
+            .deadline
+            .filter(|&s| s > 0)
+            .map(Duration::from_secs)
+            .or(self.deadline);
         if let Some(secs) = decoding.first_response_timeout.filter(|&s| s > 0) {
             let wait = Duration::from_secs(secs);
             self.stall.first_byte = Some(wait);
@@ -47,6 +52,7 @@ impl TurnLimits {
             thinking_budget: self.thinking.max_thinking_tokens,
             max_output_tokens: self.max_output_tokens,
             first_response_timeout: self.stall.first_token.map(|d| d.as_secs()),
+            deadline: self.deadline.map(|d| d.as_secs()),
         }
     }
 }

@@ -64,6 +64,7 @@ pub(crate) fn resolve_decoding(
         thinking_budget: small("thinking_budget", &d.thinking_budget)?,
         max_output_tokens: small("max_output_tokens", &d.max_output_tokens)?,
         first_response_timeout: count("first_response_timeout", &d.first_response_timeout)?,
+        deadline: count("deadline", &d.deadline)?,
     })
 }
 

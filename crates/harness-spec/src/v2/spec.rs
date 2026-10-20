@@ -148,6 +148,9 @@ pub struct TurnBounds {
     /// Seconds to wait for the server's first response.
     #[serde(default)]
     pub first_response_timeout: Setting,
+    /// The most wall-clock seconds one turn may take, whole. Default: none.
+    #[serde(default)]
+    pub deadline: Setting,
 }
 
 /// The step-level form of a `sampling`, `thinking` and `turn` block.
@@ -171,6 +174,7 @@ pub fn decoding_of(
         thinking_budget: t.budget,
         max_output_tokens: b.max_output_tokens,
         first_response_timeout: b.first_response_timeout,
+        deadline: b.deadline,
     }
 }
 

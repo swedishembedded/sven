@@ -154,3 +154,18 @@ async fn a_turn_can_bound_its_response_and_its_wait_for_the_first_one() {
         Some(100)
     );
 }
+
+#[tokio::test]
+async fn a_turns_deadline_is_part_of_its_limits_and_its_record() {
+    let limits = TurnLimits::default().with_turn_decoding(&TurnDecoding {
+        deadline: Some(45),
+        ..TurnDecoding::default()
+    });
+    assert_eq!(limits.deadline, Some(std::time::Duration::from_secs(45)));
+    assert_eq!(limits.recorded_decoding().deadline, Some(45));
+    assert_eq!(
+        TurnLimits::default().deadline,
+        None,
+        "no bound unless asked"
+    );
+}

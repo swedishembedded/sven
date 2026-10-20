@@ -42,6 +42,9 @@ pub struct StepDecoding {
     /// Seconds to wait for the server's first response before the turn fails.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_response_timeout: Option<serde_json::Value>,
+    /// The most wall-clock seconds one turn may take, whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<serde_json::Value>,
 }
 
 impl StepDecoding {
@@ -53,7 +56,7 @@ impl StepDecoding {
 
     /// The settings, by name.
     #[must_use]
-    pub fn settings(&self) -> [(&'static str, &Option<serde_json::Value>); 8] {
+    pub fn settings(&self) -> [(&'static str, &Option<serde_json::Value>); 9] {
         [
             ("temperature", &self.temperature),
             ("top_p", &self.top_p),
@@ -63,6 +66,7 @@ impl StepDecoding {
             ("thinking_budget", &self.thinking_budget),
             ("max_output_tokens", &self.max_output_tokens),
             ("first_response_timeout", &self.first_response_timeout),
+            ("deadline", &self.deadline),
         ]
     }
 
@@ -85,6 +89,7 @@ impl StepDecoding {
                 &self.first_response_timeout,
                 &over.first_response_timeout,
             ),
+            deadline: pick(&self.deadline, &over.deadline),
         }
     }
 }

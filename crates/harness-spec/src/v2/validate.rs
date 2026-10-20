@@ -358,9 +358,14 @@ fn validate_decoding(
         let ok = match (name, value) {
             ("temperature", v) => v.as_f64().is_some_and(|t| (0.0..=2.0).contains(&t)),
             ("top_p", v) => v.as_f64().is_some_and(|p| p > 0.0 && p <= 1.0),
-            ("top_k" | "thinking_budget" | "max_output_tokens" | "first_response_timeout", v) => {
-                v.as_u64().is_some_and(|n| n >= 1)
-            }
+            (
+                "top_k"
+                | "thinking_budget"
+                | "max_output_tokens"
+                | "first_response_timeout"
+                | "deadline",
+                v,
+            ) => v.as_u64().is_some_and(|n| n >= 1),
             ("seed", v) => v.as_u64().is_some(),
             ("thinking", v) => v.is_boolean(),
             _ => false,

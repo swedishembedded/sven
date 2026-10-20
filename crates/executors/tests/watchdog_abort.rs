@@ -70,6 +70,19 @@ fn harness(
     store: Arc<Mutex<ThreadStore>>,
     compaction: Option<CompactionConfig>,
 ) -> Harness {
+    let limits = sven_turn::TurnLimits::from(sven_turn::ThinkingBudget {
+        max_thinking_tokens: Some(10),
+        thinking_timeout_secs: None,
+    });
+    harness_with_limits(model, store, compaction, limits)
+}
+
+fn harness_with_limits(
+    model: Reasoner,
+    store: Arc<Mutex<ThreadStore>>,
+    compaction: Option<CompactionConfig>,
+    limits: sven_turn::TurnLimits,
+) -> Harness {
     let cancel = Arc::new(tokio::sync::Mutex::new(None));
     let mut turn = TurnExecutor::new(
         Arc::new(model),
@@ -79,10 +92,7 @@ fn harness(
         Arc::new(Mutex::new(std::collections::HashMap::new())),
         Arc::clone(&cancel),
     )
-    .with_turn_limits(sven_turn::TurnLimits::from(sven_turn::ThinkingBudget {
-        max_thinking_tokens: Some(10),
-        thinking_timeout_secs: None,
-    }));
+    .with_turn_limits(limits);
     if let Some(compaction) = compaction {
         turn = turn.with_compaction_config(compaction);
     }
@@ -270,4 +280,32 @@ async fn a_persons_cancel_keeps_its_own_label() {
         marker.contains("[aborted: turn cancelled by user]"),
         "{marker}"
     );
+}
+
+#[tokio::test]
+async fn a_turn_still_running_at_its_deadline_is_cut_off_and_says_so() {
+    let limits = sven_turn::TurnLimits::default().with_turn_decoding(&sven_vocab::TurnDecoding {
+        deadline: Some(1),
+        ..sven_vocab::TurnDecoding::default()
+    });
+    let h = harness_with_limits(
+        Reasoner {
+            thinking_chars: 1,
+            hang: true,
+        },
+        Arc::new(Mutex::new(ThreadStore::new())),
+        None,
+        limits,
+    );
+    let mut rx = h.rt.subscribe_observations();
+    h.rt.post(Event::user_message("go")).await;
+    let events = until_ended(&mut rx).await;
+    h.rt.abort();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Error(m) if m.contains("deadline of 1 s"))),
+        "{events:?}"
+    );
+    assert!(events.iter().any(|e| matches!(e, UiEvent::Aborted { .. })));
 }
