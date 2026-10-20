@@ -88,6 +88,9 @@ pub struct PlanLimits {
     /// Most tool calls per run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tool_calls: Option<u64>,
+    /// The run input that holds the tool-call limit, when it comes from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_calls_input: Option<String>,
     /// Deepest delegation chain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_delegate_depth: Option<u64>,
@@ -186,6 +189,18 @@ pub enum PlanPrimitive {
         /// What the prompt is, for the record (version 2 plans only).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<String>,
+        /// Where the loop's stop status is recorded (version 2 plans only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_as: Option<String>,
+        /// The fact holding the calls the step may still make.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pool: Option<String>,
+        /// Sets the pool when the step starts, parsed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allowance: Option<Template>,
+        /// The repeated answers that end the loop.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_repeated_results: Option<u32>,
         /// Successor.
         then: String,
     },
@@ -377,6 +392,7 @@ pub fn compile(spec: &HarnessSpec) -> HarnessPlan {
         max_steps: l.max_steps,
         max_model_turns: l.max_model_turns,
         max_tool_calls: l.max_tool_calls,
+        max_tool_calls_input: l.max_tool_calls_input.clone(),
         max_delegate_depth: l.max_delegate_depth,
         max_parallel: l.max_parallel,
         max_helper_fuel: l.max_helper_fuel,
@@ -443,6 +459,10 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             system: a.system.as_deref().and_then(|t| Template::parse(t).ok()),
             decoding: a.decoding.clone(),
             origin: a.origin.clone(),
+            stop_as: a.stop_as.clone(),
+            pool: a.pool.clone(),
+            allowance: a.allowance.as_deref().and_then(|t| Template::parse(t).ok()),
+            max_repeated_results: a.max_repeated_results,
             then: a.then.clone(),
         },
         StepSpec::Tool(t) => PlanPrimitive::Tool {

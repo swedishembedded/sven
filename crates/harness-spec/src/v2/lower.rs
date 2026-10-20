@@ -22,7 +22,9 @@ use serde_json::{json, Value};
 use super::checks::{
     lower_checks, Builder, CommandRun, Kind, Phase, RepairPlan, Resolved, DEFAULT_REPAIR_PROMPT,
 };
-use super::rewrite::{output_fact, rewrite_condition, rewrite_text, rewrite_value, Scope};
+use super::rewrite::{
+    output_fact, pool_fact, rewrite_condition, rewrite_text, rewrite_value, stop_fact, Scope,
+};
 use super::spec::{decoding_of, Check, CommandGate, GateDef, OnFailure, TaskSpec, WorkflowSpec};
 use super::validate::{needed_capabilities, split_metric};
 use crate::error::HarnessError;
@@ -378,6 +380,9 @@ fn lower_task(
         model_only: task
             .model_only
             .then(|| task.schema.is_some().then(|| task.name.clone())),
+        stop: (!task.model_only).then(|| stop_fact(&task.name)),
+        pool: (!task.model_only).then(|| pool_fact(&task.name)),
+        max_repeated_results: task.max_repeated_results,
         conversation: task.model_only.then(|| task.name.clone()),
         system: if task.model_only {
             task_system.clone()
@@ -398,38 +403,67 @@ fn lower_task(
     };
     let mut following = lower_checks(b, &phase, &checks, &after_checks)?;
 
-    for (j, turn) in task.follow_ups.iter().enumerate().rev() {
-        let id = format!("{}__f{j}", task.name);
-        let scope = cx.scope(format!("{place}: follow_ups[{j}]"), through, vars);
-        b.add(
-            &id,
-            StepSpec::Agent(Box::new(AgentStepSpec {
-                prompt: rewrite_text(&turn.task, &scope)?,
-                tools: tools.clone(),
-                store_as: Some(fact.clone()),
-                system: agent_system.clone(),
-                origin: Some("follow_up".to_string()),
-                decoding: decoding.clone(),
-                then: following.clone(),
-            })),
-            origin(Some(&task.name), "follow_up"),
-        );
-        following = match &turn.when {
-            None => id,
-            Some(condition) => {
-                let when_id = format!("{id}_when");
-                b.add(
-                    &when_id,
-                    StepSpec::Branch(Box::new(BranchStepSpec {
-                        on: rewrite_condition(condition, &scope)?,
-                        when_true: id,
-                        when_false: following,
-                    })),
-                    origin(Some(&task.name), "follow_up"),
-                );
-                when_id
-            }
+    let stop = stop_fact(&task.name);
+    let pool = pool_fact(&task.name);
+    let allowance =
+        |value: &Option<Value>, scope: &Scope<'_>| -> Result<Option<String>, HarnessError> {
+            value
+                .as_ref()
+                .map(|v| match v {
+                    Value::String(text) => rewrite_text(text, scope),
+                    other => Ok(other.to_string()),
+                })
+                .transpose()
         };
+    for (j, turn) in task.follow_ups.iter().enumerate().rev() {
+        let scope = cx.scope(format!("{place}: follow_ups[{j}]"), through, vars);
+        let times = turn.max.unwrap_or(1);
+        // The turn is sent up to `max` times, each only while its condition
+        // holds; the condition is read again after every turn.
+        for k in (0..times).rev() {
+            let id = if k == 0 {
+                format!("{}__f{j}", task.name)
+            } else {
+                format!("{}__f{j}_{k}", task.name)
+            };
+            b.add(
+                &id,
+                StepSpec::Agent(Box::new(AgentStepSpec {
+                    prompt: rewrite_text(&turn.task, &scope)?,
+                    tools: tools.clone(),
+                    store_as: Some(fact.clone()),
+                    system: agent_system.clone(),
+                    origin: Some("follow_up".to_string()),
+                    stop_as: Some(stop.clone()),
+                    pool: Some(pool.clone()),
+                    allowance: if k == 0 {
+                        allowance(&turn.allowance, &scope)?
+                    } else {
+                        None
+                    },
+                    max_repeated_results: task.max_repeated_results,
+                    decoding: decoding.clone(),
+                    then: following.clone(),
+                })),
+                origin(Some(&task.name), "follow_up"),
+            );
+            following = match &turn.when {
+                None => id,
+                Some(condition) => {
+                    let when_id = format!("{id}_when");
+                    b.add(
+                        &when_id,
+                        StepSpec::Branch(Box::new(BranchStepSpec {
+                            on: rewrite_condition(condition, &scope, &task.name)?,
+                            when_true: id,
+                            when_false: following,
+                        })),
+                        origin(Some(&task.name), "follow_up"),
+                    );
+                    when_id
+                }
+            };
+        }
     }
 
     let scope = cx.scope(format!("{place}: task"), before, vars);
@@ -461,6 +495,10 @@ fn lower_task(
             store_as: Some(fact),
             system: agent_system.clone(),
             origin: Some("task".to_string()),
+            stop_as: Some(stop),
+            pool: Some(pool),
+            allowance: allowance(&task.allowance, &scope)?,
+            max_repeated_results: task.max_repeated_results,
             decoding: decoding.clone(),
             then: following,
         }))
@@ -475,7 +513,7 @@ fn lower_task(
         b.add(
             &entry_of(task),
             StepSpec::Branch(Box::new(BranchStepSpec {
-                on: rewrite_condition(condition, &scope)?,
+                on: rewrite_condition(condition, &scope, &task.name)?,
                 when_true: entered,
                 when_false: next.to_string(),
             })),
@@ -664,7 +702,13 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         limits: Some(LimitsSpec {
             max_steps: Some(max_steps),
             max_model_turns: limits.model_turns,
-            max_tool_calls: limits.tool_calls,
+            max_tool_calls: limits.tool_calls.as_ref().and_then(Value::as_u64),
+            max_tool_calls_input: limits
+                .tool_calls
+                .as_ref()
+                .and_then(Value::as_str)
+                .and_then(|text| crate::expr::Template::parse(text).ok())
+                .and_then(|t| t.single_hole().map(|h| h.segments()[1..].join("."))),
             max_delegate_depth: limits.delegate_depth,
             max_parallel: None,
             max_helper_fuel: None,

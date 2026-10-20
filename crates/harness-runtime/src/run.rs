@@ -270,6 +270,22 @@ pub struct AgentLoop {
     /// once it is approved.
     #[serde(default)]
     pub calls: BTreeMap<String, HeldCall>,
+    /// Where the loop records how it ended.
+    #[serde(default)]
+    pub stop_as: Option<String>,
+    /// The fact holding the calls the step may still make.
+    #[serde(default)]
+    pub pool: Option<String>,
+    /// The repeated answers that end the loop.
+    #[serde(default)]
+    pub max_repeats: Option<u32>,
+    /// How many times each (call, answer) pair has been seen this loop.
+    #[serde(default)]
+    pub repeats: BTreeMap<String, u32>,
+    /// Why the loop ends once the calls in flight settle (`tool_cap`,
+    /// `repetition`).
+    #[serde(default)]
+    pub ending: Option<String>,
     /// The decoding settings of the step's turns.
     #[serde(default)]
     pub decoding: sven_vocab::TurnDecoding,
@@ -715,7 +731,14 @@ impl HarnessRunState {
     /// The declared tool-call budget, if any.
     #[must_use]
     pub fn tool_call_budget(&self, plan: &HarnessPlan) -> Option<u64> {
-        plan.limits.as_ref().and_then(|l| l.max_tool_calls)
+        let limits = plan.limits.as_ref()?;
+        // A limit the run was started with replaces the document's number.
+        limits
+            .max_tool_calls_input
+            .as_deref()
+            .and_then(|name| self.inputs.get(name))
+            .and_then(Value::as_u64)
+            .or(limits.max_tool_calls)
     }
 
     /// `true` when the run has spent more model turns than its budget

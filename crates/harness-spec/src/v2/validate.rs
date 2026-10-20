@@ -93,10 +93,14 @@ fn validate_execution(w: &WorkflowSpec) -> Result<(), HarnessError> {
                 .into(),
         ));
     }
+    validate_allowance(w, "execution.limits.tool_calls", &limits.tool_calls)?;
     for (name, value) in [
         ("steps", limits.steps),
         ("model_turns", limits.model_turns),
-        ("tool_calls", limits.tool_calls),
+        (
+            "tool_calls",
+            limits.tool_calls.as_ref().and_then(Value::as_u64),
+        ),
         ("delegate_depth", limits.delegate_depth),
     ] {
         if value == Some(0) {
@@ -295,6 +299,14 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
             &super::spec::decoding_of(&task.sampling, &task.thinking, &task.turn),
         )?;
         validate_model_only(task, &place)?;
+        validate_allowance(w, &place, &task.allowance)?;
+        for (j, turn) in task.follow_ups.iter().enumerate() {
+            let place = format!("{place}: follow_ups[{j}]");
+            validate_allowance(w, &place, &turn.allowance)?;
+            if turn.max.is_some_and(|m| !(1..=8).contains(&m)) {
+                return Err(invalid(format!("{place}: max must be within 1..=8")));
+            }
+        }
         if let Some(repair) = &task.repair {
             if task.verify.is_empty() && task.outputs.is_empty() {
                 return Err(invalid(format!(
@@ -362,6 +374,39 @@ fn validate_decoding(
     Ok(())
 }
 
+/// A follow-up's `max` and an allowance are whole numbers or a single input.
+fn validate_allowance(
+    w: &WorkflowSpec,
+    place: &str,
+    value: &Option<Value>,
+) -> Result<(), HarnessError> {
+    let Some(value) = value else { return Ok(()) };
+    match value {
+        Value::Number(n) if n.as_u64().is_some() => Ok(()),
+        Value::String(text) => {
+            let template = crate::expr::Template::parse(text)?;
+            let declared = template.single_hole().is_some_and(|hole| {
+                hole.root() == "inputs"
+                    && hole
+                        .segments()
+                        .get(1)
+                        .is_some_and(|n| w.inputs.as_ref().is_some_and(|i| i.contains_key(n)))
+            });
+            if declared {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "{place}: allowance `{text}` is a whole number or a single declared \
+                     `{{{{ inputs.<name> }}}}`"
+                )))
+            }
+        }
+        other => Err(invalid(format!(
+            "{place}: allowance `{other}` is not a whole number"
+        ))),
+    }
+}
+
 /// A `model_only` task is one model turn without tools.
 fn validate_model_only(task: &super::spec::TaskSpec, place: &str) -> Result<(), HarnessError> {
     if task.schema.is_some() && !task.model_only {
@@ -382,6 +427,11 @@ fn validate_model_only(task: &super::spec::TaskSpec, place: &str) -> Result<(), 
         return Err(invalid(format!(
             "{place}: a `model_only` task is one model turn without tools: it takes neither \
              `tools` nor `follow_ups`"
+        )));
+    }
+    if task.allowance.is_some() || task.max_repeated_results.is_some() {
+        return Err(invalid(format!(
+            "{place}: a `model_only` task makes no tool calls: no `allowance` or `max_repeated_results`"
         )));
     }
     if task.schema.as_ref().is_some_and(|s| !s.is_object()) {

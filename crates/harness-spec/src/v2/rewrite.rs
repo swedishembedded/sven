@@ -16,7 +16,7 @@
 
 use std::collections::BTreeSet;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::error::HarnessError;
 use crate::expr::{Expr, Path, PathRewrite, Template};
@@ -24,6 +24,16 @@ use crate::expr::{Expr, Path, PathRewrite, Template};
 /// The fact a task's output is stored under: the text of its last agent turn.
 pub(super) fn output_fact(task: &str) -> String {
     format!("task_{task}")
+}
+
+/// The fact a task's agent turns record how they ended under.
+pub(super) fn stop_fact(task: &str) -> String {
+    format!("stop_{task}")
+}
+
+/// The fact holding the tool calls a task may still make.
+pub(super) fn pool_fact(task: &str) -> String {
+    format!("calls_left_{task}")
 }
 
 /// The fields of `failure.*` a repair prompt may read.
@@ -140,8 +150,14 @@ impl Scope<'_> {
                 let [_, task, field, fields @ ..] = segments else {
                     return Err(self.invalid(path, "is not of the form tasks.<name>.output"));
                 };
-                if field != "output" {
-                    return Err(self.invalid(path, "can only read a task's `output`"));
+                if !["output", "stop", "calls_left"].contains(&field.as_str()) {
+                    return Err(self.invalid(
+                        path,
+                        "can only read a task's `output`, `stop` or `calls_left`",
+                    ));
+                }
+                if field != "output" && !fields.is_empty() {
+                    return Err(self.invalid(path, &format!("`{field}` has no fields")));
                 }
                 if !fields.is_empty() && !self.structured.contains(task) {
                     return Err(self.invalid(
@@ -164,7 +180,12 @@ impl Scope<'_> {
                     ));
                 }
                 let rest: String = fields.iter().map(|f| format!(".{f}")).collect();
-                Path::parse(&format!("facts.{}{rest}", output_fact(task))).map(PathRewrite::Path)
+                let fact = match field.as_str() {
+                    "stop" => stop_fact(task),
+                    "calls_left" => pool_fact(task),
+                    _ => output_fact(task),
+                };
+                Path::parse(&format!("facts.{fact}{rest}")).map(PathRewrite::Path)
             }
             "failure" => self.map_failure(path),
             "gates" => {
@@ -273,7 +294,23 @@ pub(super) fn rewrite_value(value: &Value, scope: &Scope<'_>) -> Result<Value, H
 
 /// Parses an authored condition and moves its paths into the run's
 /// namespaces, returning it in the form a `branch` step takes.
-pub(super) fn rewrite_condition(value: &Value, scope: &Scope<'_>) -> Result<Value, HarnessError> {
+pub(super) fn rewrite_condition(
+    value: &Value,
+    scope: &Scope<'_>,
+    current_task: &str,
+) -> Result<Value, HarnessError> {
+    // `{last_turn: <stop>}` is `{eq: tasks.<this task>.stop, value: <stop>}`.
+    let sugared;
+    let value = match value {
+        Value::Object(map) if map.len() == 1 && map.contains_key("last_turn") => {
+            sugared = json!({
+                "eq": format!("tasks.{current_task}.stop"),
+                "value": map["last_turn"],
+            });
+            &sugared
+        }
+        other => other,
+    };
     let expr = Expr::parse_value(value)
         .map_err(|e| HarnessError::Invalid(format!("{}: bad condition: {e}", scope.place)))?;
     let lowered = expr.rewrite_paths(&mut |path| match scope.map(path)? {

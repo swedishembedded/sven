@@ -162,3 +162,72 @@ fn with_on_failure_return_a_failed_check_returns_the_outputs_marked_failed() {
     };
     assert_eq!(value["status"], "completed");
 }
+
+const STOPS: &str = r#"
+api_version: "2"
+name: stops
+inputs: { calls: number, per: number }
+execution: { limits: { model_turns: 40, tool_calls: "{{ inputs.calls }}" } }
+workflow:
+  - name: work
+    allowance: "{{ inputs.calls }}"
+    max_repeated_results: 4
+    task: Do it.
+    follow_ups:
+      - task: Go on.
+        when: { last_turn: stopped_without_conclusion }
+        max: 2
+        allowance: "{{ inputs.per }}"
+outputs:
+  stop: { type: string, value: "{{ tasks.work.stop }}" }
+"#;
+
+#[test]
+fn follow_ups_repeat_while_their_condition_holds_and_budgets_come_from_inputs() {
+    let plan = compile(STOPS);
+    assert_eq!(
+        plan.limits
+            .as_ref()
+            .and_then(|l| l.max_tool_calls_input.as_deref()),
+        Some("calls")
+    );
+    // Two copies of the follow-up, each behind its own check of the last turn.
+    for id in ["work__f0", "work__f0_when", "work__f0_1", "work__f0_1_when"] {
+        assert!(plan.steps.contains_key(id), "{id}");
+    }
+    let PlanPrimitive::Branch { on, .. } = &plan.steps["work__f0_when"].primitive else {
+        panic!("a branch");
+    };
+    assert_eq!(
+        serde_json::Value::from(on.clone()),
+        serde_json::json!({ "eq": "facts.stop_work", "value": "stopped_without_conclusion" })
+    );
+    let PlanPrimitive::Agent {
+        allowance,
+        pool,
+        max_repeated_results,
+        ..
+    } = &plan.steps["work__work"].primitive
+    else {
+        panic!("an agent step");
+    };
+    assert!(allowance.is_some());
+    assert_eq!(pool.as_deref(), Some("calls_left_work"));
+    assert_eq!(*max_repeated_results, Some(4));
+    // Only the first of the repeated turns resets the allowance.
+    let PlanPrimitive::Agent { allowance, .. } = &plan.steps["work__f0_1"].primitive else {
+        panic!("an agent step");
+    };
+    assert!(allowance.is_none());
+}
+
+#[test]
+fn budgets_must_name_declared_inputs_and_follow_ups_stay_within_eight() {
+    assert!(rejected(&STOPS.replace("inputs.per", "inputs.nope")).contains("allowance"));
+    assert!(rejected(&STOPS.replace("max: 2", "max: 9")).contains("max must be within"));
+    assert!(rejected(&STOPS.replace(
+        "tool_calls: \"{{ inputs.calls }}\"",
+        "tool_calls: \"{{ inputs.nope }}\""
+    ))
+    .contains("allowance"));
+}

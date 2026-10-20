@@ -65,14 +65,7 @@ pub enum RunConclusion {
     StoppedWithoutConclusion,
 }
 
-/// Whether `reply`, the text a run ended on, announces work that never came:
-/// it ends in a colon, the way "now the test file, let me find the tests:"
-/// introduces a call the model did not make. A reply that merely trails off
-/// without a colon cannot be told from a short answer and is not matched.
-#[must_use]
-pub fn announces_unfinished_work(reply: &str) -> bool {
-    reply.trim_end().ends_with(':')
-}
+pub use sven_vocab::announces_unfinished_work;
 
 /// Running tally of the outcome-bearing events seen during one session.
 ///

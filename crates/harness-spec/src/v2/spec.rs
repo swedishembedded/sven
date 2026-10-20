@@ -236,9 +236,10 @@ pub struct ExecLimits {
     /// The most model turns.
     #[serde(default)]
     pub model_turns: Option<u64>,
-    /// The most tool calls.
+    /// The most tool calls: a whole number, or a single `{{ inputs.<name> }}`
+    /// the host computes per run.
     #[serde(default)]
-    pub tool_calls: Option<u64>,
+    pub tool_calls: Option<Value>,
     /// The deepest delegation chain.
     #[serde(default)]
     pub delegate_depth: Option<u64>,
@@ -428,6 +429,16 @@ pub struct FollowUp {
     pub when: Option<Value>,
     /// The prompt.
     pub task: String,
+    /// How many times the turn is sent, each only while its condition still
+    /// holds (the condition is evaluated again after every turn). At least 1
+    /// and at most 8; default 1.
+    #[serde(default)]
+    pub max: Option<u64>,
+    /// Sets the task's tool-call allowance for this turn (a whole number or a
+    /// single `{{ inputs.<name> }}`); without it the turn draws on what the
+    /// task's allowance still holds.
+    #[serde(default)]
+    pub allowance: Option<Value>,
 }
 
 /// `repair:`.
@@ -509,6 +520,14 @@ pub struct TaskSpec {
     pub thinking: Option<Thinking>,
     /// Bounds on each response of this task.
     pub turn: Option<TurnBounds>,
+    /// The tool calls the task's first turn may make (a whole number or a
+    /// single `{{ inputs.<name> }}`); follow-ups and repairs draw on what is
+    /// left. A call beyond it is refused and the turn ends with the stop
+    /// `tool_cap`.
+    pub allowance: Option<Value>,
+    /// Ends a turn with the stop `repetition` when the same call has been
+    /// answered the same way this many times.
+    pub max_repeated_results: Option<u32>,
 }
 
 /// `success:`.

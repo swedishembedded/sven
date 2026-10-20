@@ -304,6 +304,10 @@ pub struct LimitsSpec {
     /// The most tool calls one run may make.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tool_calls: Option<u64>,
+    /// Names a run input holding the tool-call limit, which then replaces
+    /// `max_tool_calls` for the run. Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_calls_input: Option<String>,
     /// The deepest delegation chain (parent harness = 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_delegate_depth: Option<u64>,
@@ -424,6 +428,23 @@ pub struct AgentStepSpec {
     /// `correction`. Version 2 only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
+    /// Where to record how the step's loop ended (`concluded`,
+    /// `stopped_without_conclusion`, `tool_cap`, `repetition`). Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_as: Option<String>,
+    /// The fact holding the tool calls the step may still make. Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<String>,
+    /// Sets the pool to this (a template resolving to a whole number) when
+    /// the step starts; without it the step draws on what the pool still
+    /// holds. A call beyond the pool is refused and ends the loop with the
+    /// stop `tool_cap`. Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<String>,
+    /// Ends the loop with the stop `repetition` when the same call has been
+    /// answered the same way this many times. Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_repeated_results: Option<u32>,
     /// The next step.
     pub then: String,
 }

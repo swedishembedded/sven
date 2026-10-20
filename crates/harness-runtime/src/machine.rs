@@ -420,8 +420,17 @@ impl HarnessMachine {
                 }
                 self.side_effect_failed(&mut run, error, ctx)
             }
-            Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
-                self.on_agent_tool_settled(&mut run, *call_id, ctx)
+            Event::ToolSucceeded {
+                call_id,
+                observation,
+            } => {
+                let answer = observation
+                    .as_str()
+                    .map_or_else(|| observation.to_string(), str::to_string);
+                self.on_agent_tool_settled(&mut run, *call_id, &answer, ctx)
+            }
+            Event::ToolFailed { call_id, error } => {
+                self.on_agent_tool_settled(&mut run, *call_id, &format!("error: {error}"), ctx)
             }
             _ => self.on_gate_event(&mut run, event, ctx),
         }

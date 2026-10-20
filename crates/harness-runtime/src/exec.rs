@@ -188,12 +188,32 @@ impl HarnessMachine {
                 ref system,
                 ref origin,
                 ref decoding,
+                ref stop_as,
+                ref pool,
+                ref allowance,
+                max_repeated_results,
                 ..
             } => {
                 let decoding = match resolve_decoding(run, decoding) {
                     Ok(d) => d,
                     Err(why) => return self.fail_now(run, "invalid_setting", &why, ctx),
                 };
+                if let (Some(pool), Some(allowance)) = (pool, allowance) {
+                    match run.resolve_template(allowance).as_u64() {
+                        Some(calls) => {
+                            run.facts
+                                .insert(pool.clone(), serde_json::Value::from(calls));
+                        }
+                        None => {
+                            return self.fail_now(
+                                run,
+                                "invalid_setting",
+                                "the tool-call allowance is not a whole number",
+                                ctx,
+                            );
+                        }
+                    }
+                }
                 run.counts.model_turns += 1;
                 if run.exceeds_model_budget(self.run.plan()) {
                     return self.fail_now(
@@ -204,6 +224,9 @@ impl HarnessMachine {
                     );
                 }
                 run.agent = Some(AgentLoop {
+                    stop_as: stop_as.clone(),
+                    pool: pool.clone(),
+                    max_repeats: max_repeated_results,
                     step: step_id.clone(),
                     thread: harness_thread(self.run.plan()),
                     tools: tools.clone().unwrap_or_default(),

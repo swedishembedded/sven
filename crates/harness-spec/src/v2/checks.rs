@@ -135,6 +135,12 @@ pub(super) struct RepairPlan<'a> {
     /// For a `model_only` task, the repair is a model turn without tools,
     /// answering the task's schema when it has one.
     pub model_only: Option<Option<String>>,
+    /// The fact the repair turn's stop status is recorded in.
+    pub stop: Option<String>,
+    /// The fact holding the calls the task may still make.
+    pub pool: Option<String>,
+    /// Ends a repair turn that gets the same answers this many times.
+    pub max_repeated_results: Option<u32>,
     /// The conversation a model-only repair turn is in.
     pub conversation: Option<String>,
     /// The system message of the repair turn's conversation (already moved
@@ -427,6 +433,10 @@ fn on_failure(
                 store_as: Some(plan.fact.clone()),
                 system: plan.system.clone(),
                 origin: Some("repair".to_string()),
+                stop_as: plan.stop.clone(),
+                pool: plan.pool.clone(),
+                allowance: None,
+                max_repeated_results: plan.max_repeated_results,
                 decoding: plan.decoding.clone(),
                 then: again,
             })),

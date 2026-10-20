@@ -223,7 +223,7 @@ impl HarnessMachine {
                 agent
                     .refused
                     .insert(call_id.as_uuid().to_string(), NOT_APPROVED.to_string());
-                self.on_agent_tool_settled(run, call_id, ctx)
+                self.on_agent_tool_settled(run, call_id, NOT_APPROVED, ctx)
             }
             None => self.side_effect_failed(run, NOT_APPROVED, ctx),
         }

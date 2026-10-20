@@ -98,6 +98,15 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
             spec.api_version
         )));
     }
+    if spec
+        .limits
+        .as_ref()
+        .is_some_and(|l| l.max_tool_calls_input.is_some())
+    {
+        return Err(HarnessError::Invalid(format!(
+            "`max_tool_calls_input` needs `api_version: \"{WORKFLOW_API_VERSION}\"`"
+        )));
+    }
     for (id, step) in &spec.steps {
         let only_v2 = match step {
             StepSpec::Gate(_) | StepSpec::Iterate(_) => Some(format!("primitive `{}`", step.key())),
@@ -105,7 +114,13 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
                 Some("`propagate_failure` on a delegate".to_string())
             }
             StepSpec::Agent(a)
-                if !a.decoding.is_empty() || a.system.is_some() || a.origin.is_some() =>
+                if !a.decoding.is_empty()
+                    || a.system.is_some()
+                    || a.origin.is_some()
+                    || a.stop_as.is_some()
+                    || a.pool.is_some()
+                    || a.allowance.is_some()
+                    || a.max_repeated_results.is_some() =>
             {
                 Some("`decoding` or `system` on an agent step".to_string())
             }
@@ -377,10 +392,14 @@ fn template_texts(step: &StepSpec) -> Vec<String> {
             .into_iter()
             .flatten()
             .collect(),
-        StepSpec::Agent(a) => [Some(a.prompt.clone()), a.system.clone()]
-            .into_iter()
-            .flatten()
-            .collect(),
+        StepSpec::Agent(a) => [
+            Some(a.prompt.clone()),
+            a.system.clone(),
+            a.allowance.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         StepSpec::Tool(t) => template_texts_in_value(&t.args),
         StepSpec::Assign(a) => a.set.values().flat_map(&template_texts_in_value).collect(),
         StepSpec::Delegate(d) => template_texts_in_value(&d.input),

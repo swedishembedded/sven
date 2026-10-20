@@ -219,6 +219,10 @@ struct RawTask {
     thinking: Option<spec::Thinking>,
     #[serde(default)]
     turn: Option<spec::TurnBounds>,
+    #[serde(default)]
+    allowance: Option<Value>,
+    #[serde(default)]
+    max_repeated_results: Option<u32>,
 }
 
 /// `until:`; the comparison keys are collected and checked by
@@ -284,6 +288,8 @@ fn parse_workflow_tasks(section: Option<Value>) -> Result<Vec<TaskSpec>, Harness
             sampling: raw.sampling,
             thinking: raw.thinking,
             turn: raw.turn,
+            allowance: raw.allowance,
+            max_repeated_results: raw.max_repeated_results,
         });
     }
     Ok(tasks)
