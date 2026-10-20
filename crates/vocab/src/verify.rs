@@ -122,6 +122,14 @@ pub enum JsonCmpOp {
     Ne,
     /// The pointed-to value, as a string, contains the given value's string.
     Contains,
+    /// Both are numbers and the pointed-to one is greater.
+    Gt,
+    /// Both are numbers and the pointed-to one is greater or equal.
+    Gte,
+    /// Both are numbers and the pointed-to one is less.
+    Lt,
+    /// Both are numbers and the pointed-to one is less or equal.
+    Lte,
 }
 
 /// The result of evaluating one [`VerifierSpec`].

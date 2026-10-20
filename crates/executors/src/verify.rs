@@ -108,12 +108,26 @@ pub fn evaluate<'a>(
                     };
                 };
                 let passed = match op {
-                    JsonCmpOp::Eq => found == value,
-                    JsonCmpOp::Ne => found != value,
+                    // Two numbers are equal by value: 90 and 90.0 are one number.
+                    JsonCmpOp::Eq => values_equal(found, value),
+                    JsonCmpOp::Ne => !values_equal(found, value),
                     JsonCmpOp::Contains => match (found.as_str(), value.as_str()) {
                         (Some(hay), Some(needle)) => hay.contains(needle),
                         _ => false,
                     },
+                    // An ordering holds only between two numbers; anything
+                    // else is a failure, never a pass.
+                    JsonCmpOp::Gt | JsonCmpOp::Gte | JsonCmpOp::Lt | JsonCmpOp::Lte => {
+                        match (found.as_f64(), value.as_f64()) {
+                            (Some(a), Some(b)) => match op {
+                                JsonCmpOp::Gt => a > b,
+                                JsonCmpOp::Gte => a >= b,
+                                JsonCmpOp::Lt => a < b,
+                                _ => a <= b,
+                            },
+                            _ => false,
+                        }
+                    }
                 };
                 if passed {
                     VerifierVerdict::Passed
@@ -199,6 +213,15 @@ pub fn evaluate<'a>(
             },
         }
     })
+}
+
+/// JSON equality with numbers compared by value rather than by
+/// representation.
+fn values_equal(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) if a.is_number() && b.is_number() => x == y,
+        _ => a == b,
+    }
 }
 
 /// Resolve `path` (from a spec) against `root`, rejecting an absolute path
@@ -447,6 +470,78 @@ mod tests {
             value: serde_json::json!("succeeded"),
         };
         assert_eq!(evaluate(&spec, dir.path()).await, VerifierVerdict::Passed);
+    }
+
+    async fn numeric(found: &str, op: JsonCmpOp, value: serde_json::Value) -> VerifierVerdict {
+        let dir = tempdir();
+        std::fs::write(dir.path().join("m.json"), format!(r#"{{"v":{found}}}"#)).unwrap();
+        let spec = VerifierSpec::JsonPredicate {
+            path: "m.json".into(),
+            pointer: "/v".into(),
+            op,
+            value,
+        };
+        evaluate(&spec, dir.path()).await
+    }
+
+    #[tokio::test]
+    async fn json_predicate_orders_numbers() {
+        let ninety = serde_json::json!(90);
+        assert_eq!(
+            numeric("90.0", JsonCmpOp::Gte, ninety.clone()).await,
+            VerifierVerdict::Passed
+        );
+        assert_eq!(
+            numeric("91", JsonCmpOp::Gt, ninety.clone()).await,
+            VerifierVerdict::Passed
+        );
+        assert_eq!(
+            numeric("89.9", JsonCmpOp::Lt, ninety.clone()).await,
+            VerifierVerdict::Passed
+        );
+        assert_eq!(
+            numeric("90", JsonCmpOp::Lte, ninety.clone()).await,
+            VerifierVerdict::Passed
+        );
+        for (found, op) in [
+            ("89.99", JsonCmpOp::Gte),
+            ("90", JsonCmpOp::Gt),
+            ("90", JsonCmpOp::Lt),
+            ("90.1", JsonCmpOp::Lte),
+        ] {
+            assert!(
+                matches!(
+                    numeric(found, op, ninety.clone()).await,
+                    VerifierVerdict::Failed { .. }
+                ),
+                "{found} {op:?} 90 must fail"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn json_predicate_equality_compares_numbers_by_value() {
+        assert_eq!(
+            numeric("90.0", JsonCmpOp::Eq, serde_json::json!(90)).await,
+            VerifierVerdict::Passed
+        );
+        assert_eq!(
+            numeric("90", JsonCmpOp::Ne, serde_json::json!(91)).await,
+            VerifierVerdict::Passed
+        );
+    }
+
+    #[tokio::test]
+    async fn json_predicate_ordering_a_non_number_fails_never_passes() {
+        for found in [r#""95""#, "null", "true", "[95]"] {
+            assert!(
+                matches!(
+                    numeric(found, JsonCmpOp::Gte, serde_json::json!(90)).await,
+                    VerifierVerdict::Failed { .. }
+                ),
+                "{found} is not a number"
+            );
+        }
     }
 
     // ── AskHuman ─────────────────────────────────────────────────────────
