@@ -79,7 +79,7 @@ pub use run::{
 /// at the version this SDK uses.
 pub use schemars;
 pub use state::AgentState;
-pub use sven_harness_runtime::TraceRecord;
+pub use sven_harness_runtime::{sourced_trace, Source, SourceTracker, SourcedRecord, TraceRecord};
 /// Identifies an approval, as a [`HumanGate::Approval`] and a parked
 /// [`Approval`] carry it.
 pub use sven_hsm::ApprovalId;

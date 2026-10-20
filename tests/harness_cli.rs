@@ -678,3 +678,32 @@ fn copy_dir(from: &Path, to: &Path) {
         }
     }
 }
+
+#[test]
+fn a_trace_of_a_workflow_names_the_task_gate_item_and_result() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let trace = tmp.path().join("trace.jsonl");
+    let sweep = sample("module-sweep");
+    let out = run(sven(tmp.path())
+        .arg("run")
+        .arg(&sweep)
+        .arg("--case")
+        .arg(sweep.join("cases/sweeps-every-module.yaml"))
+        .arg("--quiet")
+        .arg("--trace")
+        .arg(&trace));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let lines: Vec<Value> = std::fs::read_to_string(&trace)
+        .expect("a trace file")
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("a JSON line"))
+        .collect();
+    let gate = lines
+        .iter()
+        .find(|l| l["event"] == "gate_evaluated" && l["source"]["item_id"] == "lexer")
+        .expect("the lexer's check is on the trace");
+    assert_eq!(gate["source"]["task"], "modules");
+    assert_eq!(gate["source"]["gate"], "test");
+    assert_eq!(gate["source"]["result"], "passed");
+    assert_eq!(gate["passed"], true, "the record's own fields are kept");
+}

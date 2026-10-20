@@ -10,12 +10,13 @@
 //! services by sending an email to info@swedishembedded.com.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 use sven_harness_testkit::{
-    inspect, resume_once, run_once, HarnessDir, RunResult, RunStatus, RunSummary,
+    inspect, main_plan, resume_once, run_once, HarnessDir, RunResult, RunStatus, RunSummary,
 };
-use sven_sdk::{HarnessCheckpoint, TraceRecord};
+use sven_sdk::{sourced_trace, HarnessCheckpoint, SourcedRecord};
 
 use super::production::{self, Production};
 use super::{kit, print_json, request, usage, Failure, Outcome};
@@ -25,7 +26,8 @@ use crate::cli::{HarnessRunArgs, ToolsetArg};
 pub(super) async fn run(path: &Path, args: &HarnessRunArgs) -> Outcome {
     let dir = HarnessDir::open(path).map_err(kit)?;
     if args.toolset == ToolsetArg::Coding {
-        let production = Production::from_args(args)?;
+        let plan = Arc::new(main_plan(&dir).map_err(kit)?);
+        let production = Production::from_args(args, plan)?;
         let streamed = production.streams_progress();
         let result = production::run(&dir, production).await?;
         return finish(path, args, &result, false, streamed);
@@ -44,7 +46,8 @@ pub(super) async fn resume(path: &Path, checkpoint: &Path, args: &HarnessRunArgs
     let checkpoint: HarnessCheckpoint = serde_json::from_str(&text)
         .map_err(|e| usage(format!("{} is not a checkpoint: {e}", checkpoint.display())))?;
     if args.toolset == ToolsetArg::Coding {
-        let production = Production::from_args(args)?;
+        let plan = Arc::new(main_plan(&dir).map_err(kit)?);
+        let production = Production::from_args(args, plan)?;
         let streamed = production.streams_progress();
         let result = production::resume(&dir, checkpoint, production).await?;
         return finish(path, args, &result, false, streamed);
@@ -69,8 +72,8 @@ fn finish(
 ) -> Outcome {
     write_files(args, result)?;
     if !args.quiet && !streamed {
-        for record in &result.outcome.trace {
-            if let Ok(line) = serde_json::to_string(record) {
+        for record in sourced_trace(&result.plan, &result.outcome.trace) {
+            if let Ok(line) = serde_json::to_string(&record) {
                 eprintln!("[sven:harness] {line}");
             }
         }
@@ -102,8 +105,8 @@ fn finish(
 fn write_files(args: &HarnessRunArgs, result: &RunResult) -> Result<(), Failure> {
     if let Some(file) = &args.trace {
         let mut lines = String::new();
-        for record in &result.outcome.trace {
-            lines.push_str(&jsonl_line(record)?);
+        for record in sourced_trace(&result.plan, &result.outcome.trace) {
+            lines.push_str(&jsonl_line(&record)?);
         }
         write(file, &lines)?;
     }
@@ -123,7 +126,7 @@ fn write_files(args: &HarnessRunArgs, result: &RunResult) -> Result<(), Failure>
     Ok(())
 }
 
-fn jsonl_line(record: &TraceRecord) -> Result<String, Failure> {
+fn jsonl_line(record: &SourcedRecord) -> Result<String, Failure> {
     serde_json::to_string(record)
         .map(|line| line + "\n")
         .map_err(|e| Failure {

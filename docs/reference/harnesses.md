@@ -519,6 +519,16 @@ published as a `HarnessEvent` session event (`Started`, `StepStarted`,
 `Completed`). The headless runner prints them as `[sven:harness] ...` lines;
 ACP does not forward them.
 
+**In the author's terms.** A workflow's generated steps are named in its plan's
+`source_map`. `sourced_trace(plan, trace)` (and `SourceTracker`, for a stream)
+returns each record with a `source` object: `task`, `role` (`work`, `check`,
+`repair`, ...), `gate`, `attempt` (the verification attempt, 0 the first),
+`item_id` (the `for_each` item whose body the record belongs to) and `result`
+(`passed`, `failed` or `completed`, for a gate, a verifier, a child or a
+finished item). The record's own fields are unchanged. `sven harness run`
+prints and writes (`--trace`) records this way; a version 1 plan has no source
+map, so its records carry no `source`.
+
 ## Checkpoints, recordings and replay
 
 **Checkpoint.** A run stopped by a bound (`RunConclusion::Timeout` or

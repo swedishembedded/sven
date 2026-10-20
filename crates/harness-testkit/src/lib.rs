@@ -49,8 +49,8 @@ pub use error::TestkitError;
 pub use expect::{includes, json_diff};
 pub use fixture_model::{ModelFixture, OptIn, SequenceItem, SequenceToolCall, SequenceUsage};
 pub use inspect::{
-    inspect, io_schema, validate, ChildInfo, HelperInfo, InspectReport, StepInfo, ValidateReport,
-    ValidatedHarness,
+    inspect, io_schema, main_plan, validate, ChildInfo, HelperInfo, InspectReport, StepInfo,
+    ValidateReport, ValidatedHarness,
 };
 pub use paired::{
     compare_paired, CostComparison, CostTotals, Decision, PairedOptions, PairedReport, TaskPairing,

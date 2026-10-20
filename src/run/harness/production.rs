@@ -66,7 +66,10 @@ pub(super) struct Production {
 
 impl Production {
     /// Validates `args` for a `--toolset coding` run.
-    pub(super) fn from_args(args: &HarnessRunArgs) -> Result<Self, Failure> {
+    pub(super) fn from_args(
+        args: &HarnessRunArgs,
+        plan: Arc<sven_sdk::harness_plan::HarnessPlan>,
+    ) -> Result<Self, Failure> {
         debug_assert_eq!(args.toolset, ToolsetArg::Coding);
         for (given, flag) in [
             (args.model_fixture.is_some(), "--model-fixture"),
@@ -124,8 +127,13 @@ impl Production {
                 .collect::<Result<_, _>>()?
         };
         let progress: Option<ProgressFn> = (!args.quiet).then(|| {
-            Arc::new(|record: &sven_sdk::TraceRecord| {
-                if let Ok(line) = serde_json::to_string(record) {
+            let tracker = std::sync::Mutex::new(sven_sdk::SourceTracker::new(plan));
+            Arc::new(move |record: &sven_sdk::TraceRecord| {
+                let sourced = tracker
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .next(record);
+                if let Ok(line) = serde_json::to_string(&sourced) {
                     eprintln!("[sven:harness] {line}");
                 }
             }) as ProgressFn

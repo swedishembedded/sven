@@ -197,6 +197,16 @@ fn harness_delegates(plan: &HarnessPlan) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The compiled plan of the main document in `dir`, which reads a run's trace
+/// in the author's terms.
+///
+/// # Errors
+///
+/// [`TestkitError`] when the document cannot be read or compiled.
+pub fn main_plan(dir: &HarnessDir) -> Result<HarnessPlan, TestkitError> {
+    Ok(Source::read(&dir.main)?.plan)
+}
+
 /// Describes the harness at `path`.
 ///
 /// # Errors

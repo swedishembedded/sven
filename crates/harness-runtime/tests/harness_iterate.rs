@@ -599,3 +599,39 @@ fn a_refreshed_loop_merges_a_changed_backlog_by_id_and_reruns_changed_items() {
     );
     assert_eq!(items[0]["attempts"], 2);
 }
+
+#[test]
+fn a_trace_reads_in_the_authors_terms() {
+    let (mut m, mut ctx, mut state, fx) =
+        begin(&input_workflow(), json!({ "modules": modules(2) }));
+    let mut seen = Seen::default();
+    pump(&mut m, &mut ctx, &mut state, fx, &mut seen, None, &|_| {
+        false
+    });
+    let run = sven_harness_runtime::HarnessRunState::load(&ctx);
+    let sourced = sven_harness_runtime::sourced_trace(m.plan(), &run.trace);
+    let json = serde_json::to_value(&sourced).expect("serializes");
+    let records = json.as_array().expect("records");
+
+    // A gate's result names the task, the gate and the item whose body it ended.
+    let gates: Vec<&Value> = records
+        .iter()
+        .filter(|r| r["event"] == "gate_evaluated")
+        .collect();
+    assert_eq!(gates.len(), 2);
+    assert_eq!(gates[0]["source"]["task"], "modules");
+    assert_eq!(gates[0]["source"]["gate"], "check");
+    assert_eq!(gates[0]["source"]["role"], "check");
+    assert_eq!(gates[0]["source"]["result"], "passed");
+    assert_eq!(gates[0]["source"]["item_id"], "m000");
+    assert_eq!(gates[1]["source"]["item_id"], "m001");
+    // An item's completion carries its id and result.
+    let done = records
+        .iter()
+        .find(|r| r["event"] == "item_completed")
+        .expect("completed");
+    assert_eq!(done["source"]["item_id"], "m000");
+    assert_eq!(done["source"]["result"], "completed");
+    // The record's own fields are untouched.
+    assert_eq!(gates[0]["passed"], true);
+}
