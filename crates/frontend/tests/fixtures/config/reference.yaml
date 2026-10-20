@@ -135,8 +135,9 @@ agent:
 
   # Compaction checkpoint format.
   # "structured": produces a typed Markdown checkpoint with fixed
-  #   sections (Active Task, Key Decisions, Files & Artifacts, Constraints,
-  #   Pending Items, Session Narrative). Easier for the model to navigate.
+  #   sections (Goal & Assignment, Constraints & Repo Rules, Decisions,
+  #   Files Read & Changed, Commands & Outcomes, Current State, Open
+  #   Questions, Next Steps, Session Narrative). Easier to navigate.
   # "narrative": uses a free-form summarisation prompt.
   compaction_strategy: structured
 

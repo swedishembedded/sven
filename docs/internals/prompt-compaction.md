@@ -177,17 +177,23 @@ The strategy is selected by the `compaction_strategy` config key.
 
 ### Structured (default)
 
-The compaction prompt instructs the model to produce exactly six Markdown
+The compaction prompt instructs the model to produce exactly nine Markdown
 sections. The model is not allowed to add or remove sections:
 
 ```markdown
-## Active Task
-## Key Decisions & Rationale
-## Files & Artifacts
-## Constraints & Requirements
-## Pending Items
+## Goal & Assignment
+## Constraints & Repo Rules
+## Decisions & Rationale
+## Files Read & Changed
+## Commands & Outcomes
+## Current State
+## Open Questions
+## Next Steps
 ## Session Narrative
 ```
+
+Commands & Outcomes keeps failed approaches and why they failed, so that the
+agent does not retry them.
 
 Technical details - file paths, function names, error messages, code snippets,
 test names - are preserved verbatim within those sections. The result is a

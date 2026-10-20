@@ -279,8 +279,9 @@ agent:
 
   # Compaction checkpoint format.
   # "structured": produces a typed Markdown checkpoint with fixed
-  #   sections (Active Task, Key Decisions, Files & Artifacts, Constraints,
-  #   Pending Items, Session Narrative). Easier for the model to navigate.
+  #   sections (Goal & Assignment, Constraints & Repo Rules, Decisions,
+  #   Files Read & Changed, Commands & Outcomes, Current State, Open
+  #   Questions, Next Steps, Session Narrative). Easier to navigate.
   # "narrative": uses a free-form summarisation prompt.
   compaction_strategy: structured
 
@@ -745,8 +746,10 @@ leaves).
 3. The `compaction_keep_recent` most recent messages are restored verbatim.
 
 With `compaction_strategy: structured` (default), the model produces a typed
-Markdown checkpoint with dedicated sections for Active Task, Key Decisions,
-Files & Artifacts, Constraints, Pending Items, and a Session Narrative.
+Markdown checkpoint with dedicated sections for the goal, constraints and repo
+rules, decisions, files read and changed, commands and outcomes (failed
+approaches included), current state, open questions, next steps, and a Session
+Narrative.
 Set `compaction_strategy: narrative` to use the original free-form summary.
 
 **Smart tool-result truncation** - Before any tool result enters the session,

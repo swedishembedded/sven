@@ -36,31 +36,52 @@ impl std::fmt::Display for CompactionStrategy {
 const SUMMARIZE_PROMPT: &str =
     "You are a context compaction assistant. Summarise the following conversation history \
      in a concise, information-dense way. Preserve all technical details, decisions, file \
-     names, code snippets, and tool outputs that may be relevant to future work. \
+     names, code snippets, and tool outputs that may be relevant to future work: the \
+     assignment, the constraints and repository rules, decisions and why, files read and \
+     changed, commands run and their outcomes (failed approaches included, so they are not \
+     retried), the current state, open questions and next steps. \
      The summary will replace the original history to free up context space.";
 
 const STRUCTURED_COMPACTION_PROMPT: &str = "\
 You are a context compaction assistant for a software engineering agent. \
 Produce a structured state checkpoint from the conversation history below. \
-Use EXACTLY the following Markdown sections - do not add or remove sections. \
-Be information-dense: preserve file paths, function names, error messages, \
-code snippets, test names, and technical decisions verbatim where they matter.
+The checkpoint replaces that history: anything it leaves out is lost to the \
+agent. Use EXACTLY the following Markdown sections - do not add or remove \
+sections. Be information-dense: preserve file paths, function names, error \
+messages, code snippets, test names, commands and technical decisions \
+verbatim where they matter.
 
-## Active Task
-Describe in 1-3 sentences what the agent is currently working on.
+## Goal & Assignment
+State the assignment as it was given: what is to be achieved and what counts \
+as done, in the requester's own words where they matter.
 
-## Key Decisions & Rationale
-List every significant technical decision made and why (bullet points). \
-Include file or component names.
+## Constraints & Repo Rules
+List every requirement, constraint, repository rule and preference the \
+requester or the project gave (style, gates, files not to touch, how to \
+verify), each as stated.
 
-## Files & Artifacts
-List every file that was read, modified, or created, with a brief note on what was done.
+## Decisions & Rationale
+List every significant decision made and why (bullet points), with the \
+files or components it concerns.
 
-## Constraints & Requirements
-List every requirement, constraint, or user preference that must be preserved.
+## Files Read & Changed
+List every file that was read, modified, created or deleted, with the key \
+facts learned from it or the change made.
 
-## Pending Items
-List every unfinished subtask or open question.
+## Commands & Outcomes
+List the commands that were run and what each returned (exit status, the \
+decisive lines of output). Include failed approaches and why they failed, \
+so that they are not retried.
+
+## Current State
+Say where the work stands now: what is done, what is half done, what the \
+tree and the tests look like.
+
+## Open Questions
+List every open question and assumption that still needs checking.
+
+## Next Steps
+List the concrete next steps, in order.
 
 ## Session Narrative
 Write a dense technical summary (2-5 paragraphs) of what happened, \
@@ -636,23 +657,23 @@ mod tests {
         compact_session_with_strategy(&mut msgs, None, &CompactionStrategy::Structured);
         let text = msgs[0].as_text().unwrap();
         assert!(
-            text.contains("## Active Task"),
+            text.contains("## Goal & Assignment"),
             "missing Active Task section"
         );
         assert!(
-            text.contains("## Key Decisions"),
+            text.contains("## Decisions & Rationale"),
             "missing Key Decisions section"
         );
         assert!(
-            text.contains("## Files & Artifacts"),
+            text.contains("## Files Read & Changed"),
             "missing Files section"
         );
         assert!(
-            text.contains("## Constraints"),
+            text.contains("## Constraints & Repo Rules"),
             "missing Constraints section"
         );
         assert!(
-            text.contains("## Pending Items"),
+            text.contains("## Next Steps"),
             "missing Pending Items section"
         );
         assert!(
@@ -771,6 +792,93 @@ mod tests {
         assert_eq!(final_msgs[0].as_text(), Some("question 0"));
         assert_eq!(final_msgs[1].role, Role::Assistant);
         assert_eq!(final_msgs.len(), 4);
+    }
+
+    /// A recorded run's worth of the things a checkpoint must carry forward:
+    /// an assignment with repo rules, a decision, files read and changed,
+    /// a command that failed, one that worked, and where the work stands.
+    fn recorded_run() -> Vec<Message> {
+        use sven_model::{FunctionCall, MessageContent};
+        let call = |id: &str, name: &str, args: &str| Message {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: id.into(),
+                function: FunctionCall {
+                    name: name.into(),
+                    arguments: args.into(),
+                },
+            },
+        };
+        vec![
+            Message::system("You are Sven."),
+            Message::user(
+                "Fix the flaky retry test in crates/net. Repo rules: zero warnings, ASCII only, \
+                 no #[allow]. Do not touch Cargo.toml.",
+            ),
+            Message::assistant("I will read the test first."),
+            call("c1", "read_file", r#"{"path":"crates/net/tests/retry.rs"}"#),
+            Message::tool_result("c1", "L40: sleep(Duration::from_millis(10)) // races the backoff"),
+            Message::assistant("Decision: wait on the backoff signal instead of sleeping, because the sleep races."),
+            call("c2", "shell", r#"{"shell_command":"cargo test -p net --test retry"}"#),
+            Message::tool_result("c2", "error: test failed, to rerun pass `-p net --test retry`"),
+            call("c3", "edit_file", r#"{"path":"crates/net/tests/retry.rs"}"#),
+            Message::tool_result("c3", "edited crates/net/tests/retry.rs"),
+            Message::assistant("The first approach (a longer sleep) did not work; do not retry it."),
+            Message::user("Continue."),
+            Message::assistant("Tests now pass; clippy still has to run."),
+        ]
+    }
+
+    #[test]
+    fn the_summary_request_asks_for_every_category_a_checkpoint_must_keep() {
+        let plan = prepare_compaction(&recorded_run(), &CompactionStrategy::Structured, 2).unwrap();
+        let request = plan
+            .summarize_request
+            .iter()
+            .filter_map(|m| m.as_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for heading in [
+            "## Goal & Assignment",
+            "## Constraints & Repo Rules",
+            "## Decisions & Rationale",
+            "## Files Read & Changed",
+            "## Commands & Outcomes",
+            "## Current State",
+            "## Open Questions",
+            "## Next Steps",
+        ] {
+            assert!(request.contains(heading), "missing {heading}: {request}");
+        }
+        assert!(
+            request.contains("failed approaches") && request.contains("not retried"),
+            "failed approaches must be kept so they are not retried"
+        );
+    }
+
+    #[test]
+    fn the_history_the_summary_is_written_from_holds_each_category() {
+        let plan = prepare_compaction(&recorded_run(), &CompactionStrategy::Structured, 2).unwrap();
+        let request = plan
+            .summarize_request
+            .iter()
+            .filter_map(|m| m.as_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for fact in [
+            "Fix the flaky retry test",
+            "zero warnings, ASCII only",
+            "wait on the backoff signal",
+            "crates/net/tests/retry.rs",
+            "cargo test -p net --test retry",
+            "error: test failed",
+            "do not retry it",
+        ] {
+            assert!(
+                request.contains(fact),
+                "the summariser is not shown: {fact}"
+            );
+        }
     }
 
     #[test]
