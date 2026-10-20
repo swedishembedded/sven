@@ -136,12 +136,37 @@ pub struct TurnExecutor {
     cost: CostPolicy,
     /// What the previous requests left in that cache.
     cache_usage: Arc<Mutex<cost_gate::CacheUsage>>,
+    /// How many tokens the server counted per token this executor estimated
+    /// for the last request that reported usage (1.0 until one has). The
+    /// chars/4 estimate undercounts code by tens of percent, so the
+    /// compaction trigger scales its estimate by this to act on the server's
+    /// count instead of waiting for the server to reject an oversized request.
+    estimate_scale: Arc<Mutex<f32>>,
     /// The gate's view of the request being built.
     cache_ctx: Option<crate::CacheContext>,
     /// The rebuild decisions made for the request being built, for its record.
     rebuilds: Vec<sven_vocab::cost::RebuildRecord>,
     /// Activates and announces conditional instructions each turn.
     instructions: Option<Arc<sven_turn::instructions::Activator>>,
+}
+
+/// Largest factor the server's token count may scale the estimate by; a
+/// wilder ratio means the request and the estimate describe different things
+/// (a cached or truncated prompt), not an estimator bias.
+const MAX_ESTIMATE_SCALE: f32 = 4.0;
+
+/// Records how the server's count of a request relates to the estimate made
+/// for it. Never below 1.0 (an overcount only costs an earlier compaction when
+/// the estimator is right, but a lower scale would defeat the headroom), and a
+/// request that reported nothing leaves the last scale in place.
+fn record_estimate_scale(scale: &Mutex<f32>, estimated: usize, reported: u64) {
+    if estimated == 0 || reported == 0 {
+        return;
+    }
+    let ratio = (reported as f32 / estimated as f32).clamp(1.0, MAX_ESTIMATE_SCALE);
+    *scale
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = ratio;
 }
 
 /// Proactive-compaction settings, mirroring the agent settings'
@@ -207,6 +232,7 @@ impl TurnExecutor {
             context: None,
             cost: CostPolicy::default(),
             cache_usage: Arc::new(Mutex::new(cost_gate::CacheUsage::default())),
+            estimate_scale: Arc::new(Mutex::new(1.0)),
             cache_ctx: None,
             rebuilds: Vec::new(),
             instructions: None,
@@ -400,8 +426,13 @@ impl EffectExecutor for TurnExecutor {
         if let Some(budget) =
             sven_model::budget::effective_input_budget(context_window, configured_max_output)
         {
+            let scale = *self
+                .estimate_scale
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if budget > 0
-                && (estimate as f32 / budget as f32) >= self.compaction.effective_threshold()
+                && (estimate as f32 * scale / budget as f32)
+                    >= self.compaction.effective_threshold()
             {
                 messages = self
                     .compact_thread(
@@ -490,6 +521,8 @@ impl EffectExecutor for TurnExecutor {
         let catalog_max_output = configured_max_output.unwrap_or(0);
         let decisions = self.decisions.clone();
         let cache_usage = Arc::clone(&self.cache_usage);
+        let estimate_scale = Arc::clone(&self.estimate_scale);
+        let estimated_prompt_tokens = estimate;
         let rebuilds = std::mem::take(&mut self.rebuilds);
         // Teed copy of the assistant text streamed so far. `stream_turn`'s
         // own return value is unreachable on cancellation (its future is
@@ -520,9 +553,15 @@ impl EffectExecutor for TurnExecutor {
                     max_tokens,
                     max_output_tokens,
                     breakdown,
+                    input,
                     ..
                 } = &mut ev
                 {
+                    record_estimate_scale(
+                        &estimate_scale,
+                        estimated_prompt_tokens,
+                        u64::from(*input) + u64::from(*cache_read) + u64::from(*cache_write),
+                    );
                     if let Some(breakdown) = breakdown {
                         if let Some(decisions) = &decisions {
                             notices::charge_decisions(decisions, breakdown);

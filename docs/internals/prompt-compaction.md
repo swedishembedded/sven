@@ -108,8 +108,14 @@ Before every model turn, `TurnExecutor` compares the estimate with the budget:
 
 ```
 trigger_threshold = max(compaction_threshold − compaction_overhead_reserve, 0)
-compact when       estimate / input_budget ≥ trigger_threshold
+compact when       estimate × scale / input_budget ≥ trigger_threshold
 ```
+
+`scale` is how many tokens the server counted per estimated token for the last
+request that reported usage (1 until one has, at most 4). The chars/4 estimate
+undercounts code by tens of percent; the scale makes the trigger act on the
+server's count from the second request on, instead of on a request the server
+then rejects as too long.
 
 The overhead reserve (default 10%) keeps enough room for the summarization
 request itself.
