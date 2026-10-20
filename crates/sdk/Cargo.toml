@@ -19,6 +19,8 @@ sven-memory-sqlite = { path = "../memory-sqlite", optional = true }
 sven-sources    = { path = "../sources" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-tool-api  = { path = "../tool-api" }
+sven-tools-exec = { path = "../tools-exec" }
+sven-tools-fs  = { path = "../tools-fs", default-features = false }
 sven-sdk-macros = { path = "../sdk-macros" }
 sven-session-model = { path = "../session-model" }
 sven-session-store = { path = "../session-store" }

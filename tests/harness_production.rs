@@ -475,3 +475,97 @@ fn a_key_file_inside_the_workspace_is_refused() {
     );
     assert!(!stderr(&out).contains(KEY));
 }
+
+// ── v2 workflows: the gate tool is on every host ──────────────────────────
+
+fn workflow() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/harness/verified-v2")
+}
+
+/// A workspace holding the check, and `ok.txt` when `ready`.
+fn workflow_repo(ready: bool) -> tempfile::TempDir {
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::write(repo.path().join("check.sh"), "test -f ok.txt\n").unwrap();
+    if ready {
+        std::fs::write(repo.path().join("ok.txt"), "ok\n").unwrap();
+    }
+    repo
+}
+
+fn none_command(scratch: &Path, repo: &Path, replies: &[&str]) -> Command {
+    let model = scratch.join("model.yaml");
+    let sequence: Vec<Value> = replies.iter().map(|t| json!({ "text": t })).collect();
+    std::fs::write(&model, json!({ "sequence": sequence }).to_string()).unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_sven"));
+    cmd.current_dir(scratch)
+        .env("HOME", scratch)
+        .env("XDG_CONFIG_HOME", scratch)
+        .args(["harness", "run"])
+        .arg(workflow())
+        .args(["--toolset", "none", "--workspace"])
+        .arg(repo)
+        .arg("--model-fixture")
+        .arg(&model)
+        .args(["--json", "--timeout", "60"]);
+    cmd
+}
+
+#[test]
+fn a_workflow_gate_runs_a_real_command_with_the_none_toolset() {
+    let scratch = tempfile::tempdir().unwrap();
+    // The check passes: the exit status of the real command is 0.
+    let out = run(&mut none_command(
+        scratch.path(),
+        workflow_repo(true).path(),
+        &["done"],
+    ));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(report(&out)["output"], json!({ "note": "done" }));
+
+    // The agent claims it is fixed, but the command exits 1 both times: the
+    // claim is not believed and the run fails on the gate.
+    let out = run(&mut none_command(
+        scratch.path(),
+        workflow_repo(false).path(),
+        &["all fixed", "really fixed"],
+    ));
+    let report = report(&out);
+    assert_ne!(code(&out), 0, "{report}");
+    assert_eq!(report["status"], "failed", "{report}");
+    assert_eq!(report["failure"]["code"], "gate_failed", "{report}");
+}
+
+#[test]
+fn a_workflow_gate_runs_a_real_command_with_the_coding_toolset() {
+    let setup = setup();
+    std::fs::remove_dir_all(setup.repo.path()).unwrap();
+    std::fs::create_dir_all(setup.repo.path()).unwrap();
+    std::fs::write(setup.repo.path().join("check.sh"), "test -f ok.txt\n").unwrap();
+    let server = serve(vec![
+        Turn::Calls(vec![write("ok.txt", "ok\n")]),
+        Turn::Text("created ok.txt"),
+    ]);
+    let mut cmd = setup.command(&server);
+    cmd.args(["--approvals", "auto"]);
+    // Point the same command at the workflow instead of the C sample.
+    let args: Vec<std::ffi::OsString> = cmd
+        .get_args()
+        .map(|a| {
+            if Path::new(a) == sample() {
+                workflow().into_os_string()
+            } else {
+                a.to_os_string()
+            }
+        })
+        .collect();
+    let mut swapped = Command::new(env!("CARGO_BIN_EXE_sven"));
+    swapped
+        .current_dir(setup.scratch.path())
+        .env("HOME", setup.scratch.path())
+        .env("XDG_CONFIG_HOME", setup.scratch.path())
+        .env_remove("SVEN_MODEL")
+        .args(args);
+    let out = run(&mut swapped);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(report(&out)["output"], json!({ "note": "created ok.txt" }));
+}

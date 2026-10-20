@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# A v2 workflow whose gate runs a real command in the workspace: the check
+# passes once the agent has left ok.txt there.
+api_version: "2"
+name: verified-v2
+agent: { profile: coding }
+execution: { limits: { model_turns: 8, tool_calls: 12 } }
+gates:
+  check: { command: [sh, check.sh], timeout: 30 }
+workflow:
+  - name: work
+    task: Create ok.txt so that the check passes.
+    verify: [check]
+    repair: { attempts: 1 }
+outputs:
+  note: { type: string, value: "{{ tasks.work.output }}" }
