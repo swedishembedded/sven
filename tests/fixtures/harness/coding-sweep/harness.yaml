@@ -20,6 +20,7 @@ execution:
 workflow:
   - name: notes
     for_each: { source: { input: modules }, id: name, max_items: 10 }
+    checkpoint: each_item
     task: "Write the file {{ item.name }}.txt containing the word ok, then say done."
 success:
   work_items: { all_completed: true }

@@ -28,6 +28,7 @@ execution: { limits: { model_turns: 20 } }
 workflow:
   - name: each
     for_each: { source: { input: modules }, id: name, max_items: 10 }
+    checkpoint: each_item
     task: "Work on {{ item.name }}."
 success:
   work_items: { all_completed: true }
@@ -108,5 +109,32 @@ async fn each_completed_item_leaves_a_checkpoint_that_resumes_without_repeating_
         requests.load(Ordering::SeqCst),
         3 - done_before,
         "only the items that were not completed are worked on"
+    );
+}
+
+#[tokio::test]
+async fn a_loop_not_marked_each_item_hands_the_sink_nothing() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let engine = engine(&requests);
+    let unmarked = SWEEP.replace("    checkpoint: each_item\n", "");
+    let harness = engine.load_harness_from_str(&unmarked).expect("loads");
+    let taken: Arc<Mutex<Vec<HarnessCheckpoint>>> = Arc::default();
+    let sink = Arc::clone(&taken);
+    let mut run = harness
+        .start(json!({"modules": [{"name": "a"}, {"name": "b"}]}))
+        .expect("starts")
+        .on_item_checkpoint(move |checkpoint| sink.lock().unwrap().push(checkpoint));
+    let outcome = tokio::time::timeout(Duration::from_secs(30), run.execute(RunOptions::new()))
+        .await
+        .expect("ends")
+        .expect("an outcome");
+    assert!(
+        matches!(&outcome.result, Some(Ok(_))),
+        "{:?}",
+        outcome.result
+    );
+    assert!(
+        taken.lock().unwrap().is_empty(),
+        "the loop did not ask for checkpoints"
     );
 }

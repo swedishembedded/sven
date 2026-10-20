@@ -13,7 +13,7 @@ use sven_harness_runtime::{
     harness_event, HarnessMachine, HarnessRunData, HarnessRunState, TraceRecord, Waiting,
     OUTCOME_FACT,
 };
-use sven_harness_spec::{HarnessBundle, HarnessPlan};
+use sven_harness_spec::{HarnessBundle, HarnessPlan, PlanIteration, PlanPrimitive};
 use sven_hsm::submachine::ErasedMachine;
 use sven_hsm::{Context, EffectKind, Event, Snapshot};
 use sven_vocab::{HarnessEvent, SessionEvent};
@@ -214,8 +214,20 @@ impl HarnessRun {
 
     /// Gives the host's item-checkpoint sink the run as it rests at
     /// `snapshot`, when an item has just completed.
-    fn checkpoint_item(&self, item_completed: bool, snapshot: &Snapshot) {
-        if let (true, Some(sink)) = (item_completed, &self.item_checkpoint) {
+    fn checkpoint_item(&self, completed_loops: &[String], snapshot: &Snapshot) {
+        let marked = completed_loops.iter().any(|step| {
+            matches!(
+                self.plan.step(step).map(|s| &s.primitive),
+                Some(PlanPrimitive::Iterate {
+                    iteration: PlanIteration::ForEach {
+                        checkpoint_each_item: true,
+                        ..
+                    },
+                    ..
+                })
+            )
+        });
+        if let (true, Some(sink)) = (marked, &self.item_checkpoint) {
             sink(checkpoint_at(
                 snapshot.clone(),
                 &self.plan.digest,
@@ -497,7 +509,7 @@ impl HarnessRun {
                         tap_open = changed.is_ok();
                         let latest = tap.borrow_and_update().clone();
                         if let Some(snapshot) = latest {
-                            let item_completed = publish_trace(
+                            let completed_loops = publish_trace(
                                 &snapshot.context,
                                 &mut emitted_trace,
                                 &self.trace_tx,
@@ -505,12 +517,12 @@ impl HarnessRun {
                                 &self.run_id,
                                 &mut observed,
                             );
-                            self.checkpoint_item(item_completed, &snapshot);
+                            self.checkpoint_item(&completed_loops, &snapshot);
                         }
                     },
                     captured = settled.as_mut() => match captured {
                         Some(snapshot) => {
-                            let item_completed = publish_trace(
+                            let completed_loops = publish_trace(
                                 &snapshot.context,
                                 &mut emitted_trace,
                                 &self.trace_tx,
@@ -518,7 +530,7 @@ impl HarnessRun {
                                 &self.run_id,
                                 &mut observed,
                             );
-                            self.checkpoint_item(item_completed, &snapshot);
+                            self.checkpoint_item(&completed_loops, &snapshot);
                             // A capture is only served when the machine has
                             // nothing left to do; two in a row over the very
                             // same processed count mean it can no longer make
@@ -682,7 +694,7 @@ fn checkpoint_at(snapshot: Snapshot, plan_digest: &str, run_id: &str) -> Harness
 /// event stream, so one run's progress has one form everywhere. `observed`
 /// carries when the previous record was seen; a step's duration is the gap
 /// between observations - approximately what the step cost, zero when the
-/// run is observed in a burst. Says whether a work item completed among
+/// run is observed in a burst. Says which loops completed an item among
 /// the records published.
 fn publish_trace(
     ctx: &Context,
@@ -691,11 +703,13 @@ fn publish_trace(
     events: &broadcast::Sender<SessionEvent>,
     run_id: &str,
     observed: &mut Option<tokio::time::Instant>,
-) -> bool {
+) -> Vec<String> {
     let state = HarnessRunState::load(ctx);
-    let mut item_completed = false;
+    let mut completed_loops = Vec::new();
     for record in state.trace.iter().skip(*emitted) {
-        item_completed |= matches!(record, TraceRecord::ItemCompleted { .. });
+        if let TraceRecord::ItemCompleted { step, .. } = record {
+            completed_loops.push(step.clone());
+        }
         let duration_ms = observed
             .replace(tokio::time::Instant::now())
             .map_or(0, |previous| previous.elapsed().as_millis() as u64);
@@ -706,7 +720,7 @@ fn publish_trace(
         });
     }
     *emitted = state.trace.len();
-    item_completed
+    completed_loops
 }
 
 /// The verdict a finished run reported, read off its terminal state and
