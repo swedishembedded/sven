@@ -37,7 +37,8 @@
 use serde_json::Value;
 use sven_harness_spec::{HarnessPlan, PlanPrimitive, PlanStep, Template};
 use sven_hsm::{
-    Context, Effect, Event, InternalEvent, Machine, MachineId, Reaction, ToolCallId, ToolCapability,
+    Context, Effect, Event, InternalEvent, Machine, MachineId, Reaction, ToolCallId,
+    ToolCapability, TURN_TRUNCATED,
 };
 use sven_vocab::verify::VerifierVerdict;
 use sven_vocab::TurnRequest;
@@ -399,6 +400,11 @@ impl HarnessMachine {
             return Reaction::Ignored;
         };
         match event {
+            Event::Internal(InternalEvent::Custom { name, .. }) if name == TURN_TRUNCATED => {
+                run.truncated = true;
+                run.store(ctx);
+                Reaction::Ignored
+            }
             Event::LlmTurnComplete {
                 text, tool_calls, ..
             } => {
@@ -406,6 +412,14 @@ impl HarnessMachine {
                     if agent.step == inflight.step {
                         return self.on_agent_turn(&mut run, agent, text, tool_calls, ctx);
                     }
+                }
+                if std::mem::take(&mut run.truncated) {
+                    return self.fail_now(
+                        &mut run,
+                        "output_truncated",
+                        "the model's answer was cut off at its output-token limit",
+                        ctx,
+                    );
                 }
                 // `predict`: the turn's text is the answer. A schema'd
                 // answer must parse as JSON (providers enforce the format,

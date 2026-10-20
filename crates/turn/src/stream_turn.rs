@@ -369,6 +369,9 @@ pub struct StreamedTurn {
     /// valid JSON and could not be repaired. Such a call is in `tool_calls`
     /// with `{}` arguments; the text here is what the model really sent.
     pub unparsed_arguments: HashMap<String, String>,
+    /// The provider stopped the reply at its output-token limit, so `text`
+    /// (and any call) may be cut off.
+    pub truncated: bool,
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -454,6 +457,7 @@ pub async fn stream_turn(
     let mut completed: Vec<ToolCall> = Vec::new();
     let mut completed_indices: Vec<u32> = Vec::new();
     let mut unparsed_arguments: HashMap<String, String> = HashMap::new();
+    let mut truncated = false;
     let mut issued_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut sampled = Sampled {
         decoding: Some(limits.recorded_decoding())
@@ -491,6 +495,7 @@ pub async fn stream_turn(
             // changing what any UI-facing consumer does with the turn.
             ResponseEvent::MaxTokens => {
                 warn!("model hit its max-output-tokens limit; response was truncated");
+                truncated = true;
             }
             ResponseEvent::ThinkingDelta(delta) => {
                 let stall_started =
@@ -681,6 +686,7 @@ pub async fn stream_turn(
         text: full_text,
         tool_calls: completed,
         unparsed_arguments,
+        truncated,
     })
 }
 

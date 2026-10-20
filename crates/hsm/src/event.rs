@@ -304,6 +304,11 @@ pub enum InternalEvent {
     },
 }
 
+/// The name of the [`InternalEvent::Custom`] a turn executor sends, just
+/// before the turn's completion, when the provider cut the reply off at its
+/// output-token limit.
+pub const TURN_TRUNCATED: &str = "turn.truncated";
+
 impl Event {
     /// The reserved state-entry signal.
     #[must_use]

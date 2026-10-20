@@ -658,13 +658,13 @@ impl EffectExecutor for TurnExecutor {
             }
         }
 
-        let (text, tool_calls, unparsed) = match result {
+        let (text, tool_calls, unparsed, truncated) = match result {
             Ok(turn) => {
                 let unparsed = turn.unparsed_arguments.clone();
                 if let Ok(mut store) = self.store.lock() {
                     store.record_unparsed_arguments(turn.unparsed_arguments);
                 }
-                (turn.text, turn.tool_calls, unparsed)
+                (turn.text, turn.tool_calls, unparsed, turn.truncated)
             }
             Err(e) => {
                 let msg = format!("{e:#}");
@@ -754,6 +754,16 @@ impl EffectExecutor for TurnExecutor {
         }
 
         let has_tool_calls = !proposed.is_empty();
+        if truncated {
+            // Tells the machine the reply was cut at the output-token limit;
+            // sent ahead of the completion so it is known when the turn is read.
+            let _ = sink
+                .emit(Event::Internal(sven_hsm::InternalEvent::Custom {
+                    name: sven_hsm::TURN_TRUNCATED.to_string(),
+                    payload: serde_json::Value::Null,
+                }))
+                .await;
+        }
         let _ = sink
             .emit(Event::LlmTurnComplete {
                 thread: thread_id,

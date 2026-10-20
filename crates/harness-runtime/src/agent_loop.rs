@@ -158,6 +158,9 @@ impl HarnessMachine {
         ctx: &mut Context,
     ) -> Reaction<HarnessState> {
         agent.rounds += 1;
+        if !tool_calls.is_empty() {
+            run.truncated = false;
+        }
         if let Some(budget) = self
             .run
             .plan()
@@ -175,7 +178,9 @@ impl HarnessMachine {
             }
         }
         if tool_calls.is_empty() {
-            let stop = if sven_vocab::announces_unfinished_work(text) {
+            let stop = if std::mem::take(&mut run.truncated) {
+                "output_truncated"
+            } else if sven_vocab::announces_unfinished_work(text) {
                 "stopped_without_conclusion"
             } else {
                 "concluded"

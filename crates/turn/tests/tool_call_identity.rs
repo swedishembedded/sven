@@ -87,3 +87,20 @@ async fn an_unparsed_call_is_reported_under_its_own_id_only() {
     );
     assert_eq!(good.args["pattern"], "a");
 }
+
+#[tokio::test]
+async fn a_reply_cut_at_the_output_limit_says_so() {
+    let cut = run(vec![
+        ResponseEvent::TextDelta("half an ans".into()),
+        ResponseEvent::MaxTokens,
+        ResponseEvent::Done,
+    ])
+    .await;
+    assert!(cut.truncated);
+    let whole = run(vec![
+        ResponseEvent::TextDelta("done".into()),
+        ResponseEvent::Done,
+    ])
+    .await;
+    assert!(!whole.truncated);
+}

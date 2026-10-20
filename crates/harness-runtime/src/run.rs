@@ -579,6 +579,9 @@ pub struct HarnessRunState {
     /// This run's delegation depth (a top-level run is at 1; a delegated
     /// child starts at its parent's depth + 1).
     pub delegate_depth: u64,
+    /// The turn in flight was cut off at the output-token limit.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
     /// What the parent run had left when it started this one: the child's own
     /// budgets can only be tighter.
     #[serde(default, skip_serializing_if = "crate::budget::Ceiling::is_open")]

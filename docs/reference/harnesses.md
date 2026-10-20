@@ -211,8 +211,9 @@ in the trajectory (`extra.sven.origin`): `task`, `follow_up`, `repair` or
 make; follow-ups and repairs draw on the rest (a follow-up's own `allowance`
 sets it afresh) and a call beyond it is refused. `max_repeated_results: N` ends a
 turn when the same call has been answered the same way N times. A turn ends
-with a stop status readable as `tasks.<name>.stop` (`done`, `tool_cap`,
-`repetition`, `unfinished`) and `tasks.<name>.calls_left`; none of them fails
+with a stop status readable as `tasks.<name>.stop` (`concluded`,
+`stopped_without_conclusion`, `output_truncated` when the provider cut the final
+reply off at its output-token limit, `tool_cap`, `repetition`) and `tasks.<name>.calls_left`; none of them fails
 the run, and `when` conditions can branch on them. A follow-up's `max` (1 to 8)
 repeats it while its `when` holds.
 

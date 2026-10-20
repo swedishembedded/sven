@@ -289,3 +289,28 @@ workflow:
     assert_eq!(ran, 2, "no third gate call");
     assert_eq!(m.outcome().unwrap()["code"], "tool_call_budget");
 }
+
+#[test]
+fn an_answer_cut_off_at_the_output_limit_is_a_status_not_a_silent_empty_output() {
+    let (mut m, mut ctx, mut state) = begin(10);
+    // The provider stopped the reply at its limit; the executor says so just
+    // before the turn completes, with whatever text had arrived (here none).
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::Internal(sven_hsm::InternalEvent::Custom {
+            name: sven_hsm::TURN_TRUNCATED.to_string(),
+            payload: Value::Null,
+        }),
+    );
+    let _ = drive(&mut m, &mut ctx, &mut state, turn(THREAD, ""));
+    assert_eq!(state, HarnessState::Completed);
+    let outcome = m.outcome().expect("an outcome");
+    assert_eq!(outcome["stop"], "output_truncated", "{outcome}");
+
+    // The next turn is not tainted by the last one's flag.
+    let (mut m, mut ctx, mut state) = begin(10);
+    let _ = drive(&mut m, &mut ctx, &mut state, turn(THREAD, "All done."));
+    assert_eq!(m.outcome().expect("an outcome")["stop"], "concluded");
+}
