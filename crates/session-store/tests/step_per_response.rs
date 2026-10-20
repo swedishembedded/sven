@@ -85,6 +85,7 @@ fn each_model_response_is_its_own_agent_step() {
             gate_decisions: &[],
             memory_retrievals: &[],
             call_timings: &[],
+            system_steps: false,
         },
         &|m| m.clone(),
     );

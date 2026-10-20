@@ -355,6 +355,9 @@ impl EffectExecutor for TurnExecutor {
         let reasons = refusal_reasons(&self.call_id_to_thread, &req.refused_calls);
         if let Ok(mut s) = self.store.lock() {
             s.answer_open_calls(&thread_id, &reasons);
+            if let (Some(system), true) = (&req.system, s.is_empty(&thread_id)) {
+                s.append(&thread_id, Message::system(system));
+            }
             if !req.instruction.is_empty() {
                 s.append(&thread_id, Message::user(&req.instruction));
             }

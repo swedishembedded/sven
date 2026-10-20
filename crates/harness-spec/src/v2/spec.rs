@@ -90,40 +90,63 @@ impl Profile {
     }
 }
 
+/// A setting in a workflow: a literal, or `"{{ inputs.<name> }}"`.
+pub type Setting = Option<Value>;
+
 /// `sampling:` of an agent or a task.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sampling {
     /// Softmax temperature, within 0 to 2.
     #[serde(default)]
-    pub temperature: Option<f64>,
+    pub temperature: Setting,
     /// Nucleus-sampling mass, above 0 and at most 1.
     #[serde(default)]
-    pub top_p: Option<f64>,
+    pub top_p: Setting,
     /// Number of highest-probability tokens kept, at least 1.
     #[serde(default)]
-    pub top_k: Option<u32>,
+    pub top_k: Setting,
     /// Seed. Never defaulted: a run is only seeded when the document says so.
     #[serde(default)]
-    pub seed: Option<u64>,
+    pub seed: Setting,
 }
 
 /// `thinking:` of an agent or a task.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Thinking {
     /// Reasoning on or off, on servers that have the switch.
     #[serde(default)]
-    pub enabled: Option<bool>,
+    pub enabled: Setting,
     /// The most thinking tokens before a turn is cut off as a runaway.
     #[serde(default)]
-    pub budget: Option<u32>,
+    pub budget: Setting,
 }
 
-/// The step-level form of a `sampling` and a `thinking` block.
+/// `turn:` of an agent or a task: bounds on one model response.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TurnBounds {
+    /// The most output tokens one response may ask for.
+    #[serde(default)]
+    pub max_output_tokens: Setting,
+    /// Seconds to wait for the server's first response.
+    #[serde(default)]
+    pub first_response_timeout: Setting,
+}
+
+/// The step-level form of a `sampling`, `thinking` and `turn` block.
 #[must_use]
-pub fn decoding_of(sampling: Option<Sampling>, thinking: Option<Thinking>) -> StepDecoding {
-    let (s, t) = (sampling.unwrap_or_default(), thinking.unwrap_or_default());
+pub fn decoding_of(
+    sampling: &Option<Sampling>,
+    thinking: &Option<Thinking>,
+    bounds: &Option<TurnBounds>,
+) -> StepDecoding {
+    let (s, t, b) = (
+        sampling.clone().unwrap_or_default(),
+        thinking.clone().unwrap_or_default(),
+        bounds.clone().unwrap_or_default(),
+    );
     StepDecoding {
         temperature: s.temperature,
         top_p: s.top_p,
@@ -131,6 +154,8 @@ pub fn decoding_of(sampling: Option<Sampling>, thinking: Option<Thinking>) -> St
         seed: s.seed,
         thinking: t.enabled,
         thinking_budget: t.budget,
+        max_output_tokens: b.max_output_tokens,
+        first_response_timeout: b.first_response_timeout,
     }
 }
 
@@ -147,12 +172,20 @@ pub struct AgentSpec {
     /// An explicit tool allowlist for every task.
     #[serde(default)]
     pub tools: Option<Vec<String>>,
+    /// The system message of the agent's conversation (a template over
+    /// inputs), delivered as the model's system message and recorded in the
+    /// trajectory as its system step.
+    #[serde(default)]
+    pub system: Option<String>,
     /// Sampling for every task; a task's own settings replace it.
     #[serde(default)]
     pub sampling: Option<Sampling>,
     /// Thinking for every task; a task's own settings replace it.
     #[serde(default)]
     pub thinking: Option<Thinking>,
+    /// Bounds on each response, for every task.
+    #[serde(default)]
+    pub turn: Option<TurnBounds>,
 }
 
 /// The `execution:` block.
@@ -439,8 +472,12 @@ pub struct TaskSpec {
     pub for_each: Option<ForEach>,
     /// Repeat the task until a metric holds.
     pub until: Option<Until>,
-    /// A single model turn with no tools, for a planner or a supervisor.
+    /// A single model turn with no tools, for a planner or a supervisor, in
+    /// a conversation of its own.
     pub model_only: bool,
+    /// For a `model_only` task, the system message of its conversation (a
+    /// template over inputs and earlier outputs).
+    pub system: Option<String>,
     /// For a `model_only` task, the JSON Schema its answer must satisfy; the
     /// parsed answer is the task's output.
     pub schema: Option<Value>,
@@ -448,6 +485,8 @@ pub struct TaskSpec {
     pub sampling: Option<Sampling>,
     /// Thinking for this task's turns.
     pub thinking: Option<Thinking>,
+    /// Bounds on each response of this task.
+    pub turn: Option<TurnBounds>,
 }
 
 /// `success:`.

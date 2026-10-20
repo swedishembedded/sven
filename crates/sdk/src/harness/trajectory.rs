@@ -21,11 +21,19 @@ use sven_bootstrap::child_records::ChildRecord;
 use sven_bootstrap::RuntimeHandle;
 use sven_harness_runtime::harness_thread;
 use sven_harness_spec::HarnessPlan;
-use sven_model::{Message, Role};
+use sven_model::Message;
 
 use super::run::HarnessOutcome;
 use super::HarnessRun;
 use crate::engine::Engine;
+
+/// One model conversation of a run: the shared agent thread or the thread of
+/// a `conversation` a model-only step opened.
+struct Conversation {
+    messages: Vec<Message>,
+    compactions: Vec<(usize, sven_vocab::CompactionRecord)>,
+    requests: Vec<(usize, sven_vocab::RequestRecord)>,
+}
 
 /// What an executed run keeps for its trajectory: the plan thread's
 /// messages as the kernel held them when the run ended, and the outcome
@@ -38,6 +46,8 @@ pub(super) struct Evidence {
     memory_retrievals: Vec<atif::MemoryRetrieval>,
     call_timings: Vec<atif::CallTiming>,
     unparsed_arguments: std::collections::HashMap<String, String>,
+    /// The conversations model-only steps ran in, by name.
+    conversations: Vec<(String, Conversation)>,
     children: Vec<ChildRecord>,
     model: String,
     tools: Vec<serde_json::Value>,
@@ -71,11 +81,7 @@ impl Evidence {
             .lock()
             .map(|store| {
                 (
-                    store
-                        .transcript(&thread)
-                        .into_iter()
-                        .filter(|m| m.role != Role::System)
-                        .collect::<Vec<_>>(),
+                    store.transcript(&thread),
                     store.transcript_compactions(&thread),
                     store.transcript_requests(&thread),
                     store.gate_decisions(),
@@ -83,6 +89,36 @@ impl Evidence {
                     store.call_timings(),
                     store.unparsed_arguments().clone(),
                 )
+            })
+            .unwrap_or_default();
+        let names: std::collections::BTreeSet<&str> = plan
+            .steps
+            .values()
+            .filter_map(|step| match &step.primitive {
+                sven_harness_spec::PlanPrimitive::Predict { conversation, .. } => {
+                    conversation.as_deref()
+                }
+                _ => None,
+            })
+            .collect();
+        let conversations = handle
+            .conversation_store()
+            .lock()
+            .map(|store| {
+                names
+                    .into_iter()
+                    .map(|name| {
+                        let thread = format!("{thread}.{name}");
+                        (
+                            name.to_string(),
+                            Conversation {
+                                messages: store.transcript(&thread),
+                                compactions: store.transcript_compactions(&thread),
+                                requests: store.transcript_requests(&thread),
+                            },
+                        )
+                    })
+                    .collect()
             })
             .unwrap_or_default();
         let model = match engine.provider() {
@@ -103,6 +139,7 @@ impl Evidence {
             memory_retrievals,
             call_timings,
             unparsed_arguments: unparsed,
+            conversations,
             children,
             model,
             tools,
@@ -138,21 +175,35 @@ impl HarnessRun {
                 gate_decisions: &evidence.gate_decisions,
                 memory_retrievals: &evidence.memory_retrievals,
                 call_timings: &evidence.call_timings,
+                system_steps: true,
             },
-            &|message| {
-                let mut message = message.clone();
-                if let sven_model::MessageContent::ToolCall {
-                    tool_call_id,
-                    function,
-                } = &mut message.content
-                {
-                    if let Some(raw) = evidence.unparsed_arguments.get(tool_call_id) {
-                        function.arguments.clone_from(raw);
-                    }
-                }
-                message
-            },
+            &|message| as_sent(evidence, message),
         );
+        let conversations: Vec<atif::Trajectory> = evidence
+            .conversations
+            .iter()
+            .map(|(name, conversation)| {
+                let mut own = atif::Trajectory::new(
+                    sven_session_store::ATIF_SCHEMA_VERSION,
+                    trajectory.agent.clone(),
+                );
+                own.trajectory_id = Some(format!("{}/{name}", self.run_id));
+                own.steps = sven_session_store::record_steps::conversation_steps(
+                    &sven_session_store::record_steps::ConversationFacts {
+                        messages: &conversation.messages,
+                        compactions: &conversation.compactions,
+                        requests: &conversation.requests,
+                        gate_decisions: &[],
+                        memory_retrievals: &[],
+                        call_timings: &[],
+                        system_steps: true,
+                    },
+                    &|message| as_sent(evidence, message),
+                );
+                own.extra = Some(json!({ "harness": { "conversation": name } }));
+                own
+            })
+            .collect();
         let children: Vec<serde_json::Value> = evidence
             .children
             .iter()
@@ -167,12 +218,16 @@ impl HarnessRun {
                 })
             })
             .collect();
-        if !evidence.children.is_empty() {
+        if !evidence.children.is_empty() || !conversations.is_empty() {
             trajectory.subagent_trajectories = Some(
-                evidence
-                    .children
-                    .iter()
-                    .flat_map(|child| child.trajectories.iter().cloned())
+                conversations
+                    .into_iter()
+                    .chain(
+                        evidence
+                            .children
+                            .iter()
+                            .flat_map(|child| child.trajectories.iter().cloned()),
+                    )
                     .collect(),
             );
         }
@@ -184,6 +239,11 @@ impl HarnessRun {
                 "run_id": self.run_id,
                 "trace": evidence.outcome.trace,
                 "children": children,
+                "conversations": evidence
+                    .conversations
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>(),
             }
         }));
         trajectory.final_metrics = Some(atif::FinalMetrics {
@@ -194,4 +254,20 @@ impl HarnessRun {
         });
         Some(trajectory)
     }
+}
+
+/// A message as it was sent: a tool call whose arguments were not valid JSON
+/// keeps the model's own text.
+fn as_sent(evidence: &Evidence, message: &Message) -> Message {
+    let mut message = message.clone();
+    if let sven_model::MessageContent::ToolCall {
+        tool_call_id,
+        function,
+    } = &mut message.content
+    {
+        if let Some(raw) = evidence.unparsed_arguments.get(tool_call_id) {
+            function.arguments.clone_from(raw);
+        }
+    }
+    message
 }

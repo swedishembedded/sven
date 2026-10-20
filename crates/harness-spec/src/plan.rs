@@ -152,6 +152,12 @@ pub enum PlanPrimitive {
         /// Where to store the answer.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
+        /// The conversation the turn is in (version 2 plans only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation: Option<String>,
+        /// The system message the conversation starts with, parsed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        system: Option<Template>,
         /// Decoding settings (version 2 plans only).
         #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
         decoding: StepDecoding,
@@ -168,6 +174,9 @@ pub enum PlanPrimitive {
         /// Where to store the final text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
+        /// The system message the shared conversation starts with, parsed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        system: Option<Template>,
         /// Decoding settings (version 2 plans only).
         #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
         decoding: StepDecoding,
@@ -412,14 +421,17 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             prompt: Template::parse(&p.prompt).unwrap_or_else(|_| Template::empty()),
             schema: p.schema.clone(),
             store_as: p.store_as.clone(),
-            decoding: p.decoding,
+            conversation: p.conversation.clone(),
+            system: p.system.as_deref().and_then(|t| Template::parse(t).ok()),
+            decoding: p.decoding.clone(),
             then: p.then.clone(),
         },
         StepSpec::Agent(a) => PlanPrimitive::Agent {
             prompt: Template::parse(&a.prompt).unwrap_or_else(|_| Template::empty()),
             tools: a.tools.clone(),
             store_as: a.store_as.clone(),
-            decoding: a.decoding,
+            system: a.system.as_deref().and_then(|t| Template::parse(t).ok()),
+            decoding: a.decoding.clone(),
             then: a.then.clone(),
         },
         StepSpec::Tool(t) => PlanPrimitive::Tool {

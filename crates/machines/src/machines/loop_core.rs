@@ -178,6 +178,7 @@ impl LoopState {
                 .into_iter()
                 .map(|(call_id, reason)| sven_vocab::RefusedCall { call_id, reason })
                 .collect(),
+            system: None,
             decoding: sven_vocab::TurnDecoding::default(),
         };
         Effect::CallLlm {
@@ -344,6 +345,7 @@ pub fn build_turn_effect(
         dynamic_suffix,
         max_tool_rounds: Some(max_tool_rounds),
         refused_calls: Vec::new(),
+        system: None,
         decoding: sven_vocab::TurnDecoding::default(),
     };
     Effect::CallLlm {

@@ -191,11 +191,15 @@ struct RawTask {
     #[serde(default)]
     model_only: bool,
     #[serde(default)]
+    system: Option<String>,
+    #[serde(default)]
     schema: Option<Value>,
     #[serde(default)]
     sampling: Option<spec::Sampling>,
     #[serde(default)]
     thinking: Option<spec::Thinking>,
+    #[serde(default)]
+    turn: Option<spec::TurnBounds>,
 }
 
 /// `until:`; the comparison keys are collected and checked by
@@ -256,9 +260,11 @@ fn parse_workflow_tasks(section: Option<Value>) -> Result<Vec<TaskSpec>, Harness
             for_each: raw.for_each,
             until,
             model_only: raw.model_only,
+            system: raw.system,
             schema: raw.schema,
             sampling: raw.sampling,
             thinking: raw.thinking,
+            turn: raw.turn,
         });
     }
     Ok(tasks)

@@ -19,7 +19,7 @@ use sven_hsm::{Context, Effect, ProposedToolCall, Reaction, ToolCallId};
 use sven_vocab::{RefusedCall, TurnRequest};
 
 use crate::approval::HeldCall;
-use crate::machine::{harness_thread, HarnessMachine};
+use crate::machine::{harness_thread, system_text, HarnessMachine};
 use crate::run::{AgentLoop, HarnessRunState, Inflight, Waiting};
 use crate::state::HarnessState;
 
@@ -34,7 +34,8 @@ impl HarnessMachine {
         state: &HarnessRunState,
         prompt: &Template,
         tools: &Option<Vec<String>>,
-        decoding: sven_harness_spec::StepDecoding,
+        system: Option<&Template>,
+        decoding: sven_vocab::TurnDecoding,
     ) -> Effect {
         let instruction = state.resolve_template(prompt);
         agent_request(
@@ -43,6 +44,7 @@ impl HarnessMachine {
             tools.as_deref().unwrap_or_default().to_vec(),
             tools.is_none(),
             Vec::new(),
+            system_text(state, system),
             decoding,
         )
     }
@@ -62,6 +64,7 @@ impl HarnessMachine {
             agent.tools.clone(),
             agent.open,
             refused,
+            None,
             agent.decoding,
         ))
     }
@@ -203,7 +206,8 @@ fn agent_request(
     tools: Vec<String>,
     all_tools: bool,
     refused_calls: Vec<RefusedCall>,
-    decoding: sven_harness_spec::StepDecoding,
+    system: Option<String>,
+    decoding: sven_vocab::TurnDecoding,
 ) -> Effect {
     let request = TurnRequest {
         thread,
@@ -219,7 +223,8 @@ fn agent_request(
         dynamic_suffix: None,
         max_tool_rounds: Some(0),
         refused_calls,
-        decoding: crate::machine::turn_decoding(decoding),
+        system,
+        decoding,
     };
     Effect::CallLlm {
         request: request.to_value(),

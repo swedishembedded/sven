@@ -209,7 +209,7 @@ impl HarnessMachine {
         state: &HarnessRunState,
         prompt: &Template,
         schema_name: Option<&str>,
-        decoding: sven_harness_spec::StepDecoding,
+        shape: TurnShape<'_>,
     ) -> Effect {
         let instruction = state.resolve_template(prompt);
         let mut schema = Value::Null;
@@ -221,7 +221,10 @@ impl HarnessMachine {
             }
         }
         let request = TurnRequest {
-            thread: harness_thread(self.plan()),
+            thread: shape.conversation.map_or_else(
+                || harness_thread(self.plan()),
+                |name| format!("{}.{name}", harness_thread(self.plan())),
+            ),
             instruction: instruction.as_str().unwrap_or_default().to_string(),
             tools: Vec::new(),
             all_tools_mode: String::new(),
@@ -234,7 +237,8 @@ impl HarnessMachine {
             dynamic_suffix: None,
             max_tool_rounds: Some(0),
             refused_calls: Vec::new(),
-            decoding: turn_decoding(decoding),
+            system: system_text(state, shape.system),
+            decoding: shape.decoding,
         };
         Effect::CallLlm {
             request: request.to_value(),
@@ -733,14 +737,72 @@ fn unfenced(text: &str) -> Option<&str> {
     Some(body.trim())
 }
 
-/// A step's decoding settings as the turn request carries them.
-pub(super) fn turn_decoding(d: sven_harness_spec::StepDecoding) -> sven_vocab::TurnDecoding {
-    sven_vocab::TurnDecoding {
-        temperature: d.temperature,
-        top_p: d.top_p,
-        top_k: d.top_k,
-        seed: d.seed,
-        thinking: d.thinking,
-        thinking_budget: d.thinking_budget,
-    }
+/// A step's decoding settings with their input references resolved, as the
+/// turn request carries them. A setting that does not resolve to a value of
+/// its kind is an error naming it: the run fails rather than sampling with a
+/// setting nobody chose.
+pub(super) fn resolve_decoding(
+    run: &HarnessRunState,
+    d: &sven_harness_spec::StepDecoding,
+) -> Result<sven_vocab::TurnDecoding, String> {
+    let resolve = |name: &str, setting: &Option<Value>| -> Result<Option<Value>, String> {
+        let Some(raw) = setting else { return Ok(None) };
+        match run.resolve_value(raw) {
+            Value::Null => Err(format!("setting `{name}` reads an input that has no value")),
+            value => Ok(Some(value)),
+        }
+    };
+    let float = |name: &str, setting: &Option<Value>| -> Result<Option<f64>, String> {
+        resolve(name, setting)?
+            .map(|v| {
+                v.as_f64()
+                    .ok_or_else(|| format!("setting `{name}` is not a number"))
+            })
+            .transpose()
+    };
+    let count = |name: &str, setting: &Option<Value>| -> Result<Option<u64>, String> {
+        resolve(name, setting)?
+            .map(|v| {
+                v.as_u64()
+                    .ok_or_else(|| format!("setting `{name}` is not a whole number"))
+            })
+            .transpose()
+    };
+    let small = |name: &str, setting: &Option<Value>| -> Result<Option<u32>, String> {
+        count(name, setting)?
+            .map(|n| u32::try_from(n).map_err(|_| format!("setting `{name}` is too large")))
+            .transpose()
+    };
+    Ok(sven_vocab::TurnDecoding {
+        temperature: float("temperature", &d.temperature)?,
+        top_p: float("top_p", &d.top_p)?,
+        top_k: small("top_k", &d.top_k)?,
+        seed: count("seed", &d.seed)?,
+        thinking: resolve("thinking", &d.thinking)?
+            .map(|v| {
+                v.as_bool()
+                    .ok_or_else(|| "setting `thinking` is not true or false".to_string())
+            })
+            .transpose()?,
+        thinking_budget: small("thinking_budget", &d.thinking_budget)?,
+        max_output_tokens: small("max_output_tokens", &d.max_output_tokens)?,
+        first_response_timeout: count("first_response_timeout", &d.first_response_timeout)?,
+    })
+}
+
+/// How a model turn differs from the plain one: the conversation it is in,
+/// the system message that opens it and its decoding settings.
+#[derive(Clone, Copy)]
+pub(super) struct TurnShape<'a> {
+    pub conversation: Option<&'a str>,
+    pub system: Option<&'a Template>,
+    pub decoding: sven_vocab::TurnDecoding,
+}
+
+/// A system message template, rendered against the run.
+pub(super) fn system_text(state: &HarnessRunState, system: Option<&Template>) -> Option<String> {
+    system.map(|t| match state.resolve_template(t) {
+        Value::String(text) => text,
+        other => other.to_string(),
+    })
 }

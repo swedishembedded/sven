@@ -108,8 +108,10 @@
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
+        "system": { "type": "string", "description": "The system message of the agent's conversation: a template over inputs, delivered as the model's system message." },
         "sampling": { "$ref": "#/$defs/sampling" },
-        "thinking": { "$ref": "#/$defs/thinking" }
+        "thinking": { "$ref": "#/$defs/thinking" },
+        "turn": { "$ref": "#/$defs/turn_bounds" }
       }
     },
     "execution": {
@@ -274,22 +276,35 @@
         "lte": { "type": "number" }
       }
     },
+    "input_hole": {
+      "type": "string",
+      "pattern": "^\\{\\{\\s*inputs\\.[a-z][a-z0-9_-]*\\s*\\}\\}$",
+      "description": "A single {{ inputs.<name> }}, resolved when the turn starts."
+    },
+    "turn_bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_output_tokens": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }] },
+        "first_response_timeout": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }], "description": "Seconds to wait for the server's first response." }
+      }
+    },
     "sampling": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
-        "top_p": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
-        "top_k": { "type": "integer", "minimum": 1 },
-        "seed": { "type": "integer", "minimum": 0, "description": "Never defaulted: a run is seeded only when the document says so." }
+        "temperature": { "oneOf": [{ "type": "number", "minimum": 0, "maximum": 2 }, { "$ref": "#/$defs/input_hole" }] },
+        "top_p": { "oneOf": [{ "type": "number", "exclusiveMinimum": 0, "maximum": 1 }, { "$ref": "#/$defs/input_hole" }] },
+        "top_k": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }] },
+        "seed": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/input_hole" }], "description": "Never defaulted: a run is seeded only when the document says so." }
       }
     },
     "thinking": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "description": "Reasoning on or off, on servers whose chat template has the switch." },
-        "budget": { "type": "integer", "minimum": 1, "description": "The most thinking tokens before a turn is cut off." }
+        "enabled": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/input_hole" }], "description": "Reasoning on or off, on servers whose chat template has the switch." },
+        "budget": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }], "description": "The most thinking tokens before a turn is cut off." }
       }
     },
     "condition": {
@@ -310,10 +325,12 @@
           "uniqueItems": true
         },
         "when": { "$ref": "#/$defs/condition" },
+        "system": { "type": "string", "description": "With model_only: the system message of the task's own conversation (a template)." },
         "model_only": { "type": "boolean", "description": "One model turn without tools (a planner or a supervisor); its answer is the task's output." },
         "schema": { "type": "object", "description": "With model_only: the JSON Schema the answer must satisfy; later tasks read its fields as tasks.<name>.output.<field>." },
         "sampling": { "$ref": "#/$defs/sampling" },
         "thinking": { "$ref": "#/$defs/thinking" },
+        "turn": { "$ref": "#/$defs/turn_bounds" },
         "for_each": { "$ref": "#/$defs/for_each" },
         "until": { "$ref": "#/$defs/until" },
         "follow_ups": {

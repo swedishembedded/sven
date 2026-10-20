@@ -729,29 +729,24 @@ fn a_model_only_task_is_one_predict_turn_whose_answer_later_tasks_read() {
 
 #[test]
 fn sampling_and_thinking_are_set_per_step_with_the_task_over_the_agent() {
-    use sven_harness_spec::StepDecoding;
     let plan = compile(ROLES);
     let decoding = |id: &str| match &plan.steps[id].primitive {
         PlanPrimitive::Predict { decoding, .. } | PlanPrimitive::Agent { decoding, .. } => {
-            *decoding
+            serde_json::to_value(decoding).expect("serializes")
         }
         other => panic!("{id}: {other:?}"),
     };
     assert_eq!(
         decoding("plan__work"),
-        StepDecoding {
-            temperature: Some(0.1),
-            top_p: Some(0.9),
-            top_k: None,
-            seed: Some(7),
-            thinking: Some(false),
-            thinking_budget: Some(4096),
-        },
+        serde_json::json!({
+            "temperature": 0.1, "top_p": 0.9, "seed": 7,
+            "thinking": false, "thinking_budget": 4096
+        }),
         "the task's settings replace the agent's, field by field"
     );
-    assert_eq!(decoding("work__work").top_k, Some(20));
-    assert_eq!(decoding("work__work").temperature, Some(0.7));
-    assert_eq!(decoding("work__work").thinking, Some(true));
+    assert_eq!(decoding("work__work")["top_k"], 20);
+    assert_eq!(decoding("work__work")["temperature"], 0.7);
+    assert_eq!(decoding("work__work")["thinking"], true);
     // Repair turns decode like the task they repair.
     assert_eq!(
         decoding("supervise__v0_leak_a0_repair"),
@@ -763,22 +758,52 @@ fn sampling_and_thinking_are_set_per_step_with_the_task_over_the_agent() {
 }
 
 #[test]
+fn a_setting_may_be_an_input_and_must_be_a_declared_one() {
+    let with_inputs = ROLES
+        .replace("name: roles
+", "name: roles
+inputs: { seed: number, cap: number }
+")
+        .replace("seed: 7", "seed: \"{{ inputs.seed }}\"")
+        .replace(
+            "    thinking: { enabled: false }\n    task: Plan",
+            "    thinking: { enabled: false }\n    turn: { max_output_tokens: \"{{ inputs.cap }}\", first_response_timeout: 300 }\n    task: Plan",
+        );
+    let plan = compile(&with_inputs);
+    let PlanPrimitive::Predict { decoding, .. } = &plan.steps["plan__work"].primitive else {
+        panic!("predict");
+    };
+    assert_eq!(decoding.seed, Some(serde_json::json!("{{ inputs.seed }}")));
+    assert_eq!(
+        decoding.first_response_timeout,
+        Some(serde_json::json!(300))
+    );
+    let undeclared = with_inputs.replace(
+        "inputs: { seed: number, cap: number }",
+        "inputs: { cap: number }",
+    );
+    assert!(rejected(&undeclared).contains("not a declared input"));
+    let prose = with_inputs.replace("\"{{ inputs.cap }}\"", "\"lots {{ inputs.cap }}\"");
+    assert!(rejected(&prose).contains("single"));
+}
+
+#[test]
 fn decoding_and_role_mistakes_fail_with_the_name_of_the_culprit() {
     let cases = [
         (
             "a temperature out of range",
             ROLES.replace("temperature: 0.7", "temperature: 3"),
-            "sampling.temperature",
+            "temperature `3` is out of range",
         ),
         (
             "a top_p of zero",
             ROLES.replace("top_p: 0.9", "top_p: 0"),
-            "sampling.top_p",
+            "top_p `0` is out of range",
         ),
         (
             "a zero budget",
             ROLES.replace("budget: 4096", "budget: 0"),
-            "thinking.budget",
+            "thinking_budget `0` is out of range",
         ),
         (
             "an unknown sampling key",
@@ -827,5 +852,5 @@ steps:
   ask: { predict: { prompt: hi, decoding: { temperature: 0.1 }, then: done } }
   done: { return: { value: 1 } }
 "#;
-    assert!(rejected(yaml).contains("`decoding` on a predict step"));
+    assert!(rejected(yaml).contains("on a predict step"));
 }

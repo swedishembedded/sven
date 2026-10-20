@@ -123,3 +123,31 @@ async fn a_turn_without_settings_adds_nothing_to_the_record() {
         "nothing was set, so nothing is reported"
     );
 }
+
+#[tokio::test]
+async fn a_turn_can_bound_its_response_and_its_wait_for_the_first_one() {
+    let limits = TurnLimits::default().with_turn_decoding(&TurnDecoding {
+        max_output_tokens: Some(333),
+        first_response_timeout: Some(90),
+        ..TurnDecoding::default()
+    });
+    assert_eq!(limits.max_output_tokens, Some(333));
+    assert_eq!(
+        limits.stall.first_byte,
+        Some(std::time::Duration::from_secs(90))
+    );
+    assert_eq!(
+        limits.stall.first_token,
+        Some(std::time::Duration::from_secs(90))
+    );
+    let recorded = limits.recorded_decoding();
+    assert_eq!(recorded.max_output_tokens, Some(333));
+    assert_eq!(recorded.first_response_timeout, Some(90));
+    // The turn without them leaves the run's bounds alone.
+    let base = TurnLimits::default().with_max_output_tokens(Some(100));
+    assert_eq!(
+        base.with_turn_decoding(&TurnDecoding::default())
+            .max_output_tokens,
+        Some(100)
+    );
+}

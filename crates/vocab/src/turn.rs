@@ -100,6 +100,10 @@ pub struct TurnRequest {
     /// model is called: a history with a tool call and no result is invalid.
     #[serde(default)]
     pub refused_calls: Vec<RefusedCall>,
+    /// The system message to start the thread with. Used only when the thread
+    /// has no turns yet; a conversation already under way keeps its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
     /// Decoding settings for this turn only, laid over the run's own.
     #[serde(default, skip_serializing_if = "TurnDecoding::is_empty")]
     pub decoding: TurnDecoding,
@@ -129,6 +133,12 @@ pub struct TurnDecoding {
     /// The most thinking tokens before the turn is cut off as a runaway.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_budget: Option<u32>,
+    /// The most output tokens one response may ask for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    /// Seconds to wait for the server's first response before the turn fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_response_timeout: Option<u64>,
 }
 
 impl TurnDecoding {

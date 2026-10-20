@@ -362,30 +362,38 @@ pub enum StepSpec {
     Iterate(Box<IterateStepSpec>),
 }
 
-/// Sampling and thinking settings of a model turn. Every field is optional:
-/// an unset one leaves the run's or the provider's setting. Only a version 2
-/// document sets them (a workflow's `sampling` and `thinking`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+/// Sampling, thinking and timing settings of a model turn. Every field is
+/// optional: an unset one leaves the run's or the provider's setting. Each
+/// holds a literal (a number or a boolean) or a template that is a single
+/// hole over the run's inputs (`"{{ inputs.seed }}"`), resolved when the turn
+/// starts. Only a version 2 document sets them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StepDecoding {
     /// Softmax temperature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f64>,
+    pub temperature: Option<serde_json::Value>,
     /// Nucleus-sampling mass.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_p: Option<f64>,
+    pub top_p: Option<serde_json::Value>,
     /// Number of highest-probability tokens kept before sampling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_k: Option<u32>,
+    pub top_k: Option<serde_json::Value>,
     /// Sampling seed, for providers that honour one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<serde_json::Value>,
     /// Reasoning on or off, where the server has the switch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking: Option<bool>,
+    pub thinking: Option<serde_json::Value>,
     /// The most thinking tokens before the turn is cut off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking_budget: Option<u32>,
+    pub thinking_budget: Option<serde_json::Value>,
+    /// The most output tokens one response may ask for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<serde_json::Value>,
+    /// Seconds to wait for the server's first response before the turn fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_response_timeout: Option<serde_json::Value>,
 }
 
 impl StepDecoding {
@@ -395,17 +403,40 @@ impl StepDecoding {
         *self == Self::default()
     }
 
+    /// The settings, by name.
+    #[must_use]
+    pub fn settings(&self) -> [(&'static str, &Option<serde_json::Value>); 8] {
+        [
+            ("temperature", &self.temperature),
+            ("top_p", &self.top_p),
+            ("top_k", &self.top_k),
+            ("seed", &self.seed),
+            ("thinking", &self.thinking),
+            ("thinking_budget", &self.thinking_budget),
+            ("max_output_tokens", &self.max_output_tokens),
+            ("first_response_timeout", &self.first_response_timeout),
+        ]
+    }
+
     /// These settings with `over`'s laid on top: each setting `over` makes
     /// wins.
     #[must_use]
-    pub fn overlaid_by(self, over: Self) -> Self {
+    pub fn overlaid_by(&self, over: &Self) -> Self {
+        let pick = |a: &Option<serde_json::Value>, b: &Option<serde_json::Value>| {
+            b.clone().or_else(|| a.clone())
+        };
         Self {
-            temperature: over.temperature.or(self.temperature),
-            top_p: over.top_p.or(self.top_p),
-            top_k: over.top_k.or(self.top_k),
-            seed: over.seed.or(self.seed),
-            thinking: over.thinking.or(self.thinking),
-            thinking_budget: over.thinking_budget.or(self.thinking_budget),
+            temperature: pick(&self.temperature, &over.temperature),
+            top_p: pick(&self.top_p, &over.top_p),
+            top_k: pick(&self.top_k, &over.top_k),
+            seed: pick(&self.seed, &over.seed),
+            thinking: pick(&self.thinking, &over.thinking),
+            thinking_budget: pick(&self.thinking_budget, &over.thinking_budget),
+            max_output_tokens: pick(&self.max_output_tokens, &over.max_output_tokens),
+            first_response_timeout: pick(
+                &self.first_response_timeout,
+                &over.first_response_timeout,
+            ),
         }
     }
 }
@@ -424,6 +455,14 @@ pub struct PredictStepSpec {
     /// Where to store the answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_as: Option<String>,
+    /// The conversation the turn is in: its own thread, named by this,
+    /// instead of the run's shared one. Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
+    /// The system message the conversation starts with (a template), when
+    /// this turn starts it. Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
     /// Decoding settings for the turn. Version 2 only.
     #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
     pub decoding: StepDecoding,
@@ -446,6 +485,10 @@ pub struct AgentStepSpec {
     /// Where to store the agent's final text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_as: Option<String>,
+    /// The system message the run's shared conversation starts with (a
+    /// template), when this step starts it. Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
     /// Decoding settings for the step's turns. Version 2 only.
     #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
     pub decoding: StepDecoding,

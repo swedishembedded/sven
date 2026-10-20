@@ -16,7 +16,10 @@ use sven_harness_spec::{DelegateTarget, PlanPrimitive, PlanStep, WORKFLOW_API_VE
 use sven_hsm::{capability_for_tool_name, Context, Effect, Event, Reaction};
 use sven_vocab::verify::VerifierSpec;
 
-use crate::machine::{harness_thread, primitive_word, store_as_of, then_of, HarnessMachine};
+use crate::machine::{
+    harness_thread, primitive_word, resolve_decoding, store_as_of, then_of, HarnessMachine,
+    TurnShape,
+};
 use crate::run::{
     child_machine_id, AgentLoop, ChildRun, HarnessRunState, Inflight, ParallelJoin, RetryFrame,
     TraceRecord, Waiting, OUTCOME_FACT,
@@ -141,9 +144,15 @@ impl HarnessMachine {
             PlanPrimitive::Predict {
                 ref prompt,
                 ref schema,
-                decoding,
+                ref conversation,
+                ref system,
+                ref decoding,
                 ..
             } => {
+                let decoding = match resolve_decoding(run, decoding) {
+                    Ok(d) => d,
+                    Err(why) => return self.fail_now(run, "invalid_setting", &why, ctx),
+                };
                 run.counts.model_turns += 1;
                 if run.exceeds_model_budget(self.run.plan()) {
                     return self.fail_now(
@@ -153,7 +162,16 @@ impl HarnessMachine {
                         ctx,
                     );
                 }
-                let effect = self.turn_effect(run, prompt, schema.as_deref(), decoding);
+                let effect = self.turn_effect(
+                    run,
+                    prompt,
+                    schema.as_deref(),
+                    TurnShape {
+                        conversation: conversation.as_deref(),
+                        system: system.as_ref(),
+                        decoding,
+                    },
+                );
                 self.cache_effect(effect.clone());
                 self.park(run, &step, Waiting::Model);
                 run.store(ctx);
@@ -166,9 +184,14 @@ impl HarnessMachine {
             PlanPrimitive::Agent {
                 ref prompt,
                 ref tools,
-                decoding,
+                ref system,
+                ref decoding,
                 ..
             } => {
+                let decoding = match resolve_decoding(run, decoding) {
+                    Ok(d) => d,
+                    Err(why) => return self.fail_now(run, "invalid_setting", &why, ctx),
+                };
                 run.counts.model_turns += 1;
                 if run.exceeds_model_budget(self.run.plan()) {
                     return self.fail_now(
@@ -186,7 +209,7 @@ impl HarnessMachine {
                     decoding,
                     ..AgentLoop::default()
                 });
-                let effect = self.agent_turn_effect(run, prompt, tools, decoding);
+                let effect = self.agent_turn_effect(run, prompt, tools, system.as_ref(), decoding);
                 self.cache_effect(effect.clone());
                 self.park(run, &step, Waiting::Model);
                 run.store(ctx);

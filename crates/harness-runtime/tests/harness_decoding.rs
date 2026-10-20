@@ -117,3 +117,71 @@ fn a_model_only_answer_that_breaks_its_schema_fails_the_run() {
     );
     assert_eq!(m.outcome().expect("outcome")["code"], "invalid_answer");
 }
+
+#[test]
+fn substituted_values_are_data_and_never_template_syntax() {
+    let doc = r#"
+api_version: "2"
+name: data
+inputs: { diff: string }
+execution: { limits: { model_turns: 4 } }
+workflow:
+  - name: work
+    task: "Apply this diff:\n{{ inputs.diff }}\nEnd."
+"#;
+    let diff = "+ let a = \"{{ inputs.diff }}\";\n+ {{ unknown }} {% if x %} }} {{";
+    let (m, _ctx, _state) = start(doc, json!({ "diff": diff }));
+    let asked = request(&m.step_effect().expect("effect"));
+    assert_eq!(
+        asked["instruction"],
+        format!("Apply this diff:\n{diff}\nEnd."),
+        "braces in a substituted value are carried verbatim"
+    );
+}
+
+const FROM_INPUTS: &str = r#"
+api_version: "2"
+name: seeded
+inputs: { seed: number, cap: number, think: boolean }
+execution: { limits: { model_turns: 4 } }
+workflow:
+  - name: work
+    model_only: true
+    sampling: { seed: "{{ inputs.seed }}" }
+    thinking: { enabled: "{{ inputs.think }}" }
+    turn: { max_output_tokens: "{{ inputs.cap }}", first_response_timeout: 120 }
+    task: Go.
+"#;
+
+#[test]
+fn settings_that_name_an_input_take_the_value_the_run_was_started_with() {
+    let (m, _, _) = start(
+        FROM_INPUTS,
+        json!({ "seed": 42, "cap": 777, "think": false }),
+    );
+    let asked = request(&m.step_effect().expect("effect"));
+    assert_eq!(
+        asked["decoding"],
+        json!({ "seed": 42, "thinking": false, "max_output_tokens": 777, "first_response_timeout": 120 })
+    );
+}
+
+#[test]
+fn a_setting_that_does_not_resolve_fails_the_run_and_names_it() {
+    // A missing input, and a value of the wrong kind.
+    for inputs in [
+        json!({ "cap": 1, "think": true }),
+        json!({ "seed": "x", "cap": 1, "think": true }),
+    ] {
+        let (m, _, state) = start(FROM_INPUTS, inputs);
+        assert_eq!(state, sven_harness_runtime::HarnessState::Failed);
+        let outcome = m.outcome().expect("outcome");
+        assert_eq!(outcome["code"], "invalid_setting");
+        assert!(
+            outcome["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("`seed`")),
+            "{outcome}"
+        );
+    }
+}

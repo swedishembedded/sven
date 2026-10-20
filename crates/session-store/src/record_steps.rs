@@ -35,6 +35,10 @@ pub struct ConversationFacts<'a> {
     pub memory_retrievals: &'a [MemoryRetrieval],
     /// How long tool calls ran.
     pub call_timings: &'a [CallTiming],
+    /// File each system message as a `system` step. Off for a conversation
+    /// whose system prompt is the product's own; on for one whose system
+    /// message a harness chose.
+    pub system_steps: bool,
 }
 
 /// The steps of `facts`. `as_sent` gives a call's raw argument text when the
@@ -74,7 +78,12 @@ pub fn conversation_steps(
         if position > 0 {
             marks(&mut assembler, position);
         }
-        assembler.push_message(&as_sent(message));
+        match (&message.role, message.as_text()) {
+            (sven_model::Role::System, Some(text)) if facts.system_steps => {
+                assembler.push_system(text);
+            }
+            _ => assembler.push_message(&as_sent(message)),
+        }
         requests(&mut assembler, position + 1);
     }
     // A compaction after the last message (the run ended right after it).

@@ -161,6 +161,12 @@ impl TurnLimits {
         self.thinking.max_thinking_tokens = decoding
             .thinking_budget
             .or(self.thinking.max_thinking_tokens);
+        self.max_output_tokens = decoding.max_output_tokens.or(self.max_output_tokens);
+        if let Some(secs) = decoding.first_response_timeout.filter(|&s| s > 0) {
+            let wait = Duration::from_secs(secs);
+            self.stall.first_byte = Some(wait);
+            self.stall.first_token = Some(wait);
+        }
         self
     }
 
@@ -174,6 +180,8 @@ impl TurnLimits {
             seed: self.sampling.seed,
             thinking: self.enable_thinking,
             thinking_budget: self.thinking.max_thinking_tokens,
+            max_output_tokens: self.max_output_tokens,
+            first_response_timeout: self.stall.first_token.map(|d| d.as_secs()),
         }
     }
 

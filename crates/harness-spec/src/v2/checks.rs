@@ -130,6 +130,11 @@ pub(super) struct RepairPlan<'a> {
     /// For a `model_only` task, the repair is a model turn without tools,
     /// answering the task's schema when it has one.
     pub model_only: Option<Option<String>>,
+    /// The conversation a model-only repair turn is in.
+    pub conversation: Option<String>,
+    /// The system message of the repair turn's conversation (already moved
+    /// into run namespaces).
+    pub system: Option<String>,
     /// Tasks whose output is structured (for `failure` prompts that read it).
     pub structured: &'a [String],
 }
@@ -397,14 +402,17 @@ fn on_failure(
                 prompt,
                 schema: schema.clone(),
                 store_as: Some(plan.fact.clone()),
-                decoding: plan.decoding,
+                conversation: plan.conversation.clone(),
+                system: plan.system.clone(),
+                decoding: plan.decoding.clone(),
                 then: again,
             })),
             None => StepSpec::Agent(Box::new(AgentStepSpec {
                 prompt,
                 tools: plan.tools.clone(),
                 store_as: Some(plan.fact.clone()),
-                decoding: plan.decoding,
+                system: plan.system.clone(),
+                decoding: plan.decoding.clone(),
                 then: again,
             })),
         };

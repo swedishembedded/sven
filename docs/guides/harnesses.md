@@ -98,6 +98,14 @@ runs *inside the repository* is as editable by the agent as the code under test:
 pin it with an `{artifact: ..., sha256: ...}` check, or keep it outside the
 workspace.
 
+Roles are tasks too. A `model_only` task is one model turn without tools in a
+conversation of its own, for a planner or a supervisor; give it a `schema` and
+later tasks template the fields of its answer. `sampling`, `thinking` and `turn`
+settings (temperature, seed, thinking on or off and its token budget, the most
+output tokens, the wait for the first response) go on the agent for every task or
+on one task, and the trajectory records what each request was sent with
+([samples/harnesses/planner-worker](../../samples/harnesses/planner-worker)).
+
 For work that has to be done many times, a task can loop. `for_each` runs it
 once per item of a collection the agent (or the caller) produced, and
 [samples/harnesses/module-sweep](../../samples/harnesses/module-sweep) shows the
@@ -389,7 +397,7 @@ and with it any checkpoint taken under the old bundle, changes.
 
 ## Samples tour
 
-[samples/harnesses](../../samples/harnesses) holds ten harnesses, each a data
+[samples/harnesses](../../samples/harnesses) holds eleven harnesses, each a data
 directory with its cases:
 
 | Sample | What it shows |
@@ -402,12 +410,13 @@ directory with its cases:
 | `parallel-research` | `parallel` branches joined in declared order; cancellation |
 | `suspend-resume` | suspend on a deadline, resume the checkpoint, replay offline |
 | `custom-helper` | a sandboxed WASM helper carried in a bundle |
+| `planner-worker` | a model-only planner answering in a schema, a tool-using worker and a model-only supervisor behind a gate, each with its own sampling and thinking settings |
 | `module-sweep` | a v2 workflow with a `for_each` over a frozen backlog and an `until` on a coverage figure; a suspension resumes at the module it was on |
 | `verified-task` | a v2 workflow: a command gate whose exit status decides, bounded repair, a coverage threshold in the success condition |
 | `sdk-runner` | the same cases from an application, with the SDK alone |
 
 ```sh
-sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task,module-sweep}   # every sample, offline
+sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task,module-sweep,planner-worker}   # every sample, offline
 cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
 ```
 

@@ -286,9 +286,20 @@ fn lower_task(
     let place = format!("task `{}`", task.name);
     let vars = LoopVars::of(task);
     let tools = task.tools.clone().or_else(|| w.agent.tools.clone());
-    let decoding = decoding_of(w.agent.sampling, w.agent.thinking)
-        .overlaid_by(decoding_of(task.sampling, task.thinking));
+    let decoding = decoding_of(&w.agent.sampling, &w.agent.thinking, &w.agent.turn)
+        .overlaid_by(&decoding_of(&task.sampling, &task.thinking, &task.turn));
     let fact = output_fact(&task.name);
+    let agent_system = w
+        .agent
+        .system
+        .as_deref()
+        .map(|text| rewrite_text(text, &cx.scope("agent.system".into(), &[], vars)))
+        .transpose()?;
+    let task_system = task
+        .system
+        .as_deref()
+        .map(|text| rewrite_text(text, &cx.scope(format!("{place}: system"), before, vars)))
+        .transpose()?;
     let looping = task.for_each.is_some() || task.until.is_some();
 
     // What the body hands over to when it is done: the loop step, which
@@ -335,10 +346,16 @@ fn lower_task(
         tasks: through,
         item: vars.item,
         iteration: vars.iteration,
-        decoding,
+        decoding: decoding.clone(),
         model_only: task
             .model_only
             .then(|| task.schema.is_some().then(|| task.name.clone())),
+        conversation: task.model_only.then(|| task.name.clone()),
+        system: if task.model_only {
+            task_system.clone()
+        } else {
+            agent_system.clone()
+        },
         structured: &cx.structured,
     });
     let phase = Phase {
@@ -361,7 +378,8 @@ fn lower_task(
                 prompt: rewrite_text(&turn.task, &scope)?,
                 tools: tools.clone(),
                 store_as: Some(fact.clone()),
-                decoding,
+                system: agent_system.clone(),
+                decoding: decoding.clone(),
                 then: following.clone(),
             })),
             origin(Some(&task.name), "follow_up"),
@@ -400,7 +418,9 @@ fn lower_task(
             prompt,
             schema: task.schema.is_some().then(|| task.name.clone()),
             store_as: Some(fact),
-            decoding,
+            conversation: Some(task.name.clone()),
+            system: task_system.clone(),
+            decoding: decoding.clone(),
             then: following,
         }))
     } else {
@@ -408,7 +428,8 @@ fn lower_task(
             prompt,
             tools,
             store_as: Some(fact),
-            decoding,
+            system: agent_system.clone(),
+            decoding: decoding.clone(),
             then: following,
         }))
     };

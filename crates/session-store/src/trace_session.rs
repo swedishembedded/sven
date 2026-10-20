@@ -321,6 +321,13 @@ impl StepAssembler {
     /// silently drops anything else), preserved here for parity rather than
     /// invented fresh; full multimodal fidelity (inline image data URLs vs.
     /// ATIF's file/path-based `ImageSourceSchema`) is a follow-up concern.
+    /// Files a system message as a step of its own (source `system`), for a
+    /// conversation whose system message is part of what it did.
+    pub fn push_system(&mut self, text: &str) {
+        self.flush_pending();
+        self.push_immediate_step(StepOrigin::System, MessageBody::text(text.to_string()));
+    }
+
     pub fn push_message(&mut self, msg: &Message) {
         match (&msg.role, &msg.content) {
             (Role::System, _) => {}

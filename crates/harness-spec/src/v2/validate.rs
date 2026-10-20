@@ -15,6 +15,8 @@
 
 use std::collections::BTreeSet;
 
+use serde_json::Value;
+
 use super::spec::{ArtifactCheck, Check, GateDef, WorkflowSpec};
 use crate::error::HarnessError;
 use crate::spec::{
@@ -63,7 +65,11 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
     }
     validate_execution(w)?;
     validate_agent_tools(w)?;
-    validate_decoding("agent", w.agent.sampling, w.agent.thinking)?;
+    validate_decoding(
+        w,
+        "agent",
+        &super::spec::decoding_of(&w.agent.sampling, &w.agent.thinking, &w.agent.turn),
+    )?;
     validate_gates(w)?;
     validate_tasks(w)?;
     validate_success(w)?;
@@ -278,7 +284,11 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
             }
         }
         validate_loop(w, task, &place)?;
-        validate_decoding(&place, task.sampling, task.thinking)?;
+        validate_decoding(
+            w,
+            &place,
+            &super::spec::decoding_of(&task.sampling, &task.thinking, &task.turn),
+        )?;
         validate_model_only(task, &place)?;
         if let Some(repair) = &task.repair {
             if task.verify.is_empty() && task.outputs.is_empty() {
@@ -297,33 +307,52 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
     Ok(())
 }
 
-/// Ranges of the decoding settings, so a typo is an error here and not a
-/// provider's refusal in the middle of a run.
+/// Each decoding setting is a literal within its range or a single hole over
+/// the inputs, so that a typo is an error here and not a provider's refusal in
+/// the middle of a run.
 fn validate_decoding(
+    w: &WorkflowSpec,
     place: &str,
-    sampling: Option<super::spec::Sampling>,
-    thinking: Option<super::spec::Thinking>,
+    decoding: &crate::spec::StepDecoding,
 ) -> Result<(), HarnessError> {
-    let s = sampling.unwrap_or_default();
-    if s.temperature.is_some_and(|t| !(0.0..=2.0).contains(&t)) {
-        return Err(invalid(format!(
-            "{place}: sampling.temperature must be within 0 to 2"
-        )));
-    }
-    if s.top_p.is_some_and(|p| !(p > 0.0 && p <= 1.0)) {
-        return Err(invalid(format!(
-            "{place}: sampling.top_p must be above 0 and at most 1"
-        )));
-    }
-    if s.top_k == Some(0) {
-        return Err(invalid(format!(
-            "{place}: sampling.top_k must be at least 1"
-        )));
-    }
-    if thinking.is_some_and(|t| t.budget == Some(0)) {
-        return Err(invalid(format!(
-            "{place}: thinking.budget must be at least 1"
-        )));
+    for (name, setting) in decoding.settings() {
+        let Some(value) = setting else { continue };
+        if let Value::String(text) = value {
+            let template = crate::expr::Template::parse(text)?;
+            let hole = template.single_hole().ok_or_else(|| {
+                invalid(format!(
+                    "{place}: {name} is a number or a single `{{{{ inputs.<name> }}}}`"
+                ))
+            })?;
+            let declared = hole.root() == "inputs"
+                && hole
+                    .segments()
+                    .get(1)
+                    .is_some_and(|n| w.inputs.as_ref().is_some_and(|i| i.contains_key(n)));
+            if !declared {
+                return Err(invalid(format!(
+                    "{place}: {name} reads `{hole}`, which is not a declared input"
+                )));
+            }
+            continue;
+        }
+        let ok = match (name, value) {
+            ("temperature", v) => v.as_f64().is_some_and(|t| (0.0..=2.0).contains(&t)),
+            ("top_p", v) => v.as_f64().is_some_and(|p| p > 0.0 && p <= 1.0),
+            ("top_k" | "thinking_budget" | "max_output_tokens" | "first_response_timeout", v) => {
+                v.as_u64().is_some_and(|n| n >= 1)
+            }
+            ("seed", v) => v.as_u64().is_some(),
+            ("thinking", v) => v.is_boolean(),
+            _ => false,
+        };
+        if !ok {
+            return Err(invalid(format!(
+                "{place}: {name} `{value}` is out of range (temperature 0 to 2, top_p above 0 \
+                 and at most 1, counts and timeouts at least 1, seed a non-negative integer, \
+                 thinking true or false)"
+            )));
+        }
     }
     Ok(())
 }
@@ -333,6 +362,12 @@ fn validate_model_only(task: &super::spec::TaskSpec, place: &str) -> Result<(), 
     if task.schema.is_some() && !task.model_only {
         return Err(invalid(format!(
             "{place}: `schema` goes with `model_only: true`"
+        )));
+    }
+    if task.system.is_some() && !task.model_only {
+        return Err(invalid(format!(
+            "{place}: `system` belongs to a `model_only` task's own conversation; an agent task \
+             shares the conversation `agent.system` starts"
         )));
     }
     if !task.model_only {

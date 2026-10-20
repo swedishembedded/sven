@@ -104,11 +104,13 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
             StepSpec::Delegate(d) if d.propagate_failure => {
                 Some("`propagate_failure` on a delegate".to_string())
             }
-            StepSpec::Agent(a) if !a.decoding.is_empty() => {
-                Some("`decoding` on an agent step".to_string())
+            StepSpec::Agent(a) if !a.decoding.is_empty() || a.system.is_some() => {
+                Some("`decoding` or `system` on an agent step".to_string())
             }
-            StepSpec::Predict(p) if !p.decoding.is_empty() => {
-                Some("`decoding` on a predict step".to_string())
+            StepSpec::Predict(p)
+                if !p.decoding.is_empty() || p.system.is_some() || p.conversation.is_some() =>
+            {
+                Some("`decoding`, `system` or `conversation` on a predict step".to_string())
             }
             _ => None,
         };
@@ -366,8 +368,14 @@ fn check_path_root(id: &str, path: &crate::expr::Path) -> Result<(), HarnessErro
 
 fn template_texts(step: &StepSpec) -> Vec<String> {
     match step {
-        StepSpec::Predict(p) => vec![p.prompt.clone()],
-        StepSpec::Agent(a) => vec![a.prompt.clone()],
+        StepSpec::Predict(p) => [Some(p.prompt.clone()), p.system.clone()]
+            .into_iter()
+            .flatten()
+            .collect(),
+        StepSpec::Agent(a) => [Some(a.prompt.clone()), a.system.clone()]
+            .into_iter()
+            .flatten()
+            .collect(),
         StepSpec::Tool(t) => template_texts_in_value(&t.args),
         StepSpec::Assign(a) => a.set.values().flat_map(&template_texts_in_value).collect(),
         StepSpec::Delegate(d) => template_texts_in_value(&d.input),

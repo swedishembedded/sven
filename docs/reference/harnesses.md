@@ -149,7 +149,7 @@ document is never retried as the other one. The JSON Schema is
 | `name`, `description` | `name` is lowercase letters, digits, `-`, `_`; no `__`; at most 48 characters |
 | `inputs` | typed per-run inputs, as in version 1 (`name: type` or `{type, description}`); templates read `{{ inputs.<name> }}` and an undeclared one is an error |
 | `outputs` | `name: {type, value}`; the value is a template over inputs and task outputs; without `outputs` the run returns `{"status": "completed"}` |
-| `agent` | `profile` (`none` or `coding`), `instructions` (prepended to every task prompt), `tools` (an allowlist for every task, also enforced on proposed calls) |
+| `agent` | `profile` (`none` or `coding`), `instructions` (prepended to every task prompt), `system` (the model's system message for the agent's conversation, a template over inputs), `tools` (an allowlist for every task, also enforced on proposed calls), and `sampling`, `thinking`, `turn` defaults for every task |
 | `execution` | `limits` (`model_turns` is required; `steps`, `tool_calls`, `delegate_depth` optional), `workspace: repository`, `resume: true` |
 | `capabilities` | the exact grant; omitted, it is derived and shown in the plan |
 | `gates` | named checks, below |
@@ -161,8 +161,33 @@ they survive reordering and reformatting), `task` (the prompt, a template),
 `tools`, `when` (a condition; the task is skipped when it does not hold),
 `follow_ups` (further user turns in the same conversation, each with an optional
 `when`), `outputs` (files the task must leave; each is checked to exist),
-`verify` (checks that must pass, in order), `repair: {attempts, prompt}`, and
-at most one of the loops below.
+`verify` (checks that must pass, in order), `repair: {attempts, prompt}`,
+`model_only`, `system`, `schema`, `sampling`, `thinking`, `turn`, and at most one
+of the loops below.
+
+**Roles and conversations.** All agent tasks share one conversation (follow-ups
+and repair turns continue it), which `agent.system` opens as a real system
+message. A `model_only: true` task is a single model turn without tools, for a
+planner or a supervisor, in a conversation of its own that `system` (a template
+over inputs and earlier outputs) opens; its repair turns are model-only turns in
+that conversation and its answer is `tasks.<name>.output`. With a `schema` (a
+JSON Schema object) the answer must be JSON satisfying the schema's shape (a
+malformed answer fails the run with `invalid_answer`) and later templates read
+its fields, `{{ tasks.plan.output.goal }}`. Values substituted into a template
+are data: braces or template syntax inside an input or an output are carried
+verbatim and never expanded again.
+
+**Decoding settings.** `sampling: {temperature, top_p, top_k, seed}`,
+`thinking: {enabled, budget}` and `turn: {max_output_tokens,
+first_response_timeout}` (seconds) on the `agent` set defaults and on a task
+replace them field by field; repair turns decode like their task. Each is a
+literal within its range or a single `{{ inputs.<name> }}` (a `seed` from an
+input makes a rerun with the same inputs reproducible; no seed is ever
+defaulted). The settings travel with each model request (`thinking.enabled` as
+`chat_template_kwargs.enable_thinking` to servers that read it, never to the
+`openai` driver), and the trajectory records, for every request, what it was sent
+with under `extra.sven.decoding` of its step. A setting that does not resolve
+fails the run with `invalid_setting`.
 Templates read `inputs.<name>` and `tasks.<name>.output` (the text of that
 task's last agent turn) for tasks that have run; `facts` and `steps` are
 internal and rejected. A repair prompt also reads `failure.gate`,
@@ -282,6 +307,19 @@ again on resume (a version 1 document keeps the retry policy it declares).
 A version 2 `delegate` can set `propagate_failure`: a child that returns
 `ok: false` then fails the parent step (through its retry frame, if any) with
 `child_failed` instead of being stored and continued past.
+
+**Trajectory.** `HarnessRun::trajectory` holds the agent conversation, starting
+with its system message as a `system` step, and each model-only conversation as
+its own embedded trajectory (`extra.harness.conversation` names it, and
+`extra.harness.conversations` lists them), so a planner's or supervisor's
+exchange is never mixed into the agent's.
+
+**Workspace per run, tools on every host.** `HarnessRun::in_workspace(dir)` roots
+one run's file, search and shell tools, its gates and its snapshot reads in
+`dir`, so one engine serves many concurrent runs, each in a tree the host laid
+out and reads afterwards. `shell_gate` and `read_json_snapshot` are registered by
+the SDK for every harness run, confined to the run's workspace, whatever toolset
+the engine has; a host tool of the same name (a fixture) replaces them.
 
 ## Runtime
 
