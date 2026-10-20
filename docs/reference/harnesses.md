@@ -7,7 +7,8 @@ A harness is an agent program in YAML that compiles through the HSM kernel.
 This page is the reference: the language, the runtime states, the
 authorization model, checkpoints, recordings, trajectories and the SDK API.
 For the commands see [Harnesses](../guides/harnesses.md); for the
-reasons behind the design see [ADR 0004](../adr/0004-programmable-harnesses.md).
+reasons behind the design see [ADR 0004](../adr/0004-programmable-harnesses.md)
+and, for the workflow language, [ADR 0005](../adr/0005-declarative-harness-v2.md).
 
 | Crate | Tier | Role |
 |-------|------|------|
@@ -27,7 +28,7 @@ body); the JSON Schema forbids them too. Every step must be reachable from
 
 | Key | |
 |-----|---|
-| `api_version` | required, `"1"` is the only supported value |
+| `api_version` | required; `"1"` is this language, `"2"` the [workflow language](#workflows-api_version-2) |
 | `name` | required, non-empty; what `delegate` and `parallel` resolve |
 | `description` | optional |
 | `inputs`, `outputs` | optional maps of name to `string`, `number`, `boolean` or `json`; `name: string` or `name: { type: string, description: ... }` |
@@ -117,7 +118,7 @@ undeclared one.
 A `fail` step reports its own code. The runtime adds `invalid_answer` (a
 `predict` answer that is not JSON), `side_effect_failed` (a tool call failed,
 or a child could not run), `helper_*` (a helper's decode, ABI, fuel, memory,
-trap or schema failure), the four bounds above, and `cancelled`. A failed step inside a
+trap or schema failure), the four bounds above, `cancelled`, and for workflows `gate_failed`, `success_check_failed` and `child_failed` (see below). A failed step inside a
 `retry` frame re-enters the body while attempts remain, then continues at
 `on_exhausted`; outside one it fails the run. A body that succeeds ends the
 frame and the walk follows the body's own `then`. Every attempt is a
@@ -129,6 +130,106 @@ The compiler produces a canonical plan whose digest does not depend on key
 order or whitespace and changes when the program's meaning does. A bundle's
 digest additionally covers the helper bytes. Runs, checkpoints and
 recordings pin these digests, and a mismatch is refused, never reinterpreted.
+
+## Workflows (`api_version: "2"`)
+
+A version 2 document describes *what a job is* instead of *which steps run*:
+tasks, the trusted gates that decide whether each one succeeded, how failures
+are repaired, and what counts as success. It is decoded by its own strict
+parser, checked in the author's terms, and lowered into the step language above;
+the lowered spec goes through the same validator and compiler, so a workflow
+runs on the same machine and every tool that reads a plan, a checkpoint, a
+recording or a trace works on it. The version is read from the raw document
+before anything is deserialized; `"1"` and `"2"` are the supported values and a
+document is never retried as the other one. The JSON Schema is
+`crates/harness-spec/schema/harness-workflow.schema.json` (`WORKFLOW_SCHEMA`).
+
+| Key | |
+|-----|---|
+| `name`, `description` | `name` is lowercase letters, digits, `-`, `_`; no `__`; at most 48 characters |
+| `inputs` | typed per-run inputs, as in version 1 (`name: type` or `{type, description}`); templates read `{{ inputs.<name> }}` and an undeclared one is an error |
+| `outputs` | `name: {type, value}`; the value is a template over inputs and task outputs; without `outputs` the run returns `{"status": "completed"}` |
+| `agent` | `profile` (`none` or `coding`), `instructions` (prepended to every task prompt), `tools` (an allowlist for every task, also enforced on proposed calls) |
+| `execution` | `limits` (`model_turns` is required; `steps`, `tool_calls`, `delegate_depth` optional), `workspace: repository`, `resume: true` |
+| `capabilities` | the exact grant; omitted, it is derived and shown in the plan |
+| `gates` | named checks, below |
+| `workflow` | the tasks, in order |
+| `success` | `gates: [...]` and `metrics: {<gate>.<metric>: {gte: N}}`, evaluated after the last task |
+
+**Tasks.** `name` (the task's identity: generated step ids derive from it, so
+they survive reordering and reformatting), `task` (the prompt, a template),
+`tools`, `when` (a condition; the task is skipped when it does not hold),
+`follow_ups` (further user turns in the same conversation, each with an optional
+`when`), `outputs` (files the task must leave; each is checked to exist),
+`verify` (checks that must pass, in order) and `repair: {attempts, prompt}`.
+Templates read `inputs.<name>` and `tasks.<name>.output` (the text of that
+task's last agent turn) for tasks that have run; `facts` and `steps` are
+internal and rejected. A repair prompt also reads `failure.gate`,
+`failure.attempt`, `failure.kind`, `failure.detail`, `failure.exit_code`,
+`failure.stdout` and `failure.stderr`; a default prompt is used when none is given.
+
+**Gates and checks.** A gate is either `command: [argv...]` (with `timeout`
+seconds, default 600, at most 3600; `cwd` inside the workspace; and `metrics`:
+numbers the command leaves in JSON files, `{file, pointer, type: number}`) or
+`artifact: <path>` (a file that must exist, with optional `min_bytes` and
+`sha256`). A `verify` entry is a gate name, an inline `{artifact: ...}`, or
+`{metric: <gate>.<metric>, gte: N}` (`eq`, `ne`, `gt`, `gte`, `lt`, `lte`).
+A metric check *runs the gate's command first*, every time, and then compares
+the number the run left: a figure from an earlier run is not evidence.
+
+**Trust.** A command gate's argv is part of the compiled plan; the agent
+cannot redefine it. It runs without a shell, so no string is interpolated into a
+command line. The exit status decides: the gate passes only for status 0 with no
+timeout and no start error, whatever the program printed and whatever the agent
+claims. A script *inside the workspace* that the command runs is as editable as
+the code under test, so such a gate is only as strong as the script; pin it with
+an `artifact` check with `sha256`, or keep it outside the workspace.
+
+**Failure is explicit.** A failed check earns a repair turn while attempts
+remain (at most 16 per task) and then the checks run again from the first;
+when the attempts are spent the run fails with `gate_failed` (a failed success
+condition: `success_check_failed`), whose message names the task, the check and
+the reason. Nothing advances past an unsatisfied check.
+
+**Capabilities.** The profile `coding` needs `ReadFile`, `WriteFile`,
+`DeleteFile` and `ExecuteShell`; every command gate needs `ExecuteShell`;
+file and metric checks need `RunVerifier`. A declared `capabilities` list must
+cover them (the error lists what is missing); an omitted one is derived. The
+plan carries `profile` so a host knows which tools the agent steps expect.
+
+**Lowering.** Each task becomes: an optional `<task>__when` branch, the agent
+step `<task>__work`, `<task>__f<j>` follow-up steps, and for each check and
+attempt `<task>__v<i>_<check>_a<k>` (a `gate` step, or a `verify` step followed
+by a `_ok` branch; a metric check has a `_run` gate first), a `_repair` agent
+step and a `_fail` step. Repair is unrolled rather than a `retry` (a failed
+verification is a verdict, not a failed step), so the plan is acyclic and its
+`max_steps` default is its step count. The plan's `source_map` names, for every
+generated step, the task, role (`when`, `work`, `follow_up`, `check`, `repair`,
+`failure`, `complete`), check and attempt. The digest covers the source map and
+the stamp `harness-plan/2`; version 1 plans keep `harness-plan/1` and are
+byte-for-byte what they were (`v1_compiled_plan_unchanged`).
+
+### The `gate` step
+
+The thirteenth primitive, written only by the lowering and rejected in a
+version 1 document: `gate: {command, timeout, cwd, store_as, then, on_fail}`. It
+calls the reserved tool `shell_gate` (`sven_harness_spec::GATE_TOOL`; capability
+`ExecuteShell`, so host approval policy applies) with `{argv, timeout_secs,
+cwd}`. The tool, `sven_tools_exec::GateCommandTool`, runs the program in a new
+session, confined to the workspace, kills the whole process group at the
+deadline, and returns JSON `{exit_code, timed_out, error, stdout, stderr,
+truncated, duration_ms}` (the last 16 KiB of each stream). No agent mode lists
+the tool and the runtime refuses an agent step's proposed call to it. The machine
+stores `{passed, kind, exit_code, timed_out, stdout, stderr, duration_ms,
+detail}` under the step (`kind` is `passed`, `failed`, `timeout` or `exec_error`),
+records a `GateEvaluated` trace record, and continues at `then` on a pass and
+`on_fail` otherwise. A host that does not provide the tool fails every gate
+closed. A gate interrupted by a suspension is run again on resume and costs
+neither a repair attempt nor a step.
+
+A version 2 `delegate` can set `propagate_failure`: a child that returns
+`ok: false` then fails the parent step (through its retry frame, if any) with
+`child_failed` instead of being stored and continued past.
 
 ## Runtime
 

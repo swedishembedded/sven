@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# A verified task, written as a v2 workflow. The agent implements a change; an
+# independent run of the test command decides whether it worked, never the
+# agent's say-so. A failed run earns one repair turn that sees the failure. After
+# the task, the success condition runs the test again and measures coverage from
+# scratch: a coverage figure left behind by an earlier run is not evidence.
+# Swedish Embedded AB implements verifiable, declarative agent workflows for its
+# clients. If your team needs expertise in turning long-running agent work into
+# reviewable, resumable programs then you can procure our services by sending an
+# email to info@swedishembedded.com.
+api_version: "2"
+name: verified-task
+description: "Implement a change; the test command and a coverage threshold decide, not the agent."
+inputs:
+  feature: { type: string, description: "What to implement." }
+agent:
+  profile: coding
+  tools: [read_file, edit_file]
+  instructions: |
+    You work in a small repository. Keep the change minimal and never edit the
+    tests to make them pass.
+execution:
+  limits: { model_turns: 8, tool_calls: 12 }
+gates:
+  test: { command: [sh, run_tests.sh], timeout: 60 }
+  coverage:
+    command: [sh, run_tests.sh, --coverage]
+    metrics:
+      line_pct: { file: coverage.json, pointer: /line_pct, type: number }
+workflow:
+  - name: implement
+    task: "Implement: {{ inputs.feature }}. Edit the source so that the tests pass."
+    verify: [test]
+    repair: { attempts: 1 }
+success:
+  gates: [test]
+  metrics: { coverage.line_pct: { gte: 80 } }
+outputs:
+  summary: { type: string, value: "{{ tasks.implement.output }}" }

@@ -74,3 +74,72 @@ fn unknown_fields_fail_at_every_level() {
         );
     }
 }
+
+/// Every inline `r#"..."#` literal that is an `api_version: "2"` document the
+/// compiler accepts, in the test sources that author them.
+fn accepted_workflow_literals(source: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = source;
+    while let Some(start) = rest.find("r#\"") {
+        let body = &rest[start + 3..];
+        let Some(end) = body.find("\"#") else { break };
+        let literal = &body[..end];
+        if literal.contains("api_version: \"2\"") && sven_harness_spec::compile_str(literal).is_ok()
+        {
+            found.push(literal.to_string());
+        }
+        rest = &body[end + 2..];
+    }
+    found
+}
+
+#[test]
+fn every_workflow_the_compiler_accepts_validates() {
+    let validator = validator();
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut checked = 0;
+    for dir in [
+        "tests",
+        "../harness-runtime/tests",
+        "../sdk/tests",
+        "../harness-testkit/tests",
+    ] {
+        let Ok(entries) = std::fs::read_dir(manifest.join(dir)) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.expect("dir entry").path();
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("readable");
+            for document in accepted_workflow_literals(&source) {
+                if let Err(error) = validator.validate(&yaml_to_json(&document)) {
+                    panic!(
+                        "{}: accepted by the compiler, rejected by the schema: {error}\n{document}",
+                        path.display()
+                    );
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert!(
+        checked >= 1,
+        "expected inline workflow documents, saw {checked}"
+    );
+
+    // Shipped samples: every `workflow.yaml`.
+    let samples = manifest.join("../../samples/harnesses");
+    for entry in std::fs::read_dir(samples).expect("samples dir") {
+        let file = entry.expect("dir entry").path().join("workflow.yaml");
+        if let Ok(text) = std::fs::read_to_string(&file) {
+            if let Err(error) = validator.validate(&yaml_to_json(&text)) {
+                panic!(
+                    "{}: the schema rejects this sample: {error}",
+                    file.display()
+                );
+            }
+        }
+    }
+}

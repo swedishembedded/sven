@@ -20,7 +20,7 @@ fn samples_root() -> PathBuf {
 }
 
 /// The harness samples shipped, by directory name.
-const SAMPLES: [&str; 8] = [
+const SAMPLES: [&str; 9] = [
     "branching",
     "custom-helper",
     "parallel-research",
@@ -29,6 +29,7 @@ const SAMPLES: [&str; 8] = [
     "scoped-agent",
     "suspend-resume",
     "ticket-routing",
+    "verified-task",
 ];
 
 /// The one case that names a live model, and so only ever skips.
@@ -58,7 +59,7 @@ async fn every_default_sample_validates_and_passes() {
         .iter()
         .map(|d| d.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, SAMPLES, "the eight named harness samples");
+    assert_eq!(names, SAMPLES, "the nine named harness samples");
     let options = RunnerOptions {
         opt_in: OptIn::none(),
         ..RunnerOptions::default()

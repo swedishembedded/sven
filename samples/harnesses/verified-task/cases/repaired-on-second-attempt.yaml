@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The first run of the tests fails. The repair turn is told what failed, edits
+# again, and the second run passes.
+input: { feature: "add a discount to total()" }
+model:
+  sequence:
+    - tool_calls: [ { id: e1, name: edit_file, args: { path: src/total.sh, diff: "@@\n-a\n+b\n" } } ]
+    - text: "implemented the discount"
+    - tool_calls: [ { id: e2, name: edit_file, args: { path: src/total.sh, diff: "@@\n-b\n+c\n" } } ]
+    - text: "fixed the rounding"
+tools:
+  edit_file:
+    capability: WriteFile
+    responses: [ { ok: "edited" }, { ok: "edited" } ]
+  shell_gate:
+    capability: ExecuteShell
+    responses:
+      - ok: { exit_code: 1, timed_out: false, error: null, stdout: "", stderr: "FAIL with_discount" }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+        write: { path: coverage.json, content: '{"line_pct": 88}' }
+expect:
+  status: completed
+  output: { summary: "fixed the rounding" }
+  tools_invoked: [edit_file, edit_file, shell_gate, shell_gate, shell_gate, shell_gate]

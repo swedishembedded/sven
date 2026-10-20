@@ -44,6 +44,65 @@ output: {"discount":10,"tier":"silver"}
 steps: 4
 ```
 
+## A workflow: tasks, gates and repair
+
+A step map is the machine's language. For a job ("make this change and prove
+it works") you rarely want to write steps; write the job. A document with
+`api_version: "2"` declares tasks and the checks that decide them, and sven
+lowers it into steps for you
+([samples/harnesses/verified-task](../../samples/harnesses/verified-task)):
+
+```yaml
+api_version: "2"
+name: verified-task
+inputs:
+  feature: { type: string, description: "What to implement." }
+agent:
+  profile: coding
+  tools: [read_file, edit_file]
+execution:
+  limits: { model_turns: 8, tool_calls: 12 }
+gates:
+  test: { command: [sh, run_tests.sh], timeout: 60 }
+  coverage:
+    command: [sh, run_tests.sh, --coverage]
+    metrics:
+      line_pct: { file: coverage.json, pointer: /line_pct, type: number }
+workflow:
+  - name: implement
+    task: "Implement: {{ inputs.feature }}. Edit the source so that the tests pass."
+    verify: [test]
+    repair: { attempts: 1 }
+success:
+  gates: [test]
+  metrics: { coverage.line_pct: { gte: 80 } }
+```
+
+What this means, and why it can be trusted:
+
+- The agent works on the task. Then the **gate** `test` runs: a command, with no
+  shell, whose exit status is the verdict. An agent that says "all tests pass" is
+  not believed, and neither is a program that prints it and exits 1.
+- A failed gate earns up to `attempts` **repair turns**. The agent is shown what
+  failed (exit status, the end of stdout and stderr) and the checks run again.
+  When the attempts are spent the run fails with `gate_failed` and a message
+  naming the task and the check. Nothing advances past a check that did not pass.
+- After the last task the **success** condition runs from scratch, including the
+  coverage command, and compares the number that run just wrote.
+
+Everything is declared up front, so `sven harness validate` fails with the task
+or gate at fault (a dangling gate, a duplicate name, an unknown metric, a
+capability the declared list misses, a template that reads a task that has not
+run), and `sven harness inspect` lists the generated steps. A script the gate
+runs *inside the repository* is as editable by the agent as the code under test:
+pin it with an `{artifact: ..., sha256: ...}` check, or keep it outside the
+workspace.
+
+`sven harness test` runs the sample on mock models, with a fixture standing in
+for the `shell_gate` tool; a real run needs a host that provides the tool (the
+SDK's `GateCommandTool`). The full language is in the
+[reference](../reference/harnesses.md#workflows-api_version-2).
+
 ## Harness directories
 
 A path argument is a harness file, or a directory:
@@ -320,7 +379,7 @@ and with it any checkpoint taken under the old bundle, changes.
 
 ## Samples tour
 
-[samples/harnesses](../../samples/harnesses) holds eight harnesses, each a data
+[samples/harnesses](../../samples/harnesses) holds nine harnesses, each a data
 directory with its cases:
 
 | Sample | What it shows |
@@ -333,10 +392,11 @@ directory with its cases:
 | `parallel-research` | `parallel` branches joined in declared order; cancellation |
 | `suspend-resume` | suspend on a deadline, resume the checkpoint, replay offline |
 | `custom-helper` | a sandboxed WASM helper carried in a bundle |
+| `verified-task` | a v2 workflow: a command gate whose exit status decides, bounded repair, a coverage threshold in the success condition |
 | `sdk-runner` | the same cases from an application, with the SDK alone |
 
 ```sh
-sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper}   # every sample, offline
+sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task}   # every sample, offline
 cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
 ```
 

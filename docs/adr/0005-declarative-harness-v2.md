@@ -65,8 +65,8 @@ A v2 document declares `inputs`, `outputs`, an `agent` (profile,
 instructions, tool allowlist), `execution` (limits, workspace, resume),
 named `gates`, an ordered `workflow` of tasks and a `success` condition. The
 authoritative description is the JSON Schema
-(`crates/harness-spec/schema/harness-workflow.schema.json`, printed by
-`sven harness schema --version 2`) and the reference page. Every object
+(`crates/harness-spec/schema/harness-workflow.schema.json`) and the
+[reference](../reference/harnesses.md). Every object
 rejects unknown keys; every reference (gate, task, metric, input) is checked at
 compile time with the name of the offending task.
 
@@ -90,8 +90,8 @@ Each task lowers to ordinary v1 steps: an `agent` step for the work turn,
 `gate` or `verify` step followed by a `branch`. Generated step ids are
 `<task>__<role>...` and a source map from every generated id back to its task,
 role, gate and attempt is part of the plan (and therefore of its digest), so a
-trace line, a failure and `sven harness explain` always speak in terms of the
-authored document.
+trace line, a failure and any tool that reads the plan can speak in terms of
+the authored document.
 
 v1 `retry` was considered for repair and rejected: a retry frame re-runs one
 body step when it fails, but a repair is "run the repair turn, then re-run the
@@ -172,7 +172,8 @@ invalidation semantics are recorded in the addendum of this ADR when they land.
   The v1 JSON Schema still names twelve and a test holds it there; the v2
   schema describes the authoring language, not steps.
 * Plans of v2 workflows are larger than the document. This is deliberate and
-  inspectable (`sven harness compile`), and bounded by the compile-time caps.
+  inspectable (`sven harness inspect` lists the generated steps), and bounded by
+  the compile-time caps.
 * The authoring language has no expression language beyond v1's conditions. A
   threshold on a metric is a first-class `gate`/`success` form, so no
   arithmetic is needed in the language.
@@ -181,4 +182,7 @@ invalidation semantics are recorded in the addendum of this ADR when they land.
 
 Reusable sub-workflows (`use:`/`imports:`), the production coding toolset and
 the CLI surface (`compile`, `explain`, `inspect --graph`) are separate
-milestones; this record is amended when they land.
+milestones; this record is amended when they land. Note on resume: a gate whose
+answer never arrived because the run was suspended is run again, without
+spending a repair attempt, because an interrupted check proves nothing either
+way.

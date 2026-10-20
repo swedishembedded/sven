@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# coverage_gate_cannot_be_bypassed: the tests pass, the agent says the work is
+# done, but the freshly measured coverage is below the threshold. The success
+# condition fails the run; the agent had no way to declare the number met.
+input: { feature: "add a discount to total()" }
+model:
+  sequence:
+    - text: "implemented; coverage is above 90 percent"
+tools:
+  shell_gate:
+    capability: ExecuteShell
+    responses:
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+        write: { path: coverage.json, content: '{"line_pct": 41}' }
+expect:
+  status: failed
+  failure: { code: success_check_failed, message_contains: "coverage.line_pct" }
