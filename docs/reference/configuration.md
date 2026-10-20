@@ -364,7 +364,7 @@ tools:
 
   # Longest a single shell call may ask for through its own `timeout_secs`
   # argument, in seconds; a larger request is cut to it.
-  max_timeout_secs: 300
+  max_timeout_secs: 1800
 
   # How much of each tool's definition every request carries: "full" sends all
   # of them; "deferred" sends the core tools and the ones the model has loaded

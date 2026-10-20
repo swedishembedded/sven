@@ -1058,6 +1058,7 @@ mod tests {
         "whole_project",
         "output_mode",
         "context_lines",
+        "timeout_secs",
     ];
 
     /// Whether `description` refers to the tool `needle` in prose.

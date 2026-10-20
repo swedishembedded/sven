@@ -158,7 +158,7 @@ and directories listed.
 | `shell_command` (required) | The command line |
 | `description` | One line shown to you |
 | `workdir` | Working directory; must stay inside the path scope (default: the scope root or the working directory) |
-| `timeout_secs` | Default `tools.timeout_secs` (30), at most `tools.max_timeout_secs` (300); a larger request is cut to the ceiling. A command that runs out of time is killed and the result names the limit |
+| `timeout_secs` | Default `tools.timeout_secs` (30), at most `tools.max_timeout_secs` (1800); a larger request is cut to the ceiling. A command that runs out of time is killed and the result names the limit |
 
 The path scope sets where a command starts, not what it may touch. A command
 matching `tools.deny_patterns` is refused and never runs.

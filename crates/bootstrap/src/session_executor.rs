@@ -221,6 +221,11 @@ pub(crate) fn compose(
             .with_no_tools(parts.no_tools)
             .with_tool_result_token_cap(parts.config.agent.tool_result_token_cap)
             .with_repeat_notes(parts.config.agent.note_repeated_results)
+            // The watchdog that only catches a hung tool must outlast the
+            // longest a shell call may ask for.
+            .with_tool_timeout(std::time::Duration::from_secs(
+                parts.config.tools.max_timeout_secs.max(600) + 60,
+            ))
             .with_chunk_session(chunk_session)
             .with_instructions(Some(parts.instructions.activator()));
             base.with_tool_executor(if parts.reconcile_capabilities {

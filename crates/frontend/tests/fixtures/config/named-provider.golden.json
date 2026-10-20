@@ -175,7 +175,7 @@
         "rust_command": null,
         "typescript_command": null
       },
-      "max_timeout_secs": 300,
+      "max_timeout_secs": 1800,
       "memory": {
         "memory_file": null
       },

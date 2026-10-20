@@ -137,7 +137,10 @@ mod guidelines {
          - Discovery workflow: `find_file` to locate files → `grep` to narrow → `read_file` with specific ranges for context.\n\
          - Use `grep` output_mode='content' + context_lines for code-level inspection; use whole_project=true for codebase-wide sweeps.\n\
          - Use `shell` one-liners (sed, awk) for replacements at scale.\n\
-         - Batch `read_file` calls in parallel - read all potentially relevant files in one turn."
+         - Batch `read_file` calls in parallel - read all potentially relevant files in one turn.\n\
+         - A `shell` command without `timeout_secs` is killed after 30 seconds. Pass `timeout_secs: 600` for \
+         builds, test suites and long scripts. If a command is killed for time, retry it with a larger \
+         `timeout_secs` (up to the ceiling the result names, 1800 seconds by default) or take a different approach."
     }
 
     pub fn large_content() -> &'static str {
@@ -1010,6 +1013,17 @@ mod tests {
             bullet_count >= 15,
             "guidelines should contain at least 15 bullet points, found {}",
             bullet_count
+        );
+    }
+
+    #[test]
+    fn the_prompt_asks_for_a_600_second_timeout_on_long_shell_commands() {
+        let pr = system_prompt(AgentMode::Agent, None, empty());
+        assert!(
+            pr.contains("`timeout_secs: 600`")
+                && pr.contains("30 seconds")
+                && pr.contains("1800 seconds"),
+            "builds and test suites get 600 s, the bare default and the ceiling are stated"
         );
     }
 

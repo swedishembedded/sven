@@ -34,9 +34,11 @@ const TAIL_LINES: usize = 100;
 /// The argument comes straight from the model, so without a bound a single
 /// call could pin a task and a shell essentially forever (`timeout_secs:
 /// 4294967295` is ~136 years; a model-issued loop over 1e10 years held one
-/// agent attempt idle for 17 minutes). Five minutes covers a legitimate
-/// build or test step; a longer one is raised through the setting.
-pub const DEFAULT_MAX_TIMEOUT_SECS: u64 = 300;
+/// agent attempt idle for 17 minutes). Half an hour covers a legitimate
+/// build or test run; a longer one is raised through the setting. The
+/// system prompt asks the model to pass 600 s for builds and test suites; a
+/// call that names none gets [`ShellTool::timeout_secs`] (30 s by default).
+pub const DEFAULT_MAX_TIMEOUT_SECS: u64 = 1800;
 
 /// Built-in tool that runs a shell command.
 pub struct ShellTool {
@@ -271,8 +273,10 @@ impl Tool for ShellTool {
             Err(_) => ToolOutput::err(
                 &call.id,
                 format!(
-                    "timeout after {timeout}s: the command was killed (the longest a call may run is \
-                     tools.max_timeout_secs = {max}s). Run it in smaller steps or in the background.",
+                    "timeout after {timeout}s: the command was killed. The limit used was {timeout}s; \
+                     the longest a call may ask for is {max}s (tools.max_timeout_secs). Retry with a \
+                     larger timeout_secs (up to {max}) if it needs the time, or take a different approach \
+                     (smaller steps, a narrower command, running it in the background).",
                     max = self.max_timeout_secs
                 ),
             ),
@@ -563,7 +567,10 @@ mod tests {
             .await;
         assert!(out.is_error, "{}", out.content);
         assert!(
-            out.content.contains("timeout after 1s") && out.content.contains("max_timeout_secs"),
+            out.content.contains("timeout after 1s")
+                && out.content.contains("The limit used was 1s")
+                && out.content.contains("longest a call may ask for is 1s")
+                && out.content.contains("Retry with a larger timeout_secs"),
             "the result names the limit that applied: {}",
             out.content
         );
@@ -571,8 +578,15 @@ mod tests {
     }
 
     #[test]
-    fn the_default_ceiling_is_five_minutes() {
-        assert_eq!(ShellTool::default().max_timeout_secs, 300);
+    fn the_default_ceiling_is_half_an_hour_and_a_bare_call_gets_thirty_seconds() {
+        let tool = ShellTool::default();
+        assert_eq!(tool.max_timeout_secs, 1800);
+        assert_eq!(tool.timeout_secs, 30);
+        let schema = tool.parameters_schema().to_string();
+        assert!(
+            schema.contains("default 30") && schema.contains("max 1800"),
+            "{schema}"
+        );
     }
 
     /// Whether process `pid` is gone; an exited but unreaped process counts.
