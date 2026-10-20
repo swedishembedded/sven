@@ -73,7 +73,21 @@ pub(crate) async fn run_harness_command(command: &HarnessCommands) -> i32 {
             format,
             output,
         } => views::compile(path, *format, output.as_deref()),
-        HarnessCommands::Explain { path, step } => views::explain(path, step.as_deref()),
+        HarnessCommands::Explain {
+            path,
+            step,
+            input,
+            input_file,
+            elide,
+        } => views::explain(
+            path,
+            step.as_deref(),
+            views::ExplainInputs {
+                json: input.as_deref(),
+                file: input_file.as_deref(),
+                elide: *elide,
+            },
+        ),
         HarnessCommands::Status {
             path,
             checkpoint,

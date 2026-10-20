@@ -109,6 +109,17 @@ pub enum HarnessCommands {
         /// A step id of the compiled plan (see `inspect`).
         #[arg(long, value_name = "ID")]
         step: Option<String>,
+        /// Inputs as a JSON object: also print each prompt, system message
+        /// and gate command as a run with these inputs would send it
+        /// (values are data; holes a run fills later stay visible).
+        #[arg(long, value_name = "JSON", conflicts_with = "input_file")]
+        input: Option<String>,
+        /// The inputs from a JSON file.
+        #[arg(long, value_name = "FILE")]
+        input_file: Option<PathBuf>,
+        /// Cut each rendered text to this many characters.
+        #[arg(long, value_name = "N", default_value_t = 400)]
+        elide: usize,
     },
 
     /// Say where a suspended run rests: its step (and task, check and

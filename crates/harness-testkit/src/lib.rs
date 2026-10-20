@@ -31,6 +31,7 @@ mod fixture_model;
 mod fixture_tool;
 mod inspect;
 mod paired;
+mod render;
 mod report;
 mod run;
 mod runner;
@@ -55,6 +56,7 @@ pub use paired::{
     compare_paired, CostComparison, CostTotals, Decision, PairedOptions, PairedReport, TaskPairing,
     Verdict,
 };
+pub use render::{render_prompts, render_step};
 pub use report::{
     CaseComparison, CaseReport, CaseStatus, Change, ComparisonReport, FailureSummary, JsonDiff,
     Mismatch, RunStatus, RunSummary, SuiteReport, VariantSummary,

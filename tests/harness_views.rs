@@ -403,3 +403,61 @@ fn status_refuses_a_file_that_is_not_a_checkpoint() {
     assert_eq!(code(&out), 2, "{}", stderr(&out));
     assert!(stderr(&out).contains("checkpoint"), "{}", stderr(&out));
 }
+
+#[test]
+fn explain_with_inputs_shows_each_prompt_as_the_model_will_get_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = run(sven(tmp.path()).arg("explain").arg(verified_task()).args([
+        "--input",
+        r#"{"feature": "add a {{ inputs.nope }} discount"}"#,
+    ]));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("Implement: add a {{ inputs.nope }} discount."),
+        "the input is substituted, and braces inside it stay data:\n{text}"
+    );
+    assert!(text.contains("implement__work"), "{text}");
+    assert!(
+        text.contains("sh run_tests.sh --coverage"),
+        "gate argv is shown too:\n{text}"
+    );
+}
+
+#[test]
+fn explain_leaves_a_hole_it_cannot_fill_visible_and_elides_long_prompts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = run(sven(tmp.path())
+        .arg("explain")
+        .arg(verified_task())
+        .args(["--input", "{}", "--elide", "12"]));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("more characters"),
+        "long prompts are cut:\n{text}"
+    );
+
+    let out = run(sven(tmp.path()).arg("explain").arg(verified_task()).args([
+        "--step",
+        "implement__work",
+        "--input",
+        "{}",
+    ]));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("{{inputs.feature}}"),
+        "an input that was not given stays a visible hole:\n{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn explain_refuses_inputs_that_are_not_a_json_object() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = run(sven(tmp.path())
+        .arg("explain")
+        .arg(verified_task())
+        .args(["--input", "[1]"]));
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+}

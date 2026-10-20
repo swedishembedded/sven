@@ -143,7 +143,7 @@ pinned by one digest covering both.
 sven harness validate <PATH>... [--json]
 sven harness inspect  <PATH> [--json | --graph dot|mermaid]
 sven harness compile  <PATH> [--format json|yaml] [-o FILE]
-sven harness explain  <PATH> [--step ID]
+sven harness explain  <PATH> [--step ID] [--input JSON | --input-file FILE] [--elide N]
 sven harness status   <PATH> --checkpoint FILE [--json]
 sven harness schema   [<PATH>]
 sven harness run      <PATH> [--input JSON | --input-file FILE] [--case FILE]
@@ -215,7 +215,11 @@ workflows alike.
 - `explain` describes a workflow task by task: its work turn, checks, repair
   attempts and the success condition. `explain --step ID` gives one generated
   step's task, check and attempt, what it does, where it leads and from where
-  it is reached.
+  it is reached. With `--input` or `--input-file` it also prints every prompt,
+  system message and gate command as a run with those inputs would send it
+  (substituted values are data; what a run only learns later, such as a task's
+  output, stays a visible `{{...}}` hole), each cut to `--elide` characters, so
+  a workflow can be edited and read without a model.
 - `status --checkpoint FILE` says where a suspended run rests (step, task,
   check, attempt), its counters, the steps it completed, the progress of
   `for_each` loops, and whether `resume` would accept the checkpoint under the

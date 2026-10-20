@@ -136,7 +136,7 @@ pub(crate) fn primitive_word(primitive: &PlanPrimitive) -> String {
 
 /// The steps reachable from the entry in breadth-first order, then any
 /// unreachable ones (a plan may keep them) in id order.
-fn walk_order(plan: &HarnessPlan) -> Vec<&str> {
+pub(crate) fn walk_order(plan: &HarnessPlan) -> Vec<&str> {
     let mut seen = BTreeSet::new();
     let mut order = Vec::new();
     let mut queue = VecDeque::from([plan.entry.as_str()]);

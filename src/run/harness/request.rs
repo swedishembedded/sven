@@ -138,11 +138,11 @@ pub(super) fn bounds(args: &HarnessRunArgs, base: Bounds) -> Result<Bounds, Fail
     Ok(bounds)
 }
 
-fn read(path: &Path) -> Result<String, Failure> {
+pub(super) fn read(path: &Path) -> Result<String, Failure> {
     std::fs::read_to_string(path).map_err(|e| usage(format!("cannot read {}: {e}", path.display())))
 }
 
-fn parse_json(text: &str, origin: &str) -> Result<serde_json::Value, Failure> {
+pub(super) fn parse_json(text: &str, origin: &str) -> Result<serde_json::Value, Failure> {
     serde_json::from_str(text).map_err(|e| usage(format!("{origin} is not valid JSON: {e}")))
 }
 

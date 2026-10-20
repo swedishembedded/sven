@@ -12,11 +12,11 @@
 use std::path::Path;
 
 use sven_harness_testkit::{
-    compile as compile_harness, explain_plan, explain_step, graph as draw, status as read_status,
-    CompiledHarness, GraphFormat, StatusReport, TestkitError,
+    compile as compile_harness, explain_plan, explain_step, graph as draw, render_prompts,
+    render_step, status as read_status, CompiledHarness, GraphFormat, StatusReport, TestkitError,
 };
 
-use super::{kit, print_json, usage, Failure, Outcome};
+use super::{kit, print_json, request, usage, Failure, Outcome};
 use crate::cli::{GraphArg, PlanFormatArg};
 
 /// Compiles the harness at `path`. A document that does not compile is exit
@@ -61,13 +61,52 @@ pub(super) fn compile(path: &Path, format: PlanFormatArg, output: Option<&Path>)
     Ok(0)
 }
 
-/// Explains the whole plan, or one step of it.
-pub(super) fn explain(path: &Path, step: Option<&str>) -> Outcome {
+/// Where `explain` takes inputs from, to show prompts as a run would send
+/// them.
+pub(super) struct ExplainInputs<'a> {
+    pub json: Option<&'a str>,
+    pub file: Option<&'a Path>,
+    pub elide: usize,
+}
+
+impl ExplainInputs<'_> {
+    /// The inputs the flags give, if any: a JSON object.
+    fn read(&self) -> Result<Option<serde_json::Value>, Failure> {
+        let value = match (self.json, self.file) {
+            (Some(text), _) => request::parse_json(text, "--input")?,
+            (None, Some(file)) => {
+                request::parse_json(&request::read(file)?, &file.display().to_string())?
+            }
+            (None, None) => return Ok(None),
+        };
+        if value.is_object() {
+            Ok(Some(value))
+        } else {
+            Err(usage("the inputs must be a JSON object"))
+        }
+    }
+}
+
+/// Explains the whole plan, or one step of it; with inputs, also what the
+/// steps send.
+pub(super) fn explain(path: &Path, step: Option<&str>, inputs: ExplainInputs<'_>) -> Outcome {
     let plan = &compiled(path)?.plan;
-    let text = match step {
+    let inputs_given = inputs.read()?;
+    let mut text = match step {
         Some(id) => explain_step(plan, id).map_err(|e| usage(e.to_string()))?,
         None => explain_plan(plan),
     };
+    if let Some(given) = inputs_given {
+        text.push_str("\nas a run with these inputs would send it\n\n");
+        match step {
+            Some(id) => text.push_str(
+                &render_step(plan, id, &given, inputs.elide).unwrap_or_else(|| {
+                    format!("{id} sends no prompt, system message or command\n")
+                }),
+            ),
+            None => text.push_str(&render_prompts(plan, &given, inputs.elide)),
+        }
+    }
     print!("{text}");
     Ok(0)
 }
