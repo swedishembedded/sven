@@ -132,11 +132,27 @@ expect: { status: completed }
 }
 
 #[tokio::test]
+async fn cancelling_on_a_tool_the_case_does_not_define_is_a_manifest_error() {
+    let case = r#"
+input: {}
+tools: { read_report: { capability: ReadFile, responses: [ { ok: "x" } ] } }
+bounds: { cancel_on_tool_start: nothing_like_it }
+expect: { status: completed }
+"#;
+    let report = only_case(&[("harness.yaml", REPORT), ("cases/cancel.yaml", case)]).await;
+    assert!(
+        matches!(&report.status, CaseStatus::Error { message } if message.contains("nothing_like_it")),
+        "{:?}",
+        report.status
+    );
+}
+
+#[tokio::test]
 async fn a_blocking_tool_is_cancelled_and_leaves_nothing_running() {
     let case = r#"
 input: {}
 tools: { read_report: { capability: ReadFile, responses: [ { block: true } ] } }
-bounds: { cancel_after_ms: 100 }
+bounds: { cancel_on_tool_start: read_report }
 expect: { status: cancelled, tools_invoked: [read_report] }
 "#;
     let report = only_case(&[("harness.yaml", REPORT), ("cases/cancel.yaml", case)]).await;

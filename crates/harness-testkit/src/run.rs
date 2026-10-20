@@ -227,6 +227,7 @@ pub async fn run_on_engine(
         Drive {
             safety: None,
             progress: request.progress.clone(),
+            cancel_when: None,
         },
     )
     .await
@@ -260,6 +261,7 @@ pub async fn resume_on_engine(
         Drive {
             safety: None,
             progress: request.progress.clone(),
+            cancel_when: None,
         },
     )
     .await
@@ -366,6 +368,10 @@ impl Prepared {
             Drive {
                 safety: Some(SAFETY_LIMIT),
                 progress: None,
+                cancel_when: request.bounds.cancel_on_tool_start.clone().map(|tool| {
+                    let books = Arc::clone(&self.books);
+                    Box::new(move || books.invoked_names().contains(&tool)) as Condition
+                }),
             },
         )
         .await?;
@@ -399,7 +405,15 @@ struct Drive {
     safety: Option<Duration>,
     /// Told of each trace record as it is produced.
     progress: Option<ProgressFn>,
+    /// Polled while the run goes; the run is cancelled once it holds.
+    cancel_when: Option<Condition>,
 }
+
+/// An observable condition polled during a run.
+type Condition = Box<dyn Fn() -> bool + Send + Sync>;
+
+/// How often a [`Condition`] is polled.
+const CONDITION_POLL: Duration = Duration::from_millis(5);
 
 /// Executes `run`, telling `progress` of its trace records as they appear.
 async fn execute_observed(
@@ -455,6 +469,16 @@ async fn drive_run(
         })
     });
 
+    let watcher = drive.cancel_when.map(|holds| {
+        let token = cancel.clone();
+        tokio::spawn(async move {
+            while !holds() {
+                tokio::time::sleep(CONDITION_POLL).await;
+            }
+            token.cancel();
+        })
+    });
+
     let started = Instant::now();
     let observed = execute_observed(&mut run, options, drive.progress.as_ref());
     let executed = match drive.safety {
@@ -466,8 +490,8 @@ async fn drive_run(
         })?,
         None => observed.await,
     };
-    if let Some(timer) = timer {
-        timer.abort();
+    for task in [timer, watcher].into_iter().flatten() {
+        task.abort();
     }
     let outcome = executed.map_err(|e| TestkitError::Run(e.to_string()))?;
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);

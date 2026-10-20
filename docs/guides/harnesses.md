@@ -310,6 +310,8 @@ tools:
         write: { path: fixed.txt, content: "ok" }   # a file in the case workspace
 workspace: { notes.md: "remember the milk" }
 bounds: { deadline_ms: 300, max_output_tokens: 100, cancel_after_ms: 50 }
+                                   # cancel_on_tool_start: <tool> cancels once that fixture tool has started a call
+                                   # (no clock involved; prefer it to cancel_after_ms for blocking tools)
 replay: true                       # default; record and replay offline, require the same result
 expect:
   status: completed                # completed | failed | cancelled | suspended

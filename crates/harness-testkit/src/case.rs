@@ -79,6 +79,13 @@ impl CaseManifest {
                     .to_string(),
             ));
         }
+        if let Some(tool) = &case.bounds.cancel_on_tool_start {
+            if !case.tools.contains_key(tool) {
+                return Err(TestkitError::Manifest(format!(
+                    "`bounds.cancel_on_tool_start` names `{tool}`, which the case defines no fixture tool for"
+                )));
+            }
+        }
         Ok(case)
     }
 
@@ -133,6 +140,10 @@ pub struct Bounds {
     /// Cancels the run after this many milliseconds.
     #[serde(default)]
     pub cancel_after_ms: Option<u64>,
+    /// Cancels the run once this fixture tool has started a call. Unlike a
+    /// wall-clock bound it does not depend on how fast the machine is.
+    #[serde(default)]
+    pub cancel_on_tool_start: Option<String>,
 }
 
 /// What a run must do. Every key is optional; those given are all checked.
