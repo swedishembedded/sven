@@ -194,6 +194,39 @@ Not decided here: invalidating a completed item when the code it was verified
 against changes later (the workspace, as opposed to the backlog). A completed
 item records the digest of the plan it passed under, which is the hook for it.
 
+### Reuse: `imports:` and `use:`
+
+A workflow reuses another through `imports: {alias: ./path.yaml}` and a task
+`use: alias, with: {...}`. A `use` lowers to the existing `delegate` step (with
+`propagate_failure`); no new primitive. What is new is everything around it.
+
+* **Interface, not source.** The importer sees an imported workflow's inputs,
+  outputs and capabilities, nothing else, and the compiler checks the call
+  against them. Only version 2 documents are imported.
+* **The package is the pin.** An import is a package-relative file. The bundle
+  carries the files and its digest covers each one's compiled-plan digest, so
+  the identity of a run is the identity of the whole tree. The rules that keep
+  a package closed (relative paths inside the root, no symlink escape on disk,
+  cycles named, unique names, no unreachable file, bounded size, depth and
+  count, no remote import) hold for a directory and a bundle alike.
+* **Names are the link.** `delegate` resolves a child by name in the engine's
+  registry, so a package registers its main workflow and imports together or
+  not at all, and two documents with one name are an error. A later milestone
+  may add namespacing if packages need to share a registry.
+* **One budget for the tree.** A child is started with the model turns and tool
+  calls its parent had left as a ceiling over its own limits, and a finished
+  version 2 child reports its usage to the parent in a result envelope, which the
+  parent adds to its counters. The alternative, an independent budget per child,
+  lets a tree spend more than any document in it declared. Version 1 delegates are
+  unchanged.
+* **Capabilities narrow.** A child already ran under its parent's grant
+  narrowed by its own declaration; the compiler now also requires the parent's
+  grant to cover the child's, so the narrowing never silently removes what the
+  child needs.
+* A failed child fails the caller (`child_failed`); `on_failure: return` does
+  not turn that into a returned result, because the failure comes from the
+  child, not from one of the caller's own checks.
+
 ## Consequences
 
 * A 40-line v2 document replaces several hundred lines of v1 steps; the plan
@@ -212,7 +245,7 @@ item records the digest of the plan it passed under, which is the hook for it.
 
 ## Not decided here
 
-Reusable sub-workflows (`use:`/`imports:`), the production coding toolset and
+The production coding toolset and
 the CLI surface (`compile`, `explain`, `inspect --graph`) are separate
 milestones; this record is amended when they land. Note on resume: a gate whose
 answer never arrived because the run was suspended is run again, without

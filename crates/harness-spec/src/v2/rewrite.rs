@@ -59,6 +59,9 @@ pub(super) struct FailureView {
     pub verdict_step: Option<String>,
 }
 
+static NO_IMPORTS: std::collections::BTreeMap<String, Vec<String>> =
+    std::collections::BTreeMap::new();
+
 /// What a template at one place in the document may read.
 pub(super) struct Scope<'a> {
     /// Where in the document the template is, for error messages.
@@ -78,6 +81,9 @@ pub(super) struct Scope<'a> {
     pub structured: &'a [String],
     /// The command gates whose latest result can be read.
     pub gates: &'a [String],
+    /// The tasks that run an imported workflow, with the outputs it returns:
+    /// only those fields can be read, and nothing else of the task.
+    pub imported: &'a std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl<'a> Scope<'a> {
@@ -93,7 +99,18 @@ impl<'a> Scope<'a> {
             iteration: false,
             structured: &[],
             gates: &[],
+            imported: &NO_IMPORTS,
         }
+    }
+
+    /// The same scope, knowing which tasks run an imported workflow.
+    #[must_use]
+    pub fn with_imported(
+        mut self,
+        imported: &'a std::collections::BTreeMap<String, Vec<String>>,
+    ) -> Self {
+        self.imported = imported;
+        self
     }
 
     /// The same scope, able to read the results of these command gates.
@@ -159,7 +176,25 @@ impl Scope<'_> {
                 if field != "output" && !fields.is_empty() {
                     return Err(self.invalid(path, &format!("`{field}` has no fields")));
                 }
-                if !fields.is_empty() && !self.structured.contains(task) {
+                if let Some(offered) = self.imported.get(task) {
+                    if field != "output" {
+                        return Err(self.invalid(
+                            path,
+                            &format!("reads `{field}` of `{task}`, which runs an imported workflow and has only an `output`"),
+                        ));
+                    }
+                    if let Some(first) = fields.first() {
+                        if !offered.contains(first) {
+                            return Err(self.invalid(
+                                path,
+                                &format!(
+                                    "reads output `{first}` of `{task}`, which the imported workflow does not return (it returns: {})",
+                                    if offered.is_empty() { "none".to_string() } else { offered.join(", ") }
+                                ),
+                            ));
+                        }
+                    }
+                } else if !fields.is_empty() && !self.structured.contains(task) {
                     return Err(self.invalid(
                         path,
                         &format!("reads a field of the output of `{task}`, which has no `schema`"),

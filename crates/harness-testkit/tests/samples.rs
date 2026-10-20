@@ -20,7 +20,7 @@ fn samples_root() -> PathBuf {
 }
 
 /// The harness samples shipped, by directory name.
-const SAMPLES: [&str; 11] = [
+const SAMPLES: [&str; 12] = [
     "branching",
     "custom-helper",
     "module-sweep",
@@ -28,6 +28,7 @@ const SAMPLES: [&str; 11] = [
     "planner-worker",
     "repair-loop",
     "repo-repair",
+    "reviewed-change",
     "scoped-agent",
     "suspend-resume",
     "ticket-routing",
@@ -61,7 +62,7 @@ async fn every_default_sample_validates_and_passes() {
         .iter()
         .map(|d| d.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, SAMPLES, "the eleven named harness samples");
+    assert_eq!(names, SAMPLES, "the twelve named harness samples");
     let options = RunnerOptions {
         opt_in: OptIn::none(),
         ..RunnerOptions::default()

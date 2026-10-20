@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The reviewer says approve but its command exits 1. The imported workflow
+# fails, and a child that fails fails the workflow that used it.
+input: { feature: "add a discount to total()" }
+model:
+  sequence:
+    - text: "total() takes an optional discount"
+    - text: "approve"
+tools:
+  shell_gate:
+    capability: ExecuteShell
+    responses:
+      - ok: { exit_code: 1, timed_out: false, error: null, stdout: "", stderr: "tests fail" }
+expect:
+  status: failed
+  failure: { code: child_failed }

@@ -74,6 +74,7 @@ fn start_bundle(
     let bundle = HarnessBundle {
         document: yaml.to_string(),
         helpers,
+        ..Default::default()
     };
     let run = HarnessRunData::from_bundle(&bundle, inputs).expect("valid bundle");
     let mut m = HarnessMachine::new(run);
@@ -208,6 +209,7 @@ fn a_bundle_that_mismatches_its_helpers_never_starts() {
     let bundle = HarnessBundle {
         document: ECHO.to_string(),
         helpers: BTreeMap::from([helper("other", &echo_module())]),
+        ..Default::default()
     };
     assert!(
         HarnessRunData::from_bundle(&bundle, serde_json::json!({})).is_err(),
@@ -251,6 +253,7 @@ fn a_checkpoint_pinned_to_a_bundle_resumes_under_it() {
     let bundle = HarnessBundle {
         document: PARK_ON_PREDICT.to_string(),
         helpers: BTreeMap::from([helper("echo", &echo_module())]),
+        ..Default::default()
     };
     let (mut m2, mut ctx2) =
         HarnessMachine::restore_bundle(&bundle, snap).expect("the same bundle resumes");
@@ -289,6 +292,7 @@ fn a_resume_under_a_different_bundle_is_refused() {
     let changed = HarnessBundle {
         document: PARK_ON_PREDICT.to_string(),
         helpers: BTreeMap::from([helper("echo", &trapping_module())]),
+        ..Default::default()
     };
     let text = match HarnessMachine::restore_bundle(&changed, snap) {
         Err(sven_harness_runtime::HarnessRunError::PinnedBundleMismatch { .. }) => {
@@ -325,6 +329,7 @@ fn a_registered_bundle_carries_its_helpers_to_its_children() {
     let bundle = HarnessBundle {
         document: ECHO.to_string(),
         helpers: BTreeMap::from([helper("echo", &echo_module())]),
+        ..Default::default()
     };
     let name = registry.register_bundle(&bundle).expect("bundle registers");
     assert_eq!(name, "shape");

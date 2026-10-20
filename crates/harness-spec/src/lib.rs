@@ -27,6 +27,7 @@ mod decoding;
 mod error;
 mod expr;
 mod iterate;
+pub mod package;
 mod plan;
 mod source_map;
 mod spec;
@@ -54,6 +55,7 @@ pub use spec::{
     RESERVED_TOOLS, SNAPSHOT_TOOL, SUPPORTED_API_VERSION, WORKFLOW_API_VERSION,
     WORKFLOW_PRIMITIVES,
 };
+pub use v2::spec::Imported;
 
 /// The JSON Schema (draft 2020-12) of a harness document, for editors and
 /// `sven harness schema`. It names exactly [`PRIMITIVES`] and accepts every
@@ -164,6 +166,19 @@ impl HarnessDocument {
     /// wrong field types, missing required fields), and for version 2 the
     /// workflow validation and lowering errors.
     pub fn parse(yaml: &str) -> Result<Self, HarnessError> {
+        Self::parse_in(yaml, std::collections::BTreeMap::new())
+    }
+
+    /// Like [`Self::parse`], for a document of a package: `resolved` holds
+    /// the interface of each import, by alias (see [`package`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::parse`].
+    pub fn parse_in(
+        yaml: &str,
+        resolved: std::collections::BTreeMap<String, Imported>,
+    ) -> Result<Self, HarnessError> {
         // serde_yaml's untagged-enum handling loses structural errors; going
         // through serde_json::Value (a lossless round-trip for the JSON-ish
         // subset the language uses) keeps the typed deserialization exact.
@@ -172,13 +187,32 @@ impl HarnessDocument {
         let value = yaml_to_json(&raw)?;
         match api_version_of(&value)? {
             WORKFLOW_API_VERSION => Ok(Self {
-                spec: v2::lower_document(value)?,
+                spec: v2::lower_document_with(value, resolved)?,
             }),
             _ => {
                 let spec: HarnessSpec = serde_json::from_value(value)
                     .map_err(|e| HarnessError::Parse(parse_error_with_path(&e)))?;
                 Ok(Self { spec })
             }
+        }
+    }
+
+    /// The `imports` of a document, alias to path as written; none for a
+    /// version 1 document.
+    ///
+    /// # Errors
+    ///
+    /// YAML syntax errors, an unsupported `api_version`, or `imports` that is
+    /// not a map of strings.
+    pub fn imports_of(
+        yaml: &str,
+    ) -> Result<std::collections::BTreeMap<String, String>, HarnessError> {
+        let raw: serde_yaml::Value =
+            serde_yaml::from_str(yaml).map_err(|e| HarnessError::Parse(e.to_string()))?;
+        let value = yaml_to_json(&raw)?;
+        match api_version_of(&value)? {
+            WORKFLOW_API_VERSION => v2::imports_of(&value),
+            _ => Ok(std::collections::BTreeMap::new()),
         }
     }
 

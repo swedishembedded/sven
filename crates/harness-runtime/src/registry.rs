@@ -123,6 +123,35 @@ impl HarnessRegistry {
         Ok(name)
     }
 
+    /// Registers a package: its main plan and the plans it imports, all or
+    /// none. A name already taken, or taken twice within the set, refuses the
+    /// whole set, so a refused load leaves nothing behind.
+    ///
+    /// # Errors
+    ///
+    /// A name is already registered, or repeats within `set`.
+    pub fn register_package(
+        &self,
+        set: Vec<(Arc<HarnessPlan>, BTreeMap<String, Helper>)>,
+    ) -> Result<String, HarnessRunError> {
+        let mut plans = self.plans.write().expect("registry lock poisoned");
+        let mut names = std::collections::BTreeSet::new();
+        for (plan, _) in &set {
+            if plans.contains_key(&plan.name) || !names.insert(plan.name.clone()) {
+                return Err(HarnessRunError::DuplicateHarness(plan.name.clone()));
+            }
+        }
+        // The main plan is the last of the set.
+        let main = set
+            .last()
+            .map(|(plan, _)| plan.name.clone())
+            .unwrap_or_default();
+        for (plan, helpers) in set {
+            plans.insert(plan.name.clone(), Registered { plan, helpers });
+        }
+        Ok(main)
+    }
+
     /// The registered plan called `name`, if one is.
     #[must_use]
     pub fn resolve(&self, name: &str) -> Option<Arc<HarnessPlan>> {

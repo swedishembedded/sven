@@ -73,6 +73,7 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
     validate_roles(w)?;
     validate_gates(w)?;
     validate_tasks(w)?;
+    super::imports::validate_imports(w)?;
     validate_success(w)?;
     validate_use(w)?;
     validate_capabilities(w)
@@ -266,7 +267,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
                 "{place}: the name is used by more than one task"
             )));
         }
-        if task.task.trim().is_empty() {
+        if task.task.trim().is_empty() && task.use_import.is_none() {
             return Err(invalid(format!("{place}: `task` is empty")));
         }
         for out in &task.outputs {
@@ -677,16 +678,22 @@ fn validate_use(w: &WorkflowSpec) -> Result<(), HarnessError> {
 /// The capabilities the workflow exercises: its agent profile, a shell for
 /// every command gate that is used, and the verifier for every file or
 /// metric check.
-pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<&'static str> {
-    let mut needed: BTreeSet<&'static str> =
-        w.agent.profile.capabilities().iter().copied().collect();
+pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<String> {
+    let mut needed: BTreeSet<String> = w
+        .agent
+        .profile
+        .capabilities()
+        .iter()
+        .map(|c| (*c).to_string())
+        .collect();
+    needed.extend(super::imports::imported_capabilities(w));
     let mut reads_files = false;
     let mut note = |gate: Option<&GateDef>| match gate {
         Some(GateDef::Command(_)) => {
-            needed.insert("ExecuteShell");
+            needed.insert("ExecuteShell".to_string());
         }
         _ => {
-            needed.insert("RunVerifier");
+            needed.insert("RunVerifier".to_string());
         }
     };
     for task in &w.workflow {
@@ -724,7 +731,7 @@ pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<&'static str> {
         note(None);
     }
     if reads_files {
-        needed.insert("ReadFile");
+        needed.insert("ReadFile".to_string());
     }
     needed
 }
@@ -734,9 +741,9 @@ fn validate_capabilities(w: &WorkflowSpec) -> Result<(), HarnessError> {
         return Ok(());
     };
     let declared: BTreeSet<&str> = declared.iter().map(|c| c.as_str()).collect();
-    let missing: Vec<&str> = needed_capabilities(w)
+    let missing: Vec<String> = needed_capabilities(w)
         .into_iter()
-        .filter(|c| !declared.contains(c))
+        .filter(|c| !declared.contains(c.as_str()))
         .collect();
     if missing.is_empty() {
         return Ok(());

@@ -81,6 +81,7 @@ fn composed_bundle(document: &str) -> HarnessBundle {
                 content: base64::engine::general_purpose::STANDARD.encode(echo_module()),
             },
         )]),
+        ..Default::default()
     }
 }
 

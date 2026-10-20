@@ -30,9 +30,9 @@ use super::validate::needed_capabilities;
 use crate::error::HarnessError;
 use crate::source_map::{Lowering, SourceRef};
 use crate::spec::{
-    AgentStepSpec, BranchStepSpec, CapabilityName, FailStepSpec, ForEachSpec, HarnessSpec,
-    InputValue, IterateStepSpec, LimitsSpec, PredictStepSpec, ReturnStepSpec, StepSpec, UntilSpec,
-    DEFAULT_MAX_ITEMS, WORKFLOW_API_VERSION,
+    AgentStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec, FailStepSpec, ForEachSpec,
+    HarnessSpec, InputValue, IterateStepSpec, LimitsSpec, PredictStepSpec, ReturnStepSpec,
+    StepSpec, UntilSpec, DEFAULT_MAX_ITEMS, WORKFLOW_API_VERSION,
 };
 
 /// The id of the step the run returns from.
@@ -166,6 +166,9 @@ fn lower_task(
         .as_deref()
         .map(|text| rewrite_text(text, &cx.scope(format!("{place}: system"), before, vars)))
         .transpose()?;
+    if let Some(offered) = super::imports::offered(w, task) {
+        return lower_use(cx, b, task, &offered.name, next);
+    }
     let looping = task.for_each.is_some() || task.until.is_some();
 
     // What the body hands over to when it is done: the loop step, which
@@ -389,6 +392,51 @@ fn lower_task(
     Ok(())
 }
 
+/// A `use` task: one delegate step that runs the imported workflow and keeps
+/// what it returns as the task's output. A child that fails fails the run at
+/// this task.
+fn lower_use(
+    cx: &Context<'_>,
+    b: &mut Builder,
+    task: &TaskSpec,
+    child: &str,
+    next: &str,
+) -> Result<(), HarnessError> {
+    let names: Vec<String> = cx.w.workflow.iter().map(|t| t.name.clone()).collect();
+    let index = names.iter().position(|n| *n == task.name).unwrap_or(0);
+    let before = &names[..index];
+    let work = format!("{}__work", task.name);
+    b.add(
+        &work,
+        StepSpec::Delegate(Box::new(DelegateStepSpec {
+            target: child.to_string(),
+            as_kind: None,
+            input: super::imports::call_input(cx, task, before)?,
+            store_as: Some(super::imports::result_fact(task)),
+            propagate_failure: true,
+            then: next.to_string(),
+        })),
+        origin(Some(&task.name), "use"),
+    );
+    if let Some(condition) = &task.when {
+        let scope = cx.scope(
+            format!("task `{}`: when", task.name),
+            before,
+            LoopVars::default(),
+        );
+        b.add(
+            &entry_of(task),
+            StepSpec::Branch(Box::new(BranchStepSpec {
+                on: rewrite_condition(condition, &scope, &task.name)?,
+                when_true: work,
+                when_false: next.to_string(),
+            })),
+            origin(Some(&task.name), "when"),
+        );
+    }
+    Ok(())
+}
+
 fn lower_success(cx: &Context<'_>, b: &mut Builder) -> Result<String, HarnessError> {
     let w = cx.w;
     let none = LoopVars::default();
@@ -520,6 +568,14 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
             .filter(|t| t.schema.is_some())
             .map(|t| t.name.clone())
             .collect(),
+        imported: w
+            .workflow
+            .iter()
+            .filter_map(|t| {
+                let offered = w.resolved.get(t.use_import.as_deref()?)?;
+                Some((t.name.clone(), offered.outputs.keys().cloned().collect()))
+            })
+            .collect(),
     };
     let mut b = Builder::default();
     let mut next = lower_success(&cx, &mut b)?;
@@ -547,7 +603,7 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         Some(declared) => declared.clone(),
         None => needed_capabilities(w)
             .into_iter()
-            .map(|c| CapabilityName(c.to_string()))
+            .map(CapabilityName)
             .collect(),
     };
     Ok(HarnessSpec {

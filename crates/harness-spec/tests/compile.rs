@@ -338,6 +338,7 @@ steps:
         )]
         .into_iter()
         .collect(),
+        ..Default::default()
     };
     let a = make("AGFZ").compile().expect("compiles");
     let b = make("AGFZ").compile().expect("compiles");

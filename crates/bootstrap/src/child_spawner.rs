@@ -447,7 +447,11 @@ impl SdlcChildSpawner {
         };
         let data = sven_harness_runtime::HarnessRunData::from_parts((*plan).clone(), input)
             .with_helpers(self.harnesses.helpers(name))
-            .with_delegate_depth(depth);
+            .with_delegate_depth(depth)
+            .with_ceiling(sven_harness_runtime::Ceiling::from_value(
+                descriptor.get("budget"),
+            ));
+        let api_version = plan.api_version.clone();
         let data = match entry {
             Some(step) => match data.with_entry(step) {
                 Ok(data) => data,
@@ -499,13 +503,11 @@ impl SdlcChildSpawner {
             let _ = rt.sink().emit(Event::user_message("start")).await;
             rt.wait_done().await;
             let result = match rt.join().await {
-                Ok(report) => report
-                    .ctx
-                    .fact(sven_harness_runtime::OUTCOME_FACT)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        json!({"ok": false, "error": "the harness child ended without an outcome"})
-                    }),
+                Ok(report) => sven_harness_runtime::child_result(
+                    &api_version,
+                    report.state_label == "Completed",
+                    &report.ctx,
+                ),
                 Err(e) => json!({"ok": false, "error": format!("harness run failed: {e}")}),
             };
             if let Some(records) = records {

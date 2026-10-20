@@ -144,7 +144,12 @@ pub(crate) fn validate_dir(dir: &HarnessDir, path: &Path) -> ValidateReport {
             Err(e) => report.errors.push(e.to_string()),
         }
     }
-    let names: Vec<&str> = sources.iter().map(|s| s.plan.name.as_str()).collect();
+    let names: Vec<&str> = sources
+        .iter()
+        .flat_map(|s| {
+            std::iter::once(s.plan.name.as_str()).chain(s.imported.iter().map(String::as_str))
+        })
+        .collect();
     for (index, source) in sources.iter().enumerate() {
         if names[..index].contains(&source.plan.name.as_str()) {
             report.errors.push(format!(

@@ -326,6 +326,58 @@ generated step, the task, role (`when`, `work`, `follow_up`, `check`, `repair`,
 the stamp `harness-plan/2`; version 1 plans keep `harness-plan/1` and are
 byte-for-byte what they were (`v1_compiled_plan_unchanged`).
 
+### Imports (`imports:` and `use:`)
+
+A version 2 workflow can run another as one of its tasks:
+
+```yaml
+imports:
+  review: ./lib/review.yaml        # alias: a path relative to this document
+workflow:
+  - name: reviewed
+    use: review                    # instead of `task:`
+    with: { subject: "{{ tasks.change.output }}" }
+outputs:
+  verdict: { type: string, value: "{{ tasks.reviewed.output.verdict }}" }
+```
+
+A `use` task takes only `use`, `with`, `when` and `description`. It lowers to one
+`delegate` step with `propagate_failure`: the imported workflow runs as a child
+and what it returns is `tasks.<name>.output`, whose fields (`.verdict`) are the
+outputs it declares; a child that fails fails the caller with `child_failed`.
+
+*Checked when the package compiles:* the alias exists and every import is used;
+`with` passes exactly the inputs the child takes, literals and `{{ inputs.x }}`
+holes with a type that fits; later templates read only outputs the child
+returns (and nothing but `output` of a `use` task); the capabilities the child
+holds are held by the caller too (a derived grant adds them and `SpawnChild`; a
+declared one that lacks one is an error).
+
+*Package rules.* An import is a file of the package: a relative `.yaml` path,
+resolved against the importing document's directory, that stays inside the
+package root (no absolute path, no URL, no `..` out of it); `load_package` also
+refuses a symlink that leaves the directory. An import cycle is an error that
+names the chain; two documents of a package never share a name (`delegate`
+resolves by name); a file nothing imports is an error; only version 2 documents
+can be imported; at most 64 imports, 8 levels deep, 1 MiB each. There are no
+remote imports.
+
+*Pinning.* `HarnessBundle` carries `imports` (path to document text). The bundle
+digest covers the compiled-plan digest of every imported file, so a changed
+behaviour is a changed pin and a reformatting is not; a checkpoint taken under
+one is refused under another. `sven harness validate|inspect|run|test` read a
+directory whose `harness.yaml` has `imports` as a package automatically, and
+`Engine::load_harness_from_str` registers the main workflow and every import
+together or not at all.
+
+*Shared limits.* A child starts with a ceiling of what its parent had left of
+its model-turn and tool-call budgets (its own limits can only be tighter) and,
+when it ends, its usage is added to the parent's counters: a tree of runs never
+spends more than its root declared. A version 2 child answers its parent with an
+envelope `{ok, value | code, message, usage}`; a delegate to a version 1 harness
+is unchanged. Capabilities narrow as before: a child holds what its caller
+holds, narrowed by its own declaration.
+
 ### The `gate` step
 
 The thirteenth primitive, written only by the lowering and rejected in a

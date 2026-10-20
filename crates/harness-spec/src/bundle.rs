@@ -19,7 +19,7 @@ use crate::plan::HarnessPlan;
 /// Serialized canonically (keys sorted, no whitespace) for its digest, so
 /// the digest is invariant to YAML key order exactly as a lone document's
 /// is.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct HarnessBundle {
     /// The main harness document, raw YAML.
     pub document: String,
@@ -28,6 +28,11 @@ pub struct HarnessBundle {
     /// a helper.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub helpers: std::collections::BTreeMap<String, Helper>,
+    /// The workflows the main document imports, transitively, by their path
+    /// relative to the package root. Their contents are pinned by the
+    /// bundle's digest; a file nothing imports is a bundle error.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub imports: std::collections::BTreeMap<String, String>,
 }
 
 /// A helper program: the sandboxed bytes a `transform` step runs.
@@ -52,9 +57,9 @@ impl HarnessBundle {
     /// errors: a `transform` step naming a helper the bundle does not carry,
     /// or a helper no `transform` step references.
     pub fn compile(&self) -> Result<CompiledBundle, HarnessError> {
-        let document = crate::HarnessDocument::parse(&self.document)?;
-        let spec = document.spec();
-        let used: std::collections::BTreeSet<&str> = spec
+        let package = crate::package::compile_package(&self.document, &self.imports)?;
+        let used: std::collections::BTreeSet<&str> = package
+            .spec
             .steps
             .values()
             .filter_map(|step| match step {
@@ -76,9 +81,9 @@ impl HarnessBundle {
                 )));
             }
         }
-        let plan = document.compile()?;
         Ok(CompiledBundle {
-            plan,
+            plan: package.plan,
+            imports: package.imports.into_iter().map(|(_, plan)| plan).collect(),
             digest: self.digest(),
         })
     }
@@ -91,17 +96,28 @@ impl HarnessBundle {
     /// [`HarnessError::Parse`] when the document does not parse (the digest
     /// needs its canonical form).
     pub fn digest(&self) -> String {
-        let plan_digest = crate::HarnessDocument::parse(&self.document)
-            .ok()
-            .and_then(|d| d.compile().ok())
-            .map(|p| p.digest)
+        let package = crate::package::compile_package(&self.document, &self.imports).ok();
+        let plan_digest = package
+            .as_ref()
+            .map(|p| p.plan.digest.clone())
             .unwrap_or_default();
         let helpers: std::collections::BTreeMap<&String, &Helper> = self.helpers.iter().collect();
-        let value = serde_json::json!({
+        let mut value = serde_json::json!({
             "format": BUNDLE_FORMAT_VERSION,
             "plan": plan_digest,
             "helpers": helpers,
         });
+        if !self.imports.is_empty() {
+            // Each imported file by the digest of its compiled plan, so that
+            // what it does is pinned and how it is formatted is not. A
+            // package that does not compile has no digest to pin to.
+            let pinned: std::collections::BTreeMap<&str, &str> = package
+                .iter()
+                .flat_map(|p| p.imports.iter())
+                .map(|(path, plan)| (path.as_str(), plan.digest.as_str()))
+                .collect();
+            value["imports"] = serde_json::json!(pinned);
+        }
         let mut hasher = sha2::Sha256::new();
         use sha2::Digest;
         hasher.update(serde_json::to_string(&value).unwrap_or_default());
@@ -118,6 +134,9 @@ pub const BUNDLE_FORMAT_VERSION: &str = "harness-bundle/1";
 pub struct CompiledBundle {
     /// The compiled, validated plan.
     pub plan: HarnessPlan,
+    /// The plans of the imported workflows, each after those it imports
+    /// itself: what a `use` task delegates to.
+    pub imports: Vec<HarnessPlan>,
     /// The bundle digest to pin a run to.
     pub digest: String,
 }

@@ -454,12 +454,13 @@ directory with its cases:
 | `suspend-resume` | suspend on a deadline, resume the checkpoint, replay offline |
 | `custom-helper` | a sandboxed WASM helper carried in a bundle |
 | `planner-worker` | a model-only planner answering in a schema, a tool-using worker and a model-only supervisor behind a gate, each with its own sampling and thinking settings |
+| `reviewed-change` | a package: one workflow imports another (`imports:`) and runs it as a task (`use:`), the call checked at compile time and the child spending under the caller's limits |
 | `module-sweep` | a v2 workflow with a `for_each` over a frozen backlog and an `until` on a coverage figure; a suspension resumes at the module it was on |
 | `verified-task` | a v2 workflow: a command gate whose exit status decides, bounded repair, a coverage threshold in the success condition |
 | `sdk-runner` | the same cases from an application, with the SDK alone |
 
 ```sh
-sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task,module-sweep,planner-worker}   # every sample, offline
+sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task,module-sweep,planner-worker,reviewed-change}   # every sample, offline
 cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
 ```
 

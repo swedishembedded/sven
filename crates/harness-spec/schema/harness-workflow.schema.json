@@ -53,6 +53,12 @@
       "items": { "$ref": "#/$defs/task" }
     },
     "success": { "$ref": "#/$defs/success" },
+    "imports": {
+      "type": "object",
+      "description": "Workflows this one uses, alias to a path relative to this document, inside the package. Version 2 documents only; no URLs.",
+      "additionalProperties": false,
+      "patternProperties": { "^[a-z][a-z0-9_-]*$": { "type": "string", "pattern": "\\.ya?ml$" } }
+    },
     "on_failure": {
       "enum": ["fail", "return"],
       "description": "fail: a failed check ends the run as failed. return: it ends by returning the outputs with status failed and the failure."
@@ -359,11 +365,14 @@
     },
     "task": {
       "type": "object",
-      "required": ["name", "task"],
+      "required": ["name"],
+      "oneOf": [{ "required": ["task"] }, { "required": ["use"] }],
       "additionalProperties": false,
       "properties": {
         "name": { "$ref": "#/$defs/identifier" },
         "description": { "type": "string" },
+        "use": { "$ref": "#/$defs/identifier", "description": "Run the imported workflow with this alias instead of an agent turn. Takes only with, when and description." },
+        "with": { "type": "object", "description": "The imported workflow's inputs: exactly the ones it takes. Values may be templates." },
         "task": { "type": "string", "minLength": 1, "description": "The prompt. A template over inputs and earlier task outputs." },
         "tools": {
           "type": "array",

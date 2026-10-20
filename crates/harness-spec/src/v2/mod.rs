@@ -17,6 +17,7 @@
 mod checks;
 mod context;
 mod corrections;
+mod imports;
 mod lower;
 mod rewrite;
 pub mod spec;
@@ -31,7 +32,8 @@ use spec::{
     ArtifactCheck, Check, CommandGate, GateDef, MetricCheck, SuccessSpec, TaskSpec, WorkflowSpec,
 };
 
-const TOP_LEVEL_KEYS: [&str; 12] = [
+const TOP_LEVEL_KEYS: [&str; 13] = [
+    "imports",
     "on_failure",
     "api_version",
     "name",
@@ -104,6 +106,10 @@ pub fn parse_workflow(value: Value) -> Result<WorkflowSpec, HarnessError> {
         .map(|v| decode(v, "on_failure"))
         .transpose()?
         .unwrap_or_default();
+    let imports = take("imports")
+        .map(|v| decode(v, "imports"))
+        .transpose()?
+        .unwrap_or_default();
     Ok(WorkflowSpec {
         name,
         description,
@@ -116,6 +122,8 @@ pub fn parse_workflow(value: Value) -> Result<WorkflowSpec, HarnessError> {
         workflow,
         success,
         on_failure,
+        imports,
+        resolved: std::collections::BTreeMap::new(),
     })
 }
 
@@ -192,7 +200,12 @@ struct RawTask {
     name: String,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
     task: String,
+    #[serde(default, rename = "use")]
+    use_import: Option<String>,
+    #[serde(default)]
+    with: std::collections::BTreeMap<String, Value>,
     #[serde(default)]
     tools: Option<Vec<String>>,
     #[serde(default)]
@@ -301,19 +314,42 @@ fn parse_workflow_tasks(section: Option<Value>) -> Result<Vec<TaskSpec>, Harness
             max_repeated_results: raw.max_repeated_results,
             corrections: raw.corrections,
             checkpoint: raw.checkpoint,
+            use_import: raw.use_import,
+            with: raw.with,
         });
     }
     Ok(tasks)
 }
 
 /// Decodes, validates and lowers a workflow document into the v1 spec the
-/// shared validator and plan compiler take.
+/// shared validator and plan compiler take. `resolved` holds the interface of
+/// each import the package resolved, by alias.
 ///
 /// # Errors
 ///
-/// A decoding error, or the first authoring-level validation failure.
-pub fn lower_document(value: Value) -> Result<HarnessSpec, HarnessError> {
-    let workflow = parse_workflow(value)?;
+/// A decoding error, the first authoring-level validation failure, an import
+/// that is not in `resolved`, or a `use` that does not fit the interface of
+/// what it uses.
+pub fn lower_document_with(
+    value: Value,
+    resolved: std::collections::BTreeMap<String, spec::Imported>,
+) -> Result<HarnessSpec, HarnessError> {
+    let mut workflow = parse_workflow(value)?;
+    workflow.resolved = resolved;
     validate::validate(&workflow)?;
     lower::lower(&workflow)
+}
+
+/// The `imports` of a raw workflow document, alias to path as written.
+///
+/// # Errors
+///
+/// [`HarnessError::Parse`] when `imports` is not a map of strings.
+pub fn imports_of(
+    value: &Value,
+) -> Result<std::collections::BTreeMap<String, String>, HarnessError> {
+    match value.get("imports") {
+        None => Ok(std::collections::BTreeMap::new()),
+        Some(section) => decode(section.clone(), "imports"),
+    }
 }

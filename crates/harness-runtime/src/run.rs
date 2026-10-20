@@ -89,6 +89,8 @@ pub struct HarnessRunData {
     bundle_digest: Option<String>,
     /// Where this run sits in a delegation chain (a top-level run is 1).
     delegate_depth: u64,
+    /// What the parent had left when it started this run.
+    ceiling: crate::budget::Ceiling,
 }
 
 impl HarnessRunData {
@@ -106,6 +108,7 @@ impl HarnessRunData {
             helpers: BTreeMap::new(),
             bundle_digest: None,
             delegate_depth: 1,
+            ceiling: crate::budget::Ceiling::default(),
         })
     }
 
@@ -131,6 +134,7 @@ impl HarnessRunData {
             helpers: BTreeMap::new(),
             bundle_digest: None,
             delegate_depth: 1,
+            ceiling: crate::budget::Ceiling::default(),
         }
     }
 
@@ -151,6 +155,7 @@ impl HarnessRunData {
             helpers: bundle.helpers.clone(),
             bundle_digest: Some(compiled.digest),
             delegate_depth: 1,
+            ceiling: crate::budget::Ceiling::default(),
         })
     }
 
@@ -169,6 +174,21 @@ impl HarnessRunData {
     pub fn with_delegate_depth(mut self, depth: u64) -> Self {
         self.delegate_depth = depth;
         self
+    }
+
+    /// Starts the run under a ceiling on its budgets: how a child spawner
+    /// hands a delegated child what its parent still had, so a run's limits
+    /// hold across the whole tree it starts.
+    #[must_use]
+    pub fn with_ceiling(mut self, ceiling: crate::budget::Ceiling) -> Self {
+        self.ceiling = ceiling;
+        self
+    }
+
+    /// What the parent had left when it started this run.
+    #[must_use]
+    pub fn ceiling(&self) -> crate::budget::Ceiling {
+        self.ceiling
     }
 
     /// This run's depth in its delegation chain (a top-level run is 1).
@@ -559,6 +579,10 @@ pub struct HarnessRunState {
     /// This run's delegation depth (a top-level run is at 1; a delegated
     /// child starts at its parent's depth + 1).
     pub delegate_depth: u64,
+    /// What the parent run had left when it started this one: the child's own
+    /// budgets can only be tighter.
+    #[serde(default, skip_serializing_if = "crate::budget::Ceiling::is_open")]
+    pub ceiling: crate::budget::Ceiling,
     /// The compiled plan's content digest, recorded when the run starts.
     /// A checkpoint carries it, and resuming refuses a document whose
     /// digest no longer matches — an edited harness cannot silently replace
@@ -608,6 +632,7 @@ impl HarnessRunState {
             // A top-level run is the whole delegation chain's depth 1;
             // delegated children reseed with their inherited depth.
             delegate_depth: 1,
+            ceiling: crate::budget::Ceiling::default(),
             ..Self::default()
         };
     }
@@ -722,59 +747,5 @@ fn index_into(value: &Value, segment: &str) -> Option<Value> {
             .ok()
             .and_then(|i| items.get(i).cloned()),
         _ => None,
-    }
-}
-
-/// The step budget a harness without a declared `max_steps` runs under.
-///
-/// Validation already requires limits on every harness whose steps can run
-/// away; this only bounds a pure chain against a compiler/retry-accounting
-/// bug, where an honest run can never get near it.
-const FALLBACK_STEP_BUDGET: u64 = 4096;
-
-impl HarnessRunState {
-    /// The effective step budget: the declared `max_steps` or the fallback
-    /// runaway guard.
-    #[must_use]
-    pub fn step_budget(&self, plan: &HarnessPlan) -> u64 {
-        plan.limits
-            .as_ref()
-            .and_then(|l| l.max_steps)
-            .unwrap_or(FALLBACK_STEP_BUDGET)
-    }
-
-    /// The declared model-turn budget, if any.
-    #[must_use]
-    pub fn model_turn_budget(&self, plan: &HarnessPlan) -> Option<u64> {
-        plan.limits.as_ref().and_then(|l| l.max_model_turns)
-    }
-
-    /// The declared tool-call budget, if any.
-    #[must_use]
-    pub fn tool_call_budget(&self, plan: &HarnessPlan) -> Option<u64> {
-        let limits = plan.limits.as_ref()?;
-        // A limit the run was started with replaces the document's number.
-        limits
-            .max_tool_calls_input
-            .as_deref()
-            .and_then(|name| self.inputs.get(name))
-            .and_then(Value::as_u64)
-            .or(limits.max_tool_calls)
-    }
-
-    /// `true` when the run has spent more model turns than its budget
-    /// allows (a run without a declared budget is unbounded).
-    #[must_use]
-    pub fn exceeds_model_budget(&self, plan: &HarnessPlan) -> bool {
-        self.model_turn_budget(plan)
-            .is_some_and(|budget| self.counts.model_turns > budget)
-    }
-
-    /// `true` when the run has spent more tool calls than its budget
-    /// allows (a run without a declared budget is unbounded).
-    #[must_use]
-    pub fn exceeds_tool_budget(&self, plan: &HarnessPlan) -> bool {
-        self.tool_call_budget(plan)
-            .is_some_and(|budget| self.counts.tool_calls > budget)
     }
 }

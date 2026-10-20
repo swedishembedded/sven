@@ -10,7 +10,8 @@
 
 use std::path::{Path, PathBuf};
 
-use sven_harness_spec::{HarnessBundle, HarnessPlan};
+use sven_harness_spec::package::load_package_file;
+use sven_harness_spec::{HarnessBundle, HarnessDocument, HarnessPlan};
 
 use crate::error::TestkitError;
 
@@ -24,6 +25,9 @@ pub(crate) struct Source {
     pub bundle: Option<HarnessBundle>,
     /// The bundle's content digest, when the file is a bundle.
     pub bundle_digest: Option<String>,
+    /// The names of the workflows the file imports: harnesses its delegates
+    /// may name besides the directory's own.
+    pub imported: Vec<String>,
 }
 
 impl Source {
@@ -48,6 +52,23 @@ impl Source {
             Ok(Self {
                 path: path.to_path_buf(),
                 text,
+                imported: compiled.imports.iter().map(|p| p.name.clone()).collect(),
+                plan: compiled.plan,
+                bundle_digest: Some(compiled.digest),
+                bundle: Some(bundle),
+            })
+        } else if !HarnessDocument::imports_of(&text)
+            .map_err(|e| harness(e.to_string()))?
+            .is_empty()
+        {
+            // A document with imports is a package: the files it imports are
+            // read from its directory and travel with it as a bundle.
+            let bundle = load_package_file(path).map_err(|e| harness(e.to_string()))?;
+            let compiled = bundle.compile().map_err(|e| harness(e.to_string()))?;
+            Ok(Self {
+                path: path.to_path_buf(),
+                text: serde_yaml::to_string(&bundle).map_err(|e| harness(e.to_string()))?,
+                imported: compiled.imports.iter().map(|p| p.name.clone()).collect(),
                 plan: compiled.plan,
                 bundle_digest: Some(compiled.digest),
                 bundle: Some(bundle),
@@ -60,6 +81,7 @@ impl Source {
                 plan,
                 bundle: None,
                 bundle_digest: None,
+                imported: Vec::new(),
             })
         }
     }

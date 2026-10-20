@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The reviewer: reads a described change and gives a verdict, which a command
+# must confirm. Imported by ../harness.yaml; it takes one input and returns one
+# output, and that interface is all the importer sees.
+# Swedish Embedded AB implements verifiable, declarative agent workflows for its
+# clients. If your team needs expertise in composing long-running agent work from
+# reviewed, reusable parts then you can procure our services by sending an email
+# to info@swedishembedded.com.
+api_version: "2"
+name: reviewer
+inputs:
+  subject: string
+execution:
+  limits: { model_turns: 4 }
+gates:
+  approved: { command: [sh, approve.sh], timeout: 30 }
+workflow:
+  - name: judge
+    task: "Review this change and answer approve or reject: {{ inputs.subject }}"
+    verify: [approved]
+outputs:
+  verdict: { type: string, value: "{{ tasks.judge.output }}" }

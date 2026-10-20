@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The change is made, the imported reviewer approves it and its command
+# confirms; the verdict comes back as the output of the `reviewed` task.
+input: { feature: "add a discount to total()" }
+model:
+  sequence:
+    - text: "total() takes an optional discount"
+    - text: "approve"
+tools:
+  shell_gate:
+    capability: ExecuteShell
+    responses:
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+expect:
+  status: completed
+  output: { change: "total() takes an optional discount", verdict: "approve" }

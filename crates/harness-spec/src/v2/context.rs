@@ -28,6 +28,8 @@ pub(super) struct Context<'a> {
     pub(super) command_gates: Vec<String>,
     /// The authors of corrections, whose messages the accept gates read.
     pub(super) authors: Vec<String>,
+    /// The tasks that run an imported workflow, with the outputs it returns.
+    pub(super) imported: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// What a task's templates may read besides inputs and earlier outputs.
@@ -59,6 +61,7 @@ impl Context<'_> {
             .in_loop(vars.item, vars.iteration)
             .with_structured(&self.structured)
             .with_gates(&self.command_gates)
+            .with_imported(&self.imported)
     }
 
     pub(super) fn command_run(

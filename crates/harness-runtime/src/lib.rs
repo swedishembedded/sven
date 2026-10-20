@@ -26,9 +26,11 @@
 
 mod agent_loop;
 mod approval;
+mod budget;
 mod checkpoint;
 mod command_gate;
 mod decoding;
+mod delegation;
 mod error;
 mod events;
 mod exec;
@@ -40,7 +42,9 @@ mod run;
 mod state;
 
 pub use approval::{HeldCall, HeldGate};
+pub use budget::Ceiling;
 pub use command_gate::INTERRUPTED_OPERATION;
+pub use delegation::child_result;
 pub use error::HarnessRunError;
 pub use events::harness_event;
 pub use iteration::{ItemStatus, IterationState, WorkItem};

@@ -352,6 +352,7 @@ impl HarnessMachine {
         let mut state = self.run_state(ctx);
         state.start(self.run.plan(), self.run.inputs(), self.run.bundle_digest());
         state.delegate_depth = self.run.delegate_depth();
+        state.ceiling = self.run.ceiling();
         state.store(ctx);
         Reaction::Transition {
             target: HarnessState::Advancing,
@@ -611,16 +612,19 @@ impl HarnessMachine {
                     // delivery from an earlier incarnation) is ignored.
                     return Reaction::Ignored;
                 }
+                // A version 2 child answers with an envelope; its usage is
+                // charged to this run and the value it carries is the result.
+                let (result, reported_ok) = crate::delegation::take_back(&mut run, result);
+                let result = &result;
                 run.trace.push(TraceRecord::ChildCompleted {
                     step: child.step.clone(),
                     child: child.machine.clone(),
                     // An absent `ok` is a child that returned normally; the child
                     // failure protocol is an explicit ok:false result.
-                    ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
+                    ok: reported_ok,
                 });
                 run.child = None;
                 let step = child.step;
-                let reported_ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
                 if !reported_ok && self.propagates_child_failure(&step) {
                     // A required child that failed fails this step (and so
                     // its retry frame, if any): the result is kept for whoever

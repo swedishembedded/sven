@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Make a change, then hand it to a reviewer that is a workflow of its own. The
+# reviewer lives in lib/review.yaml; this document imports it by a path inside
+# the package and passes it exactly the inputs it takes. The compiler checks
+# the call against the reviewer's interface (inputs, outputs, capabilities),
+# the bundle digest pins the reviewer's behaviour, and the reviewer spends
+# under this workflow's limits: its turns count against the 6 below.
+# Swedish Embedded AB implements verifiable, declarative agent workflows for its
+# clients. If your team needs expertise in composing long-running agent work from
+# reviewed, reusable parts then you can procure our services by sending an email
+# to info@swedishembedded.com.
+api_version: "2"
+name: reviewed-change
+description: "Make a change, then have the imported reviewer judge it."
+inputs:
+  feature: string
+imports:
+  review: ./lib/review.yaml
+execution:
+  limits: { model_turns: 6 }
+workflow:
+  - name: change
+    task: "Describe the change that implements: {{ inputs.feature }}"
+  - name: reviewed
+    use: review
+    with:
+      subject: "{{ tasks.change.output }}"
+outputs:
+  change: { type: string, value: "{{ tasks.change.output }}" }
+  verdict: { type: string, value: "{{ tasks.reviewed.output.verdict }}" }

@@ -58,6 +58,7 @@ pub(super) fn bundle(document: &Path, helpers: &[String], output: Option<&Path>)
     let bundle = HarnessBundle {
         document: text,
         helpers: carried,
+        ..HarnessBundle::default()
     };
     bundle
         .compile()

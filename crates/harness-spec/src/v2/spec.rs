@@ -45,6 +45,26 @@ pub struct WorkflowSpec {
     pub success: SuccessSpec,
     /// What a failed check does to the run.
     pub on_failure: OnFailure,
+    /// The documents this one uses, by the alias a `use` task names: the path
+    /// as written, relative to this document's directory.
+    pub imports: BTreeMap<String, String>,
+    /// What each import offers, resolved by the package before lowering. Never
+    /// read from a document.
+    pub resolved: BTreeMap<String, Imported>,
+}
+
+/// The interface of an imported workflow: what a `use` task may pass and
+/// read, and what the child needs in order to run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Imported {
+    /// The imported document's name: the harness a `use` task delegates to.
+    pub name: String,
+    /// The inputs the child takes; a `use` passes exactly these.
+    pub inputs: BTreeMap<String, InputValue>,
+    /// The outputs the child returns; later templates may read their fields.
+    pub outputs: BTreeMap<String, InputValue>,
+    /// The capabilities the child holds. The parent must hold them too.
+    pub capabilities: Vec<String>,
 }
 
 /// What a failed check or an exhausted loop does to the run.
@@ -621,6 +641,11 @@ pub struct TaskSpec {
     /// A supervisor that writes the messages the agent is sent after its
     /// result was judged.
     pub corrections: Option<Corrections>,
+    /// Runs an imported workflow as this task (`use: <alias>`) instead of an
+    /// agent turn; its outputs are `tasks.<name>.output.<field>`.
+    pub use_import: Option<String>,
+    /// The values passed to the imported workflow's inputs.
+    pub with: BTreeMap<String, Value>,
 }
 
 /// `success:`.
