@@ -2,13 +2,15 @@
 name        = "sven-tools-exec"
 version.workspace = true
 edition     = "2021"
-description = "Command execution: the free-form shell tool. Domain tier."
+description = "Command execution: the free-form shell tool and the harness-only gate command tool. Domain tier."
 license     = "Apache-2.0"
 
 [dependencies]
 sven-tool-api = { path = "../tool-api" }
 sven-tool-registry = { path = "../tool-registry" }
 sven-hsm      = { path = "../hsm" }
+sven-vocab    = { path = "../vocab" }
+sven-harness-spec = { path = "../harness-spec" }
 async-trait   = { workspace = true }
 serde_json    = { workspace = true }
 tokio         = { workspace = true }

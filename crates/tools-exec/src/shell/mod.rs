@@ -4,4 +4,6 @@
 //! Shell execution tool.
 
 mod tool;
+#[cfg(unix)]
+pub(crate) use tool::kill_group;
 pub use tool::{ShellTool, DEFAULT_MAX_TIMEOUT_SECS};

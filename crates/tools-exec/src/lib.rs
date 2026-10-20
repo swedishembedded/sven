@@ -1,9 +1,12 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Command execution: the free-form `shell` tool.
+//! Command execution: the free-form `shell` tool and the harness-only gate
+//! command tool.
+pub mod gate;
 pub mod shell;
 
+pub use gate::GateCommandTool;
 pub use shell::ShellTool;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────

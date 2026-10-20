@@ -285,21 +285,21 @@ impl Tool for ShellTool {
 }
 
 #[cfg(unix)]
-mod kill_group {
+pub(crate) mod kill_group {
     /// Sends SIGKILL to a process group when dropped, unless disarmed.
     ///
     /// The group is the one `setsid()` made for the command, so its id is the
     /// command's pid. It is only killed while the command has not finished by
     /// itself: a command that completed normally may leave background
     /// processes it deliberately started.
-    pub(super) struct KillOnDrop(Option<libc::pid_t>);
+    pub(crate) struct KillOnDrop(Option<libc::pid_t>);
 
     impl KillOnDrop {
-        pub(super) fn new(pid: Option<u32>) -> Self {
+        pub(crate) fn new(pid: Option<u32>) -> Self {
             Self(pid.and_then(|pid| libc::pid_t::try_from(pid).ok()))
         }
 
-        pub(super) fn disarm(&mut self) {
+        pub(crate) fn disarm(&mut self) {
             self.0 = None;
         }
     }
