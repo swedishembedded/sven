@@ -140,6 +140,13 @@ request itself.
 5. The thread is replaced in the `ThreadStore` and the in-flight turn
    continues with the smaller history immediately.
 
+### Rejected by the server
+
+If the server still rejects a request as too long for its context
+(`context_length_exceeded`, `n_ctx`, ...), the executor announces it with a
+`Warning`, applies `emergency_compact` to that request and sends it once more.
+A second rejection fails the turn with the server's message.
+
 ### Emergency path
 
 `emergency_compact` runs instead when the summarization request would not fit

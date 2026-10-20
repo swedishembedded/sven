@@ -49,6 +49,29 @@ use crate::ledger_output::LedgerOutput;
 use crate::output::{write_progress, write_stderr, write_stdout};
 use crate::template::apply_template;
 
+/// Resolves `true` when the process is asked to stop (Ctrl+C, or SIGTERM on
+/// Unix); `false` when no signal handler could be installed.
+async fn wait_for_interrupt() -> bool {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let (Ok(mut term), Ok(mut int)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        ) else {
+            return false;
+        };
+        tokio::select! {
+            _ = term.recv() => true,
+            _ = int.recv() => true,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await.is_ok()
+    }
+}
+
 // ── Exit codes ────────────────────────────────────────────────────────────────
 
 pub const EXIT_SUCCESS: i32 = 0;
@@ -656,10 +679,11 @@ impl CiRunner {
                 .unwrap_or_else(trace_session::new_session_id)
         });
 
-        // ── Set up Ctrl+C handler ────────────────────────────────────────────
+        // ── Set up the interrupt handler (Ctrl+C, and SIGTERM from a job
+        // scheduler or `timeout`, which must also leave the partial record) ──
         let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
+            if wait_for_interrupt().await {
                 let _ = cancel_tx.send(()).await;
             }
         });
@@ -1011,7 +1035,9 @@ impl CiRunner {
                         }
 
                         _ = cancel_rx.recv() => {
-                            write_stderr("[sven:interrupted] Ctrl+C received - saving partial conversation");
+                            write_stderr(
+                                "[sven:interrupted] Ctrl+C or SIGTERM received - saving partial conversation",
+                            );
                             if let Some(ref path) = effective_output_trace {
                                 flush_trace(
                                     path,

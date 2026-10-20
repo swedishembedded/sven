@@ -169,18 +169,7 @@ pub(crate) fn adapter_change(
     })
 }
 
-/// Does a server's error text say the request did not fit its context? Such
-/// an error usually means the window changed under us (a different model or
-/// adapter was loaded with a smaller one).
-pub(crate) fn is_context_overflow(error_text: &str) -> bool {
-    let t = error_text.to_ascii_lowercase();
-    t.contains("context_length_exceeded")
-        || t.contains("n_ctx")
-        || (t.contains("context")
-            && ["exceed", "too long", "too large", "maximum", "window"]
-                .iter()
-                .any(|w| t.contains(w)))
-}
+pub(crate) use sven_model::budget::is_context_overflow;
 
 // ── Live state of a served model ──────────────────────────────────────────────
 

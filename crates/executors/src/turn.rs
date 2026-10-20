@@ -74,7 +74,7 @@ use sven_hsm::{Effect, Event, ObservationSink, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, EventSink};
 use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
 use sven_tool_registry::ToolRegistry;
-use sven_turn::{stream_turn, to_model_schemas, AbortedError, ModelResolver};
+use sven_turn::{to_model_schemas, AbortedError, ModelResolver};
 use sven_vocab::TurnRequest;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
@@ -84,6 +84,7 @@ mod cost_gate;
 
 pub use cost_gate::CostPolicy;
 mod instructions;
+mod overflow;
 
 use crate::chunks::ContextAssembler;
 use crate::notices;
@@ -611,16 +612,20 @@ impl EffectExecutor for TurnExecutor {
             _ = cancel_rx => {
                 Err(anyhow::Error::new(AbortedError::by_user("turn cancelled by user")))
             }
-            r = stream_turn(
-                model.as_ref(),
+            r = overflow::Request {
                 messages,
-                tool_schemas,
-                Some(thread_id.clone()),
-                req.dynamic_suffix.clone(),
+                tools: tool_schemas,
+                cache_key: Some(thread_id.clone()),
+                dynamic_suffix: req.dynamic_suffix.clone(),
                 response_format,
                 max_output_tokens_override,
+            }
+            .stream_retrying_overflow(
+                model.as_ref(),
                 self.limits,
+                self.compaction.keep_recent,
                 &tx,
+                obs,
             ) => r,
         };
 

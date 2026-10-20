@@ -489,7 +489,7 @@ reach `N` the run stops with exit code `4`.
 | `5` | Waiting for a person: a parked question or verified task; the trajectory is left unscored |
 | `6` | Stopped without concluding: the model's last turn announced more work (ended in a colon) and made no call |
 | `124` | Timeout exceeded (step or total run) |
-| `130` | Interrupted (Ctrl+C) |
+| `130` | Interrupted (Ctrl+C or SIGTERM); the trajectory so far is written, stamped `cancelled` |
 
 Exit `3` lets a script tell a clean run from a partly successful one; treat it
 as success with `|| [ $? -eq 3 ]` where tool errors are tolerable.
