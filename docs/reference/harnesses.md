@@ -198,6 +198,10 @@ that did not run (its `when` was false) has not completed. Codes:
 `iterate_source_unreadable`, `iterate_source_malformed`, `iterate_source_not_array`,
 `iterate_missing_id`, `iterate_duplicate_id`, `iterate_too_many_items`. The trace
 records `IterationStarted`, `ItemStarted` and `ItemCompleted`.
+Item values from a file the agent wrote are data the agent controls: they reach
+prompts, gate argv elements (never a shell command line) and file-check paths (which
+the verifier confines to the workspace, so a path that escapes is `unknown`, not
+passed).
 
 **Gates and checks.** A gate is either `command: [argv...]` (with `timeout`
 seconds, default 600, at most 3600; `cwd` inside the workspace; and `metrics`:

@@ -121,10 +121,15 @@ fn validate_agent_tools(w: &WorkflowSpec) -> Result<(), HarnessError> {
     Ok(())
 }
 
-fn validate_artifact(place: &str, a: &ArtifactCheck) -> Result<(), HarnessError> {
-    if !is_workspace_relative(&a.artifact) || a.artifact.contains("{{") {
+/// Checks an artifact check. `templated` is true inside a `for_each` task,
+/// where the path may name the item (`reports/{{ item_id }}.md`); it is still
+/// confined to the workspace when the verifier resolves it.
+fn validate_artifact(place: &str, a: &ArtifactCheck, templated: bool) -> Result<(), HarnessError> {
+    let holes = a.artifact.contains("{{");
+    if !is_workspace_relative(&a.artifact) || (holes && !templated) {
         return Err(invalid(format!(
-            "{place}: artifact `{}` must be a literal path inside the workspace (relative, no `..`)",
+            "{place}: artifact `{}` must be a literal path inside the workspace (relative, no \
+             `..`); only a `for_each` task's paths may name the item",
             a.artifact
         )));
     }
@@ -147,7 +152,7 @@ fn validate_gates(w: &WorkflowSpec) -> Result<(), HarnessError> {
             )));
         }
         match gate {
-            GateDef::Artifact(a) => validate_artifact(&place, a)?,
+            GateDef::Artifact(a) => validate_artifact(&place, a, false)?,
             GateDef::Command(c) => {
                 if c.command.first().is_none_or(|p| p.trim().is_empty()) {
                     return Err(invalid(format!(
@@ -253,9 +258,10 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
             return Err(invalid(format!("{place}: `task` is empty")));
         }
         for out in &task.outputs {
-            if !is_workspace_relative(out) || out.contains("{{") {
+            if !is_workspace_relative(out) || (out.contains("{{") && task.for_each.is_none()) {
                 return Err(invalid(format!(
-                    "{place}: output `{out}` must be a literal path inside the workspace"
+                    "{place}: output `{out}` must be a literal path inside the workspace; only a \
+                     `for_each` task's paths may name the item"
                 )));
             }
         }
@@ -266,7 +272,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
                     return Err(unknown_gate(w, &place, name));
                 }
                 Check::Gate(_) => {}
-                Check::Artifact(a) => validate_artifact(&place, a)?,
+                Check::Artifact(a) => validate_artifact(&place, a, task.for_each.is_some())?,
                 Check::Metric(m) => check_metric_ref(w, &place, &m.metric)?,
             }
         }

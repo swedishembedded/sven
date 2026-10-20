@@ -133,25 +133,27 @@ impl Context<'_> {
 
     fn task_checks(&self, task: &TaskSpec) -> Result<Vec<Resolved>, HarnessError> {
         let vars = LoopVars::of(task);
-        let mut checks: Vec<Resolved> = task
-            .outputs
-            .iter()
-            .map(|path| Resolved {
-                label: path.clone(),
+        let names: Vec<String> = self.w.workflow.iter().map(|t| t.name.clone()).collect();
+        let scope = self.scope(format!("task `{}`: files", task.name), &names, vars);
+        let file = |path: &str| rewrite_text(path, &scope);
+        let mut checks: Vec<Resolved> = Vec::new();
+        for path in &task.outputs {
+            checks.push(Resolved {
+                label: plain(path),
                 kind: Kind::File {
-                    path: path.clone(),
+                    path: file(path)?,
                     min_bytes: None,
                     sha256: None,
                 },
-            })
-            .collect();
+            });
+        }
         for check in &task.verify {
             checks.push(match check {
                 Check::Gate(name) => self.gate(name, vars)?,
                 Check::Artifact(a) => Resolved {
-                    label: a.artifact.clone(),
+                    label: plain(&a.artifact),
                     kind: Kind::File {
-                        path: a.artifact.clone(),
+                        path: file(&a.artifact)?,
                         min_bytes: a.min_bytes,
                         sha256: a.sha256.clone(),
                     },
@@ -161,6 +163,13 @@ impl Context<'_> {
         }
         Ok(checks)
     }
+}
+
+/// A path as it is named in messages: a template's holes become `(...)`, so
+/// that the name can be written into a message template without being read as
+/// holes again.
+fn plain(path: &str) -> String {
+    path.replace("{{", "(").replace("}}", ")")
 }
 
 fn origin(task: Option<&str>, role: &str) -> SourceRef {

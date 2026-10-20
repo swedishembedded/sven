@@ -640,3 +640,28 @@ fn coverage_gate_cannot_be_bypassed() {
         }
     }
 }
+
+#[test]
+fn a_for_each_task_may_name_its_item_in_file_checks_and_no_other_task_may() {
+    use sven_harness_spec::PlanPrimitive;
+    let with_report = LOOPS.replace(
+        "    verify: [test]\n    repair: { attempts: 1, prompt:",
+        "    outputs: [\"reports/{{ item_id }}.md\"]\n    verify: [test]\n    repair: { attempts: 1, prompt:",
+    );
+    let plan = compile(&with_report);
+    let PlanPrimitive::Verify { spec, .. } =
+        &plan.steps["modules__v0_reports_item_id_md_a0"].primitive
+    else {
+        panic!(
+            "the output is checked with a verifier: {:?}",
+            plan.steps.keys().collect::<Vec<_>>()
+        );
+    };
+    assert_eq!(spec["path"], "reports/{{facts.item_id}}.md");
+    // Outside a for_each the path is a literal.
+    let outside = THREE_TASKS.replace(
+        "outputs: [plan.md]",
+        "outputs: [\"plan-{{ inputs.repo }}.md\"]",
+    );
+    assert!(rejected(&outside).contains("only a `for_each` task's paths may name the item"));
+}

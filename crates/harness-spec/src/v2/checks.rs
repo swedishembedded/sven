@@ -97,16 +97,19 @@ impl Resolved {
     /// The label as it appears in a step id: ids never contain `.`, which
     /// separates the segments of a path that reads a step's result.
     fn slug(&self) -> String {
-        self.label
-            .chars()
-            .map(|c| {
-                if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect()
+        let mut slug = String::new();
+        for c in self.label.chars() {
+            let c = if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' {
+                c
+            } else {
+                '_'
+            };
+            // A run of separators is one: `__` separates the parts of an id.
+            if c != '_' || !slug.ends_with('_') {
+                slug.push(c);
+            }
+        }
+        slug
     }
 }
 

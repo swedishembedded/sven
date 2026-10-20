@@ -468,3 +468,19 @@ workflow:
         .as_str()
         .is_some_and(|m| m.contains("coverage.line_pct")));
 }
+
+#[test]
+fn a_file_check_names_the_item_it_belongs_to() {
+    let yaml = workflow(
+        "{ input: modules }",
+        "    outputs: [\"reports/{{ item_id }}.md\"]",
+    );
+    let (mut m, mut ctx, mut state, _) = begin(&yaml, json!({ "modules": modules(2) }));
+    let fx = drive(&mut m, &mut ctx, &mut state, turn(THREAD, "hardened"));
+    let Some(Effect::Verify { spec }) = fx.into_iter().find(|e| matches!(e, Effect::Verify { .. }))
+    else {
+        panic!("the item's output is verified before its checks run");
+    };
+    let spec = serde_json::to_value(&spec).expect("spec");
+    assert_eq!(spec["path"], "reports/m000.md");
+}
