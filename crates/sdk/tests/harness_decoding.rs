@@ -40,10 +40,13 @@ outputs:
   done: { type: string, value: "{{ tasks.work.output }}" }
 "#;
 
+/// What a request was sent with: its temperature and its thinking switch.
+type Sent = (Option<f64>, Option<bool>);
+
 /// Answers "ok" and keeps what each request was sent with.
 #[derive(Default)]
 struct Capturing {
-    seen: Arc<Mutex<Vec<(Option<f64>, Option<bool>)>>>,
+    seen: Arc<Mutex<Vec<Sent>>>,
     conversations: Arc<Mutex<Vec<Vec<String>>>>,
 }
 

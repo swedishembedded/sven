@@ -453,7 +453,9 @@ pub async fn stream_turn(
     let mut unparsed_arguments: HashMap<String, String> = HashMap::new();
     let mut issued_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut sampled = Sampled {
-        decoding: limits.recorded_decoding(),
+        decoding: Some(limits.recorded_decoding())
+            .filter(|d| !d.is_empty())
+            .map(Box::new),
         ..Sampled::default()
     };
 

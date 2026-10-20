@@ -47,8 +47,8 @@ pub struct Sampled {
     pub logprobs: Vec<f64>,
     /// The sampling and thinking settings the request was sent with, when
     /// any were made (a harness step can set them per turn).
-    #[serde(default, skip_serializing_if = "TurnDecoding::is_empty")]
-    pub decoding: TurnDecoding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decoding: Option<Box<TurnDecoding>>,
 }
 
 impl Sampled {
@@ -61,7 +61,7 @@ impl Sampled {
             && self.logprobs.is_empty()
             && self.prompt_token_ids.is_empty()
             && self.identity.is_empty()
-            && self.decoding.is_empty()
+            && self.decoding.is_none()
     }
 }
 

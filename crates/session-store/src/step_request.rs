@@ -76,10 +76,7 @@ pub fn record_response(
     let identity = &sampled.identity;
     let facts: [(&str, Option<Value>); 6] = [
         ("seed", sampled.seed.map(Value::from)),
-        (
-            "decoding",
-            (!sampled.decoding.is_empty()).then(|| json!(sampled.decoding)),
-        ),
+        ("decoding", sampled.decoding.as_ref().map(|d| json!(d))),
         (
             "adapter",
             identity

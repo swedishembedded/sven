@@ -17,10 +17,13 @@ use sven_turn::{stream_turn, TurnLimits};
 use sven_vocab::{SessionEvent, TurnDecoding};
 use tokio::sync::mpsc;
 
+/// What a request was sent with: its sampling and its thinking switch.
+type Sent = (SamplingParams, Option<bool>);
+
 /// A provider that answers "ok" and keeps the requests it was sent.
 #[derive(Default)]
 struct Capturing {
-    seen: Arc<Mutex<Vec<(SamplingParams, Option<bool>)>>>,
+    seen: Arc<Mutex<Vec<Sent>>>,
 }
 
 #[async_trait]
@@ -44,7 +47,7 @@ impl ModelProvider for Capturing {
     }
 }
 
-async fn run(limits: TurnLimits) -> (Vec<(SamplingParams, Option<bool>)>, Vec<SessionEvent>) {
+async fn run(limits: TurnLimits) -> (Vec<Sent>, Vec<SessionEvent>) {
     let provider = Capturing::default();
     let (tx, mut rx) = mpsc::channel(64);
     stream_turn(
@@ -108,7 +111,7 @@ async fn the_settings_a_request_used_are_recorded_with_it() {
             _ => None,
         })
         .expect("a request with settings reports them");
-    assert_eq!(sampled.decoding, step_settings());
+    assert_eq!(sampled.decoding.as_deref(), Some(&step_settings()));
 }
 
 #[tokio::test]
