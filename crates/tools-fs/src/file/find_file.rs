@@ -10,7 +10,7 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
-use sven_tool_api::PathScope;
+use sven_tool_api::{no_match_hint, PathScope};
 
 /// The `find_file` tool. Its paths resolve through the [`PathScope`] it is built
 /// with; [`Default`] is unconfined.
@@ -295,6 +295,7 @@ impl Tool for FindFileTool {
             Ok(p) => p,
             Err(refused) => return refused,
         };
+        let hint_root = root_path.clone();
 
         // Run the walkdir traversal on a blocking thread to avoid blocking
         // the async executor.
@@ -308,7 +309,12 @@ impl Tool for FindFileTool {
         match result {
             Ok(Ok(matches)) => {
                 if matches.is_empty() {
-                    ToolOutput::ok(&call.id, "(no matches)")
+                    // An empty answer with nothing to try next is how a model
+                    // ends up repeating the call: say what is there instead.
+                    let hint = tokio::task::spawn_blocking(move || no_match_hint(&hint_root))
+                        .await
+                        .unwrap_or_default();
+                    ToolOutput::ok(&call.id, format!("(no matches){hint}"))
                 } else {
                     ToolOutput::ok(&call.id, render_page(matches, max))
                 }
@@ -516,6 +522,25 @@ mod tests {
             .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("read_file"), "{}", out.content);
+    }
+
+    /// "(no matches)" alone sent models back to the same call (22 of 253
+    /// attempts in one audit died on `**/*_test.py` in a tree whose tests were
+    /// `test_*.py`). The reply names what is under the root instead.
+    #[tokio::test]
+    async fn no_match_names_the_top_level_and_the_files_near_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/breaker.lua"), "x").unwrap();
+        let out = FindFileTool::default()
+            .execute(&call(
+                json!({"pattern": "**/*_test.py", "root": dir.path().to_str().unwrap()}),
+            ))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.starts_with("(no matches)"), "{}", out.content);
+        assert!(out.content.contains("src/"), "{}", out.content);
+        assert!(out.content.contains("src/breaker.lua"), "{}", out.content);
     }
 
     #[tokio::test]

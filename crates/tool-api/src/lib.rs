@@ -17,6 +17,7 @@ pub mod grep_match;
 pub mod params;
 pub mod path_scope;
 pub mod policy;
+pub mod search_hint;
 pub mod summary;
 pub mod tool;
 pub mod tool_summary;
@@ -26,6 +27,7 @@ pub use events::{TodoItem, TodoStatus, ToolEvent};
 pub use grep_match::GrepMatch;
 pub use path_scope::{PathScope, PathScopeError};
 pub use policy::{ApprovalPolicy, PermissionRequester};
+pub use search_hint::{no_match_hint, MAX_HINT_NAMES};
 pub use summary::{one_line_summary, SUMMARY_MAX_CHARS};
 pub use sven_hsm::ToolCapability;
 /// What a question gets when no person can answer it.

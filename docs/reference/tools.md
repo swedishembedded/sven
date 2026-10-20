@@ -101,6 +101,13 @@ file name anywhere below. Skips `.git`, `target`, `node_modules` and `.cargo`.
 | `max_results` | Default 40; the reply says when more matched |
 | `timeout_secs` | Seconds before the search stops (default 10) |
 
+When nothing matches, the reply is `(no matches)` followed by two bracketed
+lines: the searched directory's top-level entries (directories end in `/`) and
+the files within three levels of it, nearest first, at most 40 names each with
+a count of the rest. Hidden entries, `.git`, `target`, `node_modules`, `.cargo`,
+`__pycache__` and `.venv` are not listed. A search of a single file adds
+nothing.
+
 ### `grep`
 
 Search file contents by regular expression (ripgrep).
@@ -115,6 +122,8 @@ Search file contents by regular expression (ripgrep).
 | `limit` | Maximum matches (default 100) |
 | `output_mode` | `content` (default, `file:line:col:text`), `files_with_matches` or `count` |
 | `context_lines` | Lines around each match in `content` mode (default 0) |
+
+An empty result carries the same directory hint as `find_file`.
 
 ### `write_file`
 

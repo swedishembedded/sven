@@ -12,7 +12,7 @@ use sven_hsm::ToolCapability;
 use sven_tool_api::params::{opt_bool, opt_str, opt_u64, require_str};
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
-use sven_tool_api::PathScope;
+use sven_tool_api::{no_match_hint, PathScope};
 
 /// Cached availability of `rg` (ripgrep).  Probed once on first use; the
 /// result never changes during a sven session.
@@ -157,6 +157,10 @@ impl Tool for GrepTool {
             }
         };
 
+        let hint_root = workdir.map_or_else(
+            || std::path::PathBuf::from(&search_path),
+            |root| root.join(&search_path),
+        );
         let result = run_rg(
             workdir,
             &pattern,
@@ -171,7 +175,14 @@ impl Tool for GrepTool {
         .await;
 
         match result {
-            Ok(output) if output.trim().is_empty() => ToolOutput::ok(&call.id, "(no matches)"),
+            Ok(output) if output.trim().is_empty() => {
+                // Name what is there, so the model is not left at a bare
+                // "(no matches)" to repeat (see `no_match_hint`).
+                let hint = tokio::task::spawn_blocking(move || no_match_hint(&hint_root))
+                    .await
+                    .unwrap_or_default();
+                ToolOutput::ok(&call.id, format!("(no matches){hint}"))
+            }
             Ok(output) => ToolOutput::ok(&call.id, output),
             Err(e) => ToolOutput::err(&call.id, format!("grep error: {e}")),
         }
@@ -351,6 +362,22 @@ mod tests {
             name: "grep".into(),
             args,
         }
+    }
+
+    /// A search that finds nothing says what the searched directory holds, so
+    /// the model has something to try other than the same call again.
+    #[tokio::test]
+    async fn no_match_names_the_top_level_and_the_files_near_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("pkg")).unwrap();
+        std::fs::write(dir.path().join("pkg/cache.py"), "def get(): pass\n").unwrap();
+        let scope = PathScope::confined(dir.path()).unwrap();
+        let out = GrepTool::new(scope)
+            .execute(&call(json!({"pattern": "evicts the oldest", "path": "."})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.starts_with("(no matches)"), "{}", out.content);
+        assert!(out.content.contains("pkg/cache.py"), "{}", out.content);
     }
 
     /// A pattern or path that looks like an option is searched for, never
