@@ -121,6 +121,10 @@ pub struct CompactionPlan {
     /// The system message, if `messages` started with one - reattached at
     /// the front by [`finish_compaction`].
     pub system_msg: Option<Message>,
+    /// The first user message (the task), when it is among the summarized
+    /// messages - reattached verbatim by [`finish_compaction`] so a summary
+    /// can never be the only record of what the agent was asked to do.
+    pub task_msg: Option<Message>,
     /// Token estimate of `messages` before compaction (chars/4 heuristic,
     /// consistent with `sven_model::budget::estimate_request_tokens`'s
     /// message-side estimate), for `UiEvent::ContextCompacted` reporting.
@@ -158,6 +162,7 @@ pub fn prepare_compaction(
     }
 
     let to_summarize = &non_system[..start];
+    let task_msg = first_user_message(to_summarize);
     let keep_tail = non_system[start..].to_vec();
 
     let prompt = match strategy {
@@ -179,23 +184,30 @@ pub fn prepare_compaction(
         summarize_request,
         keep_tail,
         system_msg,
+        task_msg,
         tokens_before,
     })
 }
 
 /// Reassemble the final compacted history once the model has produced
 /// `summary_text` for `plan.summarize_request`: system message (if any),
-/// then the summary as an assistant message, then the preserved tail
-/// verbatim.
+/// then the task message (when it was summarized away), then the summary as
+/// an assistant message, then the preserved tail verbatim.
 #[must_use]
 pub fn finish_compaction(plan: CompactionPlan, summary_text: &str) -> Vec<Message> {
-    let mut result = Vec::with_capacity(2 + plan.keep_tail.len());
+    let mut result = Vec::with_capacity(3 + plan.keep_tail.len());
     if let Some(sys) = plan.system_msg {
         result.push(sys);
     }
+    result.extend(plan.task_msg);
     result.push(Message::assistant(summary_text));
     result.extend(plan.keep_tail);
     result
+}
+
+/// The first user message of `messages`: in a headless run, the task itself.
+fn first_user_message(messages: &[Message]) -> Option<Message> {
+    messages.iter().find(|m| m.role == Role::User).cloned()
 }
 
 /// Advance `start` (an index into `messages`, already at `len - keep`) past
@@ -223,8 +235,9 @@ fn clean_boundary_start(messages: &[Message], keep_n: usize) -> usize {
 /// a compaction prompt within the context window.
 ///
 /// Drops all but the last `keep_n` non-system messages and prepends a canned
-/// notice.  No model call is made - this is a purely deterministic operation
-/// that always succeeds regardless of session size.
+/// notice followed by the first user message (the task), unless that message
+/// is already in the preserved tail.  No model call is made - this is a purely
+/// deterministic operation that always succeeds regardless of session size.
 ///
 /// The preserved slice is adjusted forward until it starts at a clean message
 /// boundary - i.e. not inside a tool-call/tool-result group.  This prevents
@@ -243,17 +256,19 @@ pub fn emergency_compact(
         .collect();
     let start = clean_boundary_start(&non_system, keep_n);
     let preserved: Vec<Message> = non_system[start..].to_vec();
+    let task = first_user_message(&non_system[..start]);
     let notice = Message::assistant(
         "[Context emergency-compacted: earlier history was dropped to prevent a \
-         context-window overflow. The agent may lack full context for earlier \
-         decisions. Proceed carefully and ask the user to re-provide any missing \
-         requirements if needed.]",
+         context-window overflow. The original task message is kept below. \
+         Continue from the most recent messages and re-check any earlier \
+         decision before relying on it.]",
     );
     messages.clear();
     if let Some(sys) = system_msg {
         messages.push(sys);
     }
     messages.push(notice);
+    messages.extend(task);
     messages.extend(preserved);
     before
 }
@@ -736,14 +751,16 @@ mod tests {
         let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
         let final_msgs = finish_compaction(plan, "## Active Task\nSummary text here.");
         assert_eq!(final_msgs[0].role, Role::System);
-        assert_eq!(final_msgs[1].role, Role::Assistant);
+        assert_eq!(final_msgs[1].role, Role::User, "the task survives");
+        assert_eq!(final_msgs[1].as_text(), Some("question 0"));
+        assert_eq!(final_msgs[2].role, Role::Assistant);
         assert_eq!(
-            final_msgs[1].as_text(),
+            final_msgs[2].as_text(),
             Some("## Active Task\nSummary text here.")
         );
-        assert_eq!(final_msgs[2].as_text(), Some("question 3"));
-        assert_eq!(final_msgs[3].as_text(), Some("answer 3"));
-        assert_eq!(final_msgs.len(), 4);
+        assert_eq!(final_msgs[3].as_text(), Some("question 3"));
+        assert_eq!(final_msgs[4].as_text(), Some("answer 3"));
+        assert_eq!(final_msgs.len(), 5);
     }
 
     #[test]
@@ -751,8 +768,33 @@ mod tests {
         let msgs: Vec<Message> = long_history().into_iter().skip(1).collect();
         let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
         let final_msgs = finish_compaction(plan, "summary");
-        assert_eq!(final_msgs[0].role, Role::Assistant);
-        assert_eq!(final_msgs.len(), 3);
+        assert_eq!(final_msgs[0].as_text(), Some("question 0"));
+        assert_eq!(final_msgs[1].role, Role::Assistant);
+        assert_eq!(final_msgs.len(), 4);
+    }
+
+    #[test]
+    fn finish_compaction_does_not_repeat_a_task_that_is_in_the_tail() {
+        let msgs = vec![
+            Message::system("sys"),
+            Message::user("the task"),
+            Message::assistant("working"),
+        ];
+        // keep_recent 2 keeps both non-system messages: nothing to summarize.
+        assert!(prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).is_none());
+        let msgs = vec![
+            Message::user("the task"),
+            Message::assistant("a"),
+            Message::user("follow-up"),
+            Message::assistant("b"),
+        ];
+        let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 3).unwrap();
+        let out = finish_compaction(plan, "summary");
+        let tasks = out
+            .iter()
+            .filter(|m| m.as_text() == Some("the task"))
+            .count();
+        assert_eq!(tasks, 1, "{out:?}");
     }
 
     #[test]
@@ -801,9 +843,13 @@ mod tests {
         let mut msgs = make_history();
         // 4 non-system messages; keep 2
         emergency_compact(&mut msgs, None, 2);
-        // notice + 2 preserved = 3 non-system messages
+        // notice + the kept task + 2 preserved = 4 non-system messages
         let non_sys: Vec<_> = msgs.iter().filter(|m| m.role != Role::System).collect();
-        assert_eq!(non_sys.len(), 3, "notice + 2 preserved messages expected");
+        assert_eq!(
+            non_sys.len(),
+            4,
+            "notice + task + 2 preserved messages expected"
+        );
     }
 
     #[test]
@@ -827,6 +873,44 @@ mod tests {
             text.iter().any(|t| t.contains("recent reply")),
             "most recent assistant reply must be preserved"
         );
+    }
+
+    #[test]
+    fn emergency_compact_keeps_the_task_that_fell_out_of_the_tail() {
+        let mut msgs = vec![
+            Message::user("the task"),
+            Message::assistant("old reply"),
+            Message::user("later message"),
+            Message::assistant("later reply"),
+        ];
+        emergency_compact(&mut msgs, None, 2);
+        let text: Vec<&str> = msgs.iter().filter_map(Message::as_text).collect();
+        assert_eq!(text.iter().filter(|t| **t == "the task").count(), 1);
+        let task = text.iter().position(|t| *t == "the task").unwrap();
+        let tail = text.iter().position(|t| *t == "later message").unwrap();
+        assert!(
+            task < tail,
+            "the task precedes the preserved tail: {text:?}"
+        );
+        assert!(
+            !text.iter().any(|t| t.contains("re-provide")),
+            "nobody can answer in a headless run: {text:?}"
+        );
+    }
+
+    #[test]
+    fn emergency_compact_does_not_repeat_a_task_inside_the_tail() {
+        let mut msgs = vec![
+            Message::assistant("old"),
+            Message::user("the task"),
+            Message::assistant("reply"),
+        ];
+        emergency_compact(&mut msgs, None, 2);
+        let tasks = msgs
+            .iter()
+            .filter(|m| m.as_text() == Some("the task"))
+            .count();
+        assert_eq!(tasks, 1, "{msgs:?}");
     }
 
     #[test]
