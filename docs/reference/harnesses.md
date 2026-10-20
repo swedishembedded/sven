@@ -199,6 +199,11 @@ permission gate or its executors, not by the harness text.
    Reconciliation is not applied when a `tool_executor_override` replaces the
    tool slot, because that executor is the override's own.
 4. **Allowlist.** An `agent` step's `tools` list, as above.
+5. **Host ceiling.** `EngineBuilder::host_capabilities` caps every harness
+   run (and so every child) on an engine: the run's policy is the
+   intersection of its declaration and the ceiling, so a ceiling narrows and
+   never grants. `sven harness run --toolset coding` sets it from
+   `--allow-capability`. Without a ceiling the declaration is the whole cap.
 
 `parallel` and `delegate` need `SpawnChild`, and a child's depth is bounded by
 `max_delegate_depth`.

@@ -299,6 +299,12 @@ impl HarnessRun {
         if let Some(recorder) = self.recorder.as_mut() {
             machine = recorder.attach(machine, start);
         }
+        // The host's ceiling narrows the document's declaration, a fresh
+        // run's and a resumed run's alike; it never adds to it.
+        let policy = match self.engine.host_policy() {
+            Some(ceiling) => policy.intersect(&ceiling),
+            None => policy,
+        };
         builder = builder.with_machine(machine, policy);
 
         let session = builder

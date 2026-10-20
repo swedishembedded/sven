@@ -36,6 +36,9 @@ pub struct Engine {
     toolset: Toolset,
     machines: Option<Arc<sven_machines::ModeRegistry>>,
     paths: sven_tool_api::PathScope,
+    /// The most a harness run on this engine may do, whatever its document
+    /// declares; `None` leaves the document's own declaration the whole cap.
+    host_capabilities: Option<Arc<[sven_hsm::ToolCapability]>>,
     /// The named harnesses this engine's sessions resolve `delegate` and
     /// `parallel` children against, and that [`Engine::load_harness`]
     /// registers into.
@@ -263,6 +266,15 @@ impl Engine {
         self.paths.root()
     }
 
+    /// The host's capability ceiling for harness runs, when one is set.
+    pub(crate) fn host_policy(&self) -> Option<sven_hsm::PermissionPolicy> {
+        self.host_capabilities.as_ref().map(|caps| {
+            sven_hsm::PermissionPolicy::builder()
+                .allow_globally(caps.iter().copied())
+                .build()
+        })
+    }
+
     pub(crate) fn paths(&self) -> sven_tool_api::PathScope {
         self.paths.clone()
     }
@@ -301,6 +313,7 @@ pub struct EngineBuilder {
     toolset: Toolset,
     machines: Option<sven_machines::ModeRegistry>,
     project_root: Option<std::path::PathBuf>,
+    host_capabilities: Option<Vec<sven_hsm::ToolCapability>>,
 }
 
 impl EngineBuilder {
@@ -395,6 +408,25 @@ impl EngineBuilder {
     #[must_use]
     pub fn project_root(mut self, root: impl Into<std::path::PathBuf>) -> Self {
         self.project_root = Some(root.into());
+        self
+    }
+
+    /// Caps what every harness run on this engine may do at `capabilities`.
+    ///
+    /// A harness document declares the capabilities it needs; the host
+    /// decides how many of them it is willing to grant. A run holds a
+    /// capability only when its document declares it **and** this ceiling
+    /// lists it - a ceiling never grants what a document did not ask for,
+    /// and a delegated child can hold no more than its parent does. An
+    /// empty list grants nothing. Without a ceiling the document's
+    /// declaration is the whole cap. Agents driven by a mode (not a
+    /// harness) are not affected: their cap is the mode's policy.
+    #[must_use]
+    pub fn host_capabilities(
+        mut self,
+        capabilities: impl IntoIterator<Item = sven_hsm::ToolCapability>,
+    ) -> Self {
+        self.host_capabilities = Some(capabilities.into_iter().collect());
         self
     }
 
@@ -513,6 +545,7 @@ impl EngineBuilder {
             toolset: self.toolset,
             machines: self.machines.map(Arc::new),
             paths,
+            host_capabilities: self.host_capabilities.map(Into::into),
             harnesses: Arc::new(sven_harness_runtime::HarnessRegistry::new()),
         })
     }
