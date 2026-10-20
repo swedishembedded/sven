@@ -182,35 +182,54 @@ fn a_failed_gate_earns_a_repair_turn_that_sees_the_output_and_then_the_end() {
 
 #[test]
 fn every_way_a_gate_cannot_be_shown_to_pass_is_a_failure() {
-    let reports: Vec<(&str, Event)> = {
-        let id = |m: &HarnessMachine| {
-            let Some(Effect::CallTool { call_id, .. }) = m.step_effect() else {
-                panic!("gate call expected")
-            };
-            call_id
+    let cases: [(&str, Value, &str); 6] = [
+        (
+            "timeout",
+            json!({"exit_code": null, "timed_out": true, "error": null, "stdout": "", "stderr": ""}),
+            "timeout",
+        ),
+        (
+            "spawn error",
+            json!({"exit_code": null, "timed_out": false, "error": "no such file", "stdout": "", "stderr": ""}),
+            "exec_error",
+        ),
+        (
+            "no exit status",
+            json!({"exit_code": null, "timed_out": false, "error": null}),
+            "exec_error",
+        ),
+        (
+            "zero exit with an error",
+            json!({"exit_code": 0, "timed_out": false, "error": "killed"}),
+            "exec_error",
+        ),
+        (
+            "zero exit but timed out",
+            json!({"exit_code": 0, "timed_out": true, "error": null}),
+            "timeout",
+        ),
+        (
+            "not json",
+            Value::String("tests passed".into()),
+            "exec_error",
+        ),
+    ];
+    for (what, report, kind) in cases {
+        // A report is JSON text; the last case is plain text, not a report.
+        let observation = if report.is_string() {
+            report
+        } else {
+            report.to_string().into()
         };
-        let mut out = Vec::new();
-        for (what, observation, kind) in [
-            ("timeout", json!({"exit_code": null, "timed_out": true, "error": null, "stdout": "", "stderr": ""}).to_string().into(), "timeout"),
-            ("spawn error", json!({"exit_code": null, "timed_out": false, "error": "no such file", "stdout": "", "stderr": ""}).to_string().into(), "exec_error"),
-            ("no exit status", json!({"exit_code": null, "timed_out": false, "error": null}).to_string().into(), "exec_error"),
-            ("not json", Value::String("tests passed".into()), "exec_error"),
-            ("zero exit with an error", json!({"exit_code": 0, "timed_out": false, "error": "killed"}).to_string().into(), "exec_error"),
-            ("zero exit but timed out", json!({"exit_code": 0, "timed_out": true, "error": null}).to_string().into(), "timeout"),
-        ] {
-            let (mut m, mut ctx, mut state) = begin();
-            let _ = finish_turn(&mut m, &mut ctx, &mut state, "done");
-            let call = id(&m);
-            let _ = drive(&mut m, &mut ctx, &mut state, answer(call, observation));
-            assert_ne!(state, HarnessState::Completed, "{what} must not pass");
-            let gate = &run_state(&ctx)["steps"]["fix__v0_test_a0"]["value"];
-            assert_eq!(gate["passed"], false, "{what}");
-            assert_eq!(gate["kind"], kind, "{what}");
-            out.push((what, Event::user_message("x")));
-        }
-        out
-    };
-    assert_eq!(reports.len(), 6);
+        let (mut m, mut ctx, mut state) = begin();
+        let fx = finish_turn(&mut m, &mut ctx, &mut state, "done");
+        let (call, _) = gate_call(&fx);
+        let _ = drive(&mut m, &mut ctx, &mut state, answer(call, observation));
+        assert_ne!(state, HarnessState::Completed, "{what} must not pass");
+        let gate = &run_state(&ctx)["steps"]["fix__v0_test_a0"]["value"];
+        assert_eq!(gate["passed"], false, "{what}");
+        assert_eq!(gate["kind"], kind, "{what}");
+    }
 }
 
 #[test]
