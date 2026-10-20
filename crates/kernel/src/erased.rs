@@ -30,6 +30,7 @@ pub struct ErasedRuntime {
     status_rx: watch::Receiver<RuntimeStatus>,
     trail: AuditTrailHandle,
     capture_tx: mpsc::Sender<oneshot::Sender<Snapshot>>,
+    tap: watch::Sender<Option<Arc<Snapshot>>>,
     cancel: CancelScope,
     handle: AbortOnDrop<ErasedReport>,
 }
@@ -155,6 +156,7 @@ impl ErasedRuntime {
         let (tx, rx) = mpsc::channel::<Event>(queue_depth.max(1));
         let (status_tx, status_rx) = watch::channel(RuntimeStatus::default());
         let (capture_tx, capture_rx) = mpsc::channel::<oneshot::Sender<Snapshot>>(1);
+        let (tap, _) = watch::channel(None);
         let sink = EventSink { tx };
         let obs = ObservationSink::new(OBSERVATION_CAPACITY);
         let cancel = children.scope();
@@ -169,6 +171,7 @@ impl ErasedRuntime {
             sink.clone(),
             obs.clone(),
             status_tx,
+            tap.clone(),
             trail.clone(),
             children,
         ));
@@ -179,6 +182,7 @@ impl ErasedRuntime {
             status_rx,
             trail,
             capture_tx,
+            tap,
             cancel,
             handle: AbortOnDrop::new(handle),
         }
@@ -242,6 +246,21 @@ impl ErasedRuntime {
     #[must_use]
     pub fn audit_trail(&self) -> AuditTrailHandle {
         self.trail.clone()
+    }
+
+    /// Taps the machine: the receiver holds the latest state and context
+    /// taken after a dispatch, wherever the machine is, in flight or at rest.
+    ///
+    /// A [`capture`](Self::capture) waits for the event queue to drain, which
+    /// a run of long effects (model turns, tools) never does between steps;
+    /// the tap does not wait. Only the latest snapshot is kept, so a slow
+    /// reader skips states, and the context is cloned after a dispatch only
+    /// while a receiver exists. A snapshot taken mid-flight is the state a
+    /// cancelled run leaves behind; it is the caller's to know whether its
+    /// machine resumes from one.
+    #[must_use]
+    pub fn snapshots(&self) -> watch::Receiver<Option<Arc<Snapshot>>> {
+        self.tap.subscribe()
     }
 
     /// Waits until the machine's state label equals `label` or is terminal.
@@ -320,6 +339,7 @@ async fn erased_consumer_loop<E>(
     sink: EventSink,
     obs: ObservationSink,
     status_tx: watch::Sender<RuntimeStatus>,
+    tap: watch::Sender<Option<Arc<Snapshot>>>,
     trail: AuditTrailHandle,
     mut children: Children,
 ) -> ErasedReport
@@ -430,6 +450,9 @@ where
         let effects = outcome.effects;
         // Mirror the audit trail *before* running effects (see init above).
         trail.sync_from(&ctx);
+        // The transition is complete and its effects have not begun: the tap
+        // shows a long effect (a model turn) as in flight, not as over.
+        tap_snapshot(&tap, machine.state_label(), &ctx);
         tokio::select! {
             biased;
             () = cancel.cancelled() => {}
@@ -478,6 +501,17 @@ where
     ErasedReport {
         state_label: machine.state_label(),
         ctx,
+    }
+}
+
+/// Hands the tap's receivers the state and context after a dispatch's
+/// transition. The context is cloned only while someone is tapping.
+fn tap_snapshot(tap: &watch::Sender<Option<Arc<Snapshot>>>, state: String, ctx: &Context) {
+    if tap.receiver_count() > 0 {
+        tap.send_replace(Some(Arc::new(Snapshot {
+            state,
+            context: ctx.clone(),
+        })));
     }
 }
 

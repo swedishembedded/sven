@@ -465,6 +465,17 @@ repeated tool result, model turn, approval or branch completion - settles
 nothing a second time; `harness_checkpoint_interruptions.rs` holds these
 cases for each waiting state and for retries.
 
+**Item checkpoints.** A host that must survive a kill it cannot catch (an OOM
+kill, a power cut) asks for a checkpoint each time a `for_each` item completes:
+`HarnessRun::on_item_checkpoint(sink)`. The run is tapped after every dispatch
+(`ErasedRuntime::snapshots`), so the checkpoint arrives while the next item is
+already underway, not when the run next comes to rest; it is a checkpoint like
+the one a deadline leaves, resumable with `Harness::resume`, and the item in
+flight starts its interrupted step again. `sven harness run --toolset coding
+--checkpoint-out FILE` keeps the latest one in `FILE` (replaced atomically,
+removed when the run ends with a verdict). The same tap publishes the trace
+as the run goes: a step's records no longer wait for the step to end.
+
 **Recording.** `HarnessRun::with_recording()` keeps the machine's input event
 log - kickoff, model answers, tool results, child verdicts, approvals -
 exposed as a `HarnessRecording` (JSON, format `sven-harness-recording/1`) by
@@ -521,6 +532,7 @@ assert_eq!(replay.trace, outcome.trace);
 | `HarnessRun::execute(RunOptions)` | run to a verdict or a bound; once per run |
 | `RunOptions::{cancel, deadline, max_output_tokens}` | cancellation is a `CancelToken`; a bound suspends |
 | `HarnessRun::{events, subscribe_trace, run_id, checkpoint, with_recording, recording, trajectory}` | observation and export |
+| `HarnessRun::on_item_checkpoint(sink)` | a checkpoint each time a `for_each` item completes |
 | `HarnessOutcome { conclusion, result, usage, trace, steps }` | `result` is the plan's verdict, `None` when a bound stopped the run first |
 | `TraceRecord`, `HarnessEvent`, `harness_plan::*` | re-exported so an application need not name the crates behind the facade |
 

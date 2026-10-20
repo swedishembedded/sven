@@ -204,10 +204,17 @@ pub struct EngineRun {
     /// Suspends the run, leaving a checkpoint, once this token is
     /// cancelled (a host's signal handler, say).
     pub suspend: Option<sven_sdk::CancelToken>,
+    /// Called with a checkpoint each time a `for_each` item completes, for a
+    /// host that keeps the latest one durable so a killed run resumes at the
+    /// item it was on.
+    pub item_checkpoint: Option<CheckpointFn>,
 }
 
 /// A trace observer; see [`EngineRun::progress`].
 pub type ProgressFn = Arc<dyn Fn(&sven_sdk::TraceRecord) + Send + Sync>;
+
+/// A checkpoint observer; see [`EngineRun::item_checkpoint`].
+pub type CheckpointFn = Arc<dyn Fn(&HarnessCheckpoint) + Send + Sync>;
 
 /// A session-event observer; see [`EngineRun::activity`].
 pub type ActivityFn = Arc<dyn Fn(&sven_sdk::SessionEvent) + Send + Sync>;
@@ -240,6 +247,7 @@ pub async fn run_on_engine(
             progress: request.progress.clone(),
             activity: request.activity.clone(),
             suspend: request.suspend.clone(),
+            item_checkpoint: request.item_checkpoint.clone(),
             cancel_when: None,
         },
     )
@@ -276,6 +284,7 @@ pub async fn resume_on_engine(
             progress: request.progress.clone(),
             activity: request.activity.clone(),
             suspend: request.suspend.clone(),
+            item_checkpoint: request.item_checkpoint.clone(),
             cancel_when: None,
         },
     )
@@ -385,6 +394,7 @@ impl Prepared {
                 progress: None,
                 activity: None,
                 suspend: None,
+                item_checkpoint: None,
                 cancel_when: request.bounds.cancel_on_tool_start.clone().map(|tool| {
                     let books = Arc::clone(&self.books);
                     Box::new(move || books.invoked_names().contains(&tool)) as Condition
@@ -426,6 +436,8 @@ struct Drive {
     activity: Option<ActivityFn>,
     /// Suspends the run when cancelled.
     suspend: Option<sven_sdk::CancelToken>,
+    /// Told of a checkpoint when a work item completes.
+    item_checkpoint: Option<CheckpointFn>,
     /// Polled while the run goes; the run is cancelled once it holds.
     cancel_when: Option<Condition>,
 }
@@ -499,6 +511,9 @@ async fn drive_run(
     trajectory: bool,
     drive: Drive,
 ) -> Result<RunResult, TestkitError> {
+    if let Some(sink) = drive.item_checkpoint.clone() {
+        run = run.on_item_checkpoint(move |checkpoint| sink(&checkpoint));
+    }
     let cancel = CancelToken::new();
     let mut options = RunOptions::new().cancel(cancel.clone());
     if let Some(ms) = bounds.deadline_ms {

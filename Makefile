@@ -204,7 +204,7 @@ test/harness/runtime:
 
 ## test/harness/sdk - harness through the SDK: run, replay, authz, children and the 1000-run stress test
 test/harness/sdk:
-	$(HARNESS_TEST) -p sven-sdk --test harness_run --test harness_replay --test harness_authz --test harness_host_policy --test harness_children --test harness_stress -- --test-threads=4
+	$(HARNESS_TEST) -p sven-sdk --test harness_run --test harness_replay --test harness_authz --test harness_host_policy --test harness_item_checkpoints --test harness_children --test harness_stress -- --test-threads=4
 
 ## test/harness/testkit - harness test kit: sven-harness-testkit
 test/harness/testkit:
@@ -216,7 +216,7 @@ test/harness/samples:
 
 ## test/harness/cli - the `sven harness` command line
 test/harness/cli:
-	$(HARNESS_TEST) -p sven --test harness_cli --test harness_production --test harness_views --test harness_isolation -- --test-threads=4
+	$(HARNESS_TEST) -p sven --test harness_cli --test harness_production --test harness_suspension --test harness_views --test harness_isolation -- --test-threads=4
 
 ## test/harness/local-model - OPT-IN: the live-local case of the ticket-routing sample against a server you already run
 ##   Needs ENDPOINT=<url> (and optionally MODEL=<provider/name>) on the make command

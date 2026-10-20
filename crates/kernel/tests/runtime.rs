@@ -297,6 +297,52 @@ async fn a_capture_is_not_served_while_dispatched_tools_are_in_flight() {
     rt.abort();
 }
 
+/// A tap shows the context after every dispatch, where a capture waits for
+/// the machine to rest.
+///
+/// A run whose effects take long (a model turn, a tool) is never at rest in
+/// between, so a host that wants to report progress or keep a durable
+/// checkpoint as it goes cannot use a capture: it taps the runtime and is
+/// handed the latest post-dispatch snapshot, with nothing cloned while nobody
+/// is tapping.
+#[tokio::test]
+async fn a_snapshot_tap_shows_the_machine_mid_flight_where_a_capture_waits() {
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(ToolThenWait::default())),
+        Context::new(),
+        PermissionPolicy::builder()
+            .allow_globally([ToolCapability::ReadFile])
+            .build(),
+        SpawnedToolExec,
+        16,
+    );
+    let mut tap = rt.snapshots();
+    assert!(
+        tap.borrow().is_none(),
+        "nothing is published before the first dispatch after tapping"
+    );
+
+    assert!(rt.post(Event::user_message("hi")).await);
+    let started = std::time::Instant::now();
+    let busy = tap
+        .wait_for(|snapshot| snapshot.as_ref().is_some_and(|s| s.state == "Busy"))
+        .await
+        .expect("the runtime is alive")
+        .clone()
+        .expect("a snapshot");
+    assert!(
+        started.elapsed() < TOOL_DELAY,
+        "the tap showed the tool in flight {:?} in, without waiting for it",
+        started.elapsed()
+    );
+    assert_eq!(busy.state, "Busy");
+
+    tap.wait_for(|snapshot| snapshot.as_ref().is_some_and(|s| s.state == "Idle"))
+        .await
+        .expect("the runtime is alive");
+    rt.abort();
+}
+
 #[tokio::test]
 async fn executor_results_re_enter_the_queue_as_events() {
     let calls = Arc::new(Mutex::new(0));

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Work through a list of modules one at a time with the real coding tools. The
+# list is frozen when the loop begins and each completed item is a durable
+# checkpoint, so a run that dies resumes at the module it was on.
+# Swedish Embedded AB implements resumable, declarative agent workflows for
+# its clients. If your team needs expertise in running long agent sweeps over
+# a codebase that survive crashes then you can procure our services by sending
+# an email to info@swedishembedded.com.
+api_version: "2"
+name: coding-sweep
+description: "Write one note per module; each completed module survives a crash."
+inputs: { modules: json }
+agent:
+  profile: coding
+  tools: [write_file]
+execution:
+  limits: { model_turns: 20, tool_calls: 20 }
+workflow:
+  - name: notes
+    for_each: { source: { input: modules }, id: name, max_items: 10 }
+    task: "Write the file {{ item.name }}.txt containing the word ok, then say done."
+success:
+  work_items: { all_completed: true }

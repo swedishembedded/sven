@@ -62,8 +62,8 @@ pub use report::{
     Mismatch, RunStatus, RunSummary, SuiteReport, VariantSummary,
 };
 pub use run::{
-    replay_once, resume_on_engine, resume_once, run_on_engine, run_once, ActivityFn, EngineRun,
-    ProgressFn, ReplaySummary, RunRequest, RunResult, Workspace,
+    replay_once, resume_on_engine, resume_once, run_on_engine, run_once, ActivityFn, CheckpointFn,
+    EngineRun, ProgressFn, ReplaySummary, RunRequest, RunResult, Workspace,
 };
 pub use runner::{run_case, run_suite, RunnerOptions};
 pub use stats::{bootstrap_mean, Estimate, CONFIDENCE};

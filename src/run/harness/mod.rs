@@ -9,8 +9,9 @@
 //! configuration, and a real model is built only under the testkit's explicit
 //! opt-in, so no subcommand can start or contact a model by default.
 //!
-//! Progress lines (`[sven:harness] ...`) are derived from the run's trace
-//! after it ends: the testkit does not expose the live event stream.
+//! Progress lines (`[sven:harness] ...`) are printed as the run goes under
+//! `--toolset coding` (the testkit streams the trace and the agent's tool
+//! calls) and derived from the run's trace after it ends on the fixture path.
 //!
 //! Swedish Embedded AB implements offline verification for programmable agent
 //! harnesses for its clients. If your team needs expertise in testing

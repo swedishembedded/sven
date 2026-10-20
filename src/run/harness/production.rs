@@ -22,8 +22,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use sven_harness_testkit::{
-    resume_on_engine, run_on_engine, ActivityFn, Bounds, EngineRun, HarnessDir, ProgressFn,
-    RunResult,
+    resume_on_engine, run_on_engine, ActivityFn, Bounds, CheckpointFn, EngineRun, HarnessDir,
+    ProgressFn, RunResult,
 };
 use sven_sdk::config::Config;
 use sven_sdk::tool::ToolCapability;
@@ -58,6 +58,9 @@ pub(super) struct Production {
     approvals: ApprovalsArg,
     first_byte_timeout_secs: Option<u64>,
     capabilities: Vec<ToolCapability>,
+    /// Where `--checkpoint-out` keeps the latest checkpoint while the run
+    /// goes; removed when the run ends with a verdict.
+    progress_checkpoint: Option<PathBuf>,
     run: EngineRun,
 }
 
@@ -134,6 +137,16 @@ impl Production {
                 }
             }) as ActivityFn
         });
+        let item_checkpoint: Option<CheckpointFn> = args.checkpoint_out.clone().map(|file| {
+            Arc::new(move |checkpoint: &HarnessCheckpoint| {
+                if let Err(e) = write_atomically(&file, checkpoint) {
+                    eprintln!(
+                        "[sven:harness] warning: cannot keep the progress checkpoint {}: {e}",
+                        file.display()
+                    );
+                }
+            }) as CheckpointFn
+        });
         Ok(Self {
             workspace,
             provider: provider.to_string(),
@@ -143,6 +156,7 @@ impl Production {
             approvals,
             first_byte_timeout_secs: args.first_byte_timeout,
             capabilities,
+            progress_checkpoint: args.checkpoint_out.clone(),
             run: EngineRun {
                 input: request::explicit_input(args)?.unwrap_or_else(|| serde_json::json!({})),
                 bounds: request::bounds(args, Bounds::default())?,
@@ -151,6 +165,7 @@ impl Production {
                 progress,
                 activity,
                 suspend: Some(suspend_on_signal()),
+                item_checkpoint,
             },
         })
     }
@@ -162,7 +177,7 @@ impl Production {
 
     /// The engine of the run: the real model, the coding toolset confined to
     /// the workspace, the approval mode and the host ceiling.
-    fn engine(self) -> Result<(Engine, EngineRun), Failure> {
+    fn engine(self) -> Result<(Engine, EngineRun, Option<PathBuf>), Failure> {
         let mut config = Config::default();
         let model = &mut config.model;
         model.provider = self.provider;
@@ -192,14 +207,15 @@ impl Production {
         let engine = builder
             .build()
             .map_err(|e| usage(format!("cannot assemble the run: {e}")))?;
-        Ok((engine, self.run))
+        Ok((engine, self.run, self.progress_checkpoint))
     }
 }
 
 /// Starts the harness in `dir` under `production`.
 pub(super) async fn run(dir: &HarnessDir, production: Production) -> Result<RunResult, Failure> {
-    let (engine, request) = production.engine()?;
-    run_on_engine(&engine, dir, request).await.map_err(kit)
+    let (engine, request, progress_checkpoint) = production.engine()?;
+    let result = run_on_engine(&engine, dir, request).await.map_err(kit)?;
+    Ok(settled(result, progress_checkpoint))
 }
 
 /// Resumes `checkpoint` of the harness in `dir` under `production`.
@@ -208,10 +224,31 @@ pub(super) async fn resume(
     checkpoint: HarnessCheckpoint,
     production: Production,
 ) -> Result<RunResult, Failure> {
-    let (engine, request) = production.engine()?;
-    resume_on_engine(&engine, dir, checkpoint, request)
+    let (engine, request, progress_checkpoint) = production.engine()?;
+    let result = resume_on_engine(&engine, dir, checkpoint, request)
         .await
-        .map_err(kit)
+        .map_err(kit)?;
+    Ok(settled(result, progress_checkpoint))
+}
+
+/// A run that ended with a verdict has no use for the checkpoint kept while
+/// it went: left behind, it would offer a resume of a finished run. A
+/// suspended run's final checkpoint is written by the caller.
+fn settled(result: RunResult, progress_checkpoint: Option<PathBuf>) -> RunResult {
+    if let (None, Some(file)) = (&result.checkpoint, progress_checkpoint) {
+        let _ = std::fs::remove_file(file);
+    }
+    result
+}
+
+/// Writes `checkpoint` to `file` so that a reader, or a crash, sees the
+/// previous checkpoint or this one, never half of it.
+fn write_atomically(file: &Path, checkpoint: &HarnessCheckpoint) -> std::io::Result<()> {
+    let mut staging = file.as_os_str().to_owned();
+    staging.push(".partial");
+    let staging = PathBuf::from(staging);
+    std::fs::write(&staging, serde_json::to_vec_pretty(checkpoint)?)?;
+    std::fs::rename(&staging, file)
 }
 
 fn capability_named(name: &str) -> Result<ToolCapability, Failure> {

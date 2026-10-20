@@ -75,7 +75,12 @@ pub struct HarnessRun {
     pub(super) evidence: Option<Evidence>,
     /// The directory this run works in, when it is not the engine's.
     workspace: Option<sven_tool_api::PathScope>,
+    /// Told of a checkpoint whenever a `for_each` item has completed.
+    item_checkpoint: Option<ItemCheckpointSink>,
 }
+
+/// Receives the checkpoint a host asked for at each completed work item.
+type ItemCheckpointSink = Box<dyn Fn(HarnessCheckpoint) + Send + Sync>;
 
 struct RestoredMachine {
     machine: Box<dyn ErasedMachine>,
@@ -147,6 +152,7 @@ impl HarnessRun {
             recorder: None,
             evidence: None,
             workspace: None,
+            item_checkpoint: None,
         }
     }
 
@@ -189,6 +195,33 @@ impl HarnessRun {
         })?;
         self.workspace = Some(scope);
         Ok(self)
+    }
+
+    /// Hands `sink` a checkpoint each time a `for_each` item completes, so a
+    /// host can keep the latest one durable: a run killed without warning
+    /// then resumes at the item it was on ([`super::Harness::resume`]) and
+    /// never repeats a completed one. The checkpoint is taken the next time
+    /// the machine is at rest after the item, so it can already include
+    /// work on the following one.
+    #[must_use]
+    pub fn on_item_checkpoint(
+        mut self,
+        sink: impl Fn(HarnessCheckpoint) + Send + Sync + 'static,
+    ) -> Self {
+        self.item_checkpoint = Some(Box::new(sink));
+        self
+    }
+
+    /// Gives the host's item-checkpoint sink the run as it rests at
+    /// `snapshot`, when an item has just completed.
+    fn checkpoint_item(&self, item_completed: bool, snapshot: &Snapshot) {
+        if let (true, Some(sink)) = (item_completed, &self.item_checkpoint) {
+            sink(checkpoint_at(
+                snapshot.clone(),
+                &self.plan.digest,
+                &self.run_id,
+            ));
+        }
     }
 
     /// The checkpoint of a run that a bound stopped, after
@@ -403,6 +436,12 @@ impl HarnessRun {
             // publishes from. `None` means the consumer task is gone - the
             // run is over, and the final state comes from the join below.
             let mut settled = Box::pin(session.runtime.capture());
+            // The tap shows the run after every dispatch, in the middle of a
+            // long model turn too, where a capture would still be waiting:
+            // the trace goes out, and item checkpoints are taken, as the run
+            // goes. It is dropped from the select once the runtime is gone.
+            let mut tap = session.runtime.snapshots();
+            let mut tap_open = true;
 
             loop {
                 tokio::select! {
@@ -454,9 +493,11 @@ impl HarnessRun {
                         Err(broadcast::error::RecvError::Closed) => break,
                         Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     },
-                    captured = settled.as_mut() => match captured {
-                        Some(snapshot) => {
-                            publish_trace(
+                    changed = tap.changed(), if tap_open => {
+                        tap_open = changed.is_ok();
+                        let latest = tap.borrow_and_update().clone();
+                        if let Some(snapshot) = latest {
+                            let item_completed = publish_trace(
                                 &snapshot.context,
                                 &mut emitted_trace,
                                 &self.trace_tx,
@@ -464,6 +505,20 @@ impl HarnessRun {
                                 &self.run_id,
                                 &mut observed,
                             );
+                            self.checkpoint_item(item_completed, &snapshot);
+                        }
+                    },
+                    captured = settled.as_mut() => match captured {
+                        Some(snapshot) => {
+                            let item_completed = publish_trace(
+                                &snapshot.context,
+                                &mut emitted_trace,
+                                &self.trace_tx,
+                                &self.events,
+                                &self.run_id,
+                                &mut observed,
+                            );
+                            self.checkpoint_item(item_completed, &snapshot);
                             // A capture is only served when the machine has
                             // nothing left to do; two in a row over the very
                             // same processed count mean it can no longer make
@@ -530,18 +585,14 @@ impl HarnessRun {
             // rests. The program it ran under is this run's plan; the run
             // state may not have recorded the digest yet if it was stopped
             // before its first step.
-            self.checkpoint = Some(HarnessCheckpoint {
-                snapshot: Snapshot {
+            self.checkpoint = Some(checkpoint_at(
+                Snapshot {
                     state: report.state_label.clone(),
                     context: report.ctx,
                 },
-                plan_digest: run_state
-                    .plan_digest
-                    .clone()
-                    .unwrap_or_else(|| self.plan.digest.clone()),
-                bundle_digest: run_state.bundle_digest.clone(),
-                run_id: self.run_id.clone(),
-            });
+                &self.plan.digest,
+                &self.run_id,
+            ));
         }
         let (usage, _) = meter.finish(started.elapsed());
         let outcome = HarnessOutcome {
@@ -613,12 +664,26 @@ async fn settle_cancel(
     wind_down.reset(tokio::time::Instant::now() + WIND_DOWN);
 }
 
+/// The checkpoint of a run resting at `snapshot`. The program it ran under
+/// is the run state's recorded digest, or `plan_digest` when the run was
+/// stopped before its first step recorded one.
+fn checkpoint_at(snapshot: Snapshot, plan_digest: &str, run_id: &str) -> HarnessCheckpoint {
+    let state = HarnessRunState::load(&snapshot.context);
+    HarnessCheckpoint {
+        plan_digest: state.plan_digest.unwrap_or_else(|| plan_digest.to_string()),
+        bundle_digest: state.bundle_digest,
+        run_id: run_id.to_string(),
+        snapshot,
+    }
+}
+
 /// Publishes the trace records `ctx` gained since the last publish: each
 /// as a raw record on the trace stream and as its session event on the
 /// event stream, so one run's progress has one form everywhere. `observed`
 /// carries when the previous record was seen; a step's duration is the gap
 /// between observations - approximately what the step cost, zero when the
-/// run is observed in a burst.
+/// run is observed in a burst. Says whether a work item completed among
+/// the records published.
 fn publish_trace(
     ctx: &Context,
     emitted: &mut usize,
@@ -626,9 +691,11 @@ fn publish_trace(
     events: &broadcast::Sender<SessionEvent>,
     run_id: &str,
     observed: &mut Option<tokio::time::Instant>,
-) {
+) -> bool {
     let state = HarnessRunState::load(ctx);
+    let mut item_completed = false;
     for record in state.trace.iter().skip(*emitted) {
+        item_completed |= matches!(record, TraceRecord::ItemCompleted { .. });
         let duration_ms = observed
             .replace(tokio::time::Instant::now())
             .map_or(0, |previous| previous.elapsed().as_millis() as u64);
@@ -639,6 +706,7 @@ fn publish_trace(
         });
     }
     *emitted = state.trace.len();
+    item_completed
 }
 
 /// The verdict a finished run reported, read off its terminal state and

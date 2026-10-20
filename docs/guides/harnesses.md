@@ -259,6 +259,10 @@ sven harness run ./c-repair --toolset coding --workspace ./repo \
   the bare key. It is handed to the model client only, so no trace,
   recording, checkpoint or audit record carries it. A file inside the
   workspace is refused, because the agent could read it.
+- `--checkpoint-out FILE` also keeps the latest checkpoint while a `for_each`
+  sweep goes (written atomically after each completed item, removed when the
+  run ends with a verdict), so a run killed without warning resumes with
+  `harness resume --checkpoint FILE` at the item it was on.
 - `--first-byte-timeout SECS` raises how long a model call waits for the
   server's first bytes, for a server that queues requests.
 
@@ -278,8 +282,8 @@ compiler and its test succeed) passes.
 
 `run` prints `status:`, then `output:` or `failure: <code> - <message>`, then
 `steps:` on stdout. Unless `--quiet`, a `[sven:harness] {...}` line per trace
-record goes to stderr after the run ends (the same token the headless runner
-uses). `--json` replaces the stdout text with one JSON document:
+record goes to stderr (the same token the headless runner uses): as the run
+goes under `--toolset coding`, after the run ends on the fixture path. `--json` replaces the stdout text with one JSON document:
 
 ```text
 harness, plan_digest, bundle_digest, run_id, status, conclusion, output,

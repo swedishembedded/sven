@@ -146,8 +146,9 @@ pub enum HarnessCommands {
 
     /// Run a harness once.
     ///
-    /// Progress lines `[sven:harness] {...}` go to stderr after the run
-    /// (one per trace record, derived from the run's trace) unless --quiet.
+    /// Progress lines `[sven:harness] {...}` go to stderr unless --quiet:
+    /// one per trace record, as the run goes under `--toolset coding` and
+    /// after it ends otherwise.
     /// --json prints one JSON document on stdout and nothing else.
     ///
     /// A real model needs the explicit opt-in on the command line:
