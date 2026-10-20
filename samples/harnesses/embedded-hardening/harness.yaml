@@ -1,0 +1,123 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Test, simplify and harden an embedded C repository, module by module. The
+# workspace is a copy of repo/ (a disposable firmware fixture with failing
+# tests, a HAL dependency, gcov coverage and clang-tidy). Every verdict comes
+# from .hardening/run.sh, which the harness pins by hash together with the
+# hash list of the given tests: the agent cannot weaken the check or the
+# specification, only change the code under them.
+# Swedish Embedded AB implements verifiable test-and-harden workflows for
+# embedded C codebases for its clients. If your team needs expertise in
+# agent-driven firmware hardening that is judged by the build and the tests,
+# not by the agent, then you can procure our services by sending an email to
+# info@swedishembedded.com.
+api_version: "2"
+name: embedded-hardening
+description: "Test, simplify and harden an embedded C repository."
+agent:
+  profile: coding
+  tools: [read_file, write_file, edit_file, shell, find_file, grep]
+  instructions: |
+    Preserve externally observable behavior and hardware contracts.
+    Never weaken tests to make verification pass: the files under tests/ named
+    in .hardening/pins.sha256 and everything under .hardening/ are the check
+    and are not yours to change. New tests go in tests/extra_<module>.c.
+    Keep changes incremental and reviewable.
+execution:
+  workspace: repository
+  resume: true
+  limits: { model_turns: 600, tool_calls: 3000, delegate_depth: 2 }
+gates:
+  pinned_script: { artifact: .hardening/run.sh, sha256: e11887b846eba7451af195db339c0e84f254a78497f1ff98df80c910566c2c04 }
+  pinned_tests: { artifact: .hardening/pins.sha256, sha256: a0a403485b3d1f359ce1b0179574e133ddef6b0d215dea7c1226021eabaef507 }
+  build: { command: ["sh", ".hardening/run.sh", "build"], timeout: 300 }
+  test: { command: ["sh", ".hardening/run.sh", "test"], timeout: 600 }
+  module_test: { command: ["sh", ".hardening/run.sh", "test", "{{ item.module }}"], timeout: 300 }
+  coverage:
+    command: ["sh", ".hardening/run.sh", "coverage"]
+    timeout: 600
+    metrics:
+      line_pct: { file: .hardening/coverage.json, pointer: /line_pct, type: number }
+  lint: { command: ["sh", ".hardening/run.sh", "lint"], timeout: 600 }
+  layering: { command: ["sh", ".hardening/run.sh", "layering"], timeout: 60 }
+workflow:
+  - name: bootstrap
+    task: |
+      Discover the build system, toolchain and test setup of this repository.
+      .hardening/run.sh already provides build, test, coverage, lint and
+      layering subcommands; do not edit it. Write .hardening/toolchain.md: the
+      compiler and flags it uses, how to run each subcommand, what the HAL is
+      and where its host stand-in lives.
+    verify:
+      - pinned_script
+      - pinned_tests
+      - build
+      - { artifact: .hardening/toolchain.md, min_bytes: 80 }
+    repair: { attempts: 2 }
+  - name: plan
+    task: |
+      Inventory the repository's source modules (src/*.c). Write
+      .hardening/backlog.json as {"items": [{"module": "<name>"}, ...]}, one
+      item per module, in the order they should be hardened, and
+      .hardening/plan.md with the target architecture: which module may reach
+      the HAL, and what you intend to simplify. Do not modify production
+      source code.
+    outputs: [.hardening/backlog.json, .hardening/plan.md]
+    verify:
+      - { artifact: .hardening/backlog.json, min_bytes: 10 }
+      - { artifact: .hardening/plan.md, min_bytes: 40 }
+  - name: modules
+    for_each:
+      source: { json: { file: .hardening/backlog.json, pointer: /items } }
+      id: module
+      max_items: 20
+      covers: ["src/{{ item.module }}.c", "src/{{ item.module }}.h"]
+    checkpoint: each_item
+    task: |
+      Make the given tests of the module {{ item.module }} pass by fixing the
+      module (tests/test_{{ item.module }}.c is the specification; do not
+      change it), then simplify it. Cover public APIs, boundaries and error
+      handling; extra tests go in tests/extra_{{ item.module }}.c. Preserve
+      behavior and hardware contracts.
+    verify: [pinned_script, pinned_tests, build, module_test]
+    repair:
+      attempts: 2
+      prompt: |
+        The check {{ failure.gate }} failed for {{ item.module }}. Its output:
+        {{ failure.stdout }}
+        {{ failure.stderr }}
+        Fix the module, not the tests, and run .hardening/run.sh test {{ item.module }} yourself before you stop.
+  - name: coverage
+    until: { metric: coverage.line_pct, gte: 90, max_iterations: 4 }
+    task: |
+      Close the largest remaining coverage gap with genuine tests in
+      tests/extra_<module>.c (pass {{ iteration }}). Run .hardening/run.sh
+      coverage to see the figure. Do not exclude code to raise the number.
+    verify: [pinned_script, pinned_tests, test]
+  - name: architecture
+    task: |
+      Implement the architecture in .hardening/plan.md. The HAL must be
+      reached only from the modules that drive hardware: no public header may
+      include hal.h. Run .hardening/run.sh layering to check.
+    verify: [pinned_script, pinned_tests, build, test, layering]
+    repair: { attempts: 2 }
+  - name: production
+    task: |
+      Eliminate compiler and static analysis findings (.hardening/run.sh
+      lint). Add an entry for this work under [Unreleased] in CHANGELOG.md.
+    verify:
+      - pinned_script
+      - pinned_tests
+      - build
+      - test
+      - coverage
+      - lint
+      - { artifact: CHANGELOG.md, min_bytes: 120 }
+    repair: { attempts: 3 }
+success:
+  gates: [build, test, lint, layering]
+  metrics: { coverage.line_pct: { gte: 90 } }
+  work_items: { all_completed: true }
+outputs:
+  summary: { type: string, value: "{{ tasks.production.output }}" }

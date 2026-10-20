@@ -808,6 +808,15 @@ language, the authorization model and the full API are in
 [harnesses.md](harnesses.md); the command line is `sven harness`
 ([Harnesses](../guides/harnesses.md)).
 
+For a version 2 workflow the run adds: `in_workspace(dir)` roots one run's
+tools and gates in a directory (one engine serves many concurrent runs);
+`on_item_checkpoint(sink)` hands a durable checkpoint to the host each time an
+item of a `checkpoint: each_item` loop completes; `EngineBuilder::model_role`
+maps the roles a document names to providers; `corrections()`,
+`refused_messages()` and `trajectory()` read what the run did after it ends;
+`load_harness_from_str` takes a package (a bundle that carries imports) and
+registers it whole; `sourced_trace` reads a trace in the author's terms.
+
 ## Examples
 
 `crates/sdk/examples/` holds runnable programs, one concept each:

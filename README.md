@@ -63,6 +63,26 @@ lists them in order.
 - **A framework.** `sven-sdk` embeds the kernel in your own application;
   [harnesses](docs/guides/harnesses.md) define agents as YAML programs.
 
+A harness for a job says what must be true, and sven makes it so or fails:
+
+```yaml
+api_version: "2"
+name: verified-task
+inputs: { feature: string }
+execution: { limits: { model_turns: 12 } }
+gates:
+  test: { command: [sh, run_tests.sh], timeout: 300 }
+workflow:
+  - name: implement
+    task: "Implement: {{ inputs.feature }}"
+    verify: [test]          # the exit status decides, not the agent
+    repair: { attempts: 2 }
+```
+
+`sven harness run` drives it with a real model and real tools;
+`sven harness test` runs the same document against mock cases, offline. See the
+[harness guide](docs/guides/harnesses.md).
+
 ## Install
 
 ```sh
