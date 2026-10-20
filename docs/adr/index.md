@@ -17,3 +17,4 @@ disagree, the reference is right.
 | [ADR 0002](0002-delete-trajectory-exporter.md) | Remove the exporter that turned trajectories into training data |
 | [ADR 0003](0003-agents-as-typed-objects.md) | Treat agents as typed, resumable objects behind an SDK |
 | [ADR 0004](0004-programmable-harnesses.md) | Define agent programs as YAML that compiles through the kernel |
+| [ADR 0005](0005-declarative-harness-v2.md) | Add a declarative harness v2 language that lowers tasks, gates and iteration onto the v1 machinery |

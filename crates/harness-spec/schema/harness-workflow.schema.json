@@ -1,0 +1,296 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://swedishembedded.com/sven/schema/harness-workflow.schema.json",
+  "$comment": "Copyright (c) 2026 Martin Schroder <info@swedishembedded.com>. SPDX-License-Identifier: Apache-2.0. Swedish Embedded AB implements editor-checkable, verifiable agent workflows for its clients. If your team needs expertise in declarative agent workflow languages then you can procure our services by sending an email to info@swedishembedded.com. Strictness: like the compiler's typed parser, this schema forbids unknown fields everywhere. Semantic rules (references, bounds, capabilities, template roots) remain the compiler's.",
+  "title": "sven harness workflow (v2)",
+  "description": "A sven declarative harness: an ordered workflow of tasks, the trusted gates that decide whether each task succeeded, and the success condition of the run. Lowered at compile time onto the v1 harness machinery.",
+  "type": "object",
+  "required": ["api_version", "name", "workflow"],
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": "2",
+      "description": "The language version of this schema."
+    },
+    "name": {
+      "$ref": "#/$defs/identifier",
+      "description": "The workflow's name, carried into the plan and the trace."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human documentation for the workflow."
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Typed inputs a run is started with, by name. Templates read them as {{ inputs.<name> }}.",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "$ref": "#/$defs/io_value" }
+    },
+    "outputs": {
+      "type": "object",
+      "description": "Typed outputs the run returns on success, by name.",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "$ref": "#/$defs/output" }
+    },
+    "agent": { "$ref": "#/$defs/agent" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "capabilities": {
+      "type": "array",
+      "description": "The exact capabilities the workflow is granted. Omitted: derived from the agent profile and the gates, and printed by the compiler.",
+      "items": { "$ref": "#/$defs/capability" },
+      "uniqueItems": true
+    },
+    "gates": {
+      "type": "object",
+      "description": "Named trusted checks, referenced by tasks and by the success condition.",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "$ref": "#/$defs/gate" }
+    },
+    "workflow": {
+      "type": "array",
+      "description": "The tasks, run in order.",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/task" }
+    },
+    "success": { "$ref": "#/$defs/success" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,47}$"
+    },
+    "io_type": { "enum": ["string", "number", "boolean", "json"] },
+    "io_value": {
+      "oneOf": [
+        { "$ref": "#/$defs/io_type" },
+        {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "$ref": "#/$defs/io_type" },
+            "description": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "output": {
+      "type": "object",
+      "required": ["type", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "$ref": "#/$defs/io_type" },
+        "value": { "description": "The output's value; strings are templates over inputs and task outputs." },
+        "description": { "type": "string" }
+      }
+    },
+    "capability": {
+      "enum": [
+        "ReadFile", "WriteFile", "DeleteFile", "ExecuteShell", "NetworkAccess",
+        "GitOperation", "RunVerifier", "ControlDevice", "SpawnChild"
+      ]
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "enum": ["none", "coding"],
+          "description": "The tool profile the host must provide. none: the tools the host gives the session; coding: file inspection, editing, search and shell."
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Standing instructions, prepended to every task prompt. A template over inputs."
+        },
+        "tools": {
+          "type": "array",
+          "description": "An explicit tool allowlist for every task; also enforced on proposed calls.",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace": { "const": "repository", "description": "The host-provided workspace root." },
+        "resume": { "const": true, "description": "Every run is checkpointable and resumable; false is not supported." },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "steps": { "type": "integer", "minimum": 1 },
+            "model_turns": { "type": "integer", "minimum": 1 },
+            "tool_calls": { "type": "integer", "minimum": 1 },
+            "delegate_depth": { "type": "integer", "minimum": 1 }
+          },
+          "anyOf": [
+            { "required": ["steps"] },
+            { "required": ["model_turns"] },
+            { "required": ["tool_calls"] }
+          ]
+        }
+      }
+    },
+    "metric_decl": {
+      "type": "object",
+      "required": ["file", "pointer", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string", "minLength": 1, "description": "Workspace-relative JSON file the gate's command writes." },
+        "pointer": { "type": "string", "description": "RFC 6901 JSON pointer to the number." },
+        "type": { "const": "number" }
+      }
+    },
+    "gate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["command"],
+          "additionalProperties": false,
+          "properties": {
+            "description": { "type": "string" },
+            "command": {
+              "type": "array",
+              "description": "The argv. Run without a shell; the exit status is authoritative.",
+              "minItems": 1,
+              "items": { "type": "string" }
+            },
+            "timeout": { "type": "integer", "minimum": 1, "maximum": 3600, "description": "Seconds. Default 600." },
+            "cwd": { "type": "string", "description": "Workspace-relative working directory." },
+            "metrics": {
+              "type": "object",
+              "propertyNames": { "$ref": "#/$defs/identifier" },
+              "additionalProperties": { "$ref": "#/$defs/metric_decl" }
+            }
+          }
+        },
+        { "$ref": "#/$defs/artifact_check" }
+      ]
+    },
+    "artifact_check": {
+      "type": "object",
+      "required": ["artifact"],
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "artifact": { "type": "string", "minLength": 1, "description": "Workspace-relative path of a file that must exist." },
+        "min_bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }
+      }
+    },
+    "metric_ref": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_-]*$",
+      "description": "<gate>.<metric>"
+    },
+    "threshold": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "eq": { "type": "number" },
+        "ne": { "type": "number" },
+        "gt": { "type": "number" },
+        "gte": { "type": "number" },
+        "lt": { "type": "number" },
+        "lte": { "type": "number" }
+      }
+    },
+    "metric_check": {
+      "type": "object",
+      "required": ["metric"],
+      "additionalProperties": false,
+      "properties": {
+        "metric": { "$ref": "#/$defs/metric_ref" },
+        "eq": { "type": "number" },
+        "ne": { "type": "number" },
+        "gt": { "type": "number" },
+        "gte": { "type": "number" },
+        "lt": { "type": "number" },
+        "lte": { "type": "number" }
+      }
+    },
+    "check": {
+      "oneOf": [
+        { "$ref": "#/$defs/identifier" },
+        { "$ref": "#/$defs/artifact_check" },
+        { "$ref": "#/$defs/metric_check" }
+      ]
+    },
+    "condition": {
+      "description": "A path string, !path, or an {all|any|not|eq|ne} object over inputs and task outputs."
+    },
+    "task": {
+      "type": "object",
+      "required": ["name", "task"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "description": { "type": "string" },
+        "task": { "type": "string", "minLength": 1, "description": "The prompt. A template over inputs and earlier task outputs." },
+        "tools": {
+          "type": "array",
+          "description": "This task's tool allowlist; replaces the agent's.",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "when": { "$ref": "#/$defs/condition" },
+        "follow_ups": {
+          "type": "array",
+          "description": "Further user turns in the same conversation, each sent only when its condition holds.",
+          "items": {
+            "type": "object",
+            "required": ["task"],
+            "additionalProperties": false,
+            "properties": {
+              "when": { "$ref": "#/$defs/condition" },
+              "task": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "outputs": {
+          "type": "array",
+          "description": "Workspace-relative files the task must produce; each is checked to exist before the task's gates run.",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "verify": {
+          "type": "array",
+          "description": "Checks that must pass, in order.",
+          "items": { "$ref": "#/$defs/check" }
+        },
+        "repair": {
+          "type": "object",
+          "required": ["attempts"],
+          "additionalProperties": false,
+          "properties": {
+            "attempts": { "type": "integer", "minimum": 1, "maximum": 16 },
+            "prompt": {
+              "type": "string",
+              "minLength": 1,
+              "description": "A template; {{ failure.gate }}, {{ failure.detail }}, {{ failure.exit_code }}, {{ failure.stdout }}, {{ failure.stderr }} and {{ failure.attempt }} describe the failure."
+            }
+          }
+        }
+      }
+    },
+    "success": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "metrics": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/metric_ref" },
+          "additionalProperties": { "$ref": "#/$defs/threshold" }
+        }
+      }
+    }
+  }
+}

@@ -49,6 +49,12 @@ pub use spec::{
 /// capabilities) remain the compiler's.
 pub const DOCUMENT_SCHEMA: &str = include_str!("../schema/harness-document.schema.json");
 
+/// The JSON Schema (draft 2020-12) of a version 2 workflow document: the
+/// declarative authoring language of ADR 0005. Like [`DOCUMENT_SCHEMA`] it
+/// forbids unknown fields everywhere; references, bounds and capabilities
+/// are checked by the compiler.
+pub const WORKFLOW_SCHEMA: &str = include_str!("../schema/harness-workflow.schema.json");
+
 /// Converts a [`serde_yaml::Value`] to a [`serde_json::Value`]. The harness
 /// language uses the JSON-representable subset of YAML; tagged values,
 /// non-string keys and anything else outside it are a parse error naming

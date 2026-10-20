@@ -90,3 +90,4 @@ navigation:
       - docs/adr/0002-delete-trajectory-exporter.md
       - docs/adr/0003-agents-as-typed-objects.md
       - docs/adr/0004-programmable-harnesses.md
+      - docs/adr/0005-declarative-harness-v2.md
