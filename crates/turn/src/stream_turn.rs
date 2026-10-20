@@ -87,6 +87,9 @@ pub struct TurnLimits {
     pub max_output_tokens: Option<u32>,
     /// Sampling controls sent with every request of the turn.
     pub sampling: SamplingParams,
+    /// Reasoning switched on or off for every request of the turn (see
+    /// `CompletionRequest::enable_thinking`).
+    pub enable_thinking: Option<bool>,
     /// Ask the provider for the sampled token ids and log-probabilities;
     /// they come back in [`AgentEvent::ResponseSampled`].
     pub want_logprobs: bool,
@@ -106,6 +109,7 @@ impl From<ThinkingBudget> for TurnLimits {
             stall: StallLimits::default(),
             max_output_tokens: None,
             sampling: SamplingParams::default(),
+            enable_thinking: None,
             want_logprobs: false,
         }
     }
@@ -142,6 +146,35 @@ impl TurnLimits {
         self.sampling = decoding.sampling;
         self.want_logprobs = decoding.want_logprobs;
         self
+    }
+
+    /// Lays one turn's decoding settings over these limits: each setting the
+    /// turn makes replaces the run's, the others stay.
+    #[must_use]
+    pub fn with_turn_decoding(mut self, decoding: &sven_vocab::TurnDecoding) -> Self {
+        let s = &mut self.sampling;
+        s.temperature = decoding.temperature.or(s.temperature);
+        s.top_p = decoding.top_p.or(s.top_p);
+        s.top_k = decoding.top_k.or(s.top_k);
+        s.seed = decoding.seed.or(s.seed);
+        self.enable_thinking = decoding.thinking.or(self.enable_thinking);
+        self.thinking.max_thinking_tokens = decoding
+            .thinking_budget
+            .or(self.thinking.max_thinking_tokens);
+        self
+    }
+
+    /// The settings these limits send, as the request's account records them.
+    #[must_use]
+    pub fn recorded_decoding(&self) -> sven_vocab::TurnDecoding {
+        sven_vocab::TurnDecoding {
+            temperature: self.sampling.temperature,
+            top_p: self.sampling.top_p,
+            top_k: self.sampling.top_k,
+            seed: self.sampling.seed,
+            thinking: self.enable_thinking,
+            thinking_budget: self.thinking.max_thinking_tokens,
+        }
     }
 
     /// The output tokens one request may ask for: what the prompt leaves of
@@ -424,6 +457,7 @@ pub async fn stream_turn(
         core_tool_count,
         response_format,
         sampling: limits.sampling,
+        enable_thinking: limits.enable_thinking,
         want_logprobs: limits.want_logprobs,
     };
 
@@ -447,7 +481,10 @@ pub async fn stream_turn(
     let mut completed_indices: Vec<u32> = Vec::new();
     let mut unparsed_arguments: HashMap<String, String> = HashMap::new();
     let mut issued_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut sampled = Sampled::default();
+    let mut sampled = Sampled {
+        decoding: limits.recorded_decoding(),
+        ..Sampled::default()
+    };
 
     loop {
         let event = match watch.next_event(&mut stream, tx).await? {

@@ -64,6 +64,8 @@ pub(super) struct Scope<'a> {
     pub item: bool,
     /// Whether `iteration` exists here (inside an `until` task).
     pub iteration: bool,
+    /// The tasks whose output is structured: their fields can be read.
+    pub structured: &'a [String],
 }
 
 impl<'a> Scope<'a> {
@@ -77,7 +79,15 @@ impl<'a> Scope<'a> {
             failure: None,
             item: false,
             iteration: false,
+            structured: &[],
         }
+    }
+
+    /// The same scope, able to read the fields of these tasks' outputs.
+    #[must_use]
+    pub fn with_structured(mut self, structured: &'a [String]) -> Self {
+        self.structured = structured;
+        self
     }
 
     /// The same scope inside a loop of the given kind.
@@ -117,11 +127,17 @@ impl Scope<'_> {
                 }
             }
             "tasks" => {
-                let [_, task, field] = segments else {
+                let [_, task, field, fields @ ..] = segments else {
                     return Err(self.invalid(path, "is not of the form tasks.<name>.output"));
                 };
                 if field != "output" {
                     return Err(self.invalid(path, "can only read a task's `output`"));
+                }
+                if !fields.is_empty() && !self.structured.contains(task) {
+                    return Err(self.invalid(
+                        path,
+                        &format!("reads a field of the output of `{task}`, which has no `schema`"),
+                    ));
                 }
                 if !self.tasks.contains(task) {
                     return Err(self.invalid(
@@ -137,7 +153,8 @@ impl Scope<'_> {
                         ),
                     ));
                 }
-                Path::parse(&format!("facts.{}", output_fact(task))).map(PathRewrite::Path)
+                let rest: String = fields.iter().map(|f| format!(".{f}")).collect();
+                Path::parse(&format!("facts.{}{rest}", output_fact(task))).map(PathRewrite::Path)
             }
             "failure" => self.map_failure(path),
             root @ ("item" | "item_id" | "item_index") => {

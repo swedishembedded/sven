@@ -23,13 +23,13 @@ use super::checks::{
     lower_checks, Builder, CommandRun, Kind, Phase, RepairPlan, Resolved, DEFAULT_REPAIR_PROMPT,
 };
 use super::rewrite::{output_fact, rewrite_condition, rewrite_text, rewrite_value, Scope};
-use super::spec::{Check, CommandGate, GateDef, TaskSpec, WorkflowSpec};
+use super::spec::{decoding_of, Check, CommandGate, GateDef, TaskSpec, WorkflowSpec};
 use super::validate::{needed_capabilities, split_metric};
 use crate::error::HarnessError;
 use crate::source_map::{Lowering, SourceRef};
 use crate::spec::{
     AgentStepSpec, BranchStepSpec, CapabilityName, FailStepSpec, ForEachSpec, HarnessSpec,
-    InputValue, IterateStepSpec, LimitsSpec, ReturnStepSpec, StepSpec, UntilSpec,
+    InputValue, IterateStepSpec, LimitsSpec, PredictStepSpec, ReturnStepSpec, StepSpec, UntilSpec,
     DEFAULT_GATE_TIMEOUT_SECS, DEFAULT_MAX_ITEMS, WORKFLOW_API_VERSION,
 };
 
@@ -39,6 +39,8 @@ const COMPLETE: &str = "complete";
 struct Context<'a> {
     w: &'a WorkflowSpec,
     inputs: Option<BTreeSet<String>>,
+    /// Tasks with a `schema`, whose output fields templates can read.
+    structured: Vec<String>,
 }
 
 /// What a task's templates may read besides inputs and earlier outputs.
@@ -61,7 +63,9 @@ impl LoopVars {
 
 impl Context<'_> {
     fn scope<'s>(&'s self, place: String, tasks: &'s [String], vars: LoopVars) -> Scope<'s> {
-        Scope::new(place, self.inputs.as_ref(), tasks).in_loop(vars.item, vars.iteration)
+        Scope::new(place, self.inputs.as_ref(), tasks)
+            .in_loop(vars.item, vars.iteration)
+            .with_structured(&self.structured)
     }
 
     fn command_run(
@@ -282,6 +286,8 @@ fn lower_task(
     let place = format!("task `{}`", task.name);
     let vars = LoopVars::of(task);
     let tools = task.tools.clone().or_else(|| w.agent.tools.clone());
+    let decoding = decoding_of(w.agent.sampling, w.agent.thinking)
+        .overlaid_by(decoding_of(task.sampling, task.thinking));
     let fact = output_fact(&task.name);
     let looping = task.for_each.is_some() || task.until.is_some();
 
@@ -329,6 +335,11 @@ fn lower_task(
         tasks: through,
         item: vars.item,
         iteration: vars.iteration,
+        decoding,
+        model_only: task
+            .model_only
+            .then(|| task.schema.is_some().then(|| task.name.clone())),
+        structured: &cx.structured,
     });
     let phase = Phase {
         prefix: task.name.clone(),
@@ -350,6 +361,7 @@ fn lower_task(
                 prompt: rewrite_text(&turn.task, &scope)?,
                 tools: tools.clone(),
                 store_as: Some(fact.clone()),
+                decoding,
                 then: following.clone(),
             })),
             origin(Some(&task.name), "follow_up"),
@@ -383,16 +395,24 @@ fn lower_task(
         None => task_prompt,
     };
     let work = format!("{}__work", task.name);
-    b.add(
-        &work,
+    let work_step = if task.model_only {
+        StepSpec::Predict(Box::new(PredictStepSpec {
+            prompt,
+            schema: task.schema.is_some().then(|| task.name.clone()),
+            store_as: Some(fact),
+            decoding,
+            then: following,
+        }))
+    } else {
         StepSpec::Agent(Box::new(AgentStepSpec {
             prompt,
             tools,
             store_as: Some(fact),
+            decoding,
             then: following,
-        })),
-        origin(Some(&task.name), "work"),
-    );
+        }))
+    };
+    b.add(&work, work_step, origin(Some(&task.name), "work"));
     if looping {
         lower_loop(b, task, &work, next)?;
     }
@@ -499,6 +519,12 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
     let cx = Context {
         w,
         inputs: w.inputs.as_ref().map(|i| i.keys().cloned().collect()),
+        structured: w
+            .workflow
+            .iter()
+            .filter(|t| t.schema.is_some())
+            .map(|t| t.name.clone())
+            .collect(),
     };
     let mut b = Builder::default();
     let mut next = lower_success(&cx, &mut b)?;
@@ -530,7 +556,6 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         api_version: WORKFLOW_API_VERSION.to_string(),
         name: w.name.clone(),
         description: w.description.clone(),
-        schemas: None,
         inputs: w.inputs.clone(),
         outputs: w.outputs.as_ref().map(|outputs| {
             outputs
@@ -558,6 +583,14 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         }),
         entry: next,
         steps: b.steps,
+        schemas: {
+            let schemas: std::collections::BTreeMap<String, Value> = w
+                .workflow
+                .iter()
+                .filter_map(|t| t.schema.clone().map(|s| (t.name.clone(), s)))
+                .collect();
+            (!schemas.is_empty()).then_some(schemas)
+        },
         lowering: Some(Lowering {
             profile: w.agent.profile.as_str().to_string(),
             source_map: b.source,

@@ -104,6 +104,12 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
             StepSpec::Delegate(d) if d.propagate_failure => {
                 Some("`propagate_failure` on a delegate".to_string())
             }
+            StepSpec::Agent(a) if !a.decoding.is_empty() => {
+                Some("`decoding` on an agent step".to_string())
+            }
+            StepSpec::Predict(p) if !p.decoding.is_empty() => {
+                Some("`decoding` on a predict step".to_string())
+            }
             _ => None,
         };
         if let Some(what) = only_v2 {

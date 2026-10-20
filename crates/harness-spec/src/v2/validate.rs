@@ -63,6 +63,7 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
     }
     validate_execution(w)?;
     validate_agent_tools(w)?;
+    validate_decoding("agent", w.agent.sampling, w.agent.thinking)?;
     validate_gates(w)?;
     validate_tasks(w)?;
     validate_success(w)?;
@@ -277,6 +278,8 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
             }
         }
         validate_loop(w, task, &place)?;
+        validate_decoding(&place, task.sampling, task.thinking)?;
+        validate_model_only(task, &place)?;
         if let Some(repair) = &task.repair {
             if task.verify.is_empty() && task.outputs.is_empty() {
                 return Err(invalid(format!(
@@ -290,6 +293,61 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
                 )));
             }
         }
+    }
+    Ok(())
+}
+
+/// Ranges of the decoding settings, so a typo is an error here and not a
+/// provider's refusal in the middle of a run.
+fn validate_decoding(
+    place: &str,
+    sampling: Option<super::spec::Sampling>,
+    thinking: Option<super::spec::Thinking>,
+) -> Result<(), HarnessError> {
+    let s = sampling.unwrap_or_default();
+    if s.temperature.is_some_and(|t| !(0.0..=2.0).contains(&t)) {
+        return Err(invalid(format!(
+            "{place}: sampling.temperature must be within 0 to 2"
+        )));
+    }
+    if s.top_p.is_some_and(|p| !(p > 0.0 && p <= 1.0)) {
+        return Err(invalid(format!(
+            "{place}: sampling.top_p must be above 0 and at most 1"
+        )));
+    }
+    if s.top_k == Some(0) {
+        return Err(invalid(format!(
+            "{place}: sampling.top_k must be at least 1"
+        )));
+    }
+    if thinking.is_some_and(|t| t.budget == Some(0)) {
+        return Err(invalid(format!(
+            "{place}: thinking.budget must be at least 1"
+        )));
+    }
+    Ok(())
+}
+
+/// A `model_only` task is one model turn without tools.
+fn validate_model_only(task: &super::spec::TaskSpec, place: &str) -> Result<(), HarnessError> {
+    if task.schema.is_some() && !task.model_only {
+        return Err(invalid(format!(
+            "{place}: `schema` goes with `model_only: true`"
+        )));
+    }
+    if !task.model_only {
+        return Ok(());
+    }
+    if task.tools.is_some() || !task.follow_ups.is_empty() {
+        return Err(invalid(format!(
+            "{place}: a `model_only` task is one model turn without tools: it takes neither \
+             `tools` nor `follow_ups`"
+        )));
+    }
+    if task.schema.as_ref().is_some_and(|s| !s.is_object()) {
+        return Err(invalid(format!(
+            "{place}: `schema` must be a JSON Schema object"
+        )));
     }
     Ok(())
 }

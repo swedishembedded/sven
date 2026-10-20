@@ -1,0 +1,117 @@
+// Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//! Spec: the sampling and thinking settings a workflow sets per task reach the
+//! model request of that task, and the trajectory records, for each request,
+//! the settings it was sent with.
+//!
+//! Swedish Embedded AB implements reproducible agent runs on locally served
+//! models for its clients. If your team needs expertise in recording exactly
+//! how an agent's model was sampled then you can procure our services by
+//! sending an email to info@swedishembedded.com.
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use serde_json::json;
+use sven_model::{CompletionRequest, ModelProvider, ResponseEvent, ResponseStream};
+use sven_sdk::{Engine, RunOptions};
+
+const WORKFLOW: &str = r#"
+api_version: "2"
+name: decoded
+agent: { sampling: { temperature: 0.7 }, thinking: { enabled: true } }
+execution: { limits: { model_turns: 8 } }
+workflow:
+  - name: plan
+    model_only: true
+    sampling: { temperature: 0.1, seed: 3 }
+    thinking: { enabled: false, budget: 128 }
+    task: Plan it.
+  - name: work
+    task: Do it.
+outputs:
+  done: { type: string, value: "{{ tasks.work.output }}" }
+"#;
+
+/// Answers "ok" and keeps what each request was sent with.
+#[derive(Default)]
+struct Capturing {
+    seen: Arc<Mutex<Vec<(Option<f64>, Option<bool>)>>>,
+}
+
+#[async_trait]
+impl ModelProvider for Capturing {
+    fn name(&self) -> &str {
+        "capturing"
+    }
+    fn model_name(&self) -> &str {
+        "m"
+    }
+    async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((req.sampling.temperature, req.enable_thinking));
+        let events: Vec<anyhow::Result<ResponseEvent>> = vec![
+            Ok(ResponseEvent::TextDelta("ok".into())),
+            Ok(ResponseEvent::Usage {
+                input_tokens: 10,
+                output_tokens: 1,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                cost_usd: None,
+            }),
+            Ok(ResponseEvent::Done),
+        ];
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
+}
+
+#[tokio::test]
+async fn each_tasks_settings_reach_its_request_and_the_trajectory_records_them() {
+    let provider = Capturing::default();
+    let seen = Arc::clone(&provider.seen);
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::builder()
+        .model_provider(Arc::new(provider) as Arc<dyn ModelProvider>)
+        .project_root(dir.path())
+        .build()
+        .expect("an engine builds");
+    let harness = engine.load_harness_from_str(WORKFLOW).expect("loads");
+    let mut run = harness.start(json!({})).expect("starts");
+    let outcome = tokio::time::timeout(Duration::from_secs(20), run.execute(RunOptions::new()))
+        .await
+        .expect("the run ends")
+        .expect("an outcome");
+    assert!(
+        matches!(&outcome.result, Some(Ok(_))),
+        "{:?}",
+        outcome.result
+    );
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![(Some(0.1), Some(false)), (Some(0.7), Some(true))],
+        "the planner and the worker are sampled differently"
+    );
+
+    let trajectory = run.trajectory().expect("an executed run has one");
+    let decodings: Vec<serde_json::Value> = trajectory
+        .steps
+        .iter()
+        .filter_map(|s| {
+            s.metrics.as_ref()?.extra.as_ref()?["sven"]
+                .get("decoding")
+                .cloned()
+        })
+        .collect();
+    assert_eq!(
+        decodings,
+        vec![
+            json!({ "temperature": 0.1, "seed": 3, "thinking": false, "thinking_budget": 128 }),
+            json!({ "temperature": 0.7, "thinking": true }),
+        ]
+    );
+}

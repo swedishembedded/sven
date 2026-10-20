@@ -100,6 +100,43 @@ pub struct TurnRequest {
     /// model is called: a history with a tool call and no result is invalid.
     #[serde(default)]
     pub refused_calls: Vec<RefusedCall>,
+    /// Decoding settings for this turn only, laid over the run's own.
+    #[serde(default, skip_serializing_if = "TurnDecoding::is_empty")]
+    pub decoding: TurnDecoding,
+}
+
+/// Sampling and thinking settings of one turn. Every field is optional; an
+/// unset one leaves the run's (or the provider's) setting in place. The same
+/// shape is recorded with each model request that used them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TurnDecoding {
+    /// Softmax temperature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    /// Nucleus-sampling mass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    /// Number of highest-probability tokens kept before sampling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+    /// Seed for providers that honour one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    /// Whether the model reasons before answering, for servers whose chat
+    /// template has the switch. Providers without it ignore the setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<bool>,
+    /// The most thinking tokens before the turn is cut off as a runaway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u32>,
+}
+
+impl TurnDecoding {
+    /// `true` when no setting is made.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// A tool call the machine knows was not run, and why.

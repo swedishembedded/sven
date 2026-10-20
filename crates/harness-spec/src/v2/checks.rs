@@ -24,7 +24,8 @@ use super::spec::Threshold;
 use crate::error::HarnessError;
 use crate::source_map::SourceRef;
 use crate::spec::{
-    AgentStepSpec, BranchStepSpec, FailStepSpec, GateStepSpec, StepSpec, VerifyStepSpec,
+    AgentStepSpec, BranchStepSpec, FailStepSpec, GateStepSpec, PredictStepSpec, StepDecoding,
+    StepSpec, VerifyStepSpec,
 };
 
 /// The prompt a repair turn gets when the author wrote none.
@@ -124,6 +125,13 @@ pub(super) struct RepairPlan<'a> {
     /// Whether the repair runs inside a `for_each` / an `until` task.
     pub item: bool,
     pub iteration: bool,
+    /// Decoding settings of the repair turn.
+    pub decoding: StepDecoding,
+    /// For a `model_only` task, the repair is a model turn without tools,
+    /// answering the task's schema when it has one.
+    pub model_only: Option<Option<String>>,
+    /// Tasks whose output is structured (for `failure` prompts that read it).
+    pub structured: &'a [String],
 }
 
 /// The phase the checks belong to: a task, or the success condition.
@@ -379,20 +387,28 @@ fn on_failure(
             plan.inputs,
             plan.tasks,
         )
-        .in_loop(plan.item, plan.iteration);
+        .in_loop(plan.item, plan.iteration)
+        .with_structured(plan.structured);
         scope.failure = Some(&view);
         let prompt = rewrite_text(&plan.prompt, &scope)?;
         let again = entry_id(phase, checks, 0, attempt + 1);
-        b.add(
-            &id,
-            StepSpec::Agent(Box::new(AgentStepSpec {
+        let step = match &plan.model_only {
+            Some(schema) => StepSpec::Predict(Box::new(PredictStepSpec {
+                prompt,
+                schema: schema.clone(),
+                store_as: Some(plan.fact.clone()),
+                decoding: plan.decoding,
+                then: again,
+            })),
+            None => StepSpec::Agent(Box::new(AgentStepSpec {
                 prompt,
                 tools: plan.tools.clone(),
                 store_as: Some(plan.fact.clone()),
+                decoding: plan.decoding,
                 then: again,
             })),
-            origin(phase, "repair", label, attempt + 1),
-        );
+        };
+        b.add(&id, step, origin(phase, "repair", label, attempt + 1));
         return Ok(id);
     }
     if let Some(back) = &phase.loop_back {

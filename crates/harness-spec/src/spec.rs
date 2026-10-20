@@ -362,6 +362,54 @@ pub enum StepSpec {
     Iterate(Box<IterateStepSpec>),
 }
 
+/// Sampling and thinking settings of a model turn. Every field is optional:
+/// an unset one leaves the run's or the provider's setting. Only a version 2
+/// document sets them (a workflow's `sampling` and `thinking`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepDecoding {
+    /// Softmax temperature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    /// Nucleus-sampling mass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    /// Number of highest-probability tokens kept before sampling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+    /// Sampling seed, for providers that honour one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    /// Reasoning on or off, where the server has the switch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<bool>,
+    /// The most thinking tokens before the turn is cut off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u32>,
+}
+
+impl StepDecoding {
+    /// `true` when no setting is made.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// These settings with `over`'s laid on top: each setting `over` makes
+    /// wins.
+    #[must_use]
+    pub fn overlaid_by(self, over: Self) -> Self {
+        Self {
+            temperature: over.temperature.or(self.temperature),
+            top_p: over.top_p.or(self.top_p),
+            top_k: over.top_k.or(self.top_k),
+            seed: over.seed.or(self.seed),
+            thinking: over.thinking.or(self.thinking),
+            thinking_budget: over.thinking_budget.or(self.thinking_budget),
+        }
+    }
+}
+
 /// `predict`: one constrained model turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -376,6 +424,9 @@ pub struct PredictStepSpec {
     /// Where to store the answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_as: Option<String>,
+    /// Decoding settings for the turn. Version 2 only.
+    #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
+    pub decoding: StepDecoding,
     /// The next step.
     pub then: String,
 }
@@ -395,6 +446,9 @@ pub struct AgentStepSpec {
     /// Where to store the agent's final text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_as: Option<String>,
+    /// Decoding settings for the step's turns. Version 2 only.
+    #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
+    pub decoding: StepDecoding,
     /// The next step.
     pub then: String,
 }

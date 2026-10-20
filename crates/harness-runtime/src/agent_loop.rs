@@ -34,6 +34,7 @@ impl HarnessMachine {
         state: &HarnessRunState,
         prompt: &Template,
         tools: &Option<Vec<String>>,
+        decoding: sven_harness_spec::StepDecoding,
     ) -> Effect {
         let instruction = state.resolve_template(prompt);
         agent_request(
@@ -42,6 +43,7 @@ impl HarnessMachine {
             tools.as_deref().unwrap_or_default().to_vec(),
             tools.is_none(),
             Vec::new(),
+            decoding,
         )
     }
 
@@ -60,6 +62,7 @@ impl HarnessMachine {
             agent.tools.clone(),
             agent.open,
             refused,
+            agent.decoding,
         ))
     }
 
@@ -200,6 +203,7 @@ fn agent_request(
     tools: Vec<String>,
     all_tools: bool,
     refused_calls: Vec<RefusedCall>,
+    decoding: sven_harness_spec::StepDecoding,
 ) -> Effect {
     let request = TurnRequest {
         thread,
@@ -215,6 +219,7 @@ fn agent_request(
         dynamic_suffix: None,
         max_tool_rounds: Some(0),
         refused_calls,
+        decoding: crate::machine::turn_decoding(decoding),
     };
     Effect::CallLlm {
         request: request.to_value(),

@@ -46,10 +46,10 @@ pub use spec::{
     AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec,
     DelegateTarget, FailStepSpec, ForEachSpec, GateStepSpec, HarnessSpec, IOType, InputValue,
     IterateSource, IterateStepSpec, JsonSource, LimitsSpec, ParallelStepSpec, PredictStepSpec,
-    RetryStepSpec, ReturnStepSpec, StepId, StepSpec, ToolStepSpec, TransformStepSpec, UntilSpec,
-    VerifyStepSpec, DEFAULT_GATE_TIMEOUT_SECS, DEFAULT_MAX_ITEMS, GATE_TOOL, MAX_GATE_TIMEOUT_SECS,
-    MAX_ITEMS_LIMIT, MAX_ITERATIONS_LIMIT, PRIMITIVES, RESERVED_TOOLS, SNAPSHOT_TOOL,
-    SUPPORTED_API_VERSION, WORKFLOW_API_VERSION, WORKFLOW_PRIMITIVES,
+    RetryStepSpec, ReturnStepSpec, StepDecoding, StepId, StepSpec, ToolStepSpec, TransformStepSpec,
+    UntilSpec, VerifyStepSpec, DEFAULT_GATE_TIMEOUT_SECS, DEFAULT_MAX_ITEMS, GATE_TOOL,
+    MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT, MAX_ITERATIONS_LIMIT, PRIMITIVES, RESERVED_TOOLS,
+    SNAPSHOT_TOOL, SUPPORTED_API_VERSION, WORKFLOW_API_VERSION, WORKFLOW_PRIMITIVES,
 };
 
 /// The JSON Schema (draft 2020-12) of a harness document, for editors and

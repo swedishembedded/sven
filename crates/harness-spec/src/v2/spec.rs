@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::spec::{CapabilityName, IOType, InputValue, IterateSource};
+use crate::spec::{CapabilityName, IOType, InputValue, IterateSource, StepDecoding};
 
 /// A whole workflow document, as written.
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +90,50 @@ impl Profile {
     }
 }
 
+/// `sampling:` of an agent or a task.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sampling {
+    /// Softmax temperature, within 0 to 2.
+    #[serde(default)]
+    pub temperature: Option<f64>,
+    /// Nucleus-sampling mass, above 0 and at most 1.
+    #[serde(default)]
+    pub top_p: Option<f64>,
+    /// Number of highest-probability tokens kept, at least 1.
+    #[serde(default)]
+    pub top_k: Option<u32>,
+    /// Seed. Never defaulted: a run is only seeded when the document says so.
+    #[serde(default)]
+    pub seed: Option<u64>,
+}
+
+/// `thinking:` of an agent or a task.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Thinking {
+    /// Reasoning on or off, on servers that have the switch.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// The most thinking tokens before a turn is cut off as a runaway.
+    #[serde(default)]
+    pub budget: Option<u32>,
+}
+
+/// The step-level form of a `sampling` and a `thinking` block.
+#[must_use]
+pub fn decoding_of(sampling: Option<Sampling>, thinking: Option<Thinking>) -> StepDecoding {
+    let (s, t) = (sampling.unwrap_or_default(), thinking.unwrap_or_default());
+    StepDecoding {
+        temperature: s.temperature,
+        top_p: s.top_p,
+        top_k: s.top_k,
+        seed: s.seed,
+        thinking: t.enabled,
+        thinking_budget: t.budget,
+    }
+}
+
 /// The `agent:` block.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -103,6 +147,12 @@ pub struct AgentSpec {
     /// An explicit tool allowlist for every task.
     #[serde(default)]
     pub tools: Option<Vec<String>>,
+    /// Sampling for every task; a task's own settings replace it.
+    #[serde(default)]
+    pub sampling: Option<Sampling>,
+    /// Thinking for every task; a task's own settings replace it.
+    #[serde(default)]
+    pub thinking: Option<Thinking>,
 }
 
 /// The `execution:` block.
@@ -389,6 +439,15 @@ pub struct TaskSpec {
     pub for_each: Option<ForEach>,
     /// Repeat the task until a metric holds.
     pub until: Option<Until>,
+    /// A single model turn with no tools, for a planner or a supervisor.
+    pub model_only: bool,
+    /// For a `model_only` task, the JSON Schema its answer must satisfy; the
+    /// parsed answer is the task's output.
+    pub schema: Option<Value>,
+    /// Sampling for this task's turns.
+    pub sampling: Option<Sampling>,
+    /// Thinking for this task's turns.
+    pub thinking: Option<Thinking>,
 }
 
 /// `success:`.

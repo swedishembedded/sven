@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Three roles in one conversation. A planner answers in a JSON schema, without
+# tools and without thinking; a worker with the file tools carries the plan out
+# and is verified by the tests; a supervisor reviews the result, again without
+# tools, and a command gate refuses a review that leaks something it must not
+# (the gate decides, so the supervisor is asked again, not believed). Each role
+# is sampled its own way, and the trajectory records the settings of every
+# request.
+# Swedish Embedded AB implements verifiable, declarative agent workflows for its
+# clients. If your team needs expertise in turning long-running agent work into
+# reviewable, resumable programs then you can procure our services by sending an
+# email to info@swedishembedded.com.
+api_version: "2"
+name: planner-worker
+description: "A planner, a worker and a supervisor, each decoded its own way, the last one checked by a gate."
+inputs:
+  feature: string
+agent:
+  profile: coding
+  tools: [read_file, edit_file]
+  sampling: { temperature: 0.6, top_p: 0.95 }
+execution:
+  limits: { model_turns: 12, tool_calls: 12 }
+gates:
+  test: { command: [sh, run_tests.sh], timeout: 60 }
+  no-leak: { command: [sh, check_review.sh], timeout: 30 }
+workflow:
+  - name: plan
+    model_only: true
+    thinking: { enabled: false }
+    sampling: { temperature: 0, seed: 11 }
+    schema:
+      type: object
+      required: [goal]
+      properties: { goal: { type: string } }
+    task: "Plan the work for: {{ inputs.feature }}. Answer with a JSON object {\"goal\": \"...\"}."
+  - name: implement
+    task: "Carry out the plan: {{ tasks.plan.output.goal }}."
+    verify: [test]
+    repair: { attempts: 1 }
+  - name: review
+    model_only: true
+    thinking: { enabled: true, budget: 1024 }
+    task: "Review what was done ({{ tasks.implement.output }}) without quoting any secret."
+    verify: [no-leak]
+    repair: { attempts: 1, prompt: "Your review was refused: {{ failure.detail }} Write it again without the secret." }
+outputs:
+  review: { type: string, value: "{{ tasks.review.output }}" }

@@ -665,3 +665,167 @@ fn a_for_each_task_may_name_its_item_in_file_checks_and_no_other_task_may() {
     );
     assert!(rejected(&outside).contains("only a `for_each` task's paths may name the item"));
 }
+
+/// A planner that answers in a schema, a worker with its own decoding, and a
+/// supervisor that reads the plan: the roles of a multi-agent port.
+const ROLES: &str = r#"
+api_version: "2"
+name: roles
+agent:
+  profile: coding
+  sampling: { temperature: 0.7, top_p: 0.9 }
+  thinking: { enabled: true, budget: 4096 }
+execution: { limits: { model_turns: 50 } }
+gates:
+  leak: { command: [sh, leak.sh], timeout: 30 }
+workflow:
+  - name: plan
+    model_only: true
+    schema:
+      type: object
+      required: [steps]
+      properties: { steps: { type: array } }
+    sampling: { temperature: 0.1, seed: 7 }
+    thinking: { enabled: false }
+    task: Plan the work as JSON.
+  - name: work
+    task: "Do {{ tasks.plan.output.steps }}."
+    sampling: { top_k: 20 }
+  - name: supervise
+    model_only: true
+    task: "Say what {{ tasks.work.output }} got wrong."
+    verify: [leak]
+    repair: { attempts: 1 }
+outputs:
+  verdict: { type: string, value: "{{ tasks.supervise.output }}" }
+"#;
+
+#[test]
+fn a_model_only_task_is_one_predict_turn_whose_answer_later_tasks_read() {
+    let plan = compile(ROLES);
+    let PlanPrimitive::Predict {
+        schema, store_as, ..
+    } = &plan.steps["plan__work"].primitive
+    else {
+        panic!("a model_only task lowers to a predict step");
+    };
+    assert_eq!(schema.as_deref(), Some("plan"));
+    assert_eq!(store_as.as_deref(), Some("task_plan"));
+    assert!(plan
+        .schemas
+        .as_ref()
+        .is_some_and(|s| s["plan"]["type"] == "object"));
+    // A field of the structured answer is addressable; the worker reads it.
+    let PlanPrimitive::Agent { prompt, .. } = &plan.steps["work__work"].primitive else {
+        panic!("an agent step");
+    };
+    assert!(String::from(prompt.clone()).contains("{{facts.task_plan.steps}}"));
+    // The repair of a model_only task is a model turn too, not an agent loop.
+    assert!(matches!(
+        plan.steps["supervise__v0_leak_a0_repair"].primitive,
+        PlanPrimitive::Predict { .. }
+    ));
+}
+
+#[test]
+fn sampling_and_thinking_are_set_per_step_with_the_task_over_the_agent() {
+    use sven_harness_spec::StepDecoding;
+    let plan = compile(ROLES);
+    let decoding = |id: &str| match &plan.steps[id].primitive {
+        PlanPrimitive::Predict { decoding, .. } | PlanPrimitive::Agent { decoding, .. } => {
+            *decoding
+        }
+        other => panic!("{id}: {other:?}"),
+    };
+    assert_eq!(
+        decoding("plan__work"),
+        StepDecoding {
+            temperature: Some(0.1),
+            top_p: Some(0.9),
+            top_k: None,
+            seed: Some(7),
+            thinking: Some(false),
+            thinking_budget: Some(4096),
+        },
+        "the task's settings replace the agent's, field by field"
+    );
+    assert_eq!(decoding("work__work").top_k, Some(20));
+    assert_eq!(decoding("work__work").temperature, Some(0.7));
+    assert_eq!(decoding("work__work").thinking, Some(true));
+    // Repair turns decode like the task they repair.
+    assert_eq!(
+        decoding("supervise__v0_leak_a0_repair"),
+        decoding("supervise__work")
+    );
+    // A different setting is a different program.
+    let other = ROLES.replace("temperature: 0.1", "temperature: 0.2");
+    assert_ne!(compile(&other).digest, plan.digest);
+}
+
+#[test]
+fn decoding_and_role_mistakes_fail_with_the_name_of_the_culprit() {
+    let cases = [
+        (
+            "a temperature out of range",
+            ROLES.replace("temperature: 0.7", "temperature: 3"),
+            "sampling.temperature",
+        ),
+        (
+            "a top_p of zero",
+            ROLES.replace("top_p: 0.9", "top_p: 0"),
+            "sampling.top_p",
+        ),
+        (
+            "a zero budget",
+            ROLES.replace("budget: 4096", "budget: 0"),
+            "thinking.budget",
+        ),
+        (
+            "an unknown sampling key",
+            ROLES.replace("top_k: 20", "top_q: 20"),
+            "unknown field `top_q`",
+        ),
+        (
+            "a schema without model_only",
+            ROLES.replace(
+                "  - name: work\n",
+                "  - name: work\n    schema: { type: object }\n",
+            ),
+            "goes with `model_only: true`",
+        ),
+        (
+            "tools on a model_only task",
+            ROLES.replace(
+                "    model_only: true\n    task: \"Say",
+                "    model_only: true\n    tools: [read_file]\n    task: \"Say",
+            ),
+            "without tools",
+        ),
+        (
+            "a field of an unstructured output",
+            ROLES.replace("{{ tasks.work.output }}", "{{ tasks.work.output.x }}"),
+            "has no `schema`",
+        ),
+    ];
+    for (what, yaml, expect) in cases {
+        let message = rejected(&yaml);
+        assert!(
+            message.contains(expect),
+            "{what}: `{message}` should mention `{expect}`"
+        );
+    }
+}
+
+#[test]
+fn version_one_documents_cannot_set_decoding() {
+    let yaml = r#"
+api_version: "1"
+name: d
+entry: ask
+limits: { max_steps: 5, max_model_turns: 2 }
+steps:
+  ask: { predict: { prompt: hi, decoding: { temperature: 0.1 }, then: done } }
+  done: { return: { value: 1 } }
+"#;
+    assert!(rejected(yaml).contains("`decoding` on a predict step"));
+}

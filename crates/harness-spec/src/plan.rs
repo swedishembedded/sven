@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 use crate::expr::Template;
 use crate::source_map::SourceRef;
-use crate::spec::{HarnessSpec, StepSpec};
+use crate::spec::{HarnessSpec, StepDecoding, StepSpec};
 
 /// The compiled-plan format version, stamped into the digest input so plans
 /// from different compiler generations can never collide.
@@ -152,6 +152,9 @@ pub enum PlanPrimitive {
         /// Where to store the answer.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
+        /// Decoding settings (version 2 plans only).
+        #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
+        decoding: StepDecoding,
         /// Successor.
         then: String,
     },
@@ -165,6 +168,9 @@ pub enum PlanPrimitive {
         /// Where to store the final text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
+        /// Decoding settings (version 2 plans only).
+        #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
+        decoding: StepDecoding,
         /// Successor.
         then: String,
     },
@@ -406,12 +412,14 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             prompt: Template::parse(&p.prompt).unwrap_or_else(|_| Template::empty()),
             schema: p.schema.clone(),
             store_as: p.store_as.clone(),
+            decoding: p.decoding,
             then: p.then.clone(),
         },
         StepSpec::Agent(a) => PlanPrimitive::Agent {
             prompt: Template::parse(&a.prompt).unwrap_or_else(|_| Template::empty()),
             tools: a.tools.clone(),
             store_as: a.store_as.clone(),
+            decoding: a.decoding,
             then: a.then.clone(),
         },
         StepSpec::Tool(t) => PlanPrimitive::Tool {

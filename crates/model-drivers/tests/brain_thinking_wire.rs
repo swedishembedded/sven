@@ -18,6 +18,14 @@ use tokio::net::TcpListener;
 
 /// Serves one chat completion and returns the request body it received.
 async fn body_sent_to_brain(configure: impl FnOnce(&mut ModelConfig)) -> Value {
+    body_sent_with(configure, None).await
+}
+
+/// As [`body_sent_to_brain`], for a request that sets the thinking switch itself.
+async fn body_sent_with(
+    configure: impl FnOnce(&mut ModelConfig),
+    enable_thinking: Option<bool>,
+) -> Value {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let (tx, rx) = tokio::sync::oneshot::channel::<Value>();
@@ -62,6 +70,7 @@ async fn body_sent_to_brain(configure: impl FnOnce(&mut ModelConfig)) -> Value {
     let request = CompletionRequest {
         messages: vec![Message::user("hello")],
         stream: true,
+        enable_thinking,
         ..Default::default()
     };
     let mut stream = provider.complete(request).await.unwrap();
@@ -95,4 +104,32 @@ async fn an_explicit_driver_option_wins() {
     .await;
     assert_eq!(body["chat_template_kwargs"]["enable_thinking"], json!(true));
     assert_eq!(body["chat_template_kwargs"]["other"], json!(1));
+}
+
+#[tokio::test]
+async fn a_request_that_sets_the_switch_beats_the_configuration_and_the_driver_options() {
+    let body = body_sent_with(|cfg| cfg.enable_thinking = Some(true), Some(false)).await;
+    assert_eq!(
+        body["chat_template_kwargs"]["enable_thinking"],
+        json!(false)
+    );
+    let body = body_sent_with(
+        |cfg| {
+            cfg.driver_options =
+                json!({"chat_template_kwargs": {"enable_thinking": true, "other": 1}})
+        },
+        Some(false),
+    )
+    .await;
+    assert_eq!(
+        body["chat_template_kwargs"]["enable_thinking"],
+        json!(false)
+    );
+    assert_eq!(
+        body["chat_template_kwargs"]["other"],
+        json!(1),
+        "the rest of the arguments stay"
+    );
+    let body = body_sent_with(|_| {}, Some(true)).await;
+    assert_eq!(body["chat_template_kwargs"]["enable_thinking"], json!(true));
 }

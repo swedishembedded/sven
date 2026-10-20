@@ -107,7 +107,9 @@
           "description": "An explicit tool allowlist for every task; also enforced on proposed calls.",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
-        }
+        },
+        "sampling": { "$ref": "#/$defs/sampling" },
+        "thinking": { "$ref": "#/$defs/thinking" }
       }
     },
     "execution": {
@@ -272,6 +274,24 @@
         "lte": { "type": "number" }
       }
     },
+    "sampling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
+        "top_p": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "top_k": { "type": "integer", "minimum": 1 },
+        "seed": { "type": "integer", "minimum": 0, "description": "Never defaulted: a run is seeded only when the document says so." }
+      }
+    },
+    "thinking": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Reasoning on or off, on servers whose chat template has the switch." },
+        "budget": { "type": "integer", "minimum": 1, "description": "The most thinking tokens before a turn is cut off." }
+      }
+    },
     "condition": {
       "description": "A path string, !path, or an {all|any|not|eq|ne} object over inputs and task outputs."
     },
@@ -290,6 +310,10 @@
           "uniqueItems": true
         },
         "when": { "$ref": "#/$defs/condition" },
+        "model_only": { "type": "boolean", "description": "One model turn without tools (a planner or a supervisor); its answer is the task's output." },
+        "schema": { "type": "object", "description": "With model_only: the JSON Schema the answer must satisfy; later tasks read its fields as tasks.<name>.output.<field>." },
+        "sampling": { "$ref": "#/$defs/sampling" },
+        "thinking": { "$ref": "#/$defs/thinking" },
         "for_each": { "$ref": "#/$defs/for_each" },
         "until": { "$ref": "#/$defs/until" },
         "follow_ups": {

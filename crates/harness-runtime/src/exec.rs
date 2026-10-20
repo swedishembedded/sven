@@ -141,6 +141,7 @@ impl HarnessMachine {
             PlanPrimitive::Predict {
                 ref prompt,
                 ref schema,
+                decoding,
                 ..
             } => {
                 run.counts.model_turns += 1;
@@ -152,7 +153,7 @@ impl HarnessMachine {
                         ctx,
                     );
                 }
-                let effect = self.turn_effect(run, prompt, schema.as_deref());
+                let effect = self.turn_effect(run, prompt, schema.as_deref(), decoding);
                 self.cache_effect(effect.clone());
                 self.park(run, &step, Waiting::Model);
                 run.store(ctx);
@@ -165,6 +166,7 @@ impl HarnessMachine {
             PlanPrimitive::Agent {
                 ref prompt,
                 ref tools,
+                decoding,
                 ..
             } => {
                 run.counts.model_turns += 1;
@@ -181,9 +183,10 @@ impl HarnessMachine {
                     thread: harness_thread(self.run.plan()),
                     tools: tools.clone().unwrap_or_default(),
                     open: tools.is_none(),
+                    decoding,
                     ..AgentLoop::default()
                 });
-                let effect = self.agent_turn_effect(run, prompt, tools);
+                let effect = self.agent_turn_effect(run, prompt, tools, decoding);
                 self.cache_effect(effect.clone());
                 self.park(run, &step, Waiting::Model);
                 run.store(ctx);

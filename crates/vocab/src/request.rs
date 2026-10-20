@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ledger::ReportedUsage;
 use crate::served::ServedIdentity;
+use crate::turn::TurnDecoding;
 use crate::SessionEvent;
 
 /// What served one request and what it sampled, as the provider reported it.
@@ -44,6 +45,10 @@ pub struct Sampled {
     /// The log-probability of each sampled token, in the same order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub logprobs: Vec<f64>,
+    /// The sampling and thinking settings the request was sent with, when
+    /// any were made (a harness step can set them per turn).
+    #[serde(default, skip_serializing_if = "TurnDecoding::is_empty")]
+    pub decoding: TurnDecoding,
 }
 
 impl Sampled {
@@ -56,6 +61,7 @@ impl Sampled {
             && self.logprobs.is_empty()
             && self.prompt_token_ids.is_empty()
             && self.identity.is_empty()
+            && self.decoding.is_empty()
     }
 }
 

@@ -419,7 +419,10 @@ impl EffectExecutor for TurnExecutor {
         // No gate at all (not even a wrong one) when the window isn't known -
         // see `sven_model::budget::effective_input_budget`'s doc comment.
         let context_window = model.catalog_context_window();
-        let configured_max_output = self.limits.cap_output(model.catalog_max_output_tokens());
+        // The turn's own decoding settings (a harness step can make them)
+        // lie over the run's.
+        let limits = self.limits.with_turn_decoding(&req.decoding);
+        let configured_max_output = limits.cap_output(model.catalog_max_output_tokens());
         let mut estimate = sven_model::budget::estimate_request_tokens(
             view.as_ref().map_or(&messages, |v| &v.0),
             &tool_schemas,
@@ -494,8 +497,7 @@ impl EffectExecutor for TurnExecutor {
         // what made a 2-token "hi" against a small-context model with a
         // capacity-sized output cap impossible to send at all.
         let max_output_tokens_override =
-            self.limits
-                .output_budget(context_window, configured_max_output, estimate);
+            limits.output_budget(context_window, configured_max_output, estimate);
 
         // Build optional structured-output constraint.
         let response_format = if req.schema.is_null() {
@@ -631,7 +633,7 @@ impl EffectExecutor for TurnExecutor {
             }
             .stream_retrying_overflow(
                 model.as_ref(),
-                self.limits,
+                limits,
                 self.compaction.keep_recent,
                 &todos,
                 &tx,

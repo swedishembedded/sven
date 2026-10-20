@@ -270,6 +270,9 @@ pub struct AgentLoop {
     /// once it is approved.
     #[serde(default)]
     pub calls: BTreeMap<String, HeldCall>,
+    /// The decoding settings of the step's turns.
+    #[serde(default)]
+    pub decoding: sven_harness_spec::StepDecoding,
 }
 
 /// The active retry frame: which retry step is in play, its body, and how

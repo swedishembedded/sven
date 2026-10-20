@@ -637,6 +637,17 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             }
         }
 
+        // A per-request thinking switch beats the configured one. The key is
+        // not in the OpenAI schema, which rejects unknown fields, so the
+        // `openai` driver never gets it; the servers that read it (llama.cpp,
+        // vLLM, brain) take it from `chat_template_kwargs`.
+        if let (Some(enabled), true) = (req.enable_thinking, self.driver_name != "openai") {
+            if !body["chat_template_kwargs"].is_object() {
+                body["chat_template_kwargs"] = json!({});
+            }
+            body["chat_template_kwargs"]["enable_thinking"] = json!(enabled);
+        }
+
         debug!(
             driver = %self.driver_name,
             model = %self.model,

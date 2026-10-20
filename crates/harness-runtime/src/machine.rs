@@ -209,6 +209,7 @@ impl HarnessMachine {
         state: &HarnessRunState,
         prompt: &Template,
         schema_name: Option<&str>,
+        decoding: sven_harness_spec::StepDecoding,
     ) -> Effect {
         let instruction = state.resolve_template(prompt);
         let mut schema = Value::Null;
@@ -233,6 +234,7 @@ impl HarnessMachine {
             dynamic_suffix: None,
             max_tool_rounds: Some(0),
             refused_calls: Vec::new(),
+            decoding: turn_decoding(decoding),
         };
         Effect::CallLlm {
             request: request.to_value(),
@@ -729,4 +731,16 @@ fn unfenced(text: &str) -> Option<&str> {
     let inner = text.trim().strip_prefix("```")?.strip_suffix("```")?;
     let (_tag, body) = inner.split_once('\n')?;
     Some(body.trim())
+}
+
+/// A step's decoding settings as the turn request carries them.
+pub(super) fn turn_decoding(d: sven_harness_spec::StepDecoding) -> sven_vocab::TurnDecoding {
+    sven_vocab::TurnDecoding {
+        temperature: d.temperature,
+        top_p: d.top_p,
+        top_k: d.top_k,
+        seed: d.seed,
+        thinking: d.thinking,
+        thinking_budget: d.thinking_budget,
+    }
 }

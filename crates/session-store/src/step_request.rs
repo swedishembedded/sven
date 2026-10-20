@@ -74,8 +74,12 @@ pub fn record_response(
     // What identifies the decode goes under `extra.sven`; the first request of
     // the step that reported a field fixes it.
     let identity = &sampled.identity;
-    let facts: [(&str, Option<Value>); 5] = [
+    let facts: [(&str, Option<Value>); 6] = [
         ("seed", sampled.seed.map(Value::from)),
+        (
+            "decoding",
+            (!sampled.decoding.is_empty()).then(|| json!(sampled.decoding)),
+        ),
         (
             "adapter",
             identity

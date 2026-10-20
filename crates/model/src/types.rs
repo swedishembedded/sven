@@ -560,6 +560,11 @@ pub struct CompletionRequest {
     pub response_format: Option<ResponseFormat>,
     /// Sampling controls for this request (see [`SamplingParams`]).
     pub sampling: SamplingParams,
+    /// Switches the model's reasoning on or off for this request, on servers
+    /// whose chat template has the switch (`chat_template_kwargs.enable_
+    /// thinking`). `None` leaves the configured behaviour; providers without
+    /// the switch ignore it.
+    pub enable_thinking: Option<bool>,
     /// Ask the provider for the sampled token ids and their log-probabilities.
     ///
     /// Providers that cannot supply them ignore the flag and emit no
