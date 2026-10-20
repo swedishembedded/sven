@@ -16,10 +16,9 @@ use sven_harness_spec::{DelegateTarget, PlanPrimitive, PlanStep, WORKFLOW_API_VE
 use sven_hsm::{capability_for_tool_name, Context, Effect, Event, Reaction};
 use sven_vocab::verify::VerifierSpec;
 
-use crate::machine::{
-    harness_thread, primitive_word, resolve_decoding, store_as_of, then_of, HarnessMachine,
-    TurnShape,
-};
+use crate::decoding::{resolve_decoding, TurnShape};
+
+use crate::machine::{harness_thread, primitive_word, store_as_of, then_of, HarnessMachine};
 use crate::run::{
     child_machine_id, AgentLoop, ChildRun, HarnessRunState, Inflight, ParallelJoin, RetryFrame,
     TraceRecord, Waiting, OUTCOME_FACT,

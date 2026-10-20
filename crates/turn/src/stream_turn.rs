@@ -148,43 +148,6 @@ impl TurnLimits {
         self
     }
 
-    /// Lays one turn's decoding settings over these limits: each setting the
-    /// turn makes replaces the run's, the others stay.
-    #[must_use]
-    pub fn with_turn_decoding(mut self, decoding: &sven_vocab::TurnDecoding) -> Self {
-        let s = &mut self.sampling;
-        s.temperature = decoding.temperature.or(s.temperature);
-        s.top_p = decoding.top_p.or(s.top_p);
-        s.top_k = decoding.top_k.or(s.top_k);
-        s.seed = decoding.seed.or(s.seed);
-        self.enable_thinking = decoding.thinking.or(self.enable_thinking);
-        self.thinking.max_thinking_tokens = decoding
-            .thinking_budget
-            .or(self.thinking.max_thinking_tokens);
-        self.max_output_tokens = decoding.max_output_tokens.or(self.max_output_tokens);
-        if let Some(secs) = decoding.first_response_timeout.filter(|&s| s > 0) {
-            let wait = Duration::from_secs(secs);
-            self.stall.first_byte = Some(wait);
-            self.stall.first_token = Some(wait);
-        }
-        self
-    }
-
-    /// The settings these limits send, as the request's account records them.
-    #[must_use]
-    pub fn recorded_decoding(&self) -> sven_vocab::TurnDecoding {
-        sven_vocab::TurnDecoding {
-            temperature: self.sampling.temperature,
-            top_p: self.sampling.top_p,
-            top_k: self.sampling.top_k,
-            seed: self.sampling.seed,
-            thinking: self.enable_thinking,
-            thinking_budget: self.thinking.max_thinking_tokens,
-            max_output_tokens: self.max_output_tokens,
-            first_response_timeout: self.stall.first_token.map(|d| d.as_secs()),
-        }
-    }
-
     /// The output tokens one request may ask for: what the prompt leaves of
     /// the context window under `model_cap`
     /// (`sven_model::budget::dynamic_output_budget`), held to this limit.

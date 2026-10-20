@@ -42,6 +42,7 @@ use sven_hsm::{
 use sven_vocab::verify::VerifierVerdict;
 use sven_vocab::TurnRequest;
 
+use crate::decoding::{system_text, TurnShape};
 use crate::run::{step_call_id, HarnessRunData, HarnessRunState, Inflight, TraceRecord, Waiting};
 use crate::state::{superstate_of, HarnessState};
 
@@ -735,74 +736,4 @@ fn unfenced(text: &str) -> Option<&str> {
     let inner = text.trim().strip_prefix("```")?.strip_suffix("```")?;
     let (_tag, body) = inner.split_once('\n')?;
     Some(body.trim())
-}
-
-/// A step's decoding settings with their input references resolved, as the
-/// turn request carries them. A setting that does not resolve to a value of
-/// its kind is an error naming it: the run fails rather than sampling with a
-/// setting nobody chose.
-pub(super) fn resolve_decoding(
-    run: &HarnessRunState,
-    d: &sven_harness_spec::StepDecoding,
-) -> Result<sven_vocab::TurnDecoding, String> {
-    let resolve = |name: &str, setting: &Option<Value>| -> Result<Option<Value>, String> {
-        let Some(raw) = setting else { return Ok(None) };
-        match run.resolve_value(raw) {
-            Value::Null => Err(format!("setting `{name}` reads an input that has no value")),
-            value => Ok(Some(value)),
-        }
-    };
-    let float = |name: &str, setting: &Option<Value>| -> Result<Option<f64>, String> {
-        resolve(name, setting)?
-            .map(|v| {
-                v.as_f64()
-                    .ok_or_else(|| format!("setting `{name}` is not a number"))
-            })
-            .transpose()
-    };
-    let count = |name: &str, setting: &Option<Value>| -> Result<Option<u64>, String> {
-        resolve(name, setting)?
-            .map(|v| {
-                v.as_u64()
-                    .ok_or_else(|| format!("setting `{name}` is not a whole number"))
-            })
-            .transpose()
-    };
-    let small = |name: &str, setting: &Option<Value>| -> Result<Option<u32>, String> {
-        count(name, setting)?
-            .map(|n| u32::try_from(n).map_err(|_| format!("setting `{name}` is too large")))
-            .transpose()
-    };
-    Ok(sven_vocab::TurnDecoding {
-        temperature: float("temperature", &d.temperature)?,
-        top_p: float("top_p", &d.top_p)?,
-        top_k: small("top_k", &d.top_k)?,
-        seed: count("seed", &d.seed)?,
-        thinking: resolve("thinking", &d.thinking)?
-            .map(|v| {
-                v.as_bool()
-                    .ok_or_else(|| "setting `thinking` is not true or false".to_string())
-            })
-            .transpose()?,
-        thinking_budget: small("thinking_budget", &d.thinking_budget)?,
-        max_output_tokens: small("max_output_tokens", &d.max_output_tokens)?,
-        first_response_timeout: count("first_response_timeout", &d.first_response_timeout)?,
-    })
-}
-
-/// How a model turn differs from the plain one: the conversation it is in,
-/// the system message that opens it and its decoding settings.
-#[derive(Clone, Copy)]
-pub(super) struct TurnShape<'a> {
-    pub conversation: Option<&'a str>,
-    pub system: Option<&'a Template>,
-    pub decoding: sven_vocab::TurnDecoding,
-}
-
-/// A system message template, rendered against the run.
-pub(super) fn system_text(state: &HarnessRunState, system: Option<&Template>) -> Option<String> {
-    system.map(|t| match state.resolve_template(t) {
-        Value::String(text) => text,
-        other => other.to_string(),
-    })
 }

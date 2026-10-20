@@ -28,6 +28,7 @@ mod agent_loop;
 mod approval;
 mod checkpoint;
 mod command_gate;
+mod decoding;
 mod error;
 mod events;
 mod exec;

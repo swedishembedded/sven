@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::source_map::Lowering;
 
+pub use crate::decoding::StepDecoding;
+pub use crate::iterate::{ForEachSpec, IterateSource, IterateStepSpec, JsonSource, UntilSpec};
+
 /// The only harness `api_version` this compiler accepts. Bumping it is a
 /// breaking change to the language, handled the way `sven_vocab::verify`
 /// handles forward compatibility: explicit, documented, and never silently
@@ -362,85 +365,6 @@ pub enum StepSpec {
     Iterate(Box<IterateStepSpec>),
 }
 
-/// Sampling, thinking and timing settings of a model turn. Every field is
-/// optional: an unset one leaves the run's or the provider's setting. Each
-/// holds a literal (a number or a boolean) or a template that is a single
-/// hole over the run's inputs (`"{{ inputs.seed }}"`), resolved when the turn
-/// starts. Only a version 2 document sets them.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StepDecoding {
-    /// Softmax temperature.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<serde_json::Value>,
-    /// Nucleus-sampling mass.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_p: Option<serde_json::Value>,
-    /// Number of highest-probability tokens kept before sampling.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_k: Option<serde_json::Value>,
-    /// Sampling seed, for providers that honour one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<serde_json::Value>,
-    /// Reasoning on or off, where the server has the switch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking: Option<serde_json::Value>,
-    /// The most thinking tokens before the turn is cut off.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking_budget: Option<serde_json::Value>,
-    /// The most output tokens one response may ask for.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_output_tokens: Option<serde_json::Value>,
-    /// Seconds to wait for the server's first response before the turn fails.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub first_response_timeout: Option<serde_json::Value>,
-}
-
-impl StepDecoding {
-    /// `true` when no setting is made.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
-
-    /// The settings, by name.
-    #[must_use]
-    pub fn settings(&self) -> [(&'static str, &Option<serde_json::Value>); 8] {
-        [
-            ("temperature", &self.temperature),
-            ("top_p", &self.top_p),
-            ("top_k", &self.top_k),
-            ("seed", &self.seed),
-            ("thinking", &self.thinking),
-            ("thinking_budget", &self.thinking_budget),
-            ("max_output_tokens", &self.max_output_tokens),
-            ("first_response_timeout", &self.first_response_timeout),
-        ]
-    }
-
-    /// These settings with `over`'s laid on top: each setting `over` makes
-    /// wins.
-    #[must_use]
-    pub fn overlaid_by(&self, over: &Self) -> Self {
-        let pick = |a: &Option<serde_json::Value>, b: &Option<serde_json::Value>| {
-            b.clone().or_else(|| a.clone())
-        };
-        Self {
-            temperature: pick(&self.temperature, &over.temperature),
-            top_p: pick(&self.top_p, &over.top_p),
-            top_k: pick(&self.top_k, &over.top_k),
-            seed: pick(&self.seed, &over.seed),
-            thinking: pick(&self.thinking, &over.thinking),
-            thinking_budget: pick(&self.thinking_budget, &over.thinking_budget),
-            max_output_tokens: pick(&self.max_output_tokens, &over.max_output_tokens),
-            first_response_timeout: pick(
-                &self.first_response_timeout,
-                &over.first_response_timeout,
-            ),
-        }
-    }
-}
-
 /// `predict`: one constrained model turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -678,84 +602,6 @@ pub struct GateStepSpec {
     /// The step to go to when it did not (non-zero exit, timeout, or the
     /// command could not be run).
     pub on_fail: String,
-}
-
-/// Where a `for_each` reads its collection from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IterateSource {
-    /// An array in a JSON file in the workspace, read once when the
-    /// iteration begins.
-    Json(JsonSource),
-    /// An array-valued run input, by name.
-    Input(String),
-}
-
-/// A value inside a JSON file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct JsonSource {
-    /// Workspace-relative path.
-    pub file: String,
-    /// RFC 6901 pointer to the array (`""` is the whole document).
-    pub pointer: String,
-}
-
-/// `for_each` of an `iterate` step.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ForEachSpec {
-    /// The collection.
-    pub source: IterateSource,
-    /// The field of each item that names it; omitted, the items are
-    /// scalars and name themselves.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    /// The most items taken; a larger collection fails the run.
-    #[serde(default = "default_max_items")]
-    pub max_items: u64,
-}
-
-fn default_max_items() -> u64 {
-    DEFAULT_MAX_ITEMS
-}
-
-/// `until` of an `iterate` step.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UntilSpec {
-    /// The most times the body is entered; one more entry goes to
-    /// `on_exhausted`.
-    pub max_iterations: u64,
-}
-
-/// `iterate`: the one repetition primitive.
-///
-/// Each time the walk reaches the step it decides what runs next. With
-/// `for_each` the collection is read and frozen on the first visit; each
-/// later visit marks the item whose body just finished as completed and starts
-/// the next, and the visit after the last continues at `then`. With `until`
-/// each visit enters the body again, counting, until `max_iterations` entries
-/// have happened. The body is ordinary steps whose last edge returns here.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct IterateStepSpec {
-    /// Run the body once per item of a frozen collection.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub for_each: Option<ForEachSpec>,
-    /// Run the body until something else ends the loop, at most this often.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub until: Option<UntilSpec>,
-    /// The first step of the body.
-    pub body: String,
-    /// Where to continue when the loop is finished.
-    pub then: String,
-    /// Where to continue when an `until` loop has used its entries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub on_exhausted: Option<String>,
-    /// Where to store the summary `{total, completed, pending}`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub store_as: Option<String>,
 }
 
 fn default_gate_timeout() -> u64 {

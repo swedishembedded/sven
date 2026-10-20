@@ -19,7 +19,8 @@ use sven_hsm::{Context, Effect, ProposedToolCall, Reaction, ToolCallId};
 use sven_vocab::{RefusedCall, TurnRequest};
 
 use crate::approval::HeldCall;
-use crate::machine::{harness_thread, system_text, HarnessMachine};
+use crate::decoding::system_text;
+use crate::machine::{harness_thread, HarnessMachine};
 use crate::run::{AgentLoop, HarnessRunState, Inflight, Waiting};
 use crate::state::HarnessState;
 

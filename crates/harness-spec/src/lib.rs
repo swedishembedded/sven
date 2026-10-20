@@ -23,8 +23,10 @@
 //! to info@swedishembedded.com.
 
 mod bundle;
+mod decoding;
 mod error;
 mod expr;
+mod iterate;
 mod plan;
 mod source_map;
 mod spec;

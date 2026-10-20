@@ -116,6 +116,14 @@ impl ThreadStore {
         self.stop_reason.take()
     }
 
+    /// Starts an empty thread with `system` as its system message. A thread
+    /// that already has turns keeps its own start.
+    pub fn open_thread(&mut self, id: &str, system: Option<&str>) {
+        if let (Some(text), true) = (system, self.is_empty(id)) {
+            self.append(id, Message::system(text));
+        }
+    }
+
     /// Append a single turn to a thread (creating the thread if needed).
     pub fn append(&mut self, id: &str, message: Message) {
         self.log.push((id.to_string(), message.clone()));

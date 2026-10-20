@@ -355,9 +355,7 @@ impl EffectExecutor for TurnExecutor {
         let reasons = refusal_reasons(&self.call_id_to_thread, &req.refused_calls);
         if let Ok(mut s) = self.store.lock() {
             s.answer_open_calls(&thread_id, &reasons);
-            if let (Some(system), true) = (&req.system, s.is_empty(&thread_id)) {
-                s.append(&thread_id, Message::system(system));
-            }
+            s.open_thread(&thread_id, req.system.as_deref());
             if !req.instruction.is_empty() {
                 s.append(&thread_id, Message::user(&req.instruction));
             }
@@ -422,8 +420,6 @@ impl EffectExecutor for TurnExecutor {
         // No gate at all (not even a wrong one) when the window isn't known -
         // see `sven_model::budget::effective_input_budget`'s doc comment.
         let context_window = model.catalog_context_window();
-        // The turn's own decoding settings (a harness step can make them)
-        // lie over the run's.
         let limits = self.limits.with_turn_decoding(&req.decoding);
         let configured_max_output = limits.cap_output(model.catalog_max_output_tokens());
         let mut estimate = sven_model::budget::estimate_request_tokens(

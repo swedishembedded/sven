@@ -30,6 +30,7 @@ pub mod reconstruct;
 mod runtime_context;
 mod stall;
 pub mod stream_turn;
+mod turn_decoding;
 
 pub use compact::{
     compact_session, compact_session_with_strategy, emergency_compact, finish_compaction,
