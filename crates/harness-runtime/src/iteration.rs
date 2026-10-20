@@ -84,7 +84,9 @@ pub struct IterationState {
 }
 
 impl IterationState {
-    fn completed(&self) -> usize {
+    /// How many items are completed.
+    #[must_use]
+    pub fn completed_items(&self) -> usize {
         self.items
             .iter()
             .filter(|i| i.status == ItemStatus::Completed)
@@ -94,9 +96,64 @@ impl IterationState {
     fn summary(&self) -> Value {
         json!({
             "total": self.items.len(),
-            "completed": self.completed(),
-            "pending": self.items.len() - self.completed(),
+            "completed": self.completed_items(),
+            "pending": self.items.len() - self.completed_items(),
         })
+    }
+}
+
+/// What a reconciliation did to a loop's items.
+struct Reconciled {
+    kept: u64,
+    invalidated: u64,
+    added: u64,
+    removed: u64,
+}
+
+impl IterationState {
+    /// Merges `fresh` (the collection read again) into the items by id, in
+    /// the fresh order. An item whose content is unchanged keeps its status;
+    /// a completed item whose content changed is pending again (a result is
+    /// only evidence about the content it was produced for); new ids start
+    /// pending and ids the collection no longer holds are dropped.
+    fn reconcile(&mut self, fresh: Vec<WorkItem>, source_digest: Option<String>) -> Reconciled {
+        let mut old: std::collections::BTreeMap<String, WorkItem> = std::mem::take(&mut self.items)
+            .into_iter()
+            .map(|item| (item.id.clone(), item))
+            .collect();
+        let mut record = Reconciled {
+            kept: 0,
+            invalidated: 0,
+            added: 0,
+            removed: 0,
+        };
+        for item in fresh {
+            match old.remove(&item.id) {
+                Some(previous) if previous.input_digest == item.input_digest => {
+                    record.kept += 1;
+                    self.items.push(previous);
+                }
+                Some(previous) => {
+                    if previous.status == ItemStatus::Completed {
+                        record.invalidated += 1;
+                    } else {
+                        record.kept += 1;
+                    }
+                    self.items.push(WorkItem {
+                        attempts: previous.attempts,
+                        ..item
+                    });
+                }
+                None => {
+                    record.added += 1;
+                    self.items.push(item);
+                }
+            }
+        }
+        record.removed = old.len() as u64;
+        self.next = 0;
+        self.source_digest = source_digest;
+        record
     }
 }
 
@@ -336,7 +393,52 @@ impl HarnessMachine {
                 ctx,
             );
         };
+        if run.iterations.contains_key(step_id) {
+            return self.iterate_reconcile(run, &step, collection, Some(digest), ctx);
+        }
         self.iterate_freeze(run, &step, collection, Some(digest), ctx)
+    }
+
+    /// Merges the collection read again after a resume into the loop's items
+    /// by id, then goes on with the loop.
+    fn iterate_reconcile(
+        &mut self,
+        run: &mut HarnessRunState,
+        step: &PlanStep,
+        collection: &Value,
+        source_digest: Option<String>,
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
+        let PlanPrimitive::Iterate {
+            iteration: PlanIteration::ForEach { id, max_items, .. },
+            ..
+        } = &step.primitive
+        else {
+            return self.fail_now(
+                run,
+                "internal",
+                "reconcile reached a non-for_each step",
+                ctx,
+            );
+        };
+        let fresh = match freeze(collection, id.as_deref(), *max_items) {
+            Ok(items) => items,
+            Err((code, message)) => {
+                return self.fail_now(run, code, &format!("loop `{}`: {message}", step.id), ctx)
+            }
+        };
+        let Some(state) = run.iterations.get_mut(&step.id) else {
+            return self.fail_now(run, "internal", "iteration state vanished", ctx);
+        };
+        let record = state.reconcile(fresh, source_digest);
+        run.trace.push(TraceRecord::ItemsReconciled {
+            step: step.id.clone(),
+            kept: record.kept,
+            invalidated: record.invalidated,
+            added: record.added,
+            removed: record.removed,
+        });
+        self.iterate_continue(run, step, ctx)
     }
 
     fn iterate_freeze(
@@ -383,13 +485,7 @@ impl HarnessMachine {
         step: &PlanStep,
         ctx: &mut Context,
     ) -> Reaction<HarnessState> {
-        let PlanPrimitive::Iterate {
-            body,
-            then,
-            store_as,
-            ..
-        } = &step.primitive
-        else {
+        let PlanPrimitive::Iterate { iteration, .. } = &step.primitive else {
             return self.fail_now(
                 run,
                 "internal",
@@ -411,6 +507,43 @@ impl HarnessMachine {
                 index: index as u64,
             });
         }
+        if let PlanIteration::ForEach {
+            source: IterateSource::Json(json),
+            reconcile: sven_harness_spec::Reconcile::Refresh,
+            ..
+        } = iteration
+        {
+            if std::mem::take(&mut run.reconcile_pending) {
+                return self.request_snapshot(run, step, json, ctx);
+            }
+        }
+        self.iterate_continue(run, step, ctx)
+    }
+
+    /// Starts the next pending item, or leaves the loop.
+    fn iterate_continue(
+        &mut self,
+        run: &mut HarnessRunState,
+        step: &PlanStep,
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
+        let PlanPrimitive::Iterate {
+            body,
+            then,
+            store_as,
+            ..
+        } = &step.primitive
+        else {
+            return self.fail_now(
+                run,
+                "internal",
+                "iterate dispatch reached another step",
+                ctx,
+            );
+        };
+        let Some(state) = run.iterations.get_mut(&step.id) else {
+            return self.fail_now(run, "internal", "iteration state vanished", ctx);
+        };
         while state
             .items
             .get(state.next)

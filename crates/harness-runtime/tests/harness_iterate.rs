@@ -484,3 +484,118 @@ fn a_file_check_names_the_item_it_belongs_to() {
     let spec = serde_json::to_value(&spec).expect("spec");
     assert_eq!(spec["path"], "reports/m000.md");
 }
+
+/// Runs a file-sourced loop until item 2 is in flight, then resumes it in a
+/// new process against a backlog that has changed meanwhile: m000 has new
+/// content, m003 is gone and m010 is new. Returns the items the resumed run
+/// prompted for and the final run state.
+fn resume_against_changed_backlog(policy: &str) -> (Vec<String>, Value) {
+    let sep = if policy.is_empty() { "" } else { ", " };
+    let source = format!("{{ json: {{ file: backlog.json, pointer: /items }} }}{sep}{policy}");
+    let yaml = workflow(&source, "");
+    let (mut m, mut ctx, mut state, fx) = begin(&yaml, json!({ "modules": [] }));
+    let mut seen = Seen::default();
+    let stop_at = |s: &Seen| s.prompts.len() == 2 && s.gate_calls == 2;
+    let first = modules(4);
+    let _ = pump(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        fx,
+        &mut seen,
+        Some(&first),
+        &stop_at,
+    );
+
+    let snapshot = m.snapshot(&ctx);
+    drop((m, ctx));
+    let (mut m, mut ctx) =
+        HarnessMachine::restore(yaml, snapshot).expect("the checkpoint restores");
+    let mut state = HarnessState::WaitingForModel;
+    let fx = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::LlmFailed {
+            error: INTERRUPTED_OPERATION.to_string(),
+        },
+    );
+    let changed = json!([
+        { "name": "m000", "size": 99 },
+        { "name": "m001", "size": 1 },
+        { "name": "m002", "size": 2 },
+        { "name": "m010", "size": 10 },
+    ]);
+    let mut resumed = Seen::default();
+    pump(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        fx,
+        &mut resumed,
+        Some(&changed),
+        &|_| false,
+    );
+    assert_eq!(state, HarnessState::Completed);
+    let names = resumed
+        .prompts
+        .iter()
+        .map(|p| {
+            p.trim_start_matches("Harden ")
+                .trim_end_matches('.')
+                .to_string()
+        })
+        .collect();
+    (names, run_state(&ctx))
+}
+
+#[test]
+fn a_frozen_loop_ignores_a_backlog_that_changed_while_it_was_suspended() {
+    let (names, state) = resume_against_changed_backlog("");
+    assert_eq!(
+        names,
+        ["m002", "m003"],
+        "the list frozen at the start stands"
+    );
+    assert!(!state["trace"]
+        .as_array()
+        .expect("trace")
+        .iter()
+        .any(|r| r["event"] == "items_reconciled"));
+}
+
+#[test]
+fn a_refreshed_loop_merges_a_changed_backlog_by_id_and_reruns_changed_items() {
+    let (names, state) = resume_against_changed_backlog("reconcile: refresh");
+    assert_eq!(
+        names,
+        ["m002", "m000", "m010"],
+        "the interrupted item finishes, the changed completed item runs again, the new one runs, the removed one does not"
+    );
+    let record = state["trace"]
+        .as_array()
+        .expect("trace")
+        .iter()
+        .find(|r| r["event"] == "items_reconciled")
+        .expect("the merge is on the trace")
+        .clone();
+    assert_eq!(
+        (
+            record["kept"].clone(),
+            record["invalidated"].clone(),
+            record["added"].clone(),
+            record["removed"].clone()
+        ),
+        (json!(2), json!(1), json!(1), json!(1))
+    );
+    let items = state["iterations"]["modules__iter"]["items"]
+        .as_array()
+        .expect("items");
+    assert_eq!(items.len(), 4);
+    assert!(items.iter().all(|i| i["status"] == "completed"));
+    assert_eq!(
+        items[0]["value"]["size"], 99,
+        "the loop holds the new content"
+    );
+    assert_eq!(items[0]["attempts"], 2);
+}

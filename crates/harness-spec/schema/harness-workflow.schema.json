@@ -274,7 +274,8 @@
           ]
         },
         "id": { "type": "string", "minLength": 1, "description": "The item field that names an item; scalar items name themselves." },
-        "max_items": { "type": "integer", "minimum": 1, "maximum": 10000, "description": "Default 500. A larger collection fails the run." }
+        "max_items": { "type": "integer", "minimum": 1, "maximum": 10000, "description": "Default 500. A larger collection fails the run." },
+        "reconcile": { "enum": ["frozen", "refresh"], "description": "What a resume does with a collection that changed on disk. frozen (default): nothing. refresh: needs a file source; merged by item id at the next item boundary, a completed item whose content changed is pending again." }
       }
     },
     "until": {
@@ -375,6 +376,7 @@
         "system": { "type": "string", "description": "With model_only: the system message of the task's own conversation (a template)." },
         "allowance": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/input_hole" }], "description": "The tool calls the task's first turn may make; follow-ups and repairs draw on what is left. A call beyond it is refused and the turn ends with the stop tool_cap." },
         "max_repeated_results": { "type": "integer", "minimum": 1, "description": "End a turn with the stop repetition when the same call has been answered the same way this many times." },
+        "checkpoint": { "enum": ["each_item"], "description": "With for_each: the host is handed a checkpoint every time an item completes." },
         "model_only": { "type": "boolean", "description": "One model turn without tools (a planner or a supervisor); its answer is the task's output." },
         "schema": { "type": "object", "description": "With model_only: the JSON Schema the answer must satisfy; later tasks read its fields as tasks.<name>.output.<field>." },
         "sampling": { "$ref": "#/$defs/sampling" },

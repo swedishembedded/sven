@@ -439,6 +439,20 @@ pub enum TraceRecord {
         /// The item's index in the frozen collection, from 0.
         index: u64,
     },
+    /// A resumed `for_each` with `reconcile: refresh` read its collection
+    /// again and merged it by item id.
+    ItemsReconciled {
+        /// The iterate step.
+        step: String,
+        /// Items that stayed as they were.
+        kept: u64,
+        /// Completed items whose content changed and are pending again.
+        invalidated: u64,
+        /// Items the refreshed collection added.
+        added: u64,
+        /// Items the refreshed collection no longer holds.
+        removed: u64,
+    },
     /// A `gate` step judged its command's report.
     GateEvaluated {
         /// The gate step.
@@ -531,6 +545,10 @@ pub struct HarnessRunState {
     pub agent: Option<AgentLoop>,
     /// The active retry frame, when a retry step is in play.
     pub retry: Option<RetryFrame>,
+    /// Set when a resume interrupted work in flight: the next item boundary of
+    /// a `reconcile: refresh` loop reads its collection again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reconcile_pending: bool,
     /// The progress of each `iterate` step that has begun, by step id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub iterations: BTreeMap<String, crate::iteration::IterationState>,

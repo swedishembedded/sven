@@ -74,6 +74,19 @@ pub fn harness_event(record: &TraceRecord, step_duration_ms: u64) -> HarnessEven
             index: *index,
             attempt: *attempt,
         },
+        TraceRecord::ItemsReconciled {
+            step,
+            kept,
+            invalidated,
+            added,
+            removed,
+        } => HarnessEvent::ItemsReconciled {
+            step: step.clone(),
+            kept: *kept,
+            invalidated: *invalidated,
+            added: *added,
+            removed: *removed,
+        },
         TraceRecord::ItemCompleted { step, item, index } => HarnessEvent::ItemCompleted {
             step: step.clone(),
             item: item.clone(),

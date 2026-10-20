@@ -31,6 +31,7 @@ workflow:
     outputs: [backlog.json]
   - name: modules
     for_each: { source: { json: { file: backlog.json, pointer: /items } }, id: module, max_items: 50 }
+    checkpoint: each_item
     task: "Add tests for the module {{ item.module }} (number {{ item_index }}) and simplify it without changing its behavior."
     verify: [test]
     repair: { attempts: 1 }

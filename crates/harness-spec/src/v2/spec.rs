@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::spec::{CapabilityName, IOType, InputValue, IterateSource, StepDecoding};
+use crate::spec::{CapabilityName, IOType, InputValue, IterateSource, Reconcile, StepDecoding};
 
 /// A whole workflow document, as written.
 #[derive(Debug, Clone, PartialEq)]
@@ -475,6 +475,20 @@ pub struct ForEach {
     /// The most items; a larger collection fails the run.
     #[serde(default)]
     pub max_items: Option<u64>,
+    /// What a resumed run does with a collection that changed on disk:
+    /// `frozen` (default) or `refresh`, which merges by item id at the next
+    /// item boundary and makes a completed item whose content changed pending
+    /// again. Only a file source can change.
+    #[serde(default)]
+    pub reconcile: Reconcile,
+}
+
+/// When a task hands the host a durable checkpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointPolicy {
+    /// After every completed item of a `for_each` task.
+    EachItem,
 }
 
 /// `until:` of a task: the body repeats until a metric holds.
@@ -576,6 +590,9 @@ pub struct TaskSpec {
     pub for_each: Option<ForEach>,
     /// Repeat the task until a metric holds.
     pub until: Option<Until>,
+    /// `each_item` (for a `for_each` task): the host is handed a checkpoint
+    /// every time an item completes.
+    pub checkpoint: Option<CheckpointPolicy>,
     /// A single model turn with no tools, for a planner or a supervisor, in
     /// a conversation of its own.
     pub model_only: bool,

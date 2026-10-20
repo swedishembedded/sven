@@ -142,6 +142,20 @@ pub enum HarnessEvent {
         /// The item's index in the frozen collection, from 0.
         index: u64,
     },
+    /// A resumed `for_each` with `reconcile: refresh` read its collection
+    /// again and merged it by item id.
+    ItemsReconciled {
+        /// The iterate step.
+        step: String,
+        /// Items that stayed as they were.
+        kept: u64,
+        /// Completed items whose content changed and are pending again.
+        invalidated: u64,
+        /// Items the refreshed collection added.
+        added: u64,
+        /// Items the refreshed collection no longer holds.
+        removed: u64,
+    },
     /// A `gate` step judged its command's report.
     GateEvaluated {
         /// The gate step.
@@ -281,6 +295,16 @@ impl std::fmt::Display for HarnessEvent {
             Self::ItemCompleted { step, item, index } => {
                 write!(f, "loop `{step}` completed item `{item}` (#{index})")
             }
+            Self::ItemsReconciled {
+                step,
+                kept,
+                invalidated,
+                added,
+                removed,
+            } => write!(
+                f,
+                "loop `{step}` reconciled its collection: {kept} kept, {invalidated} invalidated, {added} added, {removed} removed"
+            ),
             Self::GateEvaluated {
                 step,
                 passed,

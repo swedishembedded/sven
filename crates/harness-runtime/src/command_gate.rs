@@ -201,6 +201,7 @@ impl HarnessMachine {
         run.agent = None;
         run.awaiting = None;
         run.inflight = None;
+        run.reconcile_pending = true;
         self.walk_to(run, step_id, ctx)
     }
 

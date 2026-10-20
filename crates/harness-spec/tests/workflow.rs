@@ -463,6 +463,7 @@ fn a_for_each_task_lowers_to_an_iterate_step_whose_body_returns_to_it() {
         source,
         id,
         max_items,
+        ..
     } = iteration
     else {
         panic!("for_each");
@@ -667,4 +668,52 @@ fn a_for_each_task_may_name_its_item_in_file_checks_and_no_other_task_may() {
         "outputs: [\"plan-{{ inputs.repo }}.md\"]",
     );
     assert!(rejected(&outside).contains("only a `for_each` task's paths may name the item"));
+}
+
+#[test]
+fn a_for_each_task_chooses_how_a_resume_treats_a_changed_backlog_and_when_it_checkpoints() {
+    use sven_harness_spec::{PlanIteration, Reconcile};
+    let loop_of = |plan: &sven_harness_spec::HarnessPlan| {
+        let PlanPrimitive::Iterate { iteration, .. } = &plan.steps["modules__iter"].primitive
+        else {
+            panic!("an iterate step");
+        };
+        iteration.clone()
+    };
+    let default = loop_of(&compile(LOOPS));
+    assert!(matches!(
+        default,
+        PlanIteration::ForEach {
+            reconcile: Reconcile::Frozen,
+            checkpoint_each_item: false,
+            ..
+        }
+    ));
+
+    let chosen = LOOPS
+        .replace("id: module }", "id: module, reconcile: refresh }")
+        .replace(
+            "    verify: [test]\n    repair: { attempts: 1,",
+            "    checkpoint: each_item\n    verify: [test]\n    repair: { attempts: 1,",
+        );
+    let plan = compile(&chosen);
+    assert!(matches!(
+        loop_of(&plan),
+        PlanIteration::ForEach {
+            reconcile: Reconcile::Refresh,
+            checkpoint_each_item: true,
+            ..
+        }
+    ));
+    assert_ne!(
+        plan.digest,
+        compile(LOOPS).digest,
+        "the policy is pinned by the digest"
+    );
+
+    let on_until = LOOPS.replace(
+        "    until: { metric",
+        "    checkpoint: each_item\n    until: { metric",
+    );
+    assert!(rejected(&on_until).contains("needs a `for_each` task"));
 }

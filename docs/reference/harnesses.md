@@ -262,6 +262,24 @@ that did not run (its `when` was false) has not completed. Codes:
 `iterate_source_unreadable`, `iterate_source_malformed`, `iterate_source_not_array`,
 `iterate_missing_id`, `iterate_duplicate_id`, `iterate_too_many_items`. The trace
 records `IterationStarted`, `ItemStarted` and `ItemCompleted`.
+**Durable progress and a changed backlog.** `checkpoint: each_item` on a
+`for_each` task hands the host a checkpoint every time an item completes
+(`HarnessRun::on_item_checkpoint(sink)`; `sven harness run --checkpoint-out FILE`
+keeps the latest one in FILE, replaced atomically), so a crash loses at most the
+item in flight; the checkpoint resumes like one a bound left. The host sees the
+machine after a dispatch, so the item that was in flight is settled as
+interrupted on resume. `for_each: {reconcile: frozen | refresh}` says what a
+*resumed* run does with a backlog file that changed meanwhile. `frozen` (the
+default) keeps the list. `refresh` reads the file again at the first item
+boundary after the resume and merges by item id, in the file's order: an
+unchanged item keeps its status; a completed item whose content digest changed
+is pending again (a result is evidence only about the content it was produced
+for); new ids are appended pending; ids no longer in the file are dropped. The
+trace records `ItemsReconciled {kept, invalidated, added, removed}`. A file the
+agent can write decides the list under `refresh`, so use it only when that is
+the intent; it needs a file source. A completed item records the plan digest it
+was verified under; a changed gate is a changed plan, whose checkpoints are
+refused, so invalidation by gate change needs no separate switch.
 Item values from a file the agent wrote are data the agent controls: they reach
 prompts, gate argv elements (never a shell command line) and file-check paths (which
 the verifier confines to the workspace, so a path that escapes is `unknown`, not

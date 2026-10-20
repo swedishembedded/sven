@@ -20,7 +20,7 @@ use serde_json::Value;
 use super::spec::{ArtifactCheck, Check, GateDef, WorkflowSpec};
 use crate::error::HarnessError;
 use crate::spec::{
-    IOType, IterateSource, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT, MAX_ITERATIONS_LIMIT,
+    IOType, IterateSource, Reconcile, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT, MAX_ITERATIONS_LIMIT,
     RESERVED_TOOLS,
 };
 use crate::validate::is_workspace_relative;
@@ -544,7 +544,17 @@ fn validate_loop(
             "{place}: a task loops one way, `for_each` or `until`, not both"
         )));
     }
+    if task.checkpoint.is_some() && task.for_each.is_none() {
+        return Err(invalid(format!(
+            "{place}: `checkpoint: each_item` needs a `for_each` task"
+        )));
+    }
     if let Some(each) = &task.for_each {
+        if each.reconcile == Reconcile::Refresh && !matches!(each.source, IterateSource::Json(_)) {
+            return Err(invalid(format!(
+                "{place}: `reconcile: refresh` needs a file source; an input cannot change"
+            )));
+        }
         if let Some(max) = each.max_items {
             if max == 0 || max > MAX_ITEMS_LIMIT {
                 return Err(invalid(format!(

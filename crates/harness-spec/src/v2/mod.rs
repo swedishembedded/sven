@@ -229,6 +229,8 @@ struct RawTask {
     max_repeated_results: Option<u32>,
     #[serde(default)]
     corrections: Option<spec::Corrections>,
+    #[serde(default)]
+    checkpoint: Option<spec::CheckpointPolicy>,
 }
 
 /// `until:`; the comparison keys are collected and checked by
@@ -298,6 +300,7 @@ fn parse_workflow_tasks(section: Option<Value>) -> Result<Vec<TaskSpec>, Harness
             allowance: raw.allowance,
             max_repeated_results: raw.max_repeated_results,
             corrections: raw.corrections,
+            checkpoint: raw.checkpoint,
         });
     }
     Ok(tasks)

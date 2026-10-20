@@ -40,6 +40,7 @@ use sven_hsm::Snapshot;
 use crate::engine::Engine;
 use crate::error::CallError;
 
+mod item_checkpoints;
 mod outcome;
 mod record;
 mod run;

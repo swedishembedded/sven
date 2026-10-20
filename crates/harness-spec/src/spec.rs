@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 use crate::source_map::Lowering;
 
 pub use crate::decoding::StepDecoding;
-pub use crate::iterate::{ForEachSpec, IterateSource, IterateStepSpec, JsonSource, UntilSpec};
+pub use crate::iterate::{
+    ForEachSpec, IterateSource, IterateStepSpec, JsonSource, Reconcile, UntilSpec,
+};
 
 /// The only harness `api_version` this compiler accepts. Bumping it is a
 /// breaking change to the language, handled the way `sven_vocab::verify`

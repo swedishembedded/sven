@@ -120,6 +120,13 @@ pub enum PlanIteration {
         id: Option<String>,
         /// The most items taken.
         max_items: u64,
+        /// What a resume does with a changed collection.
+        #[serde(default, skip_serializing_if = "crate::iterate::Reconcile::is_frozen")]
+        reconcile: crate::iterate::Reconcile,
+        /// Whether each completed item is a point the host may persist a
+        /// checkpoint at.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        checkpoint_each_item: bool,
     },
     /// Until another step ends the loop, at most `max_iterations` times.
     Until {
@@ -535,6 +542,8 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
                     source: f.source.clone(),
                     id: f.id.clone(),
                     max_items: f.max_items,
+                    reconcile: f.reconcile,
+                    checkpoint_each_item: f.checkpoint_each_item,
                 },
                 (_, Some(u)) => PlanIteration::Until {
                     max_iterations: u.max_iterations,

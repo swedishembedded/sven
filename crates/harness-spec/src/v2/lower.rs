@@ -85,6 +85,8 @@ fn lower_loop(
                     source: each.source.clone(),
                     id: each.id.clone(),
                     max_items: each.max_items.unwrap_or(DEFAULT_MAX_ITEMS),
+                    reconcile: each.reconcile,
+                    checkpoint_each_item: task.checkpoint.is_some(),
                 }),
                 until: None,
                 body: work.to_string(),

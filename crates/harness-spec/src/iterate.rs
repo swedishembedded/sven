@@ -31,6 +31,29 @@ pub struct JsonSource {
     pub pointer: String,
 }
 
+/// What a resumed run does with a `for_each` collection that may have
+/// changed on disk since it was frozen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reconcile {
+    /// The frozen list stands; nothing the workspace holds changes it.
+    #[default]
+    Frozen,
+    /// At the first item boundary after a resume the collection is read
+    /// again and merged by item id: unchanged completed items stay completed,
+    /// a completed item whose content changed is pending again, new ids are
+    /// appended, removed ids are dropped.
+    Refresh,
+}
+
+impl Reconcile {
+    /// `true` for the default, which a plan leaves out.
+    #[must_use]
+    pub fn is_frozen(&self) -> bool {
+        *self == Self::Frozen
+    }
+}
+
 /// `for_each` of an `iterate` step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +67,12 @@ pub struct ForEachSpec {
     /// The most items taken; a larger collection fails the run.
     #[serde(default = "default_max_items")]
     pub max_items: u64,
+    /// What a resume does with a changed collection.
+    #[serde(default, skip_serializing_if = "Reconcile::is_frozen")]
+    pub reconcile: Reconcile,
+    /// Hand the host a durable checkpoint each time an item completes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub checkpoint_each_item: bool,
 }
 
 fn default_max_items() -> u64 {

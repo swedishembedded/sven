@@ -171,11 +171,12 @@ what runs next.
 * **Snapshot rule.** The collection is read once, on the first visit, from a run
   input or through the harness-only `read_json_snapshot` tool, and frozen. Edits
   to the file afterwards are not seen: they cannot add, drop or reorder an item.
-  The run does not reconcile with the file on resume; a changed backlog is a new
-  run. This is the conservative choice, taken because the alternative (merging by
-  id and digest) makes "completed" depend on a file the agent can write. Content
-  digests of items and of the file are recorded so that a later reconciliation
-  policy has what it needs.
+  By default the run does not reconcile with the file on resume (`reconcile:
+  frozen`). `reconcile: refresh` is the explicit alternative: at the first item
+  boundary after a resume the file is read again and merged by item id and
+  content digest, and a completed item whose content changed is pending again.
+  This makes "completed" depend on a file the agent can write, so it is opt-in
+  and traced (`ItemsReconciled`).
 * **Completion.** An item is completed when its body reaches the end of its
   checks. A failing item fails the run at that item (the checks' own failure
   step); later items stay pending. `success.work_items.all_completed` checks
@@ -190,8 +191,8 @@ what runs next.
   them.
 
 Not decided here: invalidating a completed item when the code it was verified
-against changes later. A completed item records the digest of the plan it passed
-under, which is the hook for it.
+against changes later (the workspace, as opposed to the backlog). A completed
+item records the digest of the plan it passed under, which is the hook for it.
 
 ## Consequences
 
