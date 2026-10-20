@@ -225,7 +225,7 @@ start_brain() {
       --dbus-address "$BUS_ADDR" \
       --openai "$OPENAI_PORT" \
       --api-keys-out "$KEYS_FILE" \
-      --qwen-ctx 40960 \
+      --ctx 40960 \
       -d
 
   info "serving on the bus and on http://127.0.0.1:$OPENAI_PORT/v1"
@@ -265,7 +265,7 @@ model:
   base_url: http://127.0.0.1:$OPENAI_PORT/v1
   api_key: $BRAIN_API_KEY
   # max_tokens is the whole CONTEXT WINDOW (input + output), so it matches
-  # --qwen-ctx above.  max_output_tokens is the room to answer in, and it
+  # --ctx above.  max_output_tokens is the room to answer in, and it
   # has to be set: without it the window doubles as the per-request output
   # cap, so every turn asks for prompt + 40960 tokens and is refused.
   max_tokens: 40960
