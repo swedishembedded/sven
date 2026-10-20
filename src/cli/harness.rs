@@ -18,6 +18,21 @@ use clap::{Args, Subcommand, ValueEnum};
 pub enum ToolsetArg {
     /// Fixture tools only (`--tool-fixture` or the case's `tools`).
     None,
+    /// sven's real coding tools (files, search, shell) on `--workspace`, a
+    /// real model and an explicit `--approvals` mode. No fixtures.
+    Coding,
+}
+
+/// Whether the calls of a production run wait for a person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ApprovalsArg {
+    /// Every call the harness and the host ceiling allow runs unasked.
+    Auto,
+    /// Every call that is not read-only is refused; nobody is asked.
+    Deny,
+    /// Every call that is not read-only is put to you on the terminal
+    /// (stderr, answered on stdin); no answer is a refusal.
+    Ask,
 }
 
 /// `sven harness` subcommands; the exit codes are on `sven harness --help`.
@@ -241,10 +256,39 @@ pub struct HarnessRunArgs {
     /// Base URL of the model server you already run.
     #[arg(long, value_name = "URL", requires = "model")]
     pub model_endpoint: Option<String>,
-    /// Tools besides the fixtures. Only `none` is supported: the offline
-    /// kit cannot give a run the coding or research tools safely.
+    /// The run's tools. `none` (default) runs on fixtures only. `coding`
+    /// runs the real coding tools on `--workspace` and needs `--workspace`,
+    /// `--model`, `--model-endpoint` and `--approvals`; it takes no fixture
+    /// or case flags.
     #[arg(long, value_enum, default_value = "none")]
     pub toolset: ToolsetArg,
+    /// Whether production calls wait for you (`--toolset coding` only, and
+    /// required there: a run never inherits an approval mode).
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub approvals: Option<ApprovalsArg>,
+    /// A capability the host grants a production run (`--toolset coding`
+    /// only; repeatable). A run holds a capability only when its harness
+    /// declares it AND the host grants it. Default: ReadFile, WriteFile,
+    /// DeleteFile, ExecuteShell, RunVerifier and SpawnChild - never
+    /// NetworkAccess, GitOperation or ControlDevice unless named here.
+    #[arg(
+        long = "allow-capability",
+        value_name = "NAME",
+        value_parser = clap::builder::PossibleValuesParser::new(sven_harness_spec::CapabilityName::known().to_vec())
+    )]
+    pub allow_capabilities: Vec<String>,
+    /// Seconds to wait for the model server's first response bytes before a
+    /// model call fails (`--toolset coding` only). Raise it for a server
+    /// that queues requests.
+    #[arg(long, value_name = "SECS")]
+    pub first_byte_timeout: Option<u64>,
+    /// A file holding the model server's API key, read once and handed to
+    /// the model client only: a JSON object of provider name to key, or the
+    /// key itself on one line. Optional (a local server may need none).
+    /// Refused when the file is inside `--workspace`, where the agent could
+    /// read it. Needs `--model`.
+    #[arg(long, value_name = "FILE", requires = "model")]
+    pub api_key_file: Option<PathBuf>,
     /// The run's seed: selects the behaviour of a `by_seed` fixture model.
     #[arg(long, value_name = "N")]
     pub seed: Option<u64>,

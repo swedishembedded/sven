@@ -68,7 +68,10 @@ sven harness inspect  <PATH> [--json]
 sven harness schema   [<PATH>]
 sven harness run      <PATH> [--input JSON | --input-file FILE] [--case FILE]
                       [--model-fixture FILE] [--tool-fixture FILE]... [--workspace DIR]
-                      [--model SPEC [--model-endpoint URL]] [--toolset none] [--seed N]
+                      [--model SPEC [--model-endpoint URL]] [--seed N]
+                      [--toolset none | --toolset coding --approvals auto|deny|ask
+                       [--allow-capability NAME]... [--api-key-file FILE]
+                       [--first-byte-timeout SECS]]
                       [--timeout SECS] [--max-output-tokens N]
                       [--trace FILE] [--record FILE] [--trajectory FILE]
                       [--checkpoint-out FILE] [--json] [--quiet]
@@ -114,8 +117,52 @@ sven harness compare  <DIR_A> <DIR_B> --cases DIR [--fail-on-regression] [--json
   `reject`. A case skipped by either variant is listed and left out.
 
 `--timeout` and `--max-output-tokens` do not fail a run: they **suspend** it
-and leave a checkpoint. `--toolset` accepts only `none`: the tools a run sees
-are the fixtures.
+and leave a checkpoint.
+
+### Real tools: `--toolset coding`
+
+`--toolset none` (the default) runs on fixtures only. `--toolset coding` runs
+sven's real tools (file read, write and edit, search, shell) on a real
+directory with a real model. Nothing that widens a run is implied, so the
+flags below are all required except the last three; a missing one is exit 2:
+
+```sh
+sven harness run ./c-repair --toolset coding --workspace ./repo \
+  --approvals auto --model openai/<name> --model-endpoint http://127.0.0.1:8788/v1 \
+  --api-key-file ~/keys.json
+```
+
+- `--workspace DIR` is where the file tools are confined and the shell
+  starts. A shell is not a sandbox: a command can still reach outside the
+  directory; run the whole command in a container when that matters. The
+  run also writes `.sven/audit.jsonl` there.
+- `--model` and `--model-endpoint` name a server you already run. The
+  fixture flags (`--model-fixture`, `--tool-fixture`, `--case`) are refused.
+- `--approvals` is `auto` (allowed calls run unasked), `deny` (every call
+  that is not read-only is refused, including a harness's own `shell` tool
+  steps, so a gate step fails the run rather than passing without running)
+  or `ask` (each such call is put to you on the terminal; end of input
+  refuses). There is no default.
+- Three caps bound the agent, and it holds a capability only when all agree:
+  the capabilities the harness declares, the `tools` list of the agent step,
+  and the host ceiling `--allow-capability NAME` (repeatable). Without the
+  flag the ceiling is ReadFile, WriteFile, DeleteFile, ExecuteShell,
+  RunVerifier and SpawnChild: never NetworkAccess, GitOperation or
+  ControlDevice. A ceiling never grants what the harness did not declare.
+- `--api-key-file` holds the server's key as `{"<provider>": "<key>"}` or
+  the bare key. It is handed to the model client only, so no trace,
+  recording, checkpoint or audit record carries it. A file inside the
+  workspace is refused, because the agent could read it.
+- `--first-byte-timeout SECS` raises how long a model call waits for the
+  server's first bytes, for a server that queues requests.
+
+Progress lines are printed as the run goes, not afterwards. Verification is
+not the agent's: end such a harness with a `verify` step that reads a verdict a
+tool wrote, and pin the gate files with `file_hash` verifiers so the agent
+cannot edit them. A script inside the editable repository is a weak verifier
+on its own. `tests/fixtures/harness/c-repair` is a working example: the agent
+writes a C test, builds it with the real compiler and fixes the library, and
+the run completes only when a pinned gate test passes.
 
 ### Output
 

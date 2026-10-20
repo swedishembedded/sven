@@ -13,10 +13,12 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::de::DeserializeOwned;
-use sven_harness_testkit::{CaseManifest, ModelFixture, OptIn, RunRequest, ToolFixture, Workspace};
+use sven_harness_testkit::{
+    Bounds, CaseManifest, ModelFixture, OptIn, RunRequest, ToolFixture, Workspace,
+};
 
 use super::{usage, Failure};
-use crate::cli::{HarnessRunArgs, LiveModelArgs, ToolsetArg};
+use crate::cli::{HarnessRunArgs, LiveModelArgs};
 
 /// What a run uses when nothing names a model: every model call fails with
 /// this message.
@@ -44,9 +46,20 @@ pub(super) fn is_default_model(request: &RunRequest) -> bool {
 
 /// Builds the request for a run of `args`.
 pub(super) fn build(args: &HarnessRunArgs) -> Result<RunRequest, Failure> {
-    // Fixture tools are the only tools an offline run is given.
-    match args.toolset {
-        ToolsetArg::None => {}
+    // Fixture tools are the only tools an offline run is given; the flags
+    // that configure a production run mean nothing here and are refused
+    // rather than ignored.
+    for (given, flag) in [
+        (args.approvals.is_some(), "--approvals"),
+        (!args.allow_capabilities.is_empty(), "--allow-capability"),
+        (args.api_key_file.is_some(), "--api-key-file"),
+        (args.first_byte_timeout.is_some(), "--first-byte-timeout"),
+    ] {
+        if given {
+            return Err(usage(format!(
+                "{flag} configures a production run: it needs --toolset coding"
+            )));
+        }
     }
     let case = args
         .case
@@ -55,10 +68,9 @@ pub(super) fn build(args: &HarnessRunArgs) -> Result<RunRequest, Failure> {
         .transpose()
         .map_err(super::kit)?;
 
-    let input = match (&args.input, &args.input_file) {
-        (Some(text), _) => parse_json(text, "--input")?,
-        (None, Some(file)) => parse_json(&read(file)?, &file.display().to_string())?,
-        (None, None) => case
+    let input = match explicit_input(args)? {
+        Some(input) => input,
+        None => case
             .as_ref()
             .map_or_else(|| serde_json::json!({}), |c| c.input.clone()),
     };
@@ -87,16 +99,7 @@ pub(super) fn build(args: &HarnessRunArgs) -> Result<RunRequest, Failure> {
         (None, None) => Workspace::default(),
     };
 
-    let mut bounds = case.map(|c| c.bounds).unwrap_or_default();
-    if let Some(secs) = args.timeout {
-        bounds.deadline_ms = Some(
-            secs.checked_mul(1000)
-                .ok_or_else(|| usage("--timeout is too large"))?,
-        );
-    }
-    if let Some(tokens) = args.max_output_tokens {
-        bounds.max_output_tokens = Some(tokens);
-    }
+    let bounds = bounds(args, case.map(|c| c.bounds).unwrap_or_default())?;
 
     Ok(RunRequest {
         input,
@@ -109,6 +112,30 @@ pub(super) fn build(args: &HarnessRunArgs) -> Result<RunRequest, Failure> {
         record: args.record.is_some(),
         trajectory: args.trajectory.is_some(),
     })
+}
+
+/// The input the flags give (`--input` or `--input-file`), if any.
+pub(super) fn explicit_input(args: &HarnessRunArgs) -> Result<Option<serde_json::Value>, Failure> {
+    match (&args.input, &args.input_file) {
+        (Some(text), _) => parse_json(text, "--input").map(Some),
+        (None, Some(file)) => parse_json(&read(file)?, &file.display().to_string()).map(Some),
+        (None, None) => Ok(None),
+    }
+}
+
+/// `base` with the flags' deadline and token budget laid over it.
+pub(super) fn bounds(args: &HarnessRunArgs, base: Bounds) -> Result<Bounds, Failure> {
+    let mut bounds = base;
+    if let Some(secs) = args.timeout {
+        bounds.deadline_ms = Some(
+            secs.checked_mul(1000)
+                .ok_or_else(|| usage("--timeout is too large"))?,
+        );
+    }
+    if let Some(tokens) = args.max_output_tokens {
+        bounds.max_output_tokens = Some(tokens);
+    }
+    Ok(bounds)
 }
 
 fn read(path: &Path) -> Result<String, Failure> {

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **sven**: `sven harness run` and `resume` take `--toolset coding`: a harness driven by a real model with the real file, search and shell tools on `--workspace`, a mandatory `--approvals auto|deny|ask`, a host capability ceiling (`--allow-capability`), `--api-key-file` (kept out of every output and refused inside the workspace) and `--first-byte-timeout`. Progress lines are printed while the run goes. `tests/fixtures/harness/c-repair` is a disposable C repository the agent repairs under a hash-pinned gate.
+- **sven-sdk**: `EngineBuilder::host_capabilities` caps the capabilities of every harness run on an engine; it narrows a document's declaration and never grants.
+- **sven-harness-testkit**: `run_on_engine` and `resume_on_engine` drive a harness on an engine the caller built, with optional live progress, for production assemblies.
+
 ### Changed
 - **sven-tool-api**, **sven-tools-fs**, **sven-tools-web**: `find_file` and `grep` no longer end at a bare `(no matches)`. The reply appends the searched directory's top-level entries and the files near it (at most 40 names each, hidden entries and build or cache directories left out), so a model that guessed a file-name convention from another language sees the real layout. `sven_tool_api::no_match_hint` builds the text.
 

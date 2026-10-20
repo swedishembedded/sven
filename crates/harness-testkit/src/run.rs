@@ -174,6 +174,97 @@ pub async fn resume_once(
     prepared.drive(run, &request).await
 }
 
+/// How a run on a caller-built engine starts and is bounded.
+///
+/// This is the seam production assemblies use: the caller builds the
+/// [`Engine`] (model, tools, workspace, approvals, host ceiling) and the
+/// testkit loads the harness onto it, drives the run and summarizes it - with
+/// no fixture model or tool anywhere. Nothing bounds such a run except what
+/// the caller sets here and what the harness declares: the testkit's own
+/// safety limit exists to catch a hanging *fixture*.
+#[derive(Clone, Default)]
+pub struct EngineRun {
+    /// The run's inputs (checked against the harness's declared inputs);
+    /// ignored by a resume, whose checkpoint carries them.
+    pub input: Value,
+    /// Deadline, token budget and cancellation timer.
+    pub bounds: Bounds,
+    /// Keep a recording of the machine's input events.
+    pub record: bool,
+    /// Build an ATIF trajectory after the run.
+    pub trajectory: bool,
+    /// Called with each trace record as the run produces it, so a long run
+    /// can report progress while it is still going.
+    pub progress: Option<ProgressFn>,
+}
+
+/// A trace observer; see [`EngineRun::progress`].
+pub type ProgressFn = Arc<dyn Fn(&sven_sdk::TraceRecord) + Send + Sync>;
+
+/// Runs the harness in `dir` once on `engine`, which the caller built.
+///
+/// # Errors
+///
+/// As [`run_once`], minus the fixture errors.
+pub async fn run_on_engine(
+    engine: &Engine,
+    dir: &HarnessDir,
+    request: EngineRun,
+) -> Result<RunResult, TestkitError> {
+    let (harness, main) = load_all(engine, dir)?;
+    let mut run = harness
+        .start(request.input.clone())
+        .map_err(|e| TestkitError::Harness(e.to_string()))?;
+    if request.record {
+        run = run.with_recording();
+    }
+    drive_run(
+        &harness,
+        main.bundle_digest,
+        run,
+        &request.bounds,
+        request.trajectory,
+        Drive {
+            safety: None,
+            progress: request.progress.clone(),
+        },
+    )
+    .await
+}
+
+/// Resumes `checkpoint` of the harness in `dir` on `engine`, which the
+/// caller built.
+///
+/// # Errors
+///
+/// As [`resume_once`], minus the fixture errors.
+pub async fn resume_on_engine(
+    engine: &Engine,
+    dir: &HarnessDir,
+    checkpoint: HarnessCheckpoint,
+    request: EngineRun,
+) -> Result<RunResult, TestkitError> {
+    let (harness, main) = load_all(engine, dir)?;
+    let mut run = harness
+        .resume(checkpoint)
+        .map_err(|e| TestkitError::Harness(e.to_string()))?;
+    if request.record {
+        run = run.with_recording();
+    }
+    drive_run(
+        &harness,
+        main.bundle_digest,
+        run,
+        &request.bounds,
+        request.trajectory,
+        Drive {
+            safety: None,
+            progress: request.progress.clone(),
+        },
+    )
+    .await
+}
+
 /// Replays a recording under the harness in `dir`, offline: nothing asks a
 /// model, runs a tool or starts a child.
 ///
@@ -263,62 +354,31 @@ impl Prepared {
 
     async fn drive(
         &self,
-        mut run: HarnessRun,
+        run: HarnessRun,
         request: &RunRequest,
     ) -> Result<RunResult, TestkitError> {
-        let cancel = CancelToken::new();
-        let mut options = RunOptions::new().cancel(cancel.clone());
-        if let Some(ms) = request.bounds.deadline_ms {
-            options = options.deadline(Duration::from_millis(ms));
-        }
-        if let Some(tokens) = request.bounds.max_output_tokens {
-            options = options.max_output_tokens(tokens);
-        }
-        let timer = request.bounds.cancel_after_ms.map(|ms| {
-            let token = cancel.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(ms)).await;
-                token.cancel();
-            })
-        });
-
-        let started = Instant::now();
-        let executed = tokio::time::timeout(SAFETY_LIMIT, run.execute(options)).await;
-        if let Some(timer) = timer {
-            timer.abort();
-        }
-        let outcome = executed
-            .map_err(|_| {
-                TestkitError::Run(format!(
-                    "the run exceeded the testkit's {}s safety limit",
-                    SAFETY_LIMIT.as_secs()
-                ))
-            })?
-            .map_err(|e| TestkitError::Run(e.to_string()))?;
-        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-
+        let mut result = drive_run(
+            &self.harness,
+            self.bundle_digest.clone(),
+            run,
+            &request.bounds,
+            request.trajectory,
+            Drive {
+                safety: Some(SAFETY_LIMIT),
+                progress: None,
+            },
+        )
+        .await?;
         let leaked = self.settle_fixtures().await;
         let mut problems = self.books.problems();
         problems.extend(self.model.usage.exhausted());
-        Ok(RunResult {
-            summary: summarize(&self.harness, &outcome, self.books.invoked_names()),
-            checkpoint: run.checkpoint(),
-            recording: run.recording(),
-            trajectory: if request.trajectory {
-                run.trajectory().and_then(|t| serde_json::to_value(t).ok())
-            } else {
-                None
-            },
-            run_id: run.run_id().to_string(),
-            bundle_digest: self.bundle_digest.clone(),
-            duration_ms,
-            fixtures: FixtureFacts {
-                capabilities: self.books.invoked_capabilities(),
-                leaked,
-                problems,
-            },
-            outcome,
-        })
+        result.summary.tools_invoked = self.books.invoked_names();
+        result.fixtures = FixtureFacts {
+            capabilities: self.books.invoked_capabilities(),
+            leaked,
+            problems,
+        };
+        Ok(result)
     }
 
     /// Waits briefly for fixture calls abandoned by a stopped run to be
@@ -330,6 +390,102 @@ impl Prepared {
         }
         self.books.in_flight()
     }
+}
+
+/// How [`drive_run`] watches a run besides its bounds.
+struct Drive {
+    /// Caps the wall-clock time of the whole run (a fixture-hang guard);
+    /// `None` leaves the run to its bounds and the harness's own limits.
+    safety: Option<Duration>,
+    /// Told of each trace record as it is produced.
+    progress: Option<ProgressFn>,
+}
+
+/// Executes `run`, telling `progress` of its trace records as they appear.
+async fn execute_observed(
+    run: &mut HarnessRun,
+    options: RunOptions,
+    progress: Option<&ProgressFn>,
+) -> Result<HarnessOutcome, sven_sdk::CallError> {
+    let Some(progress) = progress else {
+        return run.execute(options).await;
+    };
+    let mut records = run.subscribe_trace();
+    let mut execution = Box::pin(run.execute(options));
+    let outcome = loop {
+        tokio::select! {
+            outcome = &mut execution => break outcome,
+            record = records.recv() => match record {
+                Ok(record) => progress(&record),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break (&mut execution).await;
+                }
+            },
+        }
+    };
+    while let Ok(record) = records.try_recv() {
+        progress(&record);
+    }
+    outcome
+}
+
+/// Drives `run` to its end under `bounds`.
+async fn drive_run(
+    harness: &Harness,
+    bundle_digest: Option<String>,
+    mut run: HarnessRun,
+    bounds: &Bounds,
+    trajectory: bool,
+    drive: Drive,
+) -> Result<RunResult, TestkitError> {
+    let cancel = CancelToken::new();
+    let mut options = RunOptions::new().cancel(cancel.clone());
+    if let Some(ms) = bounds.deadline_ms {
+        options = options.deadline(Duration::from_millis(ms));
+    }
+    if let Some(tokens) = bounds.max_output_tokens {
+        options = options.max_output_tokens(tokens);
+    }
+    let timer = bounds.cancel_after_ms.map(|ms| {
+        let token = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            token.cancel();
+        })
+    });
+
+    let started = Instant::now();
+    let observed = execute_observed(&mut run, options, drive.progress.as_ref());
+    let executed = match drive.safety {
+        Some(limit) => tokio::time::timeout(limit, observed).await.map_err(|_| {
+            TestkitError::Run(format!(
+                "the run exceeded the testkit's {}s safety limit",
+                limit.as_secs()
+            ))
+        })?,
+        None => observed.await,
+    };
+    if let Some(timer) = timer {
+        timer.abort();
+    }
+    let outcome = executed.map_err(|e| TestkitError::Run(e.to_string()))?;
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    Ok(RunResult {
+        summary: summarize(harness, &outcome, Vec::new()),
+        checkpoint: run.checkpoint(),
+        recording: run.recording(),
+        trajectory: if trajectory {
+            run.trajectory().and_then(|t| serde_json::to_value(t).ok())
+        } else {
+            None
+        },
+        run_id: run.run_id().to_string(),
+        bundle_digest,
+        duration_ms,
+        fixtures: FixtureFacts::default(),
+        outcome,
+    })
 }
 
 /// Writes `files` (relative path to text) under `root`.

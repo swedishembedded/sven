@@ -27,7 +27,9 @@ pub use disclosure::DisclosureFlags;
 // than duplicated here.
 pub use agent::AgentCommands;
 pub use decisions::{DecisionsCommands, DoctorCommands};
-pub use harness::{HarnessCommands, HarnessRunArgs, HelperCommands, LiveModelArgs, ToolsetArg};
+pub use harness::{
+    ApprovalsArg, HarnessCommands, HarnessRunArgs, HelperCommands, LiveModelArgs, ToolsetArg,
+};
 pub use index::IndexCommands;
 pub use questions::QuestionsCommands;
 #[cfg(feature = "network")]
@@ -525,7 +527,7 @@ pub enum Commands {
     #[command(verbatim_doc_comment)]
     Harness {
         #[command(subcommand)]
-        command: HarnessCommands,
+        command: Box<HarnessCommands>,
     },
 
     /// Attempt a task whose completion a declarative verifier checks, not

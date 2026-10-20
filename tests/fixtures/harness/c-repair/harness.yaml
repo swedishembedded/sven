@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Test and repair a small C library with the real coding tools. An agent
+# writes its own test, builds it with the real compiler and fixes what the
+# test shows. It never decides the outcome: the harness pins the gate files
+# by hash, runs the gate (which compiles a test the agent cannot edit and
+# records the verdict from the compiler's and the test's exit status), and
+# reads that verdict. A failing gate sends the agent back once with the gate's
+# own output; a second failure ends the run as `unrepaired`.
+# Swedish Embedded AB implements verifiable automated code-repair workflows
+# for its clients. If your team needs expertise in agent harnesses for
+# embedded C codebases then you can procure our services by sending an email
+# to info@swedishembedded.com.
+api_version: "1"
+name: c-repair
+description: "Write a test for a C ring buffer, fix what it shows, finish only when the pinned gate passes."
+outputs: { status: string, attempts: number }
+capabilities: [ReadFile, WriteFile, ExecuteShell, RunVerifier]
+limits: { max_steps: 40, max_model_turns: 60, max_tool_calls: 120 }
+entry: implement
+steps:
+  implement:
+    agent:
+      prompt: |
+        The repository in the working directory is a small C library:
+        src/ringbuf.h documents a fixed-capacity FIFO of ints, src/ringbuf.c
+        implements it. Do this, in order:
+        1. Create tests/test_ringbuf.c, a test program whose main returns
+           non-zero when any check fails. It must cover an empty buffer, a
+           full buffer, and wrap-around over several rounds, exactly as the
+           header documents them.
+        2. Build and run it with the real compiler, for example
+           'cc -std=c99 -Wall -Wextra -Werror -o tests/test_ringbuf tests/test_ringbuf.c src/ringbuf.c && ./tests/test_ringbuf'.
+        3. Fix every defect your test shows by editing src/ringbuf.c. Do not
+           change src/ringbuf.h and do not touch the .gate directory.
+        4. Re-run your test until it passes, then stop and say what you changed.
+      tools: [read_file, write_file, edit_file, shell, find_file, grep]
+      store_as: first_note
+      then: pin_first
+  pin_first:
+    verify:
+      spec:
+        kind: all
+        specs:
+          - { kind: file_hash, path: .gate/check.sh, sha256: 5425883abd137aa9dd409135a639702a1cfe7774978549786059e1cf6c91304e }
+          - { kind: file_hash, path: .gate/gate_test.c, sha256: 392f69aa12c4e2f0f6e0fe39d8e833618cf13e33ca9bc47437531f6dd32cd995 }
+          - { kind: file_hash, path: src/ringbuf.h, sha256: a0c0e7b719af843df4e5babe36bbcc85601e63cea0213361fbf7d11e5f3900fd }
+      store_as: pinned_first
+      then: pin_first_judge
+  pin_first_judge:
+    branch: { on: { eq: "steps.pin_first.value", value: passed }, when_true: gate_first, when_false: tampered }
+  gate_first:
+    tool: { name: shell, args: { shell_command: "sh .gate/check.sh" }, store_as: gate_output_first, then: read_first }
+  read_first:
+    verify: { spec: { kind: json_predicate, path: .gate/result.json, pointer: /passed, op: eq, value: true }, store_as: verdict_first, then: judge_first }
+  judge_first:
+    branch: { on: { eq: "steps.read_first.value", value: passed }, when_true: fixed_first, when_false: repair }
+  repair:
+    agent:
+      prompt: |
+        The independent gate failed. Its output:
+        {{ facts.gate_output_first }}
+        Fix src/ringbuf.c so the gate passes. Do not change src/ringbuf.h and
+        do not touch the .gate directory. Build and run your own test again
+        before you stop.
+      tools: [read_file, write_file, edit_file, shell, find_file, grep]
+      store_as: second_note
+      then: pin_second
+  pin_second:
+    verify:
+      spec:
+        kind: all
+        specs:
+          - { kind: file_hash, path: .gate/check.sh, sha256: 5425883abd137aa9dd409135a639702a1cfe7774978549786059e1cf6c91304e }
+          - { kind: file_hash, path: .gate/gate_test.c, sha256: 392f69aa12c4e2f0f6e0fe39d8e833618cf13e33ca9bc47437531f6dd32cd995 }
+          - { kind: file_hash, path: src/ringbuf.h, sha256: a0c0e7b719af843df4e5babe36bbcc85601e63cea0213361fbf7d11e5f3900fd }
+      store_as: pinned_second
+      then: pin_second_judge
+  pin_second_judge:
+    branch: { on: { eq: "steps.pin_second.value", value: passed }, when_true: gate_second, when_false: tampered }
+  gate_second:
+    tool: { name: shell, args: { shell_command: "sh .gate/check.sh" }, store_as: gate_output_second, then: read_second }
+  read_second:
+    verify: { spec: { kind: json_predicate, path: .gate/result.json, pointer: /passed, op: eq, value: true }, store_as: verdict_second, then: judge_second }
+  judge_second:
+    branch: { on: { eq: "steps.read_second.value", value: passed }, when_true: fixed_second, when_false: unrepaired }
+  fixed_first:   { return: { value: { status: fixed, attempts: 1 } } }
+  fixed_second:  { return: { value: { status: fixed, attempts: 2 } } }
+  tampered:      { fail: { code: gate_tampered, message: "a gate file was changed; the verdict cannot be trusted" } }
+  unrepaired:    { fail: { code: unrepaired, message: "the gate still fails after the repair attempt" } }

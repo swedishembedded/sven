@@ -17,16 +17,23 @@ use sven_harness_testkit::{
 };
 use sven_sdk::{HarnessCheckpoint, TraceRecord};
 
+use super::production::{self, Production};
 use super::{kit, print_json, request, usage, Failure, Outcome};
-use crate::cli::HarnessRunArgs;
+use crate::cli::{HarnessRunArgs, ToolsetArg};
 
 /// Starts the harness at `path` and reports how it ended.
 pub(super) async fn run(path: &Path, args: &HarnessRunArgs) -> Outcome {
     let dir = HarnessDir::open(path).map_err(kit)?;
+    if args.toolset == ToolsetArg::Coding {
+        let production = Production::from_args(args)?;
+        let streamed = production.streams_progress();
+        let result = production::run(&dir, production).await?;
+        return finish(path, args, &result, false, streamed);
+    }
     let request = request::build(args)?;
     let no_model = request::is_default_model(&request);
     let result = run_once(&dir, request).await.map_err(kit)?;
-    finish(path, args, &result, no_model)
+    finish(path, args, &result, no_model, false)
 }
 
 /// Resumes the checkpoint in `checkpoint` under the harness at `path`.
@@ -36,17 +43,32 @@ pub(super) async fn resume(path: &Path, checkpoint: &Path, args: &HarnessRunArgs
         .map_err(|e| usage(format!("cannot read {}: {e}", checkpoint.display())))?;
     let checkpoint: HarnessCheckpoint = serde_json::from_str(&text)
         .map_err(|e| usage(format!("{} is not a checkpoint: {e}", checkpoint.display())))?;
+    if args.toolset == ToolsetArg::Coding {
+        let production = Production::from_args(args)?;
+        let streamed = production.streams_progress();
+        let result = production::resume(&dir, checkpoint, production).await?;
+        return finish(path, args, &result, false, streamed);
+    }
     let request = request::build(args)?;
     let no_model = request::is_default_model(&request);
     let result = resume_once(&dir, checkpoint, request).await.map_err(kit)?;
-    finish(path, args, &result, no_model)
+    finish(path, args, &result, no_model, false)
 }
 
 /// Writes the files the flags asked for, prints the report, and maps the
 /// run's status to its exit code.
-fn finish(path: &Path, args: &HarnessRunArgs, result: &RunResult, no_model: bool) -> Outcome {
+///
+/// `streamed` says the progress lines were already printed while the run
+/// went, so they are not repeated from the trace afterwards.
+fn finish(
+    path: &Path,
+    args: &HarnessRunArgs,
+    result: &RunResult,
+    no_model: bool,
+    streamed: bool,
+) -> Outcome {
     write_files(args, result)?;
-    if !args.quiet {
+    if !args.quiet && !streamed {
         for record in &result.outcome.trace {
             if let Ok(line) = serde_json::to_string(record) {
                 eprintln!("[sven:harness] {line}");
