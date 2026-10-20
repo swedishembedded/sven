@@ -294,6 +294,12 @@ agent:
   # Set to 0 to disable per-result truncation entirely.
   tool_result_token_cap: 4000
 
+  # A call that repeats an earlier call of the same run and gets the same
+  # result carries a note saying so ("unchanged; take a different action").
+  # Calls are compared without cosmetic differences: a `description` field,
+  # whitespace, key order.
+  note_repeated_results: true
+
   # Fraction of the context window reserved for tool schemas, the dynamic
   # context block (git / CI info), and measurement error in the token
   # approximation. Reduces the effective compaction trigger threshold.
@@ -695,6 +701,7 @@ Controls the agent's autonomy and defaults.
 | `compaction_keep_recent` | `6` | Recent non-system messages preserved verbatim during compaction |
 | `compaction_strategy` | `"structured"` | Checkpoint format: `"structured"` or `"narrative"` |
 | `tool_result_token_cap` | `4000` | Token cap per tool result before smart truncation; `0` disables |
+| `note_repeated_results` | `true` | Note on the result of a call that repeats an earlier one with the same result |
 | `compaction_overhead_reserve` | `0.10` | Fraction of context reserved for schemas and dynamic context |
 | `system_prompt` | - | System prompt override (leave unset to use built-in) |
 | `max_thinking_tokens` | 10% of context window | Estimated reasoning-token cap per turn; see [Thinking-loop watchdog](#thinking-loop-watchdog) |

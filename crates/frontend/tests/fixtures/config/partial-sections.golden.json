@@ -10,6 +10,7 @@
       "max_run_timeout_secs": 14400,
       "max_step_timeout_secs": 0,
       "max_tool_rounds": 30,
+      "note_repeated_results": true,
       "system_prompt": null,
       "tool_result_token_cap": 4000
     },

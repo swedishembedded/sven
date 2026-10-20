@@ -39,6 +39,9 @@ fn default_child_run_timeout_secs() -> u64 {
 fn default_compaction_keep_recent() -> usize {
     6
 }
+fn default_note_repeated_results() -> bool {
+    true
+}
 fn default_tool_result_token_cap() -> usize {
     4000
 }
@@ -93,6 +96,13 @@ pub struct AgentConfig {
     /// display) and the audit trail.
     #[serde(default = "default_tool_result_token_cap")]
     pub tool_result_token_cap: usize,
+    /// Append a note to the result of a tool call that repeats an earlier
+    /// call of the same run and gets the same result, telling the model the
+    /// result is unchanged and that it must take a different action. Calls
+    /// are compared without cosmetic differences (a `description` field,
+    /// whitespace, key order).
+    #[serde(default = "default_note_repeated_results")]
+    pub note_repeated_results: bool,
     /// Fraction of the context window reserved for tool schemas, the dynamic
     /// context block (git/CI info), and measurement error in the token
     /// approximation.  Reduces the effective compaction trigger threshold.
@@ -186,6 +196,7 @@ impl AgentConfig {
             "compaction_keep_recent",
             "compaction_strategy",
             "tool_result_token_cap",
+            "note_repeated_results",
             "compaction_overhead_reserve",
             "system_prompt",
             "max_step_timeout_secs",
@@ -244,6 +255,7 @@ impl Default for AgentConfig {
             compaction_keep_recent: default_compaction_keep_recent(),
             compaction_strategy: CompactionStrategy::Structured,
             tool_result_token_cap: default_tool_result_token_cap(),
+            note_repeated_results: default_note_repeated_results(),
             compaction_overhead_reserve: default_compaction_overhead_reserve(),
             system_prompt: None,
             max_step_timeout_secs: 0,

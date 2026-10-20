@@ -220,6 +220,7 @@ pub(crate) fn compose(
             )
             .with_no_tools(parts.no_tools)
             .with_tool_result_token_cap(parts.config.agent.tool_result_token_cap)
+            .with_repeat_notes(parts.config.agent.note_repeated_results)
             .with_chunk_session(chunk_session)
             .with_instructions(Some(parts.instructions.activator()));
             base.with_tool_executor(if parts.reconcile_capabilities {

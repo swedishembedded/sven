@@ -14,6 +14,7 @@
       "max_thinking_tokens": 20000,
       "max_tool_rounds": 200,
       "no_progress_timeout_secs": 1200,
+      "note_repeated_results": true,
       "stream_idle_timeout_secs": 600,
       "system_prompt": "You are a careful coding assistant.",
       "thinking_timeout_secs": 300,

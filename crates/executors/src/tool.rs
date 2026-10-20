@@ -87,6 +87,9 @@ pub struct ToolExecutor {
     /// Activates the skills, subagents and knowledge documents that cover a
     /// file a successful call touched. `None` activates nothing.
     instructions: Option<Arc<Activator>>,
+    /// Append a note to the result of a call that repeats an earlier call of
+    /// the run and gets the same result. See [`Self::with_repeat_notes`].
+    repeat_notes: bool,
 }
 
 impl ToolExecutor {
@@ -107,7 +110,18 @@ impl ToolExecutor {
             reconcile_capability: false,
             chunks: None,
             instructions: None,
+            repeat_notes: true,
         }
+    }
+
+    /// Whether the result of a call that repeats an earlier one of the run,
+    /// with the same result, carries a note saying so (on by default). The
+    /// note is stored with the result, so the model reads it on its next turn
+    /// and the trajectory shows it. `agent.note_repeated_results` sets it.
+    #[must_use]
+    pub fn with_repeat_notes(mut self, on: bool) -> Self {
+        self.repeat_notes = on;
+        self
     }
 
     /// Aborts the tool calls in flight when `cancel` is cancelled.
@@ -197,6 +211,7 @@ impl ToolExecutor {
             reconcile_capability: false,
             chunks: None,
             instructions: None,
+            repeat_notes: true,
         }
     }
 }
@@ -341,6 +356,7 @@ impl EffectExecutor for ToolExecutor {
         let cancel = self.cancel.clone();
         let chunks = self.chunks.clone();
         let instructions = self.instructions.clone();
+        let repeat_notes = self.repeat_notes;
 
         // Spawn-and-forget: the task runs concurrently with other effects.
         tokio::spawn(async move {
@@ -505,13 +521,29 @@ impl EffectExecutor for ToolExecutor {
                 let category = registry.output_category(&name);
                 let truncated =
                     sven_turn::smart_truncate(&output.content, category, tool_result_token_cap);
-                let stored = if output.is_error {
+                let mut stored = if output.is_error {
                     format!("error: {truncated}")
                 } else {
                     truncated
                 };
                 if let Some(chunks) = &chunks {
                     chunks.record_result(&name, &tool_call.args, &stored);
+                }
+                // A call the model has already made in this run, with the
+                // result it got then, tells it nothing new: say so, so that it
+                // does not take the repeat for progress.
+                if repeat_notes {
+                    let earlier = store.lock().map_or(0, |s| {
+                        sven_model::repeat::earlier_identical_results(
+                            &s.snapshot(&tid),
+                            &name,
+                            &tool_call.args.to_string(),
+                            &stored,
+                        )
+                    });
+                    if earlier > 0 {
+                        stored.push_str(&sven_model::repeat::repeat_note(earlier));
+                    }
                 }
                 if let Ok(mut s) = store.lock() {
                     s.append(&tid, Message::tool_result(orig, stored));
@@ -871,6 +903,25 @@ mod tests {
         call_id: ToolCallId,
         tool_name: &str,
     ) -> String {
+        run_tool_effect_with_args(
+            exec,
+            store,
+            thread_id,
+            call_id,
+            tool_name,
+            serde_json::Value::Null,
+        )
+        .await
+    }
+
+    async fn run_tool_effect_with_args(
+        exec: &mut ToolExecutor,
+        store: Arc<Mutex<crate::thread_store::ThreadStore>>,
+        thread_id: &str,
+        call_id: ToolCallId,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> String {
         let orig_id = call_id.as_uuid().to_string();
         exec.call_id_to_thread
             .lock()
@@ -891,7 +942,7 @@ mod tests {
                 call_id,
                 name: tool_name.into(),
                 capability: ToolCapability::ReadFile,
-                args: serde_json::Value::Null,
+                args,
             },
             &sink,
             &sven_hsm::ObservationSink::default(),
@@ -909,6 +960,77 @@ mod tests {
             }
             _ => String::new(),
         }
+    }
+
+    /// Runs the registered tool `big` twice on one thread, the second call
+    /// differing from the first only in the cosmetic `description`, and
+    /// returns what each stored result looks like.
+    async fn two_identical_calls(repeat_notes: bool) -> (String, String) {
+        use sven_model::{FunctionCall, Message, MessageContent, Role};
+        let mut registry = ToolRegistry::new();
+        registry.register(BigOutputTool {
+            category: sven_tool_api::OutputCategory::Generic,
+            is_error: false,
+        });
+        let store = Arc::new(Mutex::new(crate::thread_store::ThreadStore::new()));
+        let mut exec =
+            ToolExecutor::unrestricted(Arc::new(registry)).with_repeat_notes(repeat_notes);
+        store
+            .lock()
+            .unwrap()
+            .append("t1", Message::user("do the task"));
+        let mut stored = Vec::new();
+        for (n, args) in [
+            r#"{"q": "a  b"}"#,
+            r#"{"q": "a b", "description": "again"}"#,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let call_id = ToolCallId::new();
+            let orig = call_id.as_uuid().to_string();
+            store.lock().unwrap().append(
+                "t1",
+                Message {
+                    role: Role::Assistant,
+                    content: MessageContent::ToolCall {
+                        tool_call_id: orig,
+                        function: FunctionCall {
+                            name: "big".into(),
+                            arguments: args.into(),
+                        },
+                    },
+                },
+            );
+            let content = run_tool_effect_with_args(
+                &mut exec,
+                Arc::clone(&store),
+                "t1",
+                call_id,
+                "big",
+                serde_json::from_str(args).unwrap(),
+            )
+            .await;
+            assert!(!content.is_empty(), "call {n} stored a result");
+            stored.push(content);
+        }
+        (stored.remove(0), stored.remove(0))
+    }
+
+    #[tokio::test]
+    async fn a_repeated_call_with_the_same_result_carries_a_note() {
+        let (first, second) = two_identical_calls(true).await;
+        assert!(!first.contains("[sven note:"), "{first}");
+        assert!(
+            second.contains("[sven note:") && second.contains("once before"),
+            "{second}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_note_can_be_turned_off() {
+        let (_, second) = two_identical_calls(false).await;
+        assert!(!second.contains("[sven note:"), "{second}");
     }
 
     #[tokio::test]

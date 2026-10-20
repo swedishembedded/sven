@@ -189,6 +189,11 @@ pub use sven_vocab::SessionEvent;
 /// Re-exported here so an application never has to name a kernel crate to
 /// serve the agent's model.
 pub mod model {
+    /// Whether a call repeats an earlier one of the run: [`repeat::call_identity`]
+    /// (the call without cosmetic differences) and
+    /// [`repeat::earlier_identical_results`]. A caller that bounds repetition
+    /// from outside compares calls the same way the agent's own notes do.
+    pub use sven_model::repeat;
     pub use sven_model::{
         CompletionRequest, ContentPart, FunctionCall, Message, MessageContent, ModelProvider,
         ResponseEvent, ResponseFormat, ResponseStream, Role, ToolContentPart, ToolResultContent,

@@ -25,6 +25,7 @@ pub mod budget;
 pub use sven_model_catalog as catalog;
 mod provider;
 pub mod registry;
+pub mod repeat;
 pub mod sanitize;
 mod types;
 
