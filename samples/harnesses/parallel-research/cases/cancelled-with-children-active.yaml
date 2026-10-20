@@ -13,7 +13,10 @@ tools:
     capability: ReadFile
     responses:
       - block: true
-bounds: { cancel_after_ms: 100 }
+# The cancel must land after the branch has called the search. A tenth of a
+# second was not enough on a loaded machine (the run had not reached the call
+# yet and the case saw no call at all), so the timer leaves a full second.
+bounds: { cancel_after_ms: 1000 }
 expect:
   status: cancelled
   tools_invoked: [search_slow]
