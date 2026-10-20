@@ -30,6 +30,7 @@ mod openai;
 pub(crate) mod openai_compat;
 mod provider_check;
 mod resolve;
+mod thinking;
 
 pub use anthropic::AnthropicProvider;
 pub use config::{providers_schema, ModelConfig, ModelParams, ProviderEntry, Providers};
