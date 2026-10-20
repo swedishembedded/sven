@@ -196,6 +196,11 @@ pub struct EngineRun {
     /// Called with each trace record as the run produces it, so a long run
     /// can report progress while it is still going.
     pub progress: Option<ProgressFn>,
+    /// Called with each session event the run publishes while it goes: the
+    /// agent's tool calls and their results, token usage. Unlike the trace,
+    /// which the run publishes when its machine is at rest, these arrive
+    /// during a long model turn or tool call.
+    pub activity: Option<ActivityFn>,
     /// Suspends the run, leaving a checkpoint, once this token is
     /// cancelled (a host's signal handler, say).
     pub suspend: Option<sven_sdk::CancelToken>,
@@ -203,6 +208,9 @@ pub struct EngineRun {
 
 /// A trace observer; see [`EngineRun::progress`].
 pub type ProgressFn = Arc<dyn Fn(&sven_sdk::TraceRecord) + Send + Sync>;
+
+/// A session-event observer; see [`EngineRun::activity`].
+pub type ActivityFn = Arc<dyn Fn(&sven_sdk::SessionEvent) + Send + Sync>;
 
 /// Runs the harness in `dir` once on `engine`, which the caller built.
 ///
@@ -230,6 +238,7 @@ pub async fn run_on_engine(
         Drive {
             safety: None,
             progress: request.progress.clone(),
+            activity: request.activity.clone(),
             suspend: request.suspend.clone(),
             cancel_when: None,
         },
@@ -265,6 +274,7 @@ pub async fn resume_on_engine(
         Drive {
             safety: None,
             progress: request.progress.clone(),
+            activity: request.activity.clone(),
             suspend: request.suspend.clone(),
             cancel_when: None,
         },
@@ -373,6 +383,7 @@ impl Prepared {
             Drive {
                 safety: Some(SAFETY_LIMIT),
                 progress: None,
+                activity: None,
                 suspend: None,
                 cancel_when: request.bounds.cancel_on_tool_start.clone().map(|tool| {
                     let books = Arc::clone(&self.books);
@@ -411,6 +422,8 @@ struct Drive {
     safety: Option<Duration>,
     /// Told of each trace record as it is produced.
     progress: Option<ProgressFn>,
+    /// Told of each session event as it is published.
+    activity: Option<ActivityFn>,
     /// Suspends the run when cancelled.
     suspend: Option<sven_sdk::CancelToken>,
     /// Polled while the run goes; the run is cancelled once it holds.
@@ -423,31 +436,56 @@ type Condition = Box<dyn Fn() -> bool + Send + Sync>;
 /// How often a [`Condition`] is polled.
 const CONDITION_POLL: Duration = Duration::from_millis(5);
 
-/// Executes `run`, telling `progress` of its trace records as they appear.
+/// The next item of an optional broadcast subscription: pends forever when
+/// there is none, skips what a slow reader missed, and drops the
+/// subscription once its channel closes.
+async fn heard<T: Clone>(feed: &mut Option<tokio::sync::broadcast::Receiver<T>>) -> T {
+    use tokio::sync::broadcast::error::RecvError;
+    loop {
+        let Some(receiver) = feed.as_mut() else {
+            return std::future::pending().await;
+        };
+        match receiver.recv().await {
+            Ok(item) => return item,
+            Err(RecvError::Lagged(_)) => {}
+            Err(RecvError::Closed) => *feed = None,
+        }
+    }
+}
+
+/// Executes `run`, telling `progress` of its trace records and `activity` of
+/// its session events as they appear.
 async fn execute_observed(
     run: &mut HarnessRun,
     options: RunOptions,
     progress: Option<&ProgressFn>,
+    activity: Option<&ActivityFn>,
 ) -> Result<HarnessOutcome, sven_sdk::CallError> {
-    let Some(progress) = progress else {
+    if progress.is_none() && activity.is_none() {
         return run.execute(options).await;
-    };
-    let mut records = run.subscribe_trace();
+    }
+    let mut records = progress.map(|_| run.subscribe_trace());
+    let mut events = activity.map(|_| run.events());
     let mut execution = Box::pin(run.execute(options));
     let outcome = loop {
         tokio::select! {
             outcome = &mut execution => break outcome,
-            record = records.recv() => match record {
-                Ok(record) => progress(&record),
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    break (&mut execution).await;
+            record = heard(&mut records) => {
+                if let Some(progress) = progress {
+                    progress(&record);
                 }
-            },
+            }
+            event = heard(&mut events) => {
+                if let Some(activity) = activity {
+                    activity(&event);
+                }
+            }
         }
     };
-    while let Ok(record) = records.try_recv() {
-        progress(&record);
+    if let (Some(progress), Some(records)) = (progress, records.as_mut()) {
+        while let Ok(record) = records.try_recv() {
+            progress(&record);
+        }
     }
     outcome
 }
@@ -491,7 +529,12 @@ async fn drive_run(
     });
 
     let started = Instant::now();
-    let observed = execute_observed(&mut run, options, drive.progress.as_ref());
+    let observed = execute_observed(
+        &mut run,
+        options,
+        drive.progress.as_ref(),
+        drive.activity.as_ref(),
+    );
     let executed = match drive.safety {
         Some(limit) => tokio::time::timeout(limit, observed).await.map_err(|_| {
             TestkitError::Run(format!(

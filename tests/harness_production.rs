@@ -652,3 +652,46 @@ fn a_terminated_coding_run_leaves_a_checkpoint_that_resume_completes() {
         "hello"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn tool_calls_are_reported_while_the_next_model_turn_is_still_running() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let setup = setup();
+    // The second model turn never answers, so only a live report can show
+    // the first turn's tool call.
+    let server = serve(vec![
+        Turn::Calls(vec![write("notes.txt", "hello")]),
+        Turn::Stall,
+    ]);
+    let mut child = setup
+        .subcommand("run", &coding_resume(), &server)
+        .args(["--approvals", "auto"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("sven starts");
+    let mut stderr = BufReader::new(child.stderr.take().unwrap());
+    let mut seen = String::new();
+    let mut line = String::new();
+    while !seen.contains("\"tool_finished\"") {
+        line.clear();
+        if stderr.read_line(&mut line).unwrap() == 0 {
+            break;
+        }
+        seen.push_str(&line);
+    }
+    child.kill().expect("sven is still running");
+    child.wait().unwrap();
+    assert!(
+        seen.contains("\"tool_started\"") && seen.contains("write_file"),
+        "the call was reported as it began: {seen}"
+    );
+    assert!(
+        seen.contains("\"tool_finished\"") && seen.contains("\"error\":false"),
+        "and as it ended: {seen}"
+    );
+    assert!(!seen.contains(KEY), "no report carries the key: {seen}");
+}

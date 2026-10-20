@@ -22,7 +22,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use sven_harness_testkit::{
-    resume_on_engine, run_on_engine, Bounds, EngineRun, HarnessDir, ProgressFn, RunResult,
+    resume_on_engine, run_on_engine, ActivityFn, Bounds, EngineRun, HarnessDir, ProgressFn,
+    RunResult,
 };
 use sven_sdk::config::Config;
 use sven_sdk::tool::ToolCapability;
@@ -126,6 +127,13 @@ impl Production {
                 }
             }) as ProgressFn
         });
+        let activity: Option<ActivityFn> = (!args.quiet).then(|| {
+            Arc::new(|event: &sven_sdk::SessionEvent| {
+                if let Some(line) = activity_line(event) {
+                    eprintln!("[sven:harness] {line}");
+                }
+            }) as ActivityFn
+        });
         Ok(Self {
             workspace,
             provider: provider.to_string(),
@@ -141,6 +149,7 @@ impl Production {
                 record: args.record.is_some(),
                 trajectory: args.trajectory.is_some(),
                 progress,
+                activity,
                 suspend: Some(suspend_on_signal()),
             },
         })
@@ -304,6 +313,35 @@ fn read_line() -> String {
     let mut line = String::new();
     let _ = std::io::stdin().lock().read_line(&mut line);
     line
+}
+
+/// The longest piece of a tool call's arguments a progress line carries.
+const ARGS_SHOWN: usize = 160;
+
+/// The progress line for a session event worth showing during a long step:
+/// a tool call beginning and ending. The arguments are cut short; the
+/// trajectory (`--trajectory`) keeps them whole.
+fn activity_line(event: &sven_sdk::SessionEvent) -> Option<String> {
+    use sven_sdk::SessionEvent::{ToolCallFinished, ToolCallStarted};
+
+    match event {
+        ToolCallStarted(call) => {
+            let args: String = call.args.to_string().chars().take(ARGS_SHOWN).collect();
+            Some(
+                serde_json::json!({"event": "tool_started", "tool": call.name, "args": args})
+                    .to_string(),
+            )
+        }
+        ToolCallFinished {
+            tool_name,
+            is_error,
+            ..
+        } => Some(
+            serde_json::json!({"event": "tool_finished", "tool": tool_name, "error": is_error})
+                .to_string(),
+        ),
+        _ => None,
+    }
 }
 
 /// A token that fires on the first SIGINT or SIGTERM, so the run suspends

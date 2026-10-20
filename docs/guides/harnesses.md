@@ -258,7 +258,10 @@ sven harness run ./c-repair --toolset coding --workspace ./repo \
 - `--first-byte-timeout SECS` raises how long a model call waits for the
   server's first bytes, for a server that queues requests.
 
-Progress lines are printed as the run goes. Verification is not the agent's:
+Progress lines go to stderr as the run goes: the trace records of finished
+steps, and `tool_started` / `tool_finished` lines (the tool, its arguments cut
+to 160 characters, and whether it failed) while a long agent step is still
+working. Verification is not the agent's:
 declare it as gates, pin the gate files with `artifact` gates that carry a
 `sha256` so the agent cannot edit them, and list them under the task's
 `verify`. A script inside the editable repository is a weak gate on its own.
