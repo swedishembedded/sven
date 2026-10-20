@@ -64,6 +64,9 @@ pub const EXIT_BUDGET_EXHAUSTED: i32 = 4;
 /// unscored (no reward stamped) rather than concluded, so it can be resumed
 /// once a human answers - see `sven questions`.
 pub const EXIT_NEEDS_HUMAN: i32 = 5;
+/// The model's last turn announced more work and made no call, so the run
+/// stopped without concluding (`RunConclusion::StoppedWithoutConclusion`).
+pub const EXIT_STOPPED_WITHOUT_CONCLUSION: i32 = 6;
 pub const EXIT_TIMEOUT: i32 = 124;
 pub const EXIT_INTERRUPT: i32 = 130;
 

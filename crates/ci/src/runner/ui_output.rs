@@ -25,7 +25,10 @@ use crate::output::{
     write_stderr, write_stdout,
 };
 use crate::runner::outcome::conclusion_for;
-use crate::runner::{EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_NEEDS_HUMAN, EXIT_SUCCESS};
+use crate::runner::{
+    EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_NEEDS_HUMAN, EXIT_STOPPED_WITHOUT_CONCLUSION,
+    EXIT_SUCCESS,
+};
 
 /// Mutable state threaded through [`handle_ui_event`] for one CI turn.
 pub(super) struct CiOutState {
@@ -413,6 +416,12 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
             print_total_usage(state);
             return Some(if state.had_error {
                 EXIT_AGENT_ERROR
+            } else if state.outcome.stopped_without_conclusion() {
+                write_stderr(
+                    "[sven:error] the model's last turn announced more work and made no call; \
+                     the run stopped without concluding",
+                );
+                EXIT_STOPPED_WITHOUT_CONCLUSION
             } else {
                 EXIT_SUCCESS
             });
@@ -596,6 +605,22 @@ mod tests {
         st.streamed_text.push_str("pong");
         let r = handle_ui_event(UiEvent::TurnComplete, &mut st);
         assert_eq!(r, Some(EXIT_SUCCESS));
+    }
+
+    #[test]
+    fn a_turn_that_ends_announcing_a_call_it_did_not_make_is_not_success() {
+        let mut st = state(0);
+        handle_ui_event(
+            UiEvent::TextComplete("Now the test file, let me find the tests:".into()),
+            &mut st,
+        );
+        let r = handle_ui_event(UiEvent::TurnComplete, &mut st);
+        assert_eq!(r, Some(EXIT_STOPPED_WITHOUT_CONCLUSION));
+        let outcome = st.outcome.conclude(conclusion_for(r.unwrap()), None);
+        let sven_session_store::SessionOutcome::Scored(reward) = outcome else {
+            panic!("a stop without conclusion scores confidently, got {outcome:?}");
+        };
+        assert_eq!(reward.outcome, "stopped_without_conclusion");
     }
 
     #[test]

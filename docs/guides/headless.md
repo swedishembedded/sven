@@ -374,6 +374,7 @@ The other keys are diagnostics for reading a training set by eye - only
 | interrupted (Ctrl+C) or aborted | `cancelled` | `0.0` |
 | a step or run deadline elapsed | `timeout` | `0.0` |
 | `--max-tokens` reached | `budget_exhausted` | `0.0` |
+| the last turn ended on text announcing a call that was never made (ends in a colon) | `stopped_without_conclusion` | `0.0` |
 | finished, a verifier confirmed it (`sven task run`) | `verified_success` | `0.5`-`1.0`, lowered by the share of tool calls that failed |
 | finished, a verifier refuted it | `verification_failed` | `0.0` |
 | finished, nothing verified it | - | **absent** |
@@ -486,6 +487,7 @@ reach `N` the run stops with exit code `4`.
 | `3` | The run completed, but at least one tool call returned an error (workflow runner) |
 | `4` | `--max-tokens` budget exhausted |
 | `5` | Waiting for a person: a parked question or verified task; the trajectory is left unscored |
+| `6` | Stopped without concluding: the model's last turn announced more work (ended in a colon) and made no call |
 | `124` | Timeout exceeded (step or total run) |
 | `130` | Interrupted (Ctrl+C) |
 

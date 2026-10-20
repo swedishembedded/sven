@@ -303,6 +303,7 @@ match outcome.conclusion {
     RunConclusion::BudgetExhausted => { /* out of tokens or tool rounds */ }
     RunConclusion::Cancelled | RunConclusion::Timeout => { /* stopped from outside */ }
     RunConclusion::Waiting => { /* see outcome.question */ }
+    RunConclusion::StoppedWithoutConclusion => { /* the last turn announced a call it never made; the reply is not an answer */ }
     other => { /* not produced by send */ }
 }
 ```

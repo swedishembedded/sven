@@ -576,6 +576,8 @@ impl Agent {
         // observations so that a model turn still ends on `TurnComplete`, with
         // its text collected, rather than on quiescence a moment later.
         let mut reply = String::new();
+        // What the run ended on: the text since the last tool call.
+        let mut closing_text = String::new();
         let settled = bundle.runtime.capture();
         tokio::pin!(settled);
         let mut snapshot = None;
@@ -630,7 +632,11 @@ impl Agent {
                                     stop(&bundle.handle, &abort_slot, wind_down.as_mut()).await;
                                 }
                             }
-                            SessionEvent::TextComplete(text) => reply.push_str(text),
+                            SessionEvent::TextComplete(text) => {
+                                reply.push_str(text);
+                                closing_text.clone_from(text);
+                            }
+                            SessionEvent::ToolCallStarted(_) => closing_text.clear(),
                             SessionEvent::Aborted { partial_text } => reply.push_str(partial_text),
                             SessionEvent::Error(message) => {
                                 failure.get_or_insert_with(|| message.clone());
@@ -752,6 +758,8 @@ impl Agent {
             RunConclusion::Waiting
         } else if rounds_ran_out {
             RunConclusion::BudgetExhausted
+        } else if sven_session_model::announces_unfinished_work(&closing_text) {
+            RunConclusion::StoppedWithoutConclusion
         } else {
             RunConclusion::Success
         });

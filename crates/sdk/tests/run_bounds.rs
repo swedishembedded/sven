@@ -180,3 +180,13 @@ async fn running_out_of_tool_rounds_is_not_reported_as_success() {
         .expect("an outcome");
     assert_eq!(outcome.conclusion, RunConclusion::BudgetExhausted);
 }
+
+#[tokio::test]
+async fn a_run_that_ends_announcing_work_it_did_not_do_is_not_a_success() {
+    let mut agent = engine(Arc::new(ScriptedMockProvider::new(vec![says(
+        "Now the test file - let me find the relevant tests:",
+    )])))
+    .agent("agent");
+    let outcome = agent.send("fix it").await.expect("an outcome");
+    assert_eq!(outcome.conclusion, RunConclusion::StoppedWithoutConclusion);
+}

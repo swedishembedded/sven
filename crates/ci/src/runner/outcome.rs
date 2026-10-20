@@ -17,7 +17,8 @@ use sven_session_store::{RunConclusion, Verdict};
 
 use crate::output::{write_progress, write_stderr};
 use crate::runner::{
-    EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_NEEDS_HUMAN, EXIT_SUCCESS, EXIT_TIMEOUT,
+    EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_NEEDS_HUMAN, EXIT_STOPPED_WITHOUT_CONCLUSION,
+    EXIT_SUCCESS, EXIT_TIMEOUT,
 };
 
 /// Map this runner's exit code onto the conclusion the reward scorer expects.
@@ -30,6 +31,7 @@ pub(super) fn conclusion_for(exit: i32) -> RunConclusion {
         EXIT_TIMEOUT => RunConclusion::Timeout,
         EXIT_BUDGET_EXHAUSTED => RunConclusion::BudgetExhausted,
         EXIT_NEEDS_HUMAN => RunConclusion::Waiting,
+        EXIT_STOPPED_WITHOUT_CONCLUSION => RunConclusion::StoppedWithoutConclusion,
         _ => RunConclusion::AgentError,
     }
 }
@@ -153,6 +155,10 @@ mod tests {
         );
         assert_eq!(conclusion_for(EXIT_AGENT_ERROR), RunConclusion::AgentError);
         assert_eq!(conclusion_for(EXIT_NEEDS_HUMAN), RunConclusion::Waiting);
+        assert_eq!(
+            conclusion_for(EXIT_STOPPED_WITHOUT_CONCLUSION),
+            RunConclusion::StoppedWithoutConclusion
+        );
         // Anything unexpected is a failure, never a silent success.
         assert_eq!(conclusion_for(42), RunConclusion::AgentError);
     }

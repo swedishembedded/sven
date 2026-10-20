@@ -230,6 +230,7 @@ A headless run exits with:
 | `3` | The run finished, but at least one tool call returned an error. Only runs that use the [workflow runner](../guides/headless.md#single-prompt-and-workflow-runs) report it; a plain single-prompt run records tool errors in its trajectory and exits `0`. |
 | `4` | The `--max-tokens` budget was reached. |
 | `5` | A person must decide: a verified task is parked, or a question was parked in a single-prompt run. The trajectory is left unscored so it can be resumed. |
+| `6` | Stopped without concluding: the last model turn ended on text announcing a call it did not make. |
 | `124` | A step or run timeout elapsed. |
 | `130` | Interrupted with Ctrl+C. The partial trajectory is saved. |
 

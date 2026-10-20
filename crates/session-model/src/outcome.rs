@@ -59,6 +59,19 @@ pub enum RunConclusion {
     /// The run is parked on a question for a human and resumes when it is
     /// answered. Not an ending: neither a success nor a failure.
     Waiting,
+    /// The model's last turn announced more work ("let me look at the
+    /// tests:") and made no call: the run stopped, it did not conclude. Not a
+    /// success, and its reply is not an answer.
+    StoppedWithoutConclusion,
+}
+
+/// Whether `reply`, the text a run ended on, announces work that never came:
+/// it ends in a colon, the way "now the test file, let me find the tests:"
+/// introduces a call the model did not make. A reply that merely trails off
+/// without a colon cannot be told from a short answer and is not matched.
+#[must_use]
+pub fn announces_unfinished_work(reply: &str) -> bool {
+    reply.trim_end().ends_with(':')
 }
 
 /// Running tally of the outcome-bearing events seen during one session.
@@ -73,6 +86,9 @@ pub struct OutcomeFold {
     agent_errors: u32,
     aborted: bool,
     turns_completed: u32,
+    /// The assistant text since the last tool call; what the run ends on when
+    /// nothing follows it.
+    closing_text: String,
 }
 
 /// The stamped verdict for one session.
@@ -137,7 +153,11 @@ impl OutcomeFold {
     /// it is the safe default.
     pub fn observe(&mut self, ev: &SessionEvent) {
         match ev {
-            SessionEvent::ToolCallStarted(_) => self.tool_calls += 1,
+            SessionEvent::ToolCallStarted(_) => {
+                self.tool_calls += 1;
+                self.closing_text.clear();
+            }
+            SessionEvent::TextComplete(text) => self.closing_text.clone_from(text),
             SessionEvent::ToolCallFinished { is_error, .. } => {
                 if *is_error {
                     self.tool_errors += 1;
@@ -148,6 +168,13 @@ impl OutcomeFold {
             SessionEvent::TurnComplete => self.turns_completed += 1,
             _ => {}
         }
+    }
+
+    /// Whether the run, as observed so far, ended on text that announces work
+    /// it did not do (see [`announces_unfinished_work`]).
+    #[must_use]
+    pub fn stopped_without_conclusion(&self) -> bool {
+        announces_unfinished_work(&self.closing_text)
     }
 
     /// Score the session, combining the surface's verdict, what the event
@@ -184,6 +211,12 @@ impl OutcomeFold {
             RunConclusion::Cancelled => Some("cancelled"),
             RunConclusion::Timeout => Some("timeout"),
             RunConclusion::BudgetExhausted => Some("budget_exhausted"),
+            RunConclusion::StoppedWithoutConclusion => Some("stopped_without_conclusion"),
+            RunConclusion::Success
+                if observed_failure.is_none() && self.stopped_without_conclusion() =>
+            {
+                Some("stopped_without_conclusion")
+            }
             RunConclusion::Success => observed_failure,
         };
         if let Some(outcome) = confident_failure {
@@ -279,6 +312,32 @@ mod tests {
         assert_eq!(json, "\"budget_exhausted\"");
         let back: RunConclusion = serde_json::from_str(&json).unwrap();
         assert_eq!(back, RunConclusion::BudgetExhausted);
+    }
+
+    #[test]
+    fn a_run_that_ends_on_an_announcement_is_not_an_unverified_success() {
+        let mut f = OutcomeFold::default();
+        f.observe(&tool_call("c1"));
+        f.observe(&tool_result("c1", false));
+        f.observe(&SessionEvent::TextComplete(
+            "Now the test file - let me find the relevant tests:".into(),
+        ));
+        f.observe(&SessionEvent::TurnComplete);
+        assert!(f.stopped_without_conclusion());
+        let SessionOutcome::Scored(r) = f.conclude(RunConclusion::Success, None) else {
+            panic!("a stop without conclusion is a known failure");
+        };
+        assert_eq!((r.reward, r.outcome), (0.0, "stopped_without_conclusion"));
+    }
+
+    #[test]
+    fn text_before_a_tool_call_is_not_how_the_run_ended() {
+        let mut f = OutcomeFold::default();
+        f.observe(&SessionEvent::TextComplete("Let me look:".into()));
+        f.observe(&tool_call("c1"));
+        f.observe(&tool_result("c1", false));
+        f.observe(&SessionEvent::TextComplete("The file is fine.".into()));
+        assert!(!f.stopped_without_conclusion());
     }
 
     #[test]
