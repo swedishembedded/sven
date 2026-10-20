@@ -192,6 +192,11 @@ pub struct AgentSpec {
     /// trajectory as its system step.
     #[serde(default)]
     pub system: Option<String>,
+    /// The model role every task is answered by unless it names its own: a
+    /// name the host maps to a provider. No endpoint or key ever appears in a
+    /// document.
+    #[serde(default)]
+    pub model: Option<String>,
     /// Sampling for every task; a task's own settings replace it.
     #[serde(default)]
     pub sampling: Option<Sampling>,
@@ -523,6 +528,9 @@ pub struct Author {
     /// Names the author's conversation and its output
     /// (`tasks.<name>.output`).
     pub name: String,
+    /// The model role that answers the author.
+    #[serde(default)]
+    pub model: Option<String>,
     /// The system message of its conversation.
     #[serde(default)]
     pub system: Option<String>,
@@ -570,6 +578,8 @@ pub struct TaskSpec {
     /// For a `model_only` task, the system message of its conversation (a
     /// template over inputs and earlier outputs).
     pub system: Option<String>,
+    /// The model role that answers this task.
+    pub model: Option<String>,
     /// For a `model_only` task, the JSON Schema its answer must satisfy; the
     /// parsed answer is the task's output.
     pub schema: Option<Value>,

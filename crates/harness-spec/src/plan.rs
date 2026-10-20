@@ -167,6 +167,9 @@ pub enum PlanPrimitive {
         /// Decoding settings (version 2 plans only).
         #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
         decoding: StepDecoding,
+        /// The model role that answers the step's turns (version 2 plans only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
         /// What the prompt is, for the record (version 2 plans only).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<String>,
@@ -189,6 +192,9 @@ pub enum PlanPrimitive {
         /// Decoding settings (version 2 plans only).
         #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
         decoding: StepDecoding,
+        /// The model role that answers the step's turns (version 2 plans only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
         /// What the prompt is, for the record (version 2 plans only).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<String>,
@@ -453,6 +459,7 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             system: p.system.as_deref().and_then(|t| Template::parse(t).ok()),
             decoding: p.decoding.clone(),
             origin: p.origin.clone(),
+            role: p.role.clone(),
             then: p.then.clone(),
         },
         StepSpec::Agent(a) => PlanPrimitive::Agent {
@@ -462,6 +469,7 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             system: a.system.as_deref().and_then(|t| Template::parse(t).ok()),
             decoding: a.decoding.clone(),
             origin: a.origin.clone(),
+            role: a.role.clone(),
             stop_as: a.stop_as.clone(),
             pool: a.pool.clone(),
             allowance: a.allowance.as_deref().and_then(|t| Template::parse(t).ok()),

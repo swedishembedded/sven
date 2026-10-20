@@ -143,6 +143,8 @@ pub(crate) struct ExecutorParts {
     /// to a tool slot substituted by `tool_executor_override`, whose
     /// executor the override owns.
     pub reconcile_capabilities: bool,
+    /// The providers the host offers by role name.
+    pub model_roles: Option<sven_turn::ModelResolver>,
 }
 
 /// A caller-supplied executor replaces the default composite wholesale;
@@ -171,7 +173,7 @@ pub(crate) fn compose(
     };
     let turn_executor = TurnExecutor::new(
         Arc::clone(&parts.model),
-        None,
+        parts.model_roles.clone(),
         Arc::clone(&parts.tool_registry),
         Arc::clone(&parts.conv_store),
         Arc::clone(&parts.call_id_to_thread),

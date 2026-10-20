@@ -100,6 +100,11 @@ pub struct TurnRequest {
     /// model is called: a history with a tool call and no result is invalid.
     #[serde(default)]
     pub refused_calls: Vec<RefusedCall>,
+    /// The model role to answer this turn (a name the host maps to a
+    /// provider). Unlike `model`, a role the host does not provide fails the
+    /// turn instead of falling back to the default model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     /// What the instruction is, for the record: `task`, `follow_up`,
     /// `repair` or `correction`. Filed with the user turn it becomes.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -39,6 +39,8 @@ pub struct Engine {
     /// The most a harness run on this engine may do, whatever its document
     /// declares; `None` leaves the document's own declaration the whole cap.
     host_capabilities: Option<Arc<[sven_hsm::ToolCapability]>>,
+    /// The providers a harness may ask for by role name.
+    model_roles: Arc<std::collections::BTreeMap<String, Arc<dyn ModelProvider>>>,
     /// The named harnesses this engine's sessions resolve `delegate` and
     /// `parallel` children against, and that [`Engine::load_harness`]
     /// registers into.
@@ -275,6 +277,21 @@ impl Engine {
         })
     }
 
+    /// The role resolver a harness session's turn executor uses, when the
+    /// engine offers any role.
+    pub(crate) fn model_roles(&self) -> Option<sven_turn::ModelResolver> {
+        if self.model_roles.is_empty() {
+            return None;
+        }
+        let roles = Arc::clone(&self.model_roles);
+        Some(Arc::new(move |role: &str| {
+            roles
+                .get(role)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("the engine offers no role `{role}`"))
+        }))
+    }
+
     pub(crate) fn paths(&self) -> sven_tool_api::PathScope {
         self.paths.clone()
     }
@@ -314,6 +331,7 @@ pub struct EngineBuilder {
     machines: Option<sven_machines::ModeRegistry>,
     project_root: Option<std::path::PathBuf>,
     host_capabilities: Option<Vec<sven_hsm::ToolCapability>>,
+    model_roles: std::collections::BTreeMap<String, Arc<dyn ModelProvider>>,
 }
 
 impl EngineBuilder {
@@ -333,6 +351,16 @@ impl EngineBuilder {
     #[must_use]
     pub fn model_provider(mut self, provider: Arc<dyn ModelProvider>) -> Self {
         self.provider = Some(provider);
+        self
+    }
+
+    /// Offers `provider` to harness tasks that name `role` (`model: <role>`).
+    /// A harness never carries an endpoint or a key: the host decides which
+    /// model answers each role, and a role it does not offer fails the turn
+    /// instead of quietly using the default model.
+    #[must_use]
+    pub fn model_role(mut self, role: impl Into<String>, provider: Arc<dyn ModelProvider>) -> Self {
+        self.model_roles.insert(role.into(), provider);
         self
     }
 
@@ -546,6 +574,7 @@ impl EngineBuilder {
             machines: self.machines.map(Arc::new),
             paths,
             host_capabilities: self.host_capabilities.map(Into::into),
+            model_roles: Arc::new(self.model_roles),
             harnesses: Arc::new(sven_harness_runtime::HarnessRegistry::new()),
         })
     }

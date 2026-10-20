@@ -110,6 +110,7 @@ pub struct RuntimeBuilder {
     /// `sven_model_drivers::from_config` would construct (see
     /// [`Self::with_model_provider`]).
     model_provider_override: Option<Arc<dyn sven_model::ModelProvider>>,
+    model_roles: Option<sven_turn::ModelResolver>,
     /// Kernel state to resume into instead of starting from the machine's
     /// initial state. See [`RuntimeBuilder::with_kernel_snapshot`].
     kernel_snapshot: Option<sven_hsm::Snapshot>,
@@ -181,6 +182,7 @@ impl RuntimeBuilder {
             tool_executor_override: None,
             principal: None,
             model_provider_override: None,
+            model_roles: None,
             kernel_snapshot: None,
             context_facts: serde_json::Map::new(),
             builtin_tools: BuiltinTools::default(),
@@ -427,6 +429,13 @@ impl RuntimeBuilder {
         provider: Arc<dyn sven_model::ModelProvider>,
     ) -> Self {
         self.model_provider_override = Some(provider);
+        self
+    }
+
+    /// Offers providers by role name: a turn that asks for a role is answered
+    /// by the provider this returns, and fails when it returns an error.
+    pub fn with_model_roles(mut self, roles: sven_turn::ModelResolver) -> Self {
+        self.model_roles = Some(roles);
         self
     }
 
@@ -781,6 +790,7 @@ impl RuntimeBuilder {
             self.effect_executor,
             ExecutorParts {
                 gates,
+                model_roles: self.model_roles.clone(),
                 model: model.clone(),
                 config: Arc::clone(&self.config),
                 tool_registry,

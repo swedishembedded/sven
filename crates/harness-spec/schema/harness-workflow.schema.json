@@ -112,6 +112,7 @@
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
+        "model": { "$ref": "#/$defs/identifier", "description": "The model role that answers: a name the host maps to a provider. Never an endpoint or a key." },
         "system": { "type": "string", "description": "The system message of the agent's conversation: a template over inputs, delivered as the model's system message." },
         "sampling": { "$ref": "#/$defs/sampling" },
         "thinking": { "$ref": "#/$defs/thinking" },
@@ -337,6 +338,7 @@
           "additionalProperties": false,
           "properties": {
             "name": { "$ref": "#/$defs/identifier" },
+            "model": { "$ref": "#/$defs/identifier" },
             "system": { "type": "string" },
             "task": { "type": "string", "minLength": 1 },
             "sampling": { "$ref": "#/$defs/sampling" },
@@ -368,6 +370,7 @@
           "uniqueItems": true
         },
         "when": { "$ref": "#/$defs/condition" },
+        "model": { "$ref": "#/$defs/identifier", "description": "The model role that answers: a name the host maps to a provider. Never an endpoint or a key." },
         "system": { "type": "string", "description": "With model_only: the system message of the task's own conversation (a template)." },
         "allowance": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/input_hole" }], "description": "The tool calls the task's first turn may make; follow-ups and repairs draw on what is left. A call beyond it is refused and the turn ends with the stop tool_cap." },
         "max_repeated_results": { "type": "integer", "minimum": 1, "description": "End a turn with the stop repetition when the same call has been answered the same way this many times." },

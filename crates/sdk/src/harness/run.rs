@@ -252,6 +252,9 @@ impl HarnessRun {
             .with_extra_tools(harness_tools(root.as_deref(), self.engine.tools()))
             .with_approval_mode(self.engine.approvals().into())
             .with_harnesses(self.engine.harness_registry());
+        if let Some(roles) = self.engine.model_roles() {
+            builder = builder.with_model_roles(roles);
+        }
         if self.engine.parks_questions() {
             builder = builder.with_parked_questions();
         }

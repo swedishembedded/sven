@@ -210,3 +210,31 @@ steps:
 "#;
     assert!(rejected(yaml).contains("on a predict step"));
 }
+
+#[test]
+fn a_task_names_the_model_role_that_answers_it_and_the_agent_sets_the_default() {
+    let yaml = ROLES
+        .replace(
+            "agent:\n  profile: coding",
+            "agent:\n  model: worker\n  profile: coding",
+        )
+        .replace(
+            "    model_only: true\n    schema",
+            "    model_only: true\n    model: planner\n    schema",
+        );
+    let plan = compile(&yaml);
+    let role = |id: &str| match &plan.steps[id].primitive {
+        PlanPrimitive::Predict { role, .. } | PlanPrimitive::Agent { role, .. } => role.clone(),
+        other => panic!("{id}: {other:?}"),
+    };
+    assert_eq!(role("plan__work").as_deref(), Some("planner"));
+    assert_eq!(role("work__work").as_deref(), Some("worker"));
+    // Repair turns are answered by their task's role.
+    assert_eq!(
+        role("supervise__v0_leak_a0_repair").as_deref(),
+        Some("worker")
+    );
+    // An endpoint or a key is not a role.
+    let message = rejected(&yaml.replace("model: planner", "model: \"http://host/v1\""));
+    assert!(message.contains("not a role name"), "{message}");
+}

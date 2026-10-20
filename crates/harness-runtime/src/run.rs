@@ -270,6 +270,9 @@ pub struct AgentLoop {
     /// once it is approved.
     #[serde(default)]
     pub calls: BTreeMap<String, HeldCall>,
+    /// The model role that answers the loop's turns.
+    #[serde(default)]
+    pub role: Option<String>,
     /// Where the loop records how it ended.
     #[serde(default)]
     pub stop_as: Option<String>,

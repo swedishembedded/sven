@@ -394,6 +394,10 @@ pub struct PredictStepSpec {
     /// Decoding settings for the turn. Version 2 only.
     #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
     pub decoding: StepDecoding,
+    /// The model role that answers the step's turns (a name the host maps
+    /// to a provider). Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     /// What the prompt is, for the record: `task`, `follow_up`, `repair` or
     /// `correction`. Version 2 only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -424,6 +428,10 @@ pub struct AgentStepSpec {
     /// Decoding settings for the step's turns. Version 2 only.
     #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
     pub decoding: StepDecoding,
+    /// The model role that answers the step's turns (a name the host maps
+    /// to a provider). Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     /// What the prompt is, for the record: `task`, `follow_up`, `repair` or
     /// `correction`. Version 2 only.
     #[serde(default, skip_serializing_if = "Option::is_none")]

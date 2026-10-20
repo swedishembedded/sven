@@ -301,6 +301,22 @@ impl TurnExecutor {
         self
     }
 
+    /// The provider for the turn: the host's provider for its `role` (an
+    /// error when there is none), else as [`Self::resolve_model`].
+    fn resolve_role(
+        &self,
+        req: &TurnRequest,
+    ) -> Result<Arc<dyn sven_model::ModelProvider>, String> {
+        let Some(role) = &req.role else {
+            return Ok(self.resolve_model(&req.model));
+        };
+        let resolver = self
+            .model_resolver
+            .as_ref()
+            .ok_or_else(|| format!("model role `{role}` is not provided by the host"))?;
+        resolver(role).map_err(|e| format!("model role `{role}` is not provided by the host: {e}"))
+    }
+
     /// Resolve the model provider, honouring a per-state override when both
     /// an override and a resolver are present.
     fn resolve_model(&self, model: &Option<String>) -> Arc<dyn sven_model::ModelProvider> {
@@ -349,7 +365,15 @@ impl EffectExecutor for TurnExecutor {
         };
 
         let thread_id = req.thread.clone();
-        let model = self.resolve_model(&req.model);
+        let model = match self.resolve_role(&req) {
+            Ok(model) => model,
+            Err(error) => {
+                obs.emit(UiEvent::Error(error.clone()));
+                let _ = sink.emit(Event::LlmFailed { error }).await;
+                obs.emit(UiEvent::TurnComplete);
+                return;
+            }
+        };
 
         // Answer calls refused before they ran, then the instruction: a valid history.
         let reasons = refusal_reasons(&self.call_id_to_thread, &req.refused_calls);

@@ -74,6 +74,7 @@ pub(crate) struct TurnShape<'a> {
     pub(crate) conversation: Option<&'a str>,
     pub(crate) system: Option<&'a Template>,
     pub(crate) origin: Option<&'a str>,
+    pub(crate) role: Option<&'a str>,
     pub(crate) decoding: sven_vocab::TurnDecoding,
 }
 

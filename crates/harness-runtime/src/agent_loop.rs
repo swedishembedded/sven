@@ -20,7 +20,7 @@ use sven_hsm::{Context, Effect, ProposedToolCall, Reaction, ToolCallId};
 use sven_vocab::{RefusedCall, TurnRequest};
 
 use crate::approval::HeldCall;
-use crate::decoding::system_text;
+use crate::decoding::{system_text, TurnShape};
 use crate::machine::{harness_thread, HarnessMachine};
 use crate::run::{AgentLoop, HarnessRunState, Inflight, Waiting};
 use crate::state::HarnessState;
@@ -36,9 +36,7 @@ impl HarnessMachine {
         state: &HarnessRunState,
         prompt: &Template,
         tools: &Option<Vec<String>>,
-        system: Option<&Template>,
-        origin: Option<&str>,
-        decoding: sven_vocab::TurnDecoding,
+        shape: TurnShape<'_>,
     ) -> Effect {
         let instruction = state.resolve_template(prompt);
         agent_request(
@@ -46,9 +44,10 @@ impl HarnessMachine {
                 thread: harness_thread(self.plan()),
                 instruction: instruction.as_str().unwrap_or_default().to_string(),
                 tools: tools.as_deref().unwrap_or_default().to_vec(),
-                system: system_text(state, system),
-                origin: origin.map(str::to_string),
-                decoding,
+                system: system_text(state, shape.system),
+                origin: shape.origin.map(str::to_string),
+                role: shape.role.map(str::to_string),
+                decoding: shape.decoding,
                 ..TurnRequest::default()
             },
             tools.is_none(),
@@ -69,6 +68,7 @@ impl HarnessMachine {
                 thread: agent.thread.clone(),
                 tools: agent.tools.clone(),
                 refused_calls: refused,
+                role: agent.role.clone(),
                 decoding: agent.decoding,
                 ..TurnRequest::default()
             },

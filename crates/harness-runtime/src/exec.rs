@@ -146,6 +146,7 @@ impl HarnessMachine {
                 ref conversation,
                 ref system,
                 ref origin,
+                ref role,
                 ref decoding,
                 ..
             } => {
@@ -170,6 +171,7 @@ impl HarnessMachine {
                         conversation: conversation.as_deref(),
                         system: system.as_ref(),
                         origin: origin.as_deref(),
+                        role: role.as_deref(),
                         decoding,
                     },
                 );
@@ -187,6 +189,7 @@ impl HarnessMachine {
                 ref tools,
                 ref system,
                 ref origin,
+                ref role,
                 ref decoding,
                 ref stop_as,
                 ref pool,
@@ -230,6 +233,7 @@ impl HarnessMachine {
                 }
                 run.agent = Some(AgentLoop {
                     stop_as: stop_as.clone(),
+                    role: role.clone(),
                     pool: pool.clone(),
                     max_repeats: max_repeated_results,
                     step: step_id.clone(),
@@ -243,9 +247,13 @@ impl HarnessMachine {
                     run,
                     prompt,
                     tools,
-                    system.as_ref(),
-                    origin.as_deref(),
-                    decoding,
+                    TurnShape {
+                        conversation: None,
+                        system: system.as_ref(),
+                        origin: origin.as_deref(),
+                        role: role.as_deref(),
+                        decoding,
+                    },
                 );
                 self.cache_effect(effect.clone());
                 self.park(run, &step, Waiting::Model);

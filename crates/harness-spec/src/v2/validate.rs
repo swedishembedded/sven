@@ -70,6 +70,7 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
         "agent",
         &super::spec::decoding_of(&w.agent.sampling, &w.agent.thinking, &w.agent.turn),
     )?;
+    validate_roles(w)?;
     validate_gates(w)?;
     validate_tasks(w)?;
     validate_success(w)?;
@@ -370,6 +371,36 @@ fn validate_decoding(
                  and at most 1, counts and timeouts at least 1, seed a non-negative integer, \
                  thinking true or false)"
             )));
+        }
+    }
+    Ok(())
+}
+
+/// A model role is a plain name; an endpoint or a key is the host's business
+/// and never appears in a document.
+fn validate_roles(w: &WorkflowSpec) -> Result<(), HarnessError> {
+    let named = std::iter::once(("agent.model".to_string(), w.agent.model.as_ref()))
+        .chain(
+            w.workflow
+                .iter()
+                .map(|t| (format!("task `{}`: model", t.name), t.model.as_ref())),
+        )
+        .chain(w.workflow.iter().filter_map(|t| {
+            t.corrections.as_ref().map(|c| {
+                (
+                    format!("task `{}`: corrections.author.model", t.name),
+                    c.author.model.as_ref(),
+                )
+            })
+        }));
+    for (place, role) in named {
+        if let Some(role) = role {
+            if !is_identifier(role) {
+                return Err(invalid(format!(
+                    "{place}: `{role}` is not a role name (lowercase letters, digits, `-`, `_`); \
+                     endpoints and keys belong to the host, not the document"
+                )));
+            }
         }
     }
     Ok(())

@@ -152,6 +152,7 @@ fn lower_task(
     let decoding = decoding_of(&w.agent.sampling, &w.agent.thinking, &w.agent.turn)
         .overlaid_by(&decoding_of(&task.sampling, &task.thinking, &task.turn));
     let fact = output_fact(&task.name);
+    let role = task.model.clone().or_else(|| w.agent.model.clone());
     let agent_system = w
         .agent
         .system
@@ -213,6 +214,7 @@ fn lower_task(
         model_only: task
             .model_only
             .then(|| task.schema.is_some().then(|| task.name.clone())),
+        role: role.clone(),
         stop: (!task.model_only).then(|| stop_fact(&task.name)),
         pool: (!task.model_only).then(|| pool_fact(&task.name)),
         max_repeated_results: task.max_repeated_results,
@@ -250,6 +252,7 @@ fn lower_task(
                     visible: &visible,
                     tools: tools.clone(),
                     agent_system: agent_system.clone(),
+                    role: role.clone(),
                     decoding: decoding.clone(),
                     stop: stop_fact(&task.name),
                     pool: pool_fact(&task.name),
@@ -292,6 +295,7 @@ fn lower_task(
                     store_as: Some(fact.clone()),
                     system: agent_system.clone(),
                     origin: Some("follow_up".to_string()),
+                    role: role.clone(),
                     stop_as: Some(stop.clone()),
                     pool: Some(pool.clone()),
                     allowance: if k == 0 {
@@ -343,6 +347,7 @@ fn lower_task(
             conversation: Some(task.name.clone()),
             system: task_system.clone(),
             origin: Some("task".to_string()),
+            role: role.clone(),
             decoding: decoding.clone(),
             then: following,
         }))
@@ -353,6 +358,7 @@ fn lower_task(
             store_as: Some(fact),
             system: agent_system.clone(),
             origin: Some("task".to_string()),
+            role: role.clone(),
             stop_as: Some(stop),
             pool: Some(pool),
             allowance: allowance(&task.allowance, &scope)?,

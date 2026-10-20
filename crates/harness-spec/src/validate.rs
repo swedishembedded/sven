@@ -117,6 +117,7 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
                 if !a.decoding.is_empty()
                     || a.system.is_some()
                     || a.origin.is_some()
+                    || a.role.is_some()
                     || a.stop_as.is_some()
                     || a.pool.is_some()
                     || a.allowance.is_some()
@@ -128,7 +129,8 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
                 if !p.decoding.is_empty()
                     || p.system.is_some()
                     || p.conversation.is_some()
-                    || p.origin.is_some() =>
+                    || p.origin.is_some()
+                    || p.role.is_some() =>
             {
                 Some("`decoding`, `system` or `conversation` on a predict step".to_string())
             }

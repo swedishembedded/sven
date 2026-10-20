@@ -135,6 +135,8 @@ pub(super) struct RepairPlan<'a> {
     /// For a `model_only` task, the repair is a model turn without tools,
     /// answering the task's schema when it has one.
     pub model_only: Option<Option<String>>,
+    /// The model role that answers the repair turn.
+    pub role: Option<String>,
     /// The fact the repair turn's stop status is recorded in.
     pub stop: Option<String>,
     /// The fact holding the calls the task may still make.
@@ -424,6 +426,7 @@ fn on_failure(
                 conversation: plan.conversation.clone(),
                 system: plan.system.clone(),
                 origin: Some("repair".to_string()),
+                role: plan.role.clone(),
                 decoding: plan.decoding.clone(),
                 then: again,
             })),
@@ -433,6 +436,7 @@ fn on_failure(
                 store_as: Some(plan.fact.clone()),
                 system: plan.system.clone(),
                 origin: Some("repair".to_string()),
+                role: plan.role.clone(),
                 stop_as: plan.stop.clone(),
                 pool: plan.pool.clone(),
                 allowance: None,

@@ -140,6 +140,7 @@ pub fn compile_step_effect(step_text: &str, known_vars: &[String]) -> Effect {
             max_tool_rounds: Some(1),
             refused_calls: Vec::new(),
             origin: None,
+            role: None,
             system: None,
             decoding: sven_vocab::TurnDecoding::default(),
         }

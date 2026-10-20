@@ -214,6 +214,8 @@ struct RawTask {
     #[serde(default)]
     system: Option<String>,
     #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
     schema: Option<Value>,
     #[serde(default)]
     sampling: Option<spec::Sampling>,
@@ -288,6 +290,7 @@ fn parse_workflow_tasks(section: Option<Value>) -> Result<Vec<TaskSpec>, Harness
             until,
             model_only: raw.model_only,
             system: raw.system,
+            model: raw.model,
             schema: raw.schema,
             sampling: raw.sampling,
             thinking: raw.thinking,
