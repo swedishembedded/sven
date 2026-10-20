@@ -47,9 +47,17 @@ pub const GATE_TOOL: &str = "shell_gate";
 /// the value at a JSON pointer. Reserved to the harness like [`GATE_TOOL`].
 pub const SNAPSHOT_TOOL: &str = "read_json_snapshot";
 
+/// The tool a `for_each` with `covers` calls to digest the workspace files an
+/// item covers: it answers a digest per named group of paths. Reserved to the
+/// harness like [`GATE_TOOL`].
+pub const DIGEST_TOOL: &str = "digest_files";
+
+/// The most paths one item's `covers` may name.
+pub const MAX_COVERS: usize = 64;
+
 /// The tools only the harness itself may call: no agent step is offered or
 /// admitted a call to any of them.
-pub const RESERVED_TOOLS: [&str; 2] = [GATE_TOOL, SNAPSHOT_TOOL];
+pub const RESERVED_TOOLS: [&str; 3] = [GATE_TOOL, SNAPSHOT_TOOL, DIGEST_TOOL];
 
 /// How many items a `for_each` takes when its definition names no bound.
 pub const DEFAULT_MAX_ITEMS: u64 = 500;

@@ -29,6 +29,7 @@ mod approval;
 mod budget;
 mod checkpoint;
 mod command_gate;
+mod coverage;
 mod decoding;
 mod delegation;
 mod error;

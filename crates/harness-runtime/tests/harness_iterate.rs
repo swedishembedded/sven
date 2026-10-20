@@ -60,6 +60,9 @@ struct Seen {
     prompts: Vec<String>,
     gate_calls: usize,
     snapshot_calls: usize,
+    digest_calls: usize,
+    /// The workspace files the digest tool reads, by path.
+    disk: std::collections::BTreeMap<String, String>,
 }
 
 /// Answers every model turn and tool call until the run rests terminal, or
@@ -117,6 +120,31 @@ fn pump(
                     observation: json!({ "digest": "d1", "value": snapshot.cloned().expect("a snapshot to serve") })
                         .to_string()
                         .into(),
+                }
+            }
+            Effect::CallTool {
+                call_id,
+                name,
+                args,
+                ..
+            } if name == "digest_files" => {
+                seen.digest_calls += 1;
+                let mut answer = serde_json::Map::new();
+                for (group, paths) in args["groups"].as_object().expect("groups") {
+                    let digest: Vec<String> = paths
+                        .as_array()
+                        .expect("paths")
+                        .iter()
+                        .map(|p| {
+                            let p = p.as_str().expect("a path");
+                            format!("{p}={}", seen.disk.get(p).map_or("absent", String::as_str))
+                        })
+                        .collect();
+                    answer.insert(group.clone(), json!(digest.join(";")));
+                }
+                Event::ToolSucceeded {
+                    call_id: *call_id,
+                    observation: Value::Object(answer).to_string().into(),
                 }
             }
             other => panic!("unexpected effect {other:?}"),
@@ -634,4 +662,118 @@ fn a_trace_reads_in_the_authors_terms() {
     assert_eq!(done["source"]["result"], "completed");
     // The record's own fields are untouched.
     assert_eq!(gates[0]["passed"], true);
+}
+
+const COVERING: &str = r#"
+api_version: "2"
+name: covering
+inputs: { modules: json }
+execution: { limits: { model_turns: 1000, tool_calls: 1000, steps: 100000 } }
+gates:
+  check: { command: [sh, check.sh, "{{ item_id }}"] }
+workflow:
+  - name: modules
+    for_each:
+      source: { input: modules }
+      id: name
+      covers: ["src/{{ item.name }}.c", "include/{{ item.name }}.h"]
+    task: "Harden {{ item.name }}."
+    verify: [check]
+success:
+  work_items: { all_completed: true }
+"#;
+
+/// Runs three covering items until the third is in flight, resumes in a new
+/// process after `edit` changed the disk, and returns what the resumed run
+/// prompted for and its trace events.
+fn resume_after(edit: &dyn Fn(&mut Seen)) -> (Vec<String>, Vec<String>) {
+    let inputs = json!({ "modules": modules(3) });
+    let (mut m, mut ctx, mut state, fx) = begin(COVERING, inputs);
+    let mut seen = Seen::default();
+    for name in ["m000", "m001", "m002"] {
+        seen.disk.insert(format!("src/{name}.c"), "v1".into());
+    }
+    let stop_at = |s: &Seen| s.prompts.len() == 2 && s.gate_calls == 2 && s.digest_calls == 2;
+    let _ = pump(&mut m, &mut ctx, &mut state, fx, &mut seen, None, &stop_at);
+    assert_eq!(
+        seen.digest_calls, 2,
+        "each completed item was digested once"
+    );
+
+    let snapshot = m.snapshot(&ctx);
+    drop((m, ctx));
+    let (mut m, mut ctx) =
+        HarnessMachine::restore(COVERING.to_string(), snapshot).expect("the checkpoint restores");
+    let mut state = HarnessState::WaitingForModel;
+    let fx = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::LlmFailed {
+            error: INTERRUPTED_OPERATION.to_string(),
+        },
+    );
+    let mut resumed = Seen {
+        disk: seen.disk.clone(),
+        ..Seen::default()
+    };
+    edit(&mut resumed);
+    pump(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        fx,
+        &mut resumed,
+        None,
+        &|_| false,
+    );
+    assert_eq!(state, HarnessState::Completed);
+    let names = resumed
+        .prompts
+        .iter()
+        .map(|p| {
+            p.trim_start_matches("Harden ")
+                .trim_end_matches('.')
+                .to_string()
+        })
+        .collect();
+    let events = run_state(&ctx)["trace"]
+        .as_array()
+        .expect("trace")
+        .iter()
+        .filter(|r| r["event"] == "items_invalidated")
+        .map(|r| r["items"].to_string())
+        .collect();
+    (names, events)
+}
+
+#[test]
+fn a_resume_trusts_completed_items_whose_files_are_as_they_were() {
+    let (names, invalidated) = resume_after(&|_| {});
+    assert_eq!(names, ["m002"], "only the interrupted item runs again");
+    assert!(invalidated.is_empty());
+}
+
+#[test]
+fn a_resume_re_pends_a_completed_item_whose_files_changed_appeared_or_vanished() {
+    // A covered file changed.
+    let (names, invalidated) = resume_after(&|s| {
+        s.disk.insert("src/m000.c".into(), "v2".into());
+    });
+    assert_eq!(
+        names,
+        ["m002", "m000"],
+        "the changed item runs again, after the one in flight"
+    );
+    assert_eq!(invalidated, [r#"["m000"]"#]);
+    // A covered file appeared (it was absent when the item completed).
+    let (names, _) = resume_after(&|s| {
+        s.disk.insert("include/m001.h".into(), "new".into());
+    });
+    assert_eq!(names, ["m002", "m001"]);
+    // A covered file vanished.
+    let (names, _) = resume_after(&|s| {
+        s.disk.remove("src/m001.c");
+    });
+    assert_eq!(names, ["m002", "m001"]);
 }

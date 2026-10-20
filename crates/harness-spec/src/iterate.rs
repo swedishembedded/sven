@@ -70,6 +70,11 @@ pub struct ForEachSpec {
     /// What a resume does with a changed collection.
     #[serde(default, skip_serializing_if = "Reconcile::is_frozen")]
     pub reconcile: Reconcile,
+    /// Workspace files an item covers (templates over the item): their
+    /// digest is recorded when the item completes, and a resume makes an item
+    /// pending again whose files changed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<String>,
     /// Hand the host a durable checkpoint each time an item completes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub checkpoint_each_item: bool,

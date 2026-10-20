@@ -61,6 +61,10 @@ pub struct WorkItem {
     /// For a completed item, the digest of the plan whose checks it passed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_under: Option<String>,
+    /// For a completed item of a loop with `covers`, the digest of the files
+    /// it covered when it completed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub covered_digest: Option<String>,
 }
 
 /// An `iterate` step's progress, in the run state under the step's id.
@@ -81,6 +85,9 @@ pub struct IterationState {
     /// SHA-256 of the collection as it was read, for a file source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_digest: Option<String>,
+    /// The digest call in flight, when the loop is waiting for one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digesting: Option<crate::coverage::DigestOp>,
 }
 
 impl IterationState {
@@ -225,6 +232,7 @@ fn freeze(
             status: ItemStatus::Pending,
             attempts: 0,
             verified_under: None,
+            covered_digest: None,
         });
     }
     Ok(items)
@@ -353,6 +361,13 @@ impl HarnessMachine {
         };
         run.awaiting = None;
         run.inflight = None;
+        if run
+            .iterations
+            .get(step_id)
+            .is_some_and(|state| state.digesting.is_some())
+        {
+            return self.digest_settled(run, &step, report, ctx);
+        }
         // A read whose answer never arrived is simply read again.
         if report == Err(INTERRUPTED_OPERATION) {
             run.counts.tool_calls = run.counts.tool_calls.saturating_sub(1);
@@ -438,7 +453,7 @@ impl HarnessMachine {
             added: record.added,
             removed: record.removed,
         });
-        self.iterate_continue(run, step, ctx)
+        self.iterate_revalidate(run, step, ctx)
     }
 
     fn iterate_freeze(
@@ -479,7 +494,7 @@ impl HarnessMachine {
 
     /// Completes the item that was running, then starts the next or leaves
     /// the loop.
-    fn iterate_next(
+    pub(crate) fn iterate_next(
         &mut self,
         run: &mut HarnessRunState,
         step: &PlanStep,
@@ -494,9 +509,23 @@ impl HarnessMachine {
             );
         };
         let digest = self.run.plan().digest.clone();
+        let covers = !crate::coverage::covers_of(step).is_empty();
         let Some(state) = run.iterations.get_mut(&step.id) else {
             return self.fail_now(run, "internal", "iteration state vanished", ctx);
         };
+        // An item that covers files is recorded with their digest before it
+        // counts as completed.
+        if let Some(index) = state.active {
+            if covers && state.items[index].covered_digest.is_none() {
+                return self.request_digest(
+                    run,
+                    step,
+                    crate::coverage::DigestPurpose::Complete,
+                    vec![index],
+                    ctx,
+                );
+            }
+        }
         if let Some(index) = state.active.take() {
             let item = &mut state.items[index];
             item.status = ItemStatus::Completed;
@@ -507,21 +536,27 @@ impl HarnessMachine {
                 index: index as u64,
             });
         }
-        if let PlanIteration::ForEach {
-            source: IterateSource::Json(json),
-            reconcile: sven_harness_spec::Reconcile::Refresh,
-            ..
-        } = iteration
-        {
-            if std::mem::take(&mut run.reconcile_pending) {
-                return self.request_snapshot(run, step, json, ctx);
-            }
+        let refresh = match iteration {
+            PlanIteration::ForEach {
+                source: IterateSource::Json(json),
+                reconcile: sven_harness_spec::Reconcile::Refresh,
+                ..
+            } => Some(json),
+            _ => None,
+        };
+        // The first boundary after a resume re-reads the backlog if the loop
+        // asks for it, then checks the files its completed items covered.
+        if (refresh.is_some() || covers) && std::mem::take(&mut run.reconcile_pending) {
+            return match refresh {
+                Some(json) => self.request_snapshot(run, step, json, ctx),
+                None => self.iterate_revalidate(run, step, ctx),
+            };
         }
         self.iterate_continue(run, step, ctx)
     }
 
     /// Starts the next pending item, or leaves the loop.
-    fn iterate_continue(
+    pub(crate) fn iterate_continue(
         &mut self,
         run: &mut HarnessRunState,
         step: &PlanStep,

@@ -717,3 +717,33 @@ fn a_for_each_task_chooses_how_a_resume_treats_a_changed_backlog_and_when_it_che
     );
     assert!(rejected(&on_until).contains("needs a `for_each` task"));
 }
+
+#[test]
+fn a_for_each_task_can_declare_the_files_an_item_covers() {
+    use sven_harness_spec::PlanIteration;
+    let covering = LOOPS.replace(
+        "id: module }",
+        "id: module, covers: [\"src/{{ item.module }}.c\"] }",
+    );
+    let plan = compile(&covering);
+    let PlanPrimitive::Iterate { iteration, .. } = &plan.steps["modules__iter"].primitive else {
+        panic!("an iterate step");
+    };
+    let PlanIteration::ForEach { covers, .. } = iteration else {
+        panic!("for_each");
+    };
+    assert_eq!(covers.len(), 1);
+    assert_eq!(covers[0].paths()[0].as_text(), "facts.item.module");
+    assert_ne!(
+        plan.digest,
+        compile(LOOPS).digest,
+        "the declaration is pinned"
+    );
+    for bad in ["../x.c", "/etc/passwd"] {
+        let escaped = LOOPS.replace(
+            "id: module }",
+            &format!("id: module, covers: [\"{bad}\"] }}"),
+        );
+        assert!(rejected(&escaped).contains("inside the workspace"), "{bad}");
+    }
+}

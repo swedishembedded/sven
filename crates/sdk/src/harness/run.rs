@@ -10,17 +10,17 @@ use std::time::Duration;
 use serde_json::Value;
 use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
 use sven_harness_runtime::{
-    harness_event, HarnessMachine, HarnessRunData, HarnessRunState, TraceRecord, Waiting,
-    OUTCOME_FACT,
+    harness_event, HarnessMachine, HarnessRunData, HarnessRunState, TraceRecord, OUTCOME_FACT,
 };
 use sven_harness_spec::{HarnessBundle, HarnessPlan, PlanIteration, PlanPrimitive};
 use sven_hsm::submachine::ErasedMachine;
-use sven_hsm::{Context, EffectKind, Event, Snapshot};
+use sven_hsm::{Context, Event, Snapshot};
 use sven_vocab::{HarnessEvent, SessionEvent};
 use tokio::sync::broadcast;
 
 use super::live_trajectory;
 use super::record::{start_checkpoint, Recorder};
+use super::run_support::{harness_tools, interrupted_failure};
 use super::trajectory::Evidence;
 use super::HarnessCheckpoint;
 use crate::engine::Engine;
@@ -792,61 +792,4 @@ pub(super) fn outcome_of(
         })),
         _ => None,
     }
-}
-
-/// The event that settles what a suspension interrupted, from what the
-/// run was waiting on.
-///
-/// A resumed run must not re-execute the parked step (the tick rule
-/// forbids a second child for the same `delegate`); it must answer the
-/// operation that was in flight when the suspension hit, and answer it as
-/// a failure, so the step's declared retry policy decides what becomes of
-/// it. Which event answers depends on the waiter: the tool arm only
-/// accepts the result of the exact call it parked on, so it needs the
-/// call id the run recorded; the model, verifier, child and join arms
-/// settle on a failed effect.
-fn interrupted_failure(state: &HarnessRunState) -> Option<Event> {
-    const SUSPENDED: &str = sven_harness_runtime::INTERRUPTED_OPERATION;
-    let inflight = state.inflight.as_ref()?;
-    match state.awaiting? {
-        Waiting::Model => Some(Event::LlmFailed {
-            error: SUSPENDED.to_string(),
-        }),
-        Waiting::Tool => Some(Event::ToolFailed {
-            call_id: inflight.call_id?,
-            error: SUSPENDED.to_string(),
-        }),
-        Waiting::Verifier => Some(Event::EffectFailed {
-            kind: EffectKind::Verify,
-            error: SUSPENDED.to_string(),
-        }),
-        Waiting::Child | Waiting::Join => Some(Event::EffectFailed {
-            kind: EffectKind::InstantiateSubmachine,
-            error: SUSPENDED.to_string(),
-        }),
-    }
-}
-
-/// The tools only a harness's own steps call - the gate command runner and
-/// the snapshot reader - followed by the host's own tools. They exist for every
-/// harness run whatever toolset the engine has, confined to the project root;
-/// a host tool of the same name (a test fixture, say) is registered later and
-/// so replaces them. Without a project root there is nowhere to run a gate,
-/// and a gate then fails closed because the tool is missing.
-fn harness_tools(
-    root: Option<&std::path::Path>,
-    host: Vec<Arc<dyn sven_tool_api::Tool>>,
-    trajectory: sven_tools_exec::TrajectoryHook,
-) -> Vec<Arc<dyn sven_tool_api::Tool>> {
-    let mut tools: Vec<Arc<dyn sven_tool_api::Tool>> = Vec::new();
-    if let Some(root) = root {
-        if let Ok(gate) = sven_tools_exec::GateCommandTool::new(root) {
-            tools.push(Arc::new(gate.with_trajectory_hook(trajectory)));
-        }
-        if let Ok(snapshot) = sven_tools_fs::ReadJsonSnapshotTool::new(root) {
-            tools.push(Arc::new(snapshot));
-        }
-    }
-    tools.extend(host);
-    tools
 }

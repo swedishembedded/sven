@@ -496,6 +496,14 @@ pub enum TraceRecord {
         /// Items the refreshed collection no longer holds.
         removed: u64,
     },
+    /// A resumed loop found that the files some completed items cover had
+    /// changed, and made those items pending again.
+    ItemsInvalidated {
+        /// The iterate step.
+        step: String,
+        /// The ids of the items.
+        items: Vec<String>,
+    },
     /// A `gate` step judged its command's report.
     GateEvaluated {
         /// The gate step.

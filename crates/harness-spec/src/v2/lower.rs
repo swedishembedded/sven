@@ -74,6 +74,7 @@ fn lower_loop(
     task: &TaskSpec,
     work: &str,
     next: &str,
+    covers: Vec<String>,
 ) -> Result<(), HarnessError> {
     let id = iter_id(task);
     let at = origin(Some(&task.name), "loop");
@@ -86,6 +87,7 @@ fn lower_loop(
                     id: each.id.clone(),
                     max_items: each.max_items.unwrap_or(DEFAULT_MAX_ITEMS),
                     reconcile: each.reconcile,
+                    covers,
                     checkpoint_each_item: task.checkpoint.is_some(),
                 }),
                 until: None,
@@ -374,7 +376,18 @@ fn lower_task(
     };
     b.add(&work, work_step, origin(Some(&task.name), "work"));
     if looping {
-        lower_loop(b, task, &work, next)?;
+        let covers = task
+            .for_each
+            .iter()
+            .flat_map(|each| &each.covers)
+            .map(|path| {
+                rewrite_text(
+                    path,
+                    &cx.scope(format!("{place}: covers"), before, LoopVars::of(task)),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        lower_loop(b, task, &work, next, covers)?;
     }
     if let Some(condition) = &task.when {
         let scope = cx.scope(format!("{place}: when"), before, LoopVars::default());

@@ -530,6 +530,7 @@ fn required_capability(step: &StepSpec) -> Option<&'static str> {
         StepSpec::Iterate(i) => {
             return match i.for_each.as_ref().map(|each| &each.source) {
                 Some(IterateSource::Json(_)) => Some("ReadFile"),
+                _ if i.for_each.as_ref().is_some_and(|e| !e.covers.is_empty()) => Some("ReadFile"),
                 _ => None,
             }
         }

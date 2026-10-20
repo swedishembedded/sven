@@ -569,6 +569,21 @@ fn validate_loop(
                 "{place}: `reconcile: refresh` needs a file source; an input cannot change"
             )));
         }
+        if each.covers.len() > crate::spec::MAX_COVERS {
+            return Err(invalid(format!(
+                "{place}: for_each.covers names {} paths, more than {}",
+                each.covers.len(),
+                crate::spec::MAX_COVERS
+            )));
+        }
+        for path in &each.covers {
+            if !is_workspace_relative(path) {
+                return Err(invalid(format!(
+                    "{place}: for_each.covers path `{path}` must be inside the workspace \
+                     (relative, no `..`)"
+                )));
+            }
+        }
         if let Some(max) = each.max_items {
             if max == 0 || max > MAX_ITEMS_LIMIT {
                 return Err(invalid(format!(
@@ -721,10 +736,9 @@ pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<String> {
             note(split_metric(&until.metric).and_then(|(g, _)| w.gates.get(g)));
             note(None);
         }
-        reads_files |= task
-            .for_each
-            .as_ref()
-            .is_some_and(|each| matches!(each.source, IterateSource::Json(_)));
+        reads_files |= task.for_each.as_ref().is_some_and(|each| {
+            matches!(each.source, IterateSource::Json(_)) || !each.covers.is_empty()
+        });
         for check in &task.verify {
             match check {
                 Check::Gate(name) | Check::Soft(name) => note(w.gates.get(name)),

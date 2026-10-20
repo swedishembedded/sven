@@ -44,6 +44,7 @@ pub(crate) mod live_trajectory;
 mod outcome;
 mod record;
 mod run;
+mod run_support;
 mod trajectory;
 
 pub use record::{HarnessRecording, HarnessReplay};

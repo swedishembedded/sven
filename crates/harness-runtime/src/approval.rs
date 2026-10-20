@@ -112,6 +112,17 @@ impl HarnessMachine {
         if run.awaiting != Some(Waiting::Tool) || inflight.call_id != Some(call_id) {
             return None;
         }
+        if let Some(op) = run
+            .iterations
+            .get(&inflight.step)
+            .and_then(|state| state.digesting.as_ref())
+        {
+            return Some(HeldCall {
+                name: sven_harness_spec::DIGEST_TOOL.to_string(),
+                capability: ToolCapability::ReadFile,
+                args: op.args.clone(),
+            });
+        }
         match &self.plan().step(&inflight.step)?.primitive {
             PlanPrimitive::Tool { name, args, .. } => Some(HeldCall {
                 name: name.clone(),

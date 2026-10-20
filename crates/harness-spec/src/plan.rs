@@ -123,6 +123,9 @@ pub enum PlanIteration {
         /// What a resume does with a changed collection.
         #[serde(default, skip_serializing_if = "crate::iterate::Reconcile::is_frozen")]
         reconcile: crate::iterate::Reconcile,
+        /// The files an item covers, as templates over the item.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        covers: Vec<Template>,
         /// Whether each completed item is a point the host may persist a
         /// checkpoint at.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -547,6 +550,11 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
                     id: f.id.clone(),
                     max_items: f.max_items,
                     reconcile: f.reconcile,
+                    covers: f
+                        .covers
+                        .iter()
+                        .map(|c| Template::parse(c).unwrap_or_else(|_| Template::empty()))
+                        .collect(),
                     checkpoint_each_item: f.checkpoint_each_item,
                 },
                 (_, Some(u)) => PlanIteration::Until {

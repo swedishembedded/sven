@@ -506,6 +506,11 @@ pub struct ForEach {
     /// again. Only a file source can change.
     #[serde(default)]
     pub reconcile: Reconcile,
+    /// Workspace files an item covers (paths, templates over `item`). When
+    /// the item completes their content digest is recorded; when a run is
+    /// resumed, an item whose files have changed since is pending again.
+    #[serde(default)]
+    pub covers: Vec<String>,
 }
 
 /// When a task hands the host a durable checkpoint.

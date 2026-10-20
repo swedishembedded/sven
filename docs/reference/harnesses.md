@@ -264,10 +264,11 @@ that did not run (its `when` was false) has not completed. Codes:
 `iterate_missing_id`, `iterate_duplicate_id`, `iterate_too_many_items`. The trace
 records `IterationStarted`, `ItemStarted` and `ItemCompleted`.
 **Durable progress and a changed backlog.** `checkpoint: each_item` on a
-`for_each` task hands the host a checkpoint every time an item completes
-(`HarnessRun::on_item_checkpoint(sink)`; `sven harness run --checkpoint-out FILE`
-keeps the latest one in FILE, replaced atomically), so a crash loses at most the
-item in flight; the checkpoint resumes like one a bound left. The host sees the
+`for_each` task hands the host's sink a checkpoint every time one of *its*
+items completes (`HarnessRun::on_item_checkpoint(sink)`; `sven harness run
+--checkpoint-out FILE` keeps the latest one in FILE, replaced atomically); a
+loop without the key hands it nothing. A crash loses at most the item in
+flight; the checkpoint resumes like one a bound left. The host sees the
 machine after a dispatch, so the item that was in flight is settled as
 interrupted on resume. `for_each: {reconcile: frozen | refresh}` says what a
 *resumed* run does with a backlog file that changed meanwhile. `frozen` (the
@@ -278,7 +279,13 @@ is pending again (a result is evidence only about the content it was produced
 for); new ids are appended pending; ids no longer in the file are dropped. The
 trace records `ItemsReconciled {kept, invalidated, added, removed}`. A file the
 agent can write decides the list under `refresh`, so use it only when that is
-the intent; it needs a file source. A completed item records the plan digest it
+the intent; it needs a file source. `for_each: {covers: [paths]}` (templates over `item`, workspace-relative) names
+the files an item covers: when the item completes, a digest of their contents
+is recorded (the harness-only `digest_files` tool, capability `ReadFile`), and
+at the first item boundary after a resume the digests are taken again: an item
+whose files changed, appeared or vanished is pending again (trace
+`ItemsInvalidated`). Any difference re-pends; nothing the agent says counts.
+A completed item records the plan digest it
 was verified under; a changed gate is a changed plan, whose checkpoints are
 refused, so invalidation by gate change needs no separate switch.
 Item values from a file the agent wrote are data the agent controls: they reach
@@ -378,6 +385,28 @@ spends more than its root declared. A version 2 child answers its parent with an
 envelope `{ok, value | code, message, usage}`; a delegate to a version 1 harness
 is unchanged. Capabilities narrow as before: a child holds what its caller
 holds, narrowed by its own declaration.
+
+### Gate inputs: the trajectory and a trusted directory
+
+A command gate can judge what the agent *did*, not only what it left behind.
+`{{ run.trajectory_file }}` in a gate's argv or `stdin` is the path of a file
+holding the run's ATIF trajectory so far, written by the host just before the
+command starts (a directory of its own under the host's temporary directory,
+not the workspace) and left holding the final trajectory when the run ends. A
+host that cannot provide it fails the run with `trajectory_unavailable`.
+
+`cwd_input: <input>` runs the command in the absolute directory a `string` run
+input names (a pinned checkout, a ledger) instead of the workspace. The host
+sets inputs; the agent cannot. The gate tool refuses a directory that is
+relative, missing, inside the workspace or holding it (the agent can write
+there), and `cwd` and `cwd_input` are exclusive.
+
+After a run `HarnessRun::corrections()` lists the messages the supervisors of
+`corrections` blocks sent the agent (each with the tool calls made before it)
+and `HarnessRun::refused_messages()` the supervisor messages an accept gate
+refused, with the reason each was sent back with; `sven harness run --json`
+reports both, and `HarnessRun::trajectory()` is available after a failed run
+too.
 
 ### The `gate` step
 
