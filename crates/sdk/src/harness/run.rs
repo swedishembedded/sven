@@ -73,6 +73,8 @@ pub struct HarnessRun {
     pub(super) recorder: Option<Recorder>,
     /// What the trajectory is built from, after [`Self::execute`].
     pub(super) evidence: Option<Evidence>,
+    /// The directory this run works in, when it is not the engine's.
+    workspace: Option<sven_tool_api::PathScope>,
 }
 
 struct RestoredMachine {
@@ -144,6 +146,7 @@ impl HarnessRun {
             executed: false,
             recorder: None,
             evidence: None,
+            workspace: None,
         }
     }
 
@@ -165,6 +168,27 @@ impl HarnessRun {
     /// run's stream continues after the records its checkpoint carried.
     pub fn subscribe_trace(&self) -> broadcast::Receiver<TraceRecord> {
         self.trace_tx.subscribe()
+    }
+
+    /// Runs this harness in `dir` instead of the engine's project root: the
+    /// run's file, search and shell tools, its gates and its snapshot reads are
+    /// all rooted there, so one engine can serve many runs at once, each in its
+    /// own tree (the host lays the tree out before the run and reads it after;
+    /// the harness never creates it). Tools the host registered on the engine
+    /// itself keep the root they were built with.
+    ///
+    /// # Errors
+    ///
+    /// [`CallError::Precondition`] when `dir` is not an existing directory.
+    pub fn in_workspace(mut self, dir: impl AsRef<std::path::Path>) -> Result<Self, CallError> {
+        let scope = sven_tool_api::PathScope::confined(dir.as_ref()).map_err(|e| {
+            CallError::Precondition(format!(
+                "workspace {} is not usable: {e}",
+                dir.as_ref().display()
+            ))
+        })?;
+        self.workspace = Some(scope);
+        Ok(self)
     }
 
     /// The checkpoint of a run that a bound stopped, after
@@ -195,7 +219,10 @@ impl HarnessRun {
         // A project root is discovered from the way the CLI discovers its
         // project, and confines the built-in tools; without one the session
         // knows no project at all.
-        let paths = self.engine.paths();
+        let paths = self
+            .workspace
+            .clone()
+            .unwrap_or_else(|| self.engine.paths());
         let root = paths.root().map(std::path::Path::to_path_buf);
         let discovered = match paths.root() {
             Some(root) => RuntimeContext::auto_detect_at(Some(root.to_path_buf())),
