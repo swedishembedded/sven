@@ -23,7 +23,7 @@ use super::checks::{
     lower_checks, Builder, CommandRun, Kind, Phase, RepairPlan, Resolved, DEFAULT_REPAIR_PROMPT,
 };
 use super::rewrite::{output_fact, rewrite_condition, rewrite_text, rewrite_value, Scope};
-use super::spec::{decoding_of, Check, CommandGate, GateDef, TaskSpec, WorkflowSpec};
+use super::spec::{decoding_of, Check, CommandGate, GateDef, OnFailure, TaskSpec, WorkflowSpec};
 use super::validate::{needed_capabilities, split_metric};
 use crate::error::HarnessError;
 use crate::source_map::{Lowering, SourceRef};
@@ -41,6 +41,8 @@ struct Context<'a> {
     inputs: Option<BTreeSet<String>>,
     /// Tasks with a `schema`, whose output fields templates can read.
     structured: Vec<String>,
+    /// Command gates, whose latest result templates can read.
+    command_gates: Vec<String>,
 }
 
 /// What a task's templates may read besides inputs and earlier outputs.
@@ -66,6 +68,7 @@ impl Context<'_> {
         Scope::new(place, self.inputs.as_ref(), tasks)
             .in_loop(vars.item, vars.iteration)
             .with_structured(&self.structured)
+            .with_gates(&self.command_gates)
     }
 
     fn command_run(
@@ -73,6 +76,7 @@ impl Context<'_> {
         name: &str,
         gate: &CommandGate,
         vars: LoopVars,
+        tasks: &[String],
     ) -> Result<CommandRun, HarnessError> {
         let scope = self.scope(format!("gate `{name}`"), &[], vars);
         Ok(CommandRun {
@@ -83,12 +87,23 @@ impl Context<'_> {
                 .collect::<Result<_, _>>()?,
             timeout: gate.timeout.unwrap_or(DEFAULT_GATE_TIMEOUT_SECS),
             cwd: gate.cwd.clone(),
+            stdin: gate
+                .stdin
+                .as_deref()
+                .map(|text| {
+                    rewrite_text(
+                        text,
+                        &self.scope(format!("gate `{name}`: stdin"), tasks, vars),
+                    )
+                })
+                .transpose()?,
+            store_as: format!("gate_{name}"),
         })
     }
 
-    fn gate(&self, name: &str, vars: LoopVars) -> Result<Resolved, HarnessError> {
+    fn gate(&self, name: &str, vars: LoopVars, tasks: &[String]) -> Result<Resolved, HarnessError> {
         let kind = match self.w.gates.get(name) {
-            Some(GateDef::Command(c)) => Kind::Command(self.command_run(name, c, vars)?),
+            Some(GateDef::Command(c)) => Kind::Command(self.command_run(name, c, vars, tasks)?),
             Some(GateDef::Artifact(a)) => Kind::File {
                 path: a.artifact.clone(),
                 min_bytes: a.min_bytes,
@@ -102,6 +117,7 @@ impl Context<'_> {
         };
         Ok(Resolved {
             label: name.to_string(),
+            required: true,
             kind,
         })
     }
@@ -111,6 +127,7 @@ impl Context<'_> {
         reference: &str,
         threshold: super::spec::Threshold,
         vars: LoopVars,
+        tasks: &[String],
     ) -> Result<Resolved, HarnessError> {
         let (gate, metric) = split_metric(reference)
             .ok_or_else(|| HarnessError::Invalid(format!("internal: bad metric `{reference}`")))?;
@@ -126,8 +143,9 @@ impl Context<'_> {
         // for this check: a number left by an earlier run is not evidence.
         Ok(Resolved {
             label: reference.to_string(),
+            required: true,
             kind: Kind::Metric {
-                run: Some(self.command_run(gate, command, vars)?),
+                run: Some(self.command_run(gate, command, vars, tasks)?),
                 file: decl.file.clone(),
                 pointer: decl.pointer.clone(),
                 threshold,
@@ -135,7 +153,11 @@ impl Context<'_> {
         })
     }
 
-    fn task_checks(&self, task: &TaskSpec) -> Result<Vec<Resolved>, HarnessError> {
+    fn task_checks(
+        &self,
+        task: &TaskSpec,
+        tasks: &[String],
+    ) -> Result<Vec<Resolved>, HarnessError> {
         let vars = LoopVars::of(task);
         let names: Vec<String> = self.w.workflow.iter().map(|t| t.name.clone()).collect();
         let scope = self.scope(format!("task `{}`: files", task.name), &names, vars);
@@ -144,6 +166,7 @@ impl Context<'_> {
         for path in &task.outputs {
             checks.push(Resolved {
                 label: plain(path),
+                required: true,
                 kind: Kind::File {
                     path: file(path)?,
                     min_bytes: None,
@@ -153,16 +176,21 @@ impl Context<'_> {
         }
         for check in &task.verify {
             checks.push(match check {
-                Check::Gate(name) => self.gate(name, vars)?,
+                Check::Gate(name) => self.gate(name, vars, tasks)?,
+                Check::Soft(name) => Resolved {
+                    required: false,
+                    ..self.gate(name, vars, tasks)?
+                },
                 Check::Artifact(a) => Resolved {
                     label: plain(&a.artifact),
+                    required: true,
                     kind: Kind::File {
                         path: file(&a.artifact)?,
                         min_bytes: a.min_bytes,
                         sha256: a.sha256.clone(),
                     },
                 },
-                Check::Metric(m) => self.metric(&m.metric, m.threshold, vars)?,
+                Check::Metric(m) => self.metric(&m.metric, m.threshold, vars, tasks)?,
             });
         }
         Ok(checks)
@@ -313,7 +341,7 @@ fn lower_task(
     // loop, a miss returns to the loop step, which counts it.
     let after_checks = match &task.until {
         Some(until) => {
-            let metric = cx.metric(&until.metric, until.threshold, vars)?;
+            let metric = cx.metric(&until.metric, until.threshold, vars, through)?;
             let phase = Phase {
                 prefix: format!("{}__until", task.name),
                 task: Some(task.name.clone()),
@@ -333,7 +361,7 @@ fn lower_task(
     } else {
         place.clone()
     };
-    let checks = cx.task_checks(task)?;
+    let checks = cx.task_checks(task, through)?;
     let repair = task.repair.as_ref().map(|r| RepairPlan {
         attempts: u32::try_from(r.attempts).unwrap_or(u32::MAX),
         prompt: r
@@ -357,6 +385,7 @@ fn lower_task(
             agent_system.clone()
         },
         structured: &cx.structured,
+        gates: &cx.command_gates,
     });
     let phase = Phase {
         prefix: task.name.clone(),
@@ -459,15 +488,16 @@ fn lower_task(
 fn lower_success(cx: &Context<'_>, b: &mut Builder) -> Result<String, HarnessError> {
     let w = cx.w;
     let none = LoopVars::default();
+    let names: Vec<String> = w.workflow.iter().map(|t| t.name.clone()).collect();
     let mut checks = Vec::new();
     for gate in &w.success.gates {
-        checks.push(cx.gate(gate, none)?);
+        checks.push(cx.gate(gate, none, &names)?);
     }
     for (reference, keys) in &w.success.metrics {
         let threshold = keys
             .threshold()
             .map_err(|e| HarnessError::Invalid(format!("success.metrics.{reference}: {e}")))?;
-        checks.push(cx.metric(reference, threshold, none)?);
+        checks.push(cx.metric(reference, threshold, none, &names)?);
     }
     if w.success
         .work_items
@@ -477,6 +507,7 @@ fn lower_success(cx: &Context<'_>, b: &mut Builder) -> Result<String, HarnessErr
         for task in w.workflow.iter().filter(|t| t.for_each.is_some()) {
             checks.push(Resolved {
                 label: format!("work_items.{}", task.name),
+                required: true,
                 kind: Kind::Fact {
                     path: format!("facts.{}.pending", summary_fact(task)),
                     equals: json!(0),
@@ -511,6 +542,9 @@ fn outputs_value(cx: &Context<'_>) -> Result<Value, HarnessError> {
         let scope = cx.scope(format!("outputs.{name}"), &names, LoopVars::default());
         value.insert(name.clone(), rewrite_value(&decl.value, &scope)?);
     }
+    if w.on_failure == OnFailure::Return {
+        value.insert("status".into(), json!("completed"));
+    }
     Ok(Value::Object(value))
 }
 
@@ -533,6 +567,28 @@ fn step_bound(w: &WorkflowSpec, steps: &std::collections::BTreeMap<String, StepS
     bound
 }
 
+/// With `on_failure: return`, every step that would end the run as failed
+/// returns the outputs instead, marked failed and naming the failure.
+fn returning_failures(cx: &Context<'_>, b: &mut Builder) -> Result<(), HarnessError> {
+    let outputs = outputs_value(cx)?;
+    for step in b.steps.values_mut() {
+        let StepSpec::Fail(fail) = step else { continue };
+        let mut value = match &outputs {
+            Value::Object(map) => map.clone(),
+            _ => serde_json::Map::new(),
+        };
+        value.insert("status".into(), json!("failed"));
+        value.insert(
+            "failure".into(),
+            json!({ "code": fail.code, "message": fail.message }),
+        );
+        *step = StepSpec::Return(Box::new(ReturnStepSpec {
+            value: Value::Object(value),
+        }));
+    }
+    Ok(())
+}
+
 /// Lowers `w`, which has passed [`super::validate::validate`].
 ///
 /// # Errors
@@ -543,6 +599,12 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
     let cx = Context {
         w,
         inputs: w.inputs.as_ref().map(|i| i.keys().cloned().collect()),
+        command_gates: w
+            .gates
+            .iter()
+            .filter(|(_, g)| matches!(g, GateDef::Command(_)))
+            .map(|(name, _)| name.clone())
+            .collect(),
         structured: w
             .workflow
             .iter()
@@ -564,6 +626,9 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         next = entry_of(&w.workflow[index]);
     }
 
+    if w.on_failure == OnFailure::Return {
+        returning_failures(&cx, &mut b)?;
+    }
     let limits = w.execution.limits.clone().unwrap_or_default();
     // A plan without loops is acyclic, so no run executes a step twice: the
     // step count is the exact bound. With loops it is the bound above. Either

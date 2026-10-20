@@ -315,6 +315,9 @@ pub enum PlanPrimitive {
         /// Where to store the typed gate result.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
+        /// What the command reads on standard input, parsed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stdin: Option<Template>,
         /// Successor when the gate passed.
         then: String,
         /// Successor when it did not.
@@ -520,6 +523,7 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
                 .collect(),
             timeout_secs: g.timeout,
             cwd: g.cwd.clone(),
+            stdin: g.stdin.as_deref().and_then(|t| Template::parse(t).ok()),
             store_as: g.store_as.clone(),
             then: g.then.clone(),
             on_fail: g.on_fail.clone(),

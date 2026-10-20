@@ -275,10 +275,15 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
         for (i, check) in task.verify.iter().enumerate() {
             let place = format!("{place}: verify[{i}]");
             match check {
-                Check::Gate(name) if !w.gates.contains_key(name) => {
+                Check::Gate(name) | Check::Soft(name) if !w.gates.contains_key(name) => {
                     return Err(unknown_gate(w, &place, name));
                 }
-                Check::Gate(_) => {}
+                Check::Soft(name) if !matches!(w.gates.get(name), Some(GateDef::Command(_))) => {
+                    return Err(invalid(format!(
+                        "{place}: only a command gate can be recorded without being required"
+                    )));
+                }
+                Check::Gate(_) | Check::Soft(_) => {}
                 Check::Artifact(a) => validate_artifact(&place, a, task.for_each.is_some())?,
                 Check::Metric(m) => check_metric_ref(w, &place, &m.metric)?,
             }
@@ -496,7 +501,7 @@ fn validate_use(w: &WorkflowSpec) -> Result<(), HarnessError> {
         }
         for check in &task.verify {
             match check {
-                Check::Gate(name) => {
+                Check::Gate(name) | Check::Soft(name) => {
                     used.insert(name);
                 }
                 Check::Metric(m) => {
@@ -543,7 +548,7 @@ pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<&'static str> {
             .is_some_and(|each| matches!(each.source, IterateSource::Json(_)));
         for check in &task.verify {
             match check {
-                Check::Gate(name) => note(w.gates.get(name)),
+                Check::Gate(name) | Check::Soft(name) => note(w.gates.get(name)),
                 Check::Artifact(_) => note(None),
                 Check::Metric(m) => {
                     note(split_metric(&m.metric).and_then(|(g, _)| w.gates.get(g)));

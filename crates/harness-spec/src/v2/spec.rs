@@ -43,6 +43,21 @@ pub struct WorkflowSpec {
     pub workflow: Vec<TaskSpec>,
     /// The run's success condition.
     pub success: SuccessSpec,
+    /// What a failed check does to the run.
+    pub on_failure: OnFailure,
+}
+
+/// What a failed check or an exhausted loop does to the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnFailure {
+    /// End the run as failed, with the failure's code and message.
+    #[default]
+    Fail,
+    /// End the run by returning its outputs with `status: failed` and the
+    /// failure, so what it produced (and its trajectory) is the result of an
+    /// attempt that did not succeed.
+    Return,
 }
 
 /// One declared output and the value it takes.
@@ -253,6 +268,10 @@ pub struct CommandGate {
     /// Working directory inside the workspace.
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Text the command reads on standard input (a template over inputs and
+    /// earlier outputs), for what is too large for an argument.
+    #[serde(default)]
+    pub stdin: Option<String>,
     /// Numbers the command leaves in JSON files, by name.
     #[serde(default)]
     pub metrics: BTreeMap<String, MetricDecl>,
@@ -388,8 +407,11 @@ pub struct MetricCheck {
 /// One entry of a task's `verify:` list.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Check {
-    /// A named gate.
+    /// A named gate that must pass.
     Gate(String),
+    /// A named gate whose result is recorded and never repaired or failed on
+    /// (`{gate: name, required: false}`): the run goes on whatever it says.
+    Soft(String),
     /// An inline file check.
     Artifact(ArtifactCheck),
     /// A metric threshold.

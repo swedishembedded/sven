@@ -52,7 +52,11 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/task" }
     },
-    "success": { "$ref": "#/$defs/success" }
+    "success": { "$ref": "#/$defs/success" },
+    "on_failure": {
+      "enum": ["fail", "return"],
+      "description": "fail: a failed check ends the run as failed. return: it ends by returning the outputs with status failed and the failure."
+    }
   },
   "$defs": {
     "identifier": {
@@ -163,6 +167,7 @@
             },
             "timeout": { "type": "integer", "minimum": 1, "maximum": 3600, "description": "Seconds. Default 600." },
             "cwd": { "type": "string", "description": "Workspace-relative working directory." },
+            "stdin": { "type": "string", "description": "Text the command reads on standard input: a template over inputs and earlier task outputs, for what is too large for an argument." },
             "metrics": {
               "type": "object",
               "propertyNames": { "$ref": "#/$defs/identifier" },
@@ -217,11 +222,21 @@
         "lte": { "type": "number" }
       }
     },
+    "soft_check": {
+      "type": "object",
+      "required": ["gate", "required"],
+      "additionalProperties": false,
+      "properties": {
+        "gate": { "$ref": "#/$defs/identifier" },
+        "required": { "const": false, "description": "The gate's result is recorded (gates.<name>.*) and never repairs or fails the task." }
+      }
+    },
     "check": {
       "oneOf": [
         { "$ref": "#/$defs/identifier" },
         { "$ref": "#/$defs/artifact_check" },
-        { "$ref": "#/$defs/metric_check" }
+        { "$ref": "#/$defs/metric_check" },
+        { "$ref": "#/$defs/soft_check" }
       ]
     },
     "for_each": {

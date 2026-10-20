@@ -29,7 +29,8 @@ use spec::{
     ArtifactCheck, Check, CommandGate, GateDef, MetricCheck, SuccessSpec, TaskSpec, WorkflowSpec,
 };
 
-const TOP_LEVEL_KEYS: [&str; 11] = [
+const TOP_LEVEL_KEYS: [&str; 12] = [
+    "on_failure",
     "api_version",
     "name",
     "description",
@@ -97,6 +98,10 @@ pub fn parse_workflow(value: Value) -> Result<WorkflowSpec, HarnessError> {
         .map(|v| decode::<SuccessSpec>(v, "success"))
         .transpose()?
         .unwrap_or_default();
+    let on_failure = take("on_failure")
+        .map(|v| decode(v, "on_failure"))
+        .transpose()?
+        .unwrap_or_default();
     Ok(WorkflowSpec {
         name,
         description,
@@ -108,6 +113,7 @@ pub fn parse_workflow(value: Value) -> Result<WorkflowSpec, HarnessError> {
         gates,
         workflow,
         success,
+        on_failure,
     })
 }
 
@@ -148,6 +154,19 @@ fn parse_check(raw: Value, where_: &str) -> Result<Check, HarnessError> {
             Value::Object(std::mem::take(&mut map)),
             where_,
         )?)),
+        Value::Object(map) if map.contains_key("gate") => {
+            let (Some(Value::String(name)), Some(Value::Bool(false)), 2) = (
+                map.get("gate").cloned(),
+                map.get("required").cloned(),
+                map.len(),
+            ) else {
+                return Err(HarnessError::Parse(format!(
+                    "{where_}: write `{{gate: <name>, required: false}}` for a check whose result \
+                     is recorded and never fails the task"
+                )));
+            };
+            Ok(Check::Soft(name))
+        }
         Value::Object(mut map) if map.contains_key("metric") => {
             let metric = match map.remove("metric") {
                 Some(Value::String(metric)) => metric,

@@ -386,7 +386,7 @@ fn template_texts(step: &StepSpec) -> Vec<String> {
         StepSpec::Delegate(d) => template_texts_in_value(&d.input),
         StepSpec::Transform(t) => template_texts_in_value(&t.input),
         StepSpec::Fail(f) => f.message.clone().into_iter().collect(),
-        StepSpec::Gate(g) => g.command.clone(),
+        StepSpec::Gate(g) => g.command.iter().chain(g.stdin.iter()).cloned().collect(),
         StepSpec::Verify(_)
         | StepSpec::Branch(_)
         | StepSpec::Retry(_)

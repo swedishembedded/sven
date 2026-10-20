@@ -36,6 +36,9 @@ use tokio::process::Command;
 /// verdict and failures last, so the tail is what a repair needs.
 const STREAM_TAIL_BYTES: usize = 16 * 1024;
 
+/// The most text a gate may be given on standard input.
+const MAX_STDIN_BYTES: usize = 32 * 1024 * 1024;
+
 /// How long the output readers get to finish after the program has ended,
 /// for a program whose descendants hold the pipes open.
 const DRAIN_GRACE: Duration = Duration::from_secs(5);
@@ -133,12 +136,22 @@ impl GateCommandTool {
         })
     }
 
-    async fn run(&self, argv: &[String], dir: &std::path::Path, limit: Duration) -> Report {
+    async fn run(
+        &self,
+        argv: &[String],
+        dir: &std::path::Path,
+        limit: Duration,
+        stdin: Option<String>,
+    ) -> Report {
         let mut command = Command::new(&argv[0]);
         command
             .args(&argv[1..])
             .current_dir(dir)
-            .stdin(Stdio::null())
+            .stdin(if stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -162,6 +175,15 @@ impl GateCommandTool {
         let (Some(out), Some(err)) = (child.stdout.take(), child.stderr.take()) else {
             return Report::failed_to_start("the program's output pipes are missing".into());
         };
+        // The input is written from a task of its own, so a command that reads
+        // slowly, or not at all, cannot stall the wait; a pipe it closed early is
+        // the command's business.
+        if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+            tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                let _ = pipe.write_all(text.as_bytes()).await;
+            });
+        }
         let stdout = tokio::spawn(drain(out));
         let stderr = tokio::spawn(drain(err));
         let waited = tokio::time::timeout(limit, child.wait()).await;
@@ -218,7 +240,8 @@ impl Tool for GateCommandTool {
             "properties": {
                 "argv": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
                 "timeout_secs": { "type": "integer", "minimum": 1, "maximum": MAX_GATE_TIMEOUT_SECS },
-                "cwd": { "type": "string", "description": "Directory inside the workspace" }
+                "cwd": { "type": "string", "description": "Directory inside the workspace" },
+                "stdin": { "type": "string", "description": "Text the command reads on standard input" }
             },
             "required": ["argv", "timeout_secs"],
             "additionalProperties": false
@@ -266,7 +289,23 @@ impl Tool for GateCommandTool {
                 None => return ToolOutput::err(&call.id, "the gate tool has no workspace root"),
             },
         };
-        let report = self.run(&argv, &dir, Duration::from_secs(seconds)).await;
+        let stdin = match call.args.get("stdin") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(text)) if text.len() <= MAX_STDIN_BYTES => Some(text.clone()),
+            Some(Value::String(text)) => {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "`stdin` is {} bytes, more than the {MAX_STDIN_BYTES} allowed",
+                        text.len()
+                    ),
+                );
+            }
+            Some(_) => return ToolOutput::err(&call.id, "`stdin` must be a string"),
+        };
+        let report = self
+            .run(&argv, &dir, Duration::from_secs(seconds), stdin)
+            .await;
         ToolOutput::ok(&call.id, report.to_json())
     }
 }
@@ -305,6 +344,50 @@ mod tests {
         assert_eq!(r["stderr"], "err\n");
         assert_eq!(r["timed_out"], false);
         assert_eq!(r["error"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn the_command_reads_the_text_it_is_given_on_standard_input() {
+        let dir = tempfile::tempdir().unwrap();
+        // Far more than an argument can hold, and with every awkward byte in it.
+        let text = format!(
+            "{}{{{{ not a template }}}} $HOME `x`\n",
+            "line\n".repeat(400_000)
+        );
+        let (is_error, r) = run(
+            &tool(&dir),
+            json!({ "argv": ["wc", "-c"], "timeout_secs": 20, "stdin": text }),
+        )
+        .await;
+        assert!(!is_error);
+        assert_eq!(r["exit_code"], 0);
+        assert_eq!(r["stdout"].as_str().unwrap().trim(), text.len().to_string());
+    }
+
+    #[tokio::test]
+    async fn without_stdin_the_command_reads_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, r) = run(
+            &tool(&dir),
+            json!({ "argv": ["wc", "-c"], "timeout_secs": 10 }),
+        )
+        .await;
+        assert_eq!(r["stdout"].as_str().unwrap().trim(), "0");
+    }
+
+    #[tokio::test]
+    async fn a_command_that_ignores_its_input_does_not_hang_the_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = "x".repeat(8 * 1024 * 1024);
+        let (_, r) = run(
+            &tool(&dir),
+            json!({ "argv": ["true"], "timeout_secs": 20, "stdin": big }),
+        )
+        .await;
+        assert_eq!(
+            r["exit_code"], 0,
+            "a closed pipe is not a failure of the gate: {r}"
+        );
     }
 
     #[tokio::test]

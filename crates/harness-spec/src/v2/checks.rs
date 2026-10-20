@@ -59,6 +59,9 @@ pub(super) struct CommandRun {
     pub argv: Vec<String>,
     pub timeout: u64,
     pub cwd: Option<String>,
+    pub stdin: Option<String>,
+    /// The fact the typed result is kept under: the gate's latest run.
+    pub store_as: String,
 }
 
 /// What one check does.
@@ -92,6 +95,8 @@ pub(super) struct Resolved {
     /// The gate or file the check is named by in messages.
     pub label: String,
     pub kind: Kind,
+    /// `false` for a check that is recorded and never repaired or failed on.
+    pub required: bool,
 }
 
 impl Resolved {
@@ -137,6 +142,8 @@ pub(super) struct RepairPlan<'a> {
     pub system: Option<String>,
     /// Tasks whose output is structured (for `failure` prompts that read it).
     pub structured: &'a [String],
+    /// Command gates whose results the prompt can read.
+    pub gates: &'a [String],
 }
 
 /// The phase the checks belong to: a task, or the success condition.
@@ -184,7 +191,8 @@ fn gate_step(run: &CommandRun, then: &str, on_fail: &str) -> StepSpec {
         command: run.argv.clone(),
         timeout: run.timeout,
         cwd: run.cwd.clone(),
-        store_as: None,
+        stdin: run.stdin.clone(),
+        store_as: Some(run.store_as.clone()),
         then: then.to_string(),
         on_fail: on_fail.to_string(),
     }))
@@ -284,7 +292,11 @@ pub(super) fn lower_checks(
             let at = origin(phase, "check", &check.label, attempt);
             match &check.kind {
                 Kind::Command(run) => {
-                    let to = fail(b, Failed::Command(base.clone()))?;
+                    let to = if check.required {
+                        fail(b, Failed::Command(base.clone()))?
+                    } else {
+                        after.clone()
+                    };
                     b.add(&base, gate_step(run, &after, &to), at);
                 }
                 Kind::File {
@@ -393,7 +405,8 @@ fn on_failure(
             plan.tasks,
         )
         .in_loop(plan.item, plan.iteration)
-        .with_structured(plan.structured);
+        .with_structured(plan.structured)
+        .with_gates(plan.gates);
         scope.failure = Some(&view);
         let prompt = rewrite_text(&plan.prompt, &scope)?;
         let again = entry_id(phase, checks, 0, attempt + 1);

@@ -41,6 +41,7 @@ pub(super) fn gate_args(
     command: &[Template],
     timeout_secs: u64,
     cwd: Option<&str>,
+    stdin: Option<&Template>,
 ) -> Value {
     let argv: Vec<String> = command
         .iter()
@@ -52,6 +53,12 @@ pub(super) fn gate_args(
     let mut args = json!({ "argv": argv, "timeout_secs": timeout_secs });
     if let Some(cwd) = cwd {
         args["cwd"] = json!(cwd);
+    }
+    if let Some(stdin) = stdin {
+        args["stdin"] = match run.resolve_template(stdin) {
+            Value::String(text) => json!(text),
+            other => json!(other.to_string()),
+        };
     }
     args
 }
@@ -66,6 +73,9 @@ pub(super) struct GateResult {
     stderr: String,
     duration_ms: u64,
     detail: String,
+    /// The standard output parsed as JSON, when it is a JSON document: a
+    /// check that reports its findings as data is read through this.
+    json: Value,
 }
 
 impl GateResult {
@@ -79,6 +89,7 @@ impl GateResult {
             stderr: String::new(),
             duration_ms: 0,
             detail,
+            json: Value::Null,
         }
     }
 
@@ -125,12 +136,18 @@ impl GateResult {
                 ),
             }
         };
+        let stdout = text("stdout");
+        let json = serde_json::from_str::<Value>(stdout.trim())
+            .ok()
+            .filter(|v| v.is_object() || v.is_array())
+            .unwrap_or(Value::Null);
         Self {
             passed: kind == "passed",
+            json,
             kind,
             exit_code,
             timed_out,
-            stdout: text("stdout"),
+            stdout,
             stderr: text("stderr"),
             duration_ms: report
                 .get("duration_ms")
@@ -150,6 +167,7 @@ impl GateResult {
             "stderr": self.stderr,
             "duration_ms": self.duration_ms,
             "detail": self.detail,
+            "json": self.json,
         })
     }
 }
@@ -198,6 +216,7 @@ impl HarnessMachine {
             command,
             timeout_secs,
             cwd,
+            stdin,
             ..
         } = &step.primitive
         else {
@@ -217,7 +236,7 @@ impl HarnessMachine {
             call_id,
             name: GATE_TOOL.to_string(),
             capability: GATE_CAPABILITY,
-            args: gate_args(run, command, *timeout_secs, cwd.as_deref()),
+            args: gate_args(run, command, *timeout_secs, cwd.as_deref(), stdin.as_ref()),
         };
         self.cache_effect(effect.clone());
         self.park(run, step, Waiting::Tool);

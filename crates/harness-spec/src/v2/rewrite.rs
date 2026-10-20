@@ -66,6 +66,8 @@ pub(super) struct Scope<'a> {
     pub iteration: bool,
     /// The tasks whose output is structured: their fields can be read.
     pub structured: &'a [String],
+    /// The command gates whose latest result can be read.
+    pub gates: &'a [String],
 }
 
 impl<'a> Scope<'a> {
@@ -80,7 +82,15 @@ impl<'a> Scope<'a> {
             item: false,
             iteration: false,
             structured: &[],
+            gates: &[],
         }
+    }
+
+    /// The same scope, able to read the results of these command gates.
+    #[must_use]
+    pub fn with_gates(mut self, gates: &'a [String]) -> Self {
+        self.gates = gates;
+        self
     }
 
     /// The same scope, able to read the fields of these tasks' outputs.
@@ -157,6 +167,23 @@ impl Scope<'_> {
                 Path::parse(&format!("facts.{}{rest}", output_fact(task))).map(PathRewrite::Path)
             }
             "failure" => self.map_failure(path),
+            "gates" => {
+                let [_, gate, rest @ ..] = segments else {
+                    return Err(self.invalid(path, "is not of the form gates.<name>.<field>"));
+                };
+                if !self.gates.contains(gate) {
+                    return Err(self.invalid(
+                        path,
+                        &format!(
+                            "reads the result of gate `{gate}`, which is not a declared command \
+                             gate (declared: {})",
+                            self.gates.join(", ")
+                        ),
+                    ));
+                }
+                let rest: String = rest.iter().map(|f| format!(".{f}")).collect();
+                Path::parse(&format!("facts.gate_{gate}{rest}")).map(PathRewrite::Path)
+            }
             root @ ("item" | "item_id" | "item_index") => {
                 if !self.item {
                     return Err(self.invalid(path, "is only available inside a `for_each` task"));
