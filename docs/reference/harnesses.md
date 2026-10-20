@@ -179,7 +179,8 @@ verbatim and never expanded again.
 
 **Decoding settings.** `sampling: {temperature, top_p, top_k, seed}`,
 `thinking: {enabled, budget}` and `turn: {max_output_tokens,
-first_response_timeout}` (seconds) on the `agent` set defaults and on a task
+first_response_timeout, deadline}` (seconds; `deadline` cuts a turn that is still
+running after that long, whole, with an error naming the bound) on the `agent` set defaults and on a task
 replace them field by field; repair turns decode like their task. Each is a
 literal within its range or a single `{{ inputs.<name> }}` (a `seed` from an
 input makes a rerun with the same inputs reproducible; no seed is ever
@@ -188,6 +189,44 @@ defaulted). The settings travel with each model request (`thinking.enabled` as
 `openai` driver), and the trajectory records, for every request, what it was sent
 with under `extra.sven.decoding` of its step. A setting that does not resolve
 fails the run with `invalid_setting`.
+**Model roles.** `agent.model` and a task's `model` name a *role*, never an
+endpoint or key. The host maps roles to providers
+(`EngineBuilder::model_role(role, provider)`); a role it does not provide fails the
+turn with an error naming it, and there is no fallback to the default model.
+
+**Gate data.** A command gate may take `stdin` (a template, at most 32 MiB; it
+reaches the program verbatim). After a check runs, templates read
+`gates.<name>.passed`, `.exit_code`, `.stdout`, `.stderr`, `.kind` and `.detail`.
+A check written `{gate: <name>, required: false}` is *soft*: it runs and its
+result is readable, but it neither earns a repair nor fails the task. With
+`on_failure: return` a failed check or exhausted loop ends the run by returning
+its outputs with `status: failed` and `failure`, instead of failing it.
+
+**Turn origins.** Every user turn the workflow adds to a conversation is labelled
+in the trajectory (`extra.sven.origin`): `task`, `follow_up`, `repair` or
+`correction`.
+
+**Stop statuses and budgets.** `execution.limits.tool_calls` may be a single
+`{{ inputs.<name> }}`. A task's `allowance` is the tool calls its first turn may
+make; follow-ups and repairs draw on the rest (a follow-up's own `allowance`
+sets it afresh) and a call beyond it is refused. `max_repeated_results: N` ends a
+turn when the same call has been answered the same way N times. A turn ends
+with a stop status readable as `tasks.<name>.stop` (`done`, `tool_cap`,
+`repetition`, `unfinished`) and `tasks.<name>.calls_left`; none of them fails
+the run, and `when` conditions can branch on them. A follow-up's `max` (1 to 8)
+repeats it while its `when` holds.
+
+**Corrections.** `corrections: {max, count, check, while, author, accept, retries,
+refusal, allowance}` on an agent task is a supervisor loop: the command gate
+`check` judges the result; while `while` holds (default: the check failed) the
+model-only `author` (`name`, `model`, `system`, `task`, decoding keys) writes a
+message from `gates.<check>.*`, the command gate `accept` reads it on stdin
+and decides whether it may be sent (a refused message is rewritten up to
+`retries` times, then the loop ends without sending), the accepted message is
+sent as a `correction` turn, and the check runs again. At most `max` (or the
+`count` input, if lower) corrections are sent; exhausting them is not a
+failure, the task's checks decide that afterwards.
+
 Templates read `inputs.<name>` and `tasks.<name>.output` (the text of that
 task's last agent turn) for tasks that have run; `facts` and `steps` are
 internal and rejected. A repair prompt also reads `failure.gate`,
