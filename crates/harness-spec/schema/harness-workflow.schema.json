@@ -322,6 +322,34 @@
         "budget": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }], "description": "The most thinking tokens before a turn is cut off." }
       }
     },
+    "corrections": {
+      "type": "object",
+      "required": ["max", "check", "author", "accept"],
+      "additionalProperties": false,
+      "properties": {
+        "max": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "count": { "$ref": "#/$defs/input_hole", "description": "Lowers the most corrections for a run." },
+        "check": { "$ref": "#/$defs/identifier", "description": "The command gate that judges the result before the first correction and after each." },
+        "while": { "$ref": "#/$defs/condition", "description": "Earns a correction; default: the check did not pass." },
+        "author": {
+          "type": "object",
+          "required": ["name", "task"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "$ref": "#/$defs/identifier" },
+            "system": { "type": "string" },
+            "task": { "type": "string", "minLength": 1 },
+            "sampling": { "$ref": "#/$defs/sampling" },
+            "thinking": { "$ref": "#/$defs/thinking" },
+            "turn": { "$ref": "#/$defs/turn_bounds" }
+          }
+        },
+        "accept": { "$ref": "#/$defs/identifier", "description": "The command gate that reads the author's message on standard input; exit 0 lets it be sent." },
+        "retries": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "refusal": { "type": "string", "minLength": 1 },
+        "allowance": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/input_hole" }] }
+      }
+    },
     "condition": {
       "description": "A path string, !path, or an {all|any|not|eq|ne} object over inputs and task outputs."
     },
@@ -348,6 +376,7 @@
         "sampling": { "$ref": "#/$defs/sampling" },
         "thinking": { "$ref": "#/$defs/thinking" },
         "turn": { "$ref": "#/$defs/turn_bounds" },
+        "corrections": { "$ref": "#/$defs/corrections" },
         "for_each": { "$ref": "#/$defs/for_each" },
         "until": { "$ref": "#/$defs/until" },
         "follow_ups": {

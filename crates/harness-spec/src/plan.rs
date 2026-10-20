@@ -125,6 +125,9 @@ pub enum PlanIteration {
     Until {
         /// The most body entries.
         max_iterations: u64,
+        /// The run input that lowers the bound for a run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_iterations_input: Option<String>,
     },
 }
 
@@ -527,8 +530,12 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
                 },
                 (_, Some(u)) => PlanIteration::Until {
                     max_iterations: u.max_iterations,
+                    max_iterations_input: u.max_iterations_input.clone(),
                 },
-                _ => PlanIteration::Until { max_iterations: 0 },
+                _ => PlanIteration::Until {
+                    max_iterations: 0,
+                    max_iterations_input: None,
+                },
             },
             body: i.body.clone(),
             then: i.then.clone(),

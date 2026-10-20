@@ -501,7 +501,10 @@ fn an_until_task_checks_its_metric_after_the_body_and_counts_the_misses() {
     };
     assert!(matches!(
         iteration,
-        PlanIteration::Until { max_iterations: 4 }
+        PlanIteration::Until {
+            max_iterations: 4,
+            ..
+        }
     ));
     assert_eq!(body, "coverage__work");
     assert_eq!(then, "success__v0_work_items_modules_a0");

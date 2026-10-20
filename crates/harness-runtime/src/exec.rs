@@ -199,7 +199,12 @@ impl HarnessMachine {
                     Err(why) => return self.fail_now(run, "invalid_setting", &why, ctx),
                 };
                 if let (Some(pool), Some(allowance)) = (pool, allowance) {
-                    match run.resolve_template(allowance).as_u64() {
+                    // A literal written in the document reaches here as text.
+                    let calls = match run.resolve_template(allowance) {
+                        serde_json::Value::String(text) => text.trim().parse::<u64>().ok(),
+                        other => other.as_u64(),
+                    };
+                    match calls {
                         Some(calls) => {
                             run.facts
                                 .insert(pool.clone(), serde_json::Value::from(calls));

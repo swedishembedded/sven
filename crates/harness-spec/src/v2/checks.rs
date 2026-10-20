@@ -192,7 +192,7 @@ fn entry_id(phase: &Phase<'_>, checks: &[Resolved], index: usize, attempt: u32) 
     }
 }
 
-fn gate_step(run: &CommandRun, then: &str, on_fail: &str) -> StepSpec {
+pub(super) fn gate_step(run: &CommandRun, then: &str, on_fail: &str) -> StepSpec {
     StepSpec::Gate(Box::new(GateStepSpec {
         command: run.argv.clone(),
         timeout: run.timeout,

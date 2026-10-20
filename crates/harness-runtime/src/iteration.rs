@@ -204,9 +204,18 @@ impl HarnessMachine {
             );
         };
         match iteration {
-            PlanIteration::Until { max_iterations } => {
+            PlanIteration::Until {
+                max_iterations,
+                max_iterations_input,
+            } => {
+                // The run may lower the bound, never raise it.
+                let bound = max_iterations_input
+                    .as_deref()
+                    .and_then(|name| run.inputs.get(name))
+                    .and_then(Value::as_u64)
+                    .map_or(*max_iterations, |n| n.min(*max_iterations));
                 let state = run.iterations.entry(step.id.clone()).or_default();
-                if state.entries >= *max_iterations {
+                if state.entries >= bound {
                     let target = on_exhausted.clone();
                     return self.walk_to(run, &target, ctx);
                 }

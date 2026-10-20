@@ -15,196 +15,28 @@
 //! work into reviewable, resumable programs then you can procure our services
 //! by sending an email to info@swedishembedded.com.
 
-use std::collections::BTreeSet;
-
 use serde_json::{json, Value};
 
 use super::checks::{
-    lower_checks, Builder, CommandRun, Kind, Phase, RepairPlan, Resolved, DEFAULT_REPAIR_PROMPT,
+    lower_checks, Builder, Kind, Phase, RepairPlan, Resolved, DEFAULT_REPAIR_PROMPT,
 };
+use super::context::{Context, LoopVars};
+use super::corrections::{lower_corrections, Turn};
 use super::rewrite::{
     output_fact, pool_fact, rewrite_condition, rewrite_text, rewrite_value, stop_fact, Scope,
 };
-use super::spec::{decoding_of, Check, CommandGate, GateDef, OnFailure, TaskSpec, WorkflowSpec};
-use super::validate::{needed_capabilities, split_metric};
+use super::spec::{decoding_of, GateDef, OnFailure, TaskSpec, WorkflowSpec};
+use super::validate::needed_capabilities;
 use crate::error::HarnessError;
 use crate::source_map::{Lowering, SourceRef};
 use crate::spec::{
     AgentStepSpec, BranchStepSpec, CapabilityName, FailStepSpec, ForEachSpec, HarnessSpec,
     InputValue, IterateStepSpec, LimitsSpec, PredictStepSpec, ReturnStepSpec, StepSpec, UntilSpec,
-    DEFAULT_GATE_TIMEOUT_SECS, DEFAULT_MAX_ITEMS, WORKFLOW_API_VERSION,
+    DEFAULT_MAX_ITEMS, WORKFLOW_API_VERSION,
 };
 
 /// The id of the step the run returns from.
 const COMPLETE: &str = "complete";
-
-struct Context<'a> {
-    w: &'a WorkflowSpec,
-    inputs: Option<BTreeSet<String>>,
-    /// Tasks with a `schema`, whose output fields templates can read.
-    structured: Vec<String>,
-    /// Command gates, whose latest result templates can read.
-    command_gates: Vec<String>,
-}
-
-/// What a task's templates may read besides inputs and earlier outputs.
-#[derive(Clone, Copy, Default)]
-struct LoopVars {
-    /// `item`, `item_id` and `item_index`: inside a `for_each`.
-    item: bool,
-    /// `iteration`: inside an `until`.
-    iteration: bool,
-}
-
-impl LoopVars {
-    fn of(task: &TaskSpec) -> Self {
-        Self {
-            item: task.for_each.is_some(),
-            iteration: task.until.is_some(),
-        }
-    }
-}
-
-impl Context<'_> {
-    fn scope<'s>(&'s self, place: String, tasks: &'s [String], vars: LoopVars) -> Scope<'s> {
-        Scope::new(place, self.inputs.as_ref(), tasks)
-            .in_loop(vars.item, vars.iteration)
-            .with_structured(&self.structured)
-            .with_gates(&self.command_gates)
-    }
-
-    fn command_run(
-        &self,
-        name: &str,
-        gate: &CommandGate,
-        vars: LoopVars,
-        tasks: &[String],
-    ) -> Result<CommandRun, HarnessError> {
-        let scope = self.scope(format!("gate `{name}`"), &[], vars);
-        Ok(CommandRun {
-            argv: gate
-                .command
-                .iter()
-                .map(|arg| rewrite_text(arg, &scope))
-                .collect::<Result<_, _>>()?,
-            timeout: gate.timeout.unwrap_or(DEFAULT_GATE_TIMEOUT_SECS),
-            cwd: gate.cwd.clone(),
-            stdin: gate
-                .stdin
-                .as_deref()
-                .map(|text| {
-                    rewrite_text(
-                        text,
-                        &self.scope(format!("gate `{name}`: stdin"), tasks, vars),
-                    )
-                })
-                .transpose()?,
-            store_as: format!("gate_{name}"),
-        })
-    }
-
-    fn gate(&self, name: &str, vars: LoopVars, tasks: &[String]) -> Result<Resolved, HarnessError> {
-        let kind = match self.w.gates.get(name) {
-            Some(GateDef::Command(c)) => Kind::Command(self.command_run(name, c, vars, tasks)?),
-            Some(GateDef::Artifact(a)) => Kind::File {
-                path: a.artifact.clone(),
-                min_bytes: a.min_bytes,
-                sha256: a.sha256.clone(),
-            },
-            None => {
-                return Err(HarnessError::Invalid(format!(
-                    "internal: gate `{name}` vanished"
-                )))
-            }
-        };
-        Ok(Resolved {
-            label: name.to_string(),
-            required: true,
-            kind,
-        })
-    }
-
-    fn metric(
-        &self,
-        reference: &str,
-        threshold: super::spec::Threshold,
-        vars: LoopVars,
-        tasks: &[String],
-    ) -> Result<Resolved, HarnessError> {
-        let (gate, metric) = split_metric(reference)
-            .ok_or_else(|| HarnessError::Invalid(format!("internal: bad metric `{reference}`")))?;
-        let Some(GateDef::Command(command)) = self.w.gates.get(gate) else {
-            return Err(HarnessError::Invalid(format!(
-                "internal: metric `{reference}` has no command gate"
-            )));
-        };
-        let decl = command.metrics.get(metric).ok_or_else(|| {
-            HarnessError::Invalid(format!("internal: metric `{reference}` is undeclared"))
-        })?;
-        // A metric is only trusted from a run of its command that happened
-        // for this check: a number left by an earlier run is not evidence.
-        Ok(Resolved {
-            label: reference.to_string(),
-            required: true,
-            kind: Kind::Metric {
-                run: Some(self.command_run(gate, command, vars, tasks)?),
-                file: decl.file.clone(),
-                pointer: decl.pointer.clone(),
-                threshold,
-            },
-        })
-    }
-
-    fn task_checks(
-        &self,
-        task: &TaskSpec,
-        tasks: &[String],
-    ) -> Result<Vec<Resolved>, HarnessError> {
-        let vars = LoopVars::of(task);
-        let names: Vec<String> = self.w.workflow.iter().map(|t| t.name.clone()).collect();
-        let scope = self.scope(format!("task `{}`: files", task.name), &names, vars);
-        let file = |path: &str| rewrite_text(path, &scope);
-        let mut checks: Vec<Resolved> = Vec::new();
-        for path in &task.outputs {
-            checks.push(Resolved {
-                label: plain(path),
-                required: true,
-                kind: Kind::File {
-                    path: file(path)?,
-                    min_bytes: None,
-                    sha256: None,
-                },
-            });
-        }
-        for check in &task.verify {
-            checks.push(match check {
-                Check::Gate(name) => self.gate(name, vars, tasks)?,
-                Check::Soft(name) => Resolved {
-                    required: false,
-                    ..self.gate(name, vars, tasks)?
-                },
-                Check::Artifact(a) => Resolved {
-                    label: plain(&a.artifact),
-                    required: true,
-                    kind: Kind::File {
-                        path: file(&a.artifact)?,
-                        min_bytes: a.min_bytes,
-                        sha256: a.sha256.clone(),
-                    },
-                },
-                Check::Metric(m) => self.metric(&m.metric, m.threshold, vars, tasks)?,
-            });
-        }
-        Ok(checks)
-    }
-}
-
-/// A path as it is named in messages: a template's holes become `(...)`, so
-/// that the name can be written into a message template without being read as
-/// holes again.
-fn plain(path: &str) -> String {
-    path.replace("{{", "(").replace("}}", ")")
-}
 
 fn origin(task: Option<&str>, role: &str) -> SourceRef {
     SourceRef {
@@ -271,6 +103,7 @@ fn lower_loop(
                 for_each: None,
                 until: Some(UntilSpec {
                     max_iterations: until.max_iterations,
+                    max_iterations_input: None,
                 }),
                 body: work.to_string(),
                 then: next.to_string(),
@@ -400,6 +233,31 @@ fn lower_task(
         place: place.clone(),
         repair,
         loop_back: None,
+    };
+    // The corrections come after the task's own checks and before the loop or
+    // the next task.
+    let after_checks = match &task.corrections {
+        Some(c) => {
+            let mut visible: Vec<String> = through.to_vec();
+            visible.extend(cx.authors.iter().cloned());
+            lower_corrections(
+                b,
+                c,
+                &Turn {
+                    cx,
+                    task,
+                    vars,
+                    visible: &visible,
+                    tools: tools.clone(),
+                    agent_system: agent_system.clone(),
+                    decoding: decoding.clone(),
+                    stop: stop_fact(&task.name),
+                    pool: pool_fact(&task.name),
+                    exit: &after_checks,
+                },
+            )?
+        }
+        None => after_checks,
     };
     let mut following = lower_checks(b, &phase, &checks, &after_checks)?;
 
@@ -637,6 +495,11 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
     let cx = Context {
         w,
         inputs: w.inputs.as_ref().map(|i| i.keys().cloned().collect()),
+        authors: w
+            .workflow
+            .iter()
+            .filter_map(|t| t.corrections.as_ref().map(|c| c.author.name.clone()))
+            .collect(),
         command_gates: w
             .gates
             .iter()

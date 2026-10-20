@@ -300,6 +300,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
         )?;
         validate_model_only(task, &place)?;
         validate_allowance(w, &place, &task.allowance)?;
+        validate_corrections(w, task, &place)?;
         for (j, turn) in task.follow_ups.iter().enumerate() {
             let place = format!("{place}: follow_ups[{j}]");
             validate_allowance(w, &place, &turn.allowance)?;
@@ -372,6 +373,60 @@ fn validate_decoding(
         }
     }
     Ok(())
+}
+
+/// A `corrections` block names two command gates, a distinct author and
+/// bounded counts.
+fn validate_corrections(
+    w: &WorkflowSpec,
+    task: &super::spec::TaskSpec,
+    place: &str,
+) -> Result<(), HarnessError> {
+    let Some(c) = &task.corrections else {
+        return Ok(());
+    };
+    let place = format!("{place}: corrections");
+    if task.model_only {
+        return Err(invalid(format!(
+            "{place}: a `model_only` task has no agent to correct"
+        )));
+    }
+    if c.max == 0 || c.max > 16 {
+        return Err(invalid(format!("{place}: max must be within 1..=16")));
+    }
+    if c.retries.is_some_and(|r| r > 8) {
+        return Err(invalid(format!("{place}: retries must be within 0..=8")));
+    }
+    for (what, name) in [("check", &c.check), ("accept", &c.accept)] {
+        match w.gates.get(name) {
+            Some(GateDef::Command(_)) => {}
+            Some(_) => {
+                return Err(invalid(format!(
+                    "{place}: {what} gate `{name}` must be a command gate"
+                )))
+            }
+            None => return Err(unknown_gate(w, &place, name)),
+        }
+    }
+    if !is_identifier(&c.author.name) {
+        return Err(invalid(format!(
+            "{place}: author name `{}` is not a plain name",
+            c.author.name
+        )));
+    }
+    if w.workflow.iter().any(|t| t.name == c.author.name) {
+        return Err(invalid(format!(
+            "{place}: author name `{}` is also a task's name",
+            c.author.name
+        )));
+    }
+    validate_allowance(w, &place, &c.count)?;
+    validate_allowance(w, &place, &c.allowance)?;
+    validate_decoding(
+        w,
+        &format!("{place}: author"),
+        &super::spec::decoding_of(&c.author.sampling, &c.author.thinking, &c.author.turn),
+    )
 }
 
 /// A follow-up's `max` and an allowance are whole numbers or a single input.
@@ -546,6 +601,10 @@ fn validate_use(w: &WorkflowSpec) -> Result<(), HarnessError> {
             .filter_map(|r| split_metric(r).map(|(g, _)| g)),
     );
     for task in &w.workflow {
+        if let Some(c) = &task.corrections {
+            used.insert(&c.check);
+            used.insert(&c.accept);
+        }
         if let Some(until) = &task.until {
             used.extend(split_metric(&until.metric).map(|(g, _)| g));
         }
@@ -587,6 +646,10 @@ pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<&'static str> {
     for task in &w.workflow {
         if !task.outputs.is_empty() {
             note(None);
+        }
+        if let Some(c) = &task.corrections {
+            note(w.gates.get(&c.check));
+            note(w.gates.get(&c.accept));
         }
         if let Some(until) = &task.until {
             note(split_metric(&until.metric).and_then(|(g, _)| w.gates.get(g)));

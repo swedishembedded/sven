@@ -15,6 +15,8 @@
 //! by sending an email to info@swedishembedded.com.
 
 mod checks;
+mod context;
+mod corrections;
 mod lower;
 mod rewrite;
 pub mod spec;
@@ -223,6 +225,8 @@ struct RawTask {
     allowance: Option<Value>,
     #[serde(default)]
     max_repeated_results: Option<u32>,
+    #[serde(default)]
+    corrections: Option<spec::Corrections>,
 }
 
 /// `until:`; the comparison keys are collected and checked by
@@ -290,6 +294,7 @@ fn parse_workflow_tasks(section: Option<Value>) -> Result<Vec<TaskSpec>, Harness
             turn: raw.turn,
             allowance: raw.allowance,
             max_repeated_results: raw.max_repeated_results,
+            corrections: raw.corrections,
         });
     }
     Ok(tasks)

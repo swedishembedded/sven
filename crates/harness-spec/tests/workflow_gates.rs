@@ -231,3 +231,99 @@ fn budgets_must_name_declared_inputs_and_follow_ups_stay_within_eight() {
     ))
     .contains("allowance"));
 }
+
+const CORRECTED: &str = r#"
+api_version: "2"
+name: corrected
+inputs: { rounds: number }
+execution: { limits: { model_turns: 60 } }
+gates:
+  check: { command: [replay, check] }
+  accept: { command: [replay, accept], stdin: "{{ tasks.supervisor.output }}" }
+workflow:
+  - name: work
+    task: Fix it.
+    corrections:
+      max: 3
+      count: "{{ inputs.rounds }}"
+      check: check
+      author: { name: supervisor, task: "Write the follow-up." }
+      accept: accept
+"#;
+
+#[test]
+fn a_corrections_block_lowers_to_a_bounded_loop_that_never_fails_the_run() {
+    let plan = compile(CORRECTED);
+    let PlanPrimitive::Iterate {
+        iteration,
+        then,
+        on_exhausted,
+        ..
+    } = &plan.steps["work__corr_iter"].primitive
+    else {
+        panic!("a loop step");
+    };
+    let sven_harness_spec::PlanIteration::Until {
+        max_iterations,
+        max_iterations_input,
+    } = iteration
+    else {
+        panic!("until");
+    };
+    assert_eq!(
+        (*max_iterations, max_iterations_input.as_deref()),
+        (3, Some("rounds"))
+    );
+    assert_eq!(then, "complete");
+    assert_eq!(
+        on_exhausted, "complete",
+        "running out of corrections goes on"
+    );
+    // The refused message is rewritten by the author, not by the agent; when
+    // the rewrites are spent the loop is left, not the run failed.
+    assert!(matches!(
+        plan.steps["work__accept__v0_accept_a0_repair"].primitive,
+        PlanPrimitive::Predict { .. }
+    ));
+    let PlanPrimitive::Gate { on_fail, .. } = &plan.steps["work__accept__v0_accept_a1"].primitive
+    else {
+        panic!("the last attempt of the accept gate");
+    };
+    assert_eq!(on_fail, "complete");
+    // The delivery is a user turn in the agent's conversation.
+    let PlanPrimitive::Agent { origin, prompt, .. } = &plan.steps["work__corr_deliver"].primitive
+    else {
+        panic!("the delivery");
+    };
+    assert_eq!(origin.as_deref(), Some("correction"));
+    assert_eq!(String::from(prompt.clone()), "{{facts.task_supervisor}}");
+}
+
+#[test]
+fn corrections_are_checked_in_the_authors_terms() {
+    for (what, yaml, expect) in [
+        (
+            "an unknown check gate",
+            CORRECTED.replace("check: check", "check: nope"),
+            "not declared",
+        ),
+        (
+            "an author named like a task",
+            CORRECTED.replace("name: supervisor", "name: work"),
+            "also a task's name",
+        ),
+        (
+            "too many corrections",
+            CORRECTED.replace("max: 3", "max: 40"),
+            "max must be within",
+        ),
+        (
+            "an undeclared count",
+            CORRECTED.replace("inputs.rounds", "inputs.nope"),
+            "allowance",
+        ),
+    ] {
+        let message = rejected(&yaml);
+        assert!(message.contains(expect), "{what}: {message}");
+    }
+}

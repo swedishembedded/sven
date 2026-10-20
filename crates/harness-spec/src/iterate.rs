@@ -57,6 +57,10 @@ pub struct UntilSpec {
     /// The most times the body is entered; one more entry goes to
     /// `on_exhausted`.
     pub max_iterations: u64,
+    /// Names a run input that lowers the bound for this run (never raises it
+    /// above `max_iterations`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_iterations_input: Option<String>,
 }
 
 /// `iterate`: the one repetition primitive.

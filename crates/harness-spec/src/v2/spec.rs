@@ -480,6 +480,65 @@ pub struct Until {
     pub max_iterations: u64,
 }
 
+/// `corrections:` of a task: a supervisor reads how the task's result was
+/// judged and writes the message the agent is sent next.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Corrections {
+    /// The most corrections (1 to 16).
+    pub max: u64,
+    /// Lowers the most corrections for a run: a single `{{ inputs.<name> }}`.
+    #[serde(default)]
+    pub count: Option<Value>,
+    /// The command gate that judges the task's result. It runs before the
+    /// first correction and again after every correction, and its latest
+    /// result is what `while` reads.
+    pub check: String,
+    /// The condition that earns a correction, over `gates.<check>.*` and the
+    /// task outputs. Default: the check did not pass.
+    #[serde(default, rename = "while")]
+    pub while_: Option<Value>,
+    /// The model that writes each correction.
+    pub author: Author,
+    /// The command gate that decides whether the author's message may be
+    /// sent; it reads the message on standard input.
+    pub accept: String,
+    /// How many times a refused message is rewritten (0 to 8); when they are
+    /// spent no correction is sent and the loop ends. Default 1.
+    #[serde(default)]
+    pub retries: Option<u64>,
+    /// The prompt that asks the author to rewrite a refused message; a
+    /// template over `failure.*`.
+    #[serde(default)]
+    pub refusal: Option<String>,
+    /// Sets the task's tool-call allowance for each correction.
+    #[serde(default)]
+    pub allowance: Option<Value>,
+}
+
+/// The model-only author of a correction.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Author {
+    /// Names the author's conversation and its output
+    /// (`tasks.<name>.output`).
+    pub name: String,
+    /// The system message of its conversation.
+    #[serde(default)]
+    pub system: Option<String>,
+    /// What to ask, with the check's findings in it.
+    pub task: String,
+    /// Sampling for the author's turns.
+    #[serde(default)]
+    pub sampling: Option<Sampling>,
+    /// Thinking for the author's turns.
+    #[serde(default)]
+    pub thinking: Option<Thinking>,
+    /// Bounds on each response of the author.
+    #[serde(default)]
+    pub turn: Option<TurnBounds>,
+}
+
 /// One task.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskSpec {
@@ -528,6 +587,9 @@ pub struct TaskSpec {
     /// Ends a turn with the stop `repetition` when the same call has been
     /// answered the same way this many times.
     pub max_repeated_results: Option<u32>,
+    /// A supervisor that writes the messages the agent is sent after its
+    /// result was judged.
+    pub corrections: Option<Corrections>,
 }
 
 /// `success:`.
