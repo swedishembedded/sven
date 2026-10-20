@@ -112,6 +112,13 @@ impl HarnessMachine {
         &self.run
     }
 
+    /// Names the file the host writes the run's trajectory to (see
+    /// [`HarnessRunData::with_trajectory_file`]), for a machine restored from
+    /// a checkpoint.
+    pub fn set_trajectory_file(&mut self, file: impl Into<String>) {
+        self.run.set_trajectory_file(file.into());
+    }
+
     /// The effect the most recently entered step emitted, if the walk is
     /// parked on a side-effecting step. A convenience for drivers that
     /// deliver effects one at a time; the kernel's runtime takes effects

@@ -186,6 +186,19 @@ fn validate_gates(w: &WorkflowSpec) -> Result<(), HarnessError> {
                         )));
                     }
                 }
+                if let Some(input) = &c.cwd_input {
+                    let declared = w.inputs.as_ref().and_then(|i| i.get(input));
+                    if c.cwd.is_some() {
+                        return Err(invalid(format!(
+                            "{place}: `cwd` and `cwd_input` are exclusive"
+                        )));
+                    }
+                    if declared.is_none_or(|d| d.ty != IOType::String) {
+                        return Err(invalid(format!(
+                            "{place}: cwd_input `{input}` must name a declared input of type string"
+                        )));
+                    }
+                }
                 for (metric, decl) in &c.metrics {
                     if !is_identifier(metric) {
                         return Err(invalid(format!(

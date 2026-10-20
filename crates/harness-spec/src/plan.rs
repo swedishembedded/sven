@@ -343,6 +343,10 @@ pub enum PlanPrimitive {
         /// The working directory, relative to the workspace root.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
+        /// The run input that names a trusted directory outside the
+        /// workspace to run in.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd_input: Option<String>,
         /// Where to store the typed gate result.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
@@ -567,6 +571,7 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
                 .collect(),
             timeout_secs: g.timeout,
             cwd: g.cwd.clone(),
+            cwd_input: g.cwd_input.clone(),
             stdin: g.stdin.as_deref().and_then(|t| Template::parse(t).ok()),
             store_as: g.store_as.clone(),
             then: g.then.clone(),

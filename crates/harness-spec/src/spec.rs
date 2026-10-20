@@ -633,6 +633,10 @@ pub struct GateStepSpec {
     /// The working directory, relative to the workspace root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Names a run input holding an absolute directory outside the workspace
+    /// to run in. The host sets inputs; the agent cannot write there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd_input: Option<String>,
     /// Text the command reads on its standard input (a template), for what
     /// is too big for an argument: a model's answer, a diff.
     #[serde(default, skip_serializing_if = "Option::is_none")]

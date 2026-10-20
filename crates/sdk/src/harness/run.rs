@@ -19,6 +19,7 @@ use sven_hsm::{Context, EffectKind, Event, Snapshot};
 use sven_vocab::{HarnessEvent, SessionEvent};
 use tokio::sync::broadcast;
 
+use super::live_trajectory;
 use super::record::{start_checkpoint, Recorder};
 use super::trajectory::Evidence;
 use super::HarnessCheckpoint;
@@ -287,6 +288,7 @@ impl HarnessRun {
         // The children this run starts leave their records here, for the
         // trajectory to embed.
         let children = sven_bootstrap::child_records::ChildRecords::default();
+        let trajectory_slot = live_trajectory::Slot::default();
         let mut builder = RuntimeBuilder::new(self.engine.config(), HARNESS_MODE)
             .with_cancel_handle(Arc::clone(&abort_slot))
             .with_decoding(bounds.decoding)
@@ -294,7 +296,11 @@ impl HarnessRun {
             .with_allow_interactive_oauth(false)
             .with_runtime_context(runtime_ctx)
             .with_builtin_tools(self.engine.toolset().builtin())
-            .with_extra_tools(harness_tools(root.as_deref(), self.engine.tools()))
+            .with_extra_tools(harness_tools(
+                root.as_deref(),
+                self.engine.tools(),
+                live_trajectory::hook(&trajectory_slot),
+            ))
             .with_approval_mode(self.engine.approvals().into())
             .with_harnesses(self.engine.harness_registry());
         if let Some(roles) = self.engine.model_roles() {
@@ -364,6 +370,13 @@ impl HarnessRun {
                         .map_err(|e| CallError::Precondition(format!("cannot start: {e}")))?,
                     None => HarnessRunData::from_parts((*self.plan).clone(), self.inputs.clone()),
                 };
+                let data = if sven_harness_runtime::plan_reads_trajectory(&self.plan) {
+                    data.with_trajectory_file(
+                        live_trajectory::trajectory_path(&self.run_id).to_string_lossy(),
+                    )
+                } else {
+                    data
+                };
                 let policy = HarnessMachine::permission_policy_for(&data);
                 (
                     Box::new(sven_hsm::Hsm::new(HarnessMachine::new(data)))
@@ -395,6 +408,22 @@ impl HarnessRun {
             )),
             None => tokio::spawn(session.channels.answer_unattended()),
         };
+
+        let live = sven_harness_runtime::plan_reads_trajectory(&self.plan).then(|| {
+            Arc::new(live_trajectory::Source {
+                engine: self.engine.clone(),
+                plan: Arc::clone(&self.plan),
+                run_id: self.run_id.clone(),
+                bundle_digest: self.bundle_digest.clone(),
+                handle: session.handle.clone(),
+                children: children.clone(),
+                tap: session.runtime.snapshots(),
+            })
+        });
+        if let Some(live) = &live {
+            let writer = Arc::clone(live);
+            let _ = trajectory_slot.set(Arc::new(move |path| writer.write(path)));
+        }
 
         // The run announces itself before its first step: which program,
         // which helpers, which inputs.
@@ -623,6 +652,18 @@ impl HarnessRun {
             bundle,
             children.finished(),
         ));
+        // After the run the file holds the whole trajectory.
+        if live.is_some() {
+            if let Some(trajectory) = self.trajectory() {
+                let path = live_trajectory::trajectory_path(&self.run_id);
+                let written = serde_json::to_string_pretty(&trajectory)
+                    .map_err(|e| e.to_string())
+                    .and_then(|text| live_trajectory::write_atomically(&path, &text));
+                if let Err(e) = written {
+                    eprintln!("warning: cannot write the final trajectory: {e}");
+                }
+            }
+        }
         Ok(outcome)
     }
 }
@@ -795,11 +836,12 @@ fn interrupted_failure(state: &HarnessRunState) -> Option<Event> {
 fn harness_tools(
     root: Option<&std::path::Path>,
     host: Vec<Arc<dyn sven_tool_api::Tool>>,
+    trajectory: sven_tools_exec::TrajectoryHook,
 ) -> Vec<Arc<dyn sven_tool_api::Tool>> {
     let mut tools: Vec<Arc<dyn sven_tool_api::Tool>> = Vec::new();
     if let Some(root) = root {
         if let Ok(gate) = sven_tools_exec::GateCommandTool::new(root) {
-            tools.push(Arc::new(gate));
+            tools.push(Arc::new(gate.with_trajectory_hook(trajectory)));
         }
         if let Ok(snapshot) = sven_tools_fs::ReadJsonSnapshotTool::new(root) {
             tools.push(Arc::new(snapshot));

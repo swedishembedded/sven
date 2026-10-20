@@ -171,6 +171,8 @@ fn report(path: &Path, args: &HarnessRunArgs, result: &RunResult) -> Value {
         "steps": summary.steps,
         "step_counts": summary.step_counts,
         "duration_ms": result.duration_ms,
+        "corrections": result.corrections,
+        "refused_messages": result.refused,
         "checkpoint": written,
     })
 }

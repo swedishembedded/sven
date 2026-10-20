@@ -6,7 +6,7 @@
 pub mod gate;
 pub mod shell;
 
-pub use gate::GateCommandTool;
+pub use gate::{GateCommandTool, TrajectoryHook};
 pub use shell::ShellTool;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────

@@ -80,6 +80,7 @@ impl Context<'_> {
                 .collect::<Result<_, _>>()?,
             timeout: gate.timeout.unwrap_or(DEFAULT_GATE_TIMEOUT_SECS),
             cwd: gate.cwd.clone(),
+            cwd_input: gate.cwd_input.clone(),
             stdin: gate
                 .stdin
                 .as_deref()

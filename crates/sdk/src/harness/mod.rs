@@ -40,6 +40,7 @@ use sven_hsm::Snapshot;
 use crate::engine::Engine;
 use crate::error::CallError;
 
+pub(crate) mod live_trajectory;
 mod outcome;
 mod record;
 mod run;
@@ -47,6 +48,7 @@ mod trajectory;
 
 pub use record::{HarnessRecording, HarnessReplay};
 pub use run::{HarnessFailure, HarnessOutcome, HarnessRun};
+pub use trajectory::{Correction, RefusedMessage};
 
 /// Compiles a bare harness document offline, exactly as
 /// [`Engine::load_harness_from_str`] would, without an engine or a
@@ -287,7 +289,7 @@ impl Harness {
                 checkpoint.plan_digest, self.plan.digest
             )));
         }
-        let (machine, _) = match &self.source {
+        let (mut machine, _) = match &self.source {
             HarnessSource::Document(text) => {
                 HarnessMachine::restore(text.clone(), checkpoint.snapshot.clone())
             }
@@ -296,6 +298,11 @@ impl Harness {
             }
         }
         .map_err(|e| CallError::Precondition(format!("cannot resume: {e}")))?;
+        if sven_harness_runtime::plan_reads_trajectory(&self.plan) {
+            machine.set_trajectory_file(
+                live_trajectory::trajectory_path(&checkpoint.run_id).to_string_lossy(),
+            );
+        }
         let policy = HarnessMachine::permission_policy_for(machine.run());
         Ok(HarnessRun::resumed(
             self.engine.clone(),

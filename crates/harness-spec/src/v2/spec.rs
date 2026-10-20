@@ -298,6 +298,11 @@ pub struct CommandGate {
     /// Working directory inside the workspace.
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Runs in the directory a run input names instead: a string input the
+    /// host sets to an absolute directory outside the workspace, such as a
+    /// pinned checkout the agent cannot write. Exclusive with `cwd`.
+    #[serde(default)]
+    pub cwd_input: Option<String>,
     /// Text the command reads on standard input (a template over inputs and
     /// earlier outputs), for what is too large for an argument.
     #[serde(default)]

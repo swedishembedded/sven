@@ -121,7 +121,13 @@ impl Report {
 /// Runs a harness gate's command inside the workspace.
 pub struct GateCommandTool {
     scope: PathScope,
+    trajectory: Option<TrajectoryHook>,
 }
+
+/// Writes the run's trajectory so far to the file a gate is about to read.
+/// The host supplies it: only the host can see the run's conversation.
+pub type TrajectoryHook =
+    std::sync::Arc<dyn Fn(&std::path::Path) -> Result<(), String> + Send + Sync>;
 
 impl GateCommandTool {
     /// A gate tool whose commands start in, and may only be pointed at
@@ -133,7 +139,51 @@ impl GateCommandTool {
     pub fn new(root: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
         Ok(Self {
             scope: PathScope::confined(root)?,
+            trajectory: None,
         })
+    }
+
+    /// Lets a gate read the run's trajectory: a call that names a
+    /// `trajectory_file` has it written by `hook` first, and fails closed
+    /// when there is no hook or it fails.
+    #[must_use]
+    pub fn with_trajectory_hook(mut self, hook: TrajectoryHook) -> Self {
+        self.trajectory = Some(hook);
+        self
+    }
+
+    /// The directory for a call that names a trusted one: absolute, an
+    /// existing directory, and disjoint from the workspace. The workspace is
+    /// what the agent can write, so a directory in it (or holding it) would
+    /// let the agent change what its own check runs against.
+    fn trusted_dir(
+        &self,
+        call: &ToolCall,
+        requested: &str,
+    ) -> Result<std::path::PathBuf, ToolOutput> {
+        let refuse = |why: String| ToolOutput::err(&call.id, why);
+        let path = std::path::Path::new(requested);
+        if !path.is_absolute() {
+            return Err(refuse(format!(
+                "`trusted_cwd` {requested} must be an absolute path"
+            )));
+        }
+        let real = path
+            .canonicalize()
+            .map_err(|e| refuse(format!("`trusted_cwd` {requested}: {e}")))?;
+        if !real.is_dir() {
+            return Err(refuse(format!(
+                "`trusted_cwd` {requested} is not a directory"
+            )));
+        }
+        if let Some(root) = self.scope.root().and_then(|r| r.canonicalize().ok()) {
+            if real.starts_with(&root) || root.starts_with(&real) {
+                return Err(refuse(format!(
+                    "`trusted_cwd` {requested} overlaps the workspace, which the agent can write"
+                )));
+            }
+        }
+        Ok(real)
     }
 
     async fn run(
@@ -241,7 +291,9 @@ impl Tool for GateCommandTool {
                 "argv": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
                 "timeout_secs": { "type": "integer", "minimum": 1, "maximum": MAX_GATE_TIMEOUT_SECS },
                 "cwd": { "type": "string", "description": "Directory inside the workspace" },
-                "stdin": { "type": "string", "description": "Text the command reads on standard input" }
+                "stdin": { "type": "string", "description": "Text the command reads on standard input" },
+                "trusted_cwd": { "type": "string", "description": "Absolute directory outside the workspace (a run input the host set)" },
+                "trajectory_file": { "type": "string", "description": "File the host writes the run's trajectory to before the command starts" }
             },
             "required": ["argv", "timeout_secs"],
             "additionalProperties": false
@@ -279,12 +331,35 @@ impl Tool for GateCommandTool {
             return ToolOutput::err(&call.id, "`timeout_secs` is required");
         };
         let seconds = seconds.clamp(1, MAX_GATE_TIMEOUT_SECS);
-        let dir = match call.args.get("cwd").and_then(Value::as_str) {
-            Some(requested) => match self.scope.resolve_for(call, requested) {
+        if let Some(file) = call.args.get("trajectory_file").and_then(Value::as_str) {
+            match &self.trajectory {
+                Some(write) => {
+                    if let Err(why) = write(std::path::Path::new(file)) {
+                        return ToolOutput::err(
+                            &call.id,
+                            format!("cannot write the trajectory for the gate: {why}"),
+                        );
+                    }
+                }
+                None => {
+                    return ToolOutput::err(&call.id, "this host cannot write the run's trajectory")
+                }
+            }
+        }
+        let trusted = call.args.get("trusted_cwd").and_then(Value::as_str);
+        let dir = match (call.args.get("cwd").and_then(Value::as_str), trusted) {
+            (Some(_), Some(_)) => {
+                return ToolOutput::err(&call.id, "`cwd` and `trusted_cwd` are exclusive")
+            }
+            (None, Some(requested)) => match self.trusted_dir(call, requested) {
                 Ok(dir) => dir,
                 Err(refused) => return refused,
             },
-            None => match self.scope.root() {
+            (Some(requested), None) => match self.scope.resolve_for(call, requested) {
+                Ok(dir) => dir,
+                Err(refused) => return refused,
+            },
+            (None, None) => match self.scope.root() {
                 Some(root) => root.to_path_buf(),
                 None => return ToolOutput::err(&call.id, "the gate tool has no workspace root"),
             },
@@ -504,5 +579,90 @@ mod tests {
         assert!(tool.modes().is_empty());
         assert_eq!(tool.kernel_capability(), ToolCapability::ExecuteShell);
         assert_eq!(tool.name(), "shell_gate");
+    }
+
+    #[tokio::test]
+    async fn a_trusted_directory_outside_the_workspace_is_where_the_command_runs() {
+        let workspace = tempfile::tempdir().unwrap();
+        let trusted = tempfile::tempdir().unwrap();
+        std::fs::write(trusted.path().join("pinned.txt"), "x").unwrap();
+        let (is_error, r) = run(
+            &tool(&workspace),
+            json!({ "argv": ["ls"], "timeout_secs": 10,
+                    "trusted_cwd": trusted.path().to_str().unwrap() }),
+        )
+        .await;
+        assert!(!is_error, "{r}");
+        assert_eq!(r["stdout"], "pinned.txt\n");
+    }
+
+    #[tokio::test]
+    async fn a_trusted_directory_the_agent_can_write_is_refused() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::create_dir(workspace.path().join("inside")).unwrap();
+        let parent = workspace
+            .path()
+            .parent()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        for bad in [
+            workspace
+                .path()
+                .join("inside")
+                .to_str()
+                .unwrap()
+                .to_string(),
+            workspace.path().to_str().unwrap().to_string(),
+            parent,
+            "relative/dir".to_string(),
+            "/no/such/dir".to_string(),
+        ] {
+            let (is_error, r) = run(
+                &tool(&workspace),
+                json!({ "argv": ["true"], "timeout_secs": 10, "trusted_cwd": bad }),
+            )
+            .await;
+            assert!(is_error, "{bad} must be refused: {r}");
+        }
+        // A symlink in the workspace to a directory outside is still outside,
+        // but one to a directory inside is inside.
+        let link = workspace.path().join("link");
+        std::os::unix::fs::symlink(workspace.path().join("inside"), &link).unwrap();
+        let (is_error, _) = run(
+            &tool(&workspace),
+            json!({ "argv": ["true"], "timeout_secs": 10, "trusted_cwd": link.to_str().unwrap() }),
+        )
+        .await;
+        assert!(is_error);
+    }
+
+    #[tokio::test]
+    async fn the_trajectory_is_written_before_the_command_and_a_failure_to_write_fails_closed() {
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let file = outside.path().join("trajectory.json");
+        let hook: TrajectoryHook = std::sync::Arc::new(|path| {
+            std::fs::write(path, "{\"steps\": []}").map_err(|e| e.to_string())
+        });
+        let with = GateCommandTool::new(workspace.path())
+            .unwrap()
+            .with_trajectory_hook(hook);
+        let (is_error, r) = run(
+            &with,
+            json!({ "argv": ["cat", file.to_str().unwrap()], "timeout_secs": 10,
+                    "trajectory_file": file.to_str().unwrap() }),
+        )
+        .await;
+        assert!(!is_error, "{r}");
+        assert_eq!(r["stdout"], "{\"steps\": []}");
+        // No hook: the host cannot provide it, so the gate does not run.
+        let (is_error, _) = run(
+            &tool(&workspace),
+            json!({ "argv": ["true"], "timeout_secs": 10, "trajectory_file": "/x" }),
+        )
+        .await;
+        assert!(is_error);
     }
 }

@@ -59,6 +59,7 @@ pub(super) struct CommandRun {
     pub argv: Vec<String>,
     pub timeout: u64,
     pub cwd: Option<String>,
+    pub cwd_input: Option<String>,
     pub stdin: Option<String>,
     /// The fact the typed result is kept under: the gate's latest run.
     pub store_as: String,
@@ -199,6 +200,7 @@ pub(super) fn gate_step(run: &CommandRun, then: &str, on_fail: &str) -> StepSpec
         command: run.argv.clone(),
         timeout: run.timeout,
         cwd: run.cwd.clone(),
+        cwd_input: run.cwd_input.clone(),
         stdin: run.stdin.clone(),
         store_as: Some(run.store_as.clone()),
         then: then.to_string(),

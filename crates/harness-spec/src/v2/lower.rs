@@ -507,9 +507,12 @@ fn step_bound(w: &WorkflowSpec, steps: &std::collections::BTreeMap<String, StepS
     let total = steps.len() as u64;
     let mut bound = total;
     for task in &w.workflow {
-        let passes = match (&task.for_each, &task.until) {
-            (Some(each), _) => each.max_items.unwrap_or(DEFAULT_MAX_ITEMS),
-            (_, Some(until)) => until.max_iterations,
+        let passes = match (&task.for_each, &task.until, &task.corrections) {
+            (Some(each), _, _) => each.max_items.unwrap_or(DEFAULT_MAX_ITEMS),
+            (_, Some(until), _) => until.max_iterations,
+            // A correction loop runs its steps once per correction, and once
+            // more to leave.
+            (_, _, Some(corrections)) => corrections.max + 1,
             _ => continue,
         };
         let prefix = format!("{}__", task.name);

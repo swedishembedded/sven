@@ -222,6 +222,12 @@ impl Scope<'_> {
                 };
                 Path::parse(&format!("facts.{fact}{rest}")).map(PathRewrite::Path)
             }
+            "run" => match segments {
+                [_, field] if field == "trajectory_file" => {
+                    Path::parse("facts.run.trajectory_file").map(PathRewrite::Path)
+                }
+                _ => Err(self.invalid(path, "can only read `run.trajectory_file`")),
+            },
             "failure" => self.map_failure(path),
             "gates" => {
                 let [_, gate, rest @ ..] = segments else {

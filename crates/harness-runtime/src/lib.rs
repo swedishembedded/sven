@@ -44,7 +44,7 @@ mod state;
 
 pub use approval::{HeldCall, HeldGate};
 pub use budget::Ceiling;
-pub use command_gate::INTERRUPTED_OPERATION;
+pub use command_gate::{plan_reads_trajectory, INTERRUPTED_OPERATION};
 pub use delegation::child_result;
 pub use error::HarnessRunError;
 pub use events::harness_event;

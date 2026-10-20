@@ -41,6 +41,7 @@ pub(super) fn gate_args(
     command: &[Template],
     timeout_secs: u64,
     cwd: Option<&str>,
+    cwd_input: Option<&str>,
     stdin: Option<&Template>,
 ) -> Value {
     let argv: Vec<String> = command
@@ -54,6 +55,17 @@ pub(super) fn gate_args(
     if let Some(cwd) = cwd {
         args["cwd"] = json!(cwd);
     }
+    if let Some(dir) = cwd_input
+        .and_then(|name| run.inputs.get(name))
+        .and_then(Value::as_str)
+    {
+        args["trusted_cwd"] = json!(dir);
+    }
+    if command.iter().chain(stdin).any(reads_trajectory_file) {
+        if let Some(file) = run.facts.get(RUN_FACT).and_then(|f| f.get(TRAJECTORY_FILE)) {
+            args["trajectory_file"] = file.clone();
+        }
+    }
     if let Some(stdin) = stdin {
         args["stdin"] = match run.resolve_template(stdin) {
             Value::String(text) => json!(text),
@@ -61,6 +73,31 @@ pub(super) fn gate_args(
         };
     }
     args
+}
+
+/// The fact the host-provided values of the run live under (`run.*`).
+pub(super) const RUN_FACT: &str = "run";
+/// The name of the run's trajectory file in [`RUN_FACT`].
+pub(super) const TRAJECTORY_FILE: &str = "trajectory_file";
+
+/// `true` when a template reads `{{ run.trajectory_file }}`.
+pub(super) fn reads_trajectory_file(template: &Template) -> bool {
+    template.paths().iter().any(|path| {
+        matches!(path.segments(), [facts, run, file]
+            if facts == "facts" && run == RUN_FACT && file == TRAJECTORY_FILE)
+    })
+}
+
+/// `true` when a gate of `plan` reads `{{ run.trajectory_file }}`: the host
+/// then has to provide the file.
+#[must_use]
+pub fn plan_reads_trajectory(plan: &sven_harness_spec::HarnessPlan) -> bool {
+    plan.steps.values().any(|step| match &step.primitive {
+        PlanPrimitive::Gate { command, stdin, .. } => {
+            command.iter().chain(stdin).any(reads_trajectory_file)
+        }
+        _ => false,
+    })
 }
 
 /// What one gate evaluation found, as stored under the step.
@@ -217,6 +254,7 @@ impl HarnessMachine {
             command,
             timeout_secs,
             cwd,
+            cwd_input,
             stdin,
             ..
         } = &step.primitive
@@ -232,12 +270,41 @@ impl HarnessMachine {
                 ctx,
             );
         }
+        if command
+            .iter()
+            .chain(stdin.as_ref())
+            .any(reads_trajectory_file)
+        {
+            // The host decides where the trajectory goes (and is the only one
+            // who can write it); a host that gave no place cannot run this gate.
+            match self.run.trajectory_file() {
+                Some(file) => {
+                    run.facts
+                        .insert(RUN_FACT.to_string(), json!({ TRAJECTORY_FILE: file }));
+                }
+                None => {
+                    return self.fail_now(
+                        run,
+                        "trajectory_unavailable",
+                        "a gate reads the run's trajectory but this host provides none",
+                        ctx,
+                    )
+                }
+            }
+        }
         let call_id = self.call_id_for(step, run);
         let effect = Effect::CallTool {
             call_id,
             name: GATE_TOOL.to_string(),
             capability: GATE_CAPABILITY,
-            args: gate_args(run, command, *timeout_secs, cwd.as_deref(), stdin.as_ref()),
+            args: gate_args(
+                run,
+                command,
+                *timeout_secs,
+                cwd.as_deref(),
+                cwd_input.as_deref(),
+                stdin.as_ref(),
+            ),
         };
         self.cache_effect(effect.clone());
         self.park(run, step, Waiting::Tool);

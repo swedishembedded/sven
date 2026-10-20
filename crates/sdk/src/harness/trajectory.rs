@@ -167,6 +167,17 @@ impl HarnessRun {
     #[must_use]
     pub fn trajectory(&self) -> Option<atif::Trajectory> {
         let evidence = self.evidence.as_ref()?;
+        Some(build_trajectory(evidence, &self.plan, &self.run_id))
+    }
+}
+
+/// The ATIF trajectory `evidence` makes for the run `run_id` of `plan`.
+pub(super) fn build_trajectory(
+    evidence: &Evidence,
+    plan: &HarnessPlan,
+    run_id: &str,
+) -> atif::Trajectory {
+    {
         let mut agent = sven_session_store::default_agent_profile();
         agent.model_name = Some(evidence.model.clone());
         if !evidence.tools.is_empty() {
@@ -194,7 +205,7 @@ impl HarnessRun {
                     sven_session_store::ATIF_SCHEMA_VERSION,
                     trajectory.agent.clone(),
                 );
-                own.trajectory_id = Some(format!("{}/{name}", self.run_id));
+                own.trajectory_id = Some(format!("{}/{name}", run_id));
                 own.steps = sven_session_store::record_steps::conversation_steps(
                     &sven_session_store::record_steps::ConversationFacts {
                         messages: &conversation.messages,
@@ -241,10 +252,10 @@ impl HarnessRun {
         }
         trajectory.extra = Some(json!({
             "harness": {
-                "name": self.plan.name,
-                "plan_digest": self.plan.digest,
+                "name": plan.name,
+                "plan_digest": plan.digest,
                 "bundle_digest": evidence.bundle_digest,
-                "run_id": self.run_id,
+                "run_id": run_id,
                 "trace": evidence.outcome.trace,
                 "children": children,
                 "conversations": evidence
@@ -260,7 +271,7 @@ impl HarnessRun {
             total_steps: Some(evidence.outcome.steps),
             ..atif::FinalMetrics::default()
         });
-        Some(trajectory)
+        trajectory
     }
 }
 
@@ -278,4 +289,101 @@ fn as_sent(evidence: &Evidence, message: &Message) -> Message {
         }
     }
     message
+}
+
+/// A message the supervisor of a `corrections` block sent the agent.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Correction {
+    /// The message, as the agent received it.
+    pub message: String,
+    /// Tool calls the agent had made in all before this message.
+    pub tool_calls_before: usize,
+}
+
+/// A message the supervisor wrote that its accept gate refused.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RefusedMessage {
+    /// The supervisor's conversation (its task name).
+    pub author: String,
+    /// What the supervisor wrote.
+    pub message: String,
+    /// Why it was refused: the text the supervisor was sent to rewrite it.
+    pub reason: String,
+}
+
+impl HarnessRun {
+    /// The corrections the run's supervisors sent the agent, in order, each
+    /// with the number of tool calls the agent had made before it. `None`
+    /// until the run has executed.
+    #[must_use]
+    pub fn corrections(&self) -> Option<Vec<Correction>> {
+        let evidence = self.evidence.as_ref()?;
+        let calls = |upto: usize| {
+            evidence.messages[..upto]
+                .iter()
+                .filter(|m| matches!(m.content, sven_model::MessageContent::ToolCall { .. }))
+                .count()
+        };
+        Some(
+            evidence
+                .origins
+                .iter()
+                .filter(|(_, origin)| origin == "correction")
+                .filter_map(|(at, _)| {
+                    let message = evidence.messages.get(*at)?;
+                    Some(Correction {
+                        message: message.as_text()?.to_string(),
+                        tool_calls_before: calls(*at),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// The supervisor messages an accept gate refused, in order, with the
+    /// reason each was sent back with. `None` until the run has executed.
+    #[must_use]
+    pub fn refused_messages(&self) -> Option<Vec<RefusedMessage>> {
+        let evidence = self.evidence.as_ref()?;
+        let authors: std::collections::BTreeSet<&str> = self
+            .plan
+            .steps
+            .iter()
+            .filter(|(id, _)| {
+                self.plan
+                    .source_map
+                    .get(*id)
+                    .is_some_and(|origin| origin.role == "correction")
+            })
+            .filter_map(|(_, step)| match &step.primitive {
+                sven_harness_spec::PlanPrimitive::Predict { conversation, .. } => {
+                    conversation.as_deref()
+                }
+                _ => None,
+            })
+            .collect();
+        let mut refused = Vec::new();
+        for (name, conversation) in &evidence.conversations {
+            if !authors.contains(name.as_str()) {
+                continue;
+            }
+            for (at, origin) in &conversation.origins {
+                if origin != "repair" || *at == 0 {
+                    continue;
+                }
+                let (Some(sent), Some(reason)) = (
+                    conversation.messages.get(*at - 1).and_then(|m| m.as_text()),
+                    conversation.messages.get(*at).and_then(|m| m.as_text()),
+                ) else {
+                    continue;
+                };
+                refused.push(RefusedMessage {
+                    author: name.clone(),
+                    message: sent.to_string(),
+                    reason: reason.to_string(),
+                });
+            }
+        }
+        Some(refused)
+    }
 }

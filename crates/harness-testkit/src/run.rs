@@ -90,6 +90,10 @@ pub struct RunResult {
     pub bundle_digest: Option<String>,
     /// Wall-clock time.
     pub duration_ms: u64,
+    /// The corrections the run's supervisors sent, in order.
+    pub corrections: Vec<sven_sdk::Correction>,
+    /// The supervisor messages an accept gate refused.
+    pub refused: Vec<sven_sdk::RefusedMessage>,
     /// The plan that ran, which reads its trace in the author's terms.
     pub plan: sven_sdk::harness_plan::HarnessPlan,
     /// Fixture-side facts the verdict needs.
@@ -578,6 +582,8 @@ async fn drive_run(
         run_id: run.run_id().to_string(),
         bundle_digest,
         duration_ms,
+        corrections: run.corrections().unwrap_or_default(),
+        refused: run.refused_messages().unwrap_or_default(),
         plan: harness.plan().clone(),
         fixtures: FixtureFacts::default(),
         outcome,

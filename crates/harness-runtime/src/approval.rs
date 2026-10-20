@@ -134,12 +134,20 @@ impl HarnessMachine {
                 command,
                 timeout_secs,
                 cwd,
+                cwd_input,
                 stdin,
                 ..
             } => Some(HeldCall {
                 name: GATE_TOOL.to_string(),
                 capability: GATE_CAPABILITY,
-                args: gate_args(run, command, *timeout_secs, cwd.as_deref(), stdin.as_ref()),
+                args: gate_args(
+                    run,
+                    command,
+                    *timeout_secs,
+                    cwd.as_deref(),
+                    cwd_input.as_deref(),
+                    stdin.as_ref(),
+                ),
             }),
             _ => None,
         }

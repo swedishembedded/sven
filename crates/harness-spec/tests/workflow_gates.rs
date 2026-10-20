@@ -327,3 +327,48 @@ fn corrections_are_checked_in_the_authors_terms() {
         assert!(message.contains(expect), "{what}: {message}");
     }
 }
+
+const TRUSTED: &str = r#"
+api_version: "2"
+name: trusted
+inputs: { pin: string }
+execution: { limits: { model_turns: 4 } }
+gates:
+  judge:
+    command: [check, "{{ run.trajectory_file }}"]
+    cwd_input: pin
+workflow:
+  - name: work
+    task: Work.
+    verify: [judge]
+"#;
+
+#[test]
+fn a_gate_may_run_in_a_host_named_directory_and_read_the_trajectory_file() {
+    let plan = compile(TRUSTED);
+    let gate = plan
+        .steps
+        .values()
+        .find_map(|s| match &s.primitive {
+            PlanPrimitive::Gate {
+                cwd_input, command, ..
+            } => Some((cwd_input.clone(), command.clone())),
+            _ => None,
+        })
+        .expect("a gate step");
+    assert_eq!(gate.0.as_deref(), Some("pin"));
+    assert_eq!(gate.1[1].paths()[0].as_text(), "facts.run.trajectory_file");
+
+    assert!(
+        rejected(&TRUSTED.replace("cwd_input: pin", "cwd_input: nope")).contains("declared input")
+    );
+    assert!(rejected(&TRUSTED.replace("pin: string", "pin: number")).contains("type string"));
+    assert!(
+        rejected(&TRUSTED.replace("cwd_input: pin", "cwd_input: pin\n    cwd: sub"))
+            .contains("exclusive")
+    );
+    assert!(
+        rejected(&TRUSTED.replace("run.trajectory_file", "run.workspace"))
+            .contains("run.trajectory_file")
+    );
+}
