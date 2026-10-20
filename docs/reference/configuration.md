@@ -797,9 +797,12 @@ loop indefinitely in their reasoning without ever converging to an answer.
   progress, so a legitimately long multi-step turn is never killed - only a
   stalled loop is. Defaults to `600`.
 
-A watchdog abort is reported the same way as pressing `Esc` mid-generation:
-the partial text streamed so far is kept (marked `[aborted: ...]`), and the
-turn ends cleanly rather than as an error.
+A watchdog abort ends the turn like pressing `Esc` mid-generation (the partial
+text streamed so far is kept, marked `[aborted: ...]`) but, because nobody asked
+for it, it is also reported as an error naming the limit and the setting that
+raises it: a headless run exits 1 with outcome `agent_error`, and an embedding
+application's call fails with that message. The summarisation call of a
+compaction is not subject to the token cap.
 
 ```yaml
 agent:

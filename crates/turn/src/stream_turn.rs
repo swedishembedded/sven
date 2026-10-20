@@ -50,25 +50,7 @@ use crate::stall::{StallLimits, StallWatch};
 use crate::tool_slots::attempt_json_repair;
 use sven_vocab::{ReportedUsage, Sampled, SessionEvent as AgentEvent};
 
-/// Marker error distinguishing a deliberate abort - a user cancel (Esc,
-/// Ctrl+C, `/abort`, ACP `cancel()`) or the thinking-token/time watchdog -
-/// from a genuine turn failure. `TurnExecutor` wraps its own cancel-channel
-/// trigger in this, and [`stream_turn`]'s watchdog check does the same, so a
-/// single `downcast_ref::<AbortedError>()` after the turn's `tokio::select!`
-/// collapses both onto `Event::UserCancelled`/`UiEvent::Aborted` instead of
-/// `Event::LlmFailed`/`UiEvent::Error` - the latter drives `SdlcMachine` into
-/// `Recovery`/`Failed`, which is correct for a real failure but wrong for a
-/// turn the user (or the watchdog) deliberately cut short.
-#[derive(Debug)]
-pub struct AbortedError(pub String);
-
-impl std::fmt::Display for AbortedError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for AbortedError {}
+pub use crate::aborted::AbortedError;
 
 /// Callback that resolves a model string (e.g. `"anthropic/claude-opus"`) to a
 /// live [`ModelProvider`].  Provided by the bootstrap layer so that the turn
@@ -510,14 +492,16 @@ pub async fn stream_turn(
                 // (see `AbortedError`'s doc comment for why).
                 if let Some(cap) = thinking_token_cap {
                     if thinking_token_estimate >= cap {
-                        return Err(anyhow::Error::new(AbortedError(format!(
-                            "thinking-token limit exceeded ({thinking_token_estimate} >= {cap} estimated tokens)"
+                        return Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
+                            "thinking-token limit exceeded ({thinking_token_estimate} >= {cap} estimated tokens); \
+                             raise agent.max_thinking_tokens if the model needs to reason longer"
                         ))));
                     }
                 }
                 if stall_started.elapsed() >= thinking_time_cap {
-                    return Err(anyhow::Error::new(AbortedError(format!(
-                        "thinking timeout exceeded ({}s with no forward progress)",
+                    return Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
+                        "thinking timeout exceeded ({}s with no forward progress); \
+                         raise agent.thinking_timeout_secs if the model needs longer",
                         thinking_time_cap.as_secs()
                     ))));
                 }
@@ -935,9 +919,9 @@ mod thinking_watchdog_tests {
             .downcast_ref::<AbortedError>()
             .expect("must be reported as AbortedError, not a generic failure");
         assert!(
-            aborted.0.contains("thinking-token limit"),
+            aborted.reason.contains("thinking-token limit"),
             "unexpected message: {}",
-            aborted.0
+            aborted.reason
         );
     }
 
@@ -975,9 +959,9 @@ mod thinking_watchdog_tests {
             .downcast_ref::<AbortedError>()
             .expect("must be reported as AbortedError, not a generic failure");
         assert!(
-            aborted.0.contains("thinking timeout"),
+            aborted.reason.contains("thinking timeout"),
             "unexpected message: {}",
-            aborted.0
+            aborted.reason
         );
     }
 
@@ -1012,7 +996,7 @@ mod thinking_watchdog_tests {
         let aborted = err
             .downcast_ref::<AbortedError>()
             .expect("must be AbortedError");
-        assert!(aborted.0.contains("thinking-token limit"));
+        assert!(aborted.reason.contains("thinking-token limit"));
     }
 
     #[tokio::test]
@@ -1052,9 +1036,9 @@ mod thinking_watchdog_tests {
             .downcast_ref::<AbortedError>()
             .expect("must be AbortedError");
         assert!(
-            aborted.0.contains("thinking timeout"),
+            aborted.reason.contains("thinking timeout"),
             "the token cap must be disabled when the context window is unknown: {}",
-            aborted.0
+            aborted.reason
         );
     }
 
@@ -1153,9 +1137,9 @@ mod thinking_watchdog_tests {
             .downcast_ref::<AbortedError>()
             .expect("must be AbortedError");
         assert!(
-            aborted.0.contains("thinking-token limit"),
+            aborted.reason.contains("thinking-token limit"),
             "progress must reset the stall clock, not the token count: {}",
-            aborted.0
+            aborted.reason
         );
     }
 
@@ -1213,7 +1197,7 @@ mod thinking_watchdog_tests {
         let aborted = err
             .downcast_ref::<AbortedError>()
             .expect("must be AbortedError");
-        assert!(aborted.0.contains("thinking-token limit"));
+        assert!(aborted.reason.contains("thinking-token limit"));
     }
 
     #[tokio::test]
@@ -1259,9 +1243,9 @@ mod thinking_watchdog_tests {
             .downcast_ref::<AbortedError>()
             .expect("must be AbortedError");
         assert!(
-            aborted.0.contains("thinking timeout"),
+            aborted.reason.contains("thinking timeout"),
             "a cleared override must not leave the tiny token cap active: {}",
-            aborted.0
+            aborted.reason
         );
     }
 }

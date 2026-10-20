@@ -44,6 +44,12 @@
 //! (see every consumer: `RuntimeRunner`, `KernelAgent`, ACP's prompt loop),
 //! so unlike the error path it is not followed by a separate `TurnComplete`.
 //!
+//! A cut-off nobody asked for (the thinking-token or thinking-time watchdog)
+//! still ends the turn this way, but is preceded by a `UiEvent::Error` naming
+//! the limit and the setting that raises it, so a headless run ends as a
+//! failure with its reason (exit 1, outcome `agent_error`) and an embedding
+//! application sees an error instead of a reply. A person's cancel emits none.
+//!
 //! # Empty turns
 //!
 //! A turn with no text and no tool calls is tolerated once per thread -
@@ -603,7 +609,7 @@ impl EffectExecutor for TurnExecutor {
         let result = tokio::select! {
             biased;
             _ = cancel_rx => {
-                Err(anyhow::Error::new(AbortedError("turn cancelled by user".to_string())))
+                Err(anyhow::Error::new(AbortedError::by_user("turn cancelled by user")))
             }
             r = stream_turn(
                 model.as_ref(),
@@ -631,6 +637,13 @@ impl EffectExecutor for TurnExecutor {
             if let Some(aborted) = e.downcast_ref::<AbortedError>() {
                 let partial = partial_text.lock().map(|g| g.clone()).unwrap_or_default();
                 let marker = format!("[aborted: {aborted}]");
+                // The abort still ends the turn as a cancel (see the module
+                // docs), but a cut-off nobody asked for says why, as an error,
+                // before it: a headless run then ends as a failure with its
+                // reason instead of as a silent success.
+                if !aborted.by_user {
+                    obs.emit(UiEvent::Error(aborted.to_string()));
+                }
                 let persisted = if partial.is_empty() {
                     marker
                 } else {

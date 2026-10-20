@@ -446,7 +446,13 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
             close_sven_section(state);
             finalise_stdout(&state.streamed_text);
             print_total_usage(state);
-            return Some(EXIT_SUCCESS);
+            // A user cancel is not a CI failure; an abort the runtime
+            // explained with an error (the thinking watchdog) is.
+            return Some(if state.had_error {
+                EXIT_AGENT_ERROR
+            } else {
+                EXIT_SUCCESS
+            });
         }
         // Subagent / delegate / team observations are otherwise rendered as
         // rich child-session views by the interactive frontends; this runner
@@ -834,6 +840,24 @@ mod tests {
             Some(EXIT_NEEDS_HUMAN),
             "a parked question must stop the run distinctly from success or failure"
         );
+    }
+
+    #[test]
+    fn an_abort_that_follows_an_error_is_a_failed_run() {
+        // A watchdog abort says why through an `Error` before `Aborted`; the
+        // run must not then end as success.
+        let mut st = state(0);
+        handle_ui_event(
+            UiEvent::Error("thinking-token limit exceeded".into()),
+            &mut st,
+        );
+        let r = handle_ui_event(
+            UiEvent::Aborted {
+                partial_text: String::new(),
+            },
+            &mut st,
+        );
+        assert_eq!(r, Some(EXIT_AGENT_ERROR));
     }
 
     #[test]

@@ -142,6 +142,12 @@ impl TurnExecutor {
             self.limits
                 .output_budget(context_window, configured_max_output, request_estimate);
 
+        // The thinking-token cap guards against a reasoning loop in the agent's
+        // own turns. A summary must not be thrown away (and the history with
+        // it) because the model reasoned about what to write.
+        let mut limits = self.limits;
+        limits.thinking.max_thinking_tokens = Some(u32::MAX);
+
         let (tx, mut rx) = mpsc::channel::<UiEvent>(256);
         let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
 
@@ -153,7 +159,7 @@ impl TurnExecutor {
             None,
             None,
             max_output_tokens_override,
-            self.limits,
+            limits,
             &tx,
         )
         .await;

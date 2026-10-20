@@ -13,6 +13,7 @@
 //! them from effects; `architecture.toml` forbids `sven-machines` from
 //! reaching this crate at all.
 
+mod aborted;
 pub mod assembly;
 mod assembly_focus;
 mod assembly_supersede;
