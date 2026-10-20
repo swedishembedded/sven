@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use sven_model::{Message, Role};
 use sven_tool_api::OutputCategory;
+use sven_vocab::{TodoItem, TodoStatus};
 
 /// Strategy used when compacting the session context (`agent.compaction_strategy`).
 ///
@@ -146,6 +147,10 @@ pub struct CompactionPlan {
     /// messages - reattached verbatim by [`finish_compaction`] so a summary
     /// can never be the only record of what the agent was asked to do.
     pub task_msg: Option<Message>,
+    /// The todo list as [`todo_block`] renders it, appended verbatim to the
+    /// summary by [`finish_compaction`]. It is state the agent keeps outside
+    /// the conversation, so it is never left to the summariser.
+    pub todo_block: Option<String>,
     /// Token estimate of `messages` before compaction (chars/4 heuristic,
     /// consistent with `sven_model::budget::estimate_request_tokens`'s
     /// message-side estimate), for `UiEvent::ContextCompacted` reporting.
@@ -206,8 +211,43 @@ pub fn prepare_compaction(
         keep_tail,
         system_msg,
         task_msg,
+        todo_block: None,
         tokens_before,
     })
+}
+
+impl CompactionPlan {
+    /// Carries the agent's todo list through the compaction verbatim.
+    #[must_use]
+    pub fn with_todos(mut self, todos: &[TodoItem]) -> Self {
+        self.todo_block = todo_block(todos);
+        self
+    }
+}
+
+/// The todo list as the compaction re-injects it, or `None` when it is empty.
+/// Ids, statuses and contents are copied as they are.
+#[must_use]
+pub fn todo_block(todos: &[TodoItem]) -> Option<String> {
+    if todos.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = todos
+        .iter()
+        .map(|t| {
+            let status = match t.status {
+                TodoStatus::Pending => "pending",
+                TodoStatus::InProgress => "in_progress",
+                TodoStatus::Completed => "completed",
+                TodoStatus::Cancelled => "cancelled",
+            };
+            format!("- [{status}] {}: {}", t.id, t.content)
+        })
+        .collect();
+    Some(format!(
+        "## Todo list (kept verbatim across compaction)\n{}",
+        lines.join("\n")
+    ))
 }
 
 /// Reassemble the final compacted history once the model has produced
@@ -221,7 +261,10 @@ pub fn finish_compaction(plan: CompactionPlan, summary_text: &str) -> Vec<Messag
         result.push(sys);
     }
     result.extend(plan.task_msg);
-    result.push(Message::assistant(summary_text));
+    result.push(Message::assistant(match &plan.todo_block {
+        Some(block) => format!("{summary_text}\n\n{block}"),
+        None => summary_text.to_string(),
+    }));
     result.extend(plan.keep_tail);
     result
 }
@@ -268,6 +311,7 @@ pub fn emergency_compact(
     messages: &mut Vec<Message>,
     system_msg: Option<Message>,
     keep_n: usize,
+    todos: &[TodoItem],
 ) -> usize {
     let before = messages.len();
     let non_system: Vec<Message> = messages
@@ -284,6 +328,13 @@ pub fn emergency_compact(
          Continue from the most recent messages and re-check any earlier \
          decision before relying on it.]",
     );
+    let notice = match todo_block(todos) {
+        Some(block) => Message::assistant(format!(
+            "{}\n\n{block}",
+            notice.as_text().unwrap_or_default()
+        )),
+        None => notice,
+    };
     messages.clear();
     if let Some(sys) = system_msg {
         messages.push(sys);
@@ -881,6 +932,79 @@ mod tests {
         }
     }
 
+    fn todos() -> Vec<sven_vocab::TodoItem> {
+        use sven_vocab::{TodoItem, TodoStatus};
+        vec![
+            TodoItem {
+                id: "1".into(),
+                content: "Read the retry test".into(),
+                status: TodoStatus::Completed,
+            },
+            TodoItem {
+                id: "2".into(),
+                content: "Replace the sleep with the backoff signal".into(),
+                status: TodoStatus::InProgress,
+            },
+        ]
+    }
+
+    #[test]
+    fn the_todo_list_survives_a_summary_verbatim_and_is_not_asked_of_the_summariser() {
+        let plan = prepare_compaction(&recorded_run(), &CompactionStrategy::Structured, 2)
+            .unwrap()
+            .with_todos(&todos());
+        let asked: String = plan
+            .summarize_request
+            .iter()
+            .filter_map(|m| m.as_text())
+            .collect();
+        assert!(
+            !asked.contains("Replace the sleep with the backoff signal\n"),
+            "{asked}"
+        );
+        let out = finish_compaction(plan, "the summary");
+        let summary = out
+            .iter()
+            .find_map(|m| m.as_text().filter(|t| t.starts_with("the summary")))
+            .unwrap();
+        assert!(
+            summary.contains("[in_progress] 2: Replace the sleep with the backoff signal"),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("[completed] 1: Read the retry test"),
+            "{summary}"
+        );
+    }
+
+    #[test]
+    fn the_todo_list_survives_an_emergency_compaction_with_the_task() {
+        let mut msgs = recorded_run();
+        emergency_compact(&mut msgs, None, 2, &todos());
+        let text: Vec<&str> = msgs.iter().filter_map(Message::as_text).collect();
+        assert!(
+            text.iter().any(|t| t.contains("Fix the flaky retry test")),
+            "{text:?}"
+        );
+        assert!(
+            text.iter()
+                .any(|t| t.contains("[in_progress] 2: Replace the sleep with the backoff signal")),
+            "{text:?}"
+        );
+    }
+
+    #[test]
+    fn no_todo_list_adds_nothing() {
+        let plan = prepare_compaction(&recorded_run(), &CompactionStrategy::Structured, 2)
+            .unwrap()
+            .with_todos(&[]);
+        let out = finish_compaction(plan, "the summary");
+        assert!(out
+            .iter()
+            .filter_map(Message::as_text)
+            .all(|t| !t.contains("Todo list")));
+    }
+
     #[test]
     fn finish_compaction_does_not_repeat_a_task_that_is_in_the_tail() {
         let msgs = vec![
@@ -942,7 +1066,7 @@ mod tests {
     #[test]
     fn emergency_compact_returns_original_count() {
         let mut msgs = make_history();
-        let before = emergency_compact(&mut msgs, None, 2);
+        let before = emergency_compact(&mut msgs, None, 2, &[]);
         assert_eq!(before, 5);
     }
 
@@ -950,7 +1074,7 @@ mod tests {
     fn emergency_compact_keeps_at_most_keep_n_non_system_messages() {
         let mut msgs = make_history();
         // 4 non-system messages; keep 2
-        emergency_compact(&mut msgs, None, 2);
+        emergency_compact(&mut msgs, None, 2, &[]);
         // notice + the kept task + 2 preserved = 4 non-system messages
         let non_sys: Vec<_> = msgs.iter().filter(|m| m.role != Role::System).collect();
         assert_eq!(
@@ -968,7 +1092,7 @@ mod tests {
             Message::user("recent message"),
             Message::assistant("recent reply"),
         ];
-        emergency_compact(&mut msgs, None, 2);
+        emergency_compact(&mut msgs, None, 2, &[]);
         let text: Vec<String> = msgs
             .iter()
             .filter_map(|m| m.as_text().map(|t| t.to_string()))
@@ -991,7 +1115,7 @@ mod tests {
             Message::user("later message"),
             Message::assistant("later reply"),
         ];
-        emergency_compact(&mut msgs, None, 2);
+        emergency_compact(&mut msgs, None, 2, &[]);
         let text: Vec<&str> = msgs.iter().filter_map(Message::as_text).collect();
         assert_eq!(text.iter().filter(|t| **t == "the task").count(), 1);
         let task = text.iter().position(|t| *t == "the task").unwrap();
@@ -1013,7 +1137,7 @@ mod tests {
             Message::user("the task"),
             Message::assistant("reply"),
         ];
-        emergency_compact(&mut msgs, None, 2);
+        emergency_compact(&mut msgs, None, 2, &[]);
         let tasks = msgs
             .iter()
             .filter(|m| m.as_text() == Some("the task"))
@@ -1025,7 +1149,7 @@ mod tests {
     fn emergency_compact_with_system_message_puts_sys_first() {
         let mut msgs = make_history();
         let sys = Message::system("system content");
-        emergency_compact(&mut msgs, Some(sys), 2);
+        emergency_compact(&mut msgs, Some(sys), 2, &[]);
         assert_eq!(msgs[0].role, Role::System);
         assert_eq!(msgs[0].as_text(), Some("system content"));
     }
@@ -1033,7 +1157,7 @@ mod tests {
     #[test]
     fn emergency_compact_notice_contains_warning_text() {
         let mut msgs = make_history();
-        emergency_compact(&mut msgs, None, 2);
+        emergency_compact(&mut msgs, None, 2, &[]);
         let notice_text = msgs[0].as_text().unwrap();
         assert!(
             notice_text.contains("emergency-compacted"),

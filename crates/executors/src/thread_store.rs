@@ -35,6 +35,9 @@ pub struct ThreadStore {
     /// Why the caller is stopping the run, set just before it cancels the
     /// turn in flight; the turn executor labels the aborted turn with it.
     stop_reason: Option<String>,
+    /// The agent's todo list, kept here (outside the conversation) so a
+    /// compaction can carry it through verbatim.
+    todos: Vec<sven_vocab::TodoItem>,
     /// The model's raw argument text, by call id, for tool calls whose
     /// arguments were not valid JSON. The thread holds such a call with `{}`
     /// arguments - history is replayed to providers, and a malformed string
@@ -89,6 +92,17 @@ impl ThreadStore {
     /// turns breaks the prompt-cache invariant.
     pub fn thread(&mut self, id: &str) -> &mut Vec<Message> {
         self.threads.entry(id.to_string()).or_default()
+    }
+
+    /// Replaces the stored todo list with the tool's latest.
+    pub fn set_todos(&mut self, todos: Vec<sven_vocab::TodoItem>) {
+        self.todos = todos;
+    }
+
+    /// The todo list as the tool last reported it.
+    #[must_use]
+    pub fn todos(&self) -> &[sven_vocab::TodoItem] {
+        &self.todos
     }
 
     /// Notes why the run is being stopped from outside; read once by

@@ -468,7 +468,11 @@ mod notice_tests {
         let obs = ObservationSink::new(8);
         let mut seen = obs.subscribe();
         let (tx, rx) = mpsc::channel(4);
-        crate::runtime_builder::spawn_tool_event_forwarder(rx, obs);
+        crate::tool_events::spawn_tool_event_forwarder(
+            rx,
+            obs,
+            std::sync::Arc::new(std::sync::Mutex::new(sven_executors::ThreadStore::new())),
+        );
         tx.send(ToolEvent::Notice("decisions unavailable".into()))
             .await
             .unwrap();

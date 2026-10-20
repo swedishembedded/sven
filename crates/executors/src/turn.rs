@@ -607,6 +607,7 @@ impl EffectExecutor for TurnExecutor {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         *self.cancel_handle.lock().await = Some(cancel_tx);
 
+        let todos = self.pinned_todos();
         let result = tokio::select! {
             biased;
             _ = cancel_rx => {
@@ -632,6 +633,7 @@ impl EffectExecutor for TurnExecutor {
                 model.as_ref(),
                 self.limits,
                 self.compaction.keep_recent,
+                &todos,
                 &tx,
                 obs,
             ) => r,

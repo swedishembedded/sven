@@ -134,9 +134,14 @@ request itself.
    produces the summary. Its text deltas go to a throwaway channel so they
    never reach the observation plane as if the agent had said them.
 4. `finish_compaction` rebuilds the history as
-   `[system, user(task), assistant(summary), ...kept tail]`. The task is the
-   first user message; it is kept verbatim when it was among the summarized
-   messages, so a summary is never the only record of what was asked.
+   `[system, user(task), assistant(summary + todo list), ...kept tail]`. The
+   task is the first user message; it is kept verbatim when it was among the
+   summarized messages, so a summary is never the only record of what was
+   asked. The todo list (the `todo` tool's state, which the conversation store
+   also holds as structured state) is appended to the summary message
+   verbatim - ids, statuses and contents as the tool last reported them - and
+   is never left to the summariser. The goal and the todo list therefore
+   survive every compaction intact.
 5. The thread is replaced in the `ThreadStore` and the in-flight turn
    continues with the smaller history immediately.
 
@@ -155,8 +160,8 @@ the budget, or when the summarization call fails or returns empty text:
 - Drop all non-system messages except the last `compaction_keep_recent`
   (again adjusted to a clean tool-group boundary).
 - Prepend a canned assistant notice telling the model that earlier history was
-  dropped, followed by the first user message (the task) unless it is already
-  in the kept tail.
+  dropped (with the todo list verbatim), followed by the first user message
+  (the task) unless it is already in the kept tail.
 - No model call - always succeeds regardless of session size.
 - Reported as `CompactionStrategyUsed::Emergency`.
 

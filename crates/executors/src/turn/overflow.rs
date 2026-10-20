@@ -53,6 +53,7 @@ impl Request {
         model: &dyn ModelProvider,
         limits: TurnLimits,
         keep_recent: usize,
+        todos: &[sven_vocab::TodoItem],
         tx: &mpsc::Sender<UiEvent>,
         obs: &ObservationSink,
     ) -> anyhow::Result<StreamedTurn> {
@@ -73,7 +74,7 @@ impl Request {
                 ));
                 let mut shrunk = again.messages;
                 let system = shrunk.first().filter(|m| m.role == Role::System).cloned();
-                sven_turn::emergency_compact(&mut shrunk, system, keep_recent);
+                sven_turn::emergency_compact(&mut shrunk, system, keep_recent, todos);
                 Request {
                     messages: shrunk,
                     ..again

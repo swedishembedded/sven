@@ -13,6 +13,15 @@ use tokio::sync::mpsc;
 use super::TurnExecutor;
 
 impl TurnExecutor {
+    /// The todo list the agent keeps outside the conversation, which every
+    /// compaction puts back verbatim.
+    pub(super) fn pinned_todos(&self) -> Vec<sven_vocab::TodoItem> {
+        self.store
+            .lock()
+            .map(|store| store.todos().to_vec())
+            .unwrap_or_default()
+    }
+
     /// Compact `messages` for `thread_id`, write the result back to the
     /// shared store, and return it so the in-flight turn continues with the
     /// smaller history immediately (no need to wait for the next turn).
@@ -49,6 +58,10 @@ impl TurnExecutor {
             return messages;
         };
         let tokens_before = plan.tokens_before;
+        // The goal (the first user message) and the todo list are state the
+        // agent keeps outside the conversation: they go back in verbatim.
+        let todos = self.pinned_todos();
+        let plan = plan.with_todos(&todos);
 
         let budget =
             sven_model::budget::effective_input_budget(context_window, configured_max_output);
@@ -86,6 +99,7 @@ impl TurnExecutor {
                         &mut fallback,
                         plan.system_msg,
                         self.compaction.keep_recent,
+                        &todos,
                     );
                     (fallback, CompactionStrategyUsed::Emergency)
                 }
@@ -99,6 +113,7 @@ impl TurnExecutor {
                 &mut fallback,
                 plan.system_msg,
                 self.compaction.keep_recent,
+                &todos,
             );
             (fallback, CompactionStrategyUsed::Emergency)
         };

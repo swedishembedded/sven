@@ -42,6 +42,7 @@ pub mod session_handles;
 pub mod supervisor;
 pub mod task_tool;
 pub mod tool_discovery;
+mod tool_events;
 #[cfg(feature = "android")]
 pub mod ui_test_dispatch;
 
