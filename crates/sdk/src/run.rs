@@ -116,6 +116,7 @@ impl CancelToken {
 #[derive(Clone, Debug, Default)]
 pub struct RunOptions {
     pub(crate) cancel: Option<CancelToken>,
+    pub(crate) suspend: Option<CancelToken>,
     pub(crate) deadline: Option<Duration>,
     pub(crate) max_output_tokens: Option<u64>,
     pub(crate) decoding: sven_turn::Decoding,
@@ -132,6 +133,17 @@ impl RunOptions {
     #[must_use]
     pub fn cancel(mut self, token: CancelToken) -> Self {
         self.cancel = Some(token);
+        self
+    }
+
+    /// Suspends a harness run when `token` is cancelled, as a deadline would:
+    /// the run stops where it rests, has no verdict, and leaves a checkpoint
+    /// a resume continues ([`RunConclusion::Timeout`]). Use it for a host's
+    /// own request to stop (a signal) when the work should be resumable;
+    /// [`Self::cancel`] instead finishes a harness as failed `cancelled`.
+    #[must_use]
+    pub fn suspend_on(mut self, token: CancelToken) -> Self {
+        self.suspend = Some(token);
         self
     }
 

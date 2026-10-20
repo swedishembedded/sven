@@ -141,6 +141,7 @@ impl Production {
                 record: args.record.is_some(),
                 trajectory: args.trajectory.is_some(),
                 progress,
+                suspend: Some(suspend_on_signal()),
             },
         })
     }
@@ -303,4 +304,45 @@ fn read_line() -> String {
     let mut line = String::new();
     let _ = std::io::stdin().lock().read_line(&mut line);
     line
+}
+
+/// A token that fires on the first SIGINT or SIGTERM, so the run suspends
+/// where it rests and leaves a checkpoint (`--checkpoint-out`) that `sven
+/// harness resume` continues, instead of dying with its work.
+#[cfg(unix)]
+fn suspend_on_signal() -> sven_sdk::CancelToken {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let token = sven_sdk::CancelToken::new();
+    let fired = token.clone();
+    // Registered here, not in the task, so a signal that arrives right after
+    // the run starts is not lost to the default action.
+    let (mut term, mut int) = match (
+        signal(SignalKind::terminate()),
+        signal(SignalKind::interrupt()),
+    ) {
+        (Ok(term), Ok(int)) => (term, int),
+        (term, int) => {
+            let reason = term.err().or(int.err()).map(|e| e.to_string());
+            eprintln!(
+                "[sven:harness] warning: cannot catch SIGINT/SIGTERM ({}); a signal will end the run without a checkpoint",
+                reason.unwrap_or_default()
+            );
+            return token;
+        }
+    };
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
+        }
+        eprintln!("[sven:harness] interrupted: suspending the run");
+        fired.cancel();
+    });
+    token
+}
+
+#[cfg(not(unix))]
+fn suspend_on_signal() -> sven_sdk::CancelToken {
+    sven_sdk::CancelToken::new()
 }

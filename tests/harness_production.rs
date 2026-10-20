@@ -47,6 +47,8 @@ struct Server {
 }
 
 enum Turn {
+    /// Holds the connection open without answering until the test ends.
+    Stall,
     Calls(Vec<(&'static str, Value)>),
     Text(&'static str),
 }
@@ -104,6 +106,10 @@ fn answer(mut stream: TcpStream, script: &[Turn], next: &AtomicUsize, log: &Mute
         }
     }
     let n = next.fetch_add(1, Ordering::SeqCst);
+    if matches!(script.get(n), Some(Turn::Stall)) {
+        std::thread::sleep(std::time::Duration::from_secs(120));
+        return;
+    }
     let mut events = Vec::new();
     match script.get(n) {
         Some(Turn::Calls(calls)) => {
@@ -176,13 +182,18 @@ impl Setup {
 
     /// `sven harness run` of the sample as a coding run on the repo.
     fn command(&self, server: &Server) -> Command {
+        self.subcommand("run", &sample(), server)
+    }
+
+    /// `sven harness <subcommand> <harness>` as a coding run on the repo.
+    fn subcommand(&self, subcommand: &str, harness: &Path, server: &Server) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_sven"));
         cmd.current_dir(self.scratch.path())
             .env("HOME", self.scratch.path())
             .env("XDG_CONFIG_HOME", self.scratch.path())
             .env_remove("SVEN_MODEL")
-            .args(["harness", "run"])
-            .arg(sample())
+            .args(["harness", subcommand])
+            .arg(harness)
             .args(["--toolset", "coding", "--workspace"])
             .arg(self.repo.path())
             .args([
@@ -568,4 +579,63 @@ fn a_workflow_gate_runs_a_real_command_with_the_coding_toolset() {
     let out = run(&mut swapped);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert_eq!(report(&out)["output"], json!({ "note": "created ok.txt" }));
+}
+
+fn coding_resume() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/harness/coding-resume")
+}
+
+#[cfg(unix)]
+#[test]
+fn a_terminated_coding_run_leaves_a_checkpoint_that_resume_completes() {
+    use std::process::Stdio;
+
+    let setup = setup();
+    let stalled = serve(vec![Turn::Stall]);
+    let checkpoint = setup.out("checkpoint.json");
+    let child = setup
+        .subcommand("run", &coding_resume(), &stalled)
+        .args(["--approvals", "auto", "--checkpoint-out"])
+        .arg(&checkpoint)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("sven starts");
+
+    // The model call is in flight once the request has reached the
+    // (stalled) server.
+    while stalled.seen.lock().unwrap().requests == 0 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let status = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let out = child.wait_with_output().expect("sven exits");
+    assert_eq!(
+        code(&out),
+        3,
+        "a terminated run is suspended: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(report(&out)["status"], "suspended");
+    assert!(checkpoint.is_file(), "the signal left a checkpoint");
+    assert!(!setup.repo.path().join("notes.txt").exists());
+
+    // Resume under a model that now answers.
+    let answering = serve(vec![
+        Turn::Calls(vec![write("notes.txt", "hello")]),
+        Turn::Text("done"),
+    ]);
+    let out = run(setup
+        .subcommand("resume", &coding_resume(), &answering)
+        .args(["--approvals", "auto", "--checkpoint"])
+        .arg(&checkpoint));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(report(&out)["output"], json!({"status": "written"}));
+    assert_eq!(
+        std::fs::read_to_string(setup.repo.path().join("notes.txt")).unwrap(),
+        "hello"
+    );
 }

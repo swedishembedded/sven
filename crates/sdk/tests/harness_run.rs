@@ -318,6 +318,48 @@ async fn a_bounded_run_checkpoints_and_resumes_under_the_same_program() {
 }
 
 #[tokio::test]
+async fn a_run_suspended_by_the_host_leaves_a_checkpoint_a_resume_completes() {
+    let (started_tx, started_rx) = oneshot::channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let engine = gated_engine(started_tx, Arc::clone(&release));
+    let harness = engine.load_harness_from_str(GATED).expect("loads");
+
+    let mut run = harness.start(json!({})).expect("starts");
+    let stop = sven_sdk::CancelToken::new();
+    let token = stop.clone();
+    let worker = tokio::spawn(async move {
+        // No deadline: the host's own request (a signal, say) suspends the
+        // run where it rests, unlike a cancel, which finishes it failed.
+        let outcome = run
+            .execute(RunOptions::new().suspend_on(token))
+            .await
+            .expect("the run stops on the request");
+        (outcome, run.checkpoint())
+    });
+
+    started_rx.await.expect("the run reached its tool step");
+    stop.cancel();
+    let (outcome, checkpoint) = worker.await.expect("the worker ends");
+
+    assert_eq!(outcome.conclusion, RunConclusion::Timeout);
+    assert!(outcome.result.is_none(), "no verdict: {:?}", outcome.result);
+    let checkpoint = checkpoint.expect("a suspension leaves a checkpoint");
+
+    release.notify_waiters();
+    let outcome = harness
+        .resume(checkpoint)
+        .expect("resumes")
+        .execute(RunOptions::new())
+        .await
+        .expect("the run ends");
+    assert!(
+        matches!(&outcome.result, Some(Ok(_))),
+        "the resumed run completes: {:?}",
+        outcome.result
+    );
+}
+
+#[tokio::test]
 async fn a_run_streams_its_lifecycle_events() {
     use sven_vocab::{HarnessEvent, SessionEvent};
 

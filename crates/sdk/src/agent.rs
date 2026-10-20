@@ -328,12 +328,11 @@ impl Agent {
         let mut spent: u64 = 0;
         loop {
             let attempt_bounds = RunOptions {
-                cancel: bounds.cancel.clone(),
                 deadline: bounds.deadline.map(|d| d.saturating_sub(started.elapsed())),
                 max_output_tokens: bounds
                     .max_output_tokens
                     .map(|max| max.saturating_sub(spent)),
-                decoding: bounds.decoding,
+                ..bounds.clone()
             };
             let outcome = self
                 .run(Entry::Message(message.clone()), &options, &attempt_bounds)

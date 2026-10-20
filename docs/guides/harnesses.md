@@ -256,6 +256,8 @@ duration_ms, checkpoint
 
 `status` is `completed`, `failed`, `cancelled` or `suspended`. A suspended run
 without `--checkpoint-out` prints a note saying its checkpoint was dropped.
+SIGINT and SIGTERM suspend a `--toolset coding` run the same way: the run stops
+where it rests, exits 3 and leaves its checkpoint for `harness resume`.
 `test` and `validate` print `PASS`/`FAIL`/`SKIP` and `OK`/`INVALID` lines;
 `--json` prints one array of reports.
 

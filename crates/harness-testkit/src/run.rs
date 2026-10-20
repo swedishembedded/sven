@@ -196,6 +196,9 @@ pub struct EngineRun {
     /// Called with each trace record as the run produces it, so a long run
     /// can report progress while it is still going.
     pub progress: Option<ProgressFn>,
+    /// Suspends the run, leaving a checkpoint, once this token is
+    /// cancelled (a host's signal handler, say).
+    pub suspend: Option<sven_sdk::CancelToken>,
 }
 
 /// A trace observer; see [`EngineRun::progress`].
@@ -227,6 +230,7 @@ pub async fn run_on_engine(
         Drive {
             safety: None,
             progress: request.progress.clone(),
+            suspend: request.suspend.clone(),
             cancel_when: None,
         },
     )
@@ -261,6 +265,7 @@ pub async fn resume_on_engine(
         Drive {
             safety: None,
             progress: request.progress.clone(),
+            suspend: request.suspend.clone(),
             cancel_when: None,
         },
     )
@@ -368,6 +373,7 @@ impl Prepared {
             Drive {
                 safety: Some(SAFETY_LIMIT),
                 progress: None,
+                suspend: None,
                 cancel_when: request.bounds.cancel_on_tool_start.clone().map(|tool| {
                     let books = Arc::clone(&self.books);
                     Box::new(move || books.invoked_names().contains(&tool)) as Condition
@@ -405,6 +411,8 @@ struct Drive {
     safety: Option<Duration>,
     /// Told of each trace record as it is produced.
     progress: Option<ProgressFn>,
+    /// Suspends the run when cancelled.
+    suspend: Option<sven_sdk::CancelToken>,
     /// Polled while the run goes; the run is cancelled once it holds.
     cancel_when: Option<Condition>,
 }
@@ -460,6 +468,9 @@ async fn drive_run(
     }
     if let Some(tokens) = bounds.max_output_tokens {
         options = options.max_output_tokens(tokens);
+    }
+    if let Some(token) = drive.suspend {
+        options = options.suspend_on(token);
     }
     let timer = bounds.cancel_after_ms.map(|ms| {
         let token = cancel.clone();

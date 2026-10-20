@@ -193,10 +193,13 @@ sven configuration or environment is read.
 Run options (`run` and `resume`): `--input JSON` or `--input-file FILE`,
 `--case FILE`, `--model-fixture FILE`, `--tool-fixture FILE` (repeatable),
 `--workspace DIR`, `--model SPEC` with `--model-endpoint URL`,
-`--toolset none` (the only value), `--seed N`, `--timeout SECS`,
+`--toolset none|coding` (`coding` needs `--workspace`, `--model`, `--model-endpoint` and `--approvals auto|deny|ask`; also `--allow-capability NAME` and `--api-key-file FILE`), `--seed N`, `--timeout SECS`,
 `--max-output-tokens N`, `--trace FILE` (JSONL), `--record FILE`,
 `--trajectory FILE`, `--checkpoint-out FILE`, `--json` (one JSON document on
 stdout and nothing else) and `--quiet` (no `[sven:harness]` progress lines).
+A coding run (`--toolset coding`) that receives SIGINT or SIGTERM suspends where
+it rests (exit 3) and, with `--checkpoint-out`, leaves a checkpoint that `harness resume`
+continues.
 Details: [Harnesses](harnesses.md).
 
 ### Servers and teams

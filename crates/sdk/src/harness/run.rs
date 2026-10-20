@@ -384,6 +384,7 @@ impl HarnessRun {
         let mut idle_captures: u32 = 0;
         let mut last_processed: u64 = 0;
         let cancel = bounds.cancel.clone().unwrap_or_default();
+        let suspend = bounds.suspend.clone().unwrap_or_default();
         let deadline = tokio::time::sleep(bounds.deadline.unwrap_or(Duration::MAX / 4));
         tokio::pin!(deadline);
         // How long a stopped run may take to wind down before it is left.
@@ -409,6 +410,11 @@ impl HarnessRun {
                     () = cancel.cancelled(), if stopped.is_none() => {
                         stopped = Some(RunConclusion::Cancelled);
                         settle_cancel(&session.handle, &abort_slot, wind_down.as_mut()).await;
+                    }
+                    () = suspend.cancelled(), if stopped.is_none() && bounds.suspend.is_some() => {
+                        stopped = Some(RunConclusion::Timeout);
+                        session.runtime.cancel();
+                        wind_down.as_mut().reset(tokio::time::Instant::now() + WIND_DOWN);
                     }
                     () = &mut deadline, if stopped.is_none() && bounds.deadline.is_some() => {
                         stopped = Some(RunConclusion::Timeout);
