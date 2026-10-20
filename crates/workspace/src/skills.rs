@@ -364,10 +364,20 @@ fn scan_skills_dir(dir: &Path, source: &str) -> Vec<SkillInfo> {
 /// Returns the directories in **root-first** order so callers can load them
 /// lowest-precedence first.
 pub(crate) fn ancestor_chain(start: &Path) -> Vec<PathBuf> {
+    ancestor_chain_within(start, None)
+}
+
+/// [`ancestor_chain`], stopping at `ceiling` (inclusive) when `start` is at or
+/// below it. A ceiling that is not an ancestor of `start` changes nothing.
+pub(crate) fn ancestor_chain_within(start: &Path, ceiling: Option<&Path>) -> Vec<PathBuf> {
+    let ceiling = ceiling.filter(|c| start.starts_with(c));
     let mut dirs: Vec<PathBuf> = Vec::new();
     let mut cur = start.to_path_buf();
     loop {
         dirs.push(cur.clone());
+        if ceiling.is_some_and(|c| c == cur) {
+            break;
+        }
         match cur.parent() {
             Some(p) if p != cur => cur = p.to_path_buf(),
             _ => break,
@@ -390,13 +400,25 @@ pub(crate) fn build_sorted_search_dirs(
     project_root: Option<&Path>,
     home: Option<&Path>,
 ) -> Vec<PathBuf> {
+    build_sorted_search_dirs_within(project_root, home, None)
+}
+
+/// [`build_sorted_search_dirs`] with the project's ancestor walk stopped at
+/// `ceiling`. A test that builds a tree in a temp dir passes the temp dir, so
+/// that whatever the machine keeps above it (a real `~/.claude/skills`) is not
+/// discovered.
+pub(crate) fn build_sorted_search_dirs_within(
+    project_root: Option<&Path>,
+    home: Option<&Path>,
+    ceiling: Option<&Path>,
+) -> Vec<PathBuf> {
     let base = project_root
         .map(|p| p.to_path_buf())
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("/"));
 
     let mut all_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    for dir in ancestor_chain(&base) {
+    for dir in ancestor_chain_within(&base, ceiling) {
         all_dirs.insert(dir);
     }
     if let Some(h) = home {
@@ -536,6 +558,17 @@ pub(crate) fn discover_skills_impl(
     home: Option<&Path>,
     include_system: bool,
 ) -> Vec<SkillInfo> {
+    discover_skills_within(project_root, home, include_system, None)
+}
+
+/// [`discover_skills_impl`] with the project's ancestor walk stopped at
+/// `ceiling` (see [`build_sorted_search_dirs_within`]).
+pub(crate) fn discover_skills_within(
+    project_root: Option<&Path>,
+    home: Option<&Path>,
+    include_system: bool,
+    ceiling: Option<&Path>,
+) -> Vec<SkillInfo> {
     // Keyed by command; later insertions (higher-precedence sources) win.
     let mut map: HashMap<String, SkillInfo> = HashMap::new();
     // Track canonical paths already scanned so symlinks (e.g. .cursor → .claude)
@@ -576,7 +609,7 @@ pub(crate) fn discover_skills_impl(
     // order (.agents < .claude < .codex < .cursor < .sven) means .sven/ wins
     // on collision at the same directory depth.  .codex/ is included for
     // compatibility with Codex-based tooling (mirrors Cursor's compat list).
-    for dir in &build_sorted_search_dirs(project_root, home) {
+    for dir in &build_sorted_search_dirs_within(project_root, home, ceiling) {
         let label = dir.to_string_lossy();
         load(
             dir.join(".agents").join("skills"),
@@ -863,12 +896,49 @@ mod tests {
         assert_eq!(command_from_path(root, skill), "sven/implement/research");
     }
 
+    /// Discovery over a tree built in a temp dir, walking no higher than the
+    /// temp dir: whatever the machine keeps above it (a real
+    /// `~/.claude/skills` when TMPDIR is under the home directory) is not seen.
+    fn discover_hermetic(root: &Path) -> Vec<SkillInfo> {
+        discover_skills_within(Some(root), None, false, Some(root))
+    }
+
+    #[test]
+    fn a_ceiling_stops_the_ancestor_walk_and_without_one_it_goes_on() {
+        let tmp = TempDir::new().unwrap();
+        let work = tmp.path().join("work");
+        fs::create_dir_all(&work).unwrap();
+        let above = tmp.path().join(".claude").join("skills");
+        fs::create_dir_all(&above).unwrap();
+        write_skill(&above, "ancestor-skill", "Above the project.", "", "Body.");
+
+        let open = discover_skills_within(Some(&work), None, false, None);
+        assert!(
+            open.iter().any(|s| s.command == "ancestor-skill"),
+            "an ancestor's skills are found by default"
+        );
+        let bounded = discover_skills_within(Some(&work), None, false, Some(&work));
+        assert!(
+            bounded.is_empty(),
+            "a ceiling at the project keeps them out"
+        );
+        let at_tmp = discover_skills_within(Some(&work), None, false, Some(tmp.path()));
+        assert!(
+            at_tmp.iter().any(|s| s.command == "ancestor-skill"),
+            "the ceiling's own dir counts"
+        );
+        // A ceiling that is not above the project is ignored.
+        let elsewhere = TempDir::new().unwrap();
+        let ignored = discover_skills_within(Some(&work), None, false, Some(elsewhere.path()));
+        assert!(ignored.iter().any(|s| s.command == "ancestor-skill"));
+    }
+
     // ── discover_skills ───────────────────────────────────────────────────────
 
     #[test]
     fn discover_skills_empty_dir_returns_empty() {
         let tmp = TempDir::new().unwrap();
-        let result = discover_skills_impl(Some(tmp.path()), None, false);
+        let result = discover_hermetic(tmp.path());
         assert!(result.is_empty());
     }
 
@@ -879,7 +949,7 @@ mod tests {
         fs::create_dir_all(&skills_dir).unwrap();
         write_skill(&skills_dir, "git-workflow", "Git helper.", "", "## Section");
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].command, "git-workflow");
         assert_eq!(skills[0].name, "git-workflow"); // falls back to dir name
@@ -901,7 +971,7 @@ mod tests {
         )
         .unwrap();
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         assert_eq!(skills[0].command, "git-workflow");
         assert_eq!(skills[0].name, "Git Workflow"); // from frontmatter
     }
@@ -915,7 +985,7 @@ mod tests {
         write_skill(&skills_dir, "apple", "A skill.", "", "");
         write_skill(&skills_dir, "mango", "M skill.", "", "");
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         assert_eq!(skills.len(), 3);
         assert_eq!(skills[0].command, "apple");
         assert_eq!(skills[1].command, "mango");
@@ -949,7 +1019,7 @@ mod tests {
             "Impl body.",
         );
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         assert_eq!(skills.len(), 3);
 
         let cmds: Vec<&str> = skills.iter().map(|s| s.command.as_str()).collect();
@@ -971,7 +1041,7 @@ mod tests {
             "Research body.",
         );
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].command, "sven/implement/research");
     }
@@ -995,7 +1065,7 @@ mod tests {
         fs::create_dir_all(&scripts_dir).unwrap();
         fs::write(scripts_dir.join("helper.sh"), "#!/bin/sh\necho hi").unwrap();
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         let cmds: Vec<&str> = skills.iter().map(|s| s.command.as_str()).collect();
         assert!(cmds.contains(&"sven"), "parent skill registered");
         assert!(!cmds.contains(&"sven/scripts"), "scripts/ not a sub-skill");
@@ -1013,7 +1083,7 @@ mod tests {
         fs::create_dir_all(&sven_dir).unwrap();
         write_skill(&sven_dir, "deploy", "Sven version.", "", "Sven body.");
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].description.trim(), "Sven version.");
     }
@@ -1030,7 +1100,7 @@ mod tests {
         );
         fs::write(skill_dir.join("SKILL.md"), big_content).unwrap();
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         assert!(skills.is_empty(), "oversized skill should be skipped");
     }
 
@@ -1047,7 +1117,7 @@ mod tests {
             "Body.",
         );
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         assert!(
             skills.is_empty(),
             "skill with missing binary should be skipped"
@@ -1067,7 +1137,7 @@ mod tests {
             "Body.",
         );
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         assert_eq!(skills.len(), 1);
     }
 
@@ -1121,7 +1191,7 @@ mod tests {
         fs::create_dir_all(&no_skill).unwrap();
         fs::write(no_skill.join("README.md"), "not a skill").unwrap();
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         assert!(skills.is_empty());
     }
 
@@ -1138,7 +1208,7 @@ mod tests {
             "## Usage\n\nDo things.",
         );
 
-        let skills = discover_skills_impl(Some(tmp.path()), None, false);
+        let skills = discover_hermetic(tmp.path());
         let content = &skills[0].content;
         assert!(
             !content.contains("description:"),
