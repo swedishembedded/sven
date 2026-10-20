@@ -446,6 +446,12 @@ pub struct ModelConfig {
     /// Useful for headers or parameters not covered by the standard fields.
     #[serde(default)]
     pub driver_options: serde_json::Value,
+    /// Whether a thinking model reasons before it answers, sent to a `brain`
+    /// server as `chat_template_kwargs.enable_thinking`. Unset (the default)
+    /// sends nothing and the served chat template decides. An explicit
+    /// `driver_options.chat_template_kwargs.enable_thinking` wins over this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_thinking: Option<bool>,
 
     // ── Mock provider ─────────────────────────────────────────────────────────
     /// Path to YAML mock-responses file (used when provider = "mock").
@@ -513,6 +519,7 @@ impl Default for ModelConfig {
             cache_images: true,
             cache_tool_results: true,
             driver_options: serde_json::Value::Null,
+            enable_thinking: None,
             mock_responses_file: None,
             input_modalities: None,
             detection_fallback: None,
@@ -545,9 +552,36 @@ impl ModelConfig {
             "cache_images",
             "cache_tool_results",
             "driver_options",
+            "enable_thinking",
             "mock_responses_file",
             "input_modalities",
         ])
+    }
+
+    /// This configuration with `enable_thinking` carried in `driver_options`
+    /// as `chat_template_kwargs.enable_thinking`, where a brain server reads
+    /// it. A value `driver_options` already holds is kept.
+    #[must_use]
+    pub fn with_thinking_in_driver_options(&self) -> Self {
+        let mut cfg = self.clone();
+        let Some(enabled) = self.enable_thinking else {
+            return cfg;
+        };
+        if !cfg.driver_options.is_object() {
+            cfg.driver_options = serde_json::json!({});
+        }
+        let kwargs = cfg
+            .driver_options
+            .as_object_mut()
+            .expect("driver_options was made an object above")
+            .entry("chat_template_kwargs")
+            .or_insert_with(|| serde_json::json!({}));
+        if let Some(kwargs) = kwargs.as_object_mut() {
+            kwargs
+                .entry("enable_thinking")
+                .or_insert(serde_json::Value::Bool(enabled));
+        }
+        cfg
     }
 }
 

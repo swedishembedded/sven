@@ -182,6 +182,7 @@ model:
 
   # Provider-specific options forwarded as-is to the driver.
   # driver_options: {}
+  # enable_thinking: false   # brain: sent as chat_template_kwargs.enable_thinking; unset sends nothing
 
   # Input modalities the model accepts: any of text, image, audio. Declare
   # them for a self-hosted endpoint the catalog does not know.
@@ -563,6 +564,7 @@ Controls which language model sven talks to and how.
 | `max_input_tokens` | - | Cap on the input side of the window before compaction is forced |
 | `temperature` | `0.2` | Sampling temperature (0.0-2.0) |
 | `driver_options` | - | Provider-specific options forwarded to the driver |
+| `enable_thinking` | unset | `brain` only: sent as `chat_template_kwargs.enable_thinking`; unset sends nothing and the served template decides |
 | `input_modalities` | the driver's answer | Any of `text`, `image`, `audio`; declares what a self-hosted endpoint accepts |
 | `azure_resource`, `azure_deployment`, `azure_api_version` | - | Azure OpenAI endpoint; the deployment defaults to `name` |
 | `aws_region` | - | AWS Bedrock region (also `AWS_DEFAULT_REGION`) |

@@ -344,6 +344,16 @@ impl ModelProvider for ConfigBoundedProvider {
 type BuiltProvider = (Box<dyn ModelProvider>, Option<u32>, Option<u32>);
 
 fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
+    // A brain server reads `enable_thinking` from the chat template's keyword
+    // arguments: carry the setting there, explicitly, rather than leave the
+    // served template's default to decide whenever the configuration says.
+    let with_thinking;
+    let cfg = if cfg.provider == "brain" && cfg.enable_thinking.is_some() {
+        with_thinking = cfg.with_thinking_in_driver_options();
+        &with_thinking
+    } else {
+        cfg
+    };
     check_api_key_requirement(cfg)?;
 
     // key() returns a fresh Option<String> on each call so that each match arm

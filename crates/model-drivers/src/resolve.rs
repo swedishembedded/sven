@@ -196,6 +196,7 @@ pub fn resolve_model_cfg(base: &ModelConfig, override_str: &str) -> ModelConfig 
         cfg.max_output_tokens = None;
         cfg.max_input_tokens = None;
         cfg.driver_options = serde_json::Value::Null;
+        cfg.enable_thinking = None;
         cfg.azure_resource = None;
         cfg.azure_deployment = None;
         cfg.azure_api_version = None;
