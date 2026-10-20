@@ -22,7 +22,7 @@ pub use file::{
     classify_attachment, load_attachment, AttachError, AttachFileTool, AttachOptions,
     AttachmentKind, LoadedAttachment,
 };
-pub use file::{EditFileTool, FindFileTool, ReadFileTool, WriteTool};
+pub use file::{EditFileTool, FindFileTool, ReadFileTool, ReadJsonSnapshotTool, WriteTool};
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
 //

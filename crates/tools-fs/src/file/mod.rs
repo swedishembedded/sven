@@ -16,6 +16,7 @@ pub mod attachment;
 pub mod edit_file;
 pub mod find_file;
 pub mod read_file;
+pub mod snapshot;
 pub mod write_file;
 
 #[cfg(feature = "media")]
@@ -28,4 +29,5 @@ pub use attachment::{
 pub use edit_file::EditFileTool;
 pub use find_file::FindFileTool;
 pub use read_file::ReadFileTool;
+pub use snapshot::ReadJsonSnapshotTool;
 pub use write_file::WriteTool;

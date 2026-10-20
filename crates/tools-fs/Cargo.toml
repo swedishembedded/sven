@@ -10,6 +10,7 @@ sven-tool-api = { path = "../tool-api" }
 sven-config   = { path = "../config" }
 sven-hsm      = { path = "../hsm" }
 sven-vocab    = { path = "../vocab" }
+sven-harness-spec = { path = "../harness-spec" }
 sven-model    = { path = "../model" }
 # `media`: image and audio decoding.
 sven-image    = { path = "../image", optional = true }
@@ -21,6 +22,7 @@ async-trait   = { workspace = true }
 regex         = { workspace = true }
 serde         = { workspace = true }
 serde_json    = { workspace = true }
+sha2          = { workspace = true }
 similar       = { workspace = true }
 tempfile      = { workspace = true }
 thiserror     = { workspace = true }
