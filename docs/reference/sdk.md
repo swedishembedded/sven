@@ -308,6 +308,14 @@ match outcome.conclusion {
 }
 ```
 
+A stop from outside says why in the trajectory: the aborted turn is filed as
+`[aborted: <reason>]`. `cancel.cancel_with("repetition stop: ...")` gives the
+reason; a plain `cancel()` reads "run cancelled by the caller", the deadline
+"run deadline reached" and the output-token budget "output-token budget
+reached". Only a person's Ctrl+C in the interactive session reads "turn
+cancelled by user". (When the model had streamed text before it was stopped,
+the trajectory keeps that text without the label.)
+
 A bound that fires interrupts the model call in flight and cancels the turn;
 the agent keeps the history and kernel state it had, so it can be sent to
 again. The tool-round budget is `AgentConfig.max_tool_rounds`; a turn the

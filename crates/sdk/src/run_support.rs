@@ -25,7 +25,13 @@ pub(crate) async fn stop(
     handle: &sven_bootstrap::RuntimeHandle,
     abort_slot: &tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     wind_down: std::pin::Pin<&mut tokio::time::Sleep>,
+    reason: &str,
 ) {
+    // Before the abort is sent: the turn executor reads it when it files the
+    // aborted turn into the conversation, so the trajectory says what ended it.
+    if let Ok(mut store) = handle.conversation_store().lock() {
+        store.set_stop_reason(reason);
+    }
     if let Some(abort) = abort_slot.lock().await.take() {
         let _ = abort.send(());
     }

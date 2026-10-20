@@ -32,6 +32,9 @@ pub type ThreadId = String;
 #[derive(Debug, Default)]
 pub struct ThreadStore {
     threads: HashMap<ThreadId, Vec<Message>>,
+    /// Why the caller is stopping the run, set just before it cancels the
+    /// turn in flight; the turn executor labels the aborted turn with it.
+    stop_reason: Option<String>,
     /// The model's raw argument text, by call id, for tool calls whose
     /// arguments were not valid JSON. The thread holds such a call with `{}`
     /// arguments - history is replayed to providers, and a malformed string
@@ -86,6 +89,17 @@ impl ThreadStore {
     /// turns breaks the prompt-cache invariant.
     pub fn thread(&mut self, id: &str) -> &mut Vec<Message> {
         self.threads.entry(id.to_string()).or_default()
+    }
+
+    /// Notes why the run is being stopped from outside; read once by
+    /// [`Self::take_stop_reason`] when the aborted turn is filed.
+    pub fn set_stop_reason(&mut self, reason: &str) {
+        self.stop_reason = Some(reason.to_string());
+    }
+
+    /// Takes the reason given by [`Self::set_stop_reason`].
+    pub fn take_stop_reason(&mut self) -> Option<String> {
+        self.stop_reason.take()
     }
 
     /// Append a single turn to a thread (creating the thread if needed).

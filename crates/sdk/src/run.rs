@@ -57,6 +57,7 @@ impl std::fmt::Display for RunId {
 #[derive(Clone, Debug)]
 pub struct CancelToken {
     fired: std::sync::Arc<watch::Sender<bool>>,
+    reason: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Default for CancelToken {
@@ -71,12 +72,29 @@ impl CancelToken {
     pub fn new() -> Self {
         Self {
             fired: std::sync::Arc::new(watch::channel(false).0),
+            reason: std::sync::Arc::default(),
         }
     }
 
     /// Cancels every run holding this token.
     pub fn cancel(&self) {
         self.fired.send_replace(true);
+    }
+
+    /// Cancels every run holding this token and says why: the reason labels
+    /// the stop in the run's trajectory (`[aborted: <reason>]`) instead of the
+    /// generic cancellation. The first reason given stays.
+    pub fn cancel_with(&self, reason: impl Into<String>) {
+        if let Ok(mut slot) = self.reason.lock() {
+            slot.get_or_insert_with(|| reason.into());
+        }
+        self.cancel();
+    }
+
+    /// The reason [`Self::cancel_with`] gave, if it was the one that cancelled.
+    #[must_use]
+    pub fn reason(&self) -> Option<String> {
+        self.reason.lock().ok().and_then(|slot| slot.clone())
     }
 
     /// Whether [`Self::cancel`] has been called.

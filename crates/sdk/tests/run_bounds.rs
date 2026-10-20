@@ -42,6 +42,22 @@ impl ModelProvider for Stalls {
     }
 }
 
+/// A model that never says anything.
+struct Silent;
+
+#[async_trait::async_trait]
+impl ModelProvider for Silent {
+    fn name(&self) -> &str {
+        "silent"
+    }
+    fn model_name(&self) -> &str {
+        "silent"
+    }
+    async fn complete(&self, _req: CompletionRequest) -> anyhow::Result<ResponseStream> {
+        Ok(futures::stream::pending().boxed())
+    }
+}
+
 fn engine(provider: Arc<dyn ModelProvider>) -> Engine {
     Engine::builder()
         .model_provider(provider)
@@ -189,4 +205,45 @@ async fn a_run_that_ends_announcing_work_it_did_not_do_is_not_a_success() {
     .agent("agent");
     let outcome = agent.send("fix it").await.expect("an outcome");
     assert_eq!(outcome.conclusion, RunConclusion::StoppedWithoutConclusion);
+}
+
+/// What a stopped run's trajectory says ended it.
+fn marker_in(agent: &sven_sdk::Agent) -> String {
+    serde_json::to_string(&agent.trajectory()).expect("a trajectory serialises")
+}
+
+#[tokio::test]
+async fn a_stop_with_a_reason_is_labelled_with_it_in_the_trajectory() {
+    let mut agent = engine(Arc::new(Silent)).agent("agent");
+    let cancel = CancelToken::new();
+    let trigger = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        trigger.cancel_with("repetition stop: read_file answered identically 3 times");
+    });
+    let outcome = agent
+        .send_with("hi", RunOptions::new().cancel(cancel))
+        .await
+        .expect("an outcome");
+    assert_eq!(outcome.conclusion, RunConclusion::Cancelled);
+    let trajectory = marker_in(&agent);
+    assert!(
+        trajectory.contains("[aborted: repetition stop: read_file answered identically 3 times]"),
+        "{trajectory}"
+    );
+    assert!(!trajectory.contains("cancelled by user"), "{trajectory}");
+}
+
+#[tokio::test]
+async fn a_deadline_stop_says_the_deadline_ended_the_run() {
+    let mut agent = engine(Arc::new(Silent)).agent("agent");
+    agent
+        .send_with("hi", RunOptions::new().deadline(Duration::from_millis(150)))
+        .await
+        .expect("an outcome");
+    let trajectory = marker_in(&agent);
+    assert!(
+        trajectory.contains("[aborted: run deadline reached"),
+        "{trajectory}"
+    );
 }

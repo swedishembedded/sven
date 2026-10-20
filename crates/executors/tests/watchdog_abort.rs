@@ -216,3 +216,58 @@ async fn the_thinking_cap_does_not_abort_a_summarisation_call() {
         "the summary was written, not replaced by the emergency fallback: {events:?}"
     );
 }
+
+/// What the aborted turn was filed as in the conversation.
+async fn cancelled_turn_marker(reason: Option<&str>) -> String {
+    use sven_machines::machines::reactive_agent::CHAT_THREAD;
+    let store = Arc::new(Mutex::new(ThreadStore::new()));
+    let h = harness(
+        Reasoner {
+            thinking_chars: 1,
+            hang: true,
+        },
+        Arc::clone(&store),
+        None,
+    );
+    let mut rx = h.rt.subscribe_observations();
+    h.rt.post(Event::user_message("go")).await;
+    let sender = loop {
+        if let Some(tx) = h.cancel.lock().await.take() {
+            break tx;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    };
+    if let Some(reason) = reason {
+        store.lock().unwrap().set_stop_reason(reason);
+    }
+    let _ = sender.send(());
+    until_ended(&mut rx).await;
+    h.rt.abort();
+    let thread = store.lock().unwrap().snapshot(CHAT_THREAD);
+    thread
+        .iter()
+        .filter_map(|m| match &m.content {
+            sven_model::MessageContent::Text(t) if t.contains("[aborted:") => Some(t.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn a_stop_from_outside_labels_the_aborted_turn_with_its_reason() {
+    let marker = cancelled_turn_marker(Some("repetition stop: same call 3 times")).await;
+    assert!(
+        marker.contains("[aborted: repetition stop: same call 3 times]"),
+        "{marker}"
+    );
+}
+
+#[tokio::test]
+async fn a_persons_cancel_keeps_its_own_label() {
+    let marker = cancelled_turn_marker(None).await;
+    assert!(
+        marker.contains("[aborted: turn cancelled by user]"),
+        "{marker}"
+    );
+}

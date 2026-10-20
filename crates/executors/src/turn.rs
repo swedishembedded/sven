@@ -610,7 +610,15 @@ impl EffectExecutor for TurnExecutor {
         let result = tokio::select! {
             biased;
             _ = cancel_rx => {
-                Err(anyhow::Error::new(AbortedError::by_user("turn cancelled by user")))
+                // A caller that stops the run from outside says why; a
+                // person's Ctrl+C does not.
+                let reason = self
+                    .store
+                    .lock()
+                    .ok()
+                    .and_then(|mut store| store.take_stop_reason())
+                    .unwrap_or_else(|| "turn cancelled by user".to_string());
+                Err(anyhow::Error::new(AbortedError::by_user(reason)))
             }
             r = overflow::Request {
                 messages,

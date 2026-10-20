@@ -608,11 +608,20 @@ impl Agent {
                 biased;
                 () = cancel.cancelled(), if stopped.is_none() => {
                     stopped = Some(RunConclusion::Cancelled);
-                    stop(&bundle.handle, &abort_slot, wind_down.as_mut()).await;
+                    let why = cancel
+                        .reason()
+                        .unwrap_or_else(|| "run cancelled by the caller".to_string());
+                    stop(&bundle.handle, &abort_slot, wind_down.as_mut(), &why).await;
                 }
                 () = &mut deadline, if stopped.is_none() && bounds.deadline.is_some() => {
                     stopped = Some(RunConclusion::Timeout);
-                    stop(&bundle.handle, &abort_slot, wind_down.as_mut()).await;
+                    stop(
+                        &bundle.handle,
+                        &abort_slot,
+                        wind_down.as_mut(),
+                        "run deadline reached",
+                    )
+                    .await;
                 }
                 () = &mut wind_down, if stopped.is_some() => break,
                 event = observations.recv() => match event {
@@ -629,7 +638,13 @@ impl Agent {
                                     && bounds.max_output_tokens.is_some_and(|max| spent >= max)
                                 {
                                     stopped = Some(RunConclusion::BudgetExhausted);
-                                    stop(&bundle.handle, &abort_slot, wind_down.as_mut()).await;
+                                    stop(
+                                        &bundle.handle,
+                                        &abort_slot,
+                                        wind_down.as_mut(),
+                                        "output-token budget reached",
+                                    )
+                                    .await;
                                 }
                             }
                             SessionEvent::TextComplete(text) => {
