@@ -216,7 +216,7 @@ test/harness/samples:
 
 ## test/harness/cli - the `sven harness` command line
 test/harness/cli:
-	$(HARNESS_TEST) -p sven --test harness_cli --test harness_production --test harness_views -- --test-threads=4
+	$(HARNESS_TEST) -p sven --test harness_cli --test harness_production --test harness_views --test harness_isolation -- --test-threads=4
 
 ## test/harness/local-model - OPT-IN: the live-local case of the ticket-routing sample against a server you already run
 ##   Needs ENDPOINT=<url> (and optionally MODEL=<provider/name>) on the make command

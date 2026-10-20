@@ -5,7 +5,8 @@
 //! [`MockProvider`] (a fixed echo responder) and [`YamlMockProvider`] (a
 //! YAML-scripted responder used by end-to-end and bats tests), plus
 //! [`StallingMockProvider`], which goes quiet on purpose to exercise the
-//! turn watchdogs.
+//! turn watchdogs, and [`CallbackProvider`], whose reply is a function of the
+//! request.
 //!
 //! A crate of its own so that crates which only need the `ModelProvider`
 //! trait + request/response types do not also pull in this test
@@ -17,11 +18,13 @@
 //! arm behind a feature flag would make this an optional/dev-only
 //! dependency of sven-model-drivers.
 
+mod callback;
 mod mock;
 mod recovery;
 mod stalling;
 mod yaml_mock;
 
+pub use callback::CallbackProvider;
 pub use mock::{FailingMockProvider, MockProvider, ScriptedMockProvider};
 pub use recovery::{RecoverCall, RecoverRule};
 pub use stalling::{StallMode, StallingMockProvider};
