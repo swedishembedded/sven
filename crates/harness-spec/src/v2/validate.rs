@@ -17,7 +17,10 @@ use std::collections::BTreeSet;
 
 use super::spec::{ArtifactCheck, Check, GateDef, WorkflowSpec};
 use crate::error::HarnessError;
-use crate::spec::{GATE_TOOL, MAX_GATE_TIMEOUT_SECS};
+use crate::spec::{
+    IOType, IterateSource, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT, MAX_ITERATIONS_LIMIT,
+    RESERVED_TOOLS,
+};
 use crate::validate::is_workspace_relative;
 
 /// The most repair attempts one task may earn. The attempts are unrolled
@@ -105,9 +108,13 @@ fn validate_agent_tools(w: &WorkflowSpec) -> Result<(), HarnessError> {
             .map(|t| (format!("task `{}`: tools", t.name), t.tools.as_ref())),
     );
     for (place, list) in lists {
-        if list.into_iter().flatten().any(|tool| tool == GATE_TOOL) {
+        if let Some(tool) = list
+            .into_iter()
+            .flatten()
+            .find(|tool| RESERVED_TOOLS.contains(&tool.as_str()))
+        {
             return Err(invalid(format!(
-                "{place}: `{GATE_TOOL}` is reserved to gates and cannot be an agent tool"
+                "{place}: `{tool}` is reserved to the harness's own steps and cannot be an agent tool"
             )));
         }
     }
@@ -263,6 +270,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
                 Check::Metric(m) => check_metric_ref(w, &place, &m.metric)?,
             }
         }
+        validate_loop(w, task, &place)?;
         if let Some(repair) = &task.repair {
             if task.verify.is_empty() && task.outputs.is_empty() {
                 return Err(invalid(format!(
@@ -280,7 +288,85 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
     Ok(())
 }
 
+/// `for_each` and `until`: one at most, a bounded count, a source that exists.
+fn validate_loop(
+    w: &WorkflowSpec,
+    task: &super::spec::TaskSpec,
+    place: &str,
+) -> Result<(), HarnessError> {
+    if task.for_each.is_some() && task.until.is_some() {
+        return Err(invalid(format!(
+            "{place}: a task loops one way, `for_each` or `until`, not both"
+        )));
+    }
+    if let Some(each) = &task.for_each {
+        if let Some(max) = each.max_items {
+            if max == 0 || max > MAX_ITEMS_LIMIT {
+                return Err(invalid(format!(
+                    "{place}: for_each.max_items {max} is outside 1..={MAX_ITEMS_LIMIT}"
+                )));
+            }
+        }
+        match &each.source {
+            IterateSource::Json(json) => {
+                if !is_workspace_relative(&json.file) || json.file.contains("{{") {
+                    return Err(invalid(format!(
+                        "{place}: for_each source file `{}` must be a literal path inside the \
+                         workspace",
+                        json.file
+                    )));
+                }
+                if !json.pointer.is_empty() && !json.pointer.starts_with('/') {
+                    return Err(invalid(format!(
+                        "{place}: for_each pointer `{}` must be an RFC 6901 pointer such as /items",
+                        json.pointer
+                    )));
+                }
+            }
+            IterateSource::Input(name) => match w.inputs.as_ref().and_then(|i| i.get(name)) {
+                Some(input) if input.ty == IOType::Json => {}
+                Some(_) => {
+                    return Err(invalid(format!(
+                        "{place}: for_each reads input `{name}`, which must be declared `json` \
+                         (an array)"
+                    )))
+                }
+                None => {
+                    return Err(invalid(format!(
+                        "{place}: for_each reads input `{name}`, which is not declared"
+                    )))
+                }
+            },
+        }
+        if each.id.as_deref().is_some_and(str::is_empty) {
+            return Err(invalid(format!(
+                "{place}: for_each.id names a field; it is empty"
+            )));
+        }
+    }
+    if let Some(until) = &task.until {
+        check_metric_ref(w, &format!("{place}: until"), &until.metric)?;
+        if until.max_iterations == 0 || until.max_iterations > MAX_ITERATIONS_LIMIT {
+            return Err(invalid(format!(
+                "{place}: until.max_iterations {} is outside 1..={MAX_ITERATIONS_LIMIT}",
+                until.max_iterations
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn validate_success(w: &WorkflowSpec) -> Result<(), HarnessError> {
+    if w.success
+        .work_items
+        .as_ref()
+        .is_some_and(|i| i.all_completed)
+        && !w.workflow.iter().any(|t| t.for_each.is_some())
+    {
+        return Err(invalid(
+            "success.work_items.all_completed needs a task with `for_each`".into(),
+        ));
+    }
     for name in &w.success.gates {
         if !w.gates.contains_key(name) {
             return Err(unknown_gate(w, "success.gates", name));
@@ -306,6 +392,9 @@ fn validate_use(w: &WorkflowSpec) -> Result<(), HarnessError> {
             .filter_map(|r| split_metric(r).map(|(g, _)| g)),
     );
     for task in &w.workflow {
+        if let Some(until) = &task.until {
+            used.extend(split_metric(&until.metric).map(|(g, _)| g));
+        }
         for check in &task.verify {
             match check {
                 Check::Gate(name) => {
@@ -332,6 +421,7 @@ fn validate_use(w: &WorkflowSpec) -> Result<(), HarnessError> {
 pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<&'static str> {
     let mut needed: BTreeSet<&'static str> =
         w.agent.profile.capabilities().iter().copied().collect();
+    let mut reads_files = false;
     let mut note = |gate: Option<&GateDef>| match gate {
         Some(GateDef::Command(_)) => {
             needed.insert("ExecuteShell");
@@ -344,6 +434,14 @@ pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<&'static str> {
         if !task.outputs.is_empty() {
             note(None);
         }
+        if let Some(until) = &task.until {
+            note(split_metric(&until.metric).and_then(|(g, _)| w.gates.get(g)));
+            note(None);
+        }
+        reads_files |= task
+            .for_each
+            .as_ref()
+            .is_some_and(|each| matches!(each.source, IterateSource::Json(_)));
         for check in &task.verify {
             match check {
                 Check::Gate(name) => note(w.gates.get(name)),
@@ -361,6 +459,9 @@ pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<&'static str> {
     for reference in w.success.metrics.keys() {
         note(split_metric(reference).and_then(|(g, _)| w.gates.get(g)));
         note(None);
+    }
+    if reads_files {
+        needed.insert("ReadFile");
     }
     needed
 }

@@ -59,6 +59,34 @@ pub(super) struct Scope<'a> {
     pub tasks: &'a [String],
     /// The failure a repair prompt describes.
     pub failure: Option<&'a FailureView>,
+    /// Whether `item`, `item_id` and `item_index` exist here (inside a
+    /// `for_each` task).
+    pub item: bool,
+    /// Whether `iteration` exists here (inside an `until` task).
+    pub iteration: bool,
+}
+
+impl<'a> Scope<'a> {
+    /// A scope over `inputs` and the outputs of `tasks`, outside any loop and
+    /// any repair prompt.
+    pub fn new(place: String, inputs: Option<&'a BTreeSet<String>>, tasks: &'a [String]) -> Self {
+        Self {
+            place,
+            inputs,
+            tasks,
+            failure: None,
+            item: false,
+            iteration: false,
+        }
+    }
+
+    /// The same scope inside a loop of the given kind.
+    #[must_use]
+    pub fn in_loop(mut self, item: bool, iteration: bool) -> Self {
+        self.item = item;
+        self.iteration = iteration;
+        self
+    }
 }
 
 impl Scope<'_> {
@@ -112,11 +140,30 @@ impl Scope<'_> {
                 Path::parse(&format!("facts.{}", output_fact(task))).map(PathRewrite::Path)
             }
             "failure" => self.map_failure(path),
+            root @ ("item" | "item_id" | "item_index") => {
+                if !self.item {
+                    return Err(self.invalid(path, "is only available inside a `for_each` task"));
+                }
+                if root != "item" && segments.len() > 1 {
+                    return Err(self.invalid(path, &format!("`{root}` has no fields")));
+                }
+                Path::parse(&format!("facts.{}", segments.join("."))).map(PathRewrite::Path)
+            }
+            "iteration" => {
+                if !self.iteration {
+                    return Err(self.invalid(path, "is only available inside an `until` task"));
+                }
+                if segments.len() > 1 {
+                    return Err(self.invalid(path, "`iteration` is the number of the pass, from 1"));
+                }
+                Path::parse("facts.iteration").map(PathRewrite::Path)
+            }
             other => Err(self.invalid(
                 path,
                 &format!(
-                    "starts with `{other}`; a workflow reads `inputs.<name>` and \
-                     `tasks.<name>.output` (`facts` and `steps` are internal)"
+                    "starts with `{other}`; a workflow reads `inputs.<name>`, \
+                     `tasks.<name>.output` and, inside loops, `item`, `item_id`, \
+                     `item_index` and `iteration` (`facts` and `steps` are internal)"
                 ),
             )),
         }

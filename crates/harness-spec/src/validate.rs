@@ -29,8 +29,8 @@
 use crate::error::HarnessError;
 use crate::expr::{Expr, Template};
 use crate::spec::{
-    HarnessSpec, StepSpec, GATE_TOOL, MAX_GATE_TIMEOUT_SECS, SUPPORTED_API_VERSION,
-    WORKFLOW_API_VERSION, WORKFLOW_PRIMITIVES,
+    HarnessSpec, IterateSource, StepSpec, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT,
+    MAX_ITERATIONS_LIMIT, RESERVED_TOOLS, SUPPORTED_API_VERSION, WORKFLOW_API_VERSION,
 };
 
 /// The run-data namespaces a path may root at.
@@ -100,7 +100,7 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
     }
     for (id, step) in &spec.steps {
         let only_v2 = match step {
-            StepSpec::Gate(_) => Some(format!("primitive `{}`", WORKFLOW_PRIMITIVES[0])),
+            StepSpec::Gate(_) | StepSpec::Iterate(_) => Some(format!("primitive `{}`", step.key())),
             StepSpec::Delegate(d) if d.propagate_failure => {
                 Some("`propagate_failure` on a delegate".to_string())
             }
@@ -219,13 +219,70 @@ fn validate_step_shape(id: &str, step: &StepSpec) -> Result<(), HarnessError> {
                 "step `{id}`: parallel needs at least one branch"
             )));
         }
-        StepSpec::Agent(a) if a.tools.iter().flatten().any(|t| t == GATE_TOOL) => {
-            return Err(HarnessError::Invalid(format!(
-                "step `{id}`: `{GATE_TOOL}` is reserved to `gate` steps and cannot be an agent tool"
-            )));
+        StepSpec::Agent(a) => {
+            if let Some(tool) = a
+                .tools
+                .iter()
+                .flatten()
+                .find(|t| RESERVED_TOOLS.contains(&t.as_str()))
+            {
+                return Err(HarnessError::Invalid(format!(
+                    "step `{id}`: `{tool}` is reserved to the harness's own steps and cannot be \
+                     an agent tool"
+                )));
+            }
         }
         StepSpec::Gate(g) => validate_gate_shape(id, g)?,
+        StepSpec::Iterate(i) => validate_iterate_shape(id, i)?,
         _ => {}
+    }
+    Ok(())
+}
+
+/// An `iterate` step repeats exactly one way and within a stated bound.
+fn validate_iterate_shape(
+    id: &str,
+    iterate: &crate::spec::IterateStepSpec,
+) -> Result<(), HarnessError> {
+    let bad = |why: &str| HarnessError::Invalid(format!("step `{id}`: {why}"));
+    match (&iterate.for_each, &iterate.until) {
+        (Some(_), Some(_)) | (None, None) => {
+            return Err(bad("an iterate has exactly one of `for_each` or `until`"))
+        }
+        (Some(each), None) => {
+            if each.max_items == 0 || each.max_items > MAX_ITEMS_LIMIT {
+                return Err(bad(&format!(
+                    "max_items must be within 1..={MAX_ITEMS_LIMIT}"
+                )));
+            }
+            match &each.source {
+                IterateSource::Json(json) => {
+                    if !is_workspace_relative(&json.file) {
+                        return Err(bad("the source file must be inside the workspace"));
+                    }
+                    if !json.pointer.is_empty() && !json.pointer.starts_with('/') {
+                        return Err(bad("the source pointer must be an RFC 6901 pointer"));
+                    }
+                }
+                IterateSource::Input(name) if name.is_empty() => {
+                    return Err(bad("the source input needs a name"))
+                }
+                IterateSource::Input(_) => {}
+            }
+            if iterate.on_exhausted.is_some() {
+                return Err(bad("`on_exhausted` belongs to `until`"));
+            }
+        }
+        (None, Some(until)) => {
+            if until.max_iterations == 0 || until.max_iterations > MAX_ITERATIONS_LIMIT {
+                return Err(bad(&format!(
+                    "max_iterations must be within 1..={MAX_ITERATIONS_LIMIT}"
+                )));
+            }
+            if iterate.on_exhausted.is_none() {
+                return Err(bad("an `until` needs `on_exhausted`"));
+            }
+        }
     }
     Ok(())
 }
@@ -315,6 +372,7 @@ fn template_texts(step: &StepSpec) -> Vec<String> {
         | StepSpec::Branch(_)
         | StepSpec::Retry(_)
         | StepSpec::Parallel(_)
+        | StepSpec::Iterate(_)
         | StepSpec::Return(_) => Vec::new(),
     }
 }
@@ -352,6 +410,11 @@ fn successors(step: &StepSpec) -> Vec<String> {
         StepSpec::Delegate(d) => vec![d.then.clone()],
         StepSpec::Transform(t) => vec![t.then.clone()],
         StepSpec::Gate(g) => vec![g.then.clone(), g.on_fail.clone()],
+        StepSpec::Iterate(i) => {
+            let mut out = vec![i.body.clone(), i.then.clone()];
+            out.extend(i.on_exhausted.clone());
+            out
+        }
         // Terminals hand control to nobody.
         StepSpec::Return(_) | StepSpec::Fail(_) => Vec::new(),
     }
@@ -424,6 +487,12 @@ fn required_capability(step: &StepSpec) -> Option<&'static str> {
         StepSpec::Verify(_) => return Some("RunVerifier"),
         StepSpec::Delegate(_) | StepSpec::Parallel(_) => return Some("SpawnChild"),
         StepSpec::Gate(_) => return Some("ExecuteShell"),
+        StepSpec::Iterate(i) => {
+            return match i.for_each.as_ref().map(|each| &each.source) {
+                Some(IterateSource::Json(_)) => Some("ReadFile"),
+                _ => None,
+            }
+        }
         StepSpec::Predict(_)
         | StepSpec::Assign(_)
         | StepSpec::Branch(_)
@@ -474,6 +543,7 @@ fn validate_limits(spec: &HarnessSpec) -> Result<(), HarnessError> {
                 | StepSpec::Parallel(_)
                 | StepSpec::Delegate(_)
                 | StepSpec::Gate(_)
+                | StepSpec::Iterate(_)
         )
     });
     if !runs_away {

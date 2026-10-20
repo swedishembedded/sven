@@ -59,6 +59,26 @@ pub fn harness_event(record: &TraceRecord, step_duration_ms: u64) -> HarnessEven
             condition: *condition,
             selected: selected.clone(),
         },
+        TraceRecord::IterationStarted { step, total } => HarnessEvent::IterationStarted {
+            step: step.clone(),
+            total: *total,
+        },
+        TraceRecord::ItemStarted {
+            step,
+            item,
+            index,
+            attempt,
+        } => HarnessEvent::ItemStarted {
+            step: step.clone(),
+            item: item.clone(),
+            index: *index,
+            attempt: *attempt,
+        },
+        TraceRecord::ItemCompleted { step, item, index } => HarnessEvent::ItemCompleted {
+            step: step.clone(),
+            item: item.clone(),
+            index: *index,
+        },
         TraceRecord::GateEvaluated {
             step,
             passed,

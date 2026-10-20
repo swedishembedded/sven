@@ -220,6 +220,58 @@
         { "$ref": "#/$defs/metric_check" }
       ]
     },
+    "for_each": {
+      "type": "object",
+      "required": ["source"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["json"],
+              "additionalProperties": false,
+              "properties": {
+                "json": {
+                  "type": "object",
+                  "required": ["file", "pointer"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "file": { "type": "string", "minLength": 1, "description": "Workspace-relative JSON file, read once when the loop begins." },
+                    "pointer": { "type": "string", "description": "RFC 6901 pointer to the array." }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["input"],
+              "additionalProperties": false,
+              "properties": {
+                "input": { "$ref": "#/$defs/identifier", "description": "A run input declared json." }
+              }
+            }
+          ]
+        },
+        "id": { "type": "string", "minLength": 1, "description": "The item field that names an item; scalar items name themselves." },
+        "max_items": { "type": "integer", "minimum": 1, "maximum": 10000, "description": "Default 500. A larger collection fails the run." }
+      }
+    },
+    "until": {
+      "type": "object",
+      "required": ["metric", "max_iterations"],
+      "additionalProperties": false,
+      "properties": {
+        "metric": { "$ref": "#/$defs/metric_ref" },
+        "max_iterations": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "eq": { "type": "number" },
+        "ne": { "type": "number" },
+        "gt": { "type": "number" },
+        "gte": { "type": "number" },
+        "lt": { "type": "number" },
+        "lte": { "type": "number" }
+      }
+    },
     "condition": {
       "description": "A path string, !path, or an {all|any|not|eq|ne} object over inputs and task outputs."
     },
@@ -238,6 +290,8 @@
           "uniqueItems": true
         },
         "when": { "$ref": "#/$defs/condition" },
+        "for_each": { "$ref": "#/$defs/for_each" },
+        "until": { "$ref": "#/$defs/until" },
         "follow_ups": {
           "type": "array",
           "description": "Further user turns in the same conversation, each sent only when its condition holds.",
@@ -289,6 +343,12 @@
           "type": "object",
           "propertyNames": { "$ref": "#/$defs/metric_ref" },
           "additionalProperties": { "$ref": "#/$defs/threshold" }
+        },
+        "work_items": {
+          "type": "object",
+          "required": ["all_completed"],
+          "additionalProperties": false,
+          "properties": { "all_completed": { "type": "boolean" } }
         }
       }
     }

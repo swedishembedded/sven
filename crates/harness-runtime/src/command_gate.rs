@@ -155,6 +155,37 @@ impl GateResult {
 }
 
 impl HarnessMachine {
+    /// `true` when `error` says a suspension interrupted the operation and
+    /// the plan is a workflow: a workflow's model turns and verifications
+    /// start again on resume instead of failing the run. (A version 1
+    /// document keeps the retry policy it declares.)
+    pub(super) fn restarts_interrupted(&self, error: &str) -> bool {
+        error == INTERRUPTED_OPERATION
+            && self.run.plan().api_version == sven_harness_spec::WORKFLOW_API_VERSION
+    }
+
+    /// Starts the interrupted step again from its beginning. The aborted
+    /// attempt is not counted against the step or turn budgets: it never
+    /// finished, and a resume should not make a run run out of them.
+    pub(super) fn restart_interrupted(
+        &mut self,
+        run: &mut HarnessRunState,
+        step_id: &str,
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
+        run.counts.steps = run.counts.steps.saturating_sub(1);
+        if matches!(
+            self.run.plan().step(step_id).map(|s| &s.primitive),
+            Some(PlanPrimitive::Predict { .. } | PlanPrimitive::Agent { .. })
+        ) {
+            run.counts.model_turns = run.counts.model_turns.saturating_sub(1);
+        }
+        run.agent = None;
+        run.awaiting = None;
+        run.inflight = None;
+        self.walk_to(run, step_id, ctx)
+    }
+
     /// Starts a gate step: one call of the gate tool, parked in
     /// [`HarnessState::WaitingForTool`].
     pub(super) fn run_gate(

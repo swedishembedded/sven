@@ -407,6 +407,9 @@ impl HarnessMachine {
                 self.complete_step(&mut run, &inflight.step, answer, ctx)
             }
             Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
+                if self.restarts_interrupted(error) {
+                    return self.restart_interrupted(&mut run, &inflight.step, ctx);
+                }
                 self.side_effect_failed(&mut run, error, ctx)
             }
             Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
@@ -438,6 +441,9 @@ impl HarnessMachine {
                 if self.is_gate_step(&inflight.step) {
                     return self.gate_settled(&mut run, &inflight.step, Ok(observation), ctx);
                 }
+                if self.is_iterate_step(&inflight.step) {
+                    return self.snapshot_settled(&mut run, &inflight.step, Ok(observation), ctx);
+                }
                 self.complete_step(&mut run, &inflight.step, observation.clone(), ctx)
             }
             Event::ToolFailed {
@@ -446,6 +452,9 @@ impl HarnessMachine {
             } if Some(done) == inflight.call_id.as_ref() => {
                 if self.is_gate_step(&inflight.step) {
                     return self.gate_settled(&mut run, &inflight.step, Err(error), ctx);
+                }
+                if self.is_iterate_step(&inflight.step) {
+                    return self.snapshot_settled(&mut run, &inflight.step, Err(error), ctx);
                 }
                 self.side_effect_failed(&mut run, error, ctx)
             }
@@ -488,7 +497,12 @@ impl HarnessMachine {
                     ctx,
                 )
             }
-            Event::EffectFailed { error, .. } => self.side_effect_failed(&mut run, error, ctx),
+            Event::EffectFailed { error, .. } => {
+                if self.restarts_interrupted(error) {
+                    return self.restart_interrupted(&mut run, &inflight.step, ctx);
+                }
+                self.side_effect_failed(&mut run, error, ctx)
+            }
             _ => Reaction::Ignored,
         }
     }
@@ -640,6 +654,7 @@ pub(super) fn primitive_word(primitive: &PlanPrimitive) -> &'static str {
         PlanPrimitive::Return { .. } => "return",
         PlanPrimitive::Fail { .. } => "fail",
         PlanPrimitive::Gate { .. } => "gate",
+        PlanPrimitive::Iterate { .. } => "iterate",
     }
 }
 
@@ -670,7 +685,7 @@ pub(super) fn then_of(primitive: &PlanPrimitive) -> String {
         | PlanPrimitive::Delegate { then, .. }
         | PlanPrimitive::Transform { then, .. }
         | PlanPrimitive::Parallel { join: then, .. } => then.clone(),
-        PlanPrimitive::Gate { then, .. } => then.clone(),
+        PlanPrimitive::Gate { then, .. } | PlanPrimitive::Iterate { then, .. } => then.clone(),
         PlanPrimitive::Branch { .. }
         | PlanPrimitive::Return { .. }
         | PlanPrimitive::Fail { .. } => String::new(),

@@ -114,6 +114,34 @@ pub enum HarnessEvent {
         /// Whether the verdict passed.
         ok: bool,
     },
+    /// An `iterate` step froze its collection.
+    IterationStarted {
+        /// The iterate step.
+        step: String,
+        /// How many items the collection holds.
+        total: u64,
+    },
+    /// An `iterate` step started the body for an item (or a pass of an
+    /// `until`, named by its number).
+    ItemStarted {
+        /// The iterate step.
+        step: String,
+        /// The item's id.
+        item: String,
+        /// The item's index in the frozen collection, from 0.
+        index: u64,
+        /// How many times this item's body has been started, from 1.
+        attempt: u64,
+    },
+    /// An item's body finished with every check passed.
+    ItemCompleted {
+        /// The iterate step.
+        step: String,
+        /// The item's id.
+        item: String,
+        /// The item's index in the frozen collection, from 0.
+        index: u64,
+    },
     /// A `gate` step judged its command's report.
     GateEvaluated {
         /// The gate step.
@@ -237,6 +265,21 @@ impl std::fmt::Display for HarnessEvent {
                     "verifier {verifier} {}",
                     if *ok { "passed" } else { "did not pass" }
                 )
+            }
+            Self::IterationStarted { step, total } => {
+                write!(f, "loop `{step}` froze {total} item(s)")
+            }
+            Self::ItemStarted {
+                step,
+                item,
+                index,
+                attempt,
+            } => write!(
+                f,
+                "loop `{step}` started item `{item}` (#{index}, start {attempt})"
+            ),
+            Self::ItemCompleted { step, item, index } => {
+                write!(f, "loop `{step}` completed item `{item}` (#{index})")
             }
             Self::GateEvaluated {
                 step,

@@ -184,6 +184,21 @@ struct RawTask {
     verify: Vec<Value>,
     #[serde(default)]
     repair: Option<spec::Repair>,
+    #[serde(default)]
+    for_each: Option<spec::ForEach>,
+    #[serde(default)]
+    until: Option<RawUntil>,
+}
+
+/// `until:`; the comparison keys are collected and checked by
+/// [`spec::ThresholdKeys`], which rejects unknown ones (serde cannot combine
+/// `flatten` with `deny_unknown_fields`).
+#[derive(serde::Deserialize)]
+struct RawUntil {
+    metric: String,
+    max_iterations: u64,
+    #[serde(flatten)]
+    threshold: std::collections::BTreeMap<String, Value>,
 }
 
 fn parse_workflow_tasks(section: Option<Value>) -> Result<Vec<TaskSpec>, HarnessError> {
@@ -205,6 +220,21 @@ fn parse_workflow_tasks(section: Option<Value>) -> Result<Vec<TaskSpec>, Harness
             .enumerate()
             .map(|(i, check)| parse_check(check, &format!("{label}: verify[{i}]")))
             .collect::<Result<_, _>>()?;
+        let until = raw
+            .until
+            .map(|u| {
+                let keys: spec::ThresholdKeys =
+                    decode(Value::Object(u.threshold.into_iter().collect()), &label)?;
+                let threshold = keys
+                    .threshold()
+                    .map_err(|e| HarnessError::Parse(format!("{label}: until: {e}")))?;
+                Ok::<_, HarnessError>(spec::Until {
+                    metric: u.metric,
+                    threshold,
+                    max_iterations: u.max_iterations,
+                })
+            })
+            .transpose()?;
         tasks.push(TaskSpec {
             name: raw.name,
             description: raw.description,
@@ -215,6 +245,8 @@ fn parse_workflow_tasks(section: Option<Value>) -> Result<Vec<TaskSpec>, Harness
             outputs: raw.outputs,
             verify,
             repair: raw.repair,
+            for_each: raw.for_each,
+            until,
         });
     }
     Ok(tasks)

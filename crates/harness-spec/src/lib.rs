@@ -38,17 +38,18 @@ pub use bundle::{CompiledBundle, HarnessBundle, Helper, BUNDLE_FORMAT_VERSION};
 pub use error::HarnessError;
 pub use expr::{Expr, Path, PathRewrite, Template};
 pub use plan::{
-    HarnessPlan, PlanLimits, PlanPrimitive, PlanStep, PLAN_FORMAT_VERSION,
+    HarnessPlan, PlanIteration, PlanLimits, PlanPrimitive, PlanStep, PLAN_FORMAT_VERSION,
     WORKFLOW_PLAN_FORMAT_VERSION,
 };
 pub use source_map::{Lowering, SourceRef};
 pub use spec::{
     AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec,
-    DelegateTarget, FailStepSpec, GateStepSpec, HarnessSpec, IOType, InputValue, LimitsSpec,
-    ParallelStepSpec, PredictStepSpec, RetryStepSpec, ReturnStepSpec, StepId, StepSpec,
-    ToolStepSpec, TransformStepSpec, VerifyStepSpec, DEFAULT_GATE_TIMEOUT_SECS, GATE_TOOL,
-    MAX_GATE_TIMEOUT_SECS, PRIMITIVES, SUPPORTED_API_VERSION, WORKFLOW_API_VERSION,
-    WORKFLOW_PRIMITIVES,
+    DelegateTarget, FailStepSpec, ForEachSpec, GateStepSpec, HarnessSpec, IOType, InputValue,
+    IterateSource, IterateStepSpec, JsonSource, LimitsSpec, ParallelStepSpec, PredictStepSpec,
+    RetryStepSpec, ReturnStepSpec, StepId, StepSpec, ToolStepSpec, TransformStepSpec, UntilSpec,
+    VerifyStepSpec, DEFAULT_GATE_TIMEOUT_SECS, DEFAULT_MAX_ITEMS, GATE_TOOL, MAX_GATE_TIMEOUT_SECS,
+    MAX_ITEMS_LIMIT, MAX_ITERATIONS_LIMIT, PRIMITIVES, RESERVED_TOOLS, SNAPSHOT_TOOL,
+    SUPPORTED_API_VERSION, WORKFLOW_API_VERSION, WORKFLOW_PRIMITIVES,
 };
 
 /// The JSON Schema (draft 2020-12) of a harness document, for editors and

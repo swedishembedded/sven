@@ -70,6 +70,13 @@ pub(super) enum Kind {
         min_bytes: Option<u64>,
         sha256: Option<String>,
     },
+    /// A fact the run holds must have this value.
+    Fact {
+        path: String,
+        equals: Value,
+        /// What failing it means, for the failure message.
+        failure: String,
+    },
     /// A number in a JSON file the command wrote, after the command ran.
     Metric {
         run: Option<CommandRun>,
@@ -111,6 +118,9 @@ pub(super) struct RepairPlan<'a> {
     pub fact: String,
     pub inputs: Option<&'a BTreeSet<String>>,
     pub tasks: &'a [String],
+    /// Whether the repair runs inside a `for_each` / an `until` task.
+    pub item: bool,
+    pub iteration: bool,
 }
 
 /// The phase the checks belong to: a task, or the success condition.
@@ -121,9 +131,15 @@ pub(super) struct Phase<'a> {
     pub task: Option<String>,
     /// The failure code of a check that cannot be repaired.
     pub fail_code: &'static str,
-    /// How a failure message names the phase.
+    /// How a failure message names the phase (may hold holes that resolve
+    /// when the failure happens, such as the item's id).
     pub what: String,
+    /// How an authoring error names the phase.
+    pub place: String,
     pub repair: Option<RepairPlan<'a>>,
+    /// Where an unsatisfied check leads once the repairs (if any) are spent,
+    /// instead of the run's failure: back to the loop that asked.
+    pub loop_back: Option<String>,
 }
 
 fn origin(phase: &Phase<'_>, role: &str, check: &str, attempt: u32) -> SourceRef {
@@ -212,10 +228,14 @@ fn file_spec(path: &str, min_bytes: Option<u64>, sha256: Option<&str>) -> Value 
 }
 
 /// Which failure a repair turn answers; decides what `failure.*` reads.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum Failed {
-    Command,
-    Verdict,
+    /// A gate step's typed result, at this step.
+    Command(String),
+    /// A verifier's verdict, at this step.
+    Verdict(String),
+    /// A condition on a fact, at this step, described by this text.
+    Fact(String, String),
 }
 
 /// Lowers `checks` and their repair attempts and returns the id of the
@@ -242,30 +262,21 @@ pub(super) fn lower_checks(
             } else {
                 next.to_string()
             };
-            let failure_step = |b: &mut Builder, failed: Failed, gate: &str| {
-                on_failure(
-                    b,
-                    phase,
-                    (&check.label, attempt, repairs),
-                    (failed, gate),
-                    checks,
-                )
+            let fail = |b: &mut Builder, failed: Failed| {
+                on_failure(b, phase, (&check.label, attempt, repairs), failed, checks)
             };
+            let at = origin(phase, "check", &check.label, attempt);
             match &check.kind {
                 Kind::Command(run) => {
-                    let fail = failure_step(b, Failed::Command, &base)?;
-                    b.add(
-                        &base,
-                        gate_step(run, &after, &fail),
-                        origin(phase, "check", &check.label, attempt),
-                    );
+                    let to = fail(b, Failed::Command(base.clone()))?;
+                    b.add(&base, gate_step(run, &after, &to), at);
                 }
                 Kind::File {
                     path,
                     min_bytes,
                     sha256,
                 } => {
-                    let fail = failure_step(b, Failed::Verdict, &base)?;
+                    let to = fail(b, Failed::Verdict(base.clone()))?;
                     let spec = file_spec(path, *min_bytes, sha256.as_deref());
                     verify_and_branch(
                         b,
@@ -273,7 +284,23 @@ pub(super) fn lower_checks(
                         &base,
                         spec,
                         (&check.label, attempt),
-                        (&after, &fail),
+                        (&after, &to),
+                    );
+                }
+                Kind::Fact {
+                    path,
+                    equals,
+                    failure,
+                } => {
+                    let to = fail(b, Failed::Fact(base.clone(), failure.clone()))?;
+                    b.add(
+                        &base,
+                        StepSpec::Branch(Box::new(BranchStepSpec {
+                            on: json!({ "eq": path, "value": equals }),
+                            when_true: after.clone(),
+                            when_false: to,
+                        })),
+                        at,
                     );
                 }
                 Kind::Metric {
@@ -282,15 +309,11 @@ pub(super) fn lower_checks(
                     pointer,
                     threshold,
                 } => {
-                    let fail = failure_step(b, Failed::Verdict, &base)?;
+                    let to = fail(b, Failed::Verdict(base.clone()))?;
                     if let Some(run) = run {
                         let run_id = format!("{base}_run");
-                        let run_fail = failure_step(b, Failed::Command, &run_id)?;
-                        b.add(
-                            &run_id,
-                            gate_step(run, &base, &run_fail),
-                            origin(phase, "check", &check.label, attempt),
-                        );
+                        let run_to = fail(b, Failed::Command(run_id.clone()))?;
+                        b.add(&run_id, gate_step(run, &base, &run_to), at);
                     }
                     let spec = json!({
                         "kind": "json_predicate",
@@ -305,7 +328,7 @@ pub(super) fn lower_checks(
                         &base,
                         spec,
                         (&check.label, attempt),
-                        (&after, &fail),
+                        (&after, &to),
                     );
                 }
             }
@@ -320,12 +343,19 @@ fn on_failure(
     b: &mut Builder,
     phase: &Phase<'_>,
     (label, attempt, repairs): (&str, u32, u32),
-    (failed, gate_id): (Failed, &str),
+    failed: Failed,
     checks: &[Resolved],
 ) -> Result<String, HarnessError> {
-    let (gate_step, verdict_step) = match failed {
-        Failed::Command => (Some(gate_id.to_string()), None),
-        Failed::Verdict => (None, Some(gate_id.to_string())),
+    let (gate_id, gate_step, verdict_step, detail) = match failed {
+        Failed::Command(id) => {
+            let detail = format!("{{{{ steps.{id}.detail }}}}");
+            (id.clone(), Some(id), None, detail)
+        }
+        Failed::Verdict(id) => {
+            let detail = format!("{{{{ steps.{id}.value }}}}");
+            (id.clone(), None, Some(id), detail)
+        }
+        Failed::Fact(id, text) => (id, None, None, text),
     };
     if attempt < repairs {
         let id = format!("{gate_id}_repair");
@@ -341,12 +371,13 @@ fn on_failure(
             gate_step,
             verdict_step,
         };
-        let scope = Scope {
-            place: format!("{}: repair.prompt", phase.what),
-            inputs: plan.inputs,
-            tasks: plan.tasks,
-            failure: Some(&view),
-        };
+        let mut scope = Scope::new(
+            format!("{}: repair.prompt", phase.place),
+            plan.inputs,
+            plan.tasks,
+        )
+        .in_loop(plan.item, plan.iteration);
+        scope.failure = Some(&view);
         let prompt = rewrite_text(&plan.prompt, &scope)?;
         let again = entry_id(phase, checks, 0, attempt + 1);
         b.add(
@@ -361,12 +392,10 @@ fn on_failure(
         );
         return Ok(id);
     }
+    if let Some(back) = &phase.loop_back {
+        return Ok(back.clone());
+    }
     let id = format!("{gate_id}_fail");
-    let detail = match (&gate_step, &verdict_step) {
-        (Some(step), _) => format!("{{{{ steps.{step}.detail }}}}"),
-        (_, Some(step)) => format!("{{{{ steps.{step}.value }}}}"),
-        _ => String::new(),
-    };
     let spent = if repairs == 0 {
         String::new()
     } else {

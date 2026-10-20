@@ -260,7 +260,7 @@ fn the_model_cannot_run_a_gate() {
     let told = fx.iter().any(|e| match e {
         Effect::CallLlm { request } => request
             .to_string()
-            .contains("reserved to the workflow's gates"),
+            .contains("reserved to the workflow's own steps"),
         _ => false,
     });
     assert!(told, "the refusal reaches the model: {fx:?}");

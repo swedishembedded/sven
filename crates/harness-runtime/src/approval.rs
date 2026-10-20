@@ -24,7 +24,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sven_harness_spec::{PlanPrimitive, GATE_TOOL};
+use sven_harness_spec::{IterateSource, PlanIteration, PlanPrimitive, GATE_TOOL, SNAPSHOT_TOOL};
 use sven_hsm::context::PendingApproval;
 use sven_hsm::ids::{ApprovalId, ToolCallId};
 use sven_hsm::{
@@ -32,6 +32,7 @@ use sven_hsm::{
 };
 
 use crate::command_gate::{gate_args, GATE_CAPABILITY};
+use crate::iteration::snapshot_args;
 use crate::machine::HarnessMachine;
 use crate::run::{HarnessRunState, Waiting};
 use crate::state::HarnessState;
@@ -116,6 +117,18 @@ impl HarnessMachine {
                 name: name.clone(),
                 capability: capability_for_tool_name(name),
                 args: run.resolve_value(args),
+            }),
+            PlanPrimitive::Iterate {
+                iteration:
+                    PlanIteration::ForEach {
+                        source: IterateSource::Json(json),
+                        ..
+                    },
+                ..
+            } => Some(HeldCall {
+                name: SNAPSHOT_TOOL.to_string(),
+                capability: ToolCapability::ReadFile,
+                args: snapshot_args(json),
             }),
             PlanPrimitive::Gate {
                 command,

@@ -14,7 +14,7 @@
 //! to info@swedishembedded.com.
 
 use serde_json::Value;
-use sven_harness_spec::{Template, GATE_TOOL};
+use sven_harness_spec::{Template, RESERVED_TOOLS};
 use sven_hsm::{Context, Effect, ProposedToolCall, Reaction, ToolCallId};
 use sven_vocab::{RefusedCall, TurnRequest};
 
@@ -133,11 +133,15 @@ impl HarnessMachine {
         // can neither run a gate nor make one pass.
         let (admitted, refused): (Vec<&ProposedToolCall>, Vec<&ProposedToolCall>) =
             tool_calls.iter().partition(|call| {
-                call.name != GATE_TOOL && (agent.open || agent.tools.contains(&call.name))
+                !RESERVED_TOOLS.contains(&call.name.as_str())
+                    && (agent.open || agent.tools.contains(&call.name))
             });
         for call in refused {
-            let reason = if call.name == GATE_TOOL {
-                format!("tool `{GATE_TOOL}` is reserved to the workflow's gates")
+            let reason = if RESERVED_TOOLS.contains(&call.name.as_str()) {
+                format!(
+                    "tool `{}` is reserved to the workflow's own steps",
+                    call.name
+                )
             } else {
                 format!("tool `{}` is not in this step's allowlist", call.name)
             };

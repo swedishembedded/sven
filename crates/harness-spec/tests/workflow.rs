@@ -311,7 +311,7 @@ fn authoring_mistakes_fail_with_the_name_of_the_culprit() {
                 "agent:\n  profile: coding",
                 "agent:\n  tools: [shell_gate]\n  profile: coding",
             ),
-            "reserved to gates",
+            "reserved to the harness's own steps",
         ),
         (
             "a gate path escape",
@@ -412,4 +412,231 @@ fn a_long_generated_chain_is_not_mistaken_for_an_unbounded_cycle() {
     }
     let plan = compile(&yaml);
     assert_eq!(plan.steps.len(), 151);
+}
+
+/// A workflow with both loops: a per-module task over a backlog file and a
+/// coverage task that repeats until the threshold is met.
+const LOOPS: &str = r#"
+api_version: "2"
+name: loops
+inputs:
+  repo: string
+agent: { profile: coding }
+execution: { limits: { model_turns: 400 } }
+gates:
+  build: { command: [sh, run.sh, build] }
+  test: { command: [sh, run.sh, test, "{{ item.module }}"] }
+  coverage:
+    command: [sh, run.sh, coverage]
+    metrics:
+      line_pct: { file: cov.json, pointer: /line_pct, type: number }
+workflow:
+  - name: modules
+    for_each: { source: { json: { file: backlog.json, pointer: /items } }, id: module }
+    task: "Harden {{ item.module }} (number {{ item_index }}) of {{ inputs.repo }}."
+    verify: [test]
+    repair: { attempts: 1, prompt: "{{ item_id }} broke {{ failure.gate }}" }
+  - name: coverage
+    until: { metric: coverage.line_pct, gte: 90, max_iterations: 4 }
+    task: "Raise coverage (pass {{ iteration }})."
+    verify: [build]
+success:
+  work_items: { all_completed: true }
+"#;
+
+#[test]
+fn a_for_each_task_lowers_to_an_iterate_step_whose_body_returns_to_it() {
+    use sven_harness_spec::{IterateSource, PlanIteration};
+    let plan = compile(LOOPS);
+    assert_eq!(plan.entry, "modules__iter");
+    let PlanPrimitive::Iterate {
+        iteration,
+        body,
+        then,
+        store_as,
+        ..
+    } = &plan.steps["modules__iter"].primitive
+    else {
+        panic!("an iterate step");
+    };
+    let PlanIteration::ForEach {
+        source,
+        id,
+        max_items,
+    } = iteration
+    else {
+        panic!("for_each");
+    };
+    assert!(
+        matches!(source, IterateSource::Json(j) if j.file == "backlog.json" && j.pointer == "/items")
+    );
+    assert_eq!(id.as_deref(), Some("module"));
+    assert_eq!(
+        *max_items, 500,
+        "the default bound is part of the pinned plan"
+    );
+    assert_eq!(body, "modules__work");
+    assert_eq!(then, "coverage__iter");
+    assert_eq!(store_as.as_deref(), Some("work_modules"));
+    // The body's last edge returns to the loop step.
+    let PlanPrimitive::Gate { then, .. } = &plan.steps["modules__v0_test_a1"].primitive else {
+        panic!("the last verification is a gate");
+    };
+    assert_eq!(then, "modules__iter");
+}
+
+#[test]
+fn an_until_task_checks_its_metric_after_the_body_and_counts_the_misses() {
+    use sven_harness_spec::PlanIteration;
+    let plan = compile(LOOPS);
+    let PlanPrimitive::Iterate {
+        iteration,
+        body,
+        then,
+        on_exhausted,
+        ..
+    } = &plan.steps["coverage__iter"].primitive
+    else {
+        panic!("an iterate step");
+    };
+    assert!(matches!(
+        iteration,
+        PlanIteration::Until { max_iterations: 4 }
+    ));
+    assert_eq!(body, "coverage__work");
+    assert_eq!(then, "success__v0_work_items_modules_a0");
+    assert_eq!(on_exhausted, "coverage__exhausted");
+    // A pass of the metric leaves the loop; a miss goes back to be counted.
+    let PlanPrimitive::Branch {
+        when_true,
+        when_false,
+        ..
+    } = &plan.steps["coverage__until__v0_coverage_line_pct_a0_ok"].primitive
+    else {
+        panic!("the metric predicate is checked by a branch on its verdict");
+    };
+    assert_eq!(when_true, "success__v0_work_items_modules_a0");
+    assert_eq!(when_false, "coverage__iter");
+    let PlanPrimitive::Fail { code, .. } = &plan.steps["coverage__exhausted"].primitive else {
+        panic!("exhaustion fails the run");
+    };
+    assert_eq!(code.as_deref(), Some("until_exhausted"));
+}
+
+#[test]
+fn a_looping_workflow_gets_a_step_bound_that_covers_its_passes() {
+    let plan = compile(LOOPS);
+    let steps = plan
+        .limits
+        .as_ref()
+        .and_then(|l| l.max_steps)
+        .expect("max_steps");
+    assert!(
+        steps > 500 * 5,
+        "500 items of a multi-step body fit: {steps}"
+    );
+}
+
+#[test]
+fn loop_mistakes_fail_with_the_name_of_the_culprit() {
+    let with_loops = |from: &str, to: &str| {
+        assert!(LOOPS.contains(from), "{from}");
+        LOOPS.replacen(from, to, 1)
+    };
+    let cases = [
+        ("both loops", with_loops("    task: \"Harden", "    until: { metric: coverage.line_pct, gte: 1, max_iterations: 2 }\n    task: \"Harden"), "not both"),
+        ("an unbounded until", with_loops("max_iterations: 4", "max_iterations: 5000"), "max_iterations"),
+        ("item outside a for_each", with_loops("Raise coverage (pass {{ iteration }})", "Raise {{ item_id }}"), "only available inside a `for_each`"),
+        ("iteration outside an until", with_loops("Harden {{ item.module }} (number {{ item_index }})", "Harden {{ iteration }}"), "only available inside an `until`"),
+        ("an undeclared input source", with_loops("json: { file: backlog.json, pointer: /items }", "input: nope"), "not declared"),
+        ("a source outside the workspace", with_loops("file: backlog.json", "file: ../backlog.json"), "inside the workspace"),
+        ("a source pointer that is not a pointer", with_loops("pointer: /items", "pointer: items"), "RFC 6901"),
+        ("work items without a loop", with("success:\n  gates: [build, test]", "success:\n  work_items: { all_completed: true }\n  gates: [build, test]"), "needs a task with `for_each`"),
+        ("an until metric that is not declared", with_loops("metric: coverage.line_pct, gte: 90", "metric: coverage.nope, gte: 90"), "declares no metric `nope`"),
+    ];
+    for (what, yaml, expect) in cases {
+        let message = rejected(&yaml);
+        assert!(
+            message.contains(expect),
+            "{what}: `{message}` should mention `{expect}`"
+        );
+    }
+}
+
+#[test]
+fn a_for_each_over_an_input_needs_a_json_input() {
+    let yaml = LOOPS
+        .replace(
+            "json: { file: backlog.json, pointer: /items }",
+            "input: modules",
+        )
+        .replace("  repo: string\n", "  repo: string\n  modules: json\n");
+    let plan = compile(&yaml);
+    assert_eq!(
+        plan.capabilities
+            .iter()
+            .filter(|c| *c == "ReadFile")
+            .count(),
+        1,
+        "coding already reads"
+    );
+    let wrong = yaml.replace("modules: json", "modules: string");
+    assert!(rejected(&wrong).contains("must be declared `json`"));
+}
+
+#[test]
+fn coverage_gate_cannot_be_bypassed() {
+    // The success condition is the last thing the plan does. Every step
+    // reachable from it is a command, a verification, a branch on a
+    // verification's verdict, or a terminal: no agent turn, so nothing the
+    // model says can change a verdict, and an unmet threshold can only end in
+    // `fail`. The figure compared is read after a fresh run of its command.
+    let plan = compile(THREE_TASKS);
+    let first = plan
+        .source_map
+        .iter()
+        .find(|(_, origin)| origin.role == "check" && origin.task.is_none())
+        .map(|(id, _)| id.clone())
+        .expect("the plan has a success phase");
+    let mut stack = vec![first];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut outcomes = std::collections::BTreeSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        match &plan.steps[&id].primitive {
+            PlanPrimitive::Gate { then, on_fail, .. } => {
+                stack.extend([then.clone(), on_fail.clone()])
+            }
+            PlanPrimitive::Verify { then, .. } => stack.push(then.clone()),
+            PlanPrimitive::Branch {
+                when_true,
+                when_false,
+                ..
+            } => {
+                stack.extend([when_true.clone(), when_false.clone()]);
+            }
+            PlanPrimitive::Fail { code, .. } => {
+                outcomes.insert(code.clone().unwrap_or_default());
+            }
+            PlanPrimitive::Return { .. } => {
+                outcomes.insert("return".to_string());
+            }
+            other => panic!("`{id}`: the success phase must not contain {other:?}"),
+        }
+    }
+    assert_eq!(
+        outcomes,
+        ["return".to_string(), "success_check_failed".to_string()].into(),
+        "the success phase ends in a return or in its own failure"
+    );
+    for id in &seen {
+        if id.starts_with("success__v") && id.contains("coverage") && id.ends_with("_a0") {
+            assert!(
+                seen.contains(&format!("{id}_run")),
+                "{id}: the figure is read after a fresh run of the command"
+            );
+        }
+    }
 }

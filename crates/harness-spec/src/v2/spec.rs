@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::spec::{CapabilityName, IOType, InputValue};
+use crate::spec::{CapabilityName, IOType, InputValue, IterateSource};
 
 /// A whole workflow document, as written.
 #[derive(Debug, Clone, PartialEq)]
@@ -336,6 +336,34 @@ pub struct Repair {
     pub prompt: Option<String>,
 }
 
+/// `for_each:` of a task: the body runs once per item of a collection that is
+/// frozen when the loop begins.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForEach {
+    /// Where the collection comes from.
+    pub source: IterateSource,
+    /// The item field that names an item (items that are scalars name
+    /// themselves). Templates read the item as `{{ item.<field> }}`.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// The most items; a larger collection fails the run.
+    #[serde(default)]
+    pub max_items: Option<u64>,
+}
+
+/// `until:` of a task: the body repeats until a metric holds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Until {
+    /// `<gate>.<metric>`, measured by a fresh run of the gate's command
+    /// after every pass of the body.
+    pub metric: String,
+    /// What the metric must satisfy.
+    pub threshold: Threshold,
+    /// The most passes of the body.
+    pub max_iterations: u64,
+}
+
 /// One task.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskSpec {
@@ -357,6 +385,10 @@ pub struct TaskSpec {
     pub verify: Vec<Check>,
     /// Repair policy.
     pub repair: Option<Repair>,
+    /// Run the task once per item of a frozen collection.
+    pub for_each: Option<ForEach>,
+    /// Repeat the task until a metric holds.
+    pub until: Option<Until>,
 }
 
 /// `success:`.
@@ -369,4 +401,15 @@ pub struct SuccessSpec {
     /// Metric thresholds, by `<gate>.<metric>`.
     #[serde(default)]
     pub metrics: BTreeMap<String, ThresholdKeys>,
+    /// Work-item conditions.
+    #[serde(default)]
+    pub work_items: Option<WorkItemsSpec>,
+}
+
+/// `success.work_items:`
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkItemsSpec {
+    /// Every item of every `for_each` task must have completed.
+    pub all_completed: bool,
 }

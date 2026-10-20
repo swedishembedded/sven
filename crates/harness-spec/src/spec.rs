@@ -29,13 +29,31 @@ pub const WORKFLOW_API_VERSION: &str = "2";
 /// The primitive keys only a version 2 document may use, in documentation
 /// order. They are produced by the workflow lowering; a version 1 document
 /// that names one is rejected with a message saying so.
-pub const WORKFLOW_PRIMITIVES: [&str; 1] = ["gate"];
+pub const WORKFLOW_PRIMITIVES: [&str; 2] = ["gate", "iterate"];
 
 /// The tool a `gate` step calls to run its command. Reserved to the
 /// harness: no agent step may be offered or admitted a call to it, so the
 /// model can neither run a gate nor make one pass. The tool itself lives in
 /// the process-execution crate; both sides name it through this constant.
 pub const GATE_TOOL: &str = "shell_gate";
+
+/// The tool an `iterate` step calls to read its collection from a JSON file
+/// in the workspace: it answers `{digest, value}` for the file's content and
+/// the value at a JSON pointer. Reserved to the harness like [`GATE_TOOL`].
+pub const SNAPSHOT_TOOL: &str = "read_json_snapshot";
+
+/// The tools only the harness itself may call: no agent step is offered or
+/// admitted a call to any of them.
+pub const RESERVED_TOOLS: [&str; 2] = [GATE_TOOL, SNAPSHOT_TOOL];
+
+/// How many items a `for_each` takes when its definition names no bound.
+pub const DEFAULT_MAX_ITEMS: u64 = 500;
+
+/// The most items a `for_each` may be bounded to.
+pub const MAX_ITEMS_LIMIT: u64 = 10_000;
+
+/// The most iterations an `until` may be bounded to.
+pub const MAX_ITERATIONS_LIMIT: u64 = 1_000;
 
 /// The longest a command gate may run, in seconds.
 pub const MAX_GATE_TIMEOUT_SECS: u64 = 3600;
@@ -339,6 +357,9 @@ pub enum StepSpec {
     Fail(Box<FailStepSpec>),
     /// Run a command and let its exit status decide. Version 2 only.
     Gate(Box<GateStepSpec>),
+    /// Repeat a body over a frozen collection, or until a condition holds,
+    /// within a bound. Version 2 only.
+    Iterate(Box<IterateStepSpec>),
 }
 
 /// `predict`: one constrained model turn.
@@ -562,6 +583,84 @@ pub struct GateStepSpec {
     pub on_fail: String,
 }
 
+/// Where a `for_each` reads its collection from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IterateSource {
+    /// An array in a JSON file in the workspace, read once when the
+    /// iteration begins.
+    Json(JsonSource),
+    /// An array-valued run input, by name.
+    Input(String),
+}
+
+/// A value inside a JSON file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JsonSource {
+    /// Workspace-relative path.
+    pub file: String,
+    /// RFC 6901 pointer to the array (`""` is the whole document).
+    pub pointer: String,
+}
+
+/// `for_each` of an `iterate` step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForEachSpec {
+    /// The collection.
+    pub source: IterateSource,
+    /// The field of each item that names it; omitted, the items are
+    /// scalars and name themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The most items taken; a larger collection fails the run.
+    #[serde(default = "default_max_items")]
+    pub max_items: u64,
+}
+
+fn default_max_items() -> u64 {
+    DEFAULT_MAX_ITEMS
+}
+
+/// `until` of an `iterate` step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UntilSpec {
+    /// The most times the body is entered; one more entry goes to
+    /// `on_exhausted`.
+    pub max_iterations: u64,
+}
+
+/// `iterate`: the one repetition primitive.
+///
+/// Each time the walk reaches the step it decides what runs next. With
+/// `for_each` the collection is read and frozen on the first visit; each
+/// later visit marks the item whose body just finished as completed and starts
+/// the next, and the visit after the last continues at `then`. With `until`
+/// each visit enters the body again, counting, until `max_iterations` entries
+/// have happened. The body is ordinary steps whose last edge returns here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IterateStepSpec {
+    /// Run the body once per item of a frozen collection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_each: Option<ForEachSpec>,
+    /// Run the body until something else ends the loop, at most this often.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<UntilSpec>,
+    /// The first step of the body.
+    pub body: String,
+    /// Where to continue when the loop is finished.
+    pub then: String,
+    /// Where to continue when an `until` loop has used its entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_exhausted: Option<String>,
+    /// Where to store the summary `{total, completed, pending}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_as: Option<String>,
+}
+
 fn default_gate_timeout() -> u64 {
     DEFAULT_GATE_TIMEOUT_SECS
 }
@@ -589,6 +688,7 @@ impl StepSpec {
             Self::Return(_) => "return",
             Self::Fail(_) => "fail",
             Self::Gate(_) => "gate",
+            Self::Iterate(_) => "iterate",
         }
     }
 }
@@ -652,6 +752,9 @@ impl TryFrom<serde_json::Value> for StepSpec {
             "gate" => serde_json::from_str(&text)
                 .map(|g| Self::Gate(Box::new(g)))
                 .map_err(|e| format!("bad `gate` step: {e}")),
+            "iterate" => serde_json::from_str(&text)
+                .map(|i| Self::Iterate(Box::new(i)))
+                .map_err(|e| format!("bad `iterate` step: {e}")),
             other => Err(format!(
                 "unknown step primitive `{other}` (known: {}; api_version 2 adds {})",
                 PRIMITIVES.join(", "),
@@ -677,6 +780,7 @@ impl From<StepSpec> for serde_json::Value {
             StepSpec::Return(r) => ("return", serde_json::to_value(r).unwrap_or_default()),
             StepSpec::Fail(f) => ("fail", serde_json::to_value(f).unwrap_or_default()),
             StepSpec::Gate(g) => ("gate", serde_json::to_value(g).unwrap_or_default()),
+            StepSpec::Iterate(i) => ("iterate", serde_json::to_value(i).unwrap_or_default()),
         };
         serde_json::json!({ key: body })
     }

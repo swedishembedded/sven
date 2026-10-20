@@ -31,6 +31,7 @@ mod command_gate;
 mod error;
 mod events;
 mod exec;
+mod iteration;
 mod machine;
 mod registry;
 mod retry;
@@ -41,6 +42,7 @@ pub use approval::{HeldCall, HeldGate};
 pub use command_gate::INTERRUPTED_OPERATION;
 pub use error::HarnessRunError;
 pub use events::harness_event;
+pub use iteration::{ItemStatus, IterationState, WorkItem};
 pub use machine::{harness_thread, HarnessMachine};
 pub use registry::HarnessRegistry;
 pub use run::{

@@ -104,6 +104,27 @@ pub struct PlanLimits {
     pub max_helper_pages: Option<u32>,
 }
 
+/// The compiled form of an `iterate` step's repetition, bounds applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanIteration {
+    /// Once per item of a collection frozen on the first visit.
+    ForEach {
+        /// Where the collection is read from.
+        source: crate::spec::IterateSource,
+        /// The item field that names an item, if the items are objects.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// The most items taken.
+        max_items: u64,
+    },
+    /// Until another step ends the loop, at most `max_iterations` times.
+    Until {
+        /// The most body entries.
+        max_iterations: u64,
+    },
+}
+
 /// A compiled step: the primitive plus its resolved successor edges.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -246,6 +267,20 @@ pub enum PlanPrimitive {
         /// The failure message template, parsed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<Template>,
+    },
+    /// Compiled `iterate` (plans of `api_version: "2"` only).
+    Iterate {
+        /// What repeats and how it is bounded.
+        iteration: PlanIteration,
+        /// First step of the body.
+        body: String,
+        /// Successor once the loop is finished.
+        then: String,
+        /// Successor when an `until` loop is exhausted; empty otherwise.
+        on_exhausted: String,
+        /// Where the summary is stored.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        store_as: Option<String>,
     },
     /// Compiled `gate` (plans of `api_version: "2"` only).
     Gate {
@@ -430,6 +465,24 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
         StepSpec::Fail(f) => PlanPrimitive::Fail {
             code: f.code.clone(),
             message: f.message.as_deref().and_then(|m| Template::parse(m).ok()),
+        },
+        StepSpec::Iterate(i) => PlanPrimitive::Iterate {
+            // Validation has ensured exactly one of the two is present.
+            iteration: match (&i.for_each, &i.until) {
+                (Some(f), _) => PlanIteration::ForEach {
+                    source: f.source.clone(),
+                    id: f.id.clone(),
+                    max_items: f.max_items,
+                },
+                (_, Some(u)) => PlanIteration::Until {
+                    max_iterations: u.max_iterations,
+                },
+                _ => PlanIteration::Until { max_iterations: 0 },
+            },
+            body: i.body.clone(),
+            then: i.then.clone(),
+            on_exhausted: i.on_exhausted.clone().unwrap_or_default(),
+            store_as: i.store_as.clone(),
         },
         StepSpec::Gate(g) => PlanPrimitive::Gate {
             command: g

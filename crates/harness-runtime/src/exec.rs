@@ -12,7 +12,7 @@
 //! happens between two pieces of I/O.
 
 use serde_json::Value;
-use sven_harness_spec::{DelegateTarget, PlanPrimitive, PlanStep};
+use sven_harness_spec::{DelegateTarget, PlanPrimitive, PlanStep, WORKFLOW_API_VERSION};
 use sven_hsm::{capability_for_tool_name, Context, Effect, Event, Reaction};
 use sven_vocab::verify::VerifierSpec;
 
@@ -226,8 +226,15 @@ impl HarnessMachine {
                 }
             }
             PlanPrimitive::Verify { ref spec, .. } => {
+                // A workflow's file checks may name the loop's item; a
+                // version 1 document's spec is taken as written.
+                let resolved = if self.run.plan().api_version == WORKFLOW_API_VERSION {
+                    run.resolve_value(spec)
+                } else {
+                    spec.clone()
+                };
                 let parsed: VerifierSpec =
-                    serde_json::from_value(spec.clone()).unwrap_or(VerifierSpec::Unsupported);
+                    serde_json::from_value(resolved).unwrap_or(VerifierSpec::Unsupported);
                 let effect = Effect::Verify { spec: parsed };
                 self.cache_effect(effect.clone());
                 self.park(run, &step, Waiting::Verifier);
@@ -274,6 +281,7 @@ impl HarnessMachine {
             #[cfg(feature = "transform")]
             PlanPrimitive::Transform { .. } => self.run_transform(run, &step, ctx),
             PlanPrimitive::Gate { .. } => self.run_gate(run, &step, ctx),
+            PlanPrimitive::Iterate { .. } => self.run_iterate(run, &step, ctx),
             PlanPrimitive::Parallel { ref branches, .. } => {
                 // Each branch child runs one level below this run; the
                 // depth budget bounds recursive fan-out the same way it

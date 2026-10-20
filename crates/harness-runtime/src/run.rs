@@ -389,6 +389,34 @@ pub enum TraceRecord {
         /// Whether the verdict passed.
         ok: bool,
     },
+    /// An `iterate` step froze its collection.
+    IterationStarted {
+        /// The iterate step.
+        step: String,
+        /// How many items the collection holds.
+        total: u64,
+    },
+    /// An `iterate` step started the body for an item (or a pass of an
+    /// `until`, named by its number).
+    ItemStarted {
+        /// The iterate step.
+        step: String,
+        /// The item's id.
+        item: String,
+        /// The item's index in the frozen collection, from 0.
+        index: u64,
+        /// How many times this item's body has been started, from 1.
+        attempt: u64,
+    },
+    /// An item's body finished with every check passed.
+    ItemCompleted {
+        /// The iterate step.
+        step: String,
+        /// The item's id.
+        item: String,
+        /// The item's index in the frozen collection, from 0.
+        index: u64,
+    },
     /// A `gate` step judged its command's report.
     GateEvaluated {
         /// The gate step.
@@ -481,6 +509,9 @@ pub struct HarnessRunState {
     pub agent: Option<AgentLoop>,
     /// The active retry frame, when a retry step is in play.
     pub retry: Option<RetryFrame>,
+    /// The progress of each `iterate` step that has begun, by step id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub iterations: BTreeMap<String, crate::iteration::IterationState>,
     /// The delegated child in flight, when a delegate step is waiting.
     pub child: Option<ChildRun>,
     /// The parallel step's open fan-out, while the join waits.
