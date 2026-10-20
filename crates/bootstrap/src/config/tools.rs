@@ -38,6 +38,9 @@ pub struct ToolsConfig {
     pub disabled: Vec<String>,
     /// Timeout in seconds for a single tool call
     pub timeout_secs: u64,
+    /// Longest wall time in seconds a single shell call may ask for through
+    /// its own `timeout_secs` argument; a larger request is cut to it.
+    pub max_timeout_secs: u64,
     /// Web fetch and search configuration
     #[serde(default)]
     pub web: WebConfig,
@@ -101,6 +104,7 @@ impl Default for ToolsConfig {
             deny_patterns: vec!["rm -rf /*".into(), "dd if=*".into()],
             disabled: Vec::new(),
             timeout_secs: 30,
+            max_timeout_secs: sven_tools_exec::shell::DEFAULT_MAX_TIMEOUT_SECS,
             web: WebConfig::default(),
             memory: MemoryConfig::default(),
             lints: LintsConfig::default(),

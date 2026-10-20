@@ -117,6 +117,7 @@ pub fn build_mcp_registry(
     if allow("shell") {
         reg.register(ShellTool {
             timeout_secs: tools.timeout_secs,
+            max_timeout_secs: tools.max_timeout_secs,
             scope: scope.clone(),
             policy: std::sync::Arc::new(tools.policy()),
         });

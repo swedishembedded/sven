@@ -141,6 +141,7 @@
         "rust_command": "cargo clippy --message-format json",
         "typescript_command": null
       },
+      "max_timeout_secs": 300,
       "memory": {
         "memory_file": "notes/memory.json"
       },

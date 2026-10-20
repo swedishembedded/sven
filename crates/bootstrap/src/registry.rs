@@ -599,6 +599,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     // scope sets where a command starts, not what it may touch.
     reg.register(ShellTool {
         timeout_secs: cfg.tools.timeout_secs,
+        max_timeout_secs: cfg.tools.max_timeout_secs,
         scope: paths.clone(),
         policy: Arc::new(cfg.tools.policy()),
     });
@@ -678,6 +679,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     // ── System ────────────────────────────────────────────────────────────────
     reg.register(ShellTool {
         timeout_secs: cfg.tools.timeout_secs,
+        max_timeout_secs: cfg.tools.max_timeout_secs,
         policy: Arc::new(cfg.tools.policy()),
         ..ShellTool::default()
     });

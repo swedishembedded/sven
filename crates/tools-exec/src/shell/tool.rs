@@ -29,17 +29,21 @@ const HEAD_LINES: usize = 100;
 /// so preserving the tail is at least as important as preserving the head.
 const TAIL_LINES: usize = 100;
 
-/// Ceiling on a model-supplied `timeout_secs`.
+/// Default ceiling on a model-supplied `timeout_secs` (`tools.max_timeout_secs`).
 ///
 /// The argument comes straight from the model, so without a bound a single
 /// call could pin a task and a shell essentially forever (`timeout_secs:
-/// 4294967295` is ~136 years). One hour is far above any legitimate build or
-/// test run.
-pub(crate) const MAX_TIMEOUT_SECS: u64 = 3600;
+/// 4294967295` is ~136 years; a model-issued loop over 1e10 years held one
+/// agent attempt idle for 17 minutes). Five minutes covers a legitimate
+/// build or test step; a longer one is raised through the setting.
+pub const DEFAULT_MAX_TIMEOUT_SECS: u64 = 300;
 
 /// Built-in tool that runs a shell command.
 pub struct ShellTool {
+    /// Wall time a command gets when the call names none.
     pub timeout_secs: u64,
+    /// Longest wall time a call may ask for; a larger request is cut to it.
+    pub max_timeout_secs: u64,
     /// Where a command starts when it names no `workdir` (the root, when
     /// confined), and the root a named `workdir` must stay inside. It does not
     /// confine what the command itself does: a shell can reach any path the
@@ -54,6 +58,7 @@ impl Default for ShellTool {
     fn default() -> Self {
         Self {
             timeout_secs: 30,
+            max_timeout_secs: DEFAULT_MAX_TIMEOUT_SECS,
             scope: PathScope::default(),
             policy: Arc::default(),
         }
@@ -96,7 +101,11 @@ impl Tool for ShellTool {
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Seconds before the command is killed (default 30, max 3600)"
+                    "description": format!(
+                        "Seconds before the command is killed (default {}, max {})",
+                        self.timeout_secs.min(self.max_timeout_secs),
+                        self.max_timeout_secs
+                    )
                 }
             },
             "required": ["shell_command"],
@@ -145,7 +154,7 @@ impl Tool for ShellTool {
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(self.timeout_secs)
-            .min(MAX_TIMEOUT_SECS);
+            .min(self.max_timeout_secs);
 
         debug!(cmd = %command, "executing shell tool");
 
@@ -259,7 +268,14 @@ impl Tool for ShellTool {
                 }
             }
             Ok(Err(e)) => ToolOutput::err(&call.id, format!("spawn error: {e}")),
-            Err(_) => ToolOutput::err(&call.id, format!("timeout after {timeout}s")),
+            Err(_) => ToolOutput::err(
+                &call.id,
+                format!(
+                    "timeout after {timeout}s: the command was killed (the longest a call may run is \
+                     tools.max_timeout_secs = {max}s). Run it in smaller steps or in the background.",
+                    max = self.max_timeout_secs
+                ),
+            ),
         }
     }
 }
@@ -529,6 +545,34 @@ mod tests {
             .await;
         assert!(out.is_error);
         assert!(out.content.contains("timeout"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_call_cannot_ask_for_more_than_the_configured_ceiling() {
+        let t = ShellTool {
+            max_timeout_secs: 1,
+            ..Default::default()
+        };
+        let started = std::time::Instant::now();
+        let out = t
+            .execute(&call(
+                "1",
+                json!({ "shell_command": "sleep 60", "timeout_secs": 3600 }),
+            ))
+            .await;
+        assert!(out.is_error, "{}", out.content);
+        assert!(
+            out.content.contains("timeout after 1s") && out.content.contains("max_timeout_secs"),
+            "the result names the limit that applied: {}",
+            out.content
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn the_default_ceiling_is_five_minutes() {
+        assert_eq!(ShellTool::default().max_timeout_secs, 300);
     }
 
     /// Whether process `pid` is gone; an exited but unreaped process counts.

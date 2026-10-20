@@ -4,4 +4,4 @@
 //! Shell execution tool.
 
 mod tool;
-pub use tool::ShellTool;
+pub use tool::{ShellTool, DEFAULT_MAX_TIMEOUT_SECS};
