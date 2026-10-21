@@ -78,6 +78,8 @@ pub struct HarnessRun {
     workspace: Option<sven_tool_api::PathScope>,
     /// Told of a checkpoint whenever a `for_each` item has completed.
     item_checkpoint: Option<ItemCheckpointSink>,
+    /// Whether the trajectory file a gate reads outlives the run.
+    keep_trajectory_file: bool,
 }
 
 /// Receives the checkpoint a host asked for at each completed work item.
@@ -154,6 +156,7 @@ impl HarnessRun {
             evidence: None,
             workspace: None,
             item_checkpoint: None,
+            keep_trajectory_file: false,
         }
     }
 
@@ -196,6 +199,14 @@ impl HarnessRun {
         })?;
         self.workspace = Some(scope);
         Ok(self)
+    }
+
+    /// Keeps the trajectory file (`{{ run.trajectory_file }}`), final after the run;
+    /// by default its directory is removed when the run ends, however it ends.
+    #[must_use]
+    pub fn keep_trajectory_file(mut self) -> Self {
+        self.keep_trajectory_file = true;
+        self
     }
 
     /// Hands `sink` a checkpoint each time a `for_each` item completes, so a
@@ -420,6 +431,9 @@ impl HarnessRun {
                 tap: session.runtime.snapshots(),
             })
         });
+        let _dir = live
+            .as_ref()
+            .map(|_| live_trajectory::Cleanup::of(&self.run_id, self.keep_trajectory_file));
         if let Some(live) = &live {
             let writer = Arc::clone(live);
             let _ = trajectory_slot.set(Arc::new(move |path| writer.write(path)));
@@ -652,17 +666,8 @@ impl HarnessRun {
             (bundle, &run_state.steps),
             children.finished(),
         ));
-        // After the run the file holds the whole trajectory.
-        if live.is_some() {
-            if let Some(trajectory) = self.trajectory() {
-                let path = live_trajectory::trajectory_path(&self.run_id);
-                let written = serde_json::to_string_pretty(&trajectory)
-                    .map_err(|e| e.to_string())
-                    .and_then(|text| live_trajectory::write_atomically(&path, &text));
-                if let Err(e) = written {
-                    eprintln!("warning: cannot write the final trajectory: {e}");
-                }
-            }
+        if live.is_some() && self.keep_trajectory_file {
+            live_trajectory::write_final(&self.run_id, self.trajectory());
         }
         Ok(outcome)
     }

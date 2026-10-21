@@ -8,7 +8,9 @@
 //! made. The file is the run's ATIF trajectory so far, written by the host
 //! just before the gate's command starts, in a directory of its own under the
 //! host's temporary directory (not the workspace, which the agent can write).
-//! After the run the file holds the final trajectory.
+//! After the run the directory is removed, unless the host asked to keep it
+//! ([`super::run::HarnessRun::keep_trajectory_file`]); then the file holds the
+//! final trajectory.
 //!
 //! Swedish Embedded AB implements verifiable, declarative agent workflows for
 //! its clients. If your team needs expertise in checks that judge what an
@@ -36,6 +38,33 @@ pub(super) fn trajectory_path(run_id: &str) -> PathBuf {
     std::env::temp_dir()
         .join(format!("sven-harness-{run_id}"))
         .join("trajectory.json")
+}
+
+/// Removes the run's trajectory directory when dropped, unless the host asked
+/// to keep it: the file is for the gates of the run, and a host that runs
+/// thousands of harnesses must not collect a directory for each. Dropping
+/// covers every way the run can end: a verdict, a bound, a cancellation, an
+/// error and a panic.
+pub(super) struct Cleanup {
+    dir: Option<PathBuf>,
+}
+
+impl Cleanup {
+    /// The cleanup of run `run_id`'s directory; nothing is removed when `keep`.
+    pub(super) fn of(run_id: &str, keep: bool) -> Self {
+        let dir = trajectory_path(run_id).parent().map(Path::to_path_buf);
+        Self {
+            dir: dir.filter(|_| !keep),
+        }
+    }
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        if let Some(dir) = &self.dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
 }
 
 /// The slot the gate tool's hook reads, filled once the run's session exists.
@@ -106,4 +135,18 @@ pub(super) fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
     let partial = path.with_extension("json.partial");
     std::fs::write(&partial, text).map_err(|e| format!("{}: {e}", partial.display()))?;
     std::fs::rename(&partial, path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Writes the final `trajectory` of run `run_id` to its file, for a host that
+/// keeps it; a failure is a warning, the run's verdict stands.
+pub(super) fn write_final(run_id: &str, trajectory: Option<atif::Trajectory>) {
+    let Some(trajectory) = trajectory else {
+        return;
+    };
+    let written = serde_json::to_string_pretty(&trajectory)
+        .map_err(|e| e.to_string())
+        .and_then(|text| write_atomically(&trajectory_path(run_id), &text));
+    if let Err(e) = written {
+        eprintln!("warning: cannot write the final trajectory: {e}");
+    }
 }

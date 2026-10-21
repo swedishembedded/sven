@@ -89,8 +89,12 @@ async fn a_gate_reads_the_trajectory_so_far_from_a_file_outside_the_workspace() 
     assert_eq!(code, "gate_failed");
 }
 
+fn trajectory_dir(id: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("sven-harness-{id}"))
+}
+
 #[tokio::test]
-async fn after_the_run_the_file_holds_the_final_trajectory() {
+async fn a_host_that_asks_to_keep_it_finds_the_final_trajectory_in_the_file_after_the_run() {
     let workspace = tempfile::tempdir().unwrap();
     let harness = engine(|_| "all done".into())
         .load_harness_from_str(JUDGED)
@@ -99,16 +103,45 @@ async fn after_the_run_the_file_holds_the_final_trajectory() {
         .start(json!({}))
         .unwrap()
         .in_workspace(workspace.path())
-        .unwrap();
+        .unwrap()
+        .keep_trajectory_file();
     let id = run.run_id().to_string();
     finish(&mut run).await.expect("completes");
-    let file = std::env::temp_dir()
-        .join(format!("sven-harness-{id}"))
-        .join("trajectory.json");
+    let file = trajectory_dir(&id).join("trajectory.json");
     assert!(!file.starts_with(workspace.path()));
     let text = std::fs::read_to_string(&file).expect("the file is there");
     assert!(text.contains("all done"), "the final answer is in it");
     let _ = std::fs::remove_dir_all(file.parent().unwrap());
+}
+
+#[tokio::test]
+async fn the_file_is_removed_when_the_run_ends_whether_it_succeeded_or_failed() {
+    let workspace = tempfile::tempdir().unwrap();
+    for (name, document, succeeds) in [
+        ("kept_none_ok", JUDGED.to_string(), true),
+        (
+            "kept_none_failed",
+            JUDGED
+                .replace("Do the thing\"", "Never said\"")
+                .replace("name: judged", "name: kept_none_failed"),
+            false,
+        ),
+    ] {
+        let harness = engine(|_| "all done".into())
+            .load_harness_from_str(&document.replace("name: judged", &format!("name: {name}")))
+            .expect("loads");
+        let mut run = harness
+            .start(json!({}))
+            .unwrap()
+            .in_workspace(workspace.path())
+            .unwrap();
+        let id = run.run_id().to_string();
+        assert_eq!(finish(&mut run).await.is_ok(), succeeds, "{name}");
+        assert!(
+            !trajectory_dir(&id).exists(),
+            "{name}: the trajectory directory outlived the run"
+        );
+    }
 }
 
 const PINNED: &str = r#"
