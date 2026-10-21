@@ -426,7 +426,10 @@ there), and `cwd` and `cwd_input` are exclusive.
 After a run `HarnessRun::corrections()` lists the messages the supervisors of
 `corrections` blocks sent the agent (each with the tool calls made before it)
 and `HarnessRun::refused_messages()` the supervisor messages an accept gate
-refused, with the reason each was sent back with; `sven harness run --json`
+refused, every one: a refusal sent back for a rewrite carries the text the
+supervisor was sent, and the last one, when the block's `retries` are spent
+and nothing was sent back, carries the gate's own account (its stdout, else
+stderr, else its exit status); `sven harness run --json`
 reports both, and `HarnessRun::trajectory()` is available after a failed run
 too.
 

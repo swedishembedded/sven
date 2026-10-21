@@ -220,3 +220,39 @@ async fn corrections_and_refused_messages_are_readable_after_the_run() {
     assert_eq!(refused[0].message, "bad draft");
     assert!(!refused[0].reason.is_empty());
 }
+
+#[tokio::test]
+async fn the_last_refused_message_is_listed_though_it_was_not_sent_back() {
+    let engine = engine(|req| {
+        let supervisor = req.messages.iter().any(|m| {
+            m.as_text()
+                .is_some_and(|t| t.contains("You are the supervisor"))
+        });
+        if supervisor {
+            "never what the gate wants".into()
+        } else {
+            "ok".into()
+        }
+    });
+    let workspace = tempfile::tempdir().unwrap();
+    let harness = engine.load_harness_from_str(SUPERVISED).expect("loads");
+    let mut run = harness
+        .start(json!({}))
+        .unwrap()
+        .in_workspace(workspace.path())
+        .unwrap();
+    let _ = finish(&mut run).await;
+
+    // `retries: 1`: the first refusal was sent back, the second was not.
+    let refused = run.refused_messages().expect("after the run");
+    assert_eq!(refused.len(), 2, "{refused:?}");
+    assert!(refused
+        .iter()
+        .all(|r| r.message == "never what the gate wants"));
+    assert!(refused.iter().all(|r| !r.reason.is_empty()));
+    assert!(
+        refused[1].reason.contains("status 1"),
+        "the gate's own reason: {refused:?}"
+    );
+    assert!(run.corrections().expect("after the run").is_empty());
+}

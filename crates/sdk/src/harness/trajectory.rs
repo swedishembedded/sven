@@ -54,6 +54,9 @@ pub(super) struct Evidence {
     model: String,
     tools: Vec<serde_json::Value>,
     bundle_digest: Option<String>,
+    /// What each command gate step last stored (`passed`, `detail`,
+    /// `stdout`, ...), by step id: why a gate refused what it refused.
+    gate_results: std::collections::BTreeMap<String, serde_json::Value>,
     outcome: HarnessOutcome,
 }
 
@@ -63,7 +66,10 @@ impl Evidence {
         plan: &HarnessPlan,
         handle: &RuntimeHandle,
         outcome: &HarnessOutcome,
-        bundle_digest: Option<&str>,
+        (bundle_digest, steps): (
+            Option<&str>,
+            &std::collections::BTreeMap<String, sven_harness_runtime::StepRecord>,
+        ),
         children: Vec<ChildRecord>,
     ) -> Self {
         let thread = harness_thread(plan);
@@ -136,6 +142,17 @@ impl Evidence {
             .iter()
             .map(|s| atif::function_tool(&s.name, &s.description, &s.parameters))
             .collect();
+        let gate_results = plan
+            .steps
+            .iter()
+            .filter(|(_, step)| {
+                matches!(
+                    step.primitive,
+                    sven_harness_spec::PlanPrimitive::Gate { .. }
+                )
+            })
+            .filter_map(|(id, _)| Some((id.clone(), steps.get(id)?.value.clone())))
+            .collect();
         Self {
             messages,
             compactions,
@@ -150,6 +167,7 @@ impl Evidence {
             model,
             tools,
             bundle_digest: bundle_digest.map(str::to_string),
+            gate_results,
             outcome: outcome.clone(),
         }
     }
@@ -340,8 +358,11 @@ impl HarnessRun {
         )
     }
 
-    /// The supervisor messages an accept gate refused, in order, with the
-    /// reason each was sent back with. `None` until the run has executed.
+    /// Every supervisor message an accept gate refused, in order. A refusal
+    /// that was sent back for a rewrite carries the text the supervisor was
+    /// sent; the last refusal, when the block's `retries` were spent, was not
+    /// sent back and carries the gate's own account (its output, else its
+    /// exit status). `None` until the run has executed.
     #[must_use]
     pub fn refused_messages(&self) -> Option<Vec<RefusedMessage>> {
         let evidence = self.evidence.as_ref()?;
@@ -384,6 +405,49 @@ impl HarnessRun {
                 });
             }
         }
+        refused.extend(self.unanswered_refusal(evidence, &authors));
         Some(refused)
+    }
+
+    /// The refusal that ended a `corrections` block: the author's last draft
+    /// when no rewrite was asked for and the agent never received it.
+    fn unanswered_refusal(
+        &self,
+        evidence: &Evidence,
+        authors: &std::collections::BTreeSet<&str>,
+    ) -> Option<RefusedMessage> {
+        let delivered = self.corrections()?;
+        let (name, conversation) = evidence
+            .conversations
+            .iter()
+            .rfind(|(name, _)| authors.contains(name.as_str()))?;
+        let last = conversation.messages.last()?;
+        let draft = last.as_text()?;
+        if last.role != sven_model::Role::Assistant
+            || delivered.last().is_some_and(|c| c.message == draft)
+        {
+            return None;
+        }
+        // The accept gate's latest failing attempt names why.
+        let (_, result) = self
+            .plan
+            .source_map
+            .iter()
+            .filter(|(_, origin)| origin.role == "check")
+            .filter(|(id, _)| id.contains("__accept__"))
+            .filter_map(|(id, origin)| {
+                let result = evidence.gate_results.get(id)?;
+                (result["passed"] == false).then_some((origin.attempt?, result))
+            })
+            .max_by_key(|(attempt, _)| *attempt)?;
+        let text = |key: &str| result[key].as_str().map(str::trim).unwrap_or_default();
+        let reason = [text("stdout"), text("stderr"), text("detail")]
+            .into_iter()
+            .find(|t| !t.is_empty())?;
+        Some(RefusedMessage {
+            author: name.clone(),
+            message: draft.to_string(),
+            reason: reason.to_string(),
+        })
     }
 }

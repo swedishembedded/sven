@@ -75,7 +75,7 @@ impl Source {
             conclusion: RunConclusion::Success,
             result: None,
             usage: Usage::default(),
-            trace: state.trace,
+            trace: state.trace.clone(),
             steps: state.counts.steps,
         };
         let evidence = Evidence::capture(
@@ -83,7 +83,7 @@ impl Source {
             &self.plan,
             &self.handle,
             &so_far,
-            self.bundle_digest.as_deref(),
+            (self.bundle_digest.as_deref(), &state.steps),
             self.children.finished(),
         );
         serde_json::to_string_pretty(&build_trajectory(&evidence, &self.plan, &self.run_id))

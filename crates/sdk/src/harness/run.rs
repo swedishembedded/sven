@@ -649,7 +649,7 @@ impl HarnessRun {
             &self.plan,
             &session.handle,
             &outcome,
-            bundle,
+            (bundle, &run_state.steps),
             children.finished(),
         ));
         // After the run the file holds the whole trajectory.
