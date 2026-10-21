@@ -15,45 +15,36 @@ you can procure our services by sending an email to info@swedishembedded.com.
 
 ## What runs
 
-| Task | Agent | What it does | Checked by |
+| Task | Agent | Does | Checked by |
 |---|---|---|---|
-| `explore` | read-only tools and a shell | surveys the repository and publishes two variables: `context` (purpose, layout, public surface, conventions, shared helpers, hazards) and `checks` (the bash commands that build, test, lint and format-check this project) | `clean_start` (no uncommitted changes), `inventory` (captures the tracked `.rs` files under `paths` as the backlog), `baseline` (the published commands pass on the untouched tree; captures the test count) |
-| `files` / `begin` | none | captures the commit the file starts from | |
-| `files` / `audit` | read-only tools | reads the file in full and publishes `findings` | |
-| `files` / `repair` | file tools and a shell | fixes the findings across the repository and publishes `repair_summary` (skipped when the audit found nothing) | `quick` (build, lint, format) and `scope` (at most `max_files` files changed, no junk files), 2 repairs |
-| `files` / `review` | file tools and a shell | reviews the whole diff, corrects it and publishes `commit_message` (skipped when the audit found nothing) | `verify` (build, tests, lint, format, and no fewer tests than the baseline) and `scope`, 2 repairs |
-| `files` / `commit` | none | the executor commits with the reviewer's message, if anything changed | the message's shape |
+| `explore` | read tools and a shell | sets `check` (one command that builds, tests, lints and format-checks the project) and `context` | `backlog` (a clean tree; the tracked `.rs` files under `paths`), `baseline` (`check` passes on the untouched tree; counts the tests) |
+| `audit` | read-only tools | reads the file in full, sets `findings` | |
+| `fix` | file tools and a shell | fixes the findings, runs `check` (skipped when the audit found nothing) | |
+| `review` | file tools and a shell | corrects the diff, sets `commit_message` (skipped likewise) | `check` (passes, no test gone, at most 12 files changed), 2 repairs |
+| `commit` | none | the harness commits with the reviewer's message | the subject fits in 72 characters |
 
-Each role of each file runs in a conversation of its own and sees only the
-variables it names: the auditor cannot edit, no agent can change the check
-commands once exploration is over (the validator's trust rule enforces it),
-and no agent commits. A file whose checks stay red after its repairs is
-rolled back to its base commit (`rollback`) and the sweep goes on; the run
-succeeds when every file was worked (`all_settled`).
-
-Nothing but the refactoring is written into the repository: the backlog, the
-base commits and the baseline are run variables, and sven's own audit log goes
-to the run's scratchpad.
+Each role of each file is a fresh agent that sees only the variables it names.
+No agent commits, so a file that cannot be made to pass is thrown away with
+`git reset --hard HEAD` (`rollback`) and the sweep goes on. Nothing but the
+refactoring lands in the repository.
 
 ## Running it
 
-On a clean checkout (a disposable worktree is best), against a model you
-serve:
+On a clean, disposable copy of the repository (a clone with no remote is
+safest), against a model you serve:
 
 ```sh
 sven harness run samples/harnesses/rust-refactor \
   --approvals auto --workspace /path/to/repo \
   --model openai/<name> --model-endpoint http://127.0.0.1:8798/v1 \
   --api-key-file /path/outside/repo/keys.json \
-  --input '{"paths": "crates src", "max_files": 12, "max_items": 10000, "tool_calls": 200000}' \
+  --input '{"paths": "crates src", "limit": 10000}' \
   --checkpoint-out /path/outside/repo/checkpoint.json \
   --trace /path/outside/repo/trace.jsonl
 ```
 
-- `paths` are git pathspecs whose tracked `.rs` files are refactored, in path
-  order.
-- `max_items` caps how many of them this run takes.
-- `max_files` is the most files one file's refactor may touch.
+`paths` are git pathspecs whose tracked `.rs` files are refactored, in path
+order; `limit` caps how many this run takes. The harness needs `git` and `jq`.
 
 A run that stops resumes at the file it was on (`sven harness resume ...
 --checkpoint`). Add `--conversations DIR` to keep each agent's conversation as
