@@ -71,7 +71,9 @@ impl Context<'_> {
         vars: LoopVars,
         tasks: &[String],
     ) -> Result<CommandRun, HarnessError> {
-        let scope = self.scope(format!("gate `{name}`"), &[], vars);
+        // Arguments read what has run by now, as standard input does: a check
+        // can be told why the agent stopped (`--stopped {{ tasks.work.stop }}`).
+        let scope = self.scope(format!("gate `{name}`"), tasks, vars);
         Ok(CommandRun {
             argv: gate
                 .command

@@ -250,6 +250,12 @@ sent as a `correction` turn, and the check runs again. At most `max` (or the
 `count` input, if lower) corrections are sent; exhausting them is not a
 failure, the task's checks decide that afterwards.
 
+A gate's arguments read the tasks that have run, so a check can be told why the
+agent stopped (`command: [check, --stopped, "{{ tasks.work.stop }}"]`), and
+`while` can follow the stop status (`while: {eq: tasks.work.stop, value:
+concluded}` corrects only a run that really concluded, not one that was cut off
+by `output_truncated`, `tool_cap`, `repetition` or `stopped_without_conclusion`).
+
 Templates read `inputs.<name>` and `tasks.<name>.output` (the text of that
 task's last agent turn) for tasks that have run; `facts` and `steps` are
 internal and rejected. A repair prompt also reads `failure.gate`,
