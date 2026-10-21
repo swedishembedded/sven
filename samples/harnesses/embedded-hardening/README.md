@@ -57,3 +57,16 @@ sven harness run samples/harnesses/embedded-hardening --toolset coding \
 Out of time or killed: `sven harness resume ... --checkpoint checkpoint.json`
 continues at the module it was on; completed modules whose files changed since
 are run again. See [the guide](../../../docs/guides/harnesses.md#walkthrough-hardening-an-embedded-repository).
+
+## A live run
+
+One run on a local 27B model (45 minute deadline, `--toolset coding`): it
+documented the toolchain, wrote the plan and backlog, fixed `ringbuf` (the full
+check) and `crc8` (the polynomial, after one repair turn), each accepted only
+once the pinned module test passed, and then, on `uart_tx`, the model server
+answered the repair turn with empty replies twice and the run failed with
+`side_effect_failed` after 37 minutes. Coverage, architecture and production
+were not reached; checking the workspace it left with the pinned `run.sh`
+confirmed the two fixed modules green, `uart_tx` red, the HAL leak still there
+and 87.2 percent coverage. The shipped mock cases are what covers the rest of
+the pipeline; the reference fix in `solution/` is what a full pass looks like.

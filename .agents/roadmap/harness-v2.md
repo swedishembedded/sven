@@ -1,44 +1,25 @@
 # harness v2
 
-**Status: in progress. M1 (contracts), M2 (tasks, gates, repair, success) and M4
-(iteration) have landed with ADR 0005, the v2 schema, the reference and guide
-sections and two samples; what is left is below. M3 (production execution) is
-another lane's.**
-
-## Goal
-
-A person writes the whole workflow of a long agent job (prompts, tasks, what is
-verified and by what, how failures are repaired, what counts as success) in
-one YAML file, and sven's existing harness machinery runs it: no second agent
-loop, v1 documents unchanged. The design and its rationale are in
-`docs/adr/0005-declarative-harness-v2.md`; the language is described by
-`crates/harness-spec/schema/harness-workflow.schema.json`.
+**Status: the language, the runtime, the CLI, the samples and the docs are
+done (ADR 0005, `docs/reference/harnesses.md`, `docs/guides/harnesses.md`).
+One item of the "done when" list is not fully met and keeps this file alive.**
 
 ## Left to do
 
-- [ ] Hosts register the two harness-only tools (`shell_gate`,
-  `read_json_snapshot`) for every harness run; the fixture testkit fakes them.
-  Without them every gate fails closed and every file-backed loop fails.
-- [ ] Invalidation of completed items when the code they were verified against
-  changes (items record the plan digest they passed under).
-- [ ] A reconciliation policy for resume against a changed backlog (today: none,
-  the frozen list is authoritative).
-- [ ] M5/M6: `use`/`imports`, `sven harness compile|explain|inspect --graph`,
-  the hardening sample on a disposable C repository, durable per-item checkpoint
-  writes (`checkpoint: each_item`) from the CLI.
-- [ ] Delete this file when the docs describe the finished behaviour.
-
-## Named regression tests
-
-`child_failure_does_not_succeed_parent`, `coverage_gate_cannot_be_bypassed`,
-`backlog_mutation_does_not_skip_items`, `gate_command_exit_code_is_authoritative`,
-`resume_does_not_trust_interrupted_side_effect`, `v1_compiled_plan_unchanged`
-(all landed), `agent_cannot_expand_capabilities` (production lane).
+- [ ] `embedded-hardening` has not yet completed end to end against a live
+  model. The full pipeline is proven offline (three mock cases through
+  `sven harness test`, and `tests/embedded_hardening_fixture.rs`, which turns
+  every real gate green with the reference fix), and one live run on the local
+  27B got through bootstrap, plan and two of three modules, each accepted only by
+  the pinned gates, before the model server answered a repair turn with empty
+  replies and the run failed with `side_effect_failed` (37 minutes; evidence in
+  the lane run directory). Run it again on a healthier server, or make an empty
+  model reply in a repair turn retry instead of ending the run, and when a live
+  run reaches `completed` delete this file.
 
 ## Decisions taken
 
 - Repair is unrolled, not a `retry` (a verdict is not a step failure; ADR 0005).
-- A command gate is a 13th `StepSpec` primitive, available from api_version 2.
-- Template roots in v2 are `inputs`, `tasks`, `failure` (repair prompts only)
-  and `item` (iteration); `facts`/`steps` are internal names a v2 author never
-  writes.
+- Invalidation of a completed item by a changed *gate* is not a feature: a
+  changed gate is a changed plan and a checkpoint from the old one is refused.
+  Changed *files* and a changed *backlog* are (`covers`, `reconcile: refresh`).
