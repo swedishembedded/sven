@@ -183,6 +183,7 @@ impl GateReport {
             "stdout": last.map(|r| text(&r.stdout)).unwrap_or_default(),
             "stderr": last.map(|r| text(&r.stderr)).unwrap_or_default(),
             "truncated": last.is_some_and(|r| r.stdout.truncated || r.stderr.truncated),
+            "stdout_truncated": last.is_some_and(|r| r.stdout.truncated),
             "duration_ms": millis(self.steps.iter().map(|(_, r)| r.elapsed).sum()),
             "failed_step": failed,
             "steps": self.steps.iter().map(|(name, report)| json!({

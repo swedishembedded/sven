@@ -381,3 +381,48 @@ fn a_gate_may_not_read_a_variable_a_later_agent_can_set() {
     let undeclared = CAPTURED.replace("capture: files", "capture: nothing");
     assert!(refused(&undeclared).contains("capture names `nothing`"));
 }
+
+#[test]
+fn a_long_log_on_stderr_does_not_spoil_a_captured_value_but_a_cut_stdout_does() {
+    let doc = CAPTURED
+        .replace(
+            "    verify: [inventory, build]\n",
+            "    verify: [inventory]\n    repair: { attempts: 1 }\n",
+        )
+        .replace("  build: { run: \"{{ vars.checks.build }}\" }\n", "");
+    let start = |stdout_cut: bool| {
+        let (mut m, mut c, mut s, _) = begin(&doc, json!({}));
+        let (event, _) = calls(
+            "harness.cap.explore",
+            "harness_vars_set",
+            json!({ "name": "checks", "value": { "build": "make" } }),
+        );
+        drive(&mut m, &mut c, &mut s, event);
+        let fx = drive(&mut m, &mut c, &mut s, turn("harness.cap.explore", "done"));
+        let (id, _) = gate_call(&fx);
+        let fx = drive(
+            &mut m,
+            &mut c,
+            &mut s,
+            Event::ToolSucceeded {
+                call_id: id,
+                observation: json!({ "exit_code": 0, "timed_out": false, "error": null,
+                                     "stdout": "[{\"file\": \"a.rs\"}]", "stderr": "...a long test log",
+                                     "truncated": true, "stdout_truncated": stdout_cut })
+                .to_string()
+                .into(),
+            },
+        );
+        llm(&fx)
+    };
+    assert_eq!(
+        start(false)["instruction"],
+        "Work on a.rs.",
+        "stderr was cut, stdout whole"
+    );
+    assert_eq!(
+        start(true)["origin"],
+        "repair",
+        "a cut stdout is not a value"
+    );
+}

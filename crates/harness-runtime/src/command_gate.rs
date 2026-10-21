@@ -174,8 +174,9 @@ pub(super) struct GateResult {
     /// The standard output parsed as JSON, when it is a JSON document: a
     /// check that reports its findings as data is read through this.
     json: Value,
-    /// Whether the tool cut the output streams to their kept size.
-    truncated: bool,
+    /// Whether the tool cut standard output to its kept size (a long log on
+    /// standard error does not make a captured value incomplete).
+    stdout_truncated: bool,
 }
 
 impl GateResult {
@@ -192,7 +193,7 @@ impl GateResult {
             failed_step: None,
             steps: json!([]),
             json: Value::Null,
-            truncated: false,
+            stdout_truncated: false,
         }
     }
 
@@ -275,8 +276,8 @@ impl GateResult {
             detail,
             failed_step,
             steps: report.get("steps").cloned().unwrap_or_else(|| json!([])),
-            truncated: report
-                .get("truncated")
+            stdout_truncated: report
+                .get("stdout_truncated")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         }
@@ -508,7 +509,7 @@ fn captured(
     let Some(decl) = plan.variables.get(name) else {
         return Err(format!("`{name}` is not a declared variable"));
     };
-    if result.truncated {
+    if result.stdout_truncated {
         return Err("the output was cut at the gate's output_bytes; raise it".to_string());
     }
     let text = result.stdout.trim();
