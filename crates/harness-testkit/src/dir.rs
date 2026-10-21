@@ -17,7 +17,7 @@ use crate::error::TestkitError;
 pub struct HarnessDir {
     /// The directory every fixture path is confined to (a file's parent).
     pub root: PathBuf,
-    /// `harness.yaml` or `bundle.yaml`, or the file that was opened.
+    /// `harness.yaml`, or the file that was opened.
     pub main: PathBuf,
     /// `cases/*.yaml`, sorted.
     pub cases: Vec<PathBuf>,
@@ -25,13 +25,12 @@ pub struct HarnessDir {
 
 impl HarnessDir {
     /// Opens a harness: a file is a main document alone; a directory holds
-    /// exactly one of `harness.yaml` or `bundle.yaml` and optional
-    /// `cases/*.yaml`.
+    /// `harness.yaml` and optional `cases/*.yaml`.
     ///
     /// # Errors
     ///
     /// [`TestkitError::Io`] for an unreadable path, [`TestkitError::Layout`]
-    /// for a directory without exactly one main document.
+    /// for a directory without `harness.yaml`.
     pub fn open(path: &Path) -> Result<Self, TestkitError> {
         let meta = std::fs::metadata(path).map_err(|source| io_error(path, source))?;
         if meta.is_file() {
@@ -44,22 +43,16 @@ impl HarnessDir {
                 cases: Vec::new(),
             });
         }
-        let found: Vec<PathBuf> = MAIN_NAMES
-            .iter()
-            .map(|name| path.join(name))
-            .filter(|candidate| candidate.is_file())
-            .collect();
-        let [main] = found.as_slice() else {
+        let main = path.join(MAIN_NAME);
+        if !main.is_file() {
             return Err(TestkitError::Layout(format!(
-                "{} must hold exactly one of {} (found {})",
-                path.display(),
-                MAIN_NAMES.join(" or "),
-                found.len()
+                "{} must hold {MAIN_NAME}",
+                path.display()
             )));
-        };
+        }
         Ok(Self {
             root: path.to_path_buf(),
-            main: main.clone(),
+            main,
             cases: yaml_files(&path.join("cases"))?,
         })
     }
@@ -93,7 +86,8 @@ impl HarnessDir {
     }
 }
 
-const MAIN_NAMES: [&str; 2] = ["harness.yaml", "bundle.yaml"];
+/// The main document of a harness directory.
+const MAIN_NAME: &str = "harness.yaml";
 
 fn io_error(path: &Path, source: std::io::Error) -> TestkitError {
     TestkitError::Io {

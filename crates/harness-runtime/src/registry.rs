@@ -4,8 +4,7 @@
 //! The harness registry: the named harness documents a session's children
 //! may be.
 //!
-//! A `delegate` step and a `parallel` step name their child by harness
-//! name; whoever assembles the session registers the documents those names
+//! A `delegate` step names its child by harness name; whoever assembles the session registers the documents those names
 //! resolve against. Registration compiles and validates the document
 //! offline — the same bar every run starts behind — so a name that
 //! resolves always names a complete, bounded plan. A registry is a set,

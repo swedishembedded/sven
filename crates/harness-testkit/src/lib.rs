@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Offline test runner and comparer for sven harnesses.
 //!
-//! A harness directory holds a main document (`harness.yaml` or
-//! `bundle.yaml`), optional `cases/` manifests.
+//! A harness directory holds a main document (`harness.yaml`) and optional
+//! `cases/` manifests.
 //! A case names its input, a fixture model, fixture tools and what the run
 //! must do; [`run_case`] executes it on a fresh engine and judges it,
 //! [`run_suite`] does so for a directory, and [`compare`] runs two variants

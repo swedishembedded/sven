@@ -172,17 +172,11 @@ fn a_file_path_is_a_main_document_alone() {
 }
 
 #[test]
-fn a_directory_needs_exactly_one_main_document() {
-    let both = tempfile::tempdir().unwrap();
-    write_tree(
-        both.path(),
-        &[("harness.yaml", ROUTING), ("bundle.yaml", ROUTING)],
-    );
-    let error = HarnessDir::open(both.path()).expect_err("two mains are ambiguous");
-    assert!(error.to_string().contains("exactly one"), "{error}");
-
+fn a_directory_needs_its_main_document() {
     let neither = tempfile::tempdir().unwrap();
-    assert!(HarnessDir::open(neither.path()).is_err());
+    write_tree(neither.path(), &[("bundle.yaml", ROUTING)]);
+    let error = HarnessDir::open(neither.path()).expect_err("no harness.yaml, no harness");
+    assert!(error.to_string().contains("harness.yaml"), "{error}");
 }
 
 #[test]

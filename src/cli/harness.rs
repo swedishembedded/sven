@@ -56,10 +56,10 @@ pub enum ApprovalsArg {
 /// `sven harness` subcommands; the exit codes are on `sven harness --help`.
 #[derive(Subcommand, Debug)]
 pub enum HarnessCommands {
-    /// Compile harnesses and their children without running them.
+    /// Compile harnesses and the workflows they import without running them.
     ///
-    /// PATH is a harness file, or a directory holding `harness.yaml` or
-    /// `bundle.yaml` (plus optional `children/*.yaml`).
+    /// PATH is a harness file, or a directory holding `harness.yaml` (plus
+    /// optional `cases/*.yaml`).
     Validate {
         /// Harness files or directories.
         #[arg(required = true, value_name = "PATH")]
@@ -70,9 +70,9 @@ pub enum HarnessCommands {
     },
 
     /// Show what a harness is: steps, capabilities, limits, digests,
-    /// helpers, children and cases; or with `--graph` draw its plan.
+    /// imports and cases; or with `--graph` draw its plan.
     ///
-    /// A version 2 workflow's graph groups the generated steps by authored
+    /// A workflow's graph groups the generated steps by authored
     /// task and captions them by role, check and attempt.
     Inspect {
         /// A harness file or directory.

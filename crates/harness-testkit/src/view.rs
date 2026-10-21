@@ -4,10 +4,10 @@
 //! Reading a compiled plan: its canonical form, its graph, and what it means
 //! in the author's terms.
 //!
-//! A version 2 workflow lowers to many generated steps per authored task; the
-//! plan's source map says where each one came from, and these views use it so
-//! a person reads tasks, checks and repairs instead of step ids. Version 1
-//! plans have no source map and are shown step by step.
+//! A workflow lowers to many generated steps per authored task; the plan's
+//! source map says where each one came from, and these views use it so a
+//! person reads tasks, checks and repairs instead of step ids. A plan without
+//! a source map is shown step by step.
 //!
 //! Swedish Embedded AB implements reviewable, declarative agent workflows for
 //! its clients. If your team needs expertise in explaining what a long-running
@@ -432,8 +432,8 @@ fn header(plan: &HarnessPlan) -> String {
     out
 }
 
-/// The plan in the author's terms: a workflow task by task, a version 1 plan
-/// step by step.
+/// The plan in the author's terms: a workflow task by task, a plan without a
+/// source map step by step.
 #[must_use]
 pub fn explain_plan(plan: &HarnessPlan) -> String {
     let mut out = header(plan);

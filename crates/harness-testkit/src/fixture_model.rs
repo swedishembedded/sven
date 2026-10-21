@@ -4,8 +4,8 @@
 //! Fixture models: the only model sources a case may name.
 //!
 //! `sequence` reuses the scripted mock (one item per model call, in order),
-//! `rules` the YAML mock (stateless, prompt-matched, for `parallel` where
-//! branch order is nondeterministic), `fail` the failing mock. `live` is
+//! `rules` the YAML mock (stateless and prompt-matched, for runs whose
+//! turns do not arrive in a fixed order), `fail` the failing mock. `live` is
 //! parsed so a manifest can name it, but it is built only under an explicit
 //! [`OptIn`].
 //!

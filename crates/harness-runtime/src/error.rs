@@ -43,9 +43,9 @@ pub enum HarnessRunError {
         document: String,
     },
     /// A checkpoint was taken under a bundle, and the offered resume is not
-    /// that bundle (or offers no bundle at all). A bundle's helpers are
-    /// part of the program's meaning; replaying recorded steps through
-    /// different helper bytes would not be the same run.
+    /// that bundle (or offers no bundle at all). A bundle's imported
+    /// workflows are part of the program's meaning; replaying recorded steps
+    /// through a different import would not be the same run.
     #[error(
         "harness `{name}`: the checkpoint was taken under bundle digest {checkpoint}, \
          but {offered} was offered; resume requires the same bundle"

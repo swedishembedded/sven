@@ -571,9 +571,9 @@ impl HarnessRunState {
                     descend(self.inputs.get(rest.first()?)?, &rest[1..])
                 }
             }
-            // `env` resolves to nothing in v1 — a harness has no
-            // environment namespace yet, and an absent value renders
-            // visibly in any template rather than fabricating one.
+            // `env` resolves to nothing — a harness has no environment
+            // namespace, and an absent value renders visibly in any
+            // template rather than fabricating one.
             _ => None,
         }
     }

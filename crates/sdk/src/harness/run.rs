@@ -55,8 +55,8 @@ pub struct HarnessRun {
     /// A fresh run's inputs (unset for a resumed one - the restored run
     /// state carries them).
     pub(super) inputs: Value,
-    /// The bundle a fresh run builds from, when the harness carries
-    /// helpers: the helpers travel with the run and the run pins the
+    /// The bundle a fresh run builds from, when the harness is a package
+    /// with imports: the imports travel with the run and the run pins the
     /// bundle's digest.
     bundle: Option<Arc<HarnessBundle>>,
     /// The pinned bundle digest (unset for a document-only harness and a
@@ -167,8 +167,8 @@ impl HarnessRun {
         }
     }
 
-    /// The data a fresh run starts from: the bundle's, with its helpers and
-    /// digest pinned, or the plan's alone.
+    /// The data a fresh run starts from: the bundle's, with its digest
+    /// pinned, or the plan's alone.
     fn fresh_data(&self) -> Result<HarnessRunData, CallError> {
         match &self.bundle {
             Some(bundle) => HarnessRunData::from_bundle(bundle, self.inputs.clone())
@@ -448,9 +448,9 @@ impl HarnessRun {
                 (restored.machine, restored.policy)
             }
             None => {
-                // A bundle run travels with its helpers and pins the
-                // bundle's digest, exactly as a resume does: a fresh start
-                // is not a way to run a bundle without its program.
+                // A package run pins the bundle's digest, exactly as a
+                // resume does: a fresh start is not a way to run a bundle
+                // without its program.
                 let data = fresh
                     .ok_or_else(|| {
                         CallError::Infrastructure(anyhow::anyhow!(
@@ -510,7 +510,7 @@ impl HarnessRun {
         }
 
         // The run announces itself before its first step: which program,
-        // which helpers, which inputs.
+        // which imports, which inputs.
         let _ = self.events.send(SessionEvent::Harness {
             run_id: self.run_id.clone(),
             event: HarnessEvent::Started {

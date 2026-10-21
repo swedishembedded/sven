@@ -61,7 +61,7 @@ pub struct SourcedRecord {
     /// The record as the machine wrote it.
     #[serde(flatten)]
     pub record: TraceRecord,
-    /// Where it came from in the document; absent for a version 1 plan and for
+    /// Where it came from in the document; absent for a plan without a source map and for
     /// records that belong to no authored step.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,

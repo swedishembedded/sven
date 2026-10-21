@@ -1,14 +1,14 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The SDK's harness object: a YAML-defined agent harness, loaded, run,
+//! The SDK's harness object: a YAML-defined agent workflow, loaded, run,
 //! checkpointed and resumed without writing Rust for it.
 //!
 //! A harness is a compiled [`HarnessPlan`]: bounded steps, declared inputs
 //! and outputs, declared capabilities and limits. [`Engine::load_harness`]
 //! parses and compiles it offline - the same bar every child spawn clears -
-//! and registers it on the engine's [`HarnessRegistry`], so `delegate` and
-//! `parallel` steps resolve it by name. [`Harness::start`] builds a
+//! and registers it on the engine's [`HarnessRegistry`], so the `delegate`
+//! steps of the workflows it imports resolve it by name. [`Harness::start`] builds a
 //! [`HarnessRun`]: one independent kernel session driven by a
 //! [`HarnessMachine`] through [`RuntimeBuilder::with_machine`] - an ordinary
 //! kernel machine wired by the ordinary builder, with the plan's declared
@@ -22,11 +22,9 @@
 //! inferred), how the run ended, the structured trace, and the token usage.
 //! A run stopped by a bound leaves a [`HarnessCheckpoint`] - the kernel
 //! snapshot, pinned to the digest it was taken under - and
-//! [`Harness::resume`] continues a checkpoint whose plan (and, for a bundle
-//! run, whose helpers) still match. The operation a suspension interrupted
-//! did not complete; on resume it is settled through the machine's own
-//! failure path, so the step's declared retry policy decides what repeating
-//! it is worth.
+//! [`Harness::resume`] continues a checkpoint whose plan (and, for a package
+//! run, whose imports) still match. The operation a suspension interrupted
+//! did not complete; on resume the step runs again from its beginning.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -68,8 +66,8 @@ pub fn compile_harness(yaml: &str) -> Result<HarnessPlan, CallError> {
 impl Engine {
     /// Loads a harness from a YAML file and registers it on this engine.
     ///
-    /// The file is either a bare harness document or a bundle (top-level
-    /// `document` and `helpers` keys). It is parsed, validated and compiled
+    /// The file is either a bare workflow document or a package (top-level
+    /// `document` and `imports` keys). It is parsed, validated and compiled
     /// offline, and registered under the plan's own name, so this engine's
     /// sessions resolve it.
     ///
@@ -86,8 +84,8 @@ impl Engine {
         self.load_harness_from_str(&text)
     }
 
-    /// Loads a harness from YAML text - a bare document, or a bundle whose
-    /// top level carries `document` (and optionally `helpers`).
+    /// Loads a harness from YAML text - a bare document, or a package whose
+    /// top level carries `document` (and optionally `imports`).
     ///
     /// # Errors
     ///
@@ -139,9 +137,10 @@ impl Engine {
 /// pins against.
 #[derive(Clone)]
 enum HarnessSource {
-    /// A document plus its helpers. A changed helper is a changed program.
+    /// A document plus the workflows it imports. A changed import is a
+    /// changed program.
     Bundle(HarnessBundle),
-    /// A bare document; it carries no helpers.
+    /// A bare document; it imports nothing.
     Document(String),
 }
 
@@ -172,7 +171,7 @@ pub struct Harness {
     engine: Engine,
     plan: Arc<HarnessPlan>,
     source: HarnessSource,
-    /// The bundle's content digest, when the harness carries helpers: the
+    /// The bundle's content digest, when the harness is a package: the
     /// identity a fresh run pins itself to.
     bundle_digest: Option<String>,
 }
@@ -195,7 +194,7 @@ pub struct HarnessCheckpoint {
 }
 
 impl Harness {
-    /// The plan's own name: what `delegate` and `parallel` steps resolve.
+    /// The plan's own name: what a `delegate` step resolves.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.plan.name
@@ -273,7 +272,7 @@ impl Harness {
     /// Resumes a checkpointed run of this harness.
     ///
     /// The checkpoint is rebuilt under this harness's own program: a plan -
-    /// or, for a bundle run, a helper set - whose digest no longer matches
+    /// or, for a package run, an import set - whose digest no longer matches
     /// the checkpoint's is refused offline, before anything runs.
     ///
     /// # Errors
