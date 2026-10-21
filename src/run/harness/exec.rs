@@ -182,6 +182,47 @@ fn write_files(args: &HarnessRunArgs, result: &RunResult, times: &[u64]) -> Resu
     if let (Some(file), Some(trajectory)) = (&args.trajectory, &result.trajectory) {
         write(file, &to_json(trajectory)?)?;
     }
+    if let (Some(dir), Some(trajectory)) = (&args.conversations, &result.trajectory) {
+        write_conversations(dir, trajectory)?;
+    }
+    Ok(())
+}
+
+/// Writes each conversation embedded in `trajectory` to `dir` as its own
+/// ATIF file, numbered in the order the conversations began.
+fn write_conversations(
+    dir: &std::path::Path,
+    trajectory: &serde_json::Value,
+) -> Result<(), Failure> {
+    std::fs::create_dir_all(dir).map_err(|e| Failure {
+        code: 5,
+        message: format!("cannot create {}: {e}", dir.display()),
+    })?;
+    let embedded = trajectory["subagent_trajectories"]
+        .as_array()
+        .into_iter()
+        .flatten();
+    for (index, conversation) in embedded
+        .filter(|t| t["extra"]["harness"]["conversation"].is_string())
+        .enumerate()
+    {
+        let name: String = conversation["extra"]["harness"]["conversation"]
+            .as_str()
+            .unwrap_or_default()
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        write(
+            &dir.join(format!("{index:04}-{name}.json")),
+            &to_json(conversation)?,
+        )?;
+    }
     Ok(())
 }
 

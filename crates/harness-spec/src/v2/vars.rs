@@ -110,6 +110,105 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
     Ok(())
 }
 
+/// A gate's `capture` names a declared variable, and no gate reads a variable
+/// that an agent can set after a task the gate checks: a check never runs
+/// code, or judges data, that a later agent controls.
+pub(super) fn validate_gates(w: &WorkflowSpec) -> Result<(), HarnessError> {
+    use super::spec::{Check, GateDef};
+    for (name, gate) in &w.gates {
+        if let GateDef::Command(c) = gate {
+            if let Some(var) = &c.capture {
+                if !w.variables.contains_key(var) {
+                    return Err(invalid(format!(
+                        "gates.{name}: capture names `{var}`, which is not declared under \
+                         `variables`"
+                    )));
+                }
+            }
+        }
+    }
+    let order = w.runnable();
+    let position = |task: &str| order.iter().position(|t| t.name == task);
+    // Where each gate is used: the position of the task it checks.
+    let mut uses: BTreeMap<&str, Vec<(usize, &str)>> = BTreeMap::new();
+    for (at, task) in order.iter().enumerate() {
+        for check in &task.verify {
+            if let Check::Gate(g) | Check::Soft(g) = check {
+                uses.entry(g).or_default().push((at, &task.name));
+            }
+        }
+        if let Some(c) = &task.corrections {
+            uses.entry(&c.check).or_default().push((at, &task.name));
+            uses.entry(&c.accept).or_default().push((at, &task.name));
+        }
+    }
+    for owner in &w.workflow {
+        let failure = owner
+            .for_each
+            .as_ref()
+            .and_then(|e| e.on_item_failure.as_ref());
+        let last = owner
+            .body
+            .last()
+            .map_or(owner.name.as_str(), |t| t.name.as_str());
+        if let (Some(failure), Some(at)) = (failure, position(last)) {
+            for g in &failure.verify {
+                uses.entry(g).or_default().push((at, &owner.name));
+            }
+        }
+    }
+    for (gate, used) in &uses {
+        let Some(GateDef::Command(c)) = w.gates.get(*gate) else {
+            continue;
+        };
+        for var in read_vars(c) {
+            for (at, writer) in order.iter().enumerate() {
+                let writes = matches!(
+                    writer.vars.get(&var),
+                    Some(VarUse::Write | VarUse::Required)
+                );
+                if let Some((_, checked)) = used.iter().find(|(u, _)| writes && at > *u) {
+                    return Err(invalid(format!(
+                        "gate `{gate}` reads variable `{var}`, which task `{}` can set after task \
+                         `{checked}` is checked by the gate: a check must not run code or judge \
+                         data that a later agent controls (make `{var}` read-only there, or set \
+                         it earlier)",
+                        writer.name
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The variables a command gate's command, script, environment or standard
+/// input reads.
+fn read_vars(gate: &super::spec::CommandGate) -> Vec<String> {
+    let mut texts: Vec<&str> = gate.env.values().map(String::as_str).collect();
+    texts.extend(gate.command.iter().flatten().map(String::as_str));
+    texts.extend(gate.stdin.as_deref());
+    let steps = gate.commands();
+    let scripts: Vec<String> = steps.into_iter().flat_map(|s| s.argv).collect();
+    texts.extend(scripts.iter().map(String::as_str));
+    let mut found = Vec::new();
+    for text in texts {
+        let Ok(template) = crate::expr::Template::parse(text) else {
+            continue;
+        };
+        for path in template.paths() {
+            if path.root() == "vars" {
+                if let Some(name) = path.segments().get(1) {
+                    if !found.contains(name) {
+                        found.push(name.clone());
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
 /// The declarations as the plan carries them.
 pub(super) fn decls(w: &WorkflowSpec) -> BTreeMap<String, VariableDecl> {
     w.variables

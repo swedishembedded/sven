@@ -352,6 +352,21 @@ pub(super) fn validate_loop(
                     )));
                 }
             }
+            IterateSource::Variable(name) => match w.variables.get(name) {
+                Some(v) if v.ty == IOType::Json => {}
+                Some(_) => {
+                    return Err(invalid(format!(
+                        "{place}: for_each reads variable `{name}`, which must be declared \
+                         `json` (an array)"
+                    )))
+                }
+                None => {
+                    return Err(invalid(format!(
+                        "{place}: for_each reads variable `{name}`, which is not declared under \
+                         `variables`"
+                    )))
+                }
+            },
             IterateSource::Input(name) => match w.inputs.as_ref().and_then(|i| i.get(name)) {
                 Some(input) if input.ty == IOType::Json => {}
                 Some(_) => {

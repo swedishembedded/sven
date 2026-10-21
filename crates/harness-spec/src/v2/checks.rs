@@ -66,6 +66,8 @@ pub(super) struct CommandRun {
     pub stdin: Option<String>,
     /// The fact the typed result is kept under: the gate's latest run.
     pub store_as: String,
+    /// The variable the gate's standard output is stored in when it passes.
+    pub capture: Option<String>,
 }
 
 /// What one check does.
@@ -220,6 +222,7 @@ pub(super) fn gate_step(run: &CommandRun, then: &str, on_fail: &str) -> StepSpec
         output_bytes: run.output_bytes,
         stdin: run.stdin.clone(),
         store_as: Some(run.store_as.clone()),
+        capture: run.capture.clone(),
         then: then.to_string(),
         on_fail: on_fail.to_string(),
     }))

@@ -652,6 +652,10 @@ pub struct GateStepSpec {
     /// Where to store the typed gate result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_as: Option<String>,
+    /// The variable a passing gate's standard output is stored in. Version 2
+    /// only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<String>,
     /// The step to go to when the gate passed.
     pub then: String,
     /// The step to go to when it did not (non-zero exit, timeout, or the

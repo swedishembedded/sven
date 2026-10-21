@@ -236,6 +236,7 @@
             "timeout": { "type": "integer", "minimum": 1, "maximum": 3600, "description": "Seconds. Default 600." },
             "cwd": { "type": "string", "description": "Workspace-relative working directory." },
             "output_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "description": "How much of the end of each output stream the result keeps. Default 16384." },
+            "capture": { "type": "string", "description": "When the gate passes, its standard output becomes this declared variable's value (JSON for a json variable)." },
             "cwd_input": { "$ref": "#/$defs/identifier", "description": "Run in the absolute directory this string input names, which must be outside the workspace (the host sets it; the agent cannot write there). Exclusive with cwd." },
             "stdin": { "type": "string", "description": "Text the command reads on standard input: a template over inputs and earlier task outputs, for what is too large for an argument." },
             "metrics": {
@@ -338,6 +339,14 @@
               "additionalProperties": false,
               "properties": {
                 "input": { "$ref": "#/$defs/identifier", "description": "A run input declared json." }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["variable"],
+              "additionalProperties": false,
+              "properties": {
+                "variable": { "$ref": "#/$defs/identifier", "description": "A run variable declared json (an array), read once when the loop begins." }
               }
             }
           ]

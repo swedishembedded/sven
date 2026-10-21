@@ -110,7 +110,7 @@ pub(super) fn build(args: &HarnessRunArgs, progress: TraceObserver) -> Result<Ru
         opt_in: opt_in(args),
         seed: args.seed,
         record: args.record.is_some(),
-        trajectory: args.trajectory.is_some(),
+        trajectory: args.trajectory.is_some() || args.conversations.is_some(),
         scratchpad: scratchpad(args)?,
         progress: Some(progress),
     })

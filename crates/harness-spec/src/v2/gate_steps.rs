@@ -13,11 +13,10 @@
 //! scripts into trusted checks then you can procure our services by sending
 //! an email to info@swedishembedded.com.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
-use super::spec::CommandGate;
 use crate::error::HarnessError;
 use crate::gate_command::GateCommand;
 use crate::validate::is_env_name;
@@ -148,4 +147,77 @@ pub(super) fn validate(place: &str, gate: &CommandGate) -> Result<(), HarnessErr
         ));
     }
     Ok(())
+}
+
+/// A command gate.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandGate {
+    /// Human documentation.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// The argv; templates over inputs. Exactly one of `command` and `run`.
+    #[serde(default)]
+    pub command: Option<Vec<String>>,
+    /// A script, or named scripts run in order; the first failure stops the
+    /// gate. Templates, like an argv.
+    #[serde(default)]
+    pub run: Option<super::gate_steps::Script>,
+    /// The shell a script runs under (default `bash`).
+    #[serde(default)]
+    pub shell: Option<super::gate_steps::Shell>,
+    /// Variables set for the command or script: name to value, a template.
+    /// Data should reach a script this way, not by splicing it into the text.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// Seconds; the default applies when absent.
+    #[serde(default)]
+    pub timeout: Option<u64>,
+    /// Working directory inside the workspace.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Runs in the directory a run input names instead: a string input the
+    /// host sets to an absolute directory outside the workspace, such as a
+    /// pinned checkout the agent cannot write. Exclusive with `cwd`.
+    #[serde(default)]
+    pub cwd_input: Option<String>,
+    /// Text the command reads on standard input (a template over inputs and
+    /// earlier outputs), for what is too large for an argument.
+    #[serde(default)]
+    pub stdin: Option<String>,
+    /// How much of the end of each output stream the result keeps, in bytes
+    /// (default 16384, at most 1048576): a check whose findings are long, a
+    /// diff for a supervisor, needs more.
+    #[serde(default)]
+    pub output_bytes: Option<u64>,
+    /// When the gate passes, its standard output becomes this variable's
+    /// value (parsed as JSON for a `json` variable, a number or a boolean as
+    /// such, trimmed text otherwise): a value computed by a trusted command,
+    /// not by a model.
+    #[serde(default)]
+    pub capture: Option<String>,
+    /// Numbers the command leaves in JSON files, by name.
+    #[serde(default)]
+    pub metrics: BTreeMap<String, MetricDecl>,
+}
+
+/// Where a number the gate's command leaves can be read.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricDecl {
+    /// Workspace-relative JSON file.
+    pub file: String,
+    /// RFC 6901 pointer into it.
+    pub pointer: String,
+    /// Always `number`.
+    #[serde(rename = "type")]
+    pub ty: MetricType,
+}
+
+/// The only metric type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MetricType {
+    /// A JSON number.
+    Number,
 }

@@ -19,6 +19,9 @@ pub enum IterateSource {
     Json(JsonSource),
     /// An array-valued run input, by name.
     Input(String),
+    /// An array-valued run variable (a workflow's `variables`), by name, read
+    /// once when the iteration begins.
+    Variable(String),
 }
 
 /// A value inside a JSON file.

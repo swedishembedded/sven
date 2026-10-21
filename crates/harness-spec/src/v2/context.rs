@@ -143,6 +143,7 @@ impl Context<'_> {
                     )
                 })
                 .transpose()?,
+            capture: gate.capture.clone(),
             store_as: format!("gate_{name}"),
         })
     }

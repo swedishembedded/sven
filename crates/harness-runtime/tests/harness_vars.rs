@@ -262,3 +262,112 @@ fn grants_are_checked_against_the_declarations() {
     let typo = DISCOVER.replace("{{ vars.checks.test }}.\"", "{{ vars.chekcs.test }}.\"");
     assert!(refused(&typo).contains("variable `chekcs`"));
 }
+
+const CAPTURED: &str = r#"
+api_version: "2"
+name: cap
+agent: { tools: [read_file] }
+execution: { limits: { model_turns: 20, tool_calls: 20 } }
+variables:
+  files: { type: json }
+  checks: { type: json }
+gates:
+  inventory: { run: "git ls-files", capture: files }
+  build: { run: "{{ vars.checks.build }}" }
+workflow:
+  - name: explore
+    task: "Explore."
+    vars: { checks: required }
+    verify: [inventory, build]
+  - name: each
+    for_each: { source: { variable: files }, id: file }
+    task: "Work on {{ item.file }}."
+"#;
+
+fn report(id: ToolCallId, exit: i64, stdout: &str) -> Event {
+    Event::ToolSucceeded {
+        call_id: id,
+        observation: json!({ "exit_code": exit, "timed_out": false, "error": null,
+                             "stdout": stdout, "stderr": "" })
+        .to_string()
+        .into(),
+    }
+}
+
+fn gate_call(effects: &[Effect]) -> (ToolCallId, Value) {
+    effects
+        .iter()
+        .find_map(|e| match e {
+            Effect::CallTool { call_id, args, .. } => Some((*call_id, args.clone())),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("a gate call in {effects:?}"))
+}
+
+#[test]
+fn a_gate_captures_its_output_into_a_variable_a_loop_then_iterates() {
+    let (mut m, mut c, mut s, _) = begin(CAPTURED, json!({}));
+    let (event, _) = calls(
+        "harness.cap.explore",
+        "harness_vars_set",
+        json!({ "name": "checks", "value": { "build": "make" } }),
+    );
+    drive(&mut m, &mut c, &mut s, event);
+    let fx = drive(&mut m, &mut c, &mut s, turn("harness.cap.explore", "done"));
+    let (id, _) = gate_call(&fx);
+    let fx = drive(
+        &mut m,
+        &mut c,
+        &mut s,
+        report(id, 0, "[{\"file\": \"a.rs\"}, {\"file\": \"b.rs\"}]\n"),
+    );
+    // The build gate runs the command the agent published.
+    let (id, args) = gate_call(&fx);
+    assert_eq!(args["steps"][0]["argv"][4], "make", "{args}");
+    let fx = drive(&mut m, &mut c, &mut s, report(id, 0, ""));
+    assert_eq!(llm(&fx)["instruction"], "Work on a.rs.");
+    let fx = drive(&mut m, &mut c, &mut s, turn("harness.cap.each#0", "ok"));
+    assert_eq!(llm(&fx)["instruction"], "Work on b.rs.");
+}
+
+#[test]
+fn output_that_is_not_the_variables_type_fails_the_gate() {
+    let (mut m, mut c, mut s, _) = begin(
+        &CAPTURED.replace(
+            "    verify: [inventory, build]\n",
+            "    verify: [inventory, build]\n    repair: { attempts: 1 }\n",
+        ),
+        json!({}),
+    );
+    let (event, _) = calls(
+        "harness.cap.explore",
+        "harness_vars_set",
+        json!({ "name": "checks", "value": { "build": "make" } }),
+    );
+    drive(&mut m, &mut c, &mut s, event);
+    let fx = drive(&mut m, &mut c, &mut s, turn("harness.cap.explore", "done"));
+    let (id, _) = gate_call(&fx);
+    let fx = drive(&mut m, &mut c, &mut s, report(id, 0, "a.rs\nb.rs\n"));
+    let repair = llm(&fx);
+    assert_eq!(
+        repair["origin"], "repair",
+        "the capture failure is a failed check: {repair}"
+    );
+}
+
+#[test]
+fn a_gate_may_not_read_a_variable_a_later_agent_can_set() {
+    let later = CAPTURED.replace(
+        "    task: \"Work on {{ item.file }}.\"\n",
+        "    task: \"Work on {{ item.file }}.\"\n    vars: { checks: write }\n",
+    );
+    let error = refused(&later);
+    assert!(
+        error.contains(
+            "gate `build` reads variable `checks`, which task `each` can set after task `explore`"
+        ),
+        "{error}"
+    );
+    let undeclared = CAPTURED.replace("capture: files", "capture: nothing");
+    assert!(refused(&undeclared).contains("capture names `nothing`"));
+}

@@ -174,6 +174,8 @@ pub(super) struct GateResult {
     /// The standard output parsed as JSON, when it is a JSON document: a
     /// check that reports its findings as data is read through this.
     json: Value,
+    /// Whether the tool cut the output streams to their kept size.
+    truncated: bool,
 }
 
 impl GateResult {
@@ -190,7 +192,16 @@ impl GateResult {
             failed_step: None,
             steps: json!([]),
             json: Value::Null,
+            truncated: false,
         }
+    }
+
+    /// A gate whose command passed but whose output could not become the
+    /// variable it captures: it did not pass.
+    fn refuse_capture(&mut self, why: String) {
+        self.passed = false;
+        self.kind = "failed";
+        self.detail = format!("the output could not be captured: {why}");
     }
 
     /// Reads the tool's report. The report is JSON text (or an object) with
@@ -264,6 +275,10 @@ impl GateResult {
             detail,
             failed_step,
             steps: report.get("steps").cloned().unwrap_or_else(|| json!([])),
+            truncated: report
+                .get("truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         }
     }
 
@@ -434,6 +449,7 @@ impl HarnessMachine {
         let Some(PlanPrimitive::Gate {
             timeout_secs,
             store_as,
+            capture,
             then,
             on_fail,
             ..
@@ -452,10 +468,23 @@ impl HarnessMachine {
             run.counts.tool_calls = run.counts.tool_calls.saturating_sub(1);
             return self.run_gate(run, &step, ctx);
         }
-        let result = match report {
+        let mut result = match report {
             Ok(observation) => GateResult::from_report(observation, timeout_secs),
             Err(error) => GateResult::exec_error(format!("the gate tool failed: {error}")),
         };
+        if let (true, Some(name)) = (result.passed, capture.as_deref()) {
+            match captured(self.run.plan(), name, &result) {
+                Ok(value) => {
+                    run.facts
+                        .insert(sven_harness_spec::vars::var_fact(name), value);
+                    run.facts.insert(
+                        sven_harness_spec::vars::var_set_fact(name),
+                        Value::Bool(true),
+                    );
+                }
+                Err(why) => result.refuse_capture(why),
+            }
+        }
         run.trace.push(TraceRecord::GateEvaluated {
             step: step_id.to_string(),
             passed: result.passed,
@@ -467,4 +496,35 @@ impl HarnessMachine {
         run.store_step_value(step_id, value, store_as.as_deref());
         self.settle_step(run, step_id, &next, ctx)
     }
+}
+
+/// The value a passing gate's standard output gives the variable `name`:
+/// JSON for a `json` variable, a number or a boolean as such, trimmed text
+/// for a string; checked against the declaration like any value.
+fn captured(
+    plan: &sven_harness_spec::HarnessPlan,
+    name: &str,
+    result: &GateResult,
+) -> Result<Value, String> {
+    use sven_harness_spec::IOType;
+    let Some(decl) = plan.variables.get(name) else {
+        return Err(format!("`{name}` is not a declared variable"));
+    };
+    if result.truncated {
+        return Err("the output was cut at the gate's output_bytes; raise it".to_string());
+    }
+    let text = result.stdout.trim();
+    let value = match decl.ty {
+        IOType::Json => serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?,
+        IOType::Number => serde_json::from_str::<serde_json::Number>(text)
+            .map(Value::Number)
+            .map_err(|_| format!("`{text}` is not a number"))?,
+        IOType::Boolean => match text {
+            "true" => Value::Bool(true),
+            "false" => Value::Bool(false),
+            other => return Err(format!("`{other}` is not true or false")),
+        },
+        IOType::String => Value::String(text.to_string()),
+    };
+    sven_harness_spec::vars::admit(decl, value)
 }

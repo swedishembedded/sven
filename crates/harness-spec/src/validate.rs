@@ -304,7 +304,12 @@ fn validate_iterate_shape(
                 IterateSource::Input(name) if name.is_empty() => {
                     return Err(bad("the source input needs a name"))
                 }
-                IterateSource::Input(_) => {}
+                IterateSource::Variable(name) if name.is_empty() => {
+                    return Err(HarnessError::Invalid(format!(
+                        "step `{id}`: for_each.variable must name a variable"
+                    )));
+                }
+                IterateSource::Input(_) | IterateSource::Variable(_) => {}
             }
             if iterate.on_exhausted.is_some() {
                 return Err(bad("`on_exhausted` belongs to `until`"));

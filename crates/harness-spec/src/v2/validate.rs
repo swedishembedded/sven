@@ -72,6 +72,7 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
     validate_tasks(w)?;
     super::imports::validate_imports(w)?;
     super::vars::validate(w)?;
+    super::vars::validate_gates(w)?;
     validate_success(w)?;
     validate_use(w)?;
     validate_capabilities(w)

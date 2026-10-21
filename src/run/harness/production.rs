@@ -177,7 +177,7 @@ impl Production {
                 input: request::explicit_input(args)?.unwrap_or_else(|| serde_json::json!({})),
                 bounds: request::bounds(args, Bounds::default())?,
                 record: args.record.is_some(),
-                trajectory: args.trajectory.is_some(),
+                trajectory: args.trajectory.is_some() || args.conversations.is_some(),
                 scratchpad: request::scratchpad(args)?,
                 progress,
                 activity,

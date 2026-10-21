@@ -168,7 +168,7 @@ fn a_do_body_runs_its_tasks_per_item_each_in_its_own_conversation() {
     );
     let (id, name, args) = tool(&fx);
     assert_eq!(name, "shell_gate");
-    assert_eq!(args["argv"], json!(["check", "a.rs"]));
+    assert_eq!(args["steps"][0]["argv"], json!(["check", "a.rs"]));
     let fx = answer(&mut m, &mut ctx, &mut s, id, 1);
     let again = llm(&fx);
     assert_eq!(again["thread"], "harness.sweep.repair#0");
@@ -185,7 +185,7 @@ fn a_do_body_runs_its_tasks_per_item_each_in_its_own_conversation() {
     let fx = answer(&mut m, &mut ctx, &mut s, id, 0);
     let (id, name, args) = tool(&fx);
     assert_eq!(name, "shell_gate", "the commit task runs its check at once");
-    assert_eq!(args["argv"], json!(["check", "a.rs"]));
+    assert_eq!(args["steps"][0]["argv"], json!(["check", "a.rs"]));
     assert!(
         !fx.iter().any(|e| matches!(e, Effect::CallLlm { .. })),
         "a check task asks no model"

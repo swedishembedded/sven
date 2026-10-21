@@ -12,6 +12,8 @@
 //! by sending an email to info@swedishembedded.com.
 #![allow(dead_code)]
 
+pub mod cli;
+
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};

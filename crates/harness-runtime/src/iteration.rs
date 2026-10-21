@@ -328,6 +328,14 @@ impl HarnessMachine {
                         let collection = run.inputs.get(name).cloned().unwrap_or(Value::Null);
                         self.iterate_freeze(run, step, &collection, None, ctx)
                     }
+                    IterateSource::Variable(name) => {
+                        let collection = run
+                            .facts
+                            .get(&sven_harness_spec::vars::var_fact(name))
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        self.iterate_freeze(run, step, &collection, None, ctx)
+                    }
                     IterateSource::Json(json) => self.request_snapshot(run, step, json, ctx),
                 }
             }

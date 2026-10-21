@@ -167,7 +167,8 @@ sven harness run      <PATH> [--input JSON | --input-file FILE] [--case FILE]
                        [--first-byte-timeout SECS]]
                       [--timeout SECS] [--max-output-tokens N]
                       [--scratchpad DIR] [--trace FILE] [--record FILE]
-                      [--trajectory FILE] [--checkpoint-out FILE] [--json] [--quiet]
+                      [--trajectory FILE] [--conversations DIR]
+                      [--checkpoint-out FILE] [--json] [--quiet]
 sven harness resume   <PATH> --checkpoint FILE [the flags of run]
 sven harness replay   <PATH> --recording FILE [--expect-trace FILE] [--json]
 sven harness test     <DIR>... [--case NAME] [--no-replay] [--json]
@@ -338,8 +339,10 @@ where it rests, exits 3 and leaves its checkpoint for `harness resume`.
 Nothing is written unless a flag asks for it: `--trace` (one trace record per
 line, JSONL, each with `ts_ms`, the Unix time in milliseconds at which sven
 observed it), `--record` (the recording, JSON), `--trajectory` (the ATIF
-trajectory, JSON) and `--checkpoint-out` (the checkpoint of a suspended run,
-JSON). Case workspaces are temporary directories removed with the run, and so
+trajectory, JSON), `--conversations DIR` (each conversation of the run - one
+task's agent, or one role of one loop item - as its own ATIF file
+`NNNN-<name>.json`, the form tool-call training data wants) and
+`--checkpoint-out` (the checkpoint of a suspended run, JSON). Case workspaces are temporary directories removed with the run, and so
 is the scratchpad of a case or of a run in a fresh workspace; a run in a
 directory you name (`--workspace`) keeps its scratchpad and prints the path.
 No sven configuration is read.

@@ -305,7 +305,17 @@ task's turns end earns a reminder in the task's own conversation (`origin:
 variables`), twice at most; still unset, the run fails with
 `missing_variable`. Templates anywhere read `{{ vars.<name> }}` and the fields
 of a `json` variable (`{{ vars.checks.test }}`), so an exploration task can
-publish what later prompts and gates use.
+publish what later prompts and gates use. A command gate with `capture:
+<variable>` stores its standard output in that variable when it passes (parsed
+as JSON for a `json` variable, as a number or a boolean for those types,
+trimmed text for a string; output that does not fit, or that was cut at
+`output_bytes`, fails the gate): a value a trusted command computed, such as a
+backlog (`for_each: {source: {variable: files}}` iterates a `json` array
+variable, read once when the loop begins) or a base commit. **Trust rule:** a
+gate may not read (in its command, script, `env` or `stdin`) a variable that
+an agent can set in a task that runs after a task the gate checks - so an
+exploration task may publish the commands later checks run, but no later agent
+can change them; the validator names the gate, the variable and both tasks.
 
 **Loop bodies and check tasks.** A loop task may carry `do: [tasks...]`
 instead of a prompt: for each item (or pass) the tasks of the body run in

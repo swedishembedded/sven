@@ -86,12 +86,7 @@ fn exit(
 }
 
 fn argv(args: &Value) -> Value {
-    // The gate tool takes its program either as `argv` or as the first of
-    // its `steps`.
-    args.get("argv")
-        .cloned()
-        .or_else(|| args["steps"][0].get("argv").cloned())
-        .unwrap_or(Value::Null)
+    args["steps"][0]["argv"].clone()
 }
 
 fn run_sweep(success: &str) -> Value {
