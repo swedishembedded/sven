@@ -19,13 +19,13 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use super::checks::Builder;
-use super::context::{Context, LoopVars};
-use super::rewrite::{rewrite_condition, rewrite_text};
-use super::spec::{AgentSystem, SystemVariant};
 use crate::error::HarnessError;
+use crate::lower_checks::Builder;
+use crate::lower_context::{Context, LoopVars};
+use crate::rewrite::{rewrite_condition, rewrite_text};
 use crate::source_map::SourceRef;
-use crate::spec::{AssignStepSpec, BranchStepSpec, StepSpec};
+use crate::steps::{AssignStepSpec, BranchStepSpec, StepSpec};
+use crate::workflow::{AgentSystem, SystemVariant};
 
 /// The fact the chosen variant's text is stored under.
 const FACT: &str = "agent_system";

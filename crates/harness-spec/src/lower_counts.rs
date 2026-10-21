@@ -19,11 +19,11 @@ use std::ops::RangeInclusive;
 
 use serde_json::{json, Value};
 
-use super::spec::{FollowUp, Repair};
-use super::validate::MAX_REPAIR_ATTEMPTS;
 use crate::error::HarnessError;
 use crate::expr::Template;
-use crate::spec::{IOType, InputValue};
+use crate::steps::{IOType, InputValue};
+use crate::workflow::{FollowUp, Repair};
+use crate::workflow_validate::MAX_REPAIR_ATTEMPTS;
 
 /// A count as the document gave it.
 #[derive(Debug, Clone, PartialEq, Eq)]

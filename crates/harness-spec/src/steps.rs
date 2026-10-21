@@ -1,15 +1,16 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The typed AST of a harness document.
+//! The step specification: what lowering a workflow produces, and what the
+//! plan compiler works on.
 //!
-//! [`HarnessSpec`] is what a YAML document deserializes into before any
-//! validation runs. Every field the compiler needs is typed; every primitive
-//! is a variant of [`StepSpec`]; nothing is left as an opaque map for the
-//! interpreter to re-parse. Typed specifications exist for all twelve
-//! primitives from day one (ADR 0004) even where the runtime adapters land
-//! in later releases — the language is defined whole, and rejected early,
-//! rather than growing silently.
+//! [`HarnessSpec`] is a map of steps, each one of the closed set of
+//! primitives of [`StepSpec`] (`predict`, `agent`, `verify`, `assign`,
+//! `branch`, `delegate`, `gate`, `iterate`, `return`, `fail`). It is not a
+//! document format: a harness document is a workflow
+//! ([`crate::workflow`]), and nothing but the lowering writes this. Every
+//! field the compiler needs is typed; nothing is left as an opaque map for
+//! the interpreter to re-parse.
 
 use serde::{Deserialize, Serialize};
 
@@ -244,12 +245,11 @@ pub struct HarnessSpec {
     pub entry: String,
     /// The steps, by id.
     pub steps: std::collections::BTreeMap<String, StepSpec>,
-    /// Run variables, by name (version 2 only).
+    /// Run variables, by name.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub variables: std::collections::BTreeMap<String, crate::vars::VariableDecl>,
-    /// What lowering a version 2 workflow recorded about this spec. Never
-    /// read from or written to a document; `None` for every version 1
-    /// document.
+    /// What lowering a workflow recorded about this spec. Never
+    /// read from or written to a document.
     #[serde(skip)]
     pub lowering: Option<Lowering>,
 }

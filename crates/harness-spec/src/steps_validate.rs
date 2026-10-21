@@ -25,7 +25,7 @@
 
 use crate::error::HarnessError;
 use crate::expr::{Expr, Template};
-use crate::spec::{
+use crate::steps::{
     HarnessSpec, IterateSource, StepSpec, API_VERSION, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT,
     MAX_ITERATIONS_LIMIT, RESERVED_TOOLS,
 };
@@ -205,7 +205,7 @@ fn validate_step_shape(id: &str, step: &StepSpec) -> Result<(), HarnessError> {
 /// An `iterate` step repeats exactly one way and within a stated bound.
 fn validate_iterate_shape(
     id: &str,
-    iterate: &crate::spec::IterateStepSpec,
+    iterate: &crate::steps::IterateStepSpec,
 ) -> Result<(), HarnessError> {
     let bad = |why: &str| HarnessError::Invalid(format!("step `{id}`: {why}"));
     match (&iterate.for_each, &iterate.until) {
@@ -258,7 +258,7 @@ fn validate_iterate_shape(
 /// A `gate` step runs a real command, so its definition is checked tightly:
 /// a non-empty argv, a bounded timeout and a working directory that stays in
 /// the workspace.
-fn validate_gate_shape(id: &str, gate: &crate::spec::GateStepSpec) -> Result<(), HarnessError> {
+fn validate_gate_shape(id: &str, gate: &crate::steps::GateStepSpec) -> Result<(), HarnessError> {
     if gate.steps.is_empty()
         || gate.steps.iter().any(|step| {
             step.argv

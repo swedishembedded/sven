@@ -12,10 +12,10 @@
 //! automated run out of the repository it works on then you can procure our
 //! services by sending an email to info@swedishembedded.com.
 
-use super::context::Context;
-use super::rewrite::rewrite_text;
 use crate::error::HarnessError;
 use crate::expr::Template;
+use crate::lower_context::Context;
+use crate::rewrite::rewrite_text;
 
 /// The scratchpad template of the document, checked to read inputs only.
 ///

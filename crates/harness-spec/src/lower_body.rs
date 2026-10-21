@@ -19,18 +19,18 @@
 
 use serde_json::{json, Value};
 
-use super::checks::{lower_checks, Builder, Phase};
-use super::context::{Context, LoopVars};
-use super::lower::{entry_of, iter_id, lower_loop, lower_task, origin};
-use super::rewrite::{output_fact, pool_fact, rewrite_condition, rewrite_text, stop_fact};
-use super::spec::{TaskSpec, WorkflowSpec};
-use super::validate::check_metric_ref;
 use crate::error::HarnessError;
-use crate::spec::{
+use crate::lower::{entry_of, iter_id, lower_loop, lower_task, origin};
+use crate::lower_checks::{lower_checks, Builder, Phase};
+use crate::lower_context::{Context, LoopVars};
+use crate::rewrite::{output_fact, pool_fact, rewrite_condition, rewrite_text, stop_fact};
+use crate::steps::{
     AssignStepSpec, BranchStepSpec, IOType, IterateSource, Reconcile, StepSpec, MAX_ITEMS_LIMIT,
     MAX_ITERATIONS_LIMIT,
 };
-use crate::validate::is_workspace_relative;
+use crate::steps_validate::is_workspace_relative;
+use crate::workflow::{TaskSpec, WorkflowSpec};
+use crate::workflow_validate::check_metric_ref;
 
 fn invalid(message: String) -> HarnessError {
     HarnessError::Invalid(message)
@@ -182,7 +182,7 @@ pub(super) fn lower_group(
         .flat_map(|each| &each.covers)
         .map(|path| rewrite_text(path, &cx.scope(format!("{place}: covers"), first, vars)))
         .collect::<Result<Vec<_>, _>>()?;
-    let body = super::vars::lower_reset(cx.w, b, owner, &following);
+    let body = crate::workflow_vars::lower_reset(cx.w, b, owner, &following);
     lower_loop(b, owner, &body, next, covers)?;
     lower_item_failure(cx, b, owner)?;
     if let Some(condition) = &owner.when {
@@ -295,7 +295,7 @@ fn skipped_output(task: &TaskSpec) -> Value {
 /// `for_each` and `until`: one at most, a bounded count, a source that exists.
 pub(super) fn validate_loop(
     w: &WorkflowSpec,
-    task: &super::spec::TaskSpec,
+    task: &crate::workflow::TaskSpec,
     place: &str,
 ) -> Result<(), HarnessError> {
     if task.for_each.is_some() && task.until.is_some() {
@@ -314,11 +314,11 @@ pub(super) fn validate_loop(
                 "{place}: `reconcile: refresh` needs a file source; an input cannot change"
             )));
         }
-        if each.covers.len() > crate::spec::MAX_COVERS {
+        if each.covers.len() > crate::steps::MAX_COVERS {
             return Err(invalid(format!(
                 "{place}: for_each.covers names {} paths, more than {}",
                 each.covers.len(),
-                crate::spec::MAX_COVERS
+                crate::steps::MAX_COVERS
             )));
         }
         for path in &each.covers {

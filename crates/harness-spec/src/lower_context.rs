@@ -12,13 +12,13 @@
 
 use std::collections::BTreeSet;
 
-use super::checks::{CommandRun, Kind, Resolved};
-use super::rewrite::{rewrite_text, Scope};
-use super::spec::{Check, CommandGate, GateDef, TaskSpec, WorkflowSpec};
-use super::validate::split_metric;
 use crate::error::HarnessError;
 use crate::gate_command::GateCommand;
-use crate::spec::DEFAULT_GATE_TIMEOUT_SECS;
+use crate::lower_checks::{CommandRun, Kind, Resolved};
+use crate::rewrite::{rewrite_text, Scope};
+use crate::steps::DEFAULT_GATE_TIMEOUT_SECS;
+use crate::workflow::{Check, CommandGate, GateDef, TaskSpec, WorkflowSpec};
+use crate::workflow_validate::split_metric;
 
 pub(super) struct Context<'a> {
     pub(super) w: &'a WorkflowSpec,
@@ -177,7 +177,7 @@ impl Context<'_> {
     pub(super) fn metric(
         &self,
         reference: &str,
-        threshold: super::spec::Threshold,
+        threshold: crate::workflow::Threshold,
         vars: LoopVars,
         tasks: &[String],
     ) -> Result<Resolved, HarnessError> {

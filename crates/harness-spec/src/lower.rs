@@ -1,11 +1,11 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Lowering a validated workflow into a version 1 [`HarnessSpec`].
+//! Lowering a validated workflow into the step specification ([`HarnessSpec`]).
 //!
 //! Each task becomes: an optional `when` branch, an `agent` step for its
 //! work turn, an `agent` step (behind an optional branch) per follow-up
-//! turn, then its checks with their repair attempts (see [`super::checks`]).
+//! turn, then its checks with their repair attempts (see [`crate::lower_checks`]).
 //! The tasks are chained in order, the success condition follows the last
 //! one, and `complete` returns the declared outputs. Step ids are
 //! `<task>__<role>...`; the source map records what each one is for.
@@ -17,25 +17,26 @@
 
 use serde_json::{json, Value};
 
-use super::checks::{
+use crate::error::HarnessError;
+use crate::lower_checks::{
     lower_checks, Builder, Kind, Phase, RepairPlan, Resolved, DEFAULT_REPAIR_PROMPT,
 };
-use super::context::{Context, LoopVars};
-use super::corrections::{lower_corrections, Turn};
-use super::rewrite::{
+use crate::lower_context::{Context, LoopVars};
+use crate::lower_corrections::{lower_corrections, Turn};
+use crate::lower_system;
+
+use crate::rewrite::{
     output_fact, pool_fact, rewrite_condition, rewrite_text, rewrite_value, stop_fact, Scope,
 };
-use super::scratchpad;
-use super::spec::{decoding_of, GateDef, OnFailure, TaskSpec, WorkflowSpec};
-use super::system;
-use super::validate::needed_capabilities;
-use crate::error::HarnessError;
+use crate::scratchpad;
 use crate::source_map::{Lowering, SourceRef};
-use crate::spec::{
+use crate::steps::{
     AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, FailStepSpec, ForEachSpec,
     HarnessSpec, InputValue, IterateStepSpec, LimitsSpec, PredictStepSpec, ReturnStepSpec,
     StepSpec, UntilSpec, API_VERSION, DEFAULT_MAX_ITEMS,
 };
+use crate::workflow::{decoding_of, GateDef, OnFailure, TaskSpec, WorkflowSpec};
+use crate::workflow_validate::needed_capabilities;
 
 /// The id of the step the run returns from.
 const COMPLETE: &str = "complete";
@@ -152,24 +153,25 @@ pub(super) fn lower_task(
     let through = cx.through(&task.name);
     let place = format!("task `{}`", task.name);
     let vars = cx.vars(task);
-    let tools = super::vars::tools_for(task, task.tools.clone().or_else(|| w.agent.tools.clone()));
-    let grants = super::vars::grants(task);
+    let tools =
+        crate::workflow_vars::tools_for(task, task.tools.clone().or_else(|| w.agent.tools.clone()));
+    let grants = crate::workflow_vars::grants(task);
     let decoding = decoding_of(&w.agent.sampling, &w.agent.thinking, &w.agent.turn)
         .overlaid_by(&decoding_of(&task.sampling, &task.thinking, &task.turn));
     let fact = output_fact(&task.name);
     let role = task.model.clone().or_else(|| w.agent.model.clone());
-    let agent_system = system::template(cx, vars)?;
+    let agent_system = lower_system::template(cx, vars)?;
     let task_system = task
         .system
         .as_deref()
         .map(|text| rewrite_text(text, &cx.scope(format!("{place}: system"), before, vars)))
         .transpose()?;
-    if let Some(offered) = super::imports::offered(w, task) {
-        return super::imports::lower_use(cx, b, task, &offered.name, next);
+    if let Some(offered) = crate::lower_imports::offered(w, task) {
+        return crate::lower_imports::lower_use(cx, b, task, &offered.name, next);
     }
     let looping = task.for_each.is_some() || task.until.is_some();
-    let conversation = super::body::conversation(cx, task, vars, before)?;
-    let item_failure = super::body::item_failure_entry(w, task);
+    let conversation = crate::lower_body::conversation(cx, task, vars, before)?;
+    let item_failure = crate::lower_body::item_failure_entry(w, task);
 
     // What the body hands over to when it is done: the loop step, which
     // decides whether another pass or item follows, or the next task.
@@ -208,10 +210,10 @@ pub(super) fn lower_task(
         .repair
         .as_ref()
         .map(|r| {
-            super::counts::parse(
+            crate::lower_counts::parse(
                 &r.attempts,
                 r.at_most,
-                &(1..=super::validate::MAX_REPAIR_ATTEMPTS),
+                &(1..=crate::workflow_validate::MAX_REPAIR_ATTEMPTS),
                 w.inputs.as_ref(),
                 &place,
             )
@@ -293,11 +295,11 @@ pub(super) fn lower_task(
     };
     let mut following = lower_checks(b, &phase, &checks, &after_checks)?;
     // A required variable is checked after the task's turns, before its checks.
-    following = super::vars::lower_required(
+    following = crate::workflow_vars::lower_required(
         w,
         b,
         task,
-        &super::vars::Reminder {
+        &crate::workflow_vars::Reminder {
             tools: tools.clone(),
             conversation: conversation.clone(),
             system: agent_system.clone(),
@@ -326,14 +328,14 @@ pub(super) fn lower_task(
     for (j, turn) in task.follow_ups.iter().enumerate().rev() {
         let scope = cx.scope(format!("{place}: follow_ups[{j}]"), through, vars);
         let count = match &turn.max {
-            Some(max) => super::counts::parse(
+            Some(max) => crate::lower_counts::parse(
                 max,
                 turn.at_most,
                 &(1..=8),
                 w.inputs.as_ref(),
                 &format!("{place}: follow_ups[{j}]"),
             )?,
-            None => super::counts::Count {
+            None => crate::lower_counts::Count {
                 unroll: 1,
                 input: None,
             },
@@ -394,7 +396,7 @@ pub(super) fn lower_task(
                 b.add(
                     &cap,
                     StepSpec::Branch(Box::new(BranchStepSpec {
-                        on: super::counts::at_least(name, k + 1),
+                        on: crate::lower_counts::at_least(name, k + 1),
                         when_true: following,
                         when_false: after.clone(),
                     })),
@@ -416,7 +418,7 @@ pub(super) fn lower_task(
         None => task_prompt,
     };
     let work = format!("{}__work", task.name);
-    let work_step = if super::body::is_check_task(task) {
+    let work_step = if crate::lower_body::is_check_task(task) {
         // A check task has no turn: its work is to record an empty output and
         // go on to its checks.
         StepSpec::Assign(Box::new(AssignStepSpec {
@@ -461,9 +463,9 @@ pub(super) fn lower_task(
             .flat_map(|each| &each.covers)
             .map(|path| rewrite_text(path, &cx.scope(format!("{place}: covers"), before, vars)))
             .collect::<Result<Vec<_>, _>>()?;
-        let body = super::vars::lower_reset(w, b, task, &work);
+        let body = crate::workflow_vars::lower_reset(w, b, task, &work);
         lower_loop(b, task, &body, next, covers)?;
-        super::body::lower_item_failure(cx, b, task)?;
+        crate::lower_body::lower_item_failure(cx, b, task)?;
     }
     if let Some(condition) = &task.when {
         let scope = cx.scope(format!("{place}: when"), before, LoopVars::default());
@@ -487,7 +489,7 @@ pub(super) fn lower_task(
 /// instead of a hole: `""` for a text output, an object of empty strings for
 /// the fields of a structured one.
 pub(super) fn skip_step(cx: &Context<'_>, b: &mut Builder, task: &TaskSpec, next: &str) -> String {
-    let fields: Option<Vec<String>> = match super::imports::offered(cx.w, task) {
+    let fields: Option<Vec<String>> = match crate::lower_imports::offered(cx.w, task) {
         Some(offered) => Some(offered.outputs.keys().cloned().collect()),
         None => task
             .schema
@@ -636,7 +638,7 @@ fn returning_failures(cx: &Context<'_>, b: &mut Builder) -> Result<(), HarnessEr
     Ok(())
 }
 
-/// Lowers `w`, which has passed [`super::validate::validate`].
+/// Lowers `w`, which has passed [`crate::workflow_validate::validate`].
 ///
 /// # Errors
 ///
@@ -687,11 +689,11 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         if task.body.is_empty() {
             lower_task(&cx, &mut b, task, &next)?;
         } else {
-            super::body::lower_group(&cx, &mut b, task, &next)?;
+            crate::lower_body::lower_group(&cx, &mut b, task, &next)?;
         }
         next = entry_of(task);
     }
-    next = system::lower_variants(&cx, &mut b, next)?;
+    next = lower_system::lower_variants(&cx, &mut b, next)?;
 
     if w.on_failure == OnFailure::Return {
         returning_failures(&cx, &mut b)?;
@@ -742,7 +744,7 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         }),
         entry: next,
         steps: b.steps,
-        variables: super::vars::decls(w),
+        variables: crate::workflow_vars::decls(w),
         schemas: {
             let schemas: std::collections::BTreeMap<String, Value> = w
                 .workflow

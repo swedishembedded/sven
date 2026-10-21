@@ -11,7 +11,7 @@
 //! no `..` out of the root, no symlink out of it when read from disk), an
 //! import cycle is an error naming the chain, two documents never share a
 //! name, every file carried must be reachable, and the size, depth and number
-//! of imports are bounded. Each imported document is itself a version 2
+//! of imports are bounded. Each imported document is itself a
 //! workflow; a `use` task sees only its interface (inputs, outputs and
 //! capabilities), which is checked when the importer compiles.
 //!
@@ -26,8 +26,8 @@ use std::path::{Component, Path};
 use crate::bundle::HarnessBundle;
 use crate::error::HarnessError;
 use crate::plan::HarnessPlan;
-use crate::spec::HarnessSpec;
-use crate::v2::spec::Imported;
+use crate::steps::HarnessSpec;
+use crate::workflow::Imported;
 use crate::HarnessDocument;
 
 /// The most documents a package may carry besides its main one.
@@ -193,8 +193,8 @@ impl Walk<'_> {
 /// # Errors
 ///
 /// Everything compiling a document can produce, and the package rules: a
-/// missing or unreachable file, a cycle, a duplicate name, a version 1 import,
-/// or a limit exceeded.
+/// missing or unreachable file, a cycle, a duplicate name, or a
+/// limit exceeded.
 pub fn compile_package(
     main: &str,
     files: &BTreeMap<String, String>,

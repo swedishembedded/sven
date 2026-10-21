@@ -21,18 +21,18 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use super::checks::Builder;
-use super::lower::origin;
+use crate::lower::origin;
+use crate::lower_checks::Builder;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::spec::{TaskSpec, WorkflowSpec};
-use super::validate::is_identifier;
 use crate::error::HarnessError;
-use crate::spec::{
+use crate::steps::{
     AgentStepSpec, AssignStepSpec, BranchStepSpec, FailStepSpec, IOType, StepDecoding, StepSpec,
 };
 use crate::vars::{var_fact, var_set_fact, VarAccess, VariableDecl, VAR_TOOLS};
+use crate::workflow::{TaskSpec, WorkflowSpec};
+use crate::workflow_validate::is_identifier;
 
 /// How many times an agent is reminded of one required variable.
 const REMINDERS: u32 = 2;
@@ -84,7 +84,7 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
                 )));
             }
             let agent = !task.model_only
-                && !super::body::is_check_task(task)
+                && !crate::lower_body::is_check_task(task)
                 && task.use_import.is_none()
                 && task.body.is_empty();
             if *use_ != VarUse::Read && !agent {
@@ -99,7 +99,7 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
                 "{place}: `vars` belongs to the tasks of the `do` body"
             )));
         }
-        let agent_task = !task.model_only && !super::body::is_check_task(task);
+        let agent_task = !task.model_only && !crate::lower_body::is_check_task(task);
         if agent_task && !task.vars.is_empty() && task.tools.is_none() && w.agent.tools.is_none() {
             return Err(invalid(format!(
                 "{place}: a task that names variables needs a `tools` list (on the task or the \
@@ -114,7 +114,7 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
 /// that an agent can set after a task the gate checks: a check never runs
 /// code, or judges data, that a later agent controls.
 pub(super) fn validate_gates(w: &WorkflowSpec) -> Result<(), HarnessError> {
-    use super::spec::{Check, GateDef};
+    use crate::workflow::{Check, GateDef};
     for (name, gate) in &w.gates {
         if let GateDef::Command(c) = gate {
             if let Some(var) = &c.capture {
@@ -184,7 +184,7 @@ pub(super) fn validate_gates(w: &WorkflowSpec) -> Result<(), HarnessError> {
 
 /// The variables a command gate's command, script, environment or standard
 /// input reads.
-fn read_vars(gate: &super::spec::CommandGate) -> Vec<String> {
+fn read_vars(gate: &crate::workflow::CommandGate) -> Vec<String> {
     let mut texts: Vec<&str> = gate.env.values().map(String::as_str).collect();
     texts.extend(gate.command.iter().flatten().map(String::as_str));
     texts.extend(gate.stdin.as_deref());
@@ -290,7 +290,7 @@ pub(super) fn lower_required(
             task.name
         );
         let step = match item_failure {
-            Some(target) => super::checks::fail_item(&message, target),
+            Some(target) => crate::lower_checks::fail_item(&message, target),
             None => StepSpec::Fail(Box::new(FailStepSpec {
                 code: Some("missing_variable".to_string()),
                 message: Some(message),

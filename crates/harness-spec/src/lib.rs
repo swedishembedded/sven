@@ -29,17 +29,31 @@ mod decoding;
 mod error;
 mod expr;
 mod gate_command;
+mod gate_steps;
 mod iterate;
+mod lower;
+mod lower_body;
+mod lower_checks;
+mod lower_context;
+mod lower_corrections;
+mod lower_counts;
+mod lower_imports;
+mod lower_system;
 mod names;
 pub mod package;
+mod parse;
 mod plan;
+mod rewrite;
+mod scratchpad;
 mod source_map;
-mod spec;
+mod steps;
+mod steps_validate;
 #[cfg(feature = "testing")]
 pub mod testing;
-mod v2;
-mod validate;
 pub mod vars;
+mod workflow;
+mod workflow_validate;
+mod workflow_vars;
 
 #[cfg(test)]
 mod tests;
@@ -53,7 +67,7 @@ pub use plan::{
     PLAN_FORMAT_VERSION,
 };
 pub use source_map::{Lowering, SourceRef};
-pub use spec::{
+pub use steps::{
     AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec, FailStepSpec,
     ForEachSpec, GateStepSpec, HarnessSpec, IOType, InputValue, IterateSource, IterateStepSpec,
     JsonSource, LimitsSpec, PredictStepSpec, Reconcile, ReturnStepSpec, StepDecoding, StepId,
@@ -61,7 +75,7 @@ pub use spec::{
     DIGEST_TOOL, GATE_TOOL, ITEM_FAILED_FACT, MAX_COVERS, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT,
     MAX_ITERATIONS_LIMIT, RESERVED_TOOLS, SNAPSHOT_TOOL,
 };
-pub use v2::spec::Imported;
+pub use workflow::Imported;
 
 /// The JSON Schema (draft 2020-12) of a harness document, for editors and
 /// `sven harness schema`: the declarative workflow language of ADR 0005. It
@@ -177,7 +191,7 @@ impl HarnessDocument {
         let value = yaml_to_json(&raw)?;
         check_api_version(&value)?;
         Ok(Self {
-            spec: v2::lower_document_with(value, resolved)?,
+            spec: parse::lower_document_with(value, resolved)?,
         })
     }
 
@@ -194,7 +208,7 @@ impl HarnessDocument {
             serde_yaml::from_str(yaml).map_err(|e| HarnessError::Parse(e.to_string()))?;
         let value = yaml_to_json(&raw)?;
         check_api_version(&value)?;
-        v2::imports_of(&value)
+        parse::imports_of(&value)
     }
 
     /// Parses a harness document from YAML bytes.
@@ -221,7 +235,7 @@ impl HarnessDocument {
     /// capabilities, missing limits where the primitive set can run away, and
     /// output-contract mismatches.
     pub fn compile(&self) -> Result<HarnessPlan, HarnessError> {
-        validate::validate(&self.spec)?;
+        steps_validate::validate(&self.spec)?;
         Ok(plan::compile(&self.spec))
     }
 }

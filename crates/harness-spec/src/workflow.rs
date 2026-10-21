@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The typed AST of a version 2 workflow document.
+//! The typed AST of a workflow document.
 //!
 //! Every object rejects unknown keys. Fields whose shape depends on a key
 //! (a gate is a command or an artifact, a check is a gate name, an artifact
@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::spec::{CapabilityName, IOType, InputValue, IterateSource, Reconcile, StepDecoding};
+use crate::steps::{CapabilityName, IOType, InputValue, IterateSource, Reconcile, StepDecoding};
 
 /// A whole workflow document, as written.
 #[derive(Debug, Clone, PartialEq)]
@@ -312,7 +312,7 @@ pub enum GateDef {
     Artifact(ArtifactCheck),
 }
 
-pub use super::gate_steps::CommandGate;
+pub use crate::gate_steps::CommandGate;
 
 /// A file that must exist, optionally of a minimum size or exact content.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -744,4 +744,4 @@ pub struct WorkItemsSpec {
     pub all_settled: bool,
 }
 
-pub use super::vars::{VarUse, VariableSpec};
+pub use crate::workflow_vars::{VarUse, VariableSpec};

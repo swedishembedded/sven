@@ -19,15 +19,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
 
-use super::rewrite::{rewrite_text, FailureView, Scope};
-use super::spec::Threshold;
 use crate::error::HarnessError;
 use crate::gate_command::GateCommand;
+use crate::rewrite::{rewrite_text, FailureView, Scope};
 use crate::source_map::SourceRef;
-use crate::spec::{
+use crate::steps::{
     AgentStepSpec, BranchStepSpec, FailStepSpec, GateStepSpec, PredictStepSpec, StepDecoding,
     StepSpec, VerifyStepSpec,
 };
+use crate::workflow::Threshold;
 
 /// The prompt a repair turn gets when the author wrote none.
 pub(super) const DEFAULT_REPAIR_PROMPT: &str = "A verification of your work failed.\n\
@@ -189,7 +189,7 @@ pub(super) struct Phase<'a> {
     pub item_failure: Option<String>,
 }
 
-use crate::spec::ITEM_FAILED_FACT;
+use crate::steps::ITEM_FAILED_FACT;
 
 fn origin(phase: &Phase<'_>, role: &str, check: &str, attempt: u32) -> SourceRef {
     SourceRef {
@@ -489,7 +489,7 @@ fn on_failure(
             b.add(
                 &entry,
                 StepSpec::Branch(Box::new(BranchStepSpec {
-                    on: super::counts::at_least(&name, u64::from(attempt) + 1),
+                    on: crate::lower_counts::at_least(&name, u64::from(attempt) + 1),
                     when_true: id,
                     when_false: stand,
                 })),
@@ -542,7 +542,7 @@ fn failure_step(
 /// The step that records why an item failed and continues at `target`, the
 /// loop's item-failure path.
 pub(super) fn fail_item(message: &str, target: &str) -> StepSpec {
-    StepSpec::Assign(Box::new(crate::spec::AssignStepSpec {
+    StepSpec::Assign(Box::new(crate::steps::AssignStepSpec {
         set: [(
             ITEM_FAILED_FACT.to_string(),
             Value::String(message.to_string()),

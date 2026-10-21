@@ -17,10 +17,10 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-use super::spec::{ArtifactCheck, Check, GateDef, WorkflowSpec};
 use crate::error::HarnessError;
-use crate::spec::{IOType, IterateSource, MAX_GATE_TIMEOUT_SECS, RESERVED_TOOLS};
-use crate::validate::is_workspace_relative;
+use crate::steps::{IOType, IterateSource, MAX_GATE_TIMEOUT_SECS, RESERVED_TOOLS};
+use crate::steps_validate::is_workspace_relative;
+use crate::workflow::{ArtifactCheck, Check, GateDef, WorkflowSpec};
 
 /// The most repair attempts one task may earn. The attempts are unrolled
 /// into the plan, so this bounds its size.
@@ -65,14 +65,14 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
     validate_decoding(
         w,
         "agent",
-        &super::spec::decoding_of(&w.agent.sampling, &w.agent.thinking, &w.agent.turn),
+        &crate::workflow::decoding_of(&w.agent.sampling, &w.agent.thinking, &w.agent.turn),
     )?;
     validate_roles(w)?;
     validate_gates(w)?;
     validate_tasks(w)?;
-    super::imports::validate_imports(w)?;
-    super::vars::validate(w)?;
-    super::vars::validate_gates(w)?;
+    crate::lower_imports::validate_imports(w)?;
+    crate::workflow_vars::validate(w)?;
+    crate::workflow_vars::validate_gates(w)?;
     validate_success(w)?;
     validate_use(w)?;
     validate_capabilities(w)
@@ -166,7 +166,7 @@ fn validate_gates(w: &WorkflowSpec) -> Result<(), HarnessError> {
         match gate {
             GateDef::Artifact(a) => validate_artifact(&place, a, false)?,
             GateDef::Command(c) => {
-                super::gate_steps::validate(&place, c)?;
+                crate::gate_steps::validate(&place, c)?;
                 if let Some(t) = c.timeout {
                     if t == 0 || t > MAX_GATE_TIMEOUT_SECS {
                         return Err(invalid(format!(
@@ -283,7 +283,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
             )));
         }
         let in_item = w.loop_of(task).for_each.is_some();
-        super::body::validate_shape(w, task, &place)?;
+        crate::lower_body::validate_shape(w, task, &place)?;
         for out in &task.outputs {
             if !is_workspace_relative(out) || (out.contains("{{") && !in_item) {
                 return Err(invalid(format!(
@@ -308,11 +308,11 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
                 Check::Metric(m) => check_metric_ref(w, &place, &m.metric)?,
             }
         }
-        super::body::validate_loop(w, task, &place)?;
+        crate::lower_body::validate_loop(w, task, &place)?;
         validate_decoding(
             w,
             &place,
-            &super::spec::decoding_of(&task.sampling, &task.thinking, &task.turn),
+            &crate::workflow::decoding_of(&task.sampling, &task.thinking, &task.turn),
         )?;
         validate_model_only(task, &place)?;
         validate_allowance(w, &place, &task.allowance)?;
@@ -320,7 +320,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
         for (j, turn) in task.follow_ups.iter().enumerate() {
             let place = format!("{place}: follow_ups[{j}]");
             validate_allowance(w, &place, &turn.allowance)?;
-            super::counts::validate_follow_up(w.inputs.as_ref(), turn, &place)?;
+            crate::lower_counts::validate_follow_up(w.inputs.as_ref(), turn, &place)?;
         }
         if let Some(repair) = &task.repair {
             if task.verify.is_empty() && task.outputs.is_empty() {
@@ -328,7 +328,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
                     "{place}: `repair` has nothing to repair; add `verify` or `outputs`"
                 )));
             }
-            super::counts::validate_repair(w.inputs.as_ref(), repair, &place)?;
+            crate::lower_counts::validate_repair(w.inputs.as_ref(), repair, &place)?;
         }
     }
     Ok(())
@@ -340,7 +340,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
 fn validate_decoding(
     w: &WorkflowSpec,
     place: &str,
-    decoding: &crate::spec::StepDecoding,
+    decoding: &crate::steps::StepDecoding,
 ) -> Result<(), HarnessError> {
     for (name, setting) in decoding.settings() {
         let Some(value) = setting else { continue };
@@ -423,7 +423,7 @@ fn validate_roles(w: &WorkflowSpec) -> Result<(), HarnessError> {
 /// bounded counts.
 fn validate_corrections(
     w: &WorkflowSpec,
-    task: &super::spec::TaskSpec,
+    task: &crate::workflow::TaskSpec,
     place: &str,
 ) -> Result<(), HarnessError> {
     let Some(c) = &task.corrections else {
@@ -469,7 +469,7 @@ fn validate_corrections(
     validate_decoding(
         w,
         &format!("{place}: author"),
-        &super::spec::decoding_of(&c.author.sampling, &c.author.thinking, &c.author.turn),
+        &crate::workflow::decoding_of(&c.author.sampling, &c.author.thinking, &c.author.turn),
     )
 }
 
@@ -507,7 +507,7 @@ fn validate_allowance(
 }
 
 /// A `model_only` task is one model turn without tools.
-fn validate_model_only(task: &super::spec::TaskSpec, place: &str) -> Result<(), HarnessError> {
+fn validate_model_only(task: &crate::workflow::TaskSpec, place: &str) -> Result<(), HarnessError> {
     if task.schema.is_some() && !task.model_only {
         return Err(invalid(format!(
             "{place}: `schema` goes with `model_only: true`"
@@ -638,7 +638,7 @@ pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<String> {
         .iter()
         .map(|c| (*c).to_string())
         .collect();
-    needed.extend(super::imports::imported_capabilities(w));
+    needed.extend(crate::lower_imports::imported_capabilities(w));
     let mut reads_files = false;
     let mut note = |gate: Option<&GateDef>| match gate {
         Some(GateDef::Command(_)) => {

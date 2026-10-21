@@ -20,16 +20,16 @@
 
 use serde_json::{json, Value};
 
-use super::checks::{gate_step, lower_checks, Builder, Phase, RepairPlan, Resolved};
-use super::context::{Context, LoopVars};
-use super::rewrite::{output_fact, rewrite_condition, rewrite_text, Scope};
-use super::spec::{decoding_of, Corrections, GateDef, TaskSpec};
 use crate::error::HarnessError;
+use crate::lower_checks::{gate_step, lower_checks, Builder, Phase, RepairPlan, Resolved};
+use crate::lower_context::{Context, LoopVars};
+use crate::rewrite::{output_fact, rewrite_condition, rewrite_text, Scope};
 use crate::source_map::SourceRef;
-use crate::spec::{
+use crate::steps::{
     AgentStepSpec, BranchStepSpec, IterateStepSpec, PredictStepSpec, StepDecoding, StepSpec,
     UntilSpec,
 };
+use crate::workflow::{decoding_of, Corrections, GateDef, TaskSpec};
 
 /// The default ask to an author whose message was refused.
 const DEFAULT_REFUSAL: &str = "That message cannot be sent: {{ failure.stdout }}\n\
@@ -69,7 +69,7 @@ fn origin(task: &str, role: &str) -> SourceRef {
 fn command_gate<'a>(
     cx: &'a Context<'_>,
     name: &str,
-) -> Result<&'a super::spec::CommandGate, HarnessError> {
+) -> Result<&'a crate::workflow::CommandGate, HarnessError> {
     match cx.w.gates.get(name) {
         Some(GateDef::Command(c)) => Ok(c),
         _ => Err(HarnessError::Invalid(format!(
@@ -154,7 +154,7 @@ pub(super) fn lower_corrections(
     let accept = Resolved {
         label: c.accept.clone(),
         required: true,
-        kind: super::checks::Kind::Command(t.cx.command_run(
+        kind: crate::lower_checks::Kind::Command(t.cx.command_run(
             &c.accept,
             command_gate(t.cx, &c.accept)?,
             t.vars,

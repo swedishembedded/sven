@@ -19,8 +19,8 @@
 
 use crate::error::HarnessError;
 use crate::plan::{self, HarnessPlan};
-use crate::spec::HarnessSpec;
-use crate::{validate, yaml_to_json};
+use crate::steps::HarnessSpec;
+use crate::{steps_validate, yaml_to_json};
 
 /// Parses `yaml` as a [`HarnessSpec`] (`api_version: "2"`), validates it and
 /// compiles it into a plan.
@@ -33,6 +33,6 @@ pub fn compile_steps(yaml: &str) -> Result<HarnessPlan, HarnessError> {
         serde_yaml::from_str(yaml).map_err(|e| HarnessError::Parse(e.to_string()))?;
     let spec: HarnessSpec = serde_json::from_value(yaml_to_json(&raw)?)
         .map_err(|e| HarnessError::Parse(format!("typed spec: {e}")))?;
-    validate::validate(&spec)?;
+    steps_validate::validate(&spec)?;
     Ok(plan::compile(&spec))
 }

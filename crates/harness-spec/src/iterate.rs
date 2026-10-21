@@ -84,7 +84,7 @@ pub struct ForEachSpec {
 }
 
 fn default_max_items() -> u64 {
-    crate::spec::DEFAULT_MAX_ITEMS
+    crate::steps::DEFAULT_MAX_ITEMS
 }
 
 /// `until` of an `iterate` step.

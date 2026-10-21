@@ -19,7 +19,7 @@ use serde::Deserialize;
 
 use crate::error::HarnessError;
 use crate::gate_command::GateCommand;
-use crate::validate::is_env_name;
+use crate::steps_validate::is_env_name;
 
 /// The shell a script runs under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -126,7 +126,7 @@ pub(super) fn validate(place: &str, gate: &CommandGate) -> Result<(), HarnessErr
             }
             let mut seen = BTreeSet::new();
             for step in steps {
-                if !super::validate::is_identifier(&step.name) {
+                if !crate::workflow_validate::is_identifier(&step.name) {
                     return invalid(format!(
                         "step name `{}` is lowercase letters, digits, `-` and `_` (no `__`)",
                         step.name
@@ -162,10 +162,10 @@ pub struct CommandGate {
     /// A script, or named scripts run in order; the first failure stops the
     /// gate. Templates, like an argv.
     #[serde(default)]
-    pub run: Option<super::gate_steps::Script>,
+    pub run: Option<crate::gate_steps::Script>,
     /// The shell a script runs under (default `bash`).
     #[serde(default)]
-    pub shell: Option<super::gate_steps::Shell>,
+    pub shell: Option<crate::gate_steps::Shell>,
     /// Variables set for the command or script: name to value, a template.
     /// Data should reach a script this way, not by splicing it into the text.
     #[serde(default)]

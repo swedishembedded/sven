@@ -1,40 +1,24 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The declarative workflow language (`api_version: "2"`, ADR 0005).
+//! Reading a workflow document (`api_version: "2"`, ADR 0005).
 //!
-//! A workflow document is decoded into a typed AST ([`spec`]), checked with
-//! errors written for its author ([`validate`]) and lowered ([`lower`]) into
-//! the same [`HarnessSpec`] a version 1 document parses into, which then goes
-//! through the shared static validator and plan compiler. There is no second
-//! interpreter: the machine runs the lowered steps.
+//! A document is decoded into a typed AST ([`crate::workflow`]), checked with
+//! errors written for its author ([`crate::workflow_validate`]) and lowered
+//! ([`crate::lower`]) into the step specification the plan compiler works on.
+//! There is no second interpreter: the machine runs the lowered steps.
 //!
 //! Swedish Embedded AB implements verifiable, declarative agent workflows for
 //! its clients. If your team needs expertise in turning long-running agent
 //! work into reviewable, resumable programs then you can procure our services
 //! by sending an email to info@swedishembedded.com.
 
-mod body;
-mod checks;
-mod context;
-mod corrections;
-mod counts;
-mod gate_steps;
-mod imports;
-mod lower;
-mod rewrite;
-mod scratchpad;
-pub mod spec;
-mod system;
-mod validate;
-mod vars;
-
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::error::HarnessError;
-use crate::spec::HarnessSpec;
-use spec::{
+use crate::steps::HarnessSpec;
+use crate::workflow::{
     ArtifactCheck, Check, CommandGate, GateDef, MetricCheck, SuccessSpec, TaskSpec, WorkflowSpec,
 };
 
@@ -197,7 +181,7 @@ fn parse_check(raw: Value, where_: &str) -> Result<Check, HarnessError> {
                 Some(Value::String(metric)) => metric,
                 _ => return Err(HarnessError::Parse(format!("{where_}: `metric` is a string"))),
             };
-            let keys: spec::ThresholdKeys = decode(Value::Object(map), where_)?;
+            let keys: crate::workflow::ThresholdKeys = decode(Value::Object(map), where_)?;
             let threshold = keys
                 .threshold()
                 .map_err(|e| HarnessError::Parse(format!("{where_}: metric `{metric}`: {e}")))?;
@@ -226,15 +210,15 @@ struct RawTask {
     #[serde(default)]
     when: Option<Value>,
     #[serde(default)]
-    follow_ups: Vec<spec::FollowUp>,
+    follow_ups: Vec<crate::workflow::FollowUp>,
     #[serde(default)]
     outputs: Vec<String>,
     #[serde(default)]
     verify: Vec<Value>,
     #[serde(default)]
-    repair: Option<spec::Repair>,
+    repair: Option<crate::workflow::Repair>,
     #[serde(default)]
-    for_each: Option<spec::ForEach>,
+    for_each: Option<crate::workflow::ForEach>,
     #[serde(default)]
     until: Option<RawUntil>,
     #[serde(default)]
@@ -246,29 +230,29 @@ struct RawTask {
     #[serde(default)]
     schema: Option<Value>,
     #[serde(default)]
-    sampling: Option<spec::Sampling>,
+    sampling: Option<crate::workflow::Sampling>,
     #[serde(default)]
-    thinking: Option<spec::Thinking>,
+    thinking: Option<crate::workflow::Thinking>,
     #[serde(default)]
-    turn: Option<spec::TurnBounds>,
+    turn: Option<crate::workflow::TurnBounds>,
     #[serde(default)]
     allowance: Option<Value>,
     #[serde(default)]
     max_repeated_results: Option<u32>,
     #[serde(default)]
-    corrections: Option<spec::Corrections>,
+    corrections: Option<crate::workflow::Corrections>,
     #[serde(default)]
-    checkpoint: Option<spec::CheckpointPolicy>,
+    checkpoint: Option<crate::workflow::CheckpointPolicy>,
     #[serde(default)]
     conversation: Option<String>,
     #[serde(default, rename = "do")]
     body: Vec<Value>,
     #[serde(default)]
-    vars: std::collections::BTreeMap<String, spec::VarUse>,
+    vars: std::collections::BTreeMap<String, crate::workflow::VarUse>,
 }
 
 /// `until:`; the comparison keys are collected and checked by
-/// [`spec::ThresholdKeys`], which rejects unknown ones (serde cannot combine
+/// [`crate::workflow::ThresholdKeys`], which rejects unknown ones (serde cannot combine
 /// `flatten` with `deny_unknown_fields`).
 #[derive(serde::Deserialize)]
 struct RawUntil {
@@ -312,12 +296,12 @@ fn parse_task(raw: Value, label: &str) -> Result<TaskSpec, HarnessError> {
     let until = raw
         .until
         .map(|u| {
-            let keys: spec::ThresholdKeys =
+            let keys: crate::workflow::ThresholdKeys =
                 decode(Value::Object(u.threshold.into_iter().collect()), label)?;
             let threshold = keys
                 .threshold()
                 .map_err(|e| HarnessError::Parse(format!("{label}: until: {e}")))?;
-            Ok::<_, HarnessError>(spec::Until {
+            Ok::<_, HarnessError>(crate::workflow::Until {
                 metric: u.metric,
                 threshold,
                 max_iterations: u.max_iterations,
@@ -356,7 +340,7 @@ fn parse_task(raw: Value, label: &str) -> Result<TaskSpec, HarnessError> {
     })
 }
 
-/// Decodes, validates and lowers a workflow document into the v1 spec the
+/// Decodes, validates and lowers a workflow document into the step spec the
 /// shared validator and plan compiler take. `resolved` holds the interface of
 /// each import the package resolved, by alias.
 ///
@@ -367,12 +351,12 @@ fn parse_task(raw: Value, label: &str) -> Result<TaskSpec, HarnessError> {
 /// what it uses.
 pub fn lower_document_with(
     value: Value,
-    resolved: std::collections::BTreeMap<String, spec::Imported>,
+    resolved: std::collections::BTreeMap<String, crate::workflow::Imported>,
 ) -> Result<HarnessSpec, HarnessError> {
     let mut workflow = parse_workflow(value)?;
     workflow.resolved = resolved;
-    validate::validate(&workflow)?;
-    lower::lower(&workflow)
+    crate::workflow_validate::validate(&workflow)?;
+    crate::lower::lower(&workflow)
 }
 
 /// The `imports` of a raw workflow document, alias to path as written.

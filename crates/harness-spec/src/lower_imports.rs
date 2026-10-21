@@ -22,15 +22,15 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use super::checks::Builder;
-use super::context::{Context, LoopVars};
-use super::lower::{entry_of, origin, skip_step};
-use super::rewrite::{output_fact, rewrite_condition, rewrite_value};
-use super::spec::{Imported, TaskSpec, WorkflowSpec};
-use super::validate::is_identifier;
 use crate::error::HarnessError;
 use crate::expr::Template;
-use crate::spec::{BranchStepSpec, DelegateStepSpec, IOType, InputValue, StepSpec};
+use crate::lower::{entry_of, origin, skip_step};
+use crate::lower_checks::Builder;
+use crate::lower_context::{Context, LoopVars};
+use crate::rewrite::{output_fact, rewrite_condition, rewrite_value};
+use crate::steps::{BranchStepSpec, DelegateStepSpec, IOType, InputValue, StepSpec};
+use crate::workflow::{Imported, TaskSpec, WorkflowSpec};
+use crate::workflow_validate::is_identifier;
 
 fn invalid(message: String) -> HarnessError {
     HarnessError::Invalid(message)
@@ -280,8 +280,8 @@ pub(super) fn lower_use(
         &work,
         StepSpec::Delegate(Box::new(DelegateStepSpec {
             target: child.to_string(),
-            input: super::imports::call_input(cx, task, before)?,
-            store_as: Some(super::imports::result_fact(task)),
+            input: crate::lower_imports::call_input(cx, task, before)?,
+            store_as: Some(crate::lower_imports::result_fact(task)),
             then: next.to_string(),
         })),
         origin(Some(&task.name), "use"),

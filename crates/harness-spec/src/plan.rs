@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 use crate::expr::Template;
 use crate::source_map::SourceRef;
-use crate::spec::{HarnessSpec, StepDecoding, StepSpec};
+use crate::steps::{HarnessSpec, StepDecoding, StepSpec};
 
 /// The compiled-plan format version, stamped into the digest input so plans
 /// from different compiler generations can never collide.
@@ -33,15 +33,15 @@ pub struct HarnessPlan {
     pub entry: String,
     /// Declared inputs, by name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inputs: Option<std::collections::BTreeMap<String, crate::spec::InputValue>>,
+    pub inputs: Option<std::collections::BTreeMap<String, crate::steps::InputValue>>,
     /// Declared outputs, by name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outputs: Option<std::collections::BTreeMap<String, crate::spec::InputValue>>,
+    pub outputs: Option<std::collections::BTreeMap<String, crate::steps::InputValue>>,
     /// Named JSON Schemas, by name. A `predict` step's `schema` names one;
     /// the runtime sends it as the turn's response format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schemas: Option<std::collections::BTreeMap<String, serde_json::Value>>,
-    /// Run variables, by name (version 2 plans only).
+    /// Run variables, by name.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub variables: std::collections::BTreeMap<String, crate::vars::VariableDecl>,
     /// Declared capabilities, sorted, deduplicated.
@@ -50,7 +50,7 @@ pub struct HarnessPlan {
     /// Declared limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<PlanLimits>,
-    /// The tool profile a version 2 workflow declared (`none`, `coding`):
+    /// The tool profile the workflow declared (`none`, `coding`):
     /// what the host must provide for the plan's agent steps. Absent in
     /// version 1 plans.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -60,8 +60,7 @@ pub struct HarnessPlan {
     /// chooses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scratchpad: Option<String>,
-    /// For a version 2 plan, where each generated step came from in the
-    /// authored document. Empty in version 1 plans.
+    /// Where each generated step came from in the authored document.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub source_map: std::collections::BTreeMap<String, SourceRef>,
     /// The steps, in canonical (sorted) order.
@@ -111,7 +110,7 @@ pub enum PlanIteration {
     /// Once per item of a collection frozen on the first visit.
     ForEach {
         /// Where the collection is read from.
-        source: crate::spec::IterateSource,
+        source: crate::steps::IterateSource,
         /// The item field that names an item, if the items are objects.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -165,19 +164,19 @@ pub enum PlanPrimitive {
         /// Where to store the answer.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
-        /// The conversation the turn is in, parsed (version 2 plans only).
+        /// The conversation the turn is in, parsed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         conversation: Option<Template>,
         /// The system message the conversation starts with, parsed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system: Option<Template>,
-        /// Decoding settings (version 2 plans only).
+        /// Decoding settings.
         #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
         decoding: StepDecoding,
-        /// The model role that answers the step's turns (version 2 plans only).
+        /// The model role that answers the step's turns.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         role: Option<String>,
-        /// What the prompt is, for the record (version 2 plans only).
+        /// What the prompt is, for the record.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<String>,
         /// Successor.
@@ -197,23 +196,22 @@ pub enum PlanPrimitive {
         /// plans only; absent, the run's shared conversation).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         conversation: Option<Template>,
-        /// The variables the step's agent may read or set (version 2 plans
-        /// only).
+        /// The variables the step's agent may read or set.
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
         vars: std::collections::BTreeMap<String, crate::vars::VarAccess>,
         /// The system message the step's conversation starts with, parsed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system: Option<Template>,
-        /// Decoding settings (version 2 plans only).
+        /// Decoding settings.
         #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
         decoding: StepDecoding,
-        /// The model role that answers the step's turns (version 2 plans only).
+        /// The model role that answers the step's turns.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         role: Option<String>,
-        /// What the prompt is, for the record (version 2 plans only).
+        /// What the prompt is, for the record.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<String>,
-        /// Where the loop's stop status is recorded (version 2 plans only).
+        /// Where the loop's stop status is recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stop_as: Option<String>,
         /// The fact holding the calls the step may still make.

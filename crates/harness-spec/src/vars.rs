@@ -19,7 +19,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::spec::IOType;
+use crate::steps::IOType;
 
 pub use crate::names::VAR_TOOLS;
 

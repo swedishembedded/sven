@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Where a generated step came from.
 //!
-//! A version 2 workflow lowers to many ordinary steps per authored task. The
+//! A workflow lowers to many ordinary steps per authored task. The
 //! source map names, for every generated step, the task, the role it plays
 //! (work turn, follow-up, check, repair, success check) and the gate and
 //! attempt it belongs to, so a trace line, a failure message and a graph can
@@ -38,10 +38,9 @@ pub struct SourceRef {
     pub attempt: Option<u32>,
 }
 
-/// What lowering a version 2 workflow adds to the v1 spec it produces.
+/// What lowering a workflow adds to the step spec it produces.
 ///
-/// Never read from a document: a v1 document cannot carry it (the field is
-/// skipped by serde), and only the v2 lowering sets it.
+/// Never read from a document: only the lowering sets it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Lowering {
     /// The tool profile the workflow declared (`none` or `coding`).

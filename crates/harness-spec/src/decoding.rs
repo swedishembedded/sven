@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// optional: an unset one leaves the run's or the provider's setting. Each
 /// holds a literal (a number or a boolean) or a template that is a single
 /// hole over the run's inputs (`"{{ inputs.seed }}"`), resolved when the turn
-/// starts. Only a version 2 document sets them.
+/// starts.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StepDecoding {
