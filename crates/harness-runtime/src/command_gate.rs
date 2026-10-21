@@ -36,14 +36,25 @@ pub(super) const GATE_CAPABILITY: ToolCapability = ToolCapability::ExecuteShell;
 
 /// The arguments of the gate tool call for a command: the argv with its
 /// templates resolved to strings, the timeout and the working directory.
-pub(super) fn gate_args(
-    run: &HarnessRunState,
-    command: &[Template],
-    timeout_secs: u64,
-    cwd: Option<&str>,
-    cwd_input: Option<&str>,
-    stdin: Option<&Template>,
-) -> Value {
+pub(super) fn gate_args(run: &HarnessRunState, gate: &PlanPrimitive) -> Value {
+    let PlanPrimitive::Gate {
+        command,
+        timeout_secs,
+        cwd,
+        cwd_input,
+        output_bytes,
+        stdin,
+        ..
+    } = gate
+    else {
+        return Value::Null;
+    };
+    let (timeout_secs, cwd, cwd_input, stdin) = (
+        *timeout_secs,
+        cwd.as_deref(),
+        cwd_input.as_deref(),
+        stdin.as_ref(),
+    );
     let argv: Vec<String> = command
         .iter()
         .map(|arg| match run.resolve_template(arg) {
@@ -52,6 +63,9 @@ pub(super) fn gate_args(
         })
         .collect();
     let mut args = json!({ "argv": argv, "timeout_secs": timeout_secs });
+    if let Some(bytes) = output_bytes {
+        args["tail_bytes"] = json!(bytes);
+    }
     if let Some(cwd) = cwd {
         args["cwd"] = json!(cwd);
     }
@@ -315,15 +329,7 @@ impl HarnessMachine {
         step: &PlanStep,
         ctx: &mut Context,
     ) -> Reaction<HarnessState> {
-        let PlanPrimitive::Gate {
-            command,
-            timeout_secs,
-            cwd,
-            cwd_input,
-            stdin,
-            ..
-        } = &step.primitive
-        else {
+        let PlanPrimitive::Gate { command, stdin, .. } = &step.primitive else {
             return self.fail_now(run, "internal", "gate dispatch reached another step", ctx);
         };
         run.counts.tool_calls += 1;
@@ -362,14 +368,7 @@ impl HarnessMachine {
             call_id,
             name: GATE_TOOL.to_string(),
             capability: GATE_CAPABILITY,
-            args: gate_args(
-                run,
-                command,
-                *timeout_secs,
-                cwd.as_deref(),
-                cwd_input.as_deref(),
-                stdin.as_ref(),
-            ),
+            args: gate_args(run, &step.primitive),
         };
         self.cache_effect(effect.clone());
         self.park(run, step, Waiting::Tool);

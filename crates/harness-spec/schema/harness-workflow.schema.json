@@ -174,6 +174,7 @@
             },
             "timeout": { "type": "integer", "minimum": 1, "maximum": 3600, "description": "Seconds. Default 600." },
             "cwd": { "type": "string", "description": "Workspace-relative working directory." },
+            "output_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "description": "How much of the end of each output stream the result keeps. Default 16384." },
             "cwd_input": { "$ref": "#/$defs/identifier", "description": "Run in the absolute directory this string input names, which must be outside the workspace (the host sets it; the agent cannot write there). Exclusive with cwd." },
             "stdin": { "type": "string", "description": "Text the command reads on standard input: a template over inputs and earlier task outputs, for what is too large for an argument." },
             "metrics": {
@@ -330,7 +331,7 @@
       "additionalProperties": false,
       "properties": {
         "enabled": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/input_hole" }], "description": "Reasoning on or off, on servers whose chat template has the switch." },
-        "budget": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }], "description": "The most thinking tokens before a turn is cut off." }
+        "budget": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/input_hole" }], "description": "The most thinking tokens before a turn is cut off. A budget read from an input that is empty at run time means unbounded." }
       }
     },
     "corrections": {
@@ -406,7 +407,8 @@
             "properties": {
               "when": { "$ref": "#/$defs/condition" },
               "task": { "type": "string", "minLength": 1 },
-              "max": { "type": "integer", "minimum": 1, "maximum": 8, "description": "Send the turn up to this many times, each only while its condition holds." },
+              "max": { "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 8 }, { "$ref": "#/$defs/input_hole" }], "description": "Send the turn up to this many times, each only while its condition holds: a whole number, or a number input (then at_most is required)." },
+              "at_most": { "type": "integer", "minimum": 1, "maximum": 8, "description": "With max read from an input, the most sends the plan is unrolled to." },
               "allowance": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/input_hole" }], "description": "Sets the task's remaining tool calls for this turn." }
             }
           }
@@ -427,7 +429,8 @@
           "required": ["attempts"],
           "additionalProperties": false,
           "properties": {
-            "attempts": { "type": "integer", "minimum": 1, "maximum": 16 },
+            "attempts": { "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 16 }, { "$ref": "#/$defs/input_hole" }], "description": "A whole number, or a number input (then at_most is required): the run uses that many, up to at_most." },
+            "at_most": { "type": "integer", "minimum": 1, "maximum": 16, "description": "With attempts read from an input, the most repair turns the plan is unrolled to." },
             "prompt": {
               "type": "string",
               "minLength": 1,

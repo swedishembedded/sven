@@ -272,7 +272,7 @@ fn authoring_mistakes_fail_with_the_name_of_the_culprit() {
         (
             "an unbounded repair",
             with("attempts: 2", "attempts: 99"),
-            "repair.attempts 99",
+            "repair.attempts: 99",
         ),
         (
             "a missing model-turn limit",

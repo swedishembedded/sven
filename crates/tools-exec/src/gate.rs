@@ -36,6 +36,9 @@ use tokio::process::Command;
 /// verdict and failures last, so the tail is what a repair needs.
 const STREAM_TAIL_BYTES: usize = 16 * 1024;
 
+/// The most a gate may ask to keep of each stream (`tail_bytes`).
+const MAX_TAIL_BYTES: usize = 1024 * 1024;
+
 /// The most text a gate may be given on standard input.
 const MAX_STDIN_BYTES: usize = 32 * 1024 * 1024;
 
@@ -50,7 +53,7 @@ struct Tail {
     truncated: bool,
 }
 
-async fn drain<R: AsyncRead + Unpin>(mut reader: R) -> Tail {
+async fn drain<R: AsyncRead + Unpin>(mut reader: R, keep: usize) -> Tail {
     let mut tail = Tail::default();
     let mut chunk = [0_u8; 8192];
     loop {
@@ -58,16 +61,16 @@ async fn drain<R: AsyncRead + Unpin>(mut reader: R) -> Tail {
             Ok(0) | Err(_) => break,
             Ok(n) => {
                 tail.bytes.extend_from_slice(&chunk[..n]);
-                if tail.bytes.len() > 2 * STREAM_TAIL_BYTES {
-                    let drop = tail.bytes.len() - STREAM_TAIL_BYTES;
+                if tail.bytes.len() > 2 * keep {
+                    let drop = tail.bytes.len() - keep;
                     tail.bytes.drain(..drop);
                     tail.truncated = true;
                 }
             }
         }
     }
-    if tail.bytes.len() > STREAM_TAIL_BYTES {
-        let drop = tail.bytes.len() - STREAM_TAIL_BYTES;
+    if tail.bytes.len() > keep {
+        let drop = tail.bytes.len() - keep;
         tail.bytes.drain(..drop);
         tail.truncated = true;
     }
@@ -192,6 +195,7 @@ impl GateCommandTool {
         dir: &std::path::Path,
         limit: Duration,
         stdin: Option<String>,
+        keep: usize,
     ) -> Report {
         let mut command = Command::new(&argv[0]);
         command
@@ -234,8 +238,8 @@ impl GateCommandTool {
                 let _ = pipe.write_all(text.as_bytes()).await;
             });
         }
-        let stdout = tokio::spawn(drain(out));
-        let stderr = tokio::spawn(drain(err));
+        let stdout = tokio::spawn(drain(out, keep));
+        let stderr = tokio::spawn(drain(err, keep));
         let waited = tokio::time::timeout(limit, child.wait()).await;
         let (exit_code, timed_out, error) = match waited {
             Ok(Ok(status)) => {
@@ -292,6 +296,7 @@ impl Tool for GateCommandTool {
                 "timeout_secs": { "type": "integer", "minimum": 1, "maximum": MAX_GATE_TIMEOUT_SECS },
                 "cwd": { "type": "string", "description": "Directory inside the workspace" },
                 "stdin": { "type": "string", "description": "Text the command reads on standard input" },
+                "tail_bytes": { "type": "integer", "minimum": 1024, "maximum": MAX_TAIL_BYTES, "description": "How much of the end of each output stream to keep (default 16384)" },
                 "trusted_cwd": { "type": "string", "description": "Absolute directory outside the workspace (a run input the host set)" },
                 "trajectory_file": { "type": "string", "description": "File the host writes the run's trajectory to before the command starts" }
             },
@@ -378,8 +383,22 @@ impl Tool for GateCommandTool {
             }
             Some(_) => return ToolOutput::err(&call.id, "`stdin` must be a string"),
         };
+        let keep = match call.args.get("tail_bytes") {
+            None | Some(Value::Null) => STREAM_TAIL_BYTES,
+            Some(v) => match v.as_u64().and_then(|n| usize::try_from(n).ok()) {
+                Some(n) if (1024..=MAX_TAIL_BYTES).contains(&n) => n,
+                _ => {
+                    return ToolOutput::err(
+                        &call.id,
+                        format!(
+                            "`tail_bytes` must be a whole number within 1024..={MAX_TAIL_BYTES}"
+                        ),
+                    )
+                }
+            },
+        };
         let report = self
-            .run(&argv, &dir, Duration::from_secs(seconds), stdin)
+            .run(&argv, &dir, Duration::from_secs(seconds), stdin, keep)
             .await;
         ToolOutput::ok(&call.id, report.to_json())
     }
@@ -664,5 +683,23 @@ mod tests {
         )
         .await;
         assert!(is_error);
+    }
+
+    #[tokio::test]
+    async fn a_gate_may_keep_more_of_its_output_within_a_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let ask = |bytes: Value| {
+            json!({ "argv": ["sh", "-c", "head -c 60000 /dev/zero | tr '\\0' x"],
+                    "timeout_secs": 20, "tail_bytes": bytes })
+        };
+        let (_, small) = run(&tool(&dir), json!({ "argv": ["sh", "-c", "head -c 60000 /dev/zero | tr '\\0' x"], "timeout_secs": 20 })).await;
+        assert_eq!(small["stdout"].as_str().unwrap().len(), STREAM_TAIL_BYTES);
+        let (_, big) = run(&tool(&dir), ask(json!(65536))).await;
+        assert_eq!(big["stdout"].as_str().unwrap().len(), 60000);
+        assert_eq!(big["truncated"], false);
+        for bad in [json!(10), json!(2_000_000), json!("lots")] {
+            let (is_error, _) = run(&tool(&dir), ask(bad)).await;
+            assert!(is_error);
+        }
     }
 }

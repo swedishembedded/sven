@@ -60,6 +60,7 @@ pub(super) struct CommandRun {
     pub timeout: u64,
     pub cwd: Option<String>,
     pub cwd_input: Option<String>,
+    pub output_bytes: Option<u64>,
     pub stdin: Option<String>,
     /// The fact the typed result is kept under: the gate's latest run.
     pub store_as: String,
@@ -123,6 +124,8 @@ impl Resolved {
 /// A repair policy, ready to lower.
 pub(super) struct RepairPlan<'a> {
     pub attempts: u32,
+    /// The number input that says how many of the attempts a run uses.
+    pub limit_input: Option<String>,
     pub prompt: String,
     pub tools: Option<Vec<String>>,
     pub fact: String,
@@ -201,6 +204,7 @@ pub(super) fn gate_step(run: &CommandRun, then: &str, on_fail: &str) -> StepSpec
         timeout: run.timeout,
         cwd: run.cwd.clone(),
         cwd_input: run.cwd_input.clone(),
+        output_bytes: run.output_bytes,
         stdin: run.stdin.clone(),
         store_as: Some(run.store_as.clone()),
         then: then.to_string(),
@@ -397,8 +401,15 @@ fn on_failure(
     };
     if attempt < repairs {
         let id = format!("{gate_id}_repair");
-        if b.steps.contains_key(&id) {
-            return Ok(id);
+        // A repair count read from an input: the attempt happens only when the
+        // input allows this many; otherwise the check's failure stands.
+        let limit = phase.repair.as_ref().and_then(|r| r.limit_input.clone());
+        let entry = match &limit {
+            Some(_) => format!("{id}_if"),
+            None => id.clone(),
+        };
+        if b.steps.contains_key(&entry) {
+            return Ok(entry);
         }
         let plan = phase.repair.as_ref().ok_or_else(|| {
             HarnessError::Invalid("internal: repair attempts without a repair plan".into())
@@ -448,17 +459,55 @@ fn on_failure(
             })),
         };
         b.add(&id, step, origin(phase, "repair", label, attempt + 1));
-        return Ok(id);
+        if let Some(name) = limit {
+            let stand = failure_step(
+                b,
+                phase,
+                (&gate_id, label, attempt),
+                " after the repair attempts it allowed",
+                &detail,
+            );
+            b.add(
+                &entry,
+                StepSpec::Branch(Box::new(BranchStepSpec {
+                    on: super::counts::at_least(&name, u64::from(attempt) + 1),
+                    when_true: id,
+                    when_false: stand,
+                })),
+                origin(phase, "repair", label, attempt + 1),
+            );
+        }
+        return Ok(entry);
     }
-    if let Some(back) = &phase.loop_back {
-        return Ok(back.clone());
-    }
-    let id = format!("{gate_id}_fail");
     let spent = if repairs == 0 {
         String::new()
     } else {
         format!(" after {repairs} repair attempt(s)")
     };
+    Ok(failure_step(
+        b,
+        phase,
+        (&gate_id, label, attempt),
+        &spent,
+        &detail,
+    ))
+}
+
+/// The step that ends the run (or the loop) because check `label` failed.
+fn failure_step(
+    b: &mut Builder,
+    phase: &Phase<'_>,
+    (gate_id, label, attempt): (&str, &str, u32),
+    spent: &str,
+    detail: &str,
+) -> String {
+    if let Some(back) = &phase.loop_back {
+        return back.clone();
+    }
+    let id = format!("{gate_id}_fail");
+    if b.steps.contains_key(&id) {
+        return id;
+    }
     b.add(
         &id,
         StepSpec::Fail(Box::new(FailStepSpec {
@@ -470,5 +519,5 @@ fn on_failure(
         })),
         origin(phase, "failure", label, attempt),
     );
-    Ok(id)
+    id
 }

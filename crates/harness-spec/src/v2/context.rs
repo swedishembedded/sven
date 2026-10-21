@@ -81,6 +81,7 @@ impl Context<'_> {
             timeout: gate.timeout.unwrap_or(DEFAULT_GATE_TIMEOUT_SECS),
             cwd: gate.cwd.clone(),
             cwd_input: gate.cwd_input.clone(),
+            output_bytes: gate.output_bytes,
             stdin: gate
                 .stdin
                 .as_deref()

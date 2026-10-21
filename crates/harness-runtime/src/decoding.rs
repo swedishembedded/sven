@@ -61,7 +61,13 @@ pub(crate) fn resolve_decoding(
                     .ok_or_else(|| "setting `thinking` is not true or false".to_string())
             })
             .transpose()?,
-        thinking_budget: small("thinking_budget", &d.thinking_budget)?,
+        // An input that is empty (null, or empty text) leaves the budget
+        // unset: unbounded thinking is a choice a run may make.
+        thinking_budget: match d.thinking_budget.as_ref().map(|raw| run.resolve_value(raw)) {
+            None | Some(Value::Null) => None,
+            Some(Value::String(text)) if text.trim().is_empty() => None,
+            Some(_) => small("thinking_budget", &d.thinking_budget)?,
+        },
         max_output_tokens: small("max_output_tokens", &d.max_output_tokens)?,
         first_response_timeout: count("first_response_timeout", &d.first_response_timeout)?,
         deadline: count("deadline", &d.deadline)?,

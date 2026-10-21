@@ -307,6 +307,11 @@ pub struct CommandGate {
     /// earlier outputs), for what is too large for an argument.
     #[serde(default)]
     pub stdin: Option<String>,
+    /// How much of the end of each output stream the result keeps, in bytes
+    /// (default 16384, at most 1048576): a check whose findings are long, a
+    /// diff for a supervisor, needs more.
+    #[serde(default)]
+    pub output_bytes: Option<u64>,
     /// Numbers the command leaves in JSON files, by name.
     #[serde(default)]
     pub metrics: BTreeMap<String, MetricDecl>,
@@ -467,7 +472,10 @@ pub struct FollowUp {
     /// holds (the condition is evaluated again after every turn). At least 1
     /// and at most 8; default 1.
     #[serde(default)]
-    pub max: Option<u64>,
+    pub max: Option<Value>,
+    /// With `max` read from an input, the most the plan is unrolled to.
+    #[serde(default)]
+    pub at_most: Option<u64>,
     /// Sets the task's tool-call allowance for this turn (a whole number or a
     /// single `{{ inputs.<name> }}`); without it the turn draws on what the
     /// task's allowance still holds.
@@ -479,8 +487,13 @@ pub struct FollowUp {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repair {
-    /// How many repair turns a failed check earns.
-    pub attempts: u64,
+    /// How many repair turns a failed check earns: a whole number, or a single
+    /// `{{ inputs.<name> }}` (a number input) with `at_most`.
+    pub attempts: Value,
+    /// With a count read from an input, the most the plan is unrolled to; the
+    /// run uses as many as the input says, up to this.
+    #[serde(default)]
+    pub at_most: Option<u64>,
     /// A prompt template over `failure.*`; a default applies when absent.
     #[serde(default)]
     pub prompt: Option<String>,

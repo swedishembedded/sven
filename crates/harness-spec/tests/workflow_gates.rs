@@ -224,7 +224,7 @@ fn follow_ups_repeat_while_their_condition_holds_and_budgets_come_from_inputs() 
 #[test]
 fn budgets_must_name_declared_inputs_and_follow_ups_stay_within_eight() {
     assert!(rejected(&STOPS.replace("inputs.per", "inputs.nope")).contains("allowance"));
-    assert!(rejected(&STOPS.replace("max: 2", "max: 9")).contains("max must be within"));
+    assert!(rejected(&STOPS.replace("max: 2", "max: 9")).contains("outside 1..=8"));
     assert!(rejected(&STOPS.replace(
         "tool_calls: \"{{ inputs.calls }}\"",
         "tool_calls: \"{{ inputs.nope }}\""

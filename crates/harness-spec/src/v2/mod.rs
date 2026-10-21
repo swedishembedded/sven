@@ -17,6 +17,7 @@
 mod checks;
 mod context;
 mod corrections;
+mod counts;
 mod imports;
 mod lower;
 mod rewrite;

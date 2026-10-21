@@ -217,6 +217,17 @@ reply off at its output-token limit, `tool_cap`, `repetition`) and `tasks.<name>
 the run, and `when` conditions can branch on them. A follow-up's `max` (1 to 8)
 repeats it while its `when` holds.
 
+**Counts, skipped tasks and output limits.** `repair.attempts` and a
+follow-up's `max` are a whole number or a single `{{ inputs.<name> }}` (a number
+input) given with `at_most`, the bound the plan is unrolled to: the run uses as
+many as the input says, up to `at_most` (`repair: {attempts: "{{ inputs.tries
+}}", at_most: 4}`). A task whose `when` did not hold leaves `tasks.<name>.output`
+as the empty string (an object of empty strings for a structured or imported
+task) and `tasks.<name>.stop` as `skipped`, so later templates read empty text
+and not a hole. `thinking.budget` read from an input that is empty at run time
+(null or empty text) is unbounded. A gate's `output_bytes` (1024 to 1048576,
+default 16384) says how much of the end of each output stream its result keeps.
+
 **Replies that go wrong.** A reply with no text and no tool call is not an
 answer: the turn is asked again, twice at most, after a pause that doubles
 from 2 s, each retry a `TurnRetried` trace record (`empty_reply`), and when the

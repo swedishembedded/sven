@@ -30,9 +30,9 @@ use super::validate::needed_capabilities;
 use crate::error::HarnessError;
 use crate::source_map::{Lowering, SourceRef};
 use crate::spec::{
-    AgentStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec, FailStepSpec, ForEachSpec,
-    HarnessSpec, InputValue, IterateStepSpec, LimitsSpec, PredictStepSpec, ReturnStepSpec,
-    StepSpec, UntilSpec, DEFAULT_MAX_ITEMS, WORKFLOW_API_VERSION,
+    AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec, FailStepSpec,
+    ForEachSpec, HarnessSpec, InputValue, IterateStepSpec, LimitsSpec, PredictStepSpec,
+    ReturnStepSpec, StepSpec, UntilSpec, DEFAULT_MAX_ITEMS, WORKFLOW_API_VERSION,
 };
 
 /// The id of the step the run returns from.
@@ -205,35 +205,53 @@ fn lower_task(
         place.clone()
     };
     let checks = cx.task_checks(task, through)?;
-    let repair = task.repair.as_ref().map(|r| RepairPlan {
-        attempts: u32::try_from(r.attempts).unwrap_or(u32::MAX),
-        prompt: r
-            .prompt
-            .clone()
-            .unwrap_or_else(|| DEFAULT_REPAIR_PROMPT.to_string()),
-        tools: tools.clone(),
-        fact: fact.clone(),
-        inputs: cx.inputs.as_ref(),
-        tasks: through,
-        item: vars.item,
-        iteration: vars.iteration,
-        decoding: decoding.clone(),
-        model_only: task
-            .model_only
-            .then(|| task.schema.is_some().then(|| task.name.clone())),
-        role: role.clone(),
-        stop: (!task.model_only).then(|| stop_fact(&task.name)),
-        pool: (!task.model_only).then(|| pool_fact(&task.name)),
-        max_repeated_results: task.max_repeated_results,
-        conversation: task.model_only.then(|| task.name.clone()),
-        system: if task.model_only {
-            task_system.clone()
-        } else {
-            agent_system.clone()
-        },
-        structured: &cx.structured,
-        gates: &cx.command_gates,
-    });
+    let repair_count = task
+        .repair
+        .as_ref()
+        .map(|r| {
+            super::counts::parse(
+                &r.attempts,
+                r.at_most,
+                &(1..=super::validate::MAX_REPAIR_ATTEMPTS),
+                w.inputs.as_ref(),
+                &place,
+            )
+        })
+        .transpose()?;
+    let repair = task
+        .repair
+        .as_ref()
+        .zip(repair_count)
+        .map(|(r, count)| RepairPlan {
+            attempts: u32::try_from(count.unroll).unwrap_or(u32::MAX),
+            limit_input: count.input,
+            prompt: r
+                .prompt
+                .clone()
+                .unwrap_or_else(|| DEFAULT_REPAIR_PROMPT.to_string()),
+            tools: tools.clone(),
+            fact: fact.clone(),
+            inputs: cx.inputs.as_ref(),
+            tasks: through,
+            item: vars.item,
+            iteration: vars.iteration,
+            decoding: decoding.clone(),
+            model_only: task
+                .model_only
+                .then(|| task.schema.is_some().then(|| task.name.clone())),
+            role: role.clone(),
+            stop: (!task.model_only).then(|| stop_fact(&task.name)),
+            pool: (!task.model_only).then(|| pool_fact(&task.name)),
+            max_repeated_results: task.max_repeated_results,
+            conversation: task.model_only.then(|| task.name.clone()),
+            system: if task.model_only {
+                task_system.clone()
+            } else {
+                agent_system.clone()
+            },
+            structured: &cx.structured,
+            gates: &cx.command_gates,
+        });
     let phase = Phase {
         prefix: task.name.clone(),
         task: Some(task.name.clone()),
@@ -285,9 +303,24 @@ fn lower_task(
         };
     for (j, turn) in task.follow_ups.iter().enumerate().rev() {
         let scope = cx.scope(format!("{place}: follow_ups[{j}]"), through, vars);
-        let times = turn.max.unwrap_or(1);
+        let count = match &turn.max {
+            Some(max) => super::counts::parse(
+                max,
+                turn.at_most,
+                &(1..=8),
+                w.inputs.as_ref(),
+                &format!("{place}: follow_ups[{j}]"),
+            )?,
+            None => super::counts::Count {
+                unroll: 1,
+                input: None,
+            },
+        };
+        let times = count.unroll;
+        let after = following.clone();
         // The turn is sent up to `max` times, each only while its condition
-        // holds; the condition is read again after every turn.
+        // holds; the condition is read again after every turn. With a `max`
+        // read from an input, a send past what the input allows is skipped.
         for k in (0..times).rev() {
             let id = if k == 0 {
                 format!("{}__f{j}", task.name)
@@ -332,6 +365,19 @@ fn lower_task(
                     when_id
                 }
             };
+            if let Some(name) = &count.input {
+                let cap = format!("{}__f{j}_{k}_cap", task.name);
+                b.add(
+                    &cap,
+                    StepSpec::Branch(Box::new(BranchStepSpec {
+                        on: super::counts::at_least(name, k + 1),
+                        when_true: following,
+                        when_false: after.clone(),
+                    })),
+                    origin(Some(&task.name), "follow_up"),
+                );
+                following = cap;
+            }
         }
     }
 
@@ -392,12 +438,13 @@ fn lower_task(
     if let Some(condition) = &task.when {
         let scope = cx.scope(format!("{place}: when"), before, LoopVars::default());
         let entered = if looping { iter_id(task) } else { work };
+        let skipped = skip_step(cx, b, task, next);
         b.add(
             &entry_of(task),
             StepSpec::Branch(Box::new(BranchStepSpec {
                 on: rewrite_condition(condition, &scope, &task.name)?,
                 when_true: entered,
-                when_false: next.to_string(),
+                when_false: skipped,
             })),
             origin(Some(&task.name), "when"),
         );
@@ -437,17 +484,54 @@ fn lower_use(
             before,
             LoopVars::default(),
         );
+        let skipped = skip_step(cx, b, task, next);
         b.add(
             &entry_of(task),
             StepSpec::Branch(Box::new(BranchStepSpec {
                 on: rewrite_condition(condition, &scope, &task.name)?,
                 when_true: work,
-                when_false: next.to_string(),
+                when_false: skipped,
             })),
             origin(Some(&task.name), "when"),
         );
     }
     Ok(())
+}
+
+/// What a task that was skipped (its `when` did not hold) leaves behind, so
+/// that later templates read an empty output and the stop status `skipped`
+/// instead of a hole: `""` for a text output, an object of empty strings for
+/// the fields of a structured one.
+fn skip_step(cx: &Context<'_>, b: &mut Builder, task: &TaskSpec, next: &str) -> String {
+    let fields: Option<Vec<String>> = match super::imports::offered(cx.w, task) {
+        Some(offered) => Some(offered.outputs.keys().cloned().collect()),
+        None => task
+            .schema
+            .as_ref()
+            .and_then(|schema| schema.get("properties"))
+            .and_then(Value::as_object)
+            .map(|props| props.keys().cloned().collect()),
+    };
+    let output = match fields {
+        Some(names) => Value::Object(names.into_iter().map(|n| (n, json!(""))).collect()),
+        None => json!(""),
+    };
+    let id = format!("{}__skip", task.name);
+    b.add(
+        &id,
+        StepSpec::Assign(Box::new(AssignStepSpec {
+            set: [
+                (output_fact(&task.name), output),
+                (stop_fact(&task.name), json!("skipped")),
+                (pool_fact(&task.name), json!(0)),
+            ]
+            .into_iter()
+            .collect(),
+            then: next.to_string(),
+        })),
+        origin(Some(&task.name), "skipped"),
+    );
+    id
 }
 
 fn lower_success(cx: &Context<'_>, b: &mut Builder) -> Result<String, HarnessError> {

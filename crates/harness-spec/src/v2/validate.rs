@@ -179,6 +179,13 @@ fn validate_gates(w: &WorkflowSpec) -> Result<(), HarnessError> {
                         )));
                     }
                 }
+                if c.output_bytes
+                    .is_some_and(|n| !(1024..=1_048_576).contains(&n))
+                {
+                    return Err(invalid(format!(
+                        "{place}: output_bytes must be within 1024..=1048576"
+                    )));
+                }
                 if let Some(cwd) = &c.cwd {
                     if !is_workspace_relative(cwd) {
                         return Err(invalid(format!(
@@ -319,9 +326,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
         for (j, turn) in task.follow_ups.iter().enumerate() {
             let place = format!("{place}: follow_ups[{j}]");
             validate_allowance(w, &place, &turn.allowance)?;
-            if turn.max.is_some_and(|m| !(1..=8).contains(&m)) {
-                return Err(invalid(format!("{place}: max must be within 1..=8")));
-            }
+            super::counts::validate_follow_up(w.inputs.as_ref(), turn, &place)?;
         }
         if let Some(repair) = &task.repair {
             if task.verify.is_empty() && task.outputs.is_empty() {
@@ -329,12 +334,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
                     "{place}: `repair` has nothing to repair; add `verify` or `outputs`"
                 )));
             }
-            if repair.attempts == 0 || repair.attempts > MAX_REPAIR_ATTEMPTS {
-                return Err(invalid(format!(
-                    "{place}: repair.attempts {} is outside 1..={MAX_REPAIR_ATTEMPTS}",
-                    repair.attempts
-                )));
-            }
+            super::counts::validate_repair(w.inputs.as_ref(), repair, &place)?;
         }
     }
     Ok(())

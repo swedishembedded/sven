@@ -350,6 +350,9 @@ pub enum PlanPrimitive {
         /// workspace to run in.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd_input: Option<String>,
+        /// How much of the end of each output stream the result keeps.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_bytes: Option<u64>,
         /// Where to store the typed gate result.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
@@ -580,6 +583,7 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             timeout_secs: g.timeout,
             cwd: g.cwd.clone(),
             cwd_input: g.cwd_input.clone(),
+            output_bytes: g.output_bytes,
             stdin: g.stdin.as_deref().and_then(|t| Template::parse(t).ok()),
             store_as: g.store_as.clone(),
             then: g.then.clone(),

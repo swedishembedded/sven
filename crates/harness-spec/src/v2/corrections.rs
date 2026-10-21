@@ -172,6 +172,7 @@ pub(super) fn lower_corrections(
         place: place.clone(),
         repair: Some(RepairPlan {
             attempts: u32::try_from(c.retries.unwrap_or(1)).unwrap_or(u32::MAX),
+            limit_input: None,
             prompt: c
                 .refusal
                 .clone()
