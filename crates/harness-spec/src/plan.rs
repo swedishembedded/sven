@@ -84,6 +84,20 @@ pub struct HarnessPlan {
     pub digest: String,
 }
 
+/// One command of a compiled gate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanGateStep {
+    /// What the gate's result calls the step.
+    pub name: String,
+    /// The argv, one template per element.
+    pub argv: Vec<Template>,
+}
+
+/// A template parsed from text the validator has already accepted.
+fn parsed(text: &str) -> Template {
+    Template::parse(text).unwrap_or_else(|_| Template::empty())
+}
+
 /// The plan-level limits, canonicalized (defaults applied).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanLimits {
@@ -355,8 +369,11 @@ pub enum PlanPrimitive {
     },
     /// Compiled `gate` (plans of `api_version: "2"` only).
     Gate {
-        /// The argv, one template per element.
-        command: Vec<Template>,
+        /// The commands, run in order, each an argv of templates.
+        steps: Vec<PlanGateStep>,
+        /// Variables set for the commands, name to template.
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        env: std::collections::BTreeMap<String, Template>,
         /// The most seconds the command may run.
         timeout_secs: u64,
         /// The working directory, relative to the workspace root.
@@ -601,10 +618,18 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             store_as: i.store_as.clone(),
         },
         StepSpec::Gate(g) => PlanPrimitive::Gate {
-            command: g
-                .command
+            steps: g
+                .steps
                 .iter()
-                .map(|arg| Template::parse(arg).unwrap_or_else(|_| Template::empty()))
+                .map(|step| PlanGateStep {
+                    name: step.name.clone(),
+                    argv: step.argv.iter().map(|arg| parsed(arg)).collect(),
+                })
+                .collect(),
+            env: g
+                .env
+                .iter()
+                .map(|(name, value)| (name.clone(), parsed(value)))
                 .collect(),
             timeout_secs: g.timeout,
             cwd: g.cwd.clone(),

@@ -17,6 +17,7 @@ use super::rewrite::{rewrite_text, Scope};
 use super::spec::{Check, CommandGate, GateDef, TaskSpec, WorkflowSpec};
 use super::validate::split_metric;
 use crate::error::HarnessError;
+use crate::gate_command::GateCommand;
 use crate::spec::DEFAULT_GATE_TIMEOUT_SECS;
 
 pub(super) struct Context<'a> {
@@ -103,11 +104,31 @@ impl Context<'_> {
         // can be told why the agent stopped (`--stopped {{ tasks.work.stop }}`).
         let scope = self.scope(format!("gate `{name}`"), tasks, vars);
         Ok(CommandRun {
-            argv: gate
-                .command
+            steps: gate
+                .commands()
+                .into_iter()
+                .map(|step| {
+                    Ok(GateCommand {
+                        name: step.name,
+                        argv: step
+                            .argv
+                            .iter()
+                            .map(|arg| rewrite_text(arg, &scope))
+                            .collect::<Result<_, HarnessError>>()?,
+                    })
+                })
+                .collect::<Result<_, HarnessError>>()?,
+            env: gate
+                .env
                 .iter()
-                .map(|arg| rewrite_text(arg, &scope))
-                .collect::<Result<_, _>>()?,
+                .map(|(var, value)| {
+                    let place = format!("gate `{name}`: env {var}");
+                    Ok((
+                        var.clone(),
+                        rewrite_text(value, &self.scope(place, tasks, vars))?,
+                    ))
+                })
+                .collect::<Result<_, HarnessError>>()?,
             timeout: gate.timeout.unwrap_or(DEFAULT_GATE_TIMEOUT_SECS),
             cwd: gate.cwd.clone(),
             cwd_input: gate.cwd_input.clone(),

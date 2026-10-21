@@ -63,9 +63,11 @@ agent:
 execution:
   limits: { model_turns: 8, tool_calls: 12 }
 gates:
-  test: { command: [sh, run_tests.sh], timeout: 60 }
+  test:
+    run: sh run_tests.sh
+    timeout: 60
   coverage:
-    command: [sh, run_tests.sh, --coverage]
+    run: sh run_tests.sh --coverage
     metrics:
       line_pct: { file: coverage.json, pointer: /line_pct, type: number }
 workflow:
@@ -80,8 +82,8 @@ success:
 
 What this means, and why it can be trusted:
 
-- The agent works on the task. Then the **gate** `test` runs: a command, with no
-  shell, whose exit status is the verdict. An agent that says "all tests pass" is
+- The agent works on the task. Then the **gate** `test` runs: a script (or a
+  `command:` argv, which runs without a shell) whose exit status is the verdict. An agent that says "all tests pass" is
   not believed, and neither is a program that prints it and exits 1.
 - A failed gate earns up to `attempts` **repair turns**. The agent is shown what
   failed (exit status, the end of stdout and stderr) and the checks run again.
@@ -571,10 +573,19 @@ One rule: **a model never decides that something worked.** An agent may decide
 it finished editing; whether the build passes, the tests pass or the coverage
 is 90 percent is decided by a gate, which is a program sven runs.
 
-- A **command gate** runs an argv with no shell, in the workspace (or in a
-  directory a run input names, outside it: `cwd_input`), with a timeout, and
-  only exit status 0 passes. What the program printed and what the agent said
-  do not count. A timeout and a program that cannot start have failed.
+- A **command gate** runs an argv with no shell (`command: [argv]`) or a
+  script (`run:`), in the workspace (or in a directory a run input names,
+  outside it: `cwd_input`), with a timeout, and only exit status 0 passes. What
+  the program printed and what the agent said do not count. A timeout and a
+  program that cannot start have failed.
+- A **script gate** is one multiline `run: |` script, or a list of named
+  steps, `run: [{name: build, script: make}, {name: test, script: make
+  check}]`, run in order and stopping at the first failure; the result names
+  it (`gates.<name>.failed_step`, and `{{ failure.failed_step }}` in a repair
+  prompt). The shell is `bash -eo pipefail` unless `shell: sh` (`sh -e`). The
+  script is a template, but text spliced into a script is code: hand data in
+  through `env: {NAME: "{{ inputs.x }}"}` and read `"$NAME"`, as
+  `SVEN_SCRATCHPAD` is handed to every gate. The timeout covers all steps.
 - A **metric** is a number a command leaves in a JSON file. A check on it runs
   the command again first, every time; a figure from an earlier run is not
   evidence.

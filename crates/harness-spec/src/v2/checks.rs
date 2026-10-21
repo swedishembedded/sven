@@ -22,6 +22,7 @@ use serde_json::{json, Value};
 use super::rewrite::{rewrite_text, FailureView, Scope};
 use super::spec::Threshold;
 use crate::error::HarnessError;
+use crate::gate_command::GateCommand;
 use crate::source_map::SourceRef;
 use crate::spec::{
     AgentStepSpec, BranchStepSpec, FailStepSpec, GateStepSpec, PredictStepSpec, StepDecoding,
@@ -56,7 +57,8 @@ impl Builder {
 /// A command to run, with its arguments already moved into run namespaces.
 #[derive(Clone)]
 pub(super) struct CommandRun {
-    pub argv: Vec<String>,
+    pub steps: Vec<GateCommand>,
+    pub env: BTreeMap<String, String>,
     pub timeout: u64,
     pub cwd: Option<String>,
     pub cwd_input: Option<String>,
@@ -210,7 +212,8 @@ fn entry_id(phase: &Phase<'_>, checks: &[Resolved], index: usize, attempt: u32) 
 
 pub(super) fn gate_step(run: &CommandRun, then: &str, on_fail: &str) -> StepSpec {
     StepSpec::Gate(Box::new(GateStepSpec {
-        command: run.argv.clone(),
+        steps: run.steps.clone(),
+        env: run.env.clone(),
         timeout: run.timeout,
         cwd: run.cwd.clone(),
         cwd_input: run.cwd_input.clone(),

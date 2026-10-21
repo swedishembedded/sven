@@ -88,7 +88,7 @@ fn texts_and_gates_read_the_scratchpad_the_host_gave() {
     );
 
     let args = gate_args(&mut ctx, &mut m, &mut state);
-    assert_eq!(args["argv"][1], "/host/pad/report.json");
+    assert_eq!(args["steps"][0]["argv"][1], "/host/pad/report.json");
     assert_eq!(
         args["env"]["SVEN_SCRATCHPAD"], "/host/pad",
         "a command gate finds the directory in its environment"

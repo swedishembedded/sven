@@ -319,8 +319,20 @@ pub struct CommandGate {
     /// Human documentation.
     #[serde(default)]
     pub description: Option<String>,
-    /// The argv; templates over inputs.
-    pub command: Vec<String>,
+    /// The argv; templates over inputs. Exactly one of `command` and `run`.
+    #[serde(default)]
+    pub command: Option<Vec<String>>,
+    /// A script, or named scripts run in order; the first failure stops the
+    /// gate. Templates, like an argv.
+    #[serde(default)]
+    pub run: Option<super::gate_steps::Script>,
+    /// The shell a script runs under (default `bash`).
+    #[serde(default)]
+    pub shell: Option<super::gate_steps::Shell>,
+    /// Variables set for the command or script: name to value, a template.
+    /// Data should reach a script this way, not by splicing it into the text.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
     /// Seconds; the default applies when absent.
     #[serde(default)]
     pub timeout: Option<u64>,

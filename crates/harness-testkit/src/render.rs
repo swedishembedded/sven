@@ -62,9 +62,21 @@ pub fn render_step(plan: &HarnessPlan, id: &str, inputs: &Value, limit: usize) -
             }
             let _ = writeln!(out, "  prompt: {}", shown(prompt, inputs, limit));
         }
-        PlanPrimitive::Gate { command, stdin, .. } => {
-            let argv: Vec<String> = command.iter().map(|t| shown(t, inputs, limit)).collect();
-            let _ = writeln!(out, "  command: {}", argv.join(" "));
+        PlanPrimitive::Gate {
+            steps, env, stdin, ..
+        } => {
+            for step in steps {
+                let argv: Vec<String> = step.argv.iter().map(|t| shown(t, inputs, limit)).collect();
+                let label = if steps.len() == 1 {
+                    "command".to_string()
+                } else {
+                    format!("step {}", step.name)
+                };
+                let _ = writeln!(out, "  {label}: {}", argv.join(" "));
+            }
+            for (name, value) in env {
+                let _ = writeln!(out, "  env {name}: {}", shown(value, inputs, limit));
+            }
             if let Some(stdin) = stdin {
                 let _ = writeln!(out, "  stdin: {}", shown(stdin, inputs, limit));
             }

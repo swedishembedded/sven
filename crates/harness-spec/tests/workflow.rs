@@ -183,7 +183,7 @@ fn command_gates_lower_to_gate_steps_with_argv_and_timeout() {
     let plan = compile(THREE_TASKS);
     let step = &plan.steps["bootstrap__v0_build_a0"].primitive;
     let PlanPrimitive::Gate {
-        command,
+        steps,
         timeout_secs,
         then,
         on_fail,
@@ -192,7 +192,7 @@ fn command_gates_lower_to_gate_steps_with_argv_and_timeout() {
     else {
         panic!("expected a gate step, got {step:?}");
     };
-    assert_eq!(command.len(), 3);
+    assert_eq!(steps[0].argv.len(), 3);
     assert_eq!(*timeout_secs, 300);
     assert_eq!(then, "bootstrap__v1_test_a0");
     assert_eq!(on_fail, "bootstrap__v0_build_a0_repair");
@@ -394,7 +394,7 @@ entry: run
 capabilities: [ExecuteShell]
 limits: { max_steps: 5 }
 steps:
-  run: { gate: { command: ["true"], then: ok, on_fail: bad } }
+  run: { gate: { steps: [{ name: t, argv: ["true"] }], then: ok, on_fail: bad } }
   ok: { return: { value: 1 } }
   bad: { fail: { code: no } }
 "#;

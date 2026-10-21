@@ -351,12 +351,21 @@ fn describe(plan: &HarnessPlan, id: &str) -> String {
     let text = |key: &str| value.get(key).and_then(Value::as_str).map(first_line);
     match primitive_word(&step.primitive).as_str() {
         "gate" => {
-            let argv: Vec<&str> = value
-                .get("command")
+            let commands: Vec<String> = value
+                .get("steps")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-                .filter_map(Value::as_str)
+                .map(|step| {
+                    let argv: Vec<&str> = step
+                        .get("argv")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .collect();
+                    first_line(&argv.join(" "))
+                })
                 .collect();
             let timeout = value
                 .get("timeout_secs")
@@ -364,7 +373,7 @@ fn describe(plan: &HarnessPlan, id: &str) -> String {
                 .unwrap_or(0);
             format!(
                 "runs `{}` (at most {timeout} s); only exit status 0 passes",
-                argv.join(" ")
+                commands.join("`, then `")
             )
         }
         "agent" => {

@@ -45,11 +45,14 @@ fn rejected(yaml: &str) -> String {
 #[test]
 fn a_workflow_reads_the_scratchpad_in_its_texts_and_gates() {
     let plan = compile(DOC);
-    let PlanPrimitive::Gate { command, stdin, .. } = &plan.steps["work__v0_judge_a0"].primitive
+    let PlanPrimitive::Gate { steps, stdin, .. } = &plan.steps["work__v0_judge_a0"].primitive
     else {
         panic!("a gate step");
     };
-    assert_eq!(command[1].paths()[0].as_text(), "facts.run.scratchpad");
+    assert_eq!(
+        steps[0].argv[1].paths()[0].as_text(),
+        "facts.run.scratchpad"
+    );
     assert_eq!(
         stdin.as_ref().expect("stdin").paths()[0].as_text(),
         "facts.run.scratchpad"

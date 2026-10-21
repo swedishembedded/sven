@@ -38,11 +38,12 @@ const SCRATCHPAD_ENV: &str = "SVEN_SCRATCHPAD";
 /// The capability a gate's command exercises.
 pub(super) const GATE_CAPABILITY: ToolCapability = ToolCapability::ExecuteShell;
 
-/// The arguments of the gate tool call for a command: the argv with its
-/// templates resolved to strings, the timeout and the working directory.
+/// The arguments of the gate tool call: the steps with their argv templates
+/// resolved to strings, the variables, the timeout and the working directory.
 pub(super) fn gate_args(run: &HarnessRunState, gate: &PlanPrimitive) -> Value {
     let PlanPrimitive::Gate {
-        command,
+        steps,
+        env,
         timeout_secs,
         cwd,
         cwd_input,
@@ -59,14 +60,18 @@ pub(super) fn gate_args(run: &HarnessRunState, gate: &PlanPrimitive) -> Value {
         cwd_input.as_deref(),
         stdin.as_ref(),
     );
-    let argv: Vec<String> = command
+    let text = |template: &Template| match run.resolve_template(template) {
+        Value::String(text) => text,
+        other => other.to_string(),
+    };
+    let steps: Vec<Value> = steps
         .iter()
-        .map(|arg| match run.resolve_template(arg) {
-            Value::String(text) => text,
-            other => other.to_string(),
+        .map(|step| {
+            let argv: Vec<String> = step.argv.iter().map(text).collect();
+            json!({ "name": step.name, "argv": argv })
         })
         .collect();
-    let mut args = json!({ "argv": argv, "timeout_secs": timeout_secs });
+    let mut args = json!({ "steps": steps, "timeout_secs": timeout_secs });
     if let Some(bytes) = output_bytes {
         args["tail_bytes"] = json!(bytes);
     }
@@ -80,13 +85,21 @@ pub(super) fn gate_args(run: &HarnessRunState, gate: &PlanPrimitive) -> Value {
         args["trusted_cwd"] = json!(dir);
     }
     let host = run.run_values();
-    if command.iter().chain(stdin).any(reads_trajectory_file) {
+    if gate_templates(gate).any(reads_trajectory_file) {
         if let Some(file) = host.trajectory_file {
             args["trajectory_file"] = json!(file);
         }
     }
+    // The host's variable is set last: a gate cannot point itself elsewhere.
+    let mut variables: serde_json::Map<String, Value> = env
+        .iter()
+        .map(|(name, value)| (name.clone(), json!(text(value))))
+        .collect();
     if let Some(dir) = host.scratchpad {
-        args["env"] = json!({ SCRATCHPAD_ENV: dir });
+        variables.insert(SCRATCHPAD_ENV.to_string(), json!(dir));
+    }
+    if !variables.is_empty() {
+        args["env"] = Value::Object(variables);
     }
     if let Some(stdin) = stdin {
         args["stdin"] = match run.resolve_template(stdin) {
@@ -119,16 +132,29 @@ pub(super) fn reads_trajectory_file(template: &Template) -> bool {
     })
 }
 
+/// Every template a gate's command is made of: its arguments, its variables
+/// and its standard input.
+fn gate_templates(gate: &PlanPrimitive) -> impl Iterator<Item = &Template> {
+    let (steps, env, stdin) = match gate {
+        PlanPrimitive::Gate {
+            steps, env, stdin, ..
+        } => (steps.as_slice(), Some(env), stdin.as_ref()),
+        _ => (&[][..], None, None),
+    };
+    steps
+        .iter()
+        .flat_map(|step| step.argv.iter())
+        .chain(env.into_iter().flat_map(|env| env.values()))
+        .chain(stdin)
+}
+
 /// `true` when a gate of `plan` reads `{{ run.trajectory_file }}`: the host
 /// then has to provide the file.
 #[must_use]
 pub fn plan_reads_trajectory(plan: &sven_harness_spec::HarnessPlan) -> bool {
-    plan.steps.values().any(|step| match &step.primitive {
-        PlanPrimitive::Gate { command, stdin, .. } => {
-            command.iter().chain(stdin).any(reads_trajectory_file)
-        }
-        _ => false,
-    })
+    plan.steps
+        .values()
+        .any(|step| gate_templates(&step.primitive).any(reads_trajectory_file))
 }
 
 /// What one gate evaluation found, as stored under the step.
@@ -141,6 +167,10 @@ pub(super) struct GateResult {
     stderr: String,
     duration_ms: u64,
     detail: String,
+    /// The step that ended the gate when it did not pass.
+    failed_step: Option<String>,
+    /// Each step that ran: its name, exit status and duration.
+    steps: Value,
     /// The standard output parsed as JSON, when it is a JSON document: a
     /// check that reports its findings as data is read through this.
     json: Value,
@@ -157,6 +187,8 @@ impl GateResult {
             stderr: String::new(),
             duration_ms: 0,
             detail,
+            failed_step: None,
+            steps: json!([]),
             json: Value::Null,
         }
     }
@@ -204,6 +236,14 @@ impl GateResult {
                 ),
             }
         };
+        let failed_step = report
+            .get("failed_step")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let detail = match &failed_step {
+            Some(step) if kind != "passed" => format!("{detail} (step `{step}`)"),
+            _ => detail,
+        };
         let stdout = text("stdout");
         let json = serde_json::from_str::<Value>(stdout.trim())
             .ok()
@@ -222,6 +262,8 @@ impl GateResult {
                 .and_then(Value::as_u64)
                 .unwrap_or_default(),
             detail,
+            failed_step,
+            steps: report.get("steps").cloned().unwrap_or_else(|| json!([])),
         }
     }
 
@@ -235,6 +277,8 @@ impl GateResult {
             "stderr": self.stderr,
             "duration_ms": self.duration_ms,
             "detail": self.detail,
+            "failed_step": self.failed_step,
+            "steps": self.steps,
             "json": self.json,
         })
     }
@@ -332,9 +376,9 @@ impl HarnessMachine {
         step: &PlanStep,
         ctx: &mut Context,
     ) -> Reaction<HarnessState> {
-        let PlanPrimitive::Gate { command, stdin, .. } = &step.primitive else {
+        if !matches!(step.primitive, PlanPrimitive::Gate { .. }) {
             return self.fail_now(run, "internal", "gate dispatch reached another step", ctx);
-        };
+        }
         run.counts.tool_calls += 1;
         if run.exceeds_tool_budget(self.run.plan()) {
             return self.fail_now(
@@ -344,11 +388,7 @@ impl HarnessMachine {
                 ctx,
             );
         }
-        if command
-            .iter()
-            .chain(stdin.as_ref())
-            .any(reads_trajectory_file)
-        {
+        if gate_templates(&step.primitive).any(reads_trajectory_file) {
             // The host decides where the trajectory goes (and is the only one
             // who can write it); a host that gave no place cannot run this gate.
             if run.run_values().trajectory_file.is_none() {

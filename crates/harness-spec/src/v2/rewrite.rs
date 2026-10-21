@@ -37,7 +37,7 @@ pub(super) fn pool_fact(task: &str) -> String {
 }
 
 /// The fields of `failure.*` a repair prompt may read.
-pub(super) const FAILURE_FIELDS: [&str; 7] = [
+pub(super) const FAILURE_FIELDS: [&str; 8] = [
     "gate",
     "attempt",
     "kind",
@@ -45,6 +45,7 @@ pub(super) const FAILURE_FIELDS: [&str; 7] = [
     "exit_code",
     "stdout",
     "stderr",
+    "failed_step",
 ];
 
 /// The values the host provides a run, readable as `run.<name>`.
@@ -338,6 +339,7 @@ impl Scope<'_> {
             ("exit_code", Some(step), _) => result(step, "exit_code"),
             ("stdout", Some(step), _) => result(step, "stdout"),
             ("stderr", Some(step), _) => result(step, "stderr"),
+            ("failed_step", Some(step), _) => result(step, "failed_step"),
             ("detail", None, Some(step)) => result(step, "value"),
             ("kind", None, _) => Ok(PathRewrite::Text("check".to_string())),
             // A file or metric check has no exit code or output.

@@ -165,11 +165,7 @@ fn validate_gates(w: &WorkflowSpec) -> Result<(), HarnessError> {
         match gate {
             GateDef::Artifact(a) => validate_artifact(&place, a, false)?,
             GateDef::Command(c) => {
-                if c.command.first().is_none_or(|p| p.trim().is_empty()) {
-                    return Err(invalid(format!(
-                        "{place}: `command` is an argv list whose first element names the program"
-                    )));
-                }
+                super::gate_steps::validate(&place, c)?;
                 if let Some(t) = c.timeout {
                     if t == 0 || t > MAX_GATE_TIMEOUT_SECS {
                         return Err(invalid(format!(

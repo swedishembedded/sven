@@ -105,7 +105,7 @@ fn a_failed_check_earns_a_message_from_the_supervisor_delivered_to_the_agent() {
     // The agent works; its result is judged.
     let fx = drive(&mut m, &mut ctx, &mut state, turn(AGENT, "I changed a.c"));
     let (check, args) = gate(&fx);
-    assert_eq!(args["argv"], json!(["replay", "check"]));
+    assert_eq!(args["steps"][0]["argv"], json!(["replay", "check"]));
     // It failed in a correctable way: the supervisor is asked, in its own
     // conversation, with the findings in the prompt.
     let fx = answer(&mut m, &mut ctx, &mut state, check, 1, FAILING);
@@ -126,7 +126,7 @@ fn a_failed_check_earns_a_message_from_the_supervisor_delivered_to_the_agent() {
         turn(SUPERVISOR, "Please look at b.c too."),
     );
     let (accept, args) = gate(&fx);
-    assert_eq!(args["argv"], json!(["replay", "accept"]));
+    assert_eq!(args["steps"][0]["argv"], json!(["replay", "accept"]));
     assert_eq!(args["stdin"], "Please look at b.c too.");
 
     // Accepted: it is a user turn in the AGENT's conversation, labelled as a

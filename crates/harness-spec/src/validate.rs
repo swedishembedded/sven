@@ -328,13 +328,20 @@ fn validate_iterate_shape(
 /// a non-empty argv, a bounded timeout and a working directory that stays in
 /// the workspace.
 fn validate_gate_shape(id: &str, gate: &crate::spec::GateStepSpec) -> Result<(), HarnessError> {
-    if gate
-        .command
-        .first()
-        .is_none_or(|program| program.trim().is_empty())
+    if gate.steps.is_empty()
+        || gate.steps.iter().any(|step| {
+            step.argv
+                .first()
+                .is_none_or(|program| program.trim().is_empty())
+        })
     {
         return Err(HarnessError::Invalid(format!(
-            "step `{id}`: a gate's `command` is an argv whose first element names the program"
+            "step `{id}`: a gate has commands, each an argv whose first element names the program"
+        )));
+    }
+    if let Some(name) = gate.env.keys().find(|name| !is_env_name(name)) {
+        return Err(HarnessError::Invalid(format!(
+            "step `{id}`: gate env name `{name}` is not an environment variable name ([A-Z_][A-Z0-9_]*)"
         )));
     }
     if gate.timeout == 0 || gate.timeout > MAX_GATE_TIMEOUT_SECS {
@@ -351,6 +358,15 @@ fn validate_gate_shape(id: &str, gate: &crate::spec::GateStepSpec) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// `true` for a name that is a plain environment variable: `[A-Z_][A-Z0-9_]*`.
+pub(crate) fn is_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_uppercase() || c == '_')
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 /// `true` for a non-empty relative path with no parent-directory component.
@@ -419,7 +435,14 @@ fn template_texts(step: &StepSpec) -> Vec<String> {
         StepSpec::Delegate(d) => template_texts_in_value(&d.input),
         StepSpec::Transform(t) => template_texts_in_value(&t.input),
         StepSpec::Fail(f) => f.message.clone().into_iter().collect(),
-        StepSpec::Gate(g) => g.command.iter().chain(g.stdin.iter()).cloned().collect(),
+        StepSpec::Gate(g) => g
+            .steps
+            .iter()
+            .flat_map(|step| step.argv.iter())
+            .chain(g.env.values())
+            .chain(g.stdin.iter())
+            .cloned()
+            .collect(),
         StepSpec::Verify(_)
         | StepSpec::Branch(_)
         | StepSpec::Retry(_)

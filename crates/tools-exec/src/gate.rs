@@ -1,17 +1,21 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The gate command tool: run an argv, report how it ended.
+//! The gate command tool: run commands in order, report how they ended.
 //!
 //! This is the process half of a harness `gate` step. It is a tool that no
 //! agent mode lists ([`Tool::modes`] is empty) and that the harness runtime
 //! never admits to an agent step, so only a workflow's own gates run it. It
-//! runs the program directly - there is no shell to interpolate into - in a
-//! new session with its working directory confined to the workspace, kills the
+//! runs each program directly - the tool has no shell of its own; a script
+//! gate hands its script to the shell it names as an argument - in a new
+//! session with its working directory confined to the workspace, kills the
 //! whole process group when the time is up, and reports the facts: exit
 //! status, whether the time ran out, whether the program could be started at
-//! all, and the end of each output stream. It does not decide whether that is
-//! success; the harness machine does.
+//! all, and the end of each output stream. A gate of several steps runs them
+//! one after the other under one deadline and stops at the first that does not
+//! end with status 0; the report is that step's (or the last one's) and names
+//! the step that failed. It does not decide whether that is success; the
+//! harness machine does.
 //!
 //! Swedish Embedded AB implements verifiable command execution for agent
 //! workflows for its clients. If your team needs expertise in running build
@@ -84,7 +88,16 @@ async fn finish(task: tokio::task::JoinHandle<Tail>) -> Tail {
     }
 }
 
-/// The report of a run, in the shape the harness machine reads.
+/// The most steps one gate may have.
+const MAX_STEPS: usize = 64;
+
+/// One step of a call: the name its result carries, and the program to run.
+struct Step {
+    name: String,
+    argv: Vec<String>,
+}
+
+/// The report of one step, in the shape the harness machine reads.
 struct Report {
     exit_code: Option<i32>,
     timed_out: bool,
@@ -95,6 +108,18 @@ struct Report {
 }
 
 impl Report {
+    /// A step that never started because the gate's time was already spent.
+    fn out_of_time() -> Self {
+        Self {
+            exit_code: None,
+            timed_out: true,
+            error: None,
+            stdout: Tail::default(),
+            stderr: Tail::default(),
+            elapsed: Duration::ZERO,
+        }
+    }
+
     fn failed_to_start(error: String) -> Self {
         Self {
             exit_code: None,
@@ -106,19 +131,80 @@ impl Report {
         }
     }
 
+    /// `true` when the step ended by itself with status 0.
+    fn passed(&self) -> bool {
+        self.exit_code == Some(0) && !self.timed_out && self.error.is_none()
+    }
+}
+
+fn millis(elapsed: Duration) -> u64 {
+    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// The report of a whole gate: the steps that ran, in order. The last one
+/// is the one that ended the gate.
+struct GateReport {
+    steps: Vec<(String, Report)>,
+}
+
+impl GateReport {
     fn to_json(&self) -> String {
         let text = |tail: &Tail| String::from_utf8_lossy(&tail.bytes).into_owned();
+        let last = self.steps.last().map(|(_, report)| report);
+        let failed = self
+            .steps
+            .iter()
+            .find(|(_, report)| !report.passed())
+            .map(|(name, _)| name);
         json!({
-            "exit_code": self.exit_code,
-            "timed_out": self.timed_out,
-            "error": self.error,
-            "stdout": text(&self.stdout),
-            "stderr": text(&self.stderr),
-            "truncated": self.stdout.truncated || self.stderr.truncated,
-            "duration_ms": u64::try_from(self.elapsed.as_millis()).unwrap_or(u64::MAX),
+            "exit_code": last.and_then(|r| r.exit_code),
+            "timed_out": last.is_some_and(|r| r.timed_out),
+            "error": last.and_then(|r| r.error.clone()),
+            "stdout": last.map(|r| text(&r.stdout)).unwrap_or_default(),
+            "stderr": last.map(|r| text(&r.stderr)).unwrap_or_default(),
+            "truncated": last.is_some_and(|r| r.stdout.truncated || r.stderr.truncated),
+            "duration_ms": millis(self.steps.iter().map(|(_, r)| r.elapsed).sum()),
+            "failed_step": failed,
+            "steps": self.steps.iter().map(|(name, report)| json!({
+                "name": name,
+                "exit_code": report.exit_code,
+                "duration_ms": millis(report.elapsed),
+            })).collect::<Vec<_>>(),
         })
         .to_string()
     }
+}
+
+/// The steps of a call: a non-empty list of `{name, argv}`, each argv a
+/// non-empty list of strings whose first element names the program.
+fn steps(given: Option<&Value>) -> Result<Vec<Step>, String> {
+    let bad = "`steps` must be a list of {name, argv}: a name and a non-empty list of strings";
+    let items = given.and_then(Value::as_array).ok_or(bad)?;
+    if items.is_empty() || items.len() > MAX_STEPS {
+        return Err(format!("`steps` must hold 1 to {MAX_STEPS} steps"));
+    }
+    items
+        .iter()
+        .map(|item| {
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|n| !n.is_empty());
+            let argv: Option<Vec<String>> = item
+                .get("argv")
+                .and_then(Value::as_array)
+                .and_then(|a| a.iter().map(|v| v.as_str().map(str::to_string)).collect());
+            match (name, argv) {
+                (Some(name), Some(argv)) if argv.first().is_some_and(|p| !p.is_empty()) => {
+                    Ok(Step {
+                        name: name.to_string(),
+                        argv,
+                    })
+                }
+                _ => Err(bad.to_string()),
+            }
+        })
+        .collect()
 }
 
 /// The variables a call sets for its command: an object of string values
@@ -212,7 +298,45 @@ impl GateCommandTool {
         Ok(real)
     }
 
+    /// Runs the steps in order under one deadline, up to the first that does
+    /// not pass. A step that finds the time already spent is reported as
+    /// timed out without being started.
     async fn run(
+        &self,
+        steps: &[Step],
+        dir: &std::path::Path,
+        limit: Duration,
+        stdin: Option<&str>,
+        keep: usize,
+        env: &[(String, String)],
+    ) -> GateReport {
+        let deadline = Instant::now() + limit;
+        let mut ran = Vec::new();
+        for step in steps {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let report = if remaining.is_zero() {
+                Report::out_of_time()
+            } else {
+                self.run_step(
+                    &step.argv,
+                    dir,
+                    remaining,
+                    stdin.map(str::to_string),
+                    keep,
+                    env,
+                )
+                .await
+            };
+            let passed = report.passed();
+            ran.push((step.name.clone(), report));
+            if !passed {
+                break;
+            }
+        }
+        GateReport { steps: ran }
+    }
+
+    async fn run_step(
         &self,
         argv: &[String],
         dir: &std::path::Path,
@@ -309,15 +433,31 @@ impl Tool for GateCommandTool {
     }
 
     fn description(&self) -> &str {
-        "Runs an argv without a shell and reports exit_code, timed_out, error, stdout, stderr. \
-         Called by a harness gate step, never by a model: no agent mode lists it."
+        "Runs commands in order (each an argv, without a shell of its own) and reports exit_code, \
+         timed_out, error, stdout, stderr of the step that ended the gate, with failed_step and \
+         each step's duration. Called by a harness gate step, never by a model: no agent mode \
+         lists it."
     }
 
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "argv": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+                "steps": {
+                    "type": "array",
+                    "description": "The commands, run in order; the first that does not exit 0 ends the gate",
+                    "minItems": 1,
+                    "maxItems": MAX_STEPS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "minLength": 1, "description": "What the report calls the step" },
+                            "argv": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+                        },
+                        "required": ["name", "argv"],
+                        "additionalProperties": false
+                    }
+                },
                 "timeout_secs": { "type": "integer", "minimum": 1, "maximum": MAX_GATE_TIMEOUT_SECS },
                 "cwd": { "type": "string", "description": "Directory inside the workspace" },
                 "stdin": { "type": "string", "description": "Text the command reads on standard input" },
@@ -326,7 +466,7 @@ impl Tool for GateCommandTool {
                 "trajectory_file": { "type": "string", "description": "File the host writes the run's trajectory to before the command starts" },
                 "env": { "type": "object", "description": "Variables set for the command, name to value", "additionalProperties": { "type": "string" } }
             },
-            "required": ["argv", "timeout_secs"],
+            "required": ["steps", "timeout_secs"],
             "additionalProperties": false
         })
     }
@@ -345,18 +485,9 @@ impl Tool for GateCommandTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let argv: Option<Vec<String>> =
-            call.args
-                .get("argv")
-                .and_then(Value::as_array)
-                .and_then(|items| {
-                    items
-                        .iter()
-                        .map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                });
-        let Some(argv) = argv.filter(|a| a.first().is_some_and(|p| !p.is_empty())) else {
-            return ToolOutput::err(&call.id, "`argv` must be a non-empty list of strings");
+        let steps = match steps(call.args.get("steps")) {
+            Ok(steps) => steps,
+            Err(why) => return ToolOutput::err(&call.id, why),
         };
         let Some(seconds) = call.args.get("timeout_secs").and_then(Value::as_u64) else {
             return ToolOutput::err(&call.id, "`timeout_secs` is required");
@@ -428,332 +559,18 @@ impl Tool for GateCommandTool {
             Err(why) => return ToolOutput::err(&call.id, why),
         };
         let report = self
-            .run(&argv, &dir, Duration::from_secs(seconds), stdin, keep, &env)
+            .run(
+                &steps,
+                &dir,
+                Duration::from_secs(seconds),
+                stdin.as_deref(),
+                keep,
+                &env,
+            )
             .await;
         ToolOutput::ok(&call.id, report.to_json())
     }
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-
-    fn tool(dir: &tempfile::TempDir) -> GateCommandTool {
-        GateCommandTool::new(dir.path()).expect("tool")
-    }
-
-    async fn run(tool: &GateCommandTool, args: Value) -> (bool, Value) {
-        let out = tool
-            .execute(&ToolCall {
-                id: "g".into(),
-                name: GATE_TOOL.into(),
-                args,
-            })
-            .await;
-        let report = serde_json::from_str(&out.content).unwrap_or(Value::String(out.content));
-        (out.is_error, report)
-    }
-
-    #[tokio::test]
-    async fn it_reports_the_exit_status_and_the_output_of_a_program() {
-        let dir = tempfile::tempdir().unwrap();
-        let (is_error, r) = run(
-            &tool(&dir),
-            json!({ "argv": ["sh", "-c", "echo out; echo err >&2; exit 3"], "timeout_secs": 10 }),
-        )
-        .await;
-        assert!(!is_error, "a failing program is a report, not a tool error");
-        assert_eq!(r["exit_code"], 3);
-        assert_eq!(r["stdout"], "out\n");
-        assert_eq!(r["stderr"], "err\n");
-        assert_eq!(r["timed_out"], false);
-        assert_eq!(r["error"], Value::Null);
-    }
-
-    #[tokio::test]
-    async fn the_command_reads_the_text_it_is_given_on_standard_input() {
-        let dir = tempfile::tempdir().unwrap();
-        // Far more than an argument can hold, and with every awkward byte in it.
-        let text = format!(
-            "{}{{{{ not a template }}}} $HOME `x`\n",
-            "line\n".repeat(400_000)
-        );
-        let (is_error, r) = run(
-            &tool(&dir),
-            json!({ "argv": ["wc", "-c"], "timeout_secs": 20, "stdin": text }),
-        )
-        .await;
-        assert!(!is_error);
-        assert_eq!(r["exit_code"], 0);
-        assert_eq!(r["stdout"].as_str().unwrap().trim(), text.len().to_string());
-    }
-
-    #[tokio::test]
-    async fn the_command_finds_the_variables_it_is_given_in_its_environment() {
-        let dir = tempfile::tempdir().unwrap();
-        let (is_error, r) = run(
-            &tool(&dir),
-            json!({
-                "argv": ["sh", "-c", "printf %s \"$SVEN_SCRATCHPAD\""],
-                "timeout_secs": 10,
-                "env": { "SVEN_SCRATCHPAD": "/some/dir" }
-            }),
-        )
-        .await;
-        assert!(!is_error);
-        assert_eq!(r["stdout"], "/some/dir");
-        for bad in [json!({ "A-B": "x" }), json!({ "A": 1 }), json!("x")] {
-            let (is_error, _) = run(
-                &tool(&dir),
-                json!({ "argv": ["true"], "timeout_secs": 10, "env": bad }),
-            )
-            .await;
-            assert!(is_error, "{bad} is refused");
-        }
-    }
-
-    #[tokio::test]
-    async fn without_stdin_the_command_reads_nothing() {
-        let dir = tempfile::tempdir().unwrap();
-        let (_, r) = run(
-            &tool(&dir),
-            json!({ "argv": ["wc", "-c"], "timeout_secs": 10 }),
-        )
-        .await;
-        assert_eq!(r["stdout"].as_str().unwrap().trim(), "0");
-    }
-
-    #[tokio::test]
-    async fn a_command_that_ignores_its_input_does_not_hang_the_gate() {
-        let dir = tempfile::tempdir().unwrap();
-        let big = "x".repeat(8 * 1024 * 1024);
-        let (_, r) = run(
-            &tool(&dir),
-            json!({ "argv": ["true"], "timeout_secs": 20, "stdin": big }),
-        )
-        .await;
-        assert_eq!(
-            r["exit_code"], 0,
-            "a closed pipe is not a failure of the gate: {r}"
-        );
-    }
-
-    #[tokio::test]
-    async fn success_is_exit_zero() {
-        let dir = tempfile::tempdir().unwrap();
-        let (_, r) = run(&tool(&dir), json!({ "argv": ["true"], "timeout_secs": 10 })).await;
-        assert_eq!(r["exit_code"], 0);
-    }
-
-    #[tokio::test]
-    async fn there_is_no_shell_to_interpolate_into() {
-        let dir = tempfile::tempdir().unwrap();
-        let (_, r) = run(
-            &tool(&dir),
-            json!({ "argv": ["echo", "$HOME; touch pwned"], "timeout_secs": 10 }),
-        )
-        .await;
-        assert_eq!(r["stdout"], "$HOME; touch pwned\n");
-        assert!(!dir.path().join("pwned").exists());
-    }
-
-    #[tokio::test]
-    async fn a_program_that_cannot_start_is_reported_as_an_error_without_a_status() {
-        let dir = tempfile::tempdir().unwrap();
-        let (is_error, r) = run(
-            &tool(&dir),
-            json!({ "argv": ["/nonexistent/program"], "timeout_secs": 10 }),
-        )
-        .await;
-        assert!(!is_error);
-        assert_eq!(r["exit_code"], Value::Null);
-        assert!(r["error"]
-            .as_str()
-            .is_some_and(|e| e.contains("/nonexistent/program")));
-    }
-
-    #[tokio::test]
-    async fn a_program_out_of_time_is_killed_with_everything_it_started() {
-        let dir = tempfile::tempdir().unwrap();
-        let marker = dir.path().join("survivor");
-        let script = format!("(sleep 3; touch {}) & wait", marker.display());
-        let started = Instant::now();
-        let (_, r) = run(
-            &tool(&dir),
-            json!({ "argv": ["sh", "-c", script], "timeout_secs": 1 }),
-        )
-        .await;
-        assert_eq!(r["timed_out"], true);
-        assert_eq!(r["exit_code"], Value::Null);
-        assert!(
-            started.elapsed() < Duration::from_secs(3),
-            "returned at the deadline"
-        );
-        tokio::time::sleep(Duration::from_secs(4)).await;
-        assert!(!marker.exists(), "the descendant was killed with the group");
-    }
-
-    #[tokio::test]
-    async fn only_the_tail_of_long_output_is_kept() {
-        let dir = tempfile::tempdir().unwrap();
-        let (_, r) = run(
-            &tool(&dir),
-            json!({ "argv": ["sh", "-c", "yes line | head -c 200000; echo END"], "timeout_secs": 10 }),
-        )
-        .await;
-        let out = r["stdout"].as_str().unwrap();
-        assert!(out.len() <= STREAM_TAIL_BYTES);
-        assert!(out.ends_with("END\n"));
-        assert_eq!(r["truncated"], true);
-    }
-
-    #[tokio::test]
-    async fn the_working_directory_stays_inside_the_workspace() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("sub")).unwrap();
-        let tool = tool(&dir);
-        let (is_error, r) = run(
-            &tool,
-            json!({ "argv": ["pwd"], "timeout_secs": 5, "cwd": "sub" }),
-        )
-        .await;
-        assert!(!is_error);
-        assert!(r["stdout"].as_str().unwrap().trim_end().ends_with("/sub"));
-        for escape in ["..", "/", "sub/../../.."] {
-            let (is_error, _) = run(
-                &tool,
-                json!({ "argv": ["pwd"], "timeout_secs": 5, "cwd": escape }),
-            )
-            .await;
-            assert!(is_error, "cwd `{escape}` must be refused");
-        }
-    }
-
-    #[tokio::test]
-    async fn malformed_calls_are_tool_errors() {
-        let dir = tempfile::tempdir().unwrap();
-        let tool = tool(&dir);
-        for args in [
-            json!({ "timeout_secs": 5 }),
-            json!({ "argv": [], "timeout_secs": 5 }),
-            json!({ "argv": [""], "timeout_secs": 5 }),
-            json!({ "argv": [1], "timeout_secs": 5 }),
-            json!({ "argv": ["true"] }),
-        ] {
-            let (is_error, _) = run(&tool, args.clone()).await;
-            assert!(is_error, "{args}");
-        }
-    }
-
-    #[test]
-    fn no_agent_mode_lists_the_tool_and_it_needs_the_shell_capability() {
-        let dir = tempfile::tempdir().unwrap();
-        let tool = tool(&dir);
-        assert!(tool.modes().is_empty());
-        assert_eq!(tool.kernel_capability(), ToolCapability::ExecuteShell);
-        assert_eq!(tool.name(), "shell_gate");
-    }
-
-    #[tokio::test]
-    async fn a_trusted_directory_outside_the_workspace_is_where_the_command_runs() {
-        let workspace = tempfile::tempdir().unwrap();
-        let trusted = tempfile::tempdir().unwrap();
-        std::fs::write(trusted.path().join("pinned.txt"), "x").unwrap();
-        let (is_error, r) = run(
-            &tool(&workspace),
-            json!({ "argv": ["ls"], "timeout_secs": 10,
-                    "trusted_cwd": trusted.path().to_str().unwrap() }),
-        )
-        .await;
-        assert!(!is_error, "{r}");
-        assert_eq!(r["stdout"], "pinned.txt\n");
-    }
-
-    #[tokio::test]
-    async fn a_trusted_directory_the_agent_can_write_is_refused() {
-        let workspace = tempfile::tempdir().unwrap();
-        std::fs::create_dir(workspace.path().join("inside")).unwrap();
-        let parent = workspace
-            .path()
-            .parent()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-        for bad in [
-            workspace
-                .path()
-                .join("inside")
-                .to_str()
-                .unwrap()
-                .to_string(),
-            workspace.path().to_str().unwrap().to_string(),
-            parent,
-            "relative/dir".to_string(),
-            "/no/such/dir".to_string(),
-        ] {
-            let (is_error, r) = run(
-                &tool(&workspace),
-                json!({ "argv": ["true"], "timeout_secs": 10, "trusted_cwd": bad }),
-            )
-            .await;
-            assert!(is_error, "{bad} must be refused: {r}");
-        }
-        // A symlink in the workspace to a directory outside is still outside,
-        // but one to a directory inside is inside.
-        let link = workspace.path().join("link");
-        std::os::unix::fs::symlink(workspace.path().join("inside"), &link).unwrap();
-        let (is_error, _) = run(
-            &tool(&workspace),
-            json!({ "argv": ["true"], "timeout_secs": 10, "trusted_cwd": link.to_str().unwrap() }),
-        )
-        .await;
-        assert!(is_error);
-    }
-
-    #[tokio::test]
-    async fn the_trajectory_is_written_before_the_command_and_a_failure_to_write_fails_closed() {
-        let workspace = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        let file = outside.path().join("trajectory.json");
-        let hook: TrajectoryHook = std::sync::Arc::new(|path| {
-            std::fs::write(path, "{\"steps\": []}").map_err(|e| e.to_string())
-        });
-        let with = GateCommandTool::new(workspace.path())
-            .unwrap()
-            .with_trajectory_hook(hook);
-        let (is_error, r) = run(
-            &with,
-            json!({ "argv": ["cat", file.to_str().unwrap()], "timeout_secs": 10,
-                    "trajectory_file": file.to_str().unwrap() }),
-        )
-        .await;
-        assert!(!is_error, "{r}");
-        assert_eq!(r["stdout"], "{\"steps\": []}");
-        // No hook: the host cannot provide it, so the gate does not run.
-        let (is_error, _) = run(
-            &tool(&workspace),
-            json!({ "argv": ["true"], "timeout_secs": 10, "trajectory_file": "/x" }),
-        )
-        .await;
-        assert!(is_error);
-    }
-
-    #[tokio::test]
-    async fn a_gate_may_keep_more_of_its_output_within_a_limit() {
-        let dir = tempfile::tempdir().unwrap();
-        let ask = |bytes: Value| {
-            json!({ "argv": ["sh", "-c", "head -c 60000 /dev/zero | tr '\\0' x"],
-                    "timeout_secs": 20, "tail_bytes": bytes })
-        };
-        let (_, small) = run(&tool(&dir), json!({ "argv": ["sh", "-c", "head -c 60000 /dev/zero | tr '\\0' x"], "timeout_secs": 20 })).await;
-        assert_eq!(small["stdout"].as_str().unwrap().len(), STREAM_TAIL_BYTES);
-        let (_, big) = run(&tool(&dir), ask(json!(65536))).await;
-        assert_eq!(big["stdout"].as_str().unwrap().len(), 60000);
-        assert_eq!(big["truncated"], false);
-        for bad in [json!(10), json!(2_000_000), json!("lots")] {
-            let (is_error, _) = run(&tool(&dir), ask(bad)).await;
-            assert!(is_error);
-        }
-    }
-}
+mod tests;

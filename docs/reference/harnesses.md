@@ -371,22 +371,34 @@ A completed item records the plan digest it
 was verified under; a changed gate is a changed plan, whose checkpoints are
 refused, so invalidation by gate change needs no separate switch.
 Item values from a file the agent wrote are data the agent controls: they reach
-prompts, gate argv elements (never a shell command line) and file-check paths (which
+prompts, gate argv elements and `env` values (never a shell command line: text spliced into a gate `run` script is code, so pass such values through `env`) and file-check paths (which
 the verifier confines to the workspace, so a path that escapes is `unknown`, not
 passed).
 
-**Gates and checks.** A gate is either `command: [argv...]` (with `timeout`
-seconds, default 600, at most 3600; `cwd` inside the workspace; and `metrics`:
-numbers the command leaves in JSON files, `{file, pointer, type: number}`) or
+**Gates and checks.** A gate is either a command gate, written `command:
+[argv...]` (a program, run without a shell) or `run:` (a script), or `artifact:
+<path>`. Beside `command` or `run` a command gate takes `timeout` seconds (default
+600, at most 3600, for the whole gate), `cwd` inside the workspace (or
+`cwd_input`), `stdin`, `output_bytes`, `env`, and `metrics` (numbers the command
+leaves in JSON files, `{file, pointer, type: number}`). Exactly one of `command`
+and `run` is written. `run` is one multiline script, or a list of `{name,
+script}` steps run in order, the first failure stopping the gate; `shell` is
+`bash` (the default; the script runs as `bash -eo pipefail -c`) or `sh` (`sh -e
+-c`). `env` is a map of variable names (`[A-Z_][A-Z0-9_]*`) to templates, set for
+the command or each script, and works on a `command` gate too. A script is a
+template like an argument (inputs, item variables, `run.scratchpad`, task
+outputs and earlier gate results are in scope), but text substituted into a script
+is code: pass data through `env` and read it as `"$NAME"`. A file check is
 `artifact: <path>` (a file that must exist, with optional `min_bytes` and
 `sha256`). A `verify` entry is a gate name, an inline `{artifact: ...}`, or
 `{metric: <gate>.<metric>, gte: N}` (`eq`, `ne`, `gt`, `gte`, `lt`, `lte`).
 A metric check *runs the gate's command first*, every time, and then compares
 the number the run left: a figure from an earlier run is not evidence.
 
-**Trust.** A command gate's argv is part of the compiled plan; the agent
-cannot redefine it. It runs without a shell, so no string is interpolated into a
-command line. The exit status decides: the gate passes only for status 0 with no
+**Trust.** A command gate's argv or script is part of the compiled plan; the
+agent cannot redefine it. A `command` gate runs without a shell, so no string is
+interpolated into a command line; a `run` script is a shell command line by
+design, which is why data belongs in `env`. The exit status decides: the gate passes only for status 0 with no
 timeout and no start error, whatever the program printed and whatever the agent
 claims. A script *inside the workspace* that the command runs is as editable as
 the code under test, so such a gate is only as strong as the script; pin it with
@@ -529,14 +541,22 @@ and refuses one outside it.
 The thirteenth primitive, written only by the lowering and rejected in a
 version 1 document: `gate: {command, timeout, cwd, store_as, then, on_fail}`. It
 calls the reserved tool `shell_gate` (`sven_harness_spec::GATE_TOOL`; capability
-`ExecuteShell`, so host approval policy applies) with `{argv, timeout_secs,
-cwd, env}` (`env` is `{SVEN_SCRATCHPAD: <dir>}`). The tool, `sven_tools_exec::GateCommandTool`, runs the program in a new
-session, confined to the workspace, kills the whole process group at the
+`ExecuteShell`, so host approval policy applies) with `{steps, timeout_secs, cwd,
+env, stdin}`: `steps` is a list of `{name, argv}` (a `command` gate has one step,
+named for its program; a script gate's argv is the shell and the script), `env`
+holds the gate's variables and, when the run has a scratchpad,
+`SVEN_SCRATCHPAD`. The tool, `sven_tools_exec::GateCommandTool`, runs the steps in order, each
+in a new session, confined to the workspace, under one deadline for the whole gate,
+stops at the first step that does not exit 0, kills the whole process group at the
 deadline, and returns JSON `{exit_code, timed_out, error, stdout, stderr,
-truncated, duration_ms}` (the last 16 KiB of each stream). No agent mode lists
+truncated, duration_ms, failed_step, steps}` (the last 16 KiB of each stream): the
+first five fields are those of the step that ended the gate (the last one when all
+passed), `failed_step` names it (null when every step passed) and `steps` lists
+`{name, exit_code, duration_ms}` for each step that ran. No agent mode lists
 the tool and the runtime refuses an agent step's proposed call to it. The machine
 stores `{passed, kind, exit_code, timed_out, stdout, stderr, duration_ms,
-detail}` under the step (`kind` is `passed`, `failed`, `timeout` or `exec_error`),
+detail, failed_step, steps, json}` under the step (`gates.<name>.failed_step`,
+and `failure.failed_step` in a repair prompt) (`kind` is `passed`, `failed`, `timeout` or `exec_error`),
 records a `GateEvaluated` trace record, and continues at `then` on a pass and
 `on_fail` otherwise. A host that does not provide the tool fails every gate
 closed. A gate interrupted by a suspension is run again on resume and costs

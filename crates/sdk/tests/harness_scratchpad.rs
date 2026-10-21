@@ -44,12 +44,10 @@ name: gated
 execution: { limits: { model_turns: 4 } }
 gates:
   note:
-    command:
-      - sh
-      - -c
-      - 'printf %s "$SVEN_SCRATCHPAD" > "$SVEN_SCRATCHPAD/from_env"; printf %s "$1" > "$SVEN_SCRATCHPAD/from_template"'
-      - sh
-      - "{{ run.scratchpad }}"
+    run: |
+      printf %s "$SVEN_SCRATCHPAD" > "$SVEN_SCRATCHPAD/from_env"
+      printf %s "$PAD" > "$SVEN_SCRATCHPAD/from_template"
+    env: { PAD: "{{ run.scratchpad }}" }
 workflow:
   - name: work
     task: Work.

@@ -19,6 +19,7 @@ mod checks;
 mod context;
 mod corrections;
 mod counts;
+mod gate_steps;
 mod imports;
 mod lower;
 mod rewrite;
@@ -150,16 +151,19 @@ fn parse_gates(
     };
     for (name, raw) in map {
         let where_ = format!("gates.{name}");
-        let kind = raw
-            .as_object()
-            .map(|o| (o.contains_key("command"), o.contains_key("artifact")));
+        let kind = raw.as_object().map(|o| {
+            (
+                o.contains_key("command") || o.contains_key("run"),
+                o.contains_key("artifact"),
+            )
+        });
         let gate = match kind {
             Some((true, false)) => GateDef::Command(decode::<CommandGate>(raw, &where_)?),
             Some((false, true)) => GateDef::Artifact(decode::<ArtifactCheck>(raw, &where_)?),
             _ => {
                 return Err(HarnessError::Parse(format!(
-                    "{where_}: a gate has exactly one of `command` (run an argv) or `artifact` \
-                     (a file must exist)"
+                    "{where_}: a gate has exactly one of `command` (run an argv), `run` (run a \
+                     script) or `artifact` (a file must exist)"
                 )))
             }
         };

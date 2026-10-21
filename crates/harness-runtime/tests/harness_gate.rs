@@ -93,7 +93,7 @@ fn a_gate_calls_the_gate_tool_with_a_resolved_argv() {
     let (mut m, mut ctx, mut state) = begin();
     let fx = finish_turn(&mut m, &mut ctx, &mut state, "done");
     let (_, args) = gate_call(&fx);
-    assert_eq!(args["argv"], json!(["sh", "check.sh", "lib"]));
+    assert_eq!(args["steps"][0]["argv"], json!(["sh", "check.sh", "lib"]));
     assert_eq!(args["timeout_secs"], 30);
     assert_eq!(state, HarnessState::WaitingForTool);
 }
@@ -382,7 +382,7 @@ fn resume_does_not_trust_interrupted_side_effect() {
     );
     let (again, args) = gate_call(&fx);
     assert_eq!(again, call, "the same step asks again");
-    assert_eq!(args["argv"], json!(["sh", "check.sh", "lib"]));
+    assert_eq!(args["steps"][0]["argv"], json!(["sh", "check.sh", "lib"]));
     assert!(
         !fx.iter().any(|e| matches!(e, Effect::CallLlm { .. })),
         "no repair turn"

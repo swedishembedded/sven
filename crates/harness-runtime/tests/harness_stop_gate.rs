@@ -75,8 +75,8 @@ fn observed(id: ToolCallId, text: &str) -> Event {
 /// The check gate's call in `effects`: its id and argv.
 fn check_call(effects: &[Effect]) -> Option<(ToolCallId, Value)> {
     effects.iter().find_map(|e| match e {
-        Effect::CallTool { call_id, args, .. } if args["argv"][0] == "replay" => {
-            Some((*call_id, args["argv"].clone()))
+        Effect::CallTool { call_id, args, .. } if args["steps"][0]["argv"][0] == "replay" => {
+            Some((*call_id, args["steps"][0]["argv"].clone()))
         }
         _ => None,
     })
@@ -86,7 +86,9 @@ fn read_calls(effects: &[Effect]) -> Vec<ToolCallId> {
     effects
         .iter()
         .filter_map(|e| match e {
-            Effect::CallTool { call_id, args, .. } if args["argv"].is_null() => Some(*call_id),
+            Effect::CallTool { call_id, args, .. } if args["steps"][0]["argv"].is_null() => {
+                Some(*call_id)
+            }
             _ => None,
         })
         .collect()

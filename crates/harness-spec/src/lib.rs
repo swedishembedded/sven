@@ -26,6 +26,7 @@ mod bundle;
 mod decoding;
 mod error;
 mod expr;
+mod gate_command;
 mod iterate;
 mod names;
 pub mod package;
@@ -42,9 +43,10 @@ mod tests;
 pub use bundle::{CompiledBundle, HarnessBundle, Helper, BUNDLE_FORMAT_VERSION};
 pub use error::HarnessError;
 pub use expr::{Expr, Path, PathRewrite, Template};
+pub use gate_command::GateCommand;
 pub use plan::{
-    HarnessPlan, PlanIteration, PlanLimits, PlanPrimitive, PlanStep, PLAN_FORMAT_VERSION,
-    WORKFLOW_PLAN_FORMAT_VERSION,
+    HarnessPlan, PlanGateStep, PlanIteration, PlanLimits, PlanPrimitive, PlanStep,
+    PLAN_FORMAT_VERSION, WORKFLOW_PLAN_FORMAT_VERSION,
 };
 pub use source_map::{Lowering, SourceRef};
 pub use spec::{

@@ -15,12 +15,8 @@ agent: { profile: coding }
 execution: { limits: { model_turns: 6 } }
 gates:
   note:
-    command:
-      - sh
-      - -c
-      - 'printf %s "$1" > "$SVEN_SCRATCHPAD/seen"'
-      - sh
-      - "{{ run.scratchpad }}"
+    run: printf %s "$PAD" > "$SVEN_SCRATCHPAD/seen"
+    env: { PAD: "{{ run.scratchpad }}" }
 workflow:
   - name: write
     task: "Write the file notes.txt containing the word hello."

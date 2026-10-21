@@ -626,8 +626,12 @@ pub struct FailStepSpec {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GateStepSpec {
-    /// The argv. Each element may be a template over run data.
-    pub command: Vec<String>,
+    /// The commands, in order; the first to fail ends the gate. The timeout
+    /// bounds them together.
+    pub steps: Vec<crate::gate_command::GateCommand>,
+    /// Variables set for every command: name to a template over run data.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env: std::collections::BTreeMap<String, String>,
     /// The most seconds the command may run.
     #[serde(default = "default_gate_timeout")]
     pub timeout: u64,

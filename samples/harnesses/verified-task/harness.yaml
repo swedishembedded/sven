@@ -24,9 +24,11 @@ agent:
 execution:
   limits: { model_turns: 8, tool_calls: 12 }
 gates:
-  test: { command: [sh, run_tests.sh], timeout: 60 }
+  test:
+    run: sh run_tests.sh
+    timeout: 60
   coverage:
-    command: [sh, run_tests.sh, --coverage]
+    run: sh run_tests.sh --coverage
     metrics:
       line_pct: { file: coverage.json, pointer: /line_pct, type: number }
 workflow:

@@ -351,8 +351,8 @@ fn a_gate_may_run_in_a_host_named_directory_and_read_the_trajectory_file() {
         .values()
         .find_map(|s| match &s.primitive {
             PlanPrimitive::Gate {
-                cwd_input, command, ..
-            } => Some((cwd_input.clone(), command.clone())),
+                cwd_input, steps, ..
+            } => Some((cwd_input.clone(), steps[0].argv.clone())),
             _ => None,
         })
         .expect("a gate step");
