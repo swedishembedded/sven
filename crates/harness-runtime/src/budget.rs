@@ -146,3 +146,8 @@ impl HarnessRunState {
         self.counts.tool_calls += spent("tool_calls");
     }
 }
+
+/// `true` for zero: a counter at rest is left out of the serialized state.
+pub(crate) fn is_zero(n: &u32) -> bool {
+    *n == 0
+}

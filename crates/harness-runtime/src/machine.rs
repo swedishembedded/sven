@@ -420,6 +420,10 @@ impl HarnessMachine {
                         return self.on_agent_turn(&mut run, agent, text, tool_calls, ctx);
                     }
                 }
+                if text.trim().is_empty() && !run.truncated {
+                    return self.empty_reply(&mut run, &inflight.step, ctx);
+                }
+                run.empty_replies = 0;
                 if std::mem::take(&mut run.truncated) {
                     return self.fail_now(
                         &mut run,
@@ -440,6 +444,9 @@ impl HarnessMachine {
             Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                 if self.restarts_interrupted(error) {
                     return self.restart_interrupted(&mut run, &inflight.step, ctx);
+                }
+                if error.starts_with(sven_hsm::CONTEXT_EXHAUSTED) {
+                    return self.step_failed(&mut run, "context_exhausted", error, ctx);
                 }
                 self.side_effect_failed(&mut run, error, ctx)
             }

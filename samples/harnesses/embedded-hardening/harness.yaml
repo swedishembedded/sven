@@ -18,6 +18,9 @@ description: "Test, simplify and harden an embedded C repository."
 agent:
   profile: coding
   tools: [read_file, write_file, edit_file, shell, find_file, grep]
+  # A thinking model can spend a small output budget on reasoning and leave no
+  # answer; the default of 4096 tokens did exactly that in a live run.
+  turn: { max_output_tokens: 16384 }
   instructions: |
     Preserve externally observable behavior and hardware contracts.
     Never weaken tests to make verification pass: the files under tests/ named

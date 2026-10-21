@@ -161,6 +161,13 @@ impl HarnessMachine {
         if !tool_calls.is_empty() {
             run.truncated = false;
         }
+        // An answer of nothing at all is not an answer: ask again (bounded),
+        // unless the reply was cut at the output limit, which is its own
+        // status below.
+        if tool_calls.is_empty() && text.trim().is_empty() && !run.truncated {
+            return self.empty_reply(run, &agent.step, ctx);
+        }
+        run.empty_replies = 0;
         if let Some(budget) = self
             .run
             .plan()

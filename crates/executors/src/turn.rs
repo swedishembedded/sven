@@ -86,6 +86,7 @@ pub use cost_gate::CostPolicy;
 mod instructions;
 mod limits;
 mod overflow;
+mod replies;
 
 use limits::record_estimate_scale;
 pub use limits::CompactionConfig;
@@ -310,6 +311,10 @@ impl EffectExecutor for TurnExecutor {
         };
 
         let thread_id = req.thread.clone();
+        // A turn a harness asked for is judged by the harness: an empty reply
+        // is its to retry or to name, not the executor's to count as a streak
+        // across the checks and repairs between turns.
+        let judged_by_harness = req.origin.is_some();
         let model = match self.resolve_role(&req) {
             Ok(model) => model,
             Err(error) => {
@@ -667,7 +672,7 @@ impl EffectExecutor for TurnExecutor {
                 (turn.text, turn.tool_calls, unparsed, turn.truncated)
             }
             Err(e) => {
-                let msg = format!("{e:#}");
+                let msg = replies::failure_text(&format!("{e:#}"));
                 obs.emit(UiEvent::Error(msg.clone()));
                 let _ = sink.emit(Event::LlmFailed { error: msg }).await;
                 obs.emit(UiEvent::TurnComplete);
@@ -686,7 +691,9 @@ impl EffectExecutor for TurnExecutor {
                 .empty_turns
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if is_empty_turn {
+            if is_empty_turn && judged_by_harness {
+                0
+            } else if is_empty_turn {
                 let count = counts.entry(thread_id.clone()).or_insert(0);
                 *count += 1;
                 *count
@@ -755,14 +762,7 @@ impl EffectExecutor for TurnExecutor {
 
         let has_tool_calls = !proposed.is_empty();
         if truncated {
-            // Tells the machine the reply was cut at the output-token limit;
-            // sent ahead of the completion so it is known when the turn is read.
-            let _ = sink
-                .emit(Event::Internal(sven_hsm::InternalEvent::Custom {
-                    name: sven_hsm::TURN_TRUNCATED.to_string(),
-                    payload: serde_json::Value::Null,
-                }))
-                .await;
+            replies::tell_truncated(sink).await;
         }
         let _ = sink
             .emit(Event::LlmTurnComplete {

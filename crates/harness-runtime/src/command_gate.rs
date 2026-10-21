@@ -75,6 +75,9 @@ pub(super) fn gate_args(
     args
 }
 
+/// How many times an empty model reply is asked again before the run fails.
+const MAX_EMPTY_REPLY_RETRIES: u32 = 2;
+
 /// The fact the host-provided values of the run live under (`run.*`).
 pub(super) const RUN_FACT: &str = "run";
 /// The name of the run's trajectory file in [`RUN_FACT`].
@@ -239,6 +242,44 @@ impl HarnessMachine {
         run.awaiting = None;
         run.inflight = None;
         run.reconcile_pending = true;
+        self.walk_to(run, step_id, ctx)
+    }
+
+    /// The model answered with nothing: no text and no call. Asking again is
+    /// plausible (a server that lost the reply may not next time) and bounded;
+    /// when the asks are spent the run fails with `empty_reply`, which says
+    /// what happened and not that some side effect failed. A retry costs
+    /// neither a step nor a model turn, and each is on the trace.
+    pub(super) fn empty_reply(
+        &mut self,
+        run: &mut HarnessRunState,
+        step_id: &str,
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
+        if run.empty_replies >= MAX_EMPTY_REPLY_RETRIES {
+            let times = run.empty_replies + 1;
+            run.empty_replies = 0;
+            return self.fail_now(
+                run,
+                "empty_reply",
+                &format!(
+                    "the model answered {times} times with nothing (no text and no tool call) \
+                     at step `{step_id}`"
+                ),
+                ctx,
+            );
+        }
+        run.empty_replies += 1;
+        run.trace.push(TraceRecord::TurnRetried {
+            step: step_id.to_string(),
+            reason: "empty_reply".to_string(),
+            attempt: u64::from(run.empty_replies),
+        });
+        run.counts.steps = run.counts.steps.saturating_sub(1);
+        run.counts.model_turns = run.counts.model_turns.saturating_sub(1);
+        run.agent = None;
+        run.awaiting = None;
+        run.inflight = None;
         self.walk_to(run, step_id, ctx)
     }
 

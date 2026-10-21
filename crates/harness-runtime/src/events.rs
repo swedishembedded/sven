@@ -74,6 +74,15 @@ pub fn harness_event(record: &TraceRecord, step_duration_ms: u64) -> HarnessEven
             index: *index,
             attempt: *attempt,
         },
+        TraceRecord::TurnRetried {
+            step,
+            reason,
+            attempt,
+        } => HarnessEvent::TurnRetried {
+            step: step.clone(),
+            reason: reason.clone(),
+            attempt: *attempt,
+        },
         TraceRecord::ItemsInvalidated { step, items } => HarnessEvent::ItemsInvalidated {
             step: step.clone(),
             items: items.clone(),

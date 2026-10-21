@@ -79,7 +79,9 @@ pub use contract::ChildRunContract;
 pub use dispatch::{DispatchOutcome, Hsm};
 pub use effect::{Effect, EffectKind, GatedCall};
 pub use error::{MachineError, Result};
-pub use event::{Event, EventKind, InternalEvent, ProposedToolCall, TURN_TRUNCATED};
+pub use event::{
+    Event, EventKind, InternalEvent, ProposedToolCall, CONTEXT_EXHAUSTED, TURN_TRUNCATED,
+};
 pub use ids::{ApprovalId, CorrelationId, MachineId, QuestionId, TaskId, TimerId, ToolCallId};
 pub use machine::Machine;
 pub use observation::{CompactionStrategyUsed, ObservationSink, UiEvent};

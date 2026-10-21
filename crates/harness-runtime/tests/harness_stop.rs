@@ -314,3 +314,64 @@ fn an_answer_cut_off_at_the_output_limit_is_a_status_not_a_silent_empty_output()
     let _ = drive(&mut m, &mut ctx, &mut state, turn(THREAD, "All done."));
     assert_eq!(m.outcome().expect("an outcome")["stop"], "concluded");
 }
+
+fn asks_the_model(effects: &[Effect]) -> bool {
+    effects.iter().any(|e| matches!(e, Effect::CallLlm { .. }))
+}
+
+fn retries(ctx: &Context) -> Vec<Value> {
+    sven_harness_runtime::HarnessRunState::load(ctx)
+        .trace
+        .iter()
+        .filter_map(|r| serde_json::to_value(r).ok())
+        .filter(|r| r["event"] == "turn_retried")
+        .collect()
+}
+
+#[test]
+fn an_empty_reply_is_asked_again_twice_and_then_named() {
+    let (mut m, mut ctx, mut state) = begin(10);
+    for attempt in 1..=2 {
+        let fx = drive(&mut m, &mut ctx, &mut state, turn(THREAD, ""));
+        assert!(
+            asks_the_model(&fx),
+            "attempt {attempt}: the turn is asked again"
+        );
+        assert_eq!(state, HarnessState::WaitingForModel);
+        assert_eq!(retries(&ctx).len(), attempt);
+    }
+    assert_eq!(retries(&ctx)[1]["reason"], "empty_reply");
+    let _ = drive(&mut m, &mut ctx, &mut state, turn(THREAD, "  \n"));
+    assert_eq!(state, HarnessState::Failed);
+    let outcome = m.outcome().expect("an outcome");
+    assert_eq!(outcome["code"], "empty_reply", "{outcome}");
+    assert!(outcome["message"].as_str().unwrap().contains("3 times"));
+}
+
+#[test]
+fn an_answer_after_an_empty_reply_completes_the_task() {
+    let (mut m, mut ctx, mut state) = begin(10);
+    let _ = drive(&mut m, &mut ctx, &mut state, turn(THREAD, ""));
+    let _ = drive(&mut m, &mut ctx, &mut state, turn(THREAD, "All done."));
+    assert_eq!(state, HarnessState::Completed);
+    assert_eq!(m.outcome().unwrap()["said"], "All done.");
+    assert_eq!(retries(&ctx).len(), 1);
+}
+
+#[test]
+fn a_model_that_ran_out_of_context_is_named_for_it() {
+    let (mut m, mut ctx, mut state) = begin(10);
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::LlmFailed {
+            error: format!(
+                "{}: the prompt is larger than the context",
+                sven_hsm::CONTEXT_EXHAUSTED
+            ),
+        },
+    );
+    assert_eq!(state, HarnessState::Failed);
+    assert_eq!(m.outcome().unwrap()["code"], "context_exhausted");
+}

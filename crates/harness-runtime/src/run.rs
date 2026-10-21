@@ -504,6 +504,16 @@ pub enum TraceRecord {
         /// The ids of the items.
         items: Vec<String>,
     },
+    /// A model turn was asked again, with the reason and the attempt (1 is
+    /// the first retry).
+    TurnRetried {
+        /// The step whose turn it was.
+        step: String,
+        /// Why: `empty_reply`.
+        reason: String,
+        /// Which retry this is.
+        attempt: u64,
+    },
     /// A `gate` step judged its command's report.
     GateEvaluated {
         /// The gate step.
@@ -610,6 +620,9 @@ pub struct HarnessRunState {
     /// This run's delegation depth (a top-level run is at 1; a delegated
     /// child starts at its parent's depth + 1).
     pub delegate_depth: u64,
+    /// Consecutive empty replies to the turn being asked.
+    #[serde(default, skip_serializing_if = "crate::budget::is_zero")]
+    pub empty_replies: u32,
     /// The turn in flight was cut off at the output-token limit.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,

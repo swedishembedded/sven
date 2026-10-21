@@ -152,6 +152,7 @@ fn step_of(record: &TraceRecord) -> Option<&str> {
         | TraceRecord::ItemCompleted { step, .. }
         | TraceRecord::ItemsReconciled { step, .. }
         | TraceRecord::ItemsInvalidated { step, .. }
+        | TraceRecord::TurnRetried { step, .. }
         | TraceRecord::GateEvaluated { step, .. }
         | TraceRecord::RetryAttempt { step, .. }
         | TraceRecord::ChildStarted { step, .. }

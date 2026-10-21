@@ -164,6 +164,16 @@ pub enum HarnessEvent {
         /// The ids of the items.
         items: Vec<String>,
     },
+    /// A model turn was asked again, with the reason and the attempt (1 is
+    /// the first retry).
+    TurnRetried {
+        /// The step whose turn it was.
+        step: String,
+        /// Why: `empty_reply`.
+        reason: String,
+        /// Which retry this is.
+        attempt: u64,
+    },
     /// A `gate` step judged its command's report.
     GateEvaluated {
         /// The gate step.
@@ -303,6 +313,11 @@ impl std::fmt::Display for HarnessEvent {
             Self::ItemCompleted { step, item, index } => {
                 write!(f, "loop `{step}` completed item `{item}` (#{index})")
             }
+            Self::TurnRetried {
+                step,
+                reason,
+                attempt,
+            } => write!(f, "step `{step}` asked its model turn again ({reason}, retry {attempt})"),
             Self::ItemsInvalidated { step, items } => write!(
                 f,
                 "loop `{step}` found changed files and made {} item(s) pending again: {}",
