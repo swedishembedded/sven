@@ -148,6 +148,43 @@ Grounded in the source at the start of this work (`fffb3551`):
    worktree of sven, 10 files, metrics, commit audit, estimate for the whole
    repository. Findings go back into the engine.
 
+### Phase 8 inventory (v1 removal)
+
+Decision: `api_version: "2"` stays a **required** key. A missing or other value
+is an error naming the removed version ("version 1 documents are no longer
+accepted"), which tells an author with an old document what happened; making
+the key optional would make the next language revision ambiguous. The plan
+stamp is one value (`harness-plan/2`); `api_version` of a plan is "2".
+
+**Kept (the v2 language emits it):** the step language as the internal plan
+(`predict`, `agent`, `assign`, `branch`, `verify`, `delegate`, `gate`,
+`iterate`, `return`, `fail`), `HarnessPlan`/`PlanPrimitive`, the validator rules
+that guard them, bundles reduced to document + imports (a package's pinned
+unit), the workflow JSON schema, `sven harness compile/explain/inspect`.
+
+**Removed (nothing in v2 emits or reaches it):**
+- The v1 document language: `HarnessDocument::parse` of `api_version: "1"`, the
+  `PRIMITIVES` list, the v1-only validator rules (`validate_version`'s v2-only
+  field checks), `SUPPORTED_API_VERSION`, `PLAN_FORMAT_VERSION`
+  (`harness-plan/1`), `harness-document.schema.json`, `DOCUMENT_SCHEMA`,
+  `sven harness schema` of a document, and their tests (`compile.rs`,
+  `document_schema.rs`, `v1_baseline.rs`, the golden v1 plans,
+  `v1_compiled_plan_unchanged`).
+- Primitives never emitted: `tool`, `retry`, `parallel`, `transform`; the
+  `delegate` machine-mode target (`as_kind: machine`). With them: the
+  runtime's retry frame, parallel join, tool step, transform dispatch and helper
+  module cache (`RetryFrame`, `ParallelJoin`, `retry.rs`), the `RetryAttempt`,
+  `FanOut` and `Joined` trace records and their `HarnessEvent`s, the testkit
+  graph and render cases, the SDK's helper handling, and tests for them.
+- WASM helpers: the `sven-harness-transform` crate, `Helper`, bundle helpers
+  and `BUNDLE_FORMAT_VERSION`'s helper section, `sven harness bundle` and
+  `sven harness helper run`, `src/run/harness/helper.rs`, the `transform`
+  feature of harness-runtime.
+- Samples: `custom-helper` and `parallel-research` (their point was a removed
+  feature) are deleted; `branching` (branch/assign with no model) is deleted;
+  `ticket-routing`, `scoped-agent`, `repair-loop`, `repo-repair` and
+  `suspend-resume` are rewritten as v2 workflows.
+
 ## Acceptance
 - Three distinct conversations per item in the trajectory; nothing the harness
   writes appears in the target repository's `git status` except the code it
