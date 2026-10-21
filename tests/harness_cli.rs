@@ -370,13 +370,13 @@ fn the_committed_samples_pass_offline_and_the_live_case_is_skipped() {
         .filter(|p| p.join("cases").is_dir())
         .collect();
     dirs.sort();
-    assert_eq!(dirs.len(), 13, "the thirteen named samples: {dirs:?}");
+    assert_eq!(dirs.len(), 14, "the fourteen named samples: {dirs:?}");
 
     let out = run(sven(tmp.path()).arg("test").args(&dirs).arg("--json"));
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let suites = stdout_json(&out);
     let suites = suites.as_array().expect("one report per directory");
-    assert_eq!(suites.len(), 13);
+    assert_eq!(suites.len(), 14);
     for (dir, suite) in dirs.iter().zip(suites) {
         assert_eq!(suite["failed"], 0, "{suite}");
         // Only ticket-routing's live-local case is skipped, and only it.

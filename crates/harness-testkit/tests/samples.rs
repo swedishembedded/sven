@@ -20,7 +20,7 @@ fn samples_root() -> PathBuf {
 }
 
 /// The harness samples shipped, by directory name.
-const SAMPLES: [&str; 13] = [
+const SAMPLES: [&str; 14] = [
     "branching",
     "custom-helper",
     "embedded-hardening",
@@ -30,6 +30,7 @@ const SAMPLES: [&str; 13] = [
     "repair-loop",
     "repo-repair",
     "reviewed-change",
+    "rust-refactor",
     "scoped-agent",
     "suspend-resume",
     "ticket-routing",

@@ -3,7 +3,7 @@
 
 # Harness samples
 
-Eleven programmable harnesses, each a data directory: a YAML document, the
+Fourteen programmable harnesses, each a data directory: a YAML document, the
 cases that state what it must do, and nothing to compile. The table lists
 them from the simplest program to the most involved; every default case runs
 offline on mock models and fixture tools.
@@ -23,6 +23,7 @@ offline on mock models and fixture tools.
 | [reviewed-change](reviewed-change/) | a v2 package: a workflow that imports another and `use`s it as a task, with the call checked against its interface and its limits shared |
 | [planner-worker](planner-worker/) | three roles: a planner answering in a schema, a worker with tools, a supervisor checked by a gate; each decoded its own way, in conversations of their own |
 | [verified-task](verified-task/) | a v2 workflow: a task, a command gate whose exit status decides, bounded repair, a success condition with a coverage threshold |
+| [rust-refactor](rust-refactor/) | a reusable sweep over any Rust repository: an exploration agent publishes the context and the project's own check commands as variables, then per file an auditor, a fixer and a reviewer each in a fresh conversation, the executor commits after trusted gates, and a failed file is rolled back |
 | [sdk-runner](sdk-runner/) | the same cases, run from an application with the SDK alone |
 
 ## Layout of a sample
@@ -53,7 +54,7 @@ and must reach the same verdict and trace.
 ## Running them
 
 ```sh
-sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task,module-sweep,planner-worker,reviewed-change,embedded-hardening}   # all samples, offline
+sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task,module-sweep,planner-worker,reviewed-change,embedded-hardening,rust-refactor}   # all samples, offline
 cargo test -p sven-harness-testkit --test samples
 ```
 

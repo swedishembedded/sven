@@ -1,0 +1,379 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# Refactor a Rust repository file by file without changing what it does.
+#
+# explore    one agent reads the repository and publishes two variables: a
+#            context document every later agent is given, and the commands
+#            that build, test, lint and format-check this project. A trusted
+#            gate runs those commands on the untouched tree (the baseline),
+#            and another lists the tracked .rs files into the backlog.
+# files      for each file, in a fresh conversation per role:
+#              begin   records the item's base commit (no model)
+#              audit   reads the file in full, read-only tools, and publishes
+#                      its findings
+#              repair  fixes them structurally, across the repository
+#              review  inspects the whole diff, corrects it, writes the
+#                      commit message
+#              commit  the executor commits, after the checks pass (no model)
+#            An item that cannot be made to pass is rolled back to its base
+#            and the sweep goes on.
+#
+# Nothing is written into the repository but the refactoring: the backlog,
+# the baseline and the audit log live in the run's scratchpad and variables.
+# Tool-call training data is opt-in: `sven harness run --conversations DIR`
+# writes one ATIF trajectory per agent conversation (explore, and audit,
+# repair and review of every file).
+#
+# Swedish Embedded AB implements agent-driven refactoring of large Rust
+# codebases that is judged by the build and the tests, not by the agent, for
+# its clients. If your team needs expertise in behaviour-preserving
+# refactoring at scale then you can procure our services by sending an email
+# to info@swedishembedded.com.
+api_version: "2"
+name: rust-refactor
+description: "Refactor a Rust repository file by file: audit, repair, review, commit - verified by the project's own build and tests."
+inputs:
+  paths: { type: string, description: "space-separated git pathspecs whose tracked .rs files are refactored, e.g. 'crates src'" }
+  max_files: { type: number, description: "most files one file's refactor may touch" }
+  max_items: { type: number, description: "process at most this many files of the backlog (the rest stay unprocessed)" }
+  tool_calls: { type: number, description: "tool-call budget of the whole run" }
+variables:
+  context:
+    type: string
+    description: "the repository context document: purpose, layout, public surface, conventions, shared helpers, verification, hazards"
+  checks:
+    type: json
+    description: "bash commands, run at the repository root, that verify the project: build, test, lint, format_check (lint and format_check may be empty strings when the project has none)"
+    schema:
+      type: object
+      required: [build, test, lint, format_check]
+      properties:
+        build: { type: string }
+        test: { type: string }
+        lint: { type: string }
+        format_check: { type: string }
+  files: { type: json, description: "the backlog: tracked .rs files, as [{file}]" }
+  baseline_tests: { type: number, description: "how many tests the project had before any change" }
+  item_base: { type: string, scope: item, description: "the commit the current file's work started from" }
+  findings: { type: string, scope: item, description: "the audit's numbered list of problems in the current file, with proposed structural fixes" }
+  repair_summary: { type: string, scope: item, description: "what the repair changed, file by file" }
+  commit_message: { type: string, scope: item, description: "the commit message for the current file's change" }
+agent:
+  profile: coding
+  tools: [read_file, find_file, grep, edit_file, write_file, shell]
+  turn: { max_output_tokens: 16384 }
+  system: >-
+    You are a senior Rust engineer working in a git repository, which is your working
+    directory. You make behaviour-preserving structural improvements only. Work only through
+    your tools. Never create, switch, rebase or reset branches, never commit, never push, never
+    touch anything outside the repository, and never edit files that are not part of the
+    project's source (no build output, no lock files unless a change requires it).
+execution:
+  workspace: repository
+  resume: true
+  limits: { model_turns: 100000, tool_calls: "{{ inputs.tool_calls }}" }
+gates:
+  clean_start:
+    description: The repository has no uncommitted changes, so a rollback can never destroy work.
+    run: |
+      if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+        git status --short >&2
+        echo "the repository has uncommitted changes; commit or stash them before refactoring" >&2
+        exit 1
+      fi
+  inventory:
+    description: The backlog - every tracked .rs file under the pathspecs, in path order.
+    capture: files
+    env: { PATHS: "{{ inputs.paths }}", MAX: "{{ inputs.max_items }}" }
+    output_bytes: 1048576
+    run: |
+      # PATHS holds several pathspecs, split on purpose.
+      # shellcheck disable=SC2086
+      git ls-files -- $PATHS | grep '\.rs$' | head -n "$MAX" | awk '
+        BEGIN { printf "[" }
+        { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); printf "%s{\"file\": \"%s\"}", (NR > 1 ? ", " : ""), $0 }
+        END { print "]" }'
+  baseline:
+    description: The project's own checks pass on the untouched tree; record its test count.
+    capture: baseline_tests
+    timeout: 3600
+    output_bytes: 65536
+    env: { BUILD: "{{ vars.checks.build }}", TEST: "{{ vars.checks.test }}", LINT: "{{ vars.checks.lint }}", FMT: "{{ vars.checks.format_check }}" }
+    run: |
+      for step in BUILD TEST LINT FMT; do
+        cmd="${!step}"
+        [ -z "$cmd" ] && continue
+        echo "baseline $step: $cmd" >&2
+        bash -eo pipefail -c "$cmd" >&2 || { echo "baseline $step failed on the untouched tree" >&2; exit 1; }
+      done
+      cargo test --workspace --all-targets -- --list 2>/dev/null | grep -c ': test$' || true
+  begin:
+    description: Record the commit this file's work starts from.
+    capture: item_base
+    run: git rev-parse HEAD
+  quick:
+    description: The project builds, lints and is formatted (the tests run at review).
+    timeout: 3600
+    output_bytes: 65536
+    env: { BUILD: "{{ vars.checks.build }}", LINT: "{{ vars.checks.lint }}", FMT: "{{ vars.checks.format_check }}" }
+    run:
+      - name: build
+        script: bash -eo pipefail -c "$BUILD"
+      - name: lint
+        script: '[ -z "$LINT" ] || bash -eo pipefail -c "$LINT"'
+      - name: format
+        script: '[ -z "$FMT" ] || bash -eo pipefail -c "$FMT"'
+  verify:
+    description: The project's own checks pass, and no test disappeared.
+    timeout: 3600
+    output_bytes: 65536
+    env: { BUILD: "{{ vars.checks.build }}", TEST: "{{ vars.checks.test }}", LINT: "{{ vars.checks.lint }}", FMT: "{{ vars.checks.format_check }}", WANT: "{{ vars.baseline_tests }}" }
+    run:
+      - name: build
+        script: bash -eo pipefail -c "$BUILD"
+      - name: test
+        script: bash -eo pipefail -c "$TEST"
+      - name: lint
+        script: '[ -z "$LINT" ] || bash -eo pipefail -c "$LINT"'
+      - name: format
+        script: '[ -z "$FMT" ] || bash -eo pipefail -c "$FMT"'
+      - name: test-count
+        script: |
+          now=$(cargo test --workspace --all-targets -- --list 2>/dev/null | grep -c ': test$' || true)
+          if [ "$now" -lt "$WANT" ]; then
+            echo "only $now tests remain of the $WANT the project had: a refactor never removes a test" >&2
+            exit 1
+          fi
+  scope:
+    description: The file's change stays small and contains no junk.
+    env: { BASE: "{{ vars.item_base }}", MAX: "{{ inputs.max_files }}" }
+    run: |
+      changed=$( (git diff --name-only "$BASE"; git ls-files --others --exclude-standard) | sort -u)
+      n=$(printf '%s\n' "$changed" | grep -c . || true)
+      if [ "$n" -gt "$MAX" ]; then
+        printf '%s\n' "$changed" >&2
+        echo "the change touches $n files, the limit is $MAX: refactor this file, do not re-architect the repository" >&2
+        exit 1
+      fi
+      junk=$(printf '%s\n' "$changed" | grep -E '(\.orig|\.rej|\.bak|~|\.log|\.tmp|\.swp)$|^target/|(^|/)\.sven/' || true)
+      if [ -n "$junk" ]; then
+        echo "files that are not part of a refactor: $junk" >&2
+        exit 1
+      fi
+  commit:
+    description: Commit the file's change with the reviewer's message, if anything changed.
+    env: { MSG: "{{ vars.commit_message }}" }
+    run: |
+      git add -A
+      if git diff --cached --quiet; then
+        echo "nothing to commit" >&2
+        exit 0
+      fi
+      subject=$(printf '%s\n' "$MSG" | head -n 1)
+      if [ "${#subject}" -lt 10 ] || [ "${#subject}" -gt 72 ]; then
+        echo "the commit subject must be 10 to 72 characters: '$subject'" >&2
+        git reset -q
+        exit 1
+      fi
+      if printf '%s\n' "$MSG" | grep -qiE '^(co-authored-by|signed-off-by):'; then
+        echo "the commit message must not carry trailers" >&2
+        git reset -q
+        exit 1
+      fi
+      printf '%s\n' "$MSG" | git commit -q -F -
+  rollback:
+    description: Put the repository back to the file's base commit.
+    env: { BASE: "{{ vars.item_base }}" }
+    run: |
+      git reset -q --hard "$BASE"
+      git clean -q -fd
+workflow:
+  - name: explore
+    tools: [read_file, find_file, grep, shell]
+    vars: { context: required, checks: required }
+    max_repeated_results: 4
+    task: |
+      Survey this Rust repository so that engineers who later refactor it file by file
+      understand it. Only read: do not create, modify or delete any file.
+
+      Start with `cargo metadata --no-deps --format-version 1`, the root and member Cargo.toml
+      files, README, any AGENTS.md / CLAUDE.md / CONTRIBUTING, Makefile or justfile, CI files
+      (.github/workflows), rustfmt.toml / clippy.toml, each crate's lib.rs or main.rs, and
+      `git log --oneline -15`.
+
+      Then publish two variables with the harness_vars_set tool:
+
+      1. `context` (a string): a Markdown document of at most about 1200 words with these
+         sections: Purpose (three sentences); Layout (the workspace members, the role of each,
+         which may depend on which, any layering rule the repository states); Public surface
+         (APIs, CLI flags, file and wire formats, config keys and serialized types other code
+         or users depend on - a refactor must never change these); Conventions (error handling,
+         logging, naming, module organisation, tests, comments and docs, unsafe, lint and
+         format settings, rules the repository's own docs state); Shared helpers (utilities a
+         refactor should reuse, with their paths); Hazards (generated code, FFI, unsafe, build
+         scripts, macros, anything that looks refactorable but must not move).
+
+      2. `checks` (JSON): the bash commands that verify this project, each run from the
+         repository root: `build` (compile everything including tests, e.g.
+         `cargo build --workspace --all-targets`), `test` (run the tests), `lint` (e.g.
+         `cargo clippy --workspace --all-targets -- -D warnings`, or "" if the project has no
+         lint gate it passes today) and `format_check` (e.g. `cargo fmt --all -- --check`, or
+         "" if the project is not formatted). Prefer the commands the project's own Makefile
+         or CI uses; keep each one non-interactive and offline; avoid tests that need special
+         hardware or network. Run each command once yourself to confirm it passes on the
+         untouched tree; if lint or format_check fail before any change, set it to "".
+
+      Finish with one sentence saying you are done.
+    verify: [clean_start, inventory, baseline]
+    repair:
+      attempts: 2
+      prompt: |
+        The check `{{ failure.gate }}` failed (step {{ failure.failed_step }}):
+        {{ failure.stderr }}
+        {{ failure.stdout }}
+        If a command in `checks` fails on the untouched tree, choose one that passes (or ""
+        for lint and format_check) and set `checks` again. Do not modify any file.
+  - name: files
+    for_each:
+      source: { variable: files }
+      id: file
+      max_items: 10000
+      on_item_failure: { verify: [rollback] }
+    checkpoint: each_item
+    do:
+      - name: begin
+        verify: [begin]
+      - name: audit
+        tools: [read_file, find_file, grep]
+        vars: { context: read, findings: required }
+        max_repeated_results: 4
+        task: |
+          Repository context:
+
+          {{ vars.context }}
+
+          You audit one file: `{{ item.file }}`. Read it in full - every line; page through it
+          with read_file if it is long. Read what you need to judge it: its callers (grep for
+          its public items), the modules it uses, its tests. You cannot and must not edit
+          anything.
+
+          Find every problem in this file that a behaviour-preserving refactor can fix:
+          duplicated code (inside the file, or re-implementing a helper that exists elsewhere in
+          the repository), functions that do too much, deep nesting, unclear names, wrong or
+          stale comments, dead code, needless clones or allocations, `unwrap`/`expect` whose
+          invariant is unstated, missing error context, items more visible than their uses
+          need, responsibilities that belong in another module, inconsistency with the
+          repository's conventions, magic numbers.
+
+          Do not report anything whose fix would change behaviour, change the public surface
+          the context lists, add a dependency, or reach far beyond this file. Report only
+          problems you can point at in the code; do not invent them. It is fine to find none.
+
+          Publish your findings with harness_vars_set as `findings`: a numbered list where each
+          entry gives the location (item name and line range), what is wrong and why it
+          matters, the structural fix, and every other file the fix must touch - or exactly
+          "No changes needed." when the file is fine. Finish with one sentence.
+      - name: repair
+        when: { ne: vars.findings, value: "No changes needed." }
+        tools: [read_file, find_file, grep, edit_file, write_file, shell]
+        vars: { context: read, checks: read, findings: read, repair_summary: required }
+        max_repeated_results: 4
+        task: |
+          Repository context:
+
+          {{ vars.context }}
+
+          You refactor one file: `{{ item.file }}`. An auditor found these problems:
+
+          {{ vars.findings }}
+
+          Otherwise carry out the fixes, across every file they require, without changing what
+          the program does:
+          - Behaviour, outputs, error messages, defaults, file and wire formats, the public
+            surface the context lists, and the order of side effects stay exactly as they are.
+            When a fix is not clearly safe, skip it.
+          - Prefer several small edits to a rewrite. Re-read a region before you edit it.
+          - When you rename or move an item, update every use (grep the whole repository,
+            including tests, examples, benches, docs and macros).
+          - Never delete, weaken or skip a test or an assertion; touch tests only to follow a
+            rename or a move.
+          - Stay within this file's problems: do not start on other files' problems or
+            re-architect the repository.
+          - Do not commit.
+
+          Verify before you stop, from the repository root, with the project's own commands:
+            build: {{ vars.checks.build }}
+            test:  {{ vars.checks.test }}
+            lint:  {{ vars.checks.lint }}
+            format check: {{ vars.checks.format_check }}
+          Fix whatever you broke; undo a change you cannot make pass.
+
+          Then set `repair_summary` with harness_vars_set: what you changed, file by file, and
+          which findings you skipped and why. Finish with one sentence.
+        verify: [quick, scope]
+        repair:
+          attempts: 2
+          prompt: |
+            The check `{{ failure.gate }}` failed (step {{ failure.failed_step }}) after your
+            change to `{{ item.file }}`:
+            {{ failure.stderr }}
+            {{ failure.stdout }}
+            Fix the cause in the code - never in the tests, never by silencing a lint - or undo
+            the change that caused it. Run the failing command yourself before you stop, and
+            update `repair_summary`.
+      - name: review
+        when: { ne: vars.findings, value: "No changes needed." }
+        tools: [read_file, find_file, grep, edit_file, write_file, shell]
+        vars: { context: read, checks: read, findings: read, repair_summary: read, commit_message: required }
+        max_repeated_results: 4
+        task: |
+          Repository context:
+
+          {{ vars.context }}
+
+          You are an independent, sceptical reviewer of a refactoring of `{{ item.file }}`.
+          Assume it contains mistakes. The auditor's findings were:
+
+          {{ vars.findings }}
+
+          The engineer reports:
+
+          {{ vars.repair_summary }}
+
+          Run `git status` and `git diff` and read every hunk. For each, check: does it change
+          behaviour in any way (outputs, errors, panics, ordering, defaults, public API,
+          serialization)? Is a use of a renamed or moved item missed (grep for the old name)?
+          Did it stray beyond this file's problems? Is a test weakened? Is anything left
+          half-done, commented out, debugging output, or a file that is not source? Does it
+          follow the repository's conventions?
+
+          Fix every mistake: revert a hunk that changes behaviour rather than defend it. Then
+          run the project's checks again until they pass:
+            build: {{ vars.checks.build }}
+            test:  {{ vars.checks.test }}
+            lint:  {{ vars.checks.lint }}
+            format check: {{ vars.checks.format_check }}
+
+          Do not commit; the harness commits after its own checks pass. Set `commit_message`
+          with harness_vars_set: a subject line of at most 72 characters,
+          `<area>: <what changed, in the imperative>` where area is the crate or module; a
+          blank line; a short body saying why the code is better and that behaviour is
+          unchanged. No trailers. If the diff is empty, set it to "No changes." - nothing will
+          be committed. Finish with one sentence.
+        verify: [verify, scope]
+        repair:
+          attempts: 2
+          prompt: |
+            The check `{{ failure.gate }}` failed (step {{ failure.failed_step }}):
+            {{ failure.stderr }}
+            {{ failure.stdout }}
+            Fix the cause in the code (never in the tests), or revert the hunk that caused it,
+            and run the failing command yourself before you stop. Update `commit_message` if
+            the change changed.
+      - name: commit
+        verify: [commit]
+success:
+  work_items: { all_settled: true }
+outputs:
+  checks: { type: json, value: "{{ vars.checks }}" }
