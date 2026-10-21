@@ -66,7 +66,11 @@ async fn system_for(mode: &str) -> (String, String) {
         .await
         .expect("the run ends")
         .expect("an outcome");
-    assert!(matches!(&outcome.result, Some(Ok(_))), "{:?}", outcome.result);
+    assert!(
+        matches!(&outcome.result, Some(Ok(_))),
+        "{:?}",
+        outcome.result
+    );
 
     let trajectory = run.trajectory().expect("an executed run has one");
     let recorded = trajectory

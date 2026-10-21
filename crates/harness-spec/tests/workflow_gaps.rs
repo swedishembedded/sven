@@ -130,3 +130,50 @@ fn a_gate_may_keep_more_of_its_output_within_a_limit() {
     assert!(rejected(&DOC.replace("65536", "100")).contains("output_bytes"));
     assert!(rejected(&DOC.replace("65536", "5000000")).contains("output_bytes"));
 }
+
+const VARIANTS: &str = r#"
+api_version: "2"
+name: variants
+inputs: { mode: string }
+execution: { limits: { model_turns: 4 } }
+agent:
+  system:
+    - when: { eq: inputs.mode, value: strict }
+      text: Strict.
+    - text: Neutral.
+workflow:
+  - name: work
+    task: Do it.
+"#;
+
+#[test]
+fn agent_system_variants_compile_and_an_unconditional_last_entry_is_required() {
+    compile(VARIANTS);
+
+    let open = VARIANTS.replace(
+        "    - text: Neutral.\n",
+        "    - when: { eq: inputs.mode, value: lax }\n      text: Lax.\n",
+    );
+    assert!(
+        rejected(&open).contains("last `agent.system` entry"),
+        "{}",
+        rejected(&open)
+    );
+
+    let shadowed = VARIANTS.replace(
+        "    - when: { eq: inputs.mode, value: strict }\n      text: Strict.\n    - text: Neutral.\n",
+        "    - text: Neutral.\n    - text: Strict.\n",
+    );
+    assert!(
+        rejected(&shadowed).contains("unreachable"),
+        "{}",
+        rejected(&shadowed)
+    );
+
+    let reads_a_task = VARIANTS.replace("inputs.mode", "tasks.work.stop");
+    assert!(
+        rejected(&reads_a_task).contains("agent.system"),
+        "{}",
+        rejected(&reads_a_task)
+    );
+}

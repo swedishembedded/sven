@@ -149,7 +149,7 @@ document is never retried as the other one. The JSON Schema is
 | `name`, `description` | `name` is lowercase letters, digits, `-`, `_`; no `__`; at most 48 characters |
 | `inputs` | typed per-run inputs, as in version 1 (`name: type` or `{type, description}`); templates read `{{ inputs.<name> }}` and an undeclared one is an error |
 | `outputs` | `name: {type, value}`; the value is a template over inputs and task outputs; without `outputs` the run returns `{"status": "completed"}` |
-| `agent` | `profile` (`none` or `coding`), `instructions` (prepended to every task prompt), `system` (the model's system message for the agent's conversation, a template over inputs), `tools` (an allowlist for every task, also enforced on proposed calls), and `sampling`, `thinking`, `turn` defaults for every task |
+| `agent` | `profile` (`none` or `coding`), `instructions` (prepended to every task prompt), `system` (the model's system message for the agent's conversation, a template over inputs; or a list of `{when, text}` variants, see below), `tools` (an allowlist for every task, also enforced on proposed calls), and `sampling`, `thinking`, `turn` defaults for every task |
 | `execution` | `limits` (`model_turns` is required; `steps`, `tool_calls`, `delegate_depth` optional), `workspace: repository`, `resume: true` |
 | `capabilities` | the exact grant; omitted, it is derived and shown in the plan |
 | `gates` | named checks, below |
@@ -167,7 +167,12 @@ of the loops below.
 
 **Roles and conversations.** All agent tasks share one conversation (follow-ups
 and repair turns continue it), which `agent.system` opens as a real system
-message. A `model_only: true` task is a single model turn without tools, for a
+message. `agent.system` may instead be a list of `{when, text}` entries: the
+first whose `when` (a condition over inputs) holds is chosen when the run starts
+and is both what the model is sent and the trajectory's system step, so one
+document serves runs with different standing instructions. The last entry has no
+`when` (it is the default; an entry without `when` before the end is rejected as
+leaving the rest unreachable). A `model_only: true` task is a single model turn without tools, for a
 planner or a supervisor, in a conversation of its own that `system` (a template
 over inputs and earlier outputs) opens; its repair turns are model-only turns in
 that conversation and its answer is `tasks.<name>.output`. With a `schema` (a

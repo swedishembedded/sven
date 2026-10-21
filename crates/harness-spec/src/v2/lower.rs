@@ -26,6 +26,7 @@ use super::rewrite::{
     output_fact, pool_fact, rewrite_condition, rewrite_text, rewrite_value, stop_fact, Scope,
 };
 use super::spec::{decoding_of, GateDef, OnFailure, TaskSpec, WorkflowSpec};
+use super::system;
 use super::validate::needed_capabilities;
 use crate::error::HarnessError;
 use crate::source_map::{Lowering, SourceRef};
@@ -157,12 +158,7 @@ fn lower_task(
         .overlaid_by(&decoding_of(&task.sampling, &task.thinking, &task.turn));
     let fact = output_fact(&task.name);
     let role = task.model.clone().or_else(|| w.agent.model.clone());
-    let agent_system = w
-        .agent
-        .system
-        .as_deref()
-        .map(|text| rewrite_text(text, &cx.scope("agent.system".into(), &[], vars)))
-        .transpose()?;
+    let agent_system = system::template(cx, vars)?;
     let task_system = task
         .system
         .as_deref()
@@ -690,6 +686,7 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         lower_task(&cx, &mut b, index, &next)?;
         next = entry_of(&w.workflow[index]);
     }
+    next = system::lower_variants(&cx, &mut b, next)?;
 
     if w.on_failure == OnFailure::Return {
         returning_failures(&cx, &mut b)?;

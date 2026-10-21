@@ -198,6 +198,27 @@ pub fn decoding_of(
     }
 }
 
+/// `agent.system`: one text, or variants chosen by a condition over inputs.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum AgentSystem {
+    /// The system message, a template over inputs.
+    Text(String),
+    /// Entries tried in order; the last has no `when`.
+    Variants(Vec<SystemVariant>),
+}
+
+/// One entry of a list-valued `agent.system`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SystemVariant {
+    /// A condition over inputs; absent on the entry used when none holds.
+    #[serde(default)]
+    pub when: Option<Value>,
+    /// The system message, a template over inputs.
+    pub text: String,
+}
+
 /// The `agent:` block.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -213,9 +234,10 @@ pub struct AgentSpec {
     pub tools: Option<Vec<String>>,
     /// The system message of the agent's conversation (a template over
     /// inputs), delivered as the model's system message and recorded in the
-    /// trajectory as its system step.
+    /// trajectory as its system step; or a list of variants of which the
+    /// first whose condition holds is chosen when the run starts.
     #[serde(default)]
-    pub system: Option<String>,
+    pub system: Option<AgentSystem>,
     /// The model role every task is answered by unless it names its own: a
     /// name the host maps to a provider. No endpoint or key ever appears in a
     /// document.
