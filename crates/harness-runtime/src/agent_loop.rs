@@ -301,6 +301,14 @@ impl HarnessMachine {
                         .to_string(),
                     stored: content.starts_with("ok:"),
                     answer: content.clone(),
+                    preview: call
+                        .args
+                        .get("value")
+                        .map(|v| match v {
+                            Value::String(text) => text.chars().take(400).collect(),
+                            other => other.to_string().chars().take(400).collect(),
+                        })
+                        .unwrap_or_default(),
                 });
             }
             agent

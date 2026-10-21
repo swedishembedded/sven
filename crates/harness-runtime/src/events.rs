@@ -110,11 +110,13 @@ pub fn harness_event(record: &TraceRecord, step_duration_ms: u64) -> HarnessEven
             name,
             stored,
             answer,
+            preview,
         } => HarnessEvent::VariableSet {
             step: step.clone(),
             name: name.clone(),
             stored: *stored,
             answer: answer.clone(),
+            preview: preview.clone(),
         },
         TraceRecord::ItemFailed {
             step,

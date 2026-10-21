@@ -152,6 +152,8 @@ pub enum HarnessEvent {
         stored: bool,
         /// The answer the agent was given.
         answer: String,
+        /// The start of the value it sent (at most 400 characters).
+        preview: String,
     },
     /// An item's body failed for good in a loop with `on_item_failure`.
     ItemFailed {

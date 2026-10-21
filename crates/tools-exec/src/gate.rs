@@ -57,13 +57,22 @@ struct Tail {
     truncated: bool,
 }
 
-async fn drain<R: AsyncRead + Unpin>(mut reader: R, keep: usize) -> Tail {
-    let mut tail = Tail::default();
+/// Reads `reader` to its end into `tail`, keeping the last `keep` bytes. The
+/// tail is shared so that what was read survives a reader that never sees
+/// the end (a descendant of the program holding the pipe open).
+async fn drain<R: AsyncRead + Unpin>(
+    mut reader: R,
+    keep: usize,
+    tail: std::sync::Arc<std::sync::Mutex<Tail>>,
+) {
     let mut chunk = [0_u8; 8192];
     loop {
         match reader.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
             Ok(n) => {
+                let mut tail = tail
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 tail.bytes.extend_from_slice(&chunk[..n]);
                 if tail.bytes.len() > 2 * keep {
                     let drop = tail.bytes.len() - keep;
@@ -73,19 +82,30 @@ async fn drain<R: AsyncRead + Unpin>(mut reader: R, keep: usize) -> Tail {
             }
         }
     }
+}
+
+/// What a stream's reader kept, once it reached the end or the grace after
+/// the program ended ran out: a stream a descendant still holds open keeps
+/// what was read so far rather than losing it.
+async fn finish(
+    task: tokio::task::JoinHandle<()>,
+    tail: std::sync::Arc<std::sync::Mutex<Tail>>,
+    keep: usize,
+) -> Tail {
+    if tokio::time::timeout(DRAIN_GRACE, task).await.is_err() {
+        // The reader is abandoned with the pipe; what it read stays.
+    }
+    let mut tail = std::mem::take(
+        &mut *tail
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
     if tail.bytes.len() > keep {
         let drop = tail.bytes.len() - keep;
         tail.bytes.drain(..drop);
         tail.truncated = true;
     }
     tail
-}
-
-async fn finish(task: tokio::task::JoinHandle<Tail>) -> Tail {
-    match tokio::time::timeout(DRAIN_GRACE, task).await {
-        Ok(Ok(tail)) => tail,
-        _ => Tail::default(),
-    }
 }
 
 /// The most steps one gate may have.
@@ -387,8 +407,9 @@ impl GateCommandTool {
                 let _ = pipe.write_all(text.as_bytes()).await;
             });
         }
-        let stdout = tokio::spawn(drain(out, keep));
-        let stderr = tokio::spawn(drain(err, keep));
+        let (out_tail, err_tail) = (Default::default(), Default::default());
+        let stdout = tokio::spawn(drain(out, keep, std::sync::Arc::clone(&out_tail)));
+        let stderr = tokio::spawn(drain(err, keep, std::sync::Arc::clone(&err_tail)));
         let waited = tokio::time::timeout(limit, child.wait()).await;
         let (exit_code, timed_out, error) = match waited {
             Ok(Ok(status)) => {
@@ -415,8 +436,8 @@ impl GateCommandTool {
             exit_code,
             timed_out,
             error,
-            stdout: finish(stdout).await,
-            stderr: finish(stderr).await,
+            stdout: finish(stdout, out_tail, keep).await,
+            stderr: finish(stderr, err_tail, keep).await,
             elapsed: started.elapsed(),
         }
     }

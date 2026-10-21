@@ -48,6 +48,22 @@ async fn it_reports_the_exit_status_and_the_output_of_a_program() {
 }
 
 #[tokio::test]
+async fn output_survives_a_descendant_that_holds_the_pipes_open() {
+    // A test suite that leaves a helper running keeps the gate's pipes open
+    // after the program exited; what the program printed is still reported.
+    let dir = tempfile::tempdir().unwrap();
+    let (_, r) = run(
+        &tool(&dir),
+        json!({ "argv": ["sh", "-c", "echo before; echo why it failed >&2; sleep 30 & exit 1"],
+                "timeout_secs": 60 }),
+    )
+    .await;
+    assert_eq!(r["exit_code"], 1);
+    assert_eq!(r["stdout"], "before\n");
+    assert_eq!(r["stderr"], "why it failed\n");
+}
+
+#[tokio::test]
 async fn the_command_reads_the_text_it_is_given_on_standard_input() {
     let dir = tempfile::tempdir().unwrap();
     // Far more than an argument can hold, and with every awkward byte in it.
