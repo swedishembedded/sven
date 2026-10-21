@@ -3,7 +3,7 @@
 
 # verified-task - the test run decides, not the agent
 
-A v2 workflow (`api_version: "2"`): one task, one gate and a success condition,
+A workflow: one task, one gate and a success condition,
 in forty lines. The compiler lowers it to ordinary harness steps (`sven harness
 inspect` lists them), so everything else in sven - checkpoints, replay, traces,
 `harness test` - works on it unchanged.

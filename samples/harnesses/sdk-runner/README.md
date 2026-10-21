@@ -27,7 +27,6 @@ was not handed.
 ## Run it
 
 ```sh
-cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/branching
 cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
 cargo test -p sample-harnesses-sdk-runner
 ```
@@ -38,9 +37,8 @@ cargo test -p sample-harnesses-sdk-runner
 PASS bug
 PASS feature
 SKIP live-local (names a live model; run it with `sven harness test <dir> --model-endpoint <url>`)
-PASS malformed-then-valid
-PASS unroutable
-4 passed, 0 failed, 1 skipped
+PASS malformed-answer
+3 passed, 0 failed, 1 skipped
 ```
 
 The exit code is 0 when every case passes, 1 when one fails, 2 when a case or

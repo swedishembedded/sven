@@ -3,7 +3,10 @@
 ## Status
 
 Accepted. Implemented by `crates/harness-spec` (the language and compiler) and
-`crates/harness-runtime` (the machine that executes compiled plans).
+`crates/harness-runtime` (the machine that executes compiled plans). Its
+step-map document language was removed by
+[ADR 0006](0006-v2-is-the-only-harness-language.md); the plan, the machine and
+the authorization model described here remain.
 
 ## Context
 

@@ -3,151 +3,44 @@
 
 # Programmable harnesses
 
-A harness is an agent program in YAML that compiles through the HSM kernel.
+A harness is an agent workflow in YAML that compiles through the HSM kernel.
 This page is the reference: the language, the runtime states, the
 authorization model, checkpoints, recordings, trajectories and the SDK API.
 For the commands see [Harnesses](../guides/harnesses.md); for the
 reasons behind the design see [ADR 0004](../adr/0004-programmable-harnesses.md)
-and, for the workflow language, [ADR 0005](../adr/0005-declarative-harness-v2.md).
+for the workflow language [ADR 0005](../adr/0005-declarative-harness-v2.md) and for
+the removal of the earlier step-map language [ADR 0006](../adr/0006-v2-is-the-only-harness-language.md).
 
 | Crate | Tier | Role |
 |-------|------|------|
-| `sven-harness-spec` | foundation | document, typed AST, validator, compiler to a content-hashed `HarnessPlan`, JSON Schema |
-| `sven-harness-transform` | foundation | the sandboxed WASM helper runtime |
+| `sven-harness-spec` | foundation | the workflow document, typed AST, lowering to the step specification, validator, compiler to a content-hashed `HarnessPlan`, JSON Schema |
 | `sven-harness-runtime` | machines | `HarnessMachine`: the plan interpreted as a kernel `Machine` |
 | `sven-sdk` | sdk | `Engine::load_harness`, `Harness`, `HarnessRun`, recording and replay |
 | `sven-harness-testkit` | surface | case manifests, fixture models and tools, runner, comparer |
 
 ## The language
 
-A document has these top-level keys. An unknown key is an error at every level
-(document, `limits`, each primitive's body, declared inputs and outputs), named
-in the message (`unknown field \`entrypoint\``, with the primitive for a step
-body); the JSON Schema forbids them too. Every step must be reachable from
-`entry`: an orphan step is rejected by name.
-
-| Key | |
-|-----|---|
-| `api_version` | required; `"1"` is this language, `"2"` the [workflow language](#workflows-api_version-2) |
-| `name` | required, non-empty; what `delegate` and `parallel` resolve |
-| `description` | optional |
-| `inputs`, `outputs` | optional maps of name to `string`, `number`, `boolean` or `json`; `name: string` or `name: { type: string, description: ... }` |
-| `schemas` | optional map of name to JSON Schema object, used by `predict` |
-| `capabilities` | optional list from `ReadFile`, `WriteFile`, `DeleteFile`, `ExecuteShell`, `NetworkAccess`, `GitOperation`, `RunVerifier`, `ControlDevice`, `SpawnChild` |
-| `limits` | see below |
-| `entry` | required, the first step |
-| `steps` | required map of step id to step |
-
-A **step** is a map with exactly one primitive key. The machine-readable
-form is `sven harness schema`
-(`crates/harness-spec/schema/harness-document.schema.json`).
-
-| Primitive | Fields | Meaning |
-|-----------|--------|---------|
-| `predict` | `prompt`, `schema`?, `store_as`?, `then` | one model turn; with `schema` the answer must parse as JSON (a single markdown code fence around it is removed first) and is stored parsed; the `brain` driver is not sent `response_format`, which that server refuses |
-| `agent` | `prompt`, `tools`?, `store_as`?, `then` | a model/tool loop until the model answers; `tools` is an allowlist |
-| `tool` | `name`, `args`?, `store_as`?, `then` | one tool call |
-| `verify` | `spec`, `store_as`?, `then` | an independent check of an artifact; the verdict is `passed`, `failed: <reason>`, `needs_human` or `unknown` |
-| `assign` | `set`, `then` | store values in `facts` |
-| `branch` | `on`, `when_true`, `when_false` | choose a successor |
-| `retry` | `attempts`, `body`, `then`, `on_exhausted` | run `body` up to `attempts` times |
-| `parallel` | `branches`, `join` | run the branch steps concurrently as child runs |
-| `delegate` | `target`, `as_kind`?, `input`?, `store_as`?, `then` | run another harness (`as_kind: harness`, the default) or a registered machine mode (`machine`) |
-| `transform` | `helper`, `input`?, `store_as`?, `then` | run a bundled WASM helper over a value |
-| `return` | `value` | finish with a value matching `outputs` |
-| `fail` | `code`?, `message`? | finish with a failure (`code` defaults to `harness_failed`) |
-
-`verify.spec` is the kernel's verifier vocabulary: `file_exists` (`path`,
-`min_bytes`?), `file_hash`, `json_predicate`, `http_predicate`, `ask_human`,
-and `all`/`any` over `specs`.
-
-### Data and expressions
-
-Run data lives in four namespaces, addressed by dotted paths:
-
-- `inputs.<name>` - the run's inputs;
-- `facts.<name>` - what `store_as` and `assign` stored;
-- `steps.<id>` - the value a step produced (`steps.<id>.value` is the same);
-  `steps.<parallel id>.value.0` indexes a join's results;
-- `env` is reserved and resolves to nothing.
-
-A string containing `{{ path }}` is a template. A string that is exactly one
-hole keeps the referenced value's type (`"{{ facts.discount }}"` is the
-number); otherwise the result is text. A path that resolves to nothing renders
-as the literal hole, visibly. A branch condition `on` is a path (truthy: not
-null, not false, not an empty string, array or object; zero is truthy), `!path`,
-a single `{{ path }}`, or a map:
-
-```yaml
-on: inputs.vip
-on: { eq: inputs.plan, value: pro }          # ne likewise
-on: { all: [inputs.vip, { not: facts.blocked }] }   # any likewise
-```
-
-There is no arithmetic or ordering comparison. Anything richer is a
-`transform` helper.
-
-### Limits
-
-`limits` is required when any step can run away (`predict`, `agent`, `tool`,
-`verify`, `retry`, `parallel`, `delegate`) and must set at least one of
-`max_steps`, `max_model_turns` and `max_tool_calls`. The others are
-`max_delegate_depth` (the top-level run is depth 1), `max_parallel` (a
-`parallel` wider than it fails to compile), `max_helper_fuel` and
-`max_helper_pages`. A bound the run exceeds fails it with `step_budget`,
-`model_turn_budget`, `tool_call_budget` or `delegate_depth`. A harness with no
-`max_steps` still stops after 4096 steps.
-
-### What `validate` rejects
-
-An unsupported `api_version`; an empty name or no steps; a missing or dangling
-step reference; a step that cannot reach a `return` or `fail` (cycles are only
-allowed through `retry`, which needs `attempts >= 1` and `on_exhausted`); a
-primitive whose capability the harness does not declare (`verify` needs
-`RunVerifier`, `delegate` and `parallel` need `SpawnChild`, an `agent` or
-`tool` naming `shell*`, `run_terminal*` or `gdb*` needs `ExecuteShell`);
-missing `limits`; a `return` value that does not satisfy `outputs`; a schema
-that is not an object or that no `predict` names; a bad path or template; a
-helper a `transform` names that the bundle lacks, or a bundle helper nothing
-names. Other capabilities (`ReadFile`, `WriteFile`, ...) cannot be derived
-from a tool's name in general, so declare them: the run-time gate refuses an
-undeclared one.
-
-### Failure codes
-
-A `fail` step reports its own code. The runtime adds `invalid_answer` (a
-`predict` answer that is not JSON), `side_effect_failed` (a tool call failed,
-or a child could not run), `helper_*` (a helper's decode, ABI, fuel, memory,
-trap or schema failure), the four bounds above, `cancelled`, and for workflows `gate_failed`, `success_check_failed`, `child_failed` and `missing_variable` (see below). A failed step inside a
-`retry` frame re-enters the body while attempts remain, then continues at
-`on_exhausted`; outside one it fails the run. A body that succeeds ends the
-frame and the walk follows the body's own `then`. Every attempt is a
-`StepStarted` with its attempt number.
-
-### Digests
-
-The compiler produces a canonical plan whose digest does not depend on key
-order or whitespace and changes when the program's meaning does. A bundle's
-digest additionally covers the helper bytes. Runs, checkpoints and
-recordings pin these digests, and a mismatch is refused, never reinterpreted.
-
-## Workflows (`api_version: "2"`)
-
-A version 2 document describes *what a job is* instead of *which steps run*:
+A harness document describes *what a job is* instead of *which steps run*:
 tasks, the trusted gates that decide whether each one succeeded, how failures
-are repaired, and what counts as success. It is decoded by its own strict
-parser, checked in the author's terms, and lowered into the step language above;
-the lowered spec goes through the same validator and compiler, so a workflow
-runs on the same machine and every tool that reads a plan, a checkpoint, a
-recording or a trace works on it. The version is read from the raw document
-before anything is deserialized; `"1"` and `"2"` are the supported values and a
-document is never retried as the other one. The JSON Schema is
-`crates/harness-spec/schema/harness-workflow.schema.json` (`WORKFLOW_SCHEMA`).
+are repaired, and what counts as success. It is decoded by a strict parser (an
+unknown key is an error at every level, named in the message; the JSON Schema
+forbids them too), checked in the author's terms, and lowered into a step
+specification; that specification goes through a validator and a compiler to a
+content-hashed plan, and the machine runs the plan. Every tool that reads a
+plan, a checkpoint, a recording or a trace therefore works on any document.
+The version is read from the raw document before anything is deserialized:
+`api_version` is required and `"2"` is the only value. `"1"` (the earlier
+step-map language) is refused with an error that says so
+([ADR 0006](../adr/0006-v2-is-the-only-harness-language.md)); a document is
+never retried as another version. The machine-readable form is `sven harness
+schema` (`crates/harness-spec/schema/harness-document.schema.json`,
+`DOCUMENT_SCHEMA`).
 
 | Key | |
 |-----|---|
+| `api_version` | required, `"2"` |
 | `name`, `description` | `name` is lowercase letters, digits, `-`, `_`; no `__`; at most 48 characters |
-| `inputs` | typed per-run inputs, as in version 1 (`name: type` or `{type, description}`); templates read `{{ inputs.<name> }}` and an undeclared one is an error |
+| `inputs` | typed per-run inputs (`name: type` or `{type, description}`, type `string`, `number`, `boolean` or `json`); templates read `{{ inputs.<name> }}` and an undeclared one is an error |
 | `outputs` | `name: {type, value}`; the value is a template over inputs and task outputs; without `outputs` the run returns `{"status": "completed"}` |
 | `agent` | `profile` (`none` or `coding`), `instructions` (prepended to every task prompt), `system` (the model's system message for the agent's conversation, a template over inputs; or a list of `{when, text}` variants, see below), `tools` (an allowlist for every task, also enforced on proposed calls), and `sampling`, `thinking`, `turn` defaults for every task |
 | `execution` | `limits` (`model_turns` is required; `steps`, `tool_calls`, `delegate_depth` optional), `workspace: repository`, `resume: true`, `scratchpad` (the run's private directory, below) |
@@ -430,17 +323,34 @@ plan carries `profile` so a host knows which tools the agent steps expect.
 step `<task>__work`, `<task>__f<j>` follow-up steps, and for each check and
 attempt `<task>__v<i>_<check>_a<k>` (a `gate` step, or a `verify` step followed
 by a `_ok` branch; a metric check has a `_run` gate first), a `_repair` agent
-step and a `_fail` step. Repair is unrolled rather than a `retry` (a failed
-verification is a verdict, not a failed step), so the plan is acyclic and its
-`max_steps` default is its step count. The plan's `source_map` names, for every
+step and a `_fail` step. Repair is unrolled (a failed
+verification is a verdict, not a failed step), so a plan without loops is
+acyclic and its `max_steps` default is its step count. The plan's `source_map` names, for every
 generated step, the task, role (`when`, `work`, `follow_up`, `check`, `repair`,
 `failure`, `complete`), check and attempt. The digest covers the source map and
-the stamp `harness-plan/2`; version 1 plans keep `harness-plan/1` and are
-byte-for-byte what they were (`v1_compiled_plan_unchanged`).
+the stamp `harness-plan/2`.
+
+### Failure codes
+
+A run that fails ends with a code and a message. The check and loop codes are
+`gate_failed`, `success_check_failed`, `until_exhausted`, `rollback_failed`,
+`missing_variable`, `child_failed` and the `iterate_*` codes above. The bounds
+are `step_budget`, `model_turn_budget`, `tool_call_budget` and `delegate_depth`.
+The rest report the environment: `invalid_answer` (a schema'd answer that is not
+JSON of that shape), `side_effect_failed` (a tool call failed or a child could not
+run), `invalid_setting`, `empty_reply`, `model_unavailable`, `context_exhausted`,
+`trajectory_unavailable`, `scratchpad_unavailable` and `cancelled`.
+
+### Digests
+
+The compiler produces a canonical plan whose digest does not depend on key
+order or whitespace and changes when the program's meaning does. A bundle's
+digest additionally covers the digest of every import. Runs, checkpoints and
+recordings pin these digests, and a mismatch is refused, never reinterpreted.
 
 ### Imports (`imports:` and `use:`)
 
-A version 2 workflow can run another as one of its tasks:
+A workflow can run another as one of its tasks:
 
 ```yaml
 imports:
@@ -470,12 +380,11 @@ resolved against the importing document's directory, that stays inside the
 package root (no absolute path, no URL, no `..` out of it); `load_package` also
 refuses a symlink that leaves the directory. An import cycle is an error that
 names the chain; two documents of a package never share a name (`delegate`
-resolves by name); a file nothing imports is an error; only version 2 documents
-can be imported; at most 64 imports, 8 levels deep, 1 MiB each. There are no
+resolves by name); a file nothing imports is an error; at most 64 imports, 8 levels deep, 1 MiB each. There are no
 remote imports.
 
-*Pinning.* `HarnessBundle` carries `imports` (path to document text). The bundle
-digest covers the compiled-plan digest of every imported file, so a changed
+*Pinning.* `HarnessBundle` carries the main `document` and its `imports` (path
+to document text). The bundle digest covers the compiled-plan digest of every imported file, so a changed
 behaviour is a changed pin and a reformatting is not; a checkpoint taken under
 one is refused under another. `sven harness validate|inspect|run|test` read a
 directory whose `harness.yaml` has `imports` as a package automatically, and
@@ -485,9 +394,8 @@ together or not at all.
 *Shared limits.* A child starts with a ceiling of what its parent had left of
 its model-turn and tool-call budgets (its own limits can only be tighter) and,
 when it ends, its usage is added to the parent's counters: a tree of runs never
-spends more than its root declared. A version 2 child answers its parent with an
-envelope `{ok, value | code, message, usage}`; a delegate to a version 1 harness
-is unchanged. Capabilities narrow as before: a child holds what its caller
+spends more than its root declared. A child answers its parent with an
+envelope `{ok, value | code, message, usage}`. Capabilities narrow as before: a child holds what its caller
 holds, narrowed by its own declaration.
 
 ### Gate inputs: the trajectory and a trusted directory
@@ -548,8 +456,7 @@ and refuses one outside it.
 
 ### The `gate` step
 
-The thirteenth primitive, written only by the lowering and rejected in a
-version 1 document: `gate: {command, timeout, cwd, store_as, then, on_fail}`. It
+A primitive of the step specification that only the lowering writes: `gate: {command, timeout, cwd, store_as, then, on_fail}`. It
 calls the reserved tool `shell_gate` (`sven_harness_spec::GATE_TOOL`; capability
 `ExecuteShell`, so host approval policy applies) with `{steps, timeout_secs, cwd,
 env, stdin}`: `steps` is a list of `{name, argv}` (a `command` gate has one step,
@@ -574,8 +481,7 @@ neither a repair attempt nor a step.
 
 ### The `iterate` step
 
-The fourteenth primitive, written only by the lowering and rejected in a version
-1 document: `iterate: {for_each | until, body, then, on_exhausted, store_as}`. The
+A primitive of the step specification that only the lowering writes: `iterate: {for_each | until, body, then, on_exhausted, store_as}`. The
 body is ordinary steps whose last edge returns to the `iterate` step, which is
 visited once per item or pass. A file source is read through the reserved tool
 `read_json_snapshot` (`sven_harness_spec::SNAPSHOT_TOOL`, capability `ReadFile`;
@@ -587,11 +493,11 @@ suspension is read again. Because an `iterate` plan is cyclic its default
 `execution.limits.steps` for a tighter one.
 
 A workflow's model turns and verifications that a suspension interrupted start
-again on resume (a version 1 document keeps the retry policy it declares).
+again on resume.
 
-A version 2 `delegate` can set `propagate_failure`: a child that returns
-`ok: false` then fails the parent step (through its retry frame, if any) with
-`child_failed` instead of being stored and continued past.
+A `use` task lowers to a `delegate` with `propagate_failure`: a child that
+returns `ok: false` fails the parent step with `child_failed` instead of being
+stored and continued past.
 
 **Trajectory.** `HarnessRun::trajectory` holds every conversation of the run
 as its own embedded trajectory, starting with its system message as a `system`
@@ -609,19 +515,18 @@ the engine has; a host tool of the same name (a fixture) replaces them.
 
 ## Runtime
 
-`HarnessMachine` is one `Machine` with a fixed hierarchy of eleven states,
+`HarnessMachine` is one `Machine` with a fixed hierarchy of ten states,
 whatever the plan's size; the current step and every result live in a durable
 context fact, so a run snapshots and restores like any kernel machine.
 
 | State | The run is |
 |-------|------------|
 | `Ready` | created, waiting for the message that starts it |
-| `Advancing` | working off pure steps (`assign`, `branch`, `retry`, `return`, `fail`) |
+| `Advancing` | working off pure steps (`assign`, `branch`, `return`, `fail`) |
 | `WaitingForModel` | in a `predict` or `agent` turn |
 | `WaitingForTool` | waiting for a tool result (also while a person is asked to approve it) |
 | `WaitingForVerifier` | waiting for a verdict |
 | `WaitingForChild` | in a `delegate` |
-| `WaitingForJoin` | in a `parallel`, branches running |
 | `Completed`, `Failed`, `Cancelled` | terminal; further events are absorbed |
 
 (`Root` is the fixpoint superstate.) The machine only emits typed effects
@@ -641,18 +546,16 @@ not fail the run.
 
 ### Children
 
-`delegate` and `parallel` start child runs through the kernel's child spawner.
-A harness child gets its own tools, executor and cancel scope; it can verify,
-delegate and fan out in turn within `max_delegate_depth`, because the spawn
-descriptor carries the child's depth. Branches of a `parallel` run the same
-plan from their branch step with the run's inputs and their own facts; the
-join's value is the branches' return values in declared order, whichever
-finished first. A child that ends in `fail` does not fail its
-parent: its result is `{code, message}` and the parent step stores it like any
-value, so a parent that cares branches on it (`on: facts.child.code`).
-Cancelling a run cancels its children, and a run's tool calls end with it
-(the executors are bound to the run's cancel scope, so a call that outlives
-its `execute` is dropped when the run ends).
+`delegate` starts a child run through the kernel's child spawner (a `use` task
+lowers to one). A child gets its own tools, executor and cancel scope; it can
+verify and delegate in turn within `delegate_depth`, because the spawn
+descriptor carries the child's depth. A child that ends in `fail` does not fail
+its parent by itself: its result is the envelope `{ok: false, code, message,
+usage}` and the parent step stores it like any value, or fails with
+`child_failed` when it propagates failure, as a `use` task does. Cancelling a
+run cancels its children, and a run's tool calls end with it (the executors are
+bound to the run's cancel scope, so a call that outlives its `execute` is
+dropped when the run ends).
 
 ### Authorization
 
@@ -682,18 +585,18 @@ permission gate or its executors, not by the harness text.
    never grants. `sven harness run --toolset coding` sets it from
    `--allow-capability`. Without a ceiling the declaration is the whole cap.
 
-`parallel` and `delegate` need `SpawnChild`, and a child's depth is bounded by
-`max_delegate_depth`.
+`delegate` needs `SpawnChild`, and a child's depth is bounded by
+`execution.limits.delegate_depth`.
 
 ### Observability
 
-The run keeps a trace of `TraceRecord`s: `StepStarted` (with the attempt),
-`StepCompleted`, `BranchSelected`, `Verified`, `RetryAttempt`, `ChildStarted`,
-`ChildCompleted`, `FanOut`, `Joined`, `Failed` and `Outcome`. Each is
+The run keeps a trace of `TraceRecord`s: `StepStarted`,
+`StepCompleted`, `BranchSelected`, `Verified`, `ChildStarted`,
+`ChildCompleted`, `GateEvaluated`, `TurnRetried`, the item records of loops,
+`Failed` and `Outcome`. Each is
 published as a `HarnessEvent` session event (`Started`, `StepStarted`,
-`StepCompleted`, `RetryScheduled`, `BranchSelected`, `ChildStarted`,
-`ChildCompleted`, `FanOut`, `Joined`, `Verified`, `BudgetExhausted`, `Failed`,
-`Completed`). The headless runner prints them as `[sven:harness] ...` lines;
+`StepCompleted`, `BranchSelected`, `ChildStarted`, `ChildCompleted`,
+`Verified`, `BudgetExhausted`, `Failed`, `Completed`). The headless runner prints them as `[sven:harness] ...` lines;
 ACP does not forward them.
 
 **In the author's terms.** A workflow's generated steps are named in its plan's
@@ -703,8 +606,7 @@ returns each record with a `source` object: `task`, `role` (`work`, `check`,
 `item_id` (the `for_each` item whose body the record belongs to) and `result`
 (`passed`, `failed` or `completed`, for a gate, a verifier, a child or a
 finished item). The record's own fields are unchanged. `sven harness run`
-prints and writes (`--trace`) records this way; a version 1 plan has no source
-map, so its records carry no `source`.
+prints and writes (`--trace`) records this way.
 
 **Timestamps.** The machine is clock-free, so a record does not say when it
 happened. The CLI adds `"ts_ms"` to every record it writes (`--trace`) or prints
@@ -721,14 +623,13 @@ checkpoint carried with the time the resume began. `harness replay
 digest, the bundle digest and the run id. It is `Serialize`/`Deserialize`, so
 it can be stored as JSON and resumed in another process with
 `Harness::resume`. A checkpoint under another plan or bundle is refused. The
-operation the stop interrupted did not complete; on resume it is settled
-through the step's failure path, so the step's `retry` decides what repeating
-it is worth. A resumed run keeps the run id and continues the trace. The restored machine
+operation the stop interrupted did not complete; on resume it starts again
+(a gate, a model turn or a verification costs no repair attempt). A resumed run keeps the run id and continues the trace. The restored machine
 re-emits nothing for an operation in flight (model turn, tool call, child
 batch, approval question), and a completion it has already consumed - a
 repeated tool result, model turn, approval or branch completion - settles
 nothing a second time; `harness_checkpoint_interruptions.rs` holds these
-cases for each waiting state and for retries.
+cases for each waiting state.
 
 **Item checkpoints.** A host that must survive a kill it cannot catch (an OOM
 kill, a power cut) asks for a checkpoint each time a `for_each` item completes:
@@ -763,7 +664,7 @@ an ATIF trajectory, with the harness name, digests, run id and trace under
 Children's conversations are not included.
 
 **Counts.** `HarnessOutcome::step_counts()` and `HarnessReplay::step_counts()`
-count `StepStarted` per step (a retry body counts once per attempt).
+count `StepStarted` per step.
 
 ## SDK API
 
@@ -790,7 +691,7 @@ assert_eq!(replay.trace, outcome.trace);
 
 | Item | |
 |------|--|
-| `Engine::load_harness(path)`, `load_harness_from_str(yaml)` | parse, validate, compile offline and register under the plan's name; a document or a bundle (top-level `document` and `helpers`); a duplicate name is refused |
+| `Engine::load_harness(path)`, `load_harness_from_str(yaml)` | parse, validate, compile offline and register under the plan's name; a document or a bundle (top-level `document` and `imports`); a duplicate name is refused |
 | `Harness::{name, digest, plan, validate_inputs}` | the compiled plan (`sven_sdk::harness_plan`) and an input check |
 | `Harness::start(inputs)` | a `HarnessRun`; inputs are checked against the plan first |
 | `Harness::resume(checkpoint)` | continue a checkpoint under the same program |
@@ -825,10 +726,3 @@ Samples are data directories; the SDK-only crate
 `samples/harnesses/sdk-runner` shows the same cases run with `sven-sdk` alone.
 `make test/harness` runs every harness suite on mock models, including a
 thousand-run concurrent stress test (a fixed count).
-
-## Not in scope
-
-Python or other process-isolated helpers: a helper is WASM, carried in the
-bundle, with no filesystem or network. A process-isolated helper would need a
-new spawn and sandbox executor and a host interpreter, and duplicates what
-the WASM path already provides.

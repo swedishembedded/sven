@@ -185,6 +185,16 @@ unit), the workflow JSON schema, `sven harness compile/explain/inspect`.
   `ticket-routing`, `scoped-agent`, `repair-loop`, `repo-repair` and
   `suspend-resume` are rewritten as v2 workflows.
 
+**Outcome (done, 2026-10-21).** Everything listed under "Removed" is gone, with
+these differences from the plan above: the document schema was not deleted but
+renamed, so `harness-document.schema.json` / `DOCUMENT_SCHEMA` describe the
+workflow language (the `workflow_schema` test holds it to the parser); the
+v1-era machine tests were kept by compiling step-language plans through the
+`testing` cargo feature of `sven-harness-spec` (production builds cannot parse
+the step language); `HarnessBundle` is `{document, imports}`; the runtime machine
+has ten states (no `WaitingForJoin`). Docs: reference, guide, ADR 0006, README,
+AGENTS.md, CHANGELOG and the sample READMEs describe the one language.
+
 ## Acceptance
 - Three distinct conversations per item in the trajectory; nothing the harness
   writes appears in the target repository's `git status` except the code it

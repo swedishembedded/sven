@@ -797,8 +797,8 @@ with `sven_sdk::config::load` and passes it to `EngineBuilder::config`.
 
 ## Harnesses
 
-A harness is an agent program written in YAML (steps for model calls, tools,
-verification, branching, retry, parallel fan-out and delegation).
+A harness is an agent workflow written in YAML (tasks, trusted gates, bounded
+repair, loops over a frozen backlog and imported workflows).
 `Engine::load_harness` compiles one offline, `Harness::start` returns a
 `HarnessRun` whose `execute` reaches a verdict or a bound, and a stopped run
 leaves a serializable `HarnessCheckpoint` that `Harness::resume` continues. A
@@ -808,7 +808,7 @@ language, the authorization model and the full API are in
 [harnesses.md](harnesses.md); the command line is `sven harness`
 ([Harnesses](../guides/harnesses.md)).
 
-For a version 2 workflow the run adds: `in_workspace(dir)` roots one run's
+For a workflow the run adds: `in_workspace(dir)` roots one run's
 tools and gates in a directory (one engine serves many concurrent runs);
 `on_item_checkpoint(sink)` hands a durable checkpoint to the host each time an
 item of a `checkpoint: each_item` loop completes; `EngineBuilder::model_role`

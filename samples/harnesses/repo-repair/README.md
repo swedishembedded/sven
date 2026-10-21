@@ -3,23 +3,20 @@
 
 # repo-repair - fix a failing test with real tools
 
-A harness that works on a repository, not on fixtures: it surveys the tree
-with the shell, runs the tests, has the model diagnose the failure into a
-schema-checked answer (`{file, summary}`), reads the named file, lets an agent
-edit it with `edit_file`, and re-runs the tests. The verdict is never the
-agent's: `run_tests.sh` records `result.json`, and an independent `verify`
-step (`json_predicate` on `/passed`) decides. A failed repair is retried once,
-with the new failure output in the prompt; two failed edits end in the failure
-`unrepaired`. An already green repository returns `already_green` without a
-model call.
+A workflow that works on a repository, not on fixtures. A soft baseline gate
+(`required: false`) runs the tests; if they fail, a model-only task diagnoses
+the output into a schema-checked answer (`{file, summary}`), an agent task
+reads the named file and edits it with `edit_file`, and the test gate decides.
+A failed edit earns one repair turn whose prompt carries the new failure
+output; a second failure ends the run with `gate_failed`. An already green
+repository skips both tasks and completes without a model call.
 
-The retry is unrolled (`fix_first`, `fix_second`) rather than looped, so the
-attempt budget is visible in the document and in the step counts.
+The verdict is never the agent's: the gate runs `tests/test_total.sh` and only
+its exit status counts. The repair is unrolled, so the attempt budget is
+visible in the document and in the step counts.
 
 ```text
-survey -> first_run -> first_check -> diagnose -> read_source -> fix_first
-       -> run_first -> check_first -> (fixed | fix_second -> run_second
-       -> check_second -> (fixed | unrepaired))
+baseline (soft gate) -> diagnose -> fix -> tests gate -> (done | repair -> tests gate -> (done | gate_failed))
 ```
 
 `fixtures/repo` is the repository: a three-line shell function with a bug (the
@@ -28,7 +25,7 @@ shipping argument is ignored) and its tests.
 ## Run it
 
 Offline, on fixture tools (what `sven harness test` and the kit's samples test
-run; the cases state what the harness is for):
+run, with a `shell_gate` fixture standing in for the gate tool; the cases state what the harness is for):
 
 ```sh
 sven harness test samples/harnesses/repo-repair

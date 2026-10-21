@@ -1,21 +1,21 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 <!-- Copyright (c) 2026 Martin Schröder <info@swedishembedded.com> -->
 
-# ticket-routing - one model turn, then a branch
+# ticket-routing - schema-constrained model turns, then a condition
 
 The smallest useful use of a model: ask one question whose answer is
-constrained by a JSON Schema, and let ordinary steps decide what to do with it.
-The model classifies a ticket as `bug`, `feature` or `question`; a branch
-sends bugs to the `bugs` queue and everything else to the `backlog`.
+constrained by a JSON Schema, and let the workflow decide what to do with it.
+The model classifies a ticket as `bug`, `feature` or `question`; only a bug
+earns a second model turn, a one-line summary for the bugs queue.
 
 What it shows:
 
-- `predict` with a `schema`: the answer must parse as JSON, and a malformed
-  answer is a failed step.
-- `retry` around it: two attempts, and the plan's own `fail` step
-  (`unroutable`) when both are spent. `max_model_turns` has to cover every
-  attempt.
-- The model never decides control flow; it only fills a fact the branch reads.
+- A `model_only` task with a `schema`: the answer must parse as JSON of that
+  shape, and a malformed answer fails the run with `invalid_answer`.
+- `when:` on the second task reads a field of the first answer
+  (`tasks.classify.output.label`); a skipped task leaves an empty output.
+- `execution.limits.model_turns` has to cover every turn the workflow can take.
+- The model never decides control flow; it only fills values the conditions read.
 
 ## Run it
 
@@ -47,14 +47,13 @@ cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
 PASS bug
 PASS feature
 SKIP live-local
-PASS malformed-then-valid
-PASS unroutable
-4 passed, 0 failed, 1 skipped
+PASS malformed-answer
+3 passed, 0 failed, 1 skipped
 ```
 
-`bug` completes with `{"queue": "bugs", "label": "bug"}` after one model turn;
-`malformed-then-valid` starts `ask` twice and still completes; `unroutable`
-ends `failed` with code `unroutable`.
+`bug` completes with `{"label": "bug", "summary": "Crash on start"}` after two
+model turns; `feature` completes after one with an empty summary;
+`malformed-answer` ends `failed` with code `invalid_answer`.
 
 ## Against a real model (opt-in)
 

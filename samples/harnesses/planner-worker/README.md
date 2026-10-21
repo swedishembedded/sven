@@ -3,7 +3,7 @@
 
 # planner-worker - three roles, three ways of being sampled
 
-A v2 workflow with a planner, a worker and a supervisor.
+A workflow with a planner, a worker and a supervisor.
 
 What it shows:
 

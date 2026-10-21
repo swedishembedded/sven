@@ -3,23 +3,25 @@
 
 # repair-loop - do not take the tool's word for it
 
-A patch tool is retried while it fails (up to three attempts). Once it claims
-success, an independent `verify` step checks that `fixed.txt` really exists,
-and a branch on the verdict decides whether the run repaired anything.
+One task asks the agent to apply a patch with `write_patch`. Whatever the agent
+says, an independent file check (`verify: [{artifact: fixed.txt}]`) decides
+whether the patch happened; a failed check earns one repair turn
+(`repair: {attempts: 1}`), and a second failure fails the run.
 
 What it shows:
 
-- `retry` repeats a body whose *side effect fails*; a tool that reports an
-  error is attempted again, up to `attempts` executions of the body in all.
-- `verify` is evidence the model and the tool cannot give: the verdict is
-  `passed` or `failed: <reason>`, stored under `steps.check.value`.
-- The failure path is explicit: `unrepaired` is the plan's own `fail`.
+- A check is evidence the model and the tool cannot give: a tool that answers
+  "patched" and writes nothing is not believed.
+- Repair is bounded and explicit in the plan: `patch__work`, the check
+  `patch__v0_fixed_txt_a0`, `patch__v0_fixed_txt_a0_repair`, the check again
+  and a `_fail` step.
+- The failure is the run's own: `gate_failed`, with a message naming the task
+  and the file.
 
-Cases: `repaired-on-second-attempt` (the fixture fails once, then writes the
-file inside the case workspace); `never-repaired` (three failures, the
-verification never runs); `claims-success-without-writing` (the tool answers
-"patched" but writes nothing - the retry is satisfied, the verification is
-not).
+Cases: `repaired-on-second-attempt` (the first patch fails, the repair turn's
+call writes the file inside the case workspace); `never-repaired` (both patches
+fail); `claims-success-without-writing` (the tool answers "patched" but writes
+nothing - the agent is satisfied, the check is not).
 
 ## Run it
 
@@ -39,6 +41,5 @@ cargo test -p sven-harness-testkit --test samples
 
 ## Expected
 
-`repaired-on-second-attempt` completes with
-`{"status": "repaired", "check": "passed"}`, `patch` having started twice.
-The other two cases end `failed` with code `unrepaired`.
+`repaired-on-second-attempt` completes with `{"result": "patched"}`, the repair
+turn having run once. The other two cases end `failed` with code `gate_failed`.

@@ -12,7 +12,8 @@ email to info@swedishembedded.com.
 
 ## Status
 
-Accepted. Implemented by `crates/harness-spec` (the `v2` module: authoring
+Accepted. Implemented by `crates/harness-spec` (the `v2` module, later made the crate's
+main path by [ADR 0006](0006-v2-is-the-only-harness-language.md): authoring
 language, validation, lowering), `crates/harness-runtime` (the `gate` and
 `iterate` primitives) and `crates/tools-exec` (the trusted gate command tool).
 
@@ -65,7 +66,7 @@ A v2 document declares `inputs`, `outputs`, an `agent` (profile,
 instructions, tool allowlist), `execution` (limits, workspace, resume),
 named `gates`, an ordered `workflow` of tasks and a `success` condition. The
 authoritative description is the JSON Schema
-(`crates/harness-spec/schema/harness-workflow.schema.json`) and the
+(`crates/harness-spec/schema/harness-document.schema.json`) and the
 [reference](../reference/harnesses.md). Every object
 rejects unknown keys; every reference (gate, task, metric, input) is checked at
 compile time with the name of the offending task.

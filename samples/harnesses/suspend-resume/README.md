@@ -3,9 +3,10 @@
 
 # suspend-resume - suspend, resume, replay
 
-A run that is stopped by a bound is not lost. Here a report read blocks, the
-case's 300 ms deadline suspends the run, and the checkpoint it leaves resumes
-under the same program and finishes.
+A run that is stopped by a bound is not lost. Here a report is read by a
+command gate (`cat report.txt`) that blocks, the case's 300 ms deadline
+suspends the run, and the checkpoint it leaves resumes under the same program
+and finishes.
 
 What it shows:
 
@@ -14,7 +15,8 @@ What it shows:
 - `resume:` in a case is a second phase on the first phase's checkpoint, with
   fresh fixtures. The harness is pinned by digest: a checkpoint from another
   program is refused.
-- The resumed read is a second start of the `call` step (`steps: { call: 2 }`).
+- The interrupted gate runs again on resume, and costs neither a repair
+  attempt nor a second start of the step (`steps: { fetch__v0_read_a0: 1 }`).
 - Replay: every phase is recorded and replayed offline - nothing asks a model
   or runs a tool - and must end in the same verdict and trace.
 
@@ -39,14 +41,22 @@ tests, together with the other harness samples:
 cargo test -p sven-harness-testkit --test samples
 ```
 
-A tool fixture file is the `tools:` block of a case. `blocked.yaml` is a read
+A tool fixture file is the `tools:` block of a case. `blocked.yaml` is a gate
 that never answers, `answered.yaml` one that does:
 
 ```yaml
-# blocked.yaml                       # answered.yaml
-read_report:                         read_report:
-  capability: ReadFile                 capability: ReadFile
-  responses: [ { block: true } ]       responses: [ { ok: "all green" } ]
+# blocked.yaml
+shell_gate:
+  capability: ExecuteShell
+  responses: [ { block: true } ]
+```
+
+```yaml
+# answered.yaml
+shell_gate:
+  capability: ExecuteShell
+  responses:
+    - ok: { exit_code: 0, timed_out: false, error: null, stdout: "all green", stderr: "" }
 ```
 
 `--timeout 1` suspends the first run after a second, `--checkpoint-out` keeps
@@ -56,5 +66,5 @@ reproduces the run's trace.
 
 ## Expected
 
-`suspended-then-resumed` passes: phase one is `suspended` after one `call`
-start, phase two is `completed` with `{"report": "all green"}`.
+`suspended-then-resumed` passes: phase one is `suspended` after one `fetch`
+gate start, phase two is `completed` with `{"report": "all green"}`.

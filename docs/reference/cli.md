@@ -179,9 +179,9 @@ sven configuration or environment is read.
 
 | Command | Description |
 |---------|-------------|
-| `harness validate PATH... [--json]` | Compile harnesses and their children without running them. `PATH` is a file or a directory holding `harness.yaml` or `bundle.yaml`. |
-| `harness inspect PATH [--json \| --graph dot\|mermaid]` | Show steps, capabilities, limits, digests, helpers, children and cases; or draw the plan as a graph (a workflow's steps grouped by task). |
-| `harness compile PATH [--format json\|yaml] [-o FILE]` | Print the canonical compiled plan (a workflow's lowered plan with its source map). |
+| `harness validate PATH... [--json]` | Compile harnesses and their imports without running them. `PATH` is a file or a directory holding `harness.yaml`. |
+| `harness inspect PATH [--json \| --graph dot\|mermaid]` | Show the generated steps, capabilities, limits, digests, imports and cases; or draw the plan as a graph (steps grouped by task). |
+| `harness compile PATH [--format json\|yaml] [-o FILE]` | Print the canonical compiled plan (the lowered plan with its source map). |
 | `harness explain PATH [--step ID] [--input JSON \| --input-file FILE] [--elide N]` | Explain a workflow task by task, or one generated step: origin, successors, predecessors. With inputs, also show each prompt, system message and gate command as a run with those inputs would send it. |
 | `harness status PATH --checkpoint FILE [--json]` | Where a suspended run rests, its counters and completed steps, and whether `resume` would accept the checkpoint. Exit 1 when it would not. |
 | `harness schema [PATH]` | Print the harness document JSON Schema, or the input/output contract of the harness at `PATH`. |
@@ -190,8 +190,6 @@ sven configuration or environment is read.
 | `harness replay PATH --recording FILE [--expect-trace FILE] [--json]` | Replay a recording offline; no model, tool or child starts. |
 | `harness test DIR... [--case NAME] [--no-replay] [--json] [--model SPEC --model-endpoint URL]` | Run the `cases/*.yaml` of each directory on mock models and fixture tools; cases naming a live model are skipped without `--model-endpoint`. |
 | `harness compare DIR_A DIR_B --cases DIR [--fail-on-regression] [--seed N]... [--bootstrap-seed N] [--json] [live options]` | Run one case set over two variants and report the difference. `--seed` (repeatable) and `--bootstrap-seed` must be given together. |
-| `harness bundle DOCUMENT --helper NAME=FILE.wasm ... [-o FILE]` | Compose a harness document and its WASM helpers into a bundle (stdout without `-o`). |
-| `harness helper run PATH --input JSON [--helper NAME] [--fuel N] [--max-pages N]` | Run one helper on a JSON input in the bounded runtime. Defaults: `--fuel 1000000`, `--max-pages 256` (64 KiB pages). |
 
 Run options (`run` and `resume`): `--input JSON` or `--input-file FILE`,
 `--case FILE`, `--model-fixture FILE`, `--tool-fixture FILE` (repeatable),
@@ -241,14 +239,12 @@ A headless run exits with:
 | `130` | Interrupted with Ctrl+C. The partial trajectory is saved. |
 
 `harness` commands use their own codes: `run` and `resume` exit `0` returned,
-`1` the plan failed, `2` usage or invalid harness, input or file, `3` suspended
+`1` the workflow failed, `2` usage or invalid harness, input or file, `3` suspended
 by a bound, `4` cancelled, `5` infrastructure; `validate` and `inspect` exit
 `0` valid, `1` invalid, `2` unreadable path; `test` exits `0` passed or
 skipped, `1` a case failed, `2` usage or invalid harness; `compare` exits `0`
 produced, `1` regression under `--fail-on-regression`, `2` invalid variant;
-`replay` exits `0` matched, `1` trace mismatch, `2` refused recording;
-`bundle` exits `0` written, `2` refused; `helper run` exits `0`, `1` when the
-helper broke a bound or its contract, `2` usage.
+`replay` exits `0` matched, `1` trace mismatch, `2` refused recording.
 
 ## Environment
 

@@ -3,26 +3,24 @@
 
 # Harness samples
 
-Fourteen programmable harnesses, each a data directory: a YAML document, the
-cases that state what it must do, and nothing to compile. The table lists
-them from the simplest program to the most involved; every default case runs
+Eleven programmable harnesses, each a data directory: a workflow document
+(`api_version: "2"`), the cases that state what it must do, and nothing to
+compile, plus the SDK runner that runs the same cases from an application. The
+table lists them from the simplest to the most involved; every default case runs
 offline on mock models and fixture tools.
 
 | Sample | What it shows |
 |---|---|
-| [branching](branching/) | pure branching: `assign` and `branch`, no model, no capability |
-| [ticket-routing](ticket-routing/) | one schema-constrained model turn, retried, then routed; its `live-local` case is the opt-in real-model run |
-| [scoped-agent](scoped-agent/) | delegation to a child, and an agent held to its tool list |
-| [repair-loop](repair-loop/) | retry around a tool, then an independent verification |
-| [repo-repair](repo-repair/) | the real tools on a real repository: diagnose a failing test, edit, verify independently, retry once |
-| [parallel-research](parallel-research/) | `parallel` branches joined in declared order, and cancellation |
+| [ticket-routing](ticket-routing/) | schema-constrained model-only tasks and a `when` condition; its `live-local` case is the opt-in real-model run |
+| [scoped-agent](scoped-agent/) | an imported workflow (`use:`), and an agent held to its tool list |
+| [repair-loop](repair-loop/) | an independent file check after a tool, with one bounded repair |
+| [repo-repair](repo-repair/) | the real tools on a real repository: a soft baseline gate, a diagnosis, an edit, a gate that decides, one repair |
 | [suspend-resume](suspend-resume/) | suspend on a bound, resume the checkpoint, replay offline |
-| [custom-helper](custom-helper/) | a sandboxed WASM helper carried in a bundle |
-| [module-sweep](module-sweep/) | a v2 workflow that loops: a frozen backlog worked item by item with progress that survives a resume, and an `until` on a measured coverage figure |
-| [embedded-hardening](embedded-hardening/) | the whole v2 pipeline on a disposable embedded C repository: bootstrap, plan, checkpointed modules, coverage `until`, architecture, production; gcov, clang-tidy, a pinned check |
-| [reviewed-change](reviewed-change/) | a v2 package: a workflow that imports another and `use`s it as a task, with the call checked against its interface and its limits shared |
+| [module-sweep](module-sweep/) | a workflow that loops: a frozen backlog worked item by item with progress that survives a resume, and an `until` on a measured coverage figure |
+| [embedded-hardening](embedded-hardening/) | the whole pipeline on a disposable embedded C repository: bootstrap, plan, checkpointed modules, coverage `until`, architecture, production; gcov, clang-tidy, a pinned check |
+| [reviewed-change](reviewed-change/) | a package: a workflow that imports another and `use`s it as a task, with the call checked against its interface and its limits shared |
 | [planner-worker](planner-worker/) | three roles: a planner answering in a schema, a worker with tools, a supervisor checked by a gate; each decoded its own way, in conversations of their own |
-| [verified-task](verified-task/) | a v2 workflow: a task, a command gate whose exit status decides, bounded repair, a success condition with a coverage threshold |
+| [verified-task](verified-task/) | a task, a command gate whose exit status decides, bounded repair, a success condition with a coverage threshold |
 | [rust-refactor](rust-refactor/) | a reusable sweep over any Rust repository: an exploration agent publishes the context and the project's own check commands as variables, then per file an auditor, a fixer and a reviewer each in a fresh conversation, the executor commits after trusted gates, and a failed file is rolled back |
 | [sdk-runner](sdk-runner/) | the same cases, run from an application with the SDK alone |
 
@@ -30,8 +28,8 @@ offline on mock models and fixture tools.
 
 ```text
 name/
-  harness.yaml     the main document (custom-helper ships bundle.yaml and document.yaml instead)
-  children/*.yaml  documents the main one delegates to, by name
+  harness.yaml     the main document
+  lib/*.yaml       workflows it imports (`imports:`), when a sample has any
   cases/*.yaml     one case per file: input, model, tools, expectations
   fixtures/        files a case refers to (model scripts), when a sample has any
   README.md
@@ -54,7 +52,7 @@ and must reach the same verdict and trace.
 ## Running them
 
 ```sh
-sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task,module-sweep,planner-worker,reviewed-change,embedded-hardening,rust-refactor}   # all samples, offline
+sven harness test samples/harnesses/{ticket-routing,scoped-agent,repair-loop,repo-repair,suspend-resume,verified-task,module-sweep,planner-worker,reviewed-change,embedded-hardening,rust-refactor}   # all samples, offline
 cargo test -p sven-harness-testkit --test samples
 ```
 

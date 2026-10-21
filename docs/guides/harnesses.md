@@ -3,9 +3,9 @@
 
 # Harnesses
 
-A **harness** is an agent program written as data: a YAML file whose steps are
-model calls, tool calls, verifications, branches, retries, parallel fan-outs
-and delegations to child harnesses. Sven compiles it offline, pins it by a
+A **harness** is an agent workflow written as data: a YAML file that declares
+tasks, the trusted gates that decide whether each one succeeded, how failures
+are repaired and what counts as success. Sven compiles it offline, pins it by a
 content digest and runs it on the same kernel as every other agent, so the
 permission gate, approvals, cancellation and tracing all apply unchanged.
 
@@ -13,43 +13,54 @@ permission gate, approvals, cancellation and tracing all apply unchanged.
 harnesses without a model, a network or a configuration file. This page is the
 user guide; the language, the runtime and the SDK are in
 [Programmable harnesses](../reference/harnesses.md), and the design
-decisions in [ADR 0004](../adr/0004-programmable-harnesses.md).
+decisions in [ADR 0004](../adr/0004-programmable-harnesses.md) and
+[ADR 0005](../adr/0005-declarative-harness-v2.md). The workflow language is
+the only harness language; the earlier step-map language was removed
+([ADR 0006](../adr/0006-v2-is-the-only-harness-language.md)).
 
 ## A first harness
 
+One schema-constrained model turn, then a second turn only for bugs
+([samples/harnesses/ticket-routing](../../samples/harnesses/ticket-routing)):
+
 ```yaml
-api_version: "1"
-name: decision
-inputs: { plan: string, vip: boolean }
-outputs: { tier: string, discount: number }
-entry: top
-steps:
-  top:      { branch: { on: { all: [inputs.vip, { eq: inputs.plan, value: enterprise }] }, when_true: gold, when_false: middle } }
-  middle:   { branch: { on: { any: [inputs.vip, { eq: inputs.plan, value: pro }] }, when_true: silver, when_false: standard } }
-  gold:     { assign: { set: { tier: gold, discount: 20 }, then: finish } }
-  silver:   { assign: { set: { tier: silver, discount: 10 }, then: finish } }
-  standard: { assign: { set: { tier: standard, discount: 0 }, then: finish } }
-  finish:   { return: { value: { tier: "{{ facts.tier }}", discount: "{{ facts.discount }}" } } }
+api_version: "2"
+name: model-routing
+inputs: { ticket: string }
+outputs:
+  label: { type: string, value: "{{ tasks.classify.output.label }}" }
+  summary: { type: string, value: "{{ tasks.summarize.output }}" }
+execution: { limits: { model_turns: 3 } }
+workflow:
+  - name: classify
+    model_only: true
+    schema:
+      type: object
+      required: [label]
+      properties: { label: { type: string, enum: [bug, feature, question] } }
+    task: "Classify as bug, feature or question: {{ inputs.ticket }}"
+  - name: summarize
+    model_only: true
+    when: { eq: tasks.classify.output.label, value: bug }
+    task: "Write a one-line summary of this bug for the bugs queue: {{ inputs.ticket }}"
 ```
 
-This is [samples/harnesses/branching](../../samples/harnesses/branching). Each
-step is a map with exactly one primitive key; `then` names the next step.
+A task is a prompt plus what is checked afterwards; `model_only` makes it one
+model turn without tools, `schema` makes the answer JSON of that shape that
+later templates read, and `when` skips a task. The model fills values; it never
+decides control flow.
 
 ```sh
-$ sven harness validate samples/harnesses/branching
-OK samples/harnesses/branching (decision)
-$ sven harness run samples/harnesses/branching --input '{"plan": "pro", "vip": false}' --quiet
-status: completed
-output: {"discount":10,"tier":"silver"}
-steps: 4
+$ sven harness validate samples/harnesses/ticket-routing
+OK samples/harnesses/ticket-routing (model-routing)
+$ sven harness test samples/harnesses/ticket-routing
 ```
 
 ## A workflow: tasks, gates and repair
 
-A step map is the machine's language. For a job ("make this change and prove
-it works") you rarely want to write steps; write the job. A document with
-`api_version: "2"` declares tasks and the checks that decide them, and sven
-lowers it into steps for you
+For a job ("make this change and prove it works") you write the job, not the
+steps: tasks and the checks that decide them, which sven lowers into the
+machine's steps for you
 ([samples/harnesses/verified-task](../../samples/harnesses/verified-task)):
 
 ```yaml
@@ -132,7 +143,7 @@ it was on; the finished ones are not run again.
 `sven harness test` runs the sample on mock models, with a fixture standing in
 for the `shell_gate` tool; a real run needs a host that provides the tool (the
 SDK's `GateCommandTool`). The full language is in the
-[reference](../reference/harnesses.md#workflows-api_version-2).
+[reference](../reference/harnesses.md#the-language).
 
 ## Harness directories
 
@@ -140,15 +151,14 @@ A path argument is a harness file, or a directory:
 
 ```text
 NN-name/
-  harness.yaml     the main document (or bundle.yaml, never both)
-  children/*.yaml  harnesses the main one delegates to, by name
+  harness.yaml     the main document
+  lib/*.yaml       workflows it imports (`imports:`), any path inside the directory
   cases/*.yaml     test cases, one per file
   fixtures/        files a case refers to
 ```
 
-`bundle.yaml` is a document plus its WASM helpers in one file (see
-[custom-helper](../../samples/harnesses/custom-helper)); a bundle is
-pinned by one digest covering both.
+A main document with `imports` is a package: it is pinned by one digest that
+covers every imported workflow ([reviewed-change](../../samples/harnesses/reviewed-change)).
 
 ## Commands
 
@@ -173,17 +183,15 @@ sven harness resume   <PATH> --checkpoint FILE [the flags of run]
 sven harness replay   <PATH> --recording FILE [--expect-trace FILE] [--json]
 sven harness test     <DIR>... [--case NAME] [--no-replay] [--json]
                       [--model SPEC --model-endpoint URL]
-sven harness bundle   <DOCUMENT> --helper NAME=FILE.wasm... [-o FILE]
-sven harness helper run <FILE.wasm | BUNDLE --helper NAME> --input JSON [--fuel N] [--max-pages N]
 sven harness compare  <DIR_A> <DIR_B> --cases DIR [--fail-on-regression] [--json]
                       [--seed N]... [--bootstrap-seed N] [--model SPEC --model-endpoint URL]
 ```
 
-- **validate** compiles the main document and its children; nothing runs. It
-  reports every error with the step it belongs to.
-- **inspect** shows the steps and their successors, the declared
+- **validate** compiles the main document and its imports; nothing runs. It
+  reports every error with the task or gate it belongs to.
+- **inspect** shows the generated steps and their successors, the declared
   capabilities, limits, inputs and outputs, the plan digest (and bundle
-  digest), helpers, children and cases.
+  digest), imports and cases.
 - **schema** prints the JSON Schema of harness documents (for editors); with
   a PATH it prints that harness's input/output contract as JSON Schema.
 - **run** executes once. `--input` or `--input-file` gives the inputs;
@@ -195,7 +203,7 @@ sven harness compare  <DIR_A> <DIR_B> --cases DIR [--fail-on-regression] [--json
   `--seed` selects the block a `by_seed` fixture model uses.
 - **resume** continues a suspended run from the checkpoint `run
   --checkpoint-out` wrote. The checkpoint carries the inputs; a checkpoint
-  taken under another program, or a changed bundle, is refused.
+  taken under another program, or a changed import, is refused.
 - **replay** feeds a recording back into a fresh machine and executes
   nothing. With `--expect-trace` the replayed trace must equal a trace file.
 - **test** runs every case of each directory; **compare** runs one set of
@@ -215,13 +223,12 @@ and leave a checkpoint.
 
 ### Reading a harness and a run
 
-None of these starts a model; they work on version 1 plans and version 2
-workflows alike.
+None of these starts a model.
 
 - `compile` prints the canonical plan the digest is taken over, as JSON or
-  YAML (`--format`, `-o FILE`). A workflow prints its lowered plan with the
+  YAML (`--format`, `-o FILE`). The plan carries the
   `profile` and the `source_map`.
-- `inspect --graph dot|mermaid` draws the plan. A workflow's generated steps
+- `inspect --graph dot|mermaid` draws the plan. The generated steps
   are grouped into one cluster (Graphviz) or subgraph (Mermaid) per task and
   captioned by role, check and attempt; edges say which outcome takes them
   (`passes`, `fails`, `true`, `false`). Render with `dot -Tsvg` or paste the
@@ -267,8 +274,8 @@ sven harness run ./c-repair --toolset coding --workspace ./repo \
 - `--model` and `--model-endpoint` name a server you already run. The
   fixture flags (`--model-fixture`, `--tool-fixture`, `--case`) are refused.
 - `--approvals` is `auto` (allowed calls run unasked), `deny` (every call
-  that is not read-only is refused, including a harness's own `shell` tool
-  steps, so a gate step fails the run rather than passing without running)
+  that is not read-only is refused, including a harness's own
+  gate steps, so a gate step fails the run rather than passing without running)
   or `ask` (each such call is put to you on the terminal; end of input
   refuses). There is no default.
 - Three caps bound the agent, and it holds a capability only when all agree:
@@ -295,7 +302,7 @@ working. Verification is not the agent's:
 declare it as gates, pin the gate files with `artifact` gates that carry a
 `sha256` so the agent cannot edit them, and list them under the task's
 `verify`. A script inside the editable repository is a weak gate on its own.
-`tests/fixtures/harness/c-repair` is a working version 2 example: the agent
+`tests/fixtures/harness/c-repair` is a working example: the agent
 writes a C test, builds it with the real compiler and fixes the library, and
 the run completes only when the pinned gate (which exits non-zero unless the
 compiler and its test succeed) passes.
@@ -324,13 +331,11 @@ where it rests, exits 3 and leaves its checkpoint for `harness resume`.
 
 | Command | 0 | 1 | 2 | 3 | 4 | 5 |
 |---------|---|---|---|---|---|---|
-| `run`, `resume` | the plan returned | the plan `fail`ed | usage, invalid harness, input or file | suspended by a bound | cancelled | infrastructure |
+| `run`, `resume` | the workflow returned | the workflow failed | usage, invalid harness, input or file | suspended by a bound | cancelled | infrastructure |
 | `validate`, `inspect`, `compile` | valid | invalid | unreadable path | | | |
 | `explain` | explained | | unknown step, unreadable path | | | |
 | `status` | the checkpoint fits the document | `resume` would refuse the checkpoint | not a checkpoint, unreadable path | | | |
 | `test` | all passed or skipped | a case failed | usage, invalid harness or manifest | | | |
-| `bundle` | bundle written | | usage, helper not usable, bundle does not compile | | | |
-| `helper run` | output printed | helper broke a bound or its contract | usage, unusable module | | | |
 | `compare` | report produced | regression (paired: `reject`) under `--fail-on-regression` | invalid variant or usage | | | |
 | `replay` | matched | trace mismatch | recording refused or usage | | | |
 
@@ -369,7 +374,7 @@ model:                             # exactly one of sequence | rules | file | fa
   # live: { model: "ollama/qwen3:8b" }
 tools:
   read_notes:
-    capability: ReadFile           # must equal what the tool's name implies
+    capability: ReadFile           # must equal what the tool's name implies (`shell_gate` is ExecuteShell)
     responses:                     # one per call, in order; running out is a case error
       - ok: "remember the milk"    # a string verbatim, anything else as JSON text
       - error: "disk full"
@@ -385,8 +390,8 @@ expect:
   status: completed                # completed | failed | cancelled | suspended
   output: { queue: bugs }          # exact JSON equality
   output_includes: { queue: bugs } # recursive subset
-  failure: { code: unroutable, message_contains: "valid route" }
-  steps: { classify: 1, ask: 1 }   # exact start counts of the listed top-level steps
+  failure: { code: invalid_answer, message_contains: "not valid JSON" }
+  steps: { classify__work: 1 }     # exact start counts of the listed generated steps
   max_steps: 6
   tools_invoked: [read_notes]      # sorted multiset of fixture calls, children included
   tools_not_invoked: [write_notes]
@@ -401,18 +406,20 @@ suspended` in the first phase (this is `suspend-resume`):
 ```yaml
 bounds: { deadline_ms: 300 }
 tools:
-  read_report: { capability: ReadFile, responses: [ { block: true } ] }
-expect: { status: suspended, steps: { call: 1 } }
+  shell_gate: { capability: ExecuteShell, responses: [ { block: true } ] }
+expect: { status: suspended, steps: { fetch__v0_read_a0: 1 } }
 resume:                            # a second phase on the checkpoint, with fresh fixtures
   tools:
-    read_report: { capability: ReadFile, responses: [ { ok: "all green" } ] }
-  expect: { status: completed, output: { report: "all green" }, steps: { call: 2 } }
+    shell_gate:
+      capability: ExecuteShell
+      responses: [ { ok: { exit_code: 0, timed_out: false, error: null, stdout: "all green", stderr: "" } } ]
+  expect: { status: completed, output: { report: "all green" }, steps: { fetch__v0_read_a0: 1 } }
 ```
 
 Notes:
 
 - `sequence` answers model calls in order and so suits one thread of control;
-  a `parallel` step asks in no defined order, so use stateless `rules` there.
+  tasks that run in no fixed order (a loop over items) ask in no defined order, so use stateless `rules` there.
 - A case without `model` has a model that only fails, which is how a
   model-free harness proves it never asks one. A sequence asked for more
   answers than it holds is a case error.
@@ -430,85 +437,49 @@ Notes:
 A run that disagrees with a case is a question about which one is wrong. The
 expectation is never loosened to make a run pass.
 
-## Writing a helper
-
-A `transform` step runs a helper: a WebAssembly module for the `helper-run/1`
-ABI. It exports one memory and `run(input_ptr: i32, input_len: i32) -> i64`;
-the host writes the input as JSON at `input_ptr` and the helper returns
-`(out_ptr << 32) | out_len`, the range of its JSON output. The module imports
-nothing (an import, a table, indirect calls, a start section or a second
-memory is refused when the module is loaded), a fresh instance serves every
-call, and each call is capped by fuel (`limits.max_helper_fuel`, one unit per
-instruction) and memory (`limits.max_helper_pages`). Build the module with any
-toolchain that emits such a module (for example a `no_std` Rust `cdylib` for
-`wasm32-unknown-unknown`, or WebAssembly text assembled with a WAT assembler);
-the loader says which feature it refuses if the module uses more than the
-runtime implements.
-
-The workflow, each step runnable on its own:
-
-1. **Try the module** on inputs, under the bounds a harness would give it:
-   `sven harness helper run reshape.wasm --input '{"customer": "acme"}' --fuel 100000`.
-   Exit 0 prints the JSON output; exit 1 names the boundary that broke
-   (`fuel`, `memory`, a trap, an output that is not JSON).
-2. **Bundle** it with the document that uses it:
-   `sven harness bundle document.yaml --helper reshape=reshape.wasm -o bundle.yaml`.
-   The bundle is refused when a `transform` step names a helper you did not
-   give, when you give one no step uses, or when a module does not load.
-3. **Validate and test** the bundle directory like any harness:
-   `sven harness validate DIR`, `sven harness test DIR` (cases state what the
-   helper's output must make the harness do).
-
-The [custom-helper](../../samples/harnesses/custom-helper) sample runs through
-all three; its helper is the identity module, so
-`sven harness helper run samples/harnesses/custom-helper/bundle.yaml --helper reshape --input '{"a": 1}'`
-prints `{"a": 1}`. A changed helper is a changed program: the bundle digest,
-and with it any checkpoint taken under the old bundle, changes.
-
 ## Samples tour
 
-[samples/harnesses](../../samples/harnesses) holds thirteen harnesses, each a data
-directory with its cases:
+[samples/harnesses](../../samples/harnesses) holds eleven workflows, each a data
+directory with its cases, and the SDK runner:
 
 | Sample | What it shows |
 |---|---|
-| `branching` | `assign` and `branch` only: no model, no capability |
-| `ticket-routing` | a schema-constrained `predict` inside a `retry`, then a branch; its `live-local` case is the opt-in real-model run |
-| `scoped-agent` | delegation to a child; an `agent` step held to its tool list |
-| `repair-loop` | `retry` around a failing tool, then an independent `verify` |
-| `repo-repair` | the real shell and file tools on a repository: diagnose a failing test, edit, verify independently, retry once |
-| `parallel-research` | `parallel` branches joined in declared order; cancellation |
+| `ticket-routing` | schema-constrained model-only tasks and a `when` condition; its `live-local` case is the opt-in real-model run |
+| `scoped-agent` | an imported workflow (`use:`) held to its own tools and capabilities |
+| `repair-loop` | a task whose independent file check fails until a bounded repair makes it pass |
+| `repo-repair` | the real shell and file tools on a repository: a soft baseline gate, a diagnosis, an edit, a gate that decides, one repair |
 | `suspend-resume` | suspend on a deadline, resume the checkpoint, replay offline |
-| `custom-helper` | a sandboxed WASM helper carried in a bundle |
 | `planner-worker` | a model-only planner answering in a schema, a tool-using worker and a model-only supervisor behind a gate, each with its own sampling and thinking settings |
 | `reviewed-change` | a package: one workflow imports another (`imports:`) and runs it as a task (`use:`), the call checked at compile time and the child spending under the caller's limits |
-| `module-sweep` | a v2 workflow with a `for_each` over a frozen backlog and an `until` on a coverage figure; a suspension resumes at the module it was on |
-| `verified-task` | a v2 workflow: a command gate whose exit status decides, bounded repair, a coverage threshold in the success condition |
+| `module-sweep` | a `for_each` over a frozen backlog and an `until` on a coverage figure; a suspension resumes at the module it was on |
+| `verified-task` | a command gate whose exit status decides, bounded repair, a coverage threshold in the success condition |
 | `embedded-hardening` | the full pipeline on a disposable embedded C repository: bootstrap, plan, a checkpointed `for_each` over modules, coverage `until` 90 percent, architecture, production; real gcov and clang-tidy gates, a pinned check, a live-run recipe |
+| `rust-refactor` | a reusable sweep over any Rust repository: variables published by an exploration task, a `do:` body per file in fresh conversations, trusted gates and a rollback |
 | `sdk-runner` | the same cases from an application, with the SDK alone |
 
 ```sh
-sven harness test samples/harnesses/{branching,ticket-routing,scoped-agent,repair-loop,repo-repair,parallel-research,suspend-resume,custom-helper,verified-task,module-sweep,planner-worker,reviewed-change,embedded-hardening}   # every sample, offline
+sven harness test samples/harnesses/{ticket-routing,scoped-agent,repair-loop,repo-repair,suspend-resume,verified-task,module-sweep,planner-worker,reviewed-change,embedded-hardening,rust-refactor}   # every sample, offline
 cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
 ```
 
 ### Suspend, resume, replay
 
 The checkpoint flow of `suspend-resume`, from a shell. `blocked.yaml`
-is a read that never answers and `answered.yaml` one that does:
+is a gate that never answers and `answered.yaml` one that does:
 
 ```yaml
 # blocked.yaml
-read_report:
-  capability: ReadFile
+shell_gate:
+  capability: ExecuteShell
   responses: [ { block: true } ]
 ```
 
 ```yaml
 # answered.yaml
-read_report:
-  capability: ReadFile
-  responses: [ { ok: "all green" } ]
+shell_gate:
+  capability: ExecuteShell
+  responses:
+    - ok: { exit_code: 0, timed_out: false, error: null, stdout: "all green", stderr: "" }
 ```
 
 ```sh
@@ -631,7 +602,7 @@ resumes where it stood.
 - `--checkpoint-out FILE` keeps the latest checkpoint (atomically) and, for a
   loop marked `checkpoint: each_item`, a new one after every completed item.
   `harness resume PATH --checkpoint FILE` continues; the plan digest (and the
-  bundle digest, with imports or helpers) must be the same, or it is refused
+  bundle digest, with imports) must be the same, or it is refused
   before anything runs. `harness status --checkpoint FILE` says where the run
   stands and whether `resume` would accept it.
 - Work in flight when the run stopped proves nothing. A model turn, a gate, a
@@ -650,32 +621,29 @@ resumes where it stood.
 - `harness replay` re-dispatches a recording into a fresh machine and executes
   nothing; two replays are identical.
 
-## Moving from version 1 to version 2
+## Moving from the step-map language
 
-Version 1 documents keep working, byte for byte (`v1_compiled_plan_unchanged`
-pins their digests). Version 2 is for jobs, not for control flow, and it lowers
-onto the same machine: `harness inspect` lists the generated steps and the
-source map says which task each belongs to. Rewrite by hand when a harness is a
-job:
+The earlier language, a map of steps with a primitive each (`api_version:
+"1"`), is gone: a document that says so is refused with an error that points
+to [ADR 0006](../adr/0006-v2-is-the-only-harness-language.md). Rewrite by hand;
+the jobs it was used for are tasks:
 
-| In version 1 you wrote | In version 2 you write |
+| In the step-map language you wrote | Now you write |
 |---|---|
 | an `agent` step, then a `tool` step running tests, a `verify`, a `branch` on the verdict | a task with `verify: [gate]` |
-| a `retry` around the agent step with a repair prompt | `repair: {attempts, prompt}` (unrolled, not a retry) |
+| a `retry` around the agent step with a repair prompt | `repair: {attempts, prompt}` |
 | an `assign` and a `branch` per condition | `when:` on a task, a `follow_ups` entry |
 | a loop built from `retry` and a counter | `for_each` (a frozen list, per-item state) or `until` (a measured metric) |
 | a `predict` with a named schema | a `model_only` task with `schema:` |
-| a `delegate` to a harness in the directory | `imports:` and `use:` (a package, checked at compile time) |
+| a `delegate` to a harness in `children/` | `imports:` and `use:` (a package, checked at compile time) |
+| `parallel` branches | tasks in order; a `for_each` over items |
+| a `transform` step running a WASM helper | a command gate, or a `model_only` task |
 | hand-rolled success `verify` steps at the end | `success: {gates, metrics, work_items}` |
 
-What changes: the `tool_calls` and `model_turns` limits are under
-`execution.limits`; a gate's argv is part of the plan and cannot be redefined by
-the agent; templates read `inputs.x` and `tasks.t.output` (never `facts` or
-`steps`); a failing check never advances. What does not: capabilities,
-approvals, checkpoints, recordings, replay, traces, the SDK, `harness test`.
-Step ids are stable across reformatting, so a v1 tool that reads a trace by step
-id keeps working on the generated ones, and now also has the `source` of each.
-A document is never retried as the other version: say `api_version: "2"`.
+The `tool_calls` and `model_turns` limits are under `execution.limits`; a
+gate's argv is part of the plan and cannot be redefined by the agent;
+templates read `inputs.x` and `tasks.t.output` (never `facts` or `steps`); a
+failing check never advances.
 
 ## Models: offline by default
 
@@ -698,8 +666,8 @@ suite must not depend on one.
 
 ## Authorization in one paragraph
 
-A harness declares the capabilities it needs; a step whose primitive needs one
-the harness does not declare fails `validate`. At run time a child harness
+A harness declares the capabilities it needs (or has them derived); a task or
+gate that needs one the declared list lacks fails `validate`. At run time a child harness
 holds only what both its parent and its own document declare, an `agent`
 step's `tools` list is an enforced allowlist, host approval applies, and a
 tool is held to the capability it really has. See

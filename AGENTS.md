@@ -196,7 +196,7 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
 | `make fmt` | Format |
 | `make test/harness` | Every harness suite (one `test/harness/<suite>` each) (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
 | `make test/harness/local-model` | OPT-IN: the `live-local` case of the `ticket-routing` sample against a model you already serve (`ENDPOINT=<url>`, optional `MODEL=<spec>`; refuses without ENDPOINT); never part of `make test` or `make check` |
-| `make generate/harness/sample-bundle`, `make generate/config/golden` | Rewrite committed derived files (`generate/<area>/<file>`); the matching tests only check them |
+| `make generate/config/golden` | Rewrite committed derived files (`generate/<area>/<file>`); the matching tests only check them |
 | `make help` | Every target as a tree; names are concept first (`test/harness`, `check/gates/no-machine-paths`), so `make <TAB>` descends level by level (`check/gates/make-targets` enforces it) |
 | `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |
 | `make test/e2e/basic` | Bats end-to-end suite (CLI/CI/mock behaviour); one `test/e2e/basic/<test>` per bats file |
@@ -259,9 +259,9 @@ decoding, resampling, audio data-URL helpers) · `sven-workspace`
 (project/skill/agent/knowledge discovery) · `atif` (ATIF v1.7 trajectory
 format) · `sven-tui-nvim` (embedded Neovim client, ratatui-rendered)
 
-Harness language crates: `sven-harness-spec` (document, validator, compiler
-to a content-hashed plan, JSON Schema) and `sven-harness-transform` (the
-sandboxed WASM helper runtime of `transform` steps).
+Harness language crate: `sven-harness-spec` (the workflow document, its
+lowering to the step specification, validator, compiler to a content-hashed
+plan, JSON Schema).
 
 ### kernel
 `sven-model` (`ModelProvider` trait, request/response vocab, driver metadata
@@ -487,14 +487,16 @@ A decision model only advises; see [docs/internals/decisions.md](docs/internals/
 6. Config: `sven_vocab::AgentMode` if it's user-selectable.
 
 ### Add a harness primitive
-A new primitive is a variant added to the closed `StepSpec` enum (ADR 0004);
-it is a deliberate act across the whole stack, never an interpreter escape
-hatch:
-1. **Typed schema** - the variant and its step struct in
-   `harness-spec/src/spec.rs`, its name in `PRIMITIVES`, and its shape in
+Documents are workflows (ADR 0005, 0006); a primitive is a variant of the
+closed `StepSpec` enum that a workflow construct lowers to. It is a deliberate
+act across the whole stack, never an interpreter escape hatch:
+1. **Lowering and typed spec** - the variant and its step struct in
+   `harness-spec/src/steps.rs`, the workflow construct that produces it in
+   `harness-spec/src/workflow.rs` (and its checks in `workflow_validate.rs`),
+   the lowering in `lower*.rs`, and its shape in
    `harness-spec/schema/harness-document.schema.json` (the
-   `document_schema` test holds the three together).
-2. **Static validator** - `harness-spec/src/validate.rs`: references, the
+   `workflow_schema` test holds schema and parser together).
+2. **Static validator** - `harness-spec/src/steps_validate.rs`: references, the
    capability it exercises (`required_capability`), the limits it needs.
    Plan form in `plan.rs`.
 3. **Runtime behaviour** - `harness-runtime/src/exec.rs` (or a new module

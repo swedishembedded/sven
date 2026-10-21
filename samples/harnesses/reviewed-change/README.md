@@ -3,7 +3,7 @@
 
 # reviewed-change - a workflow that uses another workflow
 
-A v2 package: `harness.yaml` makes a change and then `use`s the reviewer in
+A package: `harness.yaml` makes a change and then `use`s the reviewer in
 `lib/review.yaml`, an ordinary workflow of its own. `imports: {review:
 ./lib/review.yaml}` names the file, a path relative to the importing document
 that has to stay inside the package; `use: review` with `with: {subject: ...}`

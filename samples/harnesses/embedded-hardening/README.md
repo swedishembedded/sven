@@ -3,7 +3,7 @@
 
 # embedded-hardening - test, simplify and harden an embedded C repository
 
-The full version 2 pipeline on a disposable firmware repository: **bootstrap**,
+The full pipeline on a disposable firmware repository: **bootstrap**,
 **plan**, **modules** (a `for_each` over a frozen backlog with `checkpoint:
 each_item` and `covers`), **coverage** (`until` 90 percent), **architecture**,
 **production**, and a success condition that re-measures everything.

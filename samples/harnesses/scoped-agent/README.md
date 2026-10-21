@@ -1,16 +1,16 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 <!-- Copyright (c) 2026 Martin Schröder <info@swedishembedded.com> -->
 
-# scoped-agent - least privilege across a delegation
+# scoped-agent - least privilege across an imported workflow
 
 `triage` answers a question from the notes. It does not read them itself: it
-delegates to the child harness `reader` (`children/reader.yaml`), and the
-authority narrows at each step.
+imports the workflow `reader` (`lib/reader.yaml`) and runs it as a task
+(`use: reader`), and the authority narrows at each step.
 
 - `triage` declares `SpawnChild` and `ReadFile`.
 - `reader` declares `ReadFile` only. A child never holds more than its own
   document declares, whatever its parent holds.
-- `reader`'s agent step lists `tools: [read_notes]`. The list is an enforced
+- `reader`'s agent lists `tools: [read_notes]`. The list is an enforced
   allowlist: a call to any other tool is refused before it runs, and the
   model is told so.
 

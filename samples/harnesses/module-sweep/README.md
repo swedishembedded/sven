@@ -3,7 +3,7 @@
 
 # module-sweep - a long job that can be interrupted
 
-A v2 workflow with three tasks: a planning task that leaves `backlog.json`, a
+A workflow with three tasks: a planning task that leaves `backlog.json`, a
 task that runs once per module in it, and a task that repeats until coverage
 reaches a threshold.
 

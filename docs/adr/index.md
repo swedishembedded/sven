@@ -18,3 +18,4 @@ disagree, the reference is right.
 | [ADR 0003](0003-agents-as-typed-objects.md) | Treat agents as typed, resumable objects behind an SDK |
 | [ADR 0004](0004-programmable-harnesses.md) | Define agent programs as YAML that compiles through the kernel |
 | [ADR 0005](0005-declarative-harness-v2.md) | Add a declarative harness v2 language that lowers tasks, gates and iteration onto the v1 machinery |
+| [ADR 0006](0006-v2-is-the-only-harness-language.md) | Make the workflow language the only harness language and remove the step-map document language |
