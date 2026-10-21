@@ -397,8 +397,11 @@ fn ascend_to_find(path: &str) -> Option<std::path::PathBuf> {
         return None;
     }
 
-    // Cap total path depth to avoid excessive fs stats on exotic paths.
-    const MAX_DEPTH: usize = 12;
+    // Cap the path depth to bound the file system stats on exotic paths: two
+    // passes, so at most about twice the depth. The cap is generous because a
+    // workspace under a deep checkout or temporary directory is ordinary and
+    // must not lose ascent for living deep.
+    const MAX_DEPTH: usize = 64;
     if parts.len() > MAX_DEPTH {
         return None;
     }
@@ -770,6 +773,25 @@ mod tests {
     }
 
     // ── ascend_to_find tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn ascent_works_in_a_workspace_that_is_deep_in_the_file_system() {
+        use std::fs;
+        // 20 components below the temporary directory, whatever that is.
+        let mut deep =
+            std::env::temp_dir().join(format!("sven_deep_ascend_{}", std::process::id()));
+        for n in 0..20 {
+            deep = deep.join(format!("d{n}"));
+        }
+        let real_dir = deep.join("subdir");
+        fs::create_dir_all(&real_dir).unwrap();
+        fs::write(real_dir.join("file.txt"), "hello").unwrap();
+        let wrong = deep.join("project").join("subdir").join("file.txt");
+        let found = ascend_to_find(&wrong.to_string_lossy());
+        assert_eq!(found.as_deref(), Some(real_dir.join("file.txt").as_path()));
+        let root = deep.ancestors().nth(20).unwrap().to_path_buf();
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn ascend_finds_file_one_level_up() {
