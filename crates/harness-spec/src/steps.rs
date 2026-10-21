@@ -214,7 +214,7 @@ impl Serialize for InputValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HarnessSpec {
-    /// The language version. Only [`SUPPORTED_API_VERSION`] compiles.
+    /// The language version. Only [`API_VERSION`] compiles.
     #[serde(rename = "api_version")]
     pub api_version: String,
     /// The harness's name, carried into the plan for tracing.
