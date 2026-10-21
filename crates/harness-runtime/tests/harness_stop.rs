@@ -375,3 +375,52 @@ fn a_model_that_ran_out_of_context_is_named_for_it() {
     assert_eq!(state, HarnessState::Failed);
     assert_eq!(m.outcome().unwrap()["code"], "context_exhausted");
 }
+
+fn transient() -> Event {
+    Event::LlmFailed {
+        error: format!(
+            "{}: model completion failed: connection closed before message completed",
+            sven_hsm::TRANSIENT
+        ),
+    }
+}
+
+#[test]
+fn a_server_failure_that_may_pass_is_asked_again_after_a_growing_pause_and_then_named() {
+    let (mut m, mut ctx, mut state) = begin(10);
+    let mut pauses = Vec::new();
+    for _ in 0..4 {
+        let fx = drive(&mut m, &mut ctx, &mut state, transient());
+        let request = fx
+            .iter()
+            .find_map(|e| match e {
+                Effect::CallLlm { request } => Some(request.clone()),
+                _ => None,
+            })
+            .expect("the turn is asked again");
+        pauses.push(request["delay_ms"].as_u64());
+    }
+    assert_eq!(
+        pauses,
+        [Some(5_000), Some(10_000), Some(20_000), Some(40_000)]
+    );
+    assert_eq!(retries(&ctx).len(), 4);
+    assert_eq!(retries(&ctx)[0]["reason"], "transient");
+    let _ = drive(&mut m, &mut ctx, &mut state, transient());
+    assert_eq!(state, HarnessState::Failed);
+    let outcome = m.outcome().expect("an outcome");
+    assert_eq!(outcome["code"], "model_unavailable", "{outcome}");
+    assert!(outcome["message"]
+        .as_str()
+        .unwrap()
+        .contains("connection closed"));
+}
+
+#[test]
+fn the_pause_ends_with_the_first_answer() {
+    let (mut m, mut ctx, mut state) = begin(10);
+    let _ = drive(&mut m, &mut ctx, &mut state, transient());
+    let _ = drive(&mut m, &mut ctx, &mut state, turn(THREAD, "All done."));
+    assert_eq!(state, HarnessState::Completed);
+    assert_eq!(m.outcome().unwrap()["stop"], "concluded");
+}

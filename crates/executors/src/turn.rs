@@ -315,6 +315,9 @@ impl EffectExecutor for TurnExecutor {
         // is its to retry or to name, not the executor's to count as a streak
         // across the checks and repairs between turns.
         let judged_by_harness = req.origin.is_some();
+        if let Some(ms) = req.delay_ms {
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+        }
         let model = match self.resolve_role(&req) {
             Ok(model) => model,
             Err(error) => {

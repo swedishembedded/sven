@@ -77,6 +77,17 @@ pub(super) fn gate_args(
 
 /// How many times an empty model reply is asked again before the run fails.
 const MAX_EMPTY_REPLY_RETRIES: u32 = 2;
+/// How many times a turn is asked again after a failure that may pass.
+const MAX_TRANSIENT_RETRIES: u32 = 4;
+
+/// What went wrong with a model turn that is worth asking again.
+#[derive(Clone, Copy)]
+pub(super) enum TurnTrouble<'a> {
+    /// No text and no tool call.
+    Empty,
+    /// The server failed in a way that may pass, with its error.
+    Transient(&'a str),
+}
 
 /// The fact the host-provided values of the run live under (`run.*`).
 pub(super) const RUN_FACT: &str = "run";
@@ -245,35 +256,48 @@ impl HarnessMachine {
         self.walk_to(run, step_id, ctx)
     }
 
-    /// The model answered with nothing: no text and no call. Asking again is
-    /// plausible (a server that lost the reply may not next time) and bounded;
-    /// when the asks are spent the run fails with `empty_reply`, which says
-    /// what happened and not that some side effect failed. A retry costs
-    /// neither a step nor a model turn, and each is on the trace.
-    pub(super) fn empty_reply(
+    /// The model answered with nothing, or the server failed in a way that
+    /// may pass: ask the turn again, a bounded number of times and after a
+    /// pause that grows, each ask on the trace. When the asks are spent the run
+    /// fails with a code that says what happened (`empty_reply`,
+    /// `model_unavailable`), not that some side effect failed. A retry costs
+    /// neither a step nor a model turn.
+    pub(super) fn retry_turn(
         &mut self,
         run: &mut HarnessRunState,
         step_id: &str,
+        why: TurnTrouble<'_>,
         ctx: &mut Context,
     ) -> Reaction<HarnessState> {
-        if run.empty_replies >= MAX_EMPTY_REPLY_RETRIES {
-            let times = run.empty_replies + 1;
-            run.empty_replies = 0;
-            return self.fail_now(
-                run,
-                "empty_reply",
-                &format!(
-                    "the model answered {times} times with nothing (no text and no tool call) \
-                     at step `{step_id}`"
+        let (reason, max, base_ms) = match why {
+            TurnTrouble::Empty => ("empty_reply", MAX_EMPTY_REPLY_RETRIES, 2_000),
+            TurnTrouble::Transient(_) => ("transient", MAX_TRANSIENT_RETRIES, 5_000),
+        };
+        if run.turn_retries >= max {
+            let times = run.turn_retries + 1;
+            run.turn_retries = 0;
+            run.retry_delay_ms = 0;
+            let (code, message) = match why {
+                TurnTrouble::Empty => (
+                    "empty_reply",
+                    format!(
+                        "the model answered {times} times with nothing (no text and no tool \
+                         call) at step `{step_id}`"
+                    ),
                 ),
-                ctx,
-            );
+                TurnTrouble::Transient(error) => (
+                    "model_unavailable",
+                    format!("the model server failed {times} times at step `{step_id}`: {error}"),
+                ),
+            };
+            return self.fail_now(run, code, &message, ctx);
         }
-        run.empty_replies += 1;
+        run.turn_retries += 1;
+        run.retry_delay_ms = base_ms << (run.turn_retries - 1);
         run.trace.push(TraceRecord::TurnRetried {
             step: step_id.to_string(),
-            reason: "empty_reply".to_string(),
-            attempt: u64::from(run.empty_replies),
+            reason: reason.to_string(),
+            attempt: u64::from(run.turn_retries),
         });
         run.counts.steps = run.counts.steps.saturating_sub(1);
         run.counts.model_turns = run.counts.model_turns.saturating_sub(1);

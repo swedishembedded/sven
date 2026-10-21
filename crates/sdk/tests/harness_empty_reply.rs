@@ -129,3 +129,47 @@ async fn a_prompt_that_does_not_fit_the_context_is_named_for_it() {
     };
     assert_eq!(failure.code, "context_exhausted", "{failure:?}");
 }
+
+/// A server whose first request fails the way a dropped connection does.
+struct Flaky(AtomicUsize);
+
+#[async_trait::async_trait]
+impl sven_model::ModelProvider for Flaky {
+    fn name(&self) -> &str {
+        "flaky"
+    }
+    fn model_name(&self) -> &str {
+        "flaky"
+    }
+    async fn complete(
+        &self,
+        _req: sven_model::CompletionRequest,
+    ) -> anyhow::Result<sven_model::ResponseStream> {
+        if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+            anyhow::bail!("error sending request: connection closed before message completed");
+        }
+        Ok(Box::pin(futures::stream::iter(vec![
+            Ok(ResponseEvent::TextDelta("back again".into())),
+            Ok(ResponseEvent::Done),
+        ])))
+    }
+}
+
+#[tokio::test]
+async fn a_dropped_connection_is_waited_out_and_asked_again() {
+    let engine = Engine::builder()
+        .model_provider(Arc::new(Flaky(AtomicUsize::new(0))) as Arc<_>)
+        .build()
+        .expect("an engine builds");
+    let harness = engine.load_harness_from_str(DOC).expect("loads");
+    let mut run = harness.start(json!({})).expect("starts");
+    let outcome = run.execute(RunOptions::new()).await.expect("an outcome");
+    assert!(
+        matches!(&outcome.result, Some(Ok(v)) if v["said"] == "back again"),
+        "{:?}",
+        outcome.result
+    );
+    assert!(outcome.trace.iter().any(
+        |r| matches!(r, TraceRecord::TurnRetried { reason, attempt: 1, .. } if reason == "transient")
+    ));
+}

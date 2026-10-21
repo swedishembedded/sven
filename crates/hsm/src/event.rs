@@ -308,6 +308,10 @@ pub enum InternalEvent {
 /// exhausted (`context_exhausted: ...`).
 pub const CONTEXT_EXHAUSTED: &str = "context_exhausted";
 
+/// The prefix of a failed model turn's error when the failure is the kind that
+/// may not happen again (a dropped connection, a busy server).
+pub const TRANSIENT: &str = "transient";
+
 /// The name of the [`InternalEvent::Custom`] a turn executor sends, just
 /// before the turn's completion, when the provider cut the reply off at its
 /// output-token limit.

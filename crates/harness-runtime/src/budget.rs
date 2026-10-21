@@ -147,6 +147,11 @@ impl HarnessRunState {
     }
 }
 
+/// `true` for zero milliseconds.
+pub(crate) fn is_zero_ms(n: &u64) -> bool {
+    *n == 0
+}
+
 /// `true` for zero: a counter at rest is left out of the serialized state.
 pub(crate) fn is_zero(n: &u32) -> bool {
     *n == 0

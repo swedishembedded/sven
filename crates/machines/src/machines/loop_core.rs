@@ -182,6 +182,7 @@ impl LoopState {
             role: None,
             system: None,
             decoding: sven_vocab::TurnDecoding::default(),
+            delay_ms: None,
         };
         Effect::CallLlm {
             request: req.to_value(),
@@ -351,6 +352,7 @@ pub fn build_turn_effect(
         role: None,
         system: None,
         decoding: sven_vocab::TurnDecoding::default(),
+        delay_ms: None,
     };
     Effect::CallLlm {
         request: req.to_value(),

@@ -113,6 +113,10 @@ pub struct TurnRequest {
     /// has no turns yet; a conversation already under way keeps its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
+    /// How long the executor waits before asking the model: the backoff of a
+    /// turn that is being asked again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delay_ms: Option<u64>,
     /// Decoding settings for this turn only, laid over the run's own.
     #[serde(default, skip_serializing_if = "TurnDecoding::is_empty")]
     pub decoding: TurnDecoding,

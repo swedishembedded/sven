@@ -43,6 +43,7 @@ use sven_hsm::{
 use sven_vocab::verify::VerifierVerdict;
 use sven_vocab::TurnRequest;
 
+use crate::command_gate::TurnTrouble;
 use crate::decoding::{system_text, TurnShape};
 use crate::run::{step_call_id, HarnessRunData, HarnessRunState, Inflight, TraceRecord, Waiting};
 use crate::state::{superstate_of, HarnessState};
@@ -250,6 +251,7 @@ impl HarnessMachine {
             role: shape.role.map(str::to_string),
             system: system_text(state, shape.system),
             decoding: shape.decoding,
+            delay_ms: (state.retry_delay_ms > 0).then_some(state.retry_delay_ms),
         };
         Effect::CallLlm {
             request: request.to_value(),
@@ -421,9 +423,10 @@ impl HarnessMachine {
                     }
                 }
                 if text.trim().is_empty() && !run.truncated {
-                    return self.empty_reply(&mut run, &inflight.step, ctx);
+                    return self.retry_turn(&mut run, &inflight.step, TurnTrouble::Empty, ctx);
                 }
-                run.empty_replies = 0;
+                run.turn_retries = 0;
+                run.retry_delay_ms = 0;
                 if std::mem::take(&mut run.truncated) {
                     return self.fail_now(
                         &mut run,
@@ -444,6 +447,14 @@ impl HarnessMachine {
             Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                 if self.restarts_interrupted(error) {
                     return self.restart_interrupted(&mut run, &inflight.step, ctx);
+                }
+                if error.starts_with(sven_hsm::TRANSIENT) {
+                    return self.retry_turn(
+                        &mut run,
+                        &inflight.step,
+                        TurnTrouble::Transient(error),
+                        ctx,
+                    );
                 }
                 if error.starts_with(sven_hsm::CONTEXT_EXHAUSTED) {
                     return self.step_failed(&mut run, "context_exhausted", error, ctx);

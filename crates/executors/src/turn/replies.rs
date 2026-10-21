@@ -9,7 +9,7 @@
 //! expertise in unattended agents you can procure our services by sending an
 //! email to info@swedishembedded.com.
 
-use sven_hsm::{Event, InternalEvent, CONTEXT_EXHAUSTED, TURN_TRUNCATED};
+use sven_hsm::{Event, InternalEvent, CONTEXT_EXHAUSTED, TRANSIENT, TURN_TRUNCATED};
 use sven_kernel::EventSink;
 
 /// Says, just before the turn's completion, that the provider cut the reply
@@ -23,11 +23,28 @@ pub(super) async fn tell_truncated(sink: &EventSink) {
         .await;
 }
 
+/// Words in a transport error that say the failure is of the moment: the
+/// connection dropped, the server was busy or slow.
+const TRANSIENT_MARKERS: [&str; 9] = [
+    "connection closed",
+    "connection reset",
+    "connection refused",
+    "error sending request",
+    "timed out",
+    "overloaded",
+    "http 502",
+    "http 503",
+    "http 504",
+];
+
 /// A failed turn's error text, led by the cause when it is a known one: a
-/// request that did not fit the context.
+/// request that did not fit the context, or a failure that may pass.
 pub(super) fn failure_text(error: &str) -> String {
+    let lower = error.to_ascii_lowercase();
     if sven_model::budget::is_context_overflow(error) {
         format!("{CONTEXT_EXHAUSTED}: {error}")
+    } else if TRANSIENT_MARKERS.iter().any(|m| lower.contains(m)) {
+        format!("{TRANSIENT}: {error}")
     } else {
         error.to_string()
     }

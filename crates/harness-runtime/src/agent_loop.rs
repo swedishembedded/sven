@@ -20,6 +20,7 @@ use sven_hsm::{Context, Effect, ProposedToolCall, Reaction, ToolCallId};
 use sven_vocab::{RefusedCall, TurnRequest};
 
 use crate::approval::HeldCall;
+use crate::command_gate::TurnTrouble;
 use crate::decoding::{system_text, TurnShape};
 use crate::machine::{harness_thread, HarnessMachine};
 use crate::run::{AgentLoop, HarnessRunState, Inflight, Waiting};
@@ -48,6 +49,7 @@ impl HarnessMachine {
                 origin: shape.origin.map(str::to_string),
                 role: shape.role.map(str::to_string),
                 decoding: shape.decoding,
+                delay_ms: (state.retry_delay_ms > 0).then_some(state.retry_delay_ms),
                 ..TurnRequest::default()
             },
             tools.is_none(),
@@ -165,9 +167,10 @@ impl HarnessMachine {
         // unless the reply was cut at the output limit, which is its own
         // status below.
         if tool_calls.is_empty() && text.trim().is_empty() && !run.truncated {
-            return self.empty_reply(run, &agent.step, ctx);
+            return self.retry_turn(run, &agent.step, TurnTrouble::Empty, ctx);
         }
-        run.empty_replies = 0;
+        run.turn_retries = 0;
+        run.retry_delay_ms = 0;
         if let Some(budget) = self
             .run
             .plan()
