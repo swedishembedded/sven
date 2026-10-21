@@ -32,6 +32,7 @@ use crate::command_gate::INTERRUPTED_OPERATION;
 use crate::machine::HarnessMachine;
 use crate::run::{HarnessRunState, Inflight, TraceRecord, Waiting};
 use crate::state::HarnessState;
+use sven_harness_spec::ITEM_FAILED_FACT;
 
 /// Where an item is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +44,9 @@ pub enum ItemStatus {
     Active,
     /// Its body finished with every check passed.
     Completed,
+    /// A check of its body failed for good in a loop with
+    /// `on_item_failure`: the item was rolled back and the loop went on.
+    Failed,
 }
 
 /// One frozen item of a `for_each`.
@@ -65,6 +69,9 @@ pub struct WorkItem {
     /// it covered when it completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_digest: Option<String>,
+    /// For a failed item, why it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 /// An `iterate` step's progress, in the run state under the step's id.
@@ -100,11 +107,26 @@ impl IterationState {
             .count()
     }
 
+    /// How many items failed.
+    #[must_use]
+    pub fn failed_items(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|i| i.status == ItemStatus::Failed)
+            .count()
+    }
+
+    /// `total`, `completed`, `failed`, `pending` (neither completed nor
+    /// failed) and `unfinished` (not completed).
     fn summary(&self) -> Value {
+        let total = self.items.len();
+        let (completed, failed) = (self.completed_items(), self.failed_items());
         json!({
-            "total": self.items.len(),
-            "completed": self.completed_items(),
-            "pending": self.items.len() - self.completed_items(),
+            "total": total,
+            "completed": completed,
+            "failed": failed,
+            "pending": total - completed - failed,
+            "unfinished": total - completed,
         })
     }
 }
@@ -233,6 +255,7 @@ fn freeze(
             attempts: 0,
             verified_under: None,
             covered_digest: None,
+            failure: None,
         });
     }
     Ok(items)
@@ -526,15 +549,34 @@ impl HarnessMachine {
                 );
             }
         }
+        // The item-failure path leaves the reason; the item failed.
+        let failure = run
+            .facts
+            .remove(ITEM_FAILED_FACT)
+            .and_then(|v| v.as_str().map(str::to_string));
         if let Some(index) = state.active.take() {
             let item = &mut state.items[index];
-            item.status = ItemStatus::Completed;
-            item.verified_under = Some(digest);
-            run.trace.push(TraceRecord::ItemCompleted {
-                step: step.id.clone(),
-                item: item.id.clone(),
-                index: index as u64,
-            });
+            match failure {
+                Some(reason) => {
+                    item.status = ItemStatus::Failed;
+                    item.failure = Some(reason.clone());
+                    run.trace.push(TraceRecord::ItemFailed {
+                        step: step.id.clone(),
+                        item: item.id.clone(),
+                        index: index as u64,
+                        reason,
+                    });
+                }
+                None => {
+                    item.status = ItemStatus::Completed;
+                    item.verified_under = Some(digest);
+                    run.trace.push(TraceRecord::ItemCompleted {
+                        step: step.id.clone(),
+                        item: item.id.clone(),
+                        index: index as u64,
+                    });
+                }
+            }
         }
         let refresh = match iteration {
             PlanIteration::ForEach {
@@ -582,7 +624,7 @@ impl HarnessMachine {
         while state
             .items
             .get(state.next)
-            .is_some_and(|i| i.status == ItemStatus::Completed)
+            .is_some_and(|i| matches!(i.status, ItemStatus::Completed | ItemStatus::Failed))
         {
             state.next += 1;
         }

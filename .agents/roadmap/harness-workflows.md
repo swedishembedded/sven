@@ -134,9 +134,17 @@ Grounded in the source at the start of this work (`fffb3551`):
 5. D4 variables (+ `answered_calls`), `capture`, trust rule.
 6. D6 item failure policy.
 7. D7 trace timestamps, `--trajectory-dir`.
-8. Sample `samples/harnesses/rust-refactor/`: offline cases (fixture model,
+8. **v2 is the only document language** (user request, 2026-10-21): `api_version`
+   "1" documents are no longer accepted; the step language stays only as the
+   internal plan that v2 lowers to (not a document format), the v2 module
+   becomes the crate's main path, legacy v1-only code is removed, and v1
+   samples are rewritten in v2. v1-only features are inventoried first and each
+   is ported to a v2 form or removed on purpose (parallel branches, WASM
+   `transform` helpers and bundles, `delegate` to a machine mode, `retry`,
+   standalone `predict` schemas).
+9. Sample `samples/harnesses/rust-refactor/`: offline cases (fixture model,
    real gates on a fixture Cargo repo) in `make test/harness`.
-9. Live proof: Qwen3.8-27B on brain (CUDA), the sample over a disposable
+10. Live proof: Qwen3.8-27B on brain (CUDA), the sample over a disposable
    worktree of sven, 10 files, metrics, commit audit, estimate for the whole
    repository. Findings go back into the engine.
 

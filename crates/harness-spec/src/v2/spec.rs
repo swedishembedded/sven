@@ -48,6 +48,9 @@ pub struct WorkflowSpec {
     /// The documents this one uses, by the alias a `use` task names: the path
     /// as written, relative to this document's directory.
     pub imports: BTreeMap<String, String>,
+    /// Run variables, by name: typed values agents read and set through the
+    /// harness's variable tools and command gates capture.
+    pub variables: BTreeMap<String, VariableSpec>,
     /// What each import offers, resolved by the package before lowering. Never
     /// read from a document.
     pub resolved: BTreeMap<String, Imported>,
@@ -546,6 +549,21 @@ pub struct ForEach {
     /// resumed, an item whose files have changed since is pending again.
     #[serde(default)]
     pub covers: Vec<String>,
+    /// What happens to an item whose checks fail for good: without it the run
+    /// fails at that item; with it the item is recorded `failed`, these
+    /// checks run (a rollback, say) and the loop goes on with the next item.
+    #[serde(default)]
+    pub on_item_failure: Option<ItemFailure>,
+}
+
+/// `for_each.on_item_failure`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemFailure {
+    /// Gates that run, in order, after an item failed; if one of them fails
+    /// the run fails with `rollback_failed`.
+    #[serde(default)]
+    pub verify: Vec<String>,
 }
 
 /// When a task hands the host a durable checkpoint.
@@ -696,6 +714,8 @@ pub struct TaskSpec {
     /// pass inside an `until`); tasks that name the same conversation share
     /// it. A template over inputs and the loop variables.
     pub conversation: Option<String>,
+    /// The variables the task may see, and what it may do with each.
+    pub vars: BTreeMap<String, VarUse>,
     /// `do:` - the tasks a loop runs for each item or pass, in order, in
     /// place of a single prompt. Each has its own prompt, tools,
     /// conversation, checks and repairs.
@@ -765,5 +785,12 @@ pub struct SuccessSpec {
 #[serde(deny_unknown_fields)]
 pub struct WorkItemsSpec {
     /// Every item of every `for_each` task must have completed.
+    #[serde(default)]
     pub all_completed: bool,
+    /// Every item must have completed or failed (been rolled back by
+    /// `on_item_failure`): the loops ran to the end.
+    #[serde(default)]
+    pub all_settled: bool,
 }
+
+pub use super::vars::{VarUse, VariableSpec};

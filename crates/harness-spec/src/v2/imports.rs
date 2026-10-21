@@ -22,13 +22,15 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
+use super::checks::Builder;
 use super::context::{Context, LoopVars};
-use super::rewrite::{output_fact, rewrite_value};
+use super::lower::{entry_of, origin, skip_step};
+use super::rewrite::{output_fact, rewrite_condition, rewrite_value};
 use super::spec::{Imported, TaskSpec, WorkflowSpec};
 use super::validate::is_identifier;
 use crate::error::HarnessError;
 use crate::expr::Template;
-use crate::spec::{IOType, InputValue};
+use crate::spec::{BranchStepSpec, DelegateStepSpec, IOType, InputValue, StepSpec};
 
 fn invalid(message: String) -> HarnessError {
     HarnessError::Invalid(message)
@@ -260,4 +262,48 @@ pub(super) fn result_fact(task: &TaskSpec) -> String {
 /// The interface of `alias`, if the package resolved it.
 pub(super) fn offered<'a>(w: &'a WorkflowSpec, task: &TaskSpec) -> Option<&'a Imported> {
     task.use_import.as_deref().and_then(|a| w.resolved.get(a))
+}
+
+/// A `use` task: one delegate step that runs the imported workflow and keeps
+/// what it returns as the task's output. A child that fails fails the run at
+/// this task.
+pub(super) fn lower_use(
+    cx: &Context<'_>,
+    b: &mut Builder,
+    task: &TaskSpec,
+    child: &str,
+    next: &str,
+) -> Result<(), HarnessError> {
+    let before = cx.before(&task.name);
+    let work = format!("{}__work", task.name);
+    b.add(
+        &work,
+        StepSpec::Delegate(Box::new(DelegateStepSpec {
+            target: child.to_string(),
+            as_kind: None,
+            input: super::imports::call_input(cx, task, before)?,
+            store_as: Some(super::imports::result_fact(task)),
+            propagate_failure: true,
+            then: next.to_string(),
+        })),
+        origin(Some(&task.name), "use"),
+    );
+    if let Some(condition) = &task.when {
+        let scope = cx.scope(
+            format!("task `{}`: when", task.name),
+            before,
+            LoopVars::default(),
+        );
+        let skipped = skip_step(cx, b, task, next);
+        b.add(
+            &entry_of(task),
+            StepSpec::Branch(Box::new(BranchStepSpec {
+                on: rewrite_condition(condition, &scope, &task.name)?,
+                when_true: work,
+                when_false: skipped,
+            })),
+            origin(Some(&task.name), "when"),
+        );
+    }
+    Ok(())
 }

@@ -190,6 +190,7 @@ impl HarnessMachine {
                 ref prompt,
                 ref tools,
                 ref conversation,
+                ref vars,
                 ref system,
                 ref origin,
                 ref role,
@@ -236,6 +237,7 @@ impl HarnessMachine {
                 }
                 let thread = conversation_thread(self.run.plan(), run, conversation.as_ref());
                 run.agent = Some(AgentLoop {
+                    grants: vars.clone(),
                     stop_as: stop_as.clone(),
                     role: role.clone(),
                     pool: pool.clone(),

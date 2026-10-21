@@ -31,6 +31,8 @@ use sven_hsm::{
     capability_for_tool_name, Context, Effect, Event, GatedCall, Reaction, ToolCapability,
 };
 
+use sven_vocab::AnsweredCall;
+
 use crate::command_gate::{gate_args, GATE_CAPABILITY};
 use crate::iteration::snapshot_args;
 use crate::machine::HarnessMachine;
@@ -225,9 +227,8 @@ impl HarnessMachine {
     ) -> Reaction<HarnessState> {
         match run.agent.as_mut() {
             Some(agent) => {
-                agent
-                    .refused
-                    .insert(call_id.as_uuid().to_string(), NOT_APPROVED.to_string());
+                let answer = AnsweredCall::refused(call_id.as_uuid().to_string(), NOT_APPROVED);
+                agent.answered.insert(answer.call_id, answer.content);
                 self.on_agent_tool_settled(run, call_id, NOT_APPROVED, ctx)
             }
             None => self.side_effect_failed(run, NOT_APPROVED, ctx),

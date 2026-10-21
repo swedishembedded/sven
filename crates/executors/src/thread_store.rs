@@ -179,18 +179,18 @@ impl ThreadStore {
     /// is a history a provider accepts. `reasons` maps the model's call id to
     /// why the call was not run; a call without one is answered generically.
     /// Returns how many calls were answered.
-    pub fn answer_open_calls(&mut self, id: &str, reasons: &HashMap<String, String>) -> usize {
+    pub fn answer_open_calls(&mut self, id: &str, answers: &HashMap<String, String>) -> usize {
         let open: Vec<String> = self
             .open_calls(id)
             .into_iter()
             .map(|(call, _)| call.to_string())
             .collect();
         for call in &open {
-            let reason = reasons.get(call).map_or("it was refused", String::as_str);
-            self.append(
-                id,
-                Message::tool_result(call, format!("The call was not run: {reason}.")),
-            );
+            let answer = answers
+                .get(call)
+                .cloned()
+                .unwrap_or_else(|| "The call was not run: it was refused.".to_string());
+            self.append(id, Message::tool_result(call, answer));
         }
         open.len()
     }
@@ -512,9 +512,9 @@ impl GateJournal {
 
 /// The model's own call id for each refused call, mapped to its reason:
 /// the machine names calls by the kernel's id, the thread by the model's.
-pub(crate) fn refusal_reasons(
+pub(crate) fn machine_answers(
     registry: &Mutex<HashMap<ToolCallId, (String, String)>>,
-    refused: &[sven_vocab::RefusedCall],
+    answered: &[sven_vocab::AnsweredCall],
 ) -> HashMap<String, String> {
     let Ok(registry) = registry.lock() else {
         return HashMap::new();
@@ -523,8 +523,8 @@ pub(crate) fn refusal_reasons(
         .iter()
         .filter_map(|(id, (_, model_id))| {
             let id = id.as_uuid().to_string();
-            let refusal = refused.iter().find(|r| r.call_id == id)?;
-            Some((model_id.clone(), refusal.reason.clone()))
+            let answer = answered.iter().find(|r| r.call_id == id)?;
+            Some((model_id.clone(), answer.content.clone()))
         })
         .collect()
 }

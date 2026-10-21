@@ -94,7 +94,7 @@ pub use limits::CompactionConfig;
 use crate::chunks::ContextAssembler;
 use crate::notices;
 use crate::thread_store::{
-    append_messages, refusal_reasons, register_calls, snapshot_thread, ThreadStore,
+    append_messages, machine_answers, register_calls, snapshot_thread, ThreadStore,
 };
 
 /// Executes single-turn `CallLlm { kind: "turn" }` effects.
@@ -328,10 +328,10 @@ impl EffectExecutor for TurnExecutor {
             }
         };
 
-        // Answer calls refused before they ran, then the instruction: a valid history.
-        let reasons = refusal_reasons(&self.call_id_to_thread, &req.refused_calls);
+        // Answer the calls the machine answered itself, then the instruction: a valid history.
+        let answers = machine_answers(&self.call_id_to_thread, &req.answered_calls);
         if let Ok(mut s) = self.store.lock() {
-            s.answer_open_calls(&thread_id, &reasons);
+            s.answer_open_calls(&thread_id, &answers);
             s.open_thread(&thread_id, req.system.as_deref());
             if !req.instruction.is_empty() {
                 match &req.origin {

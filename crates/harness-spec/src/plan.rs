@@ -55,6 +55,9 @@ pub struct HarnessPlan {
     /// the runtime sends it as the turn's response format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schemas: Option<std::collections::BTreeMap<String, serde_json::Value>>,
+    /// Run variables, by name (version 2 plans only).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub variables: std::collections::BTreeMap<String, crate::vars::VariableDecl>,
     /// Declared capabilities, sorted, deduplicated.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
@@ -200,6 +203,10 @@ pub enum PlanPrimitive {
         /// plans only; absent, the run's shared conversation).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         conversation: Option<Template>,
+        /// The variables the step's agent may read or set (version 2 plans
+        /// only).
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        vars: std::collections::BTreeMap<String, crate::vars::VarAccess>,
         /// The system message the step's conversation starts with, parsed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system: Option<Template>,
@@ -436,6 +443,7 @@ pub fn compile(spec: &HarnessSpec) -> HarnessPlan {
         inputs: spec.inputs.clone(),
         outputs: spec.outputs.clone(),
         schemas: spec.schemas.clone(),
+        variables: spec.variables.clone(),
         capabilities,
         limits,
         profile: spec.lowering.as_ref().map(|l| l.profile.clone()),
@@ -490,6 +498,7 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             prompt: Template::parse(&a.prompt).unwrap_or_else(|_| Template::empty()),
             tools: a.tools.clone(),
             store_as: a.store_as.clone(),
+            vars: a.vars.clone(),
             conversation: a
                 .conversation
                 .as_deref()

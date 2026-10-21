@@ -118,7 +118,7 @@ undeclared one.
 A `fail` step reports its own code. The runtime adds `invalid_answer` (a
 `predict` answer that is not JSON), `side_effect_failed` (a tool call failed,
 or a child could not run), `helper_*` (a helper's decode, ABI, fuel, memory,
-trap or schema failure), the four bounds above, `cancelled`, and for workflows `gate_failed`, `success_check_failed` and `child_failed` (see below). A failed step inside a
+trap or schema failure), the four bounds above, `cancelled`, and for workflows `gate_failed`, `success_check_failed`, `child_failed` and `missing_variable` (see below). A failed step inside a
 `retry` frame re-enters the body while attempts remain, then continues at
 `on_exhausted`; outside one it fails the run. A body that succeeds ends the
 frame and the walk follows the body's own `then`. Every attempt is a
@@ -285,6 +285,28 @@ then measures the metric with a fresh run of the gate's command, and repeats
 while it is not met; the task's templates read `{{ iteration }}` (the pass, from
 1), and a run that uses all `max_iterations` passes fails with `until_exhausted`.
 
+**Variables.** `variables: {<name>: {type, scope, schema, description}}`
+declares typed values shared between tasks (`type` is `string`, `number`,
+`boolean` or `json`; `scope` is `run`, the default, or `item`, cleared when
+each loop item or pass begins; `schema`, for a `json` variable, is the shape
+its value must have: `type`, `properties`, `required`, `items`, `enum`). A
+task names what it may see with `vars: {<name>: read | write | required}`;
+nothing else is visible to it. An agent task that names any variable is
+offered three tools that the machine answers itself (they never reach an
+executor, and what they do is checkpointed and replayed with the run):
+`harness_vars_list` (each visible variable's name, type, description, schema,
+access and whether it is set), `harness_vars_get {name}` and
+`harness_vars_set {name, value}`. A set is refused, with the reason, when the
+task may only read the variable or the value does not fit its type or schema
+(a `json` variable given a string that holds a JSON object or array stores the
+parsed value; a value is at most 256 KiB). Such a task needs a `tools` list,
+to which the three are added. A `required` variable still unset when the
+task's turns end earns a reminder in the task's own conversation (`origin:
+variables`), twice at most; still unset, the run fails with
+`missing_variable`. Templates anywhere read `{{ vars.<name> }}` and the fields
+of a `json` variable (`{{ vars.checks.test }}`), so an exploration task can
+publish what later prompts and gates use.
+
 **Loop bodies and check tasks.** A loop task may carry `do: [tasks...]`
 instead of a prompt: for each item (or pass) the tasks of the body run in
 order, each with its own prompt, tools, conversation, checks and repairs, and
@@ -308,11 +330,21 @@ that item, leaving the later ones `pending`. The run state carries the whole
 record, so a checkpoint resumes at the item it was on: completed items are not
 run again, the collection is not read again, and the item that was in flight
 starts its interrupted step again. The loop's summary `{total, completed,
-pending}` is what `success.work_items.all_completed` checks; a `for_each` task
+pending}` (and `failed`, `unfinished`) is what `success.work_items` checks; a `for_each` task
 that did not run (its `when` was false) has not completed. Codes:
 `iterate_source_unreadable`, `iterate_source_malformed`, `iterate_source_not_array`,
 `iterate_missing_id`, `iterate_duplicate_id`, `iterate_too_many_items`. The trace
 records `IterationStarted`, `ItemStarted` and `ItemCompleted`.
+**Failed items.** `for_each: {on_item_failure: {verify: [gates]}}` turns an
+item whose check fails for good (repairs spent, or a required variable never
+set) into a failed item instead of a failed run: its reason is recorded, the
+listed gates run in order (a rollback, say - if one fails, the run fails with
+`rollback_failed`), and the loop goes on with the next item. A failed item is
+not started again on resume. The loop's summary is `{total, completed,
+failed, pending, unfinished}`; `success.work_items.all_completed` needs every
+item completed, `all_settled` every item completed or failed. The trace
+records `ItemFailed` with the reason.
+
 **Durable progress and a changed backlog.** `checkpoint: each_item` on a
 `for_each` task hands the host's sink a checkpoint every time one of *its*
 items completes (`HarnessRun::on_item_checkpoint(sink)`; `sven harness run

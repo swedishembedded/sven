@@ -33,6 +33,8 @@ pub(super) struct Context<'a> {
     /// The names of the tasks that run, in order (a loop's `do:` body stands
     /// for the loop).
     pub(super) order: Vec<String>,
+    /// The declared variables.
+    pub(super) var_names: Vec<String>,
 }
 
 /// What a task's templates may read besides inputs and earlier outputs.
@@ -87,6 +89,7 @@ impl Context<'_> {
             .with_structured(&self.structured)
             .with_gates(&self.command_gates)
             .with_imported(&self.imported)
+            .with_vars(&self.var_names)
     }
 
     pub(super) fn command_run(

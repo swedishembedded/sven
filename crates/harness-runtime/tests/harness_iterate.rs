@@ -181,7 +181,7 @@ fn every_item_of_the_frozen_collection_runs_once_in_order() {
     let summary = &run_state(&ctx)["facts"]["work_modules"];
     assert_eq!(
         summary,
-        &json!({ "total": 5, "completed": 5, "pending": 0 })
+        &json!({ "total": 5, "completed": 5, "failed": 0, "pending": 0, "unfinished": 0 })
     );
     let items = &run_state(&ctx)["iterations"]["modules__iter"]["items"];
     assert!(items
@@ -414,7 +414,7 @@ fn a_hundred_items_interrupted_midway_resume_without_redoing_completed_ones() {
     );
     assert_eq!(
         run_state(&ctx)["facts"]["work_modules"],
-        json!({ "total": 100, "completed": 100, "pending": 0 })
+        json!({ "total": 100, "completed": 100, "failed": 0, "pending": 0, "unfinished": 0 })
     );
 }
 

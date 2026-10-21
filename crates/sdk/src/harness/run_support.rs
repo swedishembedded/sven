@@ -71,6 +71,21 @@ pub(super) fn harness_tools(
             tools.push(Arc::new(digest));
         }
     }
+    // The variable tools are answered by the machine; registering them gives
+    // the model their definitions when a step offers them.
+    for tool in sven_tools_agent::HarnessVarTool::all() {
+        tools.push(Arc::new(tool));
+    }
     tools.extend(host);
     tools
+}
+
+/// The loop a record says finished one of its items (completed or failed):
+/// the moment a host is handed an item checkpoint.
+pub(super) fn finished_item_loop(record: &sven_harness_runtime::TraceRecord) -> Option<&str> {
+    match record {
+        sven_harness_runtime::TraceRecord::ItemCompleted { step, .. }
+        | sven_harness_runtime::TraceRecord::ItemFailed { step, .. } => Some(step),
+        _ => None,
+    }
 }

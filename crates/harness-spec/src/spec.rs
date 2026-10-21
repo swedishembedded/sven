@@ -36,28 +36,9 @@ pub const WORKFLOW_API_VERSION: &str = "2";
 /// that names one is rejected with a message saying so.
 pub const WORKFLOW_PRIMITIVES: [&str; 2] = ["gate", "iterate"];
 
-/// The tool a `gate` step calls to run its command. Reserved to the
-/// harness: no agent step may be offered or admitted a call to it, so the
-/// model can neither run a gate nor make one pass. The tool itself lives in
-/// the process-execution crate; both sides name it through this constant.
-pub const GATE_TOOL: &str = "shell_gate";
-
-/// The tool an `iterate` step calls to read its collection from a JSON file
-/// in the workspace: it answers `{digest, value}` for the file's content and
-/// the value at a JSON pointer. Reserved to the harness like [`GATE_TOOL`].
-pub const SNAPSHOT_TOOL: &str = "read_json_snapshot";
-
-/// The tool a `for_each` with `covers` calls to digest the workspace files an
-/// item covers: it answers a digest per named group of paths. Reserved to the
-/// harness like [`GATE_TOOL`].
-pub const DIGEST_TOOL: &str = "digest_files";
-
-/// The most paths one item's `covers` may name.
-pub const MAX_COVERS: usize = 64;
-
-/// The tools only the harness itself may call: no agent step is offered or
-/// admitted a call to any of them.
-pub const RESERVED_TOOLS: [&str; 3] = [GATE_TOOL, SNAPSHOT_TOOL, DIGEST_TOOL];
+pub use crate::names::{
+    DIGEST_TOOL, GATE_TOOL, ITEM_FAILED_FACT, MAX_COVERS, RESERVED_TOOLS, SNAPSHOT_TOOL,
+};
 
 /// How many items a `for_each` takes when its definition names no bound.
 pub const DEFAULT_MAX_ITEMS: u64 = 500;
@@ -292,6 +273,9 @@ pub struct HarnessSpec {
     pub entry: String,
     /// The steps, by id.
     pub steps: std::collections::BTreeMap<String, StepSpec>,
+    /// Run variables, by name (version 2 only).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub variables: std::collections::BTreeMap<String, crate::vars::VariableDecl>,
     /// What lowering a version 2 workflow recorded about this spec. Never
     /// read from or written to a document; `None` for every version 1
     /// document.
@@ -437,6 +421,9 @@ pub struct AgentStepSpec {
     /// shared one. Version 2 only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation: Option<String>,
+    /// The variables the step's agent may read or set. Version 2 only.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub vars: std::collections::BTreeMap<String, crate::vars::VarAccess>,
     /// The system message the step's conversation starts with (a template),
     /// when this step starts it. Version 2 only.
     #[serde(default, skip_serializing_if = "Option::is_none")]

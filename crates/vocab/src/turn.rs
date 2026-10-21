@@ -95,11 +95,13 @@ pub struct TurnRequest {
     /// Maximum tool-call rounds before a forced wrap-up turn.
     #[serde(default)]
     pub max_tool_rounds: Option<u32>,
-    /// Tool calls refused before they ran, with the reason, keyed by the
-    /// kernel's call id. The executor answers each in the thread before the
-    /// model is called: a history with a tool call and no result is invalid.
+    /// Tool calls the machine answered itself - refused before they ran, or
+    /// served by the machine (a harness's variable tools) - with the result
+    /// the model reads, keyed by the kernel's call id. The executor appends
+    /// each to the thread before the model is called: a history with a tool
+    /// call and no result is invalid.
     #[serde(default)]
-    pub refused_calls: Vec<RefusedCall>,
+    pub answered_calls: Vec<AnsweredCall>,
     /// The model role to answer this turn (a name the host maps to a
     /// provider). Unlike `model`, a role the host does not provide fails the
     /// turn instead of falling back to the default model.
@@ -166,13 +168,25 @@ impl TurnDecoding {
     }
 }
 
-/// A tool call the machine knows was not run, and why.
+/// A tool call the machine answered itself: a refusal, or a result it
+/// computed without an executor.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RefusedCall {
+pub struct AnsweredCall {
     /// The kernel's id for the call (a `ToolCallId`'s UUID).
     pub call_id: String,
-    /// Why it was not run, as the model should read it.
-    pub reason: String,
+    /// The tool result, as the model should read it.
+    pub content: String,
+}
+
+impl AnsweredCall {
+    /// The answer to a call that was not run, saying why.
+    #[must_use]
+    pub fn refused(call_id: String, reason: &str) -> Self {
+        Self {
+            call_id,
+            content: format!("The call was not run: {reason}."),
+        }
+    }
 }
 
 impl TurnRequest {

@@ -108,6 +108,12 @@ output tokens, the wait for the first response) go on the agent for every task o
 on one task, and the trajectory records what each request was sent with
 ([samples/harnesses/planner-worker](../../samples/harnesses/planner-worker)).
 
+Tasks share what they learn through **variables**: declare
+`variables: {checks: {type: json}}`, let an exploration task set it
+(`vars: {checks: required}` - its agent gets `harness_vars_set` and is reminded
+if it forgets), and read `{{ vars.checks.test }}` in later prompts and gates;
+a task sees only the variables it names, and `read` keeps it from changing them.
+
 For work that has to be done many times, a task can loop (and with `do:` a
 loop runs several roles per item: an auditor that only reads, a fixer that
 edits, a reviewer, then a check task - `verify` and no prompt - that commits,

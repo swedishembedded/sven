@@ -25,6 +25,7 @@ mod rewrite;
 pub mod spec;
 mod system;
 mod validate;
+mod vars;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -35,7 +36,8 @@ use spec::{
     ArtifactCheck, Check, CommandGate, GateDef, MetricCheck, SuccessSpec, TaskSpec, WorkflowSpec,
 };
 
-const TOP_LEVEL_KEYS: [&str; 13] = [
+const TOP_LEVEL_KEYS: [&str; 14] = [
+    "variables",
     "imports",
     "on_failure",
     "api_version",
@@ -109,6 +111,10 @@ pub fn parse_workflow(value: Value) -> Result<WorkflowSpec, HarnessError> {
         .map(|v| decode(v, "on_failure"))
         .transpose()?
         .unwrap_or_default();
+    let variables = take("variables")
+        .map(|v| decode(v, "variables"))
+        .transpose()?
+        .unwrap_or_default();
     let imports = take("imports")
         .map(|v| decode(v, "imports"))
         .transpose()?
@@ -126,6 +132,7 @@ pub fn parse_workflow(value: Value) -> Result<WorkflowSpec, HarnessError> {
         success,
         on_failure,
         imports,
+        variables,
         resolved: std::collections::BTreeMap::new(),
     })
 }
@@ -251,6 +258,8 @@ struct RawTask {
     conversation: Option<String>,
     #[serde(default, rename = "do")]
     body: Vec<Value>,
+    #[serde(default)]
+    vars: std::collections::BTreeMap<String, spec::VarUse>,
 }
 
 /// `until:`; the comparison keys are collected and checked by
@@ -337,6 +346,7 @@ fn parse_task(raw: Value, label: &str) -> Result<TaskSpec, HarnessError> {
         use_import: raw.use_import,
         with: raw.with,
         conversation: raw.conversation,
+        vars: raw.vars,
         body,
     })
 }

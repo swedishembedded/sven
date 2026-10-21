@@ -105,6 +105,17 @@ pub fn harness_event(record: &TraceRecord, step_duration_ms: u64) -> HarnessEven
             item: item.clone(),
             index: *index,
         },
+        TraceRecord::ItemFailed {
+            step,
+            item,
+            index,
+            reason,
+        } => HarnessEvent::ItemFailed {
+            step: step.clone(),
+            item: item.clone(),
+            index: *index,
+            reason: reason.clone(),
+        },
         TraceRecord::GateEvaluated {
             step,
             passed,

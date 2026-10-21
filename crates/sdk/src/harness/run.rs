@@ -753,8 +753,8 @@ fn publish_trace(
     let state = HarnessRunState::load(ctx);
     let mut completed_loops = Vec::new();
     for record in state.trace.iter().skip(*emitted) {
-        if let TraceRecord::ItemCompleted { step, .. } = record {
-            completed_loops.push(step.clone());
+        if let Some(step) = super::run_support::finished_item_loop(record) {
+            completed_loops.push(step.to_string());
         }
         let duration_ms = observed
             .replace(tokio::time::Instant::now())

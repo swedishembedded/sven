@@ -44,7 +44,7 @@ pub use ledger::{
 pub use conclusion::announces_unfinished_work;
 pub use request::{RequestFold, RequestRecord, Sampled};
 pub use served::{describe_adapter, served_model_changed_text, AdapterRef, ServedIdentity};
-pub use turn::{RefusedCall, TurnDecoding, TurnRequest, TURN_KIND};
+pub use turn::{AnsweredCall, TurnDecoding, TurnRequest, TURN_KIND};
 pub use wait::ModelWaitPhase;
 
 use provenance::FactSource;

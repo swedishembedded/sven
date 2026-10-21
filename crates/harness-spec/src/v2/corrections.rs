@@ -46,6 +46,8 @@ pub(super) struct Turn<'a> {
     pub agent_system: Option<String>,
     /// The task's conversation, which the correction turns continue.
     pub conversation: String,
+    /// What the correction turns may do with the task's variables.
+    pub grants: std::collections::BTreeMap<String, crate::vars::VarAccess>,
     /// The model role that answers the agent.
     pub role: Option<String>,
     pub decoding: StepDecoding,
@@ -195,8 +197,11 @@ pub(super) fn lower_corrections(
             system: None,
             structured: &t.cx.structured,
             gates: &t.cx.command_gates,
+            vars: std::collections::BTreeMap::new(),
+            var_names: &t.cx.var_names,
         }),
         loop_back: Some(t.exit.to_string()),
+        item_failure: None,
     };
     let accept_entry = lower_checks(b, &phase, &[accept], &deliver)?;
 
@@ -231,6 +236,7 @@ pub(super) fn lower_corrections(
             tools: t.tools.clone(),
             store_as: Some(output_fact(name)),
             conversation: Some(t.conversation.clone()),
+            vars: t.grants.clone(),
             system: t.agent_system.clone(),
             origin: Some("correction".to_string()),
             role: t.role.clone(),

@@ -156,6 +156,10 @@ pub(super) struct RepairPlan<'a> {
     pub structured: &'a [String],
     /// Command gates whose results the prompt can read.
     pub gates: &'a [String],
+    /// What the repair turn may do with the task's variables.
+    pub vars: std::collections::BTreeMap<String, crate::vars::VarAccess>,
+    /// The declared variables, which the prompt can read.
+    pub var_names: &'a [String],
 }
 
 /// The phase the checks belong to: a task, or the success condition.
@@ -175,7 +179,13 @@ pub(super) struct Phase<'a> {
     /// Where an unsatisfied check leads once the repairs (if any) are spent,
     /// instead of the run's failure: back to the loop that asked.
     pub loop_back: Option<String>,
+    /// Inside a loop with `on_item_failure`: the step that fails the item
+    /// (and rolls it back) instead of the run, which a failure records its
+    /// reason in [`ITEM_FAILED_FACT`] and continues at.
+    pub item_failure: Option<String>,
 }
+
+use crate::spec::ITEM_FAILED_FACT;
 
 fn origin(phase: &Phase<'_>, role: &str, check: &str, attempt: u32) -> SourceRef {
     SourceRef {
@@ -427,7 +437,8 @@ fn on_failure(
         )
         .in_loop(plan.item, plan.iteration)
         .with_structured(plan.structured)
-        .with_gates(plan.gates);
+        .with_gates(plan.gates)
+        .with_vars(plan.var_names);
         scope.failure = Some(&view);
         let prompt = rewrite_text(&plan.prompt, &scope)?;
         let again = entry_id(phase, checks, 0, attempt + 1);
@@ -448,6 +459,7 @@ fn on_failure(
                 tools: plan.tools.clone(),
                 store_as: Some(plan.fact.clone()),
                 conversation: plan.conversation.clone(),
+                vars: plan.vars.clone(),
                 system: plan.system.clone(),
                 origin: Some("repair".to_string()),
                 role: plan.role.clone(),
@@ -509,16 +521,28 @@ fn failure_step(
     if b.steps.contains_key(&id) {
         return id;
     }
-    b.add(
-        &id,
-        StepSpec::Fail(Box::new(FailStepSpec {
+    let message = format!("{}: check `{label}` failed{spent}: {detail}", phase.what);
+    let step = match &phase.item_failure {
+        Some(target) => fail_item(&message, target),
+        None => StepSpec::Fail(Box::new(FailStepSpec {
             code: Some(phase.fail_code.to_string()),
-            message: Some(format!(
-                "{}: check `{label}` failed{spent}: {detail}",
-                phase.what
-            )),
+            message: Some(message),
         })),
-        origin(phase, "failure", label, attempt),
-    );
+    };
+    b.add(&id, step, origin(phase, "failure", label, attempt));
     id
+}
+
+/// The step that records why an item failed and continues at `target`, the
+/// loop's item-failure path.
+pub(super) fn fail_item(message: &str, target: &str) -> StepSpec {
+    StepSpec::Assign(Box::new(crate::spec::AssignStepSpec {
+        set: [(
+            ITEM_FAILED_FACT.to_string(),
+            Value::String(message.to_string()),
+        )]
+        .into_iter()
+        .collect(),
+        then: target.to_string(),
+    }))
 }

@@ -84,6 +84,8 @@ pub(super) struct Scope<'a> {
     /// The tasks that run an imported workflow, with the outputs it returns:
     /// only those fields can be read, and nothing else of the task.
     pub imported: &'a std::collections::BTreeMap<String, Vec<String>>,
+    /// The declared variables, which `vars.<name>` reads.
+    pub vars: &'a [String],
 }
 
 impl<'a> Scope<'a> {
@@ -100,7 +102,15 @@ impl<'a> Scope<'a> {
             structured: &[],
             gates: &[],
             imported: &NO_IMPORTS,
+            vars: &[],
         }
+    }
+
+    /// The same scope, able to read these declared variables.
+    #[must_use]
+    pub fn with_vars(mut self, vars: &'a [String]) -> Self {
+        self.vars = vars;
+        self
     }
 
     /// The same scope, knowing which tasks run an imported workflow.
@@ -229,6 +239,28 @@ impl Scope<'_> {
                 _ => Err(self.invalid(path, "can only read `run.trajectory_file`")),
             },
             "failure" => self.map_failure(path),
+            "vars" => {
+                let [_, name, rest @ ..] = segments else {
+                    return Err(self.invalid(path, "needs a variable name: vars.<name>"));
+                };
+                if !self.vars.contains(name) {
+                    return Err(self.invalid(
+                        path,
+                        &format!(
+                            "reads variable `{name}`, which is not declared under `variables` \
+                             (declared: {})",
+                            if self.vars.is_empty() {
+                                "none".to_string()
+                            } else {
+                                self.vars.join(", ")
+                            }
+                        ),
+                    ));
+                }
+                let rest: String = rest.iter().map(|f| format!(".{f}")).collect();
+                Path::parse(&format!("facts.{}{rest}", crate::vars::var_fact(name)))
+                    .map(PathRewrite::Path)
+            }
             "gates" => {
                 let [_, gate, rest @ ..] = segments else {
                     return Err(self.invalid(path, "is not of the form gates.<name>.<field>"));
@@ -268,8 +300,9 @@ impl Scope<'_> {
                 path,
                 &format!(
                     "starts with `{other}`; a workflow reads `inputs.<name>`, \
-                     `tasks.<name>.output` and, inside loops, `item`, `item_id`, \
-                     `item_index` and `iteration` (`facts` and `steps` are internal)"
+                     `tasks.<name>.output`, `vars.<name>` and, inside loops, `item`, \
+                     `item_id`, `item_index` and `iteration` (`facts` and `steps` are \
+                     internal)"
                 ),
             )),
         }

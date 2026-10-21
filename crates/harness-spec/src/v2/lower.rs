@@ -31,9 +31,9 @@ use super::validate::needed_capabilities;
 use crate::error::HarnessError;
 use crate::source_map::{Lowering, SourceRef};
 use crate::spec::{
-    AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec, FailStepSpec,
-    ForEachSpec, HarnessSpec, InputValue, IterateStepSpec, LimitsSpec, PredictStepSpec,
-    ReturnStepSpec, StepSpec, UntilSpec, DEFAULT_MAX_ITEMS, WORKFLOW_API_VERSION,
+    AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, FailStepSpec, ForEachSpec,
+    HarnessSpec, InputValue, IterateStepSpec, LimitsSpec, PredictStepSpec, ReturnStepSpec,
+    StepSpec, UntilSpec, DEFAULT_MAX_ITEMS, WORKFLOW_API_VERSION,
 };
 
 /// The id of the step the run returns from.
@@ -151,7 +151,8 @@ pub(super) fn lower_task(
     let through = cx.through(&task.name);
     let place = format!("task `{}`", task.name);
     let vars = cx.vars(task);
-    let tools = task.tools.clone().or_else(|| w.agent.tools.clone());
+    let tools = super::vars::tools_for(task, task.tools.clone().or_else(|| w.agent.tools.clone()));
+    let grants = super::vars::grants(task);
     let decoding = decoding_of(&w.agent.sampling, &w.agent.thinking, &w.agent.turn)
         .overlaid_by(&decoding_of(&task.sampling, &task.thinking, &task.turn));
     let fact = output_fact(&task.name);
@@ -163,10 +164,11 @@ pub(super) fn lower_task(
         .map(|text| rewrite_text(text, &cx.scope(format!("{place}: system"), before, vars)))
         .transpose()?;
     if let Some(offered) = super::imports::offered(w, task) {
-        return lower_use(cx, b, task, &offered.name, next);
+        return super::imports::lower_use(cx, b, task, &offered.name, next);
     }
     let looping = task.for_each.is_some() || task.until.is_some();
     let conversation = super::body::conversation(cx, task, vars, before)?;
+    let item_failure = super::body::item_failure_entry(w, task);
 
     // What the body hands over to when it is done: the loop step, which
     // decides whether another pass or item follows, or the next task.
@@ -188,6 +190,7 @@ pub(super) fn lower_task(
                 place: format!("{place}: until"),
                 repair: None,
                 loop_back: Some(iter_id(task)),
+                item_failure: None,
             };
             lower_checks(b, &phase, &[metric], next)?
         }
@@ -246,6 +249,8 @@ pub(super) fn lower_task(
             },
             structured: &cx.structured,
             gates: &cx.command_gates,
+            vars: grants.clone(),
+            var_names: &cx.var_names,
         });
     let phase = Phase {
         prefix: task.name.clone(),
@@ -255,6 +260,7 @@ pub(super) fn lower_task(
         place: place.clone(),
         repair,
         loop_back: None,
+        item_failure: item_failure.clone(),
     };
     // The corrections come after the task's own checks and before the loop or
     // the next task.
@@ -273,6 +279,7 @@ pub(super) fn lower_task(
                     tools: tools.clone(),
                     agent_system: agent_system.clone(),
                     conversation: conversation.clone(),
+                    grants: grants.clone(),
                     role: role.clone(),
                     decoding: decoding.clone(),
                     stop: stop_fact(&task.name),
@@ -284,6 +291,24 @@ pub(super) fn lower_task(
         None => after_checks,
     };
     let mut following = lower_checks(b, &phase, &checks, &after_checks)?;
+    // A required variable is checked after the task's turns, before its checks.
+    following = super::vars::lower_required(
+        w,
+        b,
+        task,
+        &super::vars::Reminder {
+            tools: tools.clone(),
+            conversation: conversation.clone(),
+            system: agent_system.clone(),
+            role: role.clone(),
+            decoding: decoding.clone(),
+            stop: stop_fact(&task.name),
+            pool: pool_fact(&task.name),
+            max_repeated_results: task.max_repeated_results,
+        },
+        item_failure.as_deref(),
+        following,
+    );
 
     let stop = stop_fact(&task.name);
     let pool = pool_fact(&task.name);
@@ -330,6 +355,7 @@ pub(super) fn lower_task(
                     tools: tools.clone(),
                     store_as: Some(fact.clone()),
                     conversation: Some(conversation.clone()),
+                    vars: grants.clone(),
                     system: agent_system.clone(),
                     origin: Some("follow_up".to_string()),
                     role: role.clone(),
@@ -414,6 +440,7 @@ pub(super) fn lower_task(
             tools,
             store_as: Some(fact),
             conversation: Some(conversation),
+            vars: grants,
             system: agent_system.clone(),
             origin: Some("task".to_string()),
             role: role.clone(),
@@ -433,7 +460,9 @@ pub(super) fn lower_task(
             .flat_map(|each| &each.covers)
             .map(|path| rewrite_text(path, &cx.scope(format!("{place}: covers"), before, vars)))
             .collect::<Result<Vec<_>, _>>()?;
-        lower_loop(b, task, &work, next, covers)?;
+        let body = super::vars::lower_reset(w, b, task, &work);
+        lower_loop(b, task, &body, next, covers)?;
+        super::body::lower_item_failure(cx, b, task)?;
     }
     if let Some(condition) = &task.when {
         let scope = cx.scope(format!("{place}: when"), before, LoopVars::default());
@@ -452,55 +481,11 @@ pub(super) fn lower_task(
     Ok(())
 }
 
-/// A `use` task: one delegate step that runs the imported workflow and keeps
-/// what it returns as the task's output. A child that fails fails the run at
-/// this task.
-fn lower_use(
-    cx: &Context<'_>,
-    b: &mut Builder,
-    task: &TaskSpec,
-    child: &str,
-    next: &str,
-) -> Result<(), HarnessError> {
-    let before = cx.before(&task.name);
-    let work = format!("{}__work", task.name);
-    b.add(
-        &work,
-        StepSpec::Delegate(Box::new(DelegateStepSpec {
-            target: child.to_string(),
-            as_kind: None,
-            input: super::imports::call_input(cx, task, before)?,
-            store_as: Some(super::imports::result_fact(task)),
-            propagate_failure: true,
-            then: next.to_string(),
-        })),
-        origin(Some(&task.name), "use"),
-    );
-    if let Some(condition) = &task.when {
-        let scope = cx.scope(
-            format!("task `{}`: when", task.name),
-            before,
-            LoopVars::default(),
-        );
-        let skipped = skip_step(cx, b, task, next);
-        b.add(
-            &entry_of(task),
-            StepSpec::Branch(Box::new(BranchStepSpec {
-                on: rewrite_condition(condition, &scope, &task.name)?,
-                when_true: work,
-                when_false: skipped,
-            })),
-            origin(Some(&task.name), "when"),
-        );
-    }
-    Ok(())
-}
-
 /// What a task that was skipped (its `when` did not hold) leaves behind, so
 /// that later templates read an empty output and the stop status `skipped`
 /// instead of a hole: `""` for a text output, an object of empty strings for
 /// the fields of a structured one.
-fn skip_step(cx: &Context<'_>, b: &mut Builder, task: &TaskSpec, next: &str) -> String {
+pub(super) fn skip_step(cx: &Context<'_>, b: &mut Builder, task: &TaskSpec, next: &str) -> String {
     let fields: Option<Vec<String>> = match super::imports::offered(cx.w, task) {
         Some(offered) => Some(offered.outputs.keys().cloned().collect()),
         None => task
@@ -546,24 +531,29 @@ fn lower_success(cx: &Context<'_>, b: &mut Builder) -> Result<String, HarnessErr
             .map_err(|e| HarnessError::Invalid(format!("success.metrics.{reference}: {e}")))?;
         checks.push(cx.metric(reference, threshold, none, names)?);
     }
-    if w.success
-        .work_items
-        .as_ref()
-        .is_some_and(|i| i.all_completed)
-    {
-        for task in w.workflow.iter().filter(|t| t.for_each.is_some()) {
-            checks.push(Resolved {
-                label: format!("work_items.{}", task.name),
-                required: true,
-                kind: Kind::Fact {
-                    path: format!("facts.{}.pending", summary_fact(task)),
-                    equals: json!(0),
-                    failure: format!(
-                        "work items of task `{}` did not all complete (the loop never finished)",
-                        task.name
-                    ),
-                },
-            });
+    if let Some(items) = &w.success.work_items {
+        // `unfinished` counts every item not completed, `pending` the ones
+        // neither completed nor failed.
+        let wanted = [
+            (items.all_completed, "unfinished", "did not all complete"),
+            (
+                items.all_settled,
+                "pending",
+                "were not all worked (the loop never finished)",
+            ),
+        ];
+        for (_, field, what) in wanted.into_iter().filter(|(on, ..)| *on) {
+            for task in w.workflow.iter().filter(|t| t.for_each.is_some()) {
+                checks.push(Resolved {
+                    label: format!("work_items.{}", task.name),
+                    required: true,
+                    kind: Kind::Fact {
+                        path: format!("facts.{}.{field}", summary_fact(task)),
+                        equals: json!(0),
+                        failure: format!("work items of task `{}` {what}", task.name),
+                    },
+                });
+            }
         }
     }
     let phase = Phase {
@@ -574,6 +564,7 @@ fn lower_success(cx: &Context<'_>, b: &mut Builder) -> Result<String, HarnessErr
         place: "success".to_string(),
         repair: None,
         loop_back: None,
+        item_failure: None,
     };
     lower_checks(b, &phase, &checks, COMPLETE)
 }
@@ -680,6 +671,7 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
             })
             .collect(),
         order: w.runnable().into_iter().map(|t| t.name.clone()).collect(),
+        var_names: w.variables.keys().cloned().collect(),
     };
     let mut b = Builder::default();
     let mut next = lower_success(&cx, &mut b)?;
@@ -752,6 +744,7 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         }),
         entry: next,
         steps: b.steps,
+        variables: super::vars::decls(w),
         schemas: {
             let schemas: std::collections::BTreeMap<String, Value> = w
                 .workflow

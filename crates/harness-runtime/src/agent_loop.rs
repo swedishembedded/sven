@@ -13,21 +13,84 @@
 //! workflow languages then you can procure our services by sending an email
 //! to info@swedishembedded.com.
 
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Digest;
 use sven_harness_spec::{Template, RESERVED_TOOLS};
 use sven_hsm::{Context, Effect, ProposedToolCall, Reaction, ToolCallId};
-use sven_vocab::{RefusedCall, TurnRequest};
+use sven_vocab::{AnsweredCall, TurnRequest};
 
 use crate::approval::HeldCall;
 use crate::command_gate::TurnTrouble;
 use crate::decoding::{system_text, TurnShape};
 use crate::machine::HarnessMachine;
-use crate::run::{AgentLoop, HarnessRunState, Inflight, Waiting};
+use crate::run::{HarnessRunState, Inflight, Waiting};
 use crate::state::HarnessState;
 
 /// The agent-mode tool set an agent step without a tool list is offered.
 const AGENT_MODE: &str = "agent";
+
+/// The agent step's in-flight model↔tool loop.
+///
+/// Mirrors the machines' `LoopState` in miniature: a harness agent step has
+/// a fixed tool allowlist, no all-tools fallback, and no schema demand —
+/// the plan's agent primitive is exactly this loop and nothing else.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AgentLoop {
+    /// The agent step's id.
+    pub step: String,
+    /// The thread the loop runs in (`harness.<plan name>`).
+    pub thread: String,
+    /// The step's tool allowlist.
+    pub tools: Vec<String>,
+    /// Calls proposed by the last turn, not yet settled.
+    pub pending: Vec<ToolCallId>,
+    /// Model turns spent in this loop so far.
+    pub rounds: u64,
+    /// `true` when the step declared no tool list: the session's agent-mode
+    /// tools are open to it and `tools` is empty. `false` when `tools` is
+    /// an explicit allowlist, which is also enforced on proposed calls.
+    #[serde(default)]
+    pub open: bool,
+    /// Proposed calls the machine answered itself (call id to the result
+    /// text): refusals, and the variable tools it serves. Drained into the
+    /// next turn, which appends them to the conversation.
+    #[serde(default)]
+    pub answered: BTreeMap<String, String>,
+    /// The variables the step was granted, which the machine's variable
+    /// tools serve.
+    #[serde(default)]
+    pub grants: BTreeMap<String, sven_harness_spec::vars::VarAccess>,
+    /// The calls the last turn proposed and the step admitted (call id to
+    /// call): what a call the permission gate holds for approval is run as
+    /// once it is approved.
+    #[serde(default)]
+    pub calls: BTreeMap<String, HeldCall>,
+    /// The model role that answers the loop's turns.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Where the loop records how it ended.
+    #[serde(default)]
+    pub stop_as: Option<String>,
+    /// The fact holding the calls the step may still make.
+    #[serde(default)]
+    pub pool: Option<String>,
+    /// The repeated answers that end the loop.
+    #[serde(default)]
+    pub max_repeats: Option<u32>,
+    /// How many times each (call, answer) pair has been seen this loop.
+    #[serde(default)]
+    pub repeats: BTreeMap<String, u32>,
+    /// Why the loop ends once the calls in flight settle (`tool_cap`,
+    /// `repetition`).
+    #[serde(default)]
+    pub ending: Option<String>,
+    /// The decoding settings of the step's turns.
+    #[serde(default)]
+    pub decoding: sven_vocab::TurnDecoding,
+}
 
 impl HarnessMachine {
     /// The agent step's first turn: its prompt, with the tools the step
@@ -61,15 +124,15 @@ impl HarnessMachine {
     /// turn into the request.
     pub(super) fn continuation_effect(&self, state: &mut HarnessRunState) -> Option<Effect> {
         let agent = state.agent.as_mut()?;
-        let refused = std::mem::take(&mut agent.refused)
+        let answered = std::mem::take(&mut agent.answered)
             .into_iter()
-            .map(|(call_id, reason)| RefusedCall { call_id, reason })
+            .map(|(call_id, content)| AnsweredCall { call_id, content })
             .collect();
         Some(agent_request(
             TurnRequest {
                 thread: agent.thread.clone(),
                 tools: agent.tools.clone(),
-                refused_calls: refused,
+                answered_calls: answered,
                 role: agent.role.clone(),
                 decoding: agent.decoding,
                 ..TurnRequest::default()
@@ -201,7 +264,7 @@ impl HarnessMachine {
         // The gate tool belongs to the workflow's gates: no agent step is
         // admitted a call to it, whatever its allowlist says, so the model
         // can neither run a gate nor make one pass.
-        let (mut admitted, refused): (Vec<&ProposedToolCall>, Vec<&ProposedToolCall>) =
+        let (admitted, refused): (Vec<&ProposedToolCall>, Vec<&ProposedToolCall>) =
             tool_calls.iter().partition(|call| {
                 !RESERVED_TOOLS.contains(&call.name.as_str())
                     && (agent.open || agent.tools.contains(&call.name))
@@ -215,10 +278,23 @@ impl HarnessMachine {
             } else {
                 format!("tool `{}` is not in this step's allowlist", call.name)
             };
-            agent
-                .refused
-                .insert(call.call_id.as_uuid().to_string(), reason);
+            let answer = AnsweredCall::refused(call.call_id.as_uuid().to_string(), &reason);
+            agent.answered.insert(answer.call_id, answer.content);
         }
+        // The variable tools are answered here and now, by the machine: they
+        // never become effects and draw on no allowance.
+        let (served, rest): (Vec<&ProposedToolCall>, Vec<&ProposedToolCall>) = admitted
+            .into_iter()
+            .partition(|call| crate::vars::is_var_tool(&call.name) && !agent.grants.is_empty());
+        let mut admitted = rest;
+        for call in &served {
+            let content =
+                crate::vars::answer(self.plan(), run, &agent.grants, &call.name, &call.args);
+            agent
+                .answered
+                .insert(call.call_id.as_uuid().to_string(), content);
+        }
+        run.counts.tool_calls += served.len() as u64;
         // A step with a pool of calls may make no more than the pool holds:
         // the calls beyond it are refused and the loop ends once the others
         // settle, with the stop `tool_cap`.
@@ -228,10 +304,11 @@ impl HarnessMachine {
                 let allowed = usize::try_from(left).unwrap_or(usize::MAX);
                 if admitted.len() > allowed {
                     for call in admitted.split_off(allowed) {
-                        agent.refused.insert(
+                        let answer = AnsweredCall::refused(
                             call.call_id.as_uuid().to_string(),
-                            "the tool-call allowance for this turn is spent".to_string(),
+                            "the tool-call allowance for this turn is spent",
                         );
+                        agent.answered.insert(answer.call_id, answer.content);
                     }
                     agent.ending = Some("tool_cap".to_string());
                 }

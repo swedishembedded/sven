@@ -19,10 +19,7 @@ use serde_json::Value;
 
 use super::spec::{ArtifactCheck, Check, GateDef, WorkflowSpec};
 use crate::error::HarnessError;
-use crate::spec::{
-    IOType, IterateSource, Reconcile, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT, MAX_ITERATIONS_LIMIT,
-    RESERVED_TOOLS,
-};
+use crate::spec::{IOType, IterateSource, MAX_GATE_TIMEOUT_SECS, RESERVED_TOOLS};
 use crate::validate::is_workspace_relative;
 
 /// The most repair attempts one task may earn. The attempts are unrolled
@@ -74,6 +71,7 @@ pub(super) fn validate(w: &WorkflowSpec) -> Result<(), HarnessError> {
     validate_gates(w)?;
     validate_tasks(w)?;
     super::imports::validate_imports(w)?;
+    super::vars::validate(w)?;
     validate_success(w)?;
     validate_use(w)?;
     validate_capabilities(w)
@@ -313,7 +311,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
                 Check::Metric(m) => check_metric_ref(w, &place, &m.metric)?,
             }
         }
-        validate_loop(w, task, &place)?;
+        super::body::validate_loop(w, task, &place)?;
         validate_decoding(
             w,
             &place,
@@ -546,109 +544,32 @@ fn validate_model_only(task: &super::spec::TaskSpec, place: &str) -> Result<(), 
     Ok(())
 }
 
-/// `for_each` and `until`: one at most, a bounded count, a source that exists.
-fn validate_loop(
-    w: &WorkflowSpec,
-    task: &super::spec::TaskSpec,
-    place: &str,
-) -> Result<(), HarnessError> {
-    if task.for_each.is_some() && task.until.is_some() {
-        return Err(invalid(format!(
-            "{place}: a task loops one way, `for_each` or `until`, not both"
-        )));
-    }
-    if task.checkpoint.is_some() && task.for_each.is_none() {
-        return Err(invalid(format!(
-            "{place}: `checkpoint: each_item` needs a `for_each` task"
-        )));
-    }
-    if let Some(each) = &task.for_each {
-        if each.reconcile == Reconcile::Refresh && !matches!(each.source, IterateSource::Json(_)) {
-            return Err(invalid(format!(
-                "{place}: `reconcile: refresh` needs a file source; an input cannot change"
-            )));
-        }
-        if each.covers.len() > crate::spec::MAX_COVERS {
-            return Err(invalid(format!(
-                "{place}: for_each.covers names {} paths, more than {}",
-                each.covers.len(),
-                crate::spec::MAX_COVERS
-            )));
-        }
-        for path in &each.covers {
-            if !is_workspace_relative(path) {
-                return Err(invalid(format!(
-                    "{place}: for_each.covers path `{path}` must be inside the workspace \
-                     (relative, no `..`)"
-                )));
-            }
-        }
-        if let Some(max) = each.max_items {
-            if max == 0 || max > MAX_ITEMS_LIMIT {
-                return Err(invalid(format!(
-                    "{place}: for_each.max_items {max} is outside 1..={MAX_ITEMS_LIMIT}"
-                )));
-            }
-        }
-        match &each.source {
-            IterateSource::Json(json) => {
-                if !is_workspace_relative(&json.file) || json.file.contains("{{") {
-                    return Err(invalid(format!(
-                        "{place}: for_each source file `{}` must be a literal path inside the \
-                         workspace",
-                        json.file
-                    )));
-                }
-                if !json.pointer.is_empty() && !json.pointer.starts_with('/') {
-                    return Err(invalid(format!(
-                        "{place}: for_each pointer `{}` must be an RFC 6901 pointer such as /items",
-                        json.pointer
-                    )));
-                }
-            }
-            IterateSource::Input(name) => match w.inputs.as_ref().and_then(|i| i.get(name)) {
-                Some(input) if input.ty == IOType::Json => {}
-                Some(_) => {
-                    return Err(invalid(format!(
-                        "{place}: for_each reads input `{name}`, which must be declared `json` \
-                         (an array)"
-                    )))
-                }
-                None => {
-                    return Err(invalid(format!(
-                        "{place}: for_each reads input `{name}`, which is not declared"
-                    )))
-                }
-            },
-        }
-        if each.id.as_deref().is_some_and(str::is_empty) {
-            return Err(invalid(format!(
-                "{place}: for_each.id names a field; it is empty"
-            )));
-        }
-    }
-    if let Some(until) = &task.until {
-        check_metric_ref(w, &format!("{place}: until"), &until.metric)?;
-        if until.max_iterations == 0 || until.max_iterations > MAX_ITERATIONS_LIMIT {
-            return Err(invalid(format!(
-                "{place}: until.max_iterations {} is outside 1..={MAX_ITERATIONS_LIMIT}",
-                until.max_iterations
-            )));
-        }
-    }
-    Ok(())
-}
-
 fn validate_success(w: &WorkflowSpec) -> Result<(), HarnessError> {
     if w.success
         .work_items
         .as_ref()
-        .is_some_and(|i| i.all_completed)
+        .is_some_and(|i| i.all_completed || i.all_settled)
         && !w.workflow.iter().any(|t| t.for_each.is_some())
     {
         return Err(invalid(
-            "success.work_items.all_completed needs a task with `for_each`".into(),
+            "success.work_items needs a task with `for_each`".into(),
         ));
+    }
+    for task in &w.workflow {
+        let gates = task
+            .for_each
+            .iter()
+            .filter_map(|e| e.on_item_failure.as_ref())
+            .flat_map(|f| &f.verify);
+        for gate in gates {
+            if !w.gates.contains_key(gate) {
+                return Err(unknown_gate(
+                    w,
+                    &format!("task `{}`: for_each.on_item_failure", task.name),
+                    gate,
+                ));
+            }
+        }
     }
     for name in &w.success.gates {
         if !w.gates.contains_key(name) {
@@ -675,6 +596,13 @@ fn validate_use(w: &WorkflowSpec) -> Result<(), HarnessError> {
             .filter_map(|r| split_metric(r).map(|(g, _)| g)),
     );
     for task in w.all_tasks() {
+        if let Some(failure) = task
+            .for_each
+            .as_ref()
+            .and_then(|e| e.on_item_failure.as_ref())
+        {
+            used.extend(failure.verify.iter().map(String::as_str));
+        }
         if let Some(c) = &task.corrections {
             used.insert(&c.check);
             used.insert(&c.accept);
@@ -730,6 +658,14 @@ pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<String> {
         if let Some(c) = &task.corrections {
             note(w.gates.get(&c.check));
             note(w.gates.get(&c.accept));
+        }
+        for gate in task
+            .for_each
+            .iter()
+            .filter_map(|e| e.on_item_failure.as_ref())
+            .flat_map(|f| &f.verify)
+        {
+            note(w.gates.get(gate));
         }
         if let Some(until) = &task.until {
             note(split_metric(&until.metric).and_then(|(g, _)| w.gates.get(g)));

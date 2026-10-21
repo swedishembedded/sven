@@ -142,6 +142,17 @@ pub enum HarnessEvent {
         /// The item's index in the frozen collection, from 0.
         index: u64,
     },
+    /// An item's body failed for good in a loop with `on_item_failure`.
+    ItemFailed {
+        /// The iterate step.
+        step: String,
+        /// The item's id.
+        item: String,
+        /// The item's index in the frozen collection, from 0.
+        index: u64,
+        /// Why it failed.
+        reason: String,
+    },
     /// A resumed `for_each` with `reconcile: refresh` read its collection
     /// again and merged it by item id.
     ItemsReconciled {
@@ -313,6 +324,12 @@ impl std::fmt::Display for HarnessEvent {
             Self::ItemCompleted { step, item, index } => {
                 write!(f, "loop `{step}` completed item `{item}` (#{index})")
             }
+            Self::ItemFailed {
+                step,
+                item,
+                index,
+                reason,
+            } => write!(f, "loop `{step}` failed item `{item}` (#{index}): {reason}"),
             Self::TurnRetried {
                 step,
                 reason,

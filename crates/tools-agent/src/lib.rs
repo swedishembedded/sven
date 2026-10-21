@@ -14,11 +14,13 @@
 //! material, which is why it lives here. The `memory` tool lives in
 //! `sven-tools-ctx` because it delegates to the knowledge tools.
 pub mod ask_question;
+pub mod harness_vars;
 pub mod skill;
 pub mod system;
 pub mod todo;
 
 pub use ask_question::{AskQuestionTool, Question, QuestionRequest};
+pub use harness_vars::HarnessVarTool;
 pub use skill::SkillTool;
 mod skill_search;
 pub use system::{ModelCatalogEntry, SystemTool};

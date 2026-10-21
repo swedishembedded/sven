@@ -24,8 +24,13 @@ use super::context::{Context, LoopVars};
 use super::lower::{entry_of, iter_id, lower_loop, lower_task, origin};
 use super::rewrite::{output_fact, pool_fact, rewrite_condition, rewrite_text, stop_fact};
 use super::spec::{TaskSpec, WorkflowSpec};
+use super::validate::check_metric_ref;
 use crate::error::HarnessError;
-use crate::spec::{AssignStepSpec, BranchStepSpec, StepSpec};
+use crate::spec::{
+    AssignStepSpec, BranchStepSpec, IOType, IterateSource, Reconcile, StepSpec, MAX_ITEMS_LIMIT,
+    MAX_ITERATIONS_LIMIT,
+};
+use crate::validate::is_workspace_relative;
 
 fn invalid(message: String) -> HarnessError {
     HarnessError::Invalid(message)
@@ -159,6 +164,7 @@ pub(super) fn lower_group(
                 place: format!("{place}: until"),
                 repair: None,
                 loop_back: Some(iter_id(owner)),
+                item_failure: None,
             };
             lower_checks(b, &phase, &[metric], next)?
         }
@@ -176,7 +182,9 @@ pub(super) fn lower_group(
         .flat_map(|each| &each.covers)
         .map(|path| rewrite_text(path, &cx.scope(format!("{place}: covers"), first, vars)))
         .collect::<Result<Vec<_>, _>>()?;
-    lower_loop(b, owner, &following, next, covers)?;
+    let body = super::vars::lower_reset(cx.w, b, owner, &following);
+    lower_loop(b, owner, &body, next, covers)?;
+    lower_item_failure(cx, b, owner)?;
     if let Some(condition) = &owner.when {
         let scope = cx.scope(format!("{place}: when"), first, LoopVars::default());
         let skipped = format!("{}__skip", owner.name);
@@ -207,6 +215,69 @@ pub(super) fn lower_group(
     Ok(())
 }
 
+/// The step that fails an item of `task`'s loop instead of the run, when
+/// the loop has `on_item_failure`.
+pub(super) fn item_failure_entry(w: &WorkflowSpec, task: &TaskSpec) -> Option<String> {
+    let owner = w.loop_of(task);
+    owner
+        .for_each
+        .as_ref()?
+        .on_item_failure
+        .as_ref()
+        .map(|_| format!("{}__item_failed", owner.name))
+}
+
+/// Lowers `owner`'s item-failure path, when it has one: its checks run (a
+/// rollback), then the loop goes on with the next item; a failing one fails
+/// the run with `rollback_failed`.
+pub(super) fn lower_item_failure(
+    cx: &Context<'_>,
+    b: &mut Builder,
+    owner: &TaskSpec,
+) -> Result<(), HarnessError> {
+    let Some(failure) = owner
+        .for_each
+        .as_ref()
+        .and_then(|e| e.on_item_failure.as_ref())
+    else {
+        return Ok(());
+    };
+    let vars = LoopVars::of(owner);
+    let last = owner
+        .body
+        .last()
+        .map_or(owner.name.as_str(), |t| t.name.as_str());
+    let through = cx.through(last);
+    let checks = failure
+        .verify
+        .iter()
+        .map(|gate| cx.gate(gate, vars, through))
+        .collect::<Result<Vec<_>, _>>()?;
+    let phase = Phase {
+        prefix: format!("{}__rollback", owner.name),
+        task: Some(owner.name.clone()),
+        fail_code: "rollback_failed",
+        what: format!(
+            "task `{}` item `{{{{ facts.item_id }}}}`: on_item_failure",
+            owner.name
+        ),
+        place: format!("task `{}`: on_item_failure", owner.name),
+        repair: None,
+        loop_back: None,
+        item_failure: None,
+    };
+    let entry = lower_checks(b, &phase, &checks, &iter_id(owner))?;
+    b.add(
+        &format!("{}__item_failed", owner.name),
+        StepSpec::Assign(Box::new(AssignStepSpec {
+            set: std::collections::BTreeMap::new(),
+            then: entry,
+        })),
+        origin(Some(&owner.name), "failure"),
+    );
+    Ok(())
+}
+
 /// What a skipped task's output reads as: empty text, or an object of empty
 /// strings for the fields of a structured one.
 fn skipped_output(task: &TaskSpec) -> Value {
@@ -219,4 +290,97 @@ fn skipped_output(task: &TaskSpec) -> Value {
         Some(props) => Value::Object(props.keys().map(|k| (k.clone(), json!(""))).collect()),
         None => json!(""),
     }
+}
+
+/// `for_each` and `until`: one at most, a bounded count, a source that exists.
+pub(super) fn validate_loop(
+    w: &WorkflowSpec,
+    task: &super::spec::TaskSpec,
+    place: &str,
+) -> Result<(), HarnessError> {
+    if task.for_each.is_some() && task.until.is_some() {
+        return Err(invalid(format!(
+            "{place}: a task loops one way, `for_each` or `until`, not both"
+        )));
+    }
+    if task.checkpoint.is_some() && task.for_each.is_none() {
+        return Err(invalid(format!(
+            "{place}: `checkpoint: each_item` needs a `for_each` task"
+        )));
+    }
+    if let Some(each) = &task.for_each {
+        if each.reconcile == Reconcile::Refresh && !matches!(each.source, IterateSource::Json(_)) {
+            return Err(invalid(format!(
+                "{place}: `reconcile: refresh` needs a file source; an input cannot change"
+            )));
+        }
+        if each.covers.len() > crate::spec::MAX_COVERS {
+            return Err(invalid(format!(
+                "{place}: for_each.covers names {} paths, more than {}",
+                each.covers.len(),
+                crate::spec::MAX_COVERS
+            )));
+        }
+        for path in &each.covers {
+            if !is_workspace_relative(path) {
+                return Err(invalid(format!(
+                    "{place}: for_each.covers path `{path}` must be inside the workspace \
+                     (relative, no `..`)"
+                )));
+            }
+        }
+        if let Some(max) = each.max_items {
+            if max == 0 || max > MAX_ITEMS_LIMIT {
+                return Err(invalid(format!(
+                    "{place}: for_each.max_items {max} is outside 1..={MAX_ITEMS_LIMIT}"
+                )));
+            }
+        }
+        match &each.source {
+            IterateSource::Json(json) => {
+                if !is_workspace_relative(&json.file) || json.file.contains("{{") {
+                    return Err(invalid(format!(
+                        "{place}: for_each source file `{}` must be a literal path inside the \
+                         workspace",
+                        json.file
+                    )));
+                }
+                if !json.pointer.is_empty() && !json.pointer.starts_with('/') {
+                    return Err(invalid(format!(
+                        "{place}: for_each pointer `{}` must be an RFC 6901 pointer such as /items",
+                        json.pointer
+                    )));
+                }
+            }
+            IterateSource::Input(name) => match w.inputs.as_ref().and_then(|i| i.get(name)) {
+                Some(input) if input.ty == IOType::Json => {}
+                Some(_) => {
+                    return Err(invalid(format!(
+                        "{place}: for_each reads input `{name}`, which must be declared `json` \
+                         (an array)"
+                    )))
+                }
+                None => {
+                    return Err(invalid(format!(
+                        "{place}: for_each reads input `{name}`, which is not declared"
+                    )))
+                }
+            },
+        }
+        if each.id.as_deref().is_some_and(str::is_empty) {
+            return Err(invalid(format!(
+                "{place}: for_each.id names a field; it is empty"
+            )));
+        }
+    }
+    if let Some(until) = &task.until {
+        check_metric_ref(w, &format!("{place}: until"), &until.metric)?;
+        if until.max_iterations == 0 || until.max_iterations > MAX_ITERATIONS_LIMIT {
+            return Err(invalid(format!(
+                "{place}: until.max_iterations {} is outside 1..={MAX_ITERATIONS_LIMIT}",
+                until.max_iterations
+            )));
+        }
+    }
+    Ok(())
 }

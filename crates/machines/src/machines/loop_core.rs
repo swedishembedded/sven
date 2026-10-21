@@ -174,9 +174,9 @@ impl LoopState {
             model: None,
             dynamic_suffix: None,
             max_tool_rounds: Some(self.max_rounds),
-            refused_calls: std::mem::take(&mut self.refusals)
+            answered_calls: std::mem::take(&mut self.refusals)
                 .into_iter()
-                .map(|(call_id, reason)| sven_vocab::RefusedCall { call_id, reason })
+                .map(|(call_id, reason)| sven_vocab::AnsweredCall::refused(call_id, &reason))
                 .collect(),
             origin: None,
             role: None,
@@ -347,7 +347,7 @@ pub fn build_turn_effect(
         model: model.map(str::to_string),
         dynamic_suffix,
         max_tool_rounds: Some(max_tool_rounds),
-        refused_calls: Vec::new(),
+        answered_calls: Vec::new(),
         origin: None,
         role: None,
         system: None,

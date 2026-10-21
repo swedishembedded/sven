@@ -244,10 +244,10 @@ fn gated_agent_calls_are_asked_one_at_a_time_and_the_loop_continues_after_them()
         })
         .expect("the loop continues once both settled");
     assert_eq!(
-        turn["refused_calls"][0]["call_id"],
+        turn["answered_calls"][0]["call_id"],
         second_id.as_uuid().to_string()
     );
-    assert!(turn["refused_calls"][0]["reason"]
+    assert!(turn["answered_calls"][0]["content"]
         .as_str()
         .is_some_and(|r| r.contains("not approve")));
 }

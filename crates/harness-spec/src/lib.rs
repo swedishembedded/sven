@@ -27,12 +27,14 @@ mod decoding;
 mod error;
 mod expr;
 mod iterate;
+mod names;
 pub mod package;
 mod plan;
 mod source_map;
 mod spec;
 mod v2;
 mod validate;
+pub mod vars;
 
 #[cfg(test)]
 mod tests;
@@ -51,7 +53,7 @@ pub use spec::{
     IterateSource, IterateStepSpec, JsonSource, LimitsSpec, ParallelStepSpec, PredictStepSpec,
     Reconcile, RetryStepSpec, ReturnStepSpec, StepDecoding, StepId, StepSpec, ToolStepSpec,
     TransformStepSpec, UntilSpec, VerifyStepSpec, DEFAULT_GATE_TIMEOUT_SECS, DEFAULT_MAX_ITEMS,
-    DIGEST_TOOL, GATE_TOOL, MAX_COVERS, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT,
+    DIGEST_TOOL, GATE_TOOL, ITEM_FAILED_FACT, MAX_COVERS, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT,
     MAX_ITERATIONS_LIMIT, PRIMITIVES, RESERVED_TOOLS, SNAPSHOT_TOOL, SUPPORTED_API_VERSION,
     WORKFLOW_API_VERSION, WORKFLOW_PRIMITIVES,
 };

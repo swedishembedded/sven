@@ -98,6 +98,11 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
             spec.api_version
         )));
     }
+    if !spec.variables.is_empty() {
+        return Err(HarnessError::Invalid(format!(
+            "`variables` needs `api_version: \"{WORKFLOW_API_VERSION}\"`"
+        )));
+    }
     if spec
         .limits
         .as_ref()
@@ -117,6 +122,7 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
                 if !a.decoding.is_empty()
                     || a.system.is_some()
                     || a.conversation.is_some()
+                    || !a.vars.is_empty()
                     || a.origin.is_some()
                     || a.role.is_some()
                     || a.stop_as.is_some()

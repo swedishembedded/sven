@@ -157,11 +157,11 @@ fn a_proposed_call_outside_the_allowlist_is_never_run() {
         1,
         "the loop continues once the tool settled"
     );
-    let refused = requests[0]["refused_calls"].as_array().expect("refusals");
+    let refused = requests[0]["answered_calls"].as_array().expect("refusals");
     assert_eq!(refused.len(), 1);
     assert_eq!(refused[0]["call_id"], denied_id.as_uuid().to_string());
     assert!(
-        refused[0]["reason"]
+        refused[0]["content"]
             .as_str()
             .is_some_and(|r| r.contains("write_file") && r.contains("allowlist")),
         "the model is told why: {refused:?}"
@@ -180,7 +180,7 @@ fn a_turn_of_only_refused_calls_continues_at_once() {
     let requests = llm_requests(&fx);
     assert_eq!(requests.len(), 1, "exactly one continuation turn: {fx:?}");
     assert_eq!(
-        requests[0]["refused_calls"][0]["call_id"],
+        requests[0]["answered_calls"][0]["call_id"],
         denied_id.as_uuid().to_string()
     );
     assert_eq!(state, HarnessState::WaitingForModel);

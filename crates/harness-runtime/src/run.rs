@@ -23,7 +23,7 @@ use serde_json::Value;
 use sven_harness_spec::{Expr, HarnessBundle, HarnessPlan, Helper, Path, Template};
 use sven_hsm::{Context, MachineId, ToolCallId};
 
-use crate::approval::{HeldCall, HeldGate};
+use crate::approval::HeldGate;
 use uuid::Uuid;
 
 use crate::error::HarnessRunError;
@@ -282,60 +282,7 @@ pub enum Waiting {
     Join,
 }
 
-/// The agent step's in-flight model↔tool loop.
-///
-/// Mirrors the machines' `LoopState` in miniature: a harness agent step has
-/// a fixed tool allowlist, no all-tools fallback, and no schema demand —
-/// the plan's agent primitive is exactly this loop and nothing else.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct AgentLoop {
-    /// The agent step's id.
-    pub step: String,
-    /// The thread the loop runs in (`harness.<plan name>`).
-    pub thread: String,
-    /// The step's tool allowlist.
-    pub tools: Vec<String>,
-    /// Calls proposed by the last turn, not yet settled.
-    pub pending: Vec<ToolCallId>,
-    /// Model turns spent in this loop so far.
-    pub rounds: u64,
-    /// `true` when the step declared no tool list: the session's agent-mode
-    /// tools are open to it and `tools` is empty. `false` when `tools` is
-    /// an explicit allowlist, which is also enforced on proposed calls.
-    #[serde(default)]
-    pub open: bool,
-    /// Proposed calls refused before they ran (call id to reason), drained
-    /// into the next turn so the model reads why they did not run.
-    #[serde(default)]
-    pub refused: BTreeMap<String, String>,
-    /// The calls the last turn proposed and the step admitted (call id to
-    /// call): what a call the permission gate holds for approval is run as
-    /// once it is approved.
-    #[serde(default)]
-    pub calls: BTreeMap<String, HeldCall>,
-    /// The model role that answers the loop's turns.
-    #[serde(default)]
-    pub role: Option<String>,
-    /// Where the loop records how it ended.
-    #[serde(default)]
-    pub stop_as: Option<String>,
-    /// The fact holding the calls the step may still make.
-    #[serde(default)]
-    pub pool: Option<String>,
-    /// The repeated answers that end the loop.
-    #[serde(default)]
-    pub max_repeats: Option<u32>,
-    /// How many times each (call, answer) pair has been seen this loop.
-    #[serde(default)]
-    pub repeats: BTreeMap<String, u32>,
-    /// Why the loop ends once the calls in flight settle (`tool_cap`,
-    /// `repetition`).
-    #[serde(default)]
-    pub ending: Option<String>,
-    /// The decoding settings of the step's turns.
-    #[serde(default)]
-    pub decoding: sven_vocab::TurnDecoding,
-}
+pub use crate::agent_loop::AgentLoop;
 
 /// The active retry frame: which retry step is in play, its body, and how
 /// many attempts are left. One frame at a time — a run's control flow is a
@@ -481,6 +428,18 @@ pub enum TraceRecord {
         item: String,
         /// The item's index in the frozen collection, from 0.
         index: u64,
+    },
+    /// An item's body failed for good in a loop with `on_item_failure`; it was
+    /// rolled back and the loop went on.
+    ItemFailed {
+        /// The iterate step.
+        step: String,
+        /// The item's id.
+        item: String,
+        /// The item's index in the frozen collection, from 0.
+        index: u64,
+        /// Why it failed.
+        reason: String,
     },
     /// A resumed `for_each` with `reconcile: refresh` read its collection
     /// again and merged it by item id.

@@ -118,6 +118,13 @@ impl<P: std::borrow::Borrow<HarnessPlan>> SourceTracker<P> {
                 source.item_id = Some(item.clone());
                 source.result = Some("completed".to_string());
             }
+            TraceRecord::ItemFailed { item, .. } => {
+                if let Some(task) = &source.task {
+                    self.items.remove(task);
+                }
+                source.item_id = Some(item.clone());
+                source.result = Some("failed".to_string());
+            }
             _ => {
                 source.item_id = source
                     .task
@@ -150,6 +157,7 @@ fn step_of(record: &TraceRecord) -> Option<&str> {
         | TraceRecord::IterationStarted { step, .. }
         | TraceRecord::ItemStarted { step, .. }
         | TraceRecord::ItemCompleted { step, .. }
+        | TraceRecord::ItemFailed { step, .. }
         | TraceRecord::ItemsReconciled { step, .. }
         | TraceRecord::ItemsInvalidated { step, .. }
         | TraceRecord::TurnRetried { step, .. }
