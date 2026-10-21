@@ -7,7 +7,8 @@
 # and the check must pass on the untouched tree. Then, for every tracked .rs
 # file under `paths`, a fresh auditor (read-only) lists the problems, a fresh
 # fixer fixes them, a fresh reviewer corrects the diff and writes the commit
-# message, and the harness commits once the project's own check passes. A file
+# message, and the harness commits all of it as one commit titled
+# `<file path>: <title>` once the project's own check passes. A file
 # that cannot be made to pass is reset and the sweep goes on. Agents never
 # commit, so `git reset --hard HEAD` is always the way back.
 #
@@ -66,14 +67,14 @@ gates:
       changed=$(git status --porcelain | wc -l)
       [ "$changed" -le 12 ] || { git status --short >&2; echo "$changed files changed: fix this file, do not re-architect" >&2; exit 1; }
   commit:
-    description: Commit the change, if there is one.
+    description: Commit everything the work on the file changed, titled with the file's path.
     run: |
       git add -A
       git diff --cached --quiet && exit 0
-      subject=$(printf '%s\n' "$MSG" | head -n 1)
-      [ "${#subject}" -le 72 ] || { git reset -q; echo "subject over 72 characters: $subject" >&2; exit 1; }
-      printf '%s\n' "$MSG" | git commit -q -F -
-    env: { MSG: "{{ vars.commit_message }}" }
+      title=$(printf '%s\n' "$MSG" | head -n 1)
+      [ "${#title}" -le 72 ] || { git reset -q; echo "title over 72 characters: $title" >&2; exit 1; }
+      printf '%s: %s\n' "$FILE" "$MSG" | git commit -q -F -
+    env: { FILE: "{{ item }}", MSG: "{{ vars.commit_message }}" }
   rollback:
     description: Throw the file's change away.
     run: git reset -q --hard HEAD && git clean -q -fd
@@ -150,8 +151,10 @@ workflow:
           hunk that changes behaviour, the public surface or a test; finish anything left half
           done; grep for uses of renamed items. Run `{{ vars.check }}` until it passes.
 
-          Set `commit_message`: `<area>: <what changed>` (at most 72 characters), a blank line,
-          and why the code is better with behaviour unchanged.
+          Set `commit_message`: a title saying what changed (imperative, at most 72 characters,
+          no path - the harness puts `{{ item }}: ` in front), a blank line, and why the code is
+          better with behaviour unchanged. The harness commits every change made for this file,
+          in all the files it touched, as one commit.
         verify: [check]
         repair:
           attempts: 2

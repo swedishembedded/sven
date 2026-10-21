@@ -21,7 +21,7 @@ you can procure our services by sending an email to info@swedishembedded.com.
 | `audit` | read-only tools | reads the file in full, sets `findings` | |
 | `fix` | file tools and a shell | fixes the findings, runs `check` (skipped when the audit found nothing) | |
 | `review` | file tools and a shell | corrects the diff, sets `commit_message` (skipped likewise) | `check` (passes, no test gone, at most 12 files changed), 2 repairs |
-| `commit` | none | the harness commits with the reviewer's message | the subject fits in 72 characters |
+| `commit` | none | the harness commits every change made for the file, in whatever files, as one commit titled `<file path>: <reviewer's title>` | the title fits in 72 characters |
 
 Each role of each file is a fresh agent that sees only the variables it names.
 No agent commits, so a file that cannot be made to pass is thrown away with
