@@ -26,7 +26,7 @@ use crate::approval::HeldCall;
 use crate::command_gate::TurnTrouble;
 use crate::decoding::{system_text, TurnShape};
 use crate::machine::HarnessMachine;
-use crate::run::{HarnessRunState, Inflight, Waiting};
+use crate::run::{HarnessRunState, Inflight, TraceRecord, Waiting};
 use crate::state::HarnessState;
 
 /// The agent-mode tool set an agent step without a tool list is offered.
@@ -290,6 +290,19 @@ impl HarnessMachine {
         for call in &served {
             let content =
                 crate::vars::answer(self.plan(), run, &agent.grants, &call.name, &call.args);
+            if call.name == "harness_vars_set" {
+                run.trace.push(TraceRecord::VariableSet {
+                    step: agent.step.clone(),
+                    name: call
+                        .args
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    stored: content.starts_with("ok:"),
+                    answer: content.clone(),
+                });
+            }
             agent
                 .answered
                 .insert(call.call_id.as_uuid().to_string(), content);

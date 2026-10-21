@@ -41,6 +41,41 @@ impl TurnExecutor {
     /// Emits `UiEvent::ContextCompacted` on success (whichever path was
     /// used); does not emit anything and returns `messages` unchanged if
     /// there was truly nothing to compact.
+    /// Makes the history an overflow retry was sent with (if there was one)
+    /// the thread's own and records it as an emergency compaction, so the
+    /// next request starts from it instead of overflowing again.
+    pub(super) fn keep_overflow_trim(
+        &self,
+        thread_id: &str,
+        trimmed: Option<Vec<Message>>,
+        obs: &ObservationSink,
+    ) {
+        let (Some(trimmed), Ok(mut store)) = (trimmed, self.store.lock()) else {
+            return;
+        };
+        let tokens_before: usize = store
+            .snapshot(thread_id)
+            .iter()
+            .map(Message::approx_tokens)
+            .sum();
+        let tokens_after: usize = trimmed.iter().map(Message::approx_tokens).sum();
+        store.replace_thread(thread_id, trimmed);
+        store.record_compaction(CompactionRecord {
+            thread: thread_id.to_string(),
+            tokens_before,
+            tokens_after,
+            strategy: CompactionStrategyUsed::Emergency,
+            turn: 0,
+        });
+        drop(store);
+        obs.emit(UiEvent::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy: CompactionStrategyUsed::Emergency,
+            turn: 0,
+        });
+    }
+
     pub(super) async fn compact_thread(
         &self,
         thread_id: &str,

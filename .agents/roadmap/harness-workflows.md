@@ -156,3 +156,28 @@ Grounded in the source at the start of this work (`fffb3551`):
   `on_item_failure`) rolls the item back; resume does not repeat completed
   items; every existing sample and test passes (updated where the language
   changed).
+
+## Live findings (Qwen3.8-27B on brain, the rust-refactor sample over sven)
+
+- **Run 1 (2026-10-21): `explore` failed with `missing_variable`, correctly.**
+  The conversation grew to 48.7k prompt tokens by turn 14. From turn 15 on,
+  every request was trimmed to its last few messages: 5.2k, then 3.7k, and
+  later 2.2k. The agent forgot what it had read, re-read `Cargo.toml` 12 times
+  and `README.md` 10 times, and the repetition guard ended its turns before it
+  set `checks`. Three causes:
+  1. `sven harness run --toolset coding` built its client with `from_config`,
+     not `from_config_probed`, so the server's 64k window was unknown and no
+     proactive (summarising) compaction ever fired.
+  2. An overflow retry trimmed only the request it retried, so every later
+     request overflowed and was trimmed again. The trim is now made the
+     thread's and recorded as an emergency compaction.
+  3. The explore prompt invited reading whole large files, with a 16k output
+     budget. It now asks for selective reads and for `checks` to be published
+     first, with an 8k budget.
+
+  Variable sets were invisible, because the machine answers them without an
+  executor. They are now `VariableSet` trace records.
+- **Serving.** With `--kv-cache fp8`, decode used generated attention kernels:
+  SM-active 54% and memory-busy 11% during decode, at ~39 tok/s. int8 KV on
+  brain main at or after 1e9c91033 has a native kernel; the perf lane measured
+  67-77 tok/s single-stream on Q8.

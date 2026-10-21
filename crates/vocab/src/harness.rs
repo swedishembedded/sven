@@ -142,6 +142,17 @@ pub enum HarnessEvent {
         /// The item's index in the frozen collection, from 0.
         index: u64,
     },
+    /// An agent asked to set a run variable.
+    VariableSet {
+        /// The agent step.
+        step: String,
+        /// The variable.
+        name: String,
+        /// Whether the value was stored.
+        stored: bool,
+        /// The answer the agent was given.
+        answer: String,
+    },
     /// An item's body failed for good in a loop with `on_item_failure`.
     ItemFailed {
         /// The iterate step.
@@ -330,6 +341,7 @@ impl std::fmt::Display for HarnessEvent {
                 index,
                 reason,
             } => write!(f, "loop `{step}` failed item `{item}` (#{index}): {reason}"),
+            Self::VariableSet { step, answer, .. } => write!(f, "step `{step}`: {answer}"),
             Self::TurnRetried {
                 step,
                 reason,

@@ -45,9 +45,13 @@ impl Request {
     }
 
     /// [`stream_turn`], and when the server rejects the request as too long
-    /// for its context (the estimate undercounted, or the window shrank under
-    /// us): announce it, apply `emergency_compact` to that request and ask
-    /// once more. A second rejection is returned as the failure it is.
+    /// for its context (the estimate undercounted, or the window was never
+    /// learned): announce it, apply `emergency_compact` to that request and
+    /// ask once more. A second rejection is returned as the failure it is.
+    /// The shrunk history comes back with the result, so the caller makes it
+    /// the thread's: a trim that stayed with one request would be needed
+    /// again by every later one, and each would lose the agent's history
+    /// anew.
     pub(super) async fn stream_retrying_overflow(
         self,
         model: &dyn ModelProvider,
@@ -56,7 +60,7 @@ impl Request {
         todos: &[sven_vocab::TodoItem],
         tx: &mpsc::Sender<UiEvent>,
         obs: &ObservationSink,
-    ) -> anyhow::Result<StreamedTurn> {
+    ) -> (anyhow::Result<StreamedTurn>, Option<Vec<Message>>) {
         let again = Request {
             messages: self.messages.clone(),
             tools: self.tools.clone(),
@@ -75,14 +79,15 @@ impl Request {
                 let mut shrunk = again.messages;
                 let system = shrunk.first().filter(|m| m.role == Role::System).cloned();
                 sven_turn::emergency_compact(&mut shrunk, system, keep_recent, todos);
-                Request {
-                    messages: shrunk,
+                let result = Request {
+                    messages: shrunk.clone(),
                     ..again
                 }
                 .stream(model, limits, tx)
-                .await
+                .await;
+                (result, Some(shrunk))
             }
-            other => other,
+            other => (other, None),
         }
     }
 }

@@ -591,7 +591,7 @@ impl EffectExecutor for TurnExecutor {
         *self.cancel_handle.lock().await = Some(cancel_tx);
 
         let todos = self.pinned_todos();
-        let result = tokio::select! {
+        let (result, trimmed) = tokio::select! {
             biased;
             _ = cancel_rx => {
                 // A caller that stops the run from outside says why; a
@@ -602,13 +602,13 @@ impl EffectExecutor for TurnExecutor {
                     .ok()
                     .and_then(|mut store| store.take_stop_reason())
                     .unwrap_or_else(|| "turn cancelled by user".to_string());
-                Err(anyhow::Error::new(AbortedError::by_user(reason)))
+                (Err(anyhow::Error::new(AbortedError::by_user(reason))), None)
             }
             () = turn_deadline(limits.deadline) => {
                 let secs = limits.deadline.map_or(0, |d| d.as_secs());
-                Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
+                (Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
                     "the turn reached its deadline of {secs} s"
-                ))))
+                )))), None)
             }
             r = overflow::Request {
                 messages,
@@ -628,6 +628,7 @@ impl EffectExecutor for TurnExecutor {
             ) => r,
         };
 
+        self.keep_overflow_trim(&thread_id, trimmed, obs);
         self.cancel_handle.lock().await.take();
         drop(tx);
         let _ = forwarder.await;

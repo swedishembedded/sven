@@ -7,7 +7,8 @@
 // running agents on local models you can procure our services by sending an
 // email to info@swedishembedded.com.
 //! Spec: a request the server rejects as too long for its context is sent
-//! once more, shrunk, instead of ending the run.
+//! once more, shrunk, instead of ending the run - and the shrunk history
+//! becomes the thread's, so the next request does not overflow again.
 
 use std::sync::{Arc, Mutex};
 
@@ -56,6 +57,13 @@ impl sven_model::ModelProvider for TightServer {
 }
 
 async fn run(rejections: usize) -> (Vec<UiEvent>, Vec<usize>) {
+    let (events, sizes, _) = run_keeping_store(rejections).await;
+    (events, sizes)
+}
+
+async fn run_keeping_store(
+    rejections: usize,
+) -> (Vec<UiEvent>, Vec<usize>, Arc<Mutex<ThreadStore>>) {
     let sizes = Arc::new(Mutex::new(Vec::new()));
     let store = Arc::new(Mutex::new(ThreadStore::new()));
     {
@@ -79,7 +87,7 @@ async fn run(rejections: usize) -> (Vec<UiEvent>, Vec<usize>) {
         }),
         None,
         Arc::new(sven_tool_registry::ToolRegistry::new()),
-        store,
+        Arc::clone(&store),
         Arc::new(Mutex::new(std::collections::HashMap::new())),
         Arc::new(tokio::sync::Mutex::new(None)),
     );
@@ -107,7 +115,7 @@ async fn run(rejections: usize) -> (Vec<UiEvent>, Vec<usize>) {
     }
     rt.abort();
     let sizes = sizes.lock().unwrap().clone();
-    (events, sizes)
+    (events, sizes, store)
 }
 
 #[tokio::test]
@@ -143,4 +151,22 @@ async fn a_second_overflow_is_a_failure_not_another_retry() {
             .any(|e| matches!(e, UiEvent::Error(m) if m.contains("context_length_exceeded"))),
         "the failure names the cause: {events:?}"
     );
+}
+
+#[tokio::test]
+async fn the_trimmed_history_becomes_the_threads_so_the_next_request_fits() {
+    use sven_machines::machines::reactive_agent::CHAT_THREAD;
+    let (_, sizes, store) = run_keeping_store(1).await;
+    let store = store.lock().unwrap();
+    let thread = store.snapshot(CHAT_THREAD);
+    // The thread holds the retried request's history plus the answer, not
+    // the 61 messages that overflowed.
+    assert_eq!(thread.len(), sizes[1] + 1, "{sizes:?}");
+    let compactions = store.compactions();
+    assert_eq!(compactions.len(), 1, "recorded as a compaction");
+    assert_eq!(
+        compactions[0].strategy,
+        sven_hsm::CompactionStrategyUsed::Emergency
+    );
+    assert!(compactions[0].tokens_after < compactions[0].tokens_before);
 }

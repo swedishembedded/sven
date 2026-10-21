@@ -411,6 +411,18 @@ pub enum TraceRecord {
         /// The item's index in the frozen collection, from 0.
         index: u64,
     },
+    /// An agent asked to set a run variable: whether it was stored, and why
+    /// not when it was refused.
+    VariableSet {
+        /// The agent step.
+        step: String,
+        /// The variable.
+        name: String,
+        /// Whether the value was stored.
+        stored: bool,
+        /// The answer the agent was given.
+        answer: String,
+    },
     /// An item's body failed for good in a loop with `on_item_failure`; it was
     /// rolled back and the loop went on.
     ItemFailed {

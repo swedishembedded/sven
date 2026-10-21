@@ -62,7 +62,7 @@ variables:
 agent:
   profile: coding
   tools: [read_file, find_file, grep, edit_file, write_file, shell]
-  turn: { max_output_tokens: 16384 }
+  turn: { max_output_tokens: 8192 }
   system: >-
     You are a senior Rust engineer working in a git repository, which is your working
     directory. You make behaviour-preserving structural improvements only. Work only through
@@ -197,12 +197,16 @@ workflow:
       Survey this Rust repository so that engineers who later refactor it file by file
       understand it. Only read: do not create, modify or delete any file.
 
-      Start with `cargo metadata --no-deps --format-version 1`, the root and member Cargo.toml
-      files, README, any AGENTS.md / CLAUDE.md / CONTRIBUTING, Makefile or justfile, CI files
-      (.github/workflows), rustfmt.toml / clippy.toml, each crate's lib.rs or main.rs, and
-      `git log --oneline -15`.
+      Your context window is limited, so read selectively and never re-read what you have
+      already seen: prefer `grep -n`, `head`, `sed -n 'A,Bp'` and read_file with an offset and
+      a limit over reading whole large files. Useful sources: `cargo metadata --no-deps
+      --format-version 1 | head -c 4000`, the root Cargo.toml, the parts of README, AGENTS.md /
+      CLAUDE.md / CONTRIBUTING that cover building, testing and conventions, the Makefile or
+      justfile targets for build/test/lint/format, CI files (.github/workflows), rustfmt.toml /
+      clippy.toml, a few crates' lib.rs, and `git log --oneline -15`.
 
-      Then publish two variables with the harness_vars_set tool:
+      Publish `checks` as soon as you know the commands (before you write `context`), then
+      publish `context`. Both are set with the harness_vars_set tool:
 
       1. `context` (a string): a Markdown document of at most about 1200 words with these
          sections: Purpose (three sentences); Layout (the workspace members, the role of each,

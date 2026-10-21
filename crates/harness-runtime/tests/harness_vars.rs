@@ -159,6 +159,16 @@ fn an_agent_sets_a_variable_that_later_templates_read() {
         json!(["read_file"]),
         "a task naming no variable gets no variable tools"
     );
+    // Every set is on the trace, refused or stored, with the agent's answer.
+    let sets: Vec<bool> = m
+        .trace(&ctx)
+        .iter()
+        .filter_map(|r| match r {
+            sven_harness_runtime::TraceRecord::VariableSet { stored, .. } => Some(*stored),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sets, [false, false, true]);
 }
 
 #[test]

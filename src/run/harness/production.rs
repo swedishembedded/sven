@@ -194,7 +194,7 @@ impl Production {
 
     /// The engine of the run: the real model, the coding toolset confined to
     /// the workspace, the approval mode and the host ceiling.
-    fn engine(self) -> Result<(Engine, EngineRun, Option<PathBuf>), Failure> {
+    async fn engine(self) -> Result<(Engine, EngineRun, Option<PathBuf>), Failure> {
         let mut config = Config::default();
         let model = &mut config.model;
         model.provider = self.provider;
@@ -202,7 +202,11 @@ impl Production {
         model.base_url = Some(self.endpoint);
         model.api_key = self.api_key;
         config.agent.first_byte_timeout_secs = self.first_byte_timeout_secs;
-        let client = sven_sdk::drivers::from_config(model)
+        // Probed: the server's own context window is learned up front, so a
+        // conversation is summarised before it outgrows the window rather
+        // than trimmed when the server refuses it.
+        let client = sven_sdk::drivers::from_config_probed(model)
+            .await
             .map_err(|e| usage(format!("cannot build the model client: {e:#}")))?;
         // The client holds the key; the engine's configuration does not.
         model.api_key = None;
@@ -230,7 +234,7 @@ impl Production {
 
 /// Starts the harness in `dir` under `production`.
 pub(super) async fn run(dir: &HarnessDir, production: Production) -> Result<RunResult, Failure> {
-    let (engine, request, progress_checkpoint) = production.engine()?;
+    let (engine, request, progress_checkpoint) = production.engine().await?;
     let result = run_on_engine(&engine, dir, request).await.map_err(kit)?;
     Ok(settled(result, progress_checkpoint))
 }
@@ -241,7 +245,7 @@ pub(super) async fn resume(
     checkpoint: HarnessCheckpoint,
     production: Production,
 ) -> Result<RunResult, Failure> {
-    let (engine, request, progress_checkpoint) = production.engine()?;
+    let (engine, request, progress_checkpoint) = production.engine().await?;
     let result = resume_on_engine(&engine, dir, checkpoint, request)
         .await
         .map_err(kit)?;
