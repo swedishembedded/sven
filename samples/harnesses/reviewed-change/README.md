@@ -27,12 +27,16 @@ What it shows:
   the package, a symlink that leads out of it, a cycle and two documents with
   one name are all refused before anything runs.
 
-Cases: `approved`, `the-reviewers-gate-fails-the-run`.
-
 ## Run it
 
 ```sh
 sven harness validate samples/harnesses/reviewed-change
 sven harness inspect  samples/harnesses/reviewed-change
-sven harness test     samples/harnesses/reviewed-change
+sven harness run samples/harnesses/reviewed-change --input '{"feature": "..."}' --workspace DIR \
+    --model openai/<model> --model-endpoint http://127.0.0.1:8788/v1 \
+    --approvals auto --trace trace.jsonl
 ```
+
+`DIR` is the repository the agent works in; the model is a server you already
+run. The gates are the repository's own commands, so `DIR` must hold what they
+run.

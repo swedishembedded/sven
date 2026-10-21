@@ -22,18 +22,19 @@ What it shows:
   this very check, and the agent has no way to declare it met
   (`coverage_gate_cannot_be_bypassed`).
 
-The cases replace the `shell_gate` tool with a fixture, which is how the gates
-run offline; in a real run the host provides the real tool (workspace-confined,
-killed with its process group at the deadline).
-
-Cases: `passes-first-time`, `repaired-on-second-attempt`,
-`exit-status-beats-the-output`, `coverage-cannot-be-bypassed`,
-`a-timeout-is-a-failure`.
+In a run the gates use the real `shell_gate` tool (workspace-confined, killed
+with its process group at the deadline).
 
 ## Run it
 
 ```sh
 sven harness validate samples/harnesses/verified-task
 sven harness inspect  samples/harnesses/verified-task
-sven harness test     samples/harnesses/verified-task
+sven harness run samples/harnesses/verified-task --input '{"feature": "..."}' --workspace DIR \
+    --model openai/<model> --model-endpoint http://127.0.0.1:8788/v1 \
+    --approvals auto --trace trace.jsonl
 ```
+
+`DIR` is the repository the agent works in; the model is a server you already
+run. The gates are the repository's own commands, so `DIR` must hold what they
+run.

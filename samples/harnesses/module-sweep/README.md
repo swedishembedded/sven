@@ -23,17 +23,19 @@ What it shows:
   fresh run of the coverage command after every pass, and a bound ends a loop that
   never gets there with `until_exhausted` instead of an endless run.
 
-As in [verified-task](../verified-task/), the cases fake the `shell_gate` tool
-(and `read_json_snapshot` for the backlog); a real run needs a host that
-provides them.
-
-Cases: `sweeps-every-module`, `a-failing-module-stops-the-sweep`,
-`coverage-takes-two-passes`, `coverage-never-arrives`,
-`interrupted-sweep-resumes-at-the-module`.
+A real run needs the host's tools: `shell_gate` and `read_json_snapshot` are
+provided by every `sven harness run`.
 
 ## Run it
 
 ```sh
 sven harness validate samples/harnesses/module-sweep
-sven harness test     samples/harnesses/module-sweep
+sven harness inspect  samples/harnesses/module-sweep
+sven harness run samples/harnesses/module-sweep --workspace DIR \
+    --model openai/<model> --model-endpoint http://127.0.0.1:8788/v1 \
+    --approvals auto --trace trace.jsonl
 ```
+
+`DIR` is the repository the agent works in; the model is a server you already
+run. The gates are the repository's own commands, so `DIR` must hold what they
+run.

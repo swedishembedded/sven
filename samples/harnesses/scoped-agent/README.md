@@ -14,37 +14,14 @@ imports the workflow `reader` (`lib/reader.yaml`) and runs it as a task
   allowlist: a call to any other tool is refused before it runs, and the
   model is told so.
 
-Cases: `happy` (the agent reads, then answers); `proposes-a-tool-outside-its-
-allowlist` (the model asks for `write_notes`; nothing is written, and the case
-checks both that the fixture was never invoked and that no `WriteFile`
-capability was exercised); `tool-error-is-reported` (a failing tool goes back
-to the model, not to the run's verdict).
-
-A fixture tool must be honest: its declared `capability` has to equal the one
-its name implies (`read_*` is `ReadFile`, `write_*` is `WriteFile`), or its
-calls are refused and the case fails with the tool never invoked.
-
 ## Run it
 
 ```sh
 sven harness validate samples/harnesses/scoped-agent
-sven harness inspect  samples/harnesses/scoped-agent
-sven harness test     samples/harnesses/scoped-agent
+sven harness run samples/harnesses/scoped-agent --input '{"question": "When is the deploy window?"}' --workspace DIR \
+    --model openai/<model> --model-endpoint http://127.0.0.1:8788/v1 \
+    --approvals auto --trace trace.jsonl
 ```
 
-`sven harness test` runs every file under `cases/` on mock models and fixture
-tools; nothing reaches a real model. The same cases run in the repository's
-tests, together with the other harness samples:
-
-```sh
-cargo test -p sven-harness-testkit --test samples
-```
-
-This sample uses tools, so the SDK-only runner refuses it and points to
-`sven harness test`.
-
-## Expected
-
-Three cases, all passed. In `happy` the run completes with
-`{"answer": "The deploy window is Friday."}` and the fixture log shows exactly
-one `read_notes` call.
+`DIR` is the directory the agent works in; the model is a server you already
+run. The trace and the final report say what the run did.

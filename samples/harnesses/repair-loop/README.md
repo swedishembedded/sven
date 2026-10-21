@@ -18,28 +18,16 @@ What it shows:
 - The failure is the run's own: `gate_failed`, with a message naming the task
   and the file.
 
-Cases: `repaired-on-second-attempt` (the first patch fails, the repair turn's
-call writes the file inside the case workspace); `never-repaired` (both patches
-fail); `claims-success-without-writing` (the tool answers "patched" but writes
-nothing - the agent is satisfied, the check is not).
-
 ## Run it
 
 ```sh
 sven harness validate samples/harnesses/repair-loop
-sven harness inspect  samples/harnesses/repair-loop
-sven harness test     samples/harnesses/repair-loop
+sven harness run samples/harnesses/repair-loop --workspace DIR \
+    --model openai/<model> --model-endpoint http://127.0.0.1:8788/v1 \
+    --approvals auto --trace trace.jsonl
 ```
 
-`sven harness test` runs every file under `cases/` on mock models and fixture
-tools; nothing reaches a real model. The same cases run in the repository's
-tests, together with the other harness samples:
+`DIR` is the directory the agent works in; the model is a server you already
+run. The trace and the final report say what the run did.
 
-```sh
-cargo test -p sven-harness-testkit --test samples
-```
-
-## Expected
-
-`repaired-on-second-attempt` completes with `{"result": "patched"}`, the repair
-turn having run once. The other two cases end `failed` with code `gate_failed`.
+The harness takes no inputs.

@@ -9,8 +9,9 @@ are repaired and what counts as success. Sven compiles it offline, pins it by a
 content digest and runs it on the same kernel as every other agent, so the
 permission gate, approvals, cancellation and tracing all apply unchanged.
 
-`sven harness` validates, inspects, runs, resumes, replays, tests and compares
-harnesses without a model, a network or a configuration file. This page is the
+`sven harness` validates, inspects, compiles, explains, runs, resumes and
+replays harnesses. Reading a harness needs no model, network or configuration
+file; a run uses a model server you name and reads no configuration. This page is the
 user guide; the language, the runtime and the SDK are in
 [Programmable harnesses](../reference/harnesses.md), and the design
 decisions in [ADR 0004](../adr/0004-programmable-harnesses.md) and
@@ -53,7 +54,9 @@ decides control flow.
 ```sh
 $ sven harness validate samples/harnesses/ticket-routing
 OK samples/harnesses/ticket-routing (model-routing)
-$ sven harness test samples/harnesses/ticket-routing
+$ sven harness run samples/harnesses/ticket-routing --workspace . \
+    --model openai/<model> --model-endpoint http://127.0.0.1:8788/v1 \
+    --approvals auto --input '{"ticket": "The app crashes on start"}'
 ```
 
 ## A workflow: tasks, gates and repair
@@ -140,9 +143,8 @@ until a freshly measured coverage figure reaches a threshold or its passes run
 out. The run state records every item, so a suspended run resumes at the module
 it was on; the finished ones are not run again.
 
-`sven harness test` runs the sample on mock models, with a fixture standing in
-for the `shell_gate` tool; a real run needs a host that provides the tool (the
-SDK's `GateCommandTool`). The full language is in the
+Every `sven harness run` provides the gate tool (`shell_gate`), confined to the
+workspace; an SDK host registers it the same way. The full language is in the
 [reference](../reference/harnesses.md#the-language).
 
 ## Harness directories
@@ -153,8 +155,7 @@ A path argument is a harness file, or a directory:
 NN-name/
   harness.yaml     the main document
   lib/*.yaml       workflows it imports (`imports:`), any path inside the directory
-  cases/*.yaml     test cases, one per file
-  fixtures/        files a case refers to
+  fixtures/        input repositories and other files a live run uses
 ```
 
 A main document with `imports` is a package: it is pinned by one digest that
@@ -169,55 +170,34 @@ sven harness compile  <PATH> [--format json|yaml] [-o FILE]
 sven harness explain  <PATH> [--step ID] [--input JSON | --input-file FILE] [--elide N]
 sven harness status   <PATH> --checkpoint FILE [--json]
 sven harness schema   [<PATH>]
-sven harness run      <PATH> [--input JSON | --input-file FILE] [--case FILE]
-                      [--model-fixture FILE] [--tool-fixture FILE]... [--workspace DIR]
-                      [--model SPEC [--model-endpoint URL]] [--seed N]
-                      [--toolset none | --toolset coding --approvals auto|deny|ask
-                       [--allow-capability NAME]... [--api-key-file FILE]
-                       [--first-byte-timeout SECS]]
-                      [--timeout SECS] [--max-output-tokens N]
+sven harness run      <PATH> [--input JSON | --input-file FILE] --workspace DIR
+                      --model SPEC --model-endpoint URL --approvals auto|deny|ask
+                      [--allow-capability NAME]... [--api-key-file FILE]
+                      [--first-byte-timeout SECS] [--timeout SECS] [--max-output-tokens N]
                       [--scratchpad DIR] [--trace FILE] [--record FILE]
                       [--trajectory FILE] [--conversations DIR]
                       [--checkpoint-out FILE] [--json] [--quiet]
 sven harness resume   <PATH> --checkpoint FILE [the flags of run]
 sven harness replay   <PATH> --recording FILE [--expect-trace FILE] [--json]
-sven harness test     <DIR>... [--case NAME] [--no-replay] [--json]
-                      [--model SPEC --model-endpoint URL]
-sven harness compare  <DIR_A> <DIR_B> --cases DIR [--fail-on-regression] [--json]
-                      [--seed N]... [--bootstrap-seed N] [--model SPEC --model-endpoint URL]
 ```
 
 - **validate** compiles the main document and its imports; nothing runs. It
   reports every error with the task or gate it belongs to.
 - **inspect** shows the generated steps and their successors, the declared
   capabilities, limits, inputs and outputs, the plan digest (and bundle
-  digest), imports and cases.
+  digest) and imports.
 - **schema** prints the JSON Schema of harness documents (for editors); with
   a PATH it prints that harness's input/output contract as JSON Schema.
-- **run** executes once. `--input` or `--input-file` gives the inputs;
-  `--case` takes input, model, tools, workspace and bounds from a case
-  manifest, and any other flag overrides what it gives. `--model-fixture` is a
-  model block (`sequence`, `rules`, `fail`) and `--tool-fixture` the `tools:`
-  block of a case, both as YAML files. `--workspace` is an existing directory
-  used as the project root; by default each run gets a fresh empty one.
-  `--seed` selects the block a `by_seed` fixture model uses.
+- **run** executes once on a real model. `--input` or `--input-file` gives the
+  inputs. `--workspace` is an existing directory used as the project root,
+  `--model` and `--model-endpoint` name the model server you already run, and
+  `--approvals` says who is asked before a call that is not read-only runs.
+  All four are required: nothing that widens a run is implied.
 - **resume** continues a suspended run from the checkpoint `run
   --checkpoint-out` wrote. The checkpoint carries the inputs; a checkpoint
   taken under another program, or a changed import, is refused.
 - **replay** feeds a recording back into a fresh machine and executes
   nothing. With `--expect-trace` the replayed trace must equal a trace file.
-- **test** runs every case of each directory; **compare** runs one set of
-  cases over two variants of a harness and reports what changed.
-  With `--seed N` (repeatable) and `--bootstrap-seed N` the comparison is
-  **paired**: both variants run every case under every seed, a case passes or
-  not per seed, and the report gives each task's pass rates, the mean
-  pass-rate change with a 95% bootstrap interval over tasks (reproducible
-  from `--bootstrap-seed`), the tokens, steps and time each variant spent,
-  and a verdict. `reject`: a task passes under fewer seeds than the baseline
-  (also an invalid candidate); `promote`: no task regressed and the interval
-  excludes zero; otherwise `inconclusive`. `--fail-on-regression` exits 1 on
-  `reject`. A case skipped by either variant is listed and left out.
-
 `--timeout` and `--max-output-tokens` do not fail a run: they **suspend** it
 and leave a checkpoint.
 
@@ -246,15 +226,15 @@ None of these starts a model.
   `for_each` loops, and whether `resume` would accept the checkpoint under the
   document as it is now (exit 1 when an edit changed the plan digest).
 
-### Real tools: `--toolset coding`
+### The run's world
 
-`--toolset none` (the default) runs on fixtures only. `--toolset coding` runs
-sven's real tools (file read, write and edit, search, shell) on a real
-directory with a real model. Nothing that widens a run is implied, so the
-flags below are all required except the last three; a missing one is exit 2:
+`run` and `resume` use sven's real tools (file read, write and edit, search,
+shell) on a real directory with a real model. Nothing that widens a run is
+implied, so the flags below are all required except the last three; a missing
+one is exit 2:
 
 ```sh
-sven harness run ./c-repair --toolset coding --workspace ./repo \
+sven harness run ./c-repair --workspace ./repo \
   --approvals auto --model openai/<name> --model-endpoint http://127.0.0.1:8788/v1 \
   --api-key-file ~/keys.json
 ```
@@ -271,8 +251,8 @@ sven harness run ./c-repair --toolset coding --workspace ./repo \
   temporary directory; a resume goes back to the directory its checkpoint
   recorded. A directory inside `--workspace`, or one that holds it, is
   refused.
-- `--model` and `--model-endpoint` name a server you already run. The
-  fixture flags (`--model-fixture`, `--tool-fixture`, `--case`) are refused.
+- `--model` and `--model-endpoint` name a server you already run; sven never
+  starts or pulls a model, and no environment variable supplies an endpoint.
 - `--approvals` is `auto` (allowed calls run unasked), `deny` (every call
   that is not read-only is refused, including a harness's own
   gate steps, so a gate step fails the run rather than passing without running)
@@ -311,8 +291,8 @@ compiler and its test succeed) passes.
 
 `run` prints `status:`, then `output:` or `failure: <code> - <message>`, then
 `steps:` on stdout. Unless `--quiet`, a `[sven:harness] {...}` line per trace
-record goes to stderr (the same token the headless runner uses): as the run
-goes under `--toolset coding`, after the run ends on the fixture path. `--json` replaces the stdout text with one JSON document:
+record goes to stderr (the same token the headless runner uses) as the run
+goes. `--json` replaces the stdout text with one JSON document:
 
 ```text
 harness, plan_digest, bundle_digest, run_id, status, conclusion, output,
@@ -322,10 +302,9 @@ duration_ms, corrections, refused_messages, checkpoint
 
 `status` is `completed`, `failed`, `cancelled` or `suspended`. A suspended run
 without `--checkpoint-out` prints a note saying its checkpoint was dropped.
-SIGINT and SIGTERM suspend a `--toolset coding` run the same way: the run stops
+SIGINT and SIGTERM suspend a run the same way: the run stops
 where it rests, exits 3 and leaves its checkpoint for `harness resume`.
-`test` and `validate` print `PASS`/`FAIL`/`SKIP` and `OK`/`INVALID` lines;
-`--json` prints one array of reports.
+`validate` prints `OK`/`INVALID` lines; `--json` prints one array of reports.
 
 ### Exit codes
 
@@ -335,8 +314,6 @@ where it rests, exits 3 and leaves its checkpoint for `harness resume`.
 | `validate`, `inspect`, `compile` | valid | invalid | unreadable path | | | |
 | `explain` | explained | | unknown step, unreadable path | | | |
 | `status` | the checkpoint fits the document | `resume` would refuse the checkpoint | not a checkpoint, unreadable path | | | |
-| `test` | all passed or skipped | a case failed | usage, invalid harness or manifest | | | |
-| `compare` | report produced | regression (paired: `reject`) under `--fail-on-regression` | invalid variant or usage | | | |
 | `replay` | matched | trace mismatch | recording refused or usage | | | |
 
 ### Files written
@@ -347,147 +324,45 @@ observed it), `--record` (the recording, JSON), `--trajectory` (the ATIF
 trajectory, JSON), `--conversations DIR` (each conversation of the run - one
 task's agent, or one role of one loop item - as its own ATIF file
 `NNNN-<name>.json`, the form tool-call training data wants) and
-`--checkpoint-out` (the checkpoint of a suspended run, JSON). Case workspaces are temporary directories removed with the run, and so
-is the scratchpad of a case or of a run in a fresh workspace; a run in a
-directory you name (`--workspace`) keeps its scratchpad and prints the path.
-No sven configuration is read.
-
-## Cases
-
-A case file states what a harness must do. Keys are checked strictly: an
-unknown key is an error, not an ignored typo.
-The first block below lists every key once; it is a catalogue, not one
-coherent case.
-
-```yaml
-name: bug                          # default: the file stem
-input: { ticket: "The app crashes on start" }
-model:                             # exactly one of sequence | rules | file | fail | by_seed | live
-  sequence:                        # one item per model call, in order
-    - text: '{"label": "bug"}'
-      usage: { input: 20, output: 6 }
-    - tool_calls: [ { id: c1, name: read_notes, args: { path: notes.md } } ]
-  # rules: [ { match_type: contains, pattern: "history:", reply: "..." } ]
-  # file: fixtures/model.yaml      # another model block, inside the directory
-  # fail: "provider down"
-  # by_seed: { 1: { sequence: [...] }, 2: { sequence: [...] } }  # one block per run --seed
-  # live: { model: "ollama/qwen3:8b" }
-tools:
-  read_notes:
-    capability: ReadFile           # must equal what the tool's name implies (`shell_gate` is ExecuteShell)
-    responses:                     # one per call, in order; running out is a case error
-      - ok: "remember the milk"    # a string verbatim, anything else as JSON text
-      - error: "disk full"
-      - block: true                # never answers; ends by cancel or deadline
-      - ok: "patched"
-        write: { path: fixed.txt, content: "ok" }   # a file in the case workspace
-workspace: { notes.md: "remember the milk" }
-bounds: { deadline_ms: 300, max_output_tokens: 100, cancel_after_ms: 50 }
-                                   # cancel_on_tool_start: <tool> cancels once that fixture tool has started a call
-                                   # (no clock involved; prefer it to cancel_after_ms for blocking tools)
-replay: true                       # default; record and replay offline, require the same result
-expect:
-  status: completed                # completed | failed | cancelled | suspended
-  output: { queue: bugs }          # exact JSON equality
-  output_includes: { queue: bugs } # recursive subset
-  failure: { code: invalid_answer, message_contains: "not valid JSON" }
-  steps: { classify__work: 1 }     # exact start counts of the listed generated steps
-  max_steps: 6
-  tools_invoked: [read_notes]      # sorted multiset of fixture calls, children included
-  tools_not_invoked: [write_notes]
-  forbidden_capabilities: [ExecuteShell, WriteFile]
-  max_output_tokens: 100
-```
-
-Only `expect.status` is required. A case that stops on a bound and continues
-from its checkpoint adds a `resume` phase, which needs `expect.status:
-suspended` in the first phase (this is `suspend-resume`):
-
-```yaml
-bounds: { deadline_ms: 300 }
-tools:
-  shell_gate: { capability: ExecuteShell, responses: [ { block: true } ] }
-expect: { status: suspended, steps: { fetch__v0_read_a0: 1 } }
-resume:                            # a second phase on the checkpoint, with fresh fixtures
-  tools:
-    shell_gate:
-      capability: ExecuteShell
-      responses: [ { ok: { exit_code: 0, timed_out: false, error: null, stdout: "all green", stderr: "" } } ]
-  expect: { status: completed, output: { report: "all green" }, steps: { fetch__v0_read_a0: 1 } }
-```
-
-Notes:
-
-- `sequence` answers model calls in order and so suits one thread of control;
-  tasks that run in no fixed order (a loop over items) ask in no defined order, so use stateless `rules` there.
-- A case without `model` has a model that only fails, which is how a
-  model-free harness proves it never asks one. A sequence asked for more
-  answers than it holds is a case error.
-- Fixture tools are honest: the declared `capability` must equal the one the
-  harness authorizes the tool's name under (`read_*` is `ReadFile`, `write_*`
-  is `WriteFile`, `shell*` is `ExecuteShell`). A fixture that claims another
-  capability has its calls refused, so the case fails with the tool never
-  invoked. Files a case names (`model.file`) and files a tool writes are
-  confined to the harness directory and the case workspace.
-- After every case the runner checks that no fixture call is still in flight;
-  a leaked call is a failed case.
-- With replay on, each phase's recording is replayed offline and must end in
-  the same result and trace.
-
-A run that disagrees with a case is a question about which one is wrong. The
-expectation is never loosened to make a run pass.
+`--checkpoint-out` (the checkpoint of a suspended run, JSON). A run keeps its
+scratchpad and prints the path. No sven configuration is read.
 
 ## Samples tour
 
 [samples/harnesses](../../samples/harnesses) holds eleven workflows, each a data
-directory with its cases, and the SDK runner:
+directory with its README:
 
 | Sample | What it shows |
 |---|---|
-| `ticket-routing` | schema-constrained model-only tasks and a `when` condition; its `live-local` case is the opt-in real-model run |
+| `ticket-routing` | schema-constrained model-only tasks and a `when` condition |
 | `scoped-agent` | an imported workflow (`use:`) held to its own tools and capabilities |
 | `repair-loop` | a task whose independent file check fails until a bounded repair makes it pass |
 | `repo-repair` | the real shell and file tools on a repository: a soft baseline gate, a diagnosis, an edit, a gate that decides, one repair |
-| `suspend-resume` | suspend on a deadline, resume the checkpoint, replay offline |
+| `suspend-resume` | suspend on a bound, resume the checkpoint, replay a recording offline |
 | `planner-worker` | a model-only planner answering in a schema, a tool-using worker and a model-only supervisor behind a gate, each with its own sampling and thinking settings |
 | `reviewed-change` | a package: one workflow imports another (`imports:`) and runs it as a task (`use:`), the call checked at compile time and the child spending under the caller's limits |
 | `module-sweep` | a `for_each` over a frozen backlog and an `until` on a coverage figure; a suspension resumes at the module it was on |
 | `verified-task` | a command gate whose exit status decides, bounded repair, a coverage threshold in the success condition |
 | `embedded-hardening` | the full pipeline on a disposable embedded C repository: bootstrap, plan, a checkpointed `for_each` over modules, coverage `until` 90 percent, architecture, production; real gcov and clang-tidy gates, a pinned check, a live-run recipe |
 | `rust-refactor` | a reusable sweep over any Rust repository: variables published by an exploration task, a `do:` body per file in fresh conversations, trusted gates and a rollback |
-| `sdk-runner` | the same cases from an application, with the SDK alone |
 
 ```sh
-sven harness test samples/harnesses/{ticket-routing,scoped-agent,repair-loop,repo-repair,suspend-resume,verified-task,module-sweep,planner-worker,reviewed-change,embedded-hardening,rust-refactor}   # every sample, offline
-cargo run -p sample-harnesses-sdk-runner -- samples/harnesses/ticket-routing
+sven harness validate samples/harnesses/*/   # every sample compiles
 ```
 
 ### Suspend, resume, replay
 
-The checkpoint flow of `suspend-resume`, from a shell. `blocked.yaml`
-is a gate that never answers and `answered.yaml` one that does:
-
-```yaml
-# blocked.yaml
-shell_gate:
-  capability: ExecuteShell
-  responses: [ { block: true } ]
-```
-
-```yaml
-# answered.yaml
-shell_gate:
-  capability: ExecuteShell
-  responses:
-    - ok: { exit_code: 0, timed_out: false, error: null, stdout: "all green", stderr: "" }
-```
+A run stopped by a bound (`--timeout`, `--max-output-tokens`) or by SIGINT or
+SIGTERM is suspended, not lost. The flow of `suspend-resume`, from a shell:
 
 ```sh
 H=samples/harnesses/suspend-resume
-sven harness run    $H --tool-fixture blocked.yaml --timeout 1 \
-    --record run.json --trace trace.jsonl --checkpoint-out checkpoint.json   # exit 3
-sven harness resume $H --checkpoint checkpoint.json --tool-fixture answered.yaml   # exit 0
-sven harness replay $H --recording run.json --expect-trace trace.jsonl             # exit 0
+sven harness run    $H --workspace DIR --model ... --model-endpoint ... --approvals auto \
+    --timeout 1 --record run.json --trace trace.jsonl --checkpoint-out checkpoint.json   # exit 3
+sven harness status $H --checkpoint checkpoint.json     # where it rests
+sven harness resume $H --checkpoint checkpoint.json --workspace DIR --model ... \
+    --model-endpoint ... --approvals auto               # exit 0
+sven harness replay $H --recording run.json --expect-trace trace.jsonl   # offline; exit 0
 ```
 
 ## Walkthrough: hardening an embedded repository
@@ -513,27 +388,23 @@ reached from the UART module only). The workflow runs, in order:
 
 ```sh
 sven harness validate samples/harnesses/embedded-hardening
-sven harness test     samples/harnesses/embedded-hardening   # three mock cases, offline
 ```
 
-The mock cases run the real workflow against fixture tools: a clean sweep, a
-module that stays red (the run fails at that module and says which check), and
-an agent that edits the check (its hash no longer matches). The repository is
-tested too: `cargo test --test embedded_hardening_fixture` shows that every
-module starts red and that the reference fix in `solution/` turns every gate
-green with coverage over 90 percent.
+The repository is tested too: `cargo test --test embedded_hardening_fixture`
+shows that the workflow pins the hashes of the check and of the given tests,
+and that the build refuses a weakened test.
 
-**Production path.** Copy `repo/` somewhere you can lose, then:
+Copy `repo/` somewhere you can lose, then:
 
 ```sh
-sven harness run samples/harnesses/embedded-hardening --toolset coding \
+sven harness run samples/harnesses/embedded-hardening \
   --workspace /path/to/copy --approvals auto \
   --model openai/<model> --model-endpoint http://127.0.0.1:8788/v1 \
   --api-key-file ~/keys.json --first-byte-timeout 900 --timeout 3000 \
   --checkpoint-out checkpoint.json --trace trace.jsonl --trajectory run.atif.json --json
 # killed or out of time? resume at the module it was on:
 sven harness resume samples/harnesses/embedded-hardening --checkpoint checkpoint.json \
-  --toolset coding --workspace /path/to/copy --approvals auto --model ... --model-endpoint ...
+  --workspace /path/to/copy --approvals auto --model ... --model-endpoint ...
 ```
 
 For your own repository, keep the shape: a pinned check script that is the
@@ -645,24 +516,19 @@ gate's argv is part of the plan and cannot be redefined by the agent;
 templates read `inputs.x` and `tasks.t.output` (never `facts` or `steps`); a
 failing check never advances.
 
-## Models: offline by default
+## Models: only the one you name
 
-Nothing in `sven harness` starts, pulls, loads or contacts a model unless you
-opt in explicitly, because a local model can exhaust a machine and a test
-suite must not depend on one.
+Nothing in `sven harness` starts, pulls, loads or contacts a model unless a
+run is given one, because a local model can exhaust a machine.
 
-- Every default path uses mock models (`sequence`, `rules`, `fail`) and
-  fixture tools. A run with no model source has a model that fails every call.
-- A **live** model needs the URL of a server you already run, given as
-  `--model-endpoint URL` (with `--model SPEC` to choose the model) on
-  `run`, `resume`, `test` or `compare`. No environment variable opts in. Sven
+- `validate`, `inspect`, `compile`, `explain`, `status`, `schema` and `replay`
+  never contact a model.
+- `run` and `resume` need `--model SPEC` and `--model-endpoint URL`, the URL of
+  a server you already run. No environment variable supplies either. Sven
   never starts or downloads the model.
-- Without `--model-endpoint`, `run --model SPEC` is refused (exit 2) and a
-  case that names `live` is reported as `SKIP`, never failed.
-- `make test`, `make check` and `make test/harness` never reach a live model.
-  `make test/harness/local-model` runs the `live-local` case of
-  [ticket-routing](../../samples/harnesses/ticket-routing) against `ENDPOINT=<url>` (optional `MODEL=<spec>`) and refuses to start
-  without it.
+- `make test`, `make check` and `make test/harness` never reach a live model:
+  the engine's tests script their models in Rust, and the command line's tests
+  talk to a loopback server that plays a script.
 
 ## Authorization in one paragraph
 

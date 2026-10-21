@@ -62,21 +62,14 @@ check` (clippy `--workspace --all-targets`) are what actually cover samples.
 ## Harness samples are data directories
 
 `samples/harnesses/` is the exception to "every sample is a directory with a
-`Cargo.toml`". Its named entries (`branching`, `ticket-routing`,
-`scoped-agent`, `repair-loop`, `repo-repair`, `parallel-research`, `suspend-resume`, `verified-task`, `module-sweep`, `planner-worker`,
-`custom-helper`) are programmable harnesses: a YAML document, the cases that state what it must do,
-and nothing to compile. They are not workspace members and `make check/gates/samples`
-has nothing to say about them; they are judged by the harness test kit, which
-the repository's own test (`cargo test -p sven-harness-testkit --test samples`)
-and `sven harness test` both run, on mock models and fixture tools only. The
-one case that names a real local model, `ticket-routing/cases/live-local.yaml`,
-is opt-in (`--model` and `--model-endpoint`) and is skipped by default.
-
-The test kit is a workspace crate, so no sample could depend on it under rule
-1. `samples/harnesses/sdk-runner` is the sample that obeys the rules: a real
-crate (`sample-harnesses-sdk-runner`) that runs a harness directory's simpler
-cases through `sven-sdk` alone, and refuses the rest with a pointer to
-`sven harness test`. See `samples/harnesses/README.md`.
+`Cargo.toml`". Its named entries (`ticket-routing`, `scoped-agent`,
+`repair-loop`, `repo-repair`, `suspend-resume`, `verified-task`, `module-sweep`,
+`planner-worker`, `reviewed-change`, `embedded-hardening`, `rust-refactor`)
+are programmable harnesses: a workflow document and nothing to compile. They
+are not workspace members and `make check/gates/samples` has nothing to say
+about them; the repository's `harness_cli` test checks that every one of them
+validates, and you observe what one does by running it with
+`sven harness run`. See `samples/harnesses/README.md`.
 
 ## Adding one
 

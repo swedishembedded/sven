@@ -24,33 +24,18 @@ shipping argument is ignored) and its tests.
 
 ## Run it
 
-Offline, on fixture tools (what `sven harness test` and the kit's samples test
-run, with a `shell_gate` fixture standing in for the gate tool; the cases state what the harness is for):
+On the fixture repository (copy it somewhere you can lose):
 
 ```sh
-sven harness test samples/harnesses/repo-repair
+cp -r samples/harnesses/repo-repair/fixtures/repo /tmp/repo-repair-work
+sven harness validate samples/harnesses/repo-repair
+sven harness run samples/harnesses/repo-repair --workspace /tmp/repo-repair-work \
+    --model openai/<model> --model-endpoint http://127.0.0.1:8788/v1 \
+    --approvals auto --api-key-file key.txt
 ```
 
-With the real tools and a scripted model (the shell, `read_file` and
-`edit_file` act on a temporary copy of `fixtures/repo`; the test judges the
-repository on disk):
-
-```sh
-cargo test -p sample-harnesses-sdk-runner --test real_tools
-```
-
-Against a real local model you already serve (opt-in; nothing is started for
-you). The binary copies the fixture repository to a temporary directory, runs
-the harness with the real tools, prints the report and re-runs the repository's
-tests itself:
-
-```sh
-cargo run -p sample-harnesses-sdk-runner --bin repo-repair -- \
-  --model-endpoint http://127.0.0.1:8788/v1 --model openai/Qwen/Qwen3-0.6B \
-  --api-key-file key.txt
-```
-
-`--api-key-file` is for servers that need a key (a file holding just the key);
-`--keep` leaves the repository on disk. Exit code 0 means the tests pass after the run, 1 that they do not, 2 a
-setup error. A small model is expected to fail this task often; the harness
-reports that as `unrepaired` and the exit code as 1, never as success.
+`--api-key-file` is for servers that need a key (a file holding just the key,
+kept outside the workspace). Exit code 0 means the tests pass after the run, 1
+that the workflow failed (`gate_failed`: the edits did not fix it). A small
+model is expected to fail this task often; the workflow reports that, never
+success.

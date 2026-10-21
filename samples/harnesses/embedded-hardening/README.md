@@ -26,28 +26,15 @@ The workflow pins `run.sh` and `pins.sha256` by hash (`artifact` gates with
 judged by; new tests go in `tests/extra_<module>.c`, which `run.sh` also runs.
 Nothing the agent says counts: only the gates.
 
-`solution/` is the reference fix (and the extra tests that take coverage over
-90 percent). `cargo test --test embedded_hardening_fixture` checks that the
-fixture starts red and that the solution turns every gate green.
+`cargo test --test embedded_hardening_fixture` checks that the workflow pins the
+hashes of the check and of the given tests, and that the build refuses a
+weakened test.
 
-## Offline
-
-```sh
-sven harness validate samples/harnesses/embedded-hardening
-sven harness test     samples/harnesses/embedded-hardening
-```
-
-Cases: `hardens-every-module` (the whole pipeline), `a-module-that-stays-red-
-stops-the-sweep` (the run fails at that module with the check's name, the rest
-stay pending) and `editing-the-check-is-caught-by-its-pin`. The cases seed
-`run.sh` and `pins.sha256` into the case workspace so the pins are checked for
-real; the shell is a fixture.
-
-## Production path
+## Run it
 
 ```sh
 cp -r samples/harnesses/embedded-hardening/repo /path/to/copy
-sven harness run samples/harnesses/embedded-hardening --toolset coding \
+sven harness run samples/harnesses/embedded-hardening \
   --workspace /path/to/copy --approvals auto \
   --model openai/<model> --model-endpoint http://127.0.0.1:8788/v1 \
   --api-key-file ~/keys.json --first-byte-timeout 900 --timeout 3000 \
@@ -60,7 +47,7 @@ are run again. See [the guide](../../../docs/guides/harnesses.md#walkthrough-har
 
 ## A live run
 
-Two live runs on a local 27B model (`--toolset coding`). The first failed after
+Two live runs on a local 27B model . The first failed after
 37 minutes at the third module: the model spent its whole 4096-token output
 budget thinking, answered nothing, and the run ended as `side_effect_failed`.
 That led to three changes: an empty reply is asked again and then ends as

@@ -19,15 +19,16 @@ What it shows:
   `check_review.sh`; a review that leaks is refused by the exit status and the
   supervisor is asked again, shown why (`{{ failure.detail }}`).
 
-As in the other samples, the cases fake `shell_gate`; a real run has the real
-tool on every host.
-
-Cases: `all-three-roles`, `a-leaking-review-is-asked-again`,
-`a-plan-outside-its-schema-fails`.
-
 ## Run it
 
 ```sh
 sven harness validate samples/harnesses/planner-worker
-sven harness test     samples/harnesses/planner-worker
+sven harness inspect  samples/harnesses/planner-worker
+sven harness run samples/harnesses/planner-worker --input '{"feature": "..."}' --workspace DIR \
+    --model openai/<model> --model-endpoint http://127.0.0.1:8788/v1 \
+    --approvals auto --trace trace.jsonl
 ```
+
+`DIR` is the repository the agent works in; the model is a server you already
+run. The gates are the repository's own commands, so `DIR` must hold what they
+run.

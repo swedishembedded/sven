@@ -80,8 +80,8 @@ workflow:
 ```
 
 `sven harness run` drives it with a real model and real tools;
-`sven harness test` runs the same document against mock cases, offline. See the
-[harness guide](docs/guides/harnesses.md).
+`sven harness validate`, `inspect`, `explain` and `replay` read a harness and a
+recorded run without one. See the [harness guide](docs/guides/harnesses.md).
 
 ## Install
 

@@ -173,34 +173,31 @@ exit `3` (tool errors), which is treated as success. See
 ### Harnesses
 
 `sven harness` validates, inspects, runs, resumes, replays, tests and compares
-programmable harnesses offline. Nothing starts or contacts a model unless a
-`--model SPEC --model-endpoint URL` pair names a server you already run, and no
-sven configuration or environment is read.
+programmable harnesses. Only `run` and `resume` use a model, the server named by
+`--model SPEC --model-endpoint URL` that you already run; no sven configuration
+or environment is read.
 
 | Command | Description |
 |---------|-------------|
 | `harness validate PATH... [--json]` | Compile harnesses and their imports without running them. `PATH` is a file or a directory holding `harness.yaml`. |
-| `harness inspect PATH [--json \| --graph dot\|mermaid]` | Show the generated steps, capabilities, limits, digests, imports and cases; or draw the plan as a graph (steps grouped by task). |
+| `harness inspect PATH [--json \| --graph dot\|mermaid]` | Show the generated steps, capabilities, limits, digests and imports; or draw the plan as a graph (steps grouped by task). |
 | `harness compile PATH [--format json\|yaml] [-o FILE]` | Print the canonical compiled plan (the lowered plan with its source map). |
 | `harness explain PATH [--step ID] [--input JSON \| --input-file FILE] [--elide N]` | Explain a workflow task by task, or one generated step: origin, successors, predecessors. With inputs, also show each prompt, system message and gate command as a run with those inputs would send it. |
 | `harness status PATH --checkpoint FILE [--json]` | Where a suspended run rests, its counters and completed steps, and whether `resume` would accept the checkpoint. Exit 1 when it would not. |
 | `harness schema [PATH]` | Print the harness document JSON Schema, or the input/output contract of the harness at `PATH`. |
-| `harness run PATH [run options]` | Run a harness once. |
+| `harness run PATH [run options]` | Run a harness once, on a real model with the coding tools. |
 | `harness resume PATH --checkpoint FILE [run options]` | Resume a suspended run from the checkpoint `run --checkpoint-out` wrote. A checkpoint from another program is refused. |
 | `harness replay PATH --recording FILE [--expect-trace FILE] [--json]` | Replay a recording offline; no model, tool or child starts. |
-| `harness test DIR... [--case NAME] [--no-replay] [--json] [--model SPEC --model-endpoint URL]` | Run the `cases/*.yaml` of each directory on mock models and fixture tools; cases naming a live model are skipped without `--model-endpoint`. |
-| `harness compare DIR_A DIR_B --cases DIR [--fail-on-regression] [--seed N]... [--bootstrap-seed N] [--json] [live options]` | Run one case set over two variants and report the difference. `--seed` (repeatable) and `--bootstrap-seed` must be given together. |
 
-Run options (`run` and `resume`): `--input JSON` or `--input-file FILE`,
-`--case FILE`, `--model-fixture FILE`, `--tool-fixture FILE` (repeatable),
-`--workspace DIR`, `--model SPEC` with `--model-endpoint URL`,
-`--toolset none|coding` (`coding` needs `--workspace`, `--model`, `--model-endpoint` and `--approvals auto|deny|ask`; also `--allow-capability NAME` and `--api-key-file FILE`), `--seed N`, `--timeout SECS`,
+Run options (`run` and `resume`): `--input JSON` or `--input-file FILE`;
+required: `--workspace DIR`, `--model SPEC`, `--model-endpoint URL` and
+`--approvals auto|deny|ask`; optional: `--allow-capability NAME` (repeatable),
+`--api-key-file FILE`, `--first-byte-timeout SECS`, `--timeout SECS`,
 `--max-output-tokens N`, `--scratchpad DIR` (the run's private directory; its audit log goes there, never into the workspace), `--trace FILE` (JSONL), `--record FILE`,
 `--trajectory FILE`, `--conversations DIR` (one ATIF file per conversation), `--checkpoint-out FILE`, `--json` (one JSON document on
 stdout and nothing else) and `--quiet` (no `[sven:harness]` progress lines).
-A coding run (`--toolset coding`) that receives SIGINT or SIGTERM suspends where
-it rests (exit 3) and, with `--checkpoint-out`, leaves a checkpoint that `harness resume`
-continues.
+A run that receives SIGINT or SIGTERM suspends where it rests (exit 3) and, with
+`--checkpoint-out`, leaves a checkpoint that `harness resume` continues.
 Details: [Harnesses](harnesses.md).
 
 ### Servers and teams

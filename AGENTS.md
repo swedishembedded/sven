@@ -194,8 +194,7 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
 | `make check/doc` | `cargo doc`, broken intra-doc links are errors |
 | `make test/gates` | Bats self-tests of the text gates (env-reads, make-targets) on scratch trees; no build needed, part of `make test` |
 | `make fmt` | Format |
-| `make test/harness` | Every harness suite (one `test/harness/<suite>` each) (spec, runtime, SDK, testkit, samples, CLI, 1000-run stress), mock models only |
-| `make test/harness/local-model` | OPT-IN: the `live-local` case of the `ticket-routing` sample against a model you already serve (`ENDPOINT=<url>`, optional `MODEL=<spec>`; refuses without ENDPOINT); never part of `make test` or `make check` |
+| `make test/harness` | Every harness suite (one `test/harness/<suite>` each) (spec, runtime, SDK, CLI, 1000-run stress), scripted models only |
 | `make generate/config/golden` | Rewrite committed derived files (`generate/<area>/<file>`); the matching tests only check them |
 | `make help` | Every target as a tree; names are concept first (`test/harness`, `check/gates/no-machine-paths`), so `make <TAB>` descends level by level (`check/gates/make-targets` enforces it) |
 | `make hooks/install` | Install the git pre-commit hooks (one-time per clone) |
@@ -340,10 +339,6 @@ session task and `SessionEvent` consumption)
 ### surface
 `sven-ci` (headless runner: `RuntimeRunner` + workflow orchestration) ·
 `sven-mcp` (MCP server) · `sven-tui` (ratatui TUI)
-
-`sven-harness-testkit` (offline case manifests, fixture models and tools,
-runner and comparer for harnesses; mock models unless explicitly opted in -
-behind `sven harness`, see [docs/guides/harnesses.md](docs/guides/harnesses.md)).
 
 ### composite
 `sven-acp` (ACP server for IDEs)
@@ -509,8 +504,8 @@ act across the whole stack, never an interpreter escape hatch:
    `SessionEvent` variant".
 6. **Unit and integration tests** - `harness-spec/tests`,
    `harness-runtime/tests`, `sdk/tests/harness_*.rs`.
-7. **A runnable sample with cases** in `samples/harnesses/`, run by the
-   testkit's `samples` test; document it in
+7. **A runnable sample** in `samples/harnesses/` (the `harness_cli` test
+   validates every sample); document it in
    `docs/reference/harnesses.md` and `docs/guides/harnesses.md`.
 
 ### Add a new model provider / driver

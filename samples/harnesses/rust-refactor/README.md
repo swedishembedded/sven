@@ -42,7 +42,7 @@ serve:
 
 ```sh
 sven harness run samples/harnesses/rust-refactor \
-  --toolset coding --approvals auto --workspace /path/to/repo \
+  --approvals auto --workspace /path/to/repo \
   --model openai/<name> --model-endpoint http://127.0.0.1:8798/v1 \
   --api-key-file /path/outside/repo/keys.json \
   --input '{"paths": "crates src", "max_files": 12, "max_items": 10000, "tool_calls": 200000}' \
@@ -58,13 +58,3 @@ sven harness run samples/harnesses/rust-refactor \
 A run that stops resumes at the file it was on (`sven harness resume ...
 --checkpoint`). Add `--conversations DIR` to keep each agent's conversation as
 an ATIF trajectory: tool-call training data, written only when asked for.
-
-## Cases
-
-`sven harness test samples/harnesses/rust-refactor` runs two offline cases on
-a fixture model and fixture gates:
-
-- `refactors-every-file`: one file is refactored and committed, one is clean
-  and skipped after its audit.
-- `a-file-that-cannot-pass-is-rolled-back`: a file whose build stays red is
-  rolled back and the sweep goes on.

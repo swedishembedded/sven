@@ -76,5 +76,9 @@ workflow language at all.
   needs runs as a command gate (trusted, confined to the workspace, judged by
   its exit status) or in the host.
 
+The case manifests and the test kit that ran them (`sven harness test`,
+`compare`, `crates/harness-testkit`) were removed afterwards: a harness is
+observed by running it, and the engine is tested in its own crates.
+
 History is unchanged: ADRs 0004 and 0005 describe the situation when they were
 written.

@@ -16,7 +16,6 @@ the removal of the earlier step-map language [ADR 0006](../adr/0006-v2-is-the-on
 | `sven-harness-spec` | foundation | the workflow document, typed AST, lowering to the step specification, validator, compiler to a content-hashed `HarnessPlan`, JSON Schema |
 | `sven-harness-runtime` | machines | `HarnessMachine`: the plan interpreted as a kernel `Machine` |
 | `sven-sdk` | sdk | `Engine::load_harness`, `Harness`, `HarnessRun`, recording and replay |
-| `sven-harness-testkit` | surface | case manifests, fixture models and tools, runner, comparer |
 
 ## The language
 
@@ -582,7 +581,7 @@ permission gate or its executors, not by the harness text.
 5. **Host ceiling.** `EngineBuilder::host_capabilities` caps every harness
    run (and so every child) on an engine: the run's policy is the
    intersection of its declaration and the ceiling, so a ceiling narrows and
-   never grants. `sven harness run --toolset coding` sets it from
+   never grants. `sven harness run` sets it from
    `--allow-capability`. Without a ceiling the declaration is the whole cap.
 
 `delegate` needs `SpawnChild`, and a child's depth is bounded by
@@ -637,7 +636,7 @@ kill, a power cut) asks for a checkpoint each time a `for_each` item completes:
 (`ErasedRuntime::snapshots`), so the checkpoint arrives while the next item is
 already underway, not when the run next comes to rest; it is a checkpoint like
 the one a deadline leaves, resumable with `Harness::resume`, and the item in
-flight starts its interrupted step again. `sven harness run --toolset coding
+flight starts its interrupted step again. `sven harness run
 --checkpoint-out FILE` keeps the latest one in `FILE` (replaced atomically,
 removed when the run ends with a verdict). The same tap publishes the trace
 as the run goes: a step's records no longer wait for the step to end.
@@ -707,22 +706,20 @@ assert_eq!(replay.trace, outcome.trace);
 Many runs can be in flight through one engine; they share the model client
 and the registry and nothing else.
 
-## Testing and the kit
+## Testing
 
-`sven-harness-testkit` is the library behind `sven harness test`, `compare`,
-`run` and `replay`. Its entry points are `HarnessDir::open`, `validate`,
-`inspect`, `io_schema`, `run_once`, `resume_once`, `replay_once`, `run_case`,
-`run_suite`, `compare` and `compare_paired` (matched seeds, per-task
-pass rates, a seeded percentile bootstrap, cost totals, a promote / reject /
-inconclusive verdict), with `RunnerOptions { opt_in, replay_check,
-case_filter, seed }`. Every case runs on a new engine with `Config::default()`, no
-built-in tools, an injected provider and automatic approval; it never reads
-the user's configuration. A live model is built only under `OptIn::live(model, endpoint)`,
-which the command line constructs from `--model` and `--model-endpoint`; the
-testkit reads no environment variable. The case format is in
-[Harnesses](../guides/harnesses.md#cases).
+The engine is tested where it lives, with models written in Rust:
+`sven-harness-spec` (parsing, validation, lowering, plan digests),
+`sven-harness-runtime` (the machine, with plans compiled through the `testing`
+feature) and `sven-sdk` (runs, replay, authorization, children, item
+checkpoints and a thousand-run concurrent stress test) script the model and
+the tools they need. The command line is tested against the real binary and a
+loopback chat-completions server that plays a script, so a run's model is
+always one the test controls (`make test/harness/cli`). `make test/harness`
+runs all of these and reaches no live model.
 
-Samples are data directories; the SDK-only crate
-`samples/harnesses/sdk-runner` shows the same cases run with `sven-sdk` alone.
-`make test/harness` runs every harness suite on mock models, including a
-thousand-run concurrent stress test (a fixed count).
+A harness itself is observed by running it: `sven harness run` with
+`--trace`, `--record` and `--trajectory` shows what the run did, and
+`sven harness replay` re-derives its verdict and trace offline from the
+recording. The samples are data directories; the repository's `harness_cli`
+test checks that every one of them validates.
