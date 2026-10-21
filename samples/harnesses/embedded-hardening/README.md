@@ -60,13 +60,17 @@ are run again. See [the guide](../../../docs/guides/harnesses.md#walkthrough-har
 
 ## A live run
 
-One run on a local 27B model (45 minute deadline, `--toolset coding`): it
-documented the toolchain, wrote the plan and backlog, fixed `ringbuf` (the full
-check) and `crc8` (the polynomial, after one repair turn), each accepted only
-once the pinned module test passed, and then, on `uart_tx`, the model server
-answered the repair turn with empty replies twice and the run failed with
-`side_effect_failed` after 37 minutes. Coverage, architecture and production
-were not reached; checking the workspace it left with the pinned `run.sh`
-confirmed the two fixed modules green, `uart_tx` red, the HAL leak still there
-and 87.2 percent coverage. The shipped mock cases are what covers the rest of
-the pipeline; the reference fix in `solution/` is what a full pass looks like.
+Two live runs on a local 27B model (`--toolset coding`). The first failed after
+37 minutes at the third module: the model spent its whole 4096-token output
+budget thinking, answered nothing, and the run ended as `side_effect_failed`.
+That led to three changes: an empty reply is asked again and then ends as
+`empty_reply` (never a side effect), a server failure that may pass is asked
+again after a growing pause, and this workflow sets `turn.max_output_tokens`.
+
+The second run **completed**: 56 minutes, 120 steps, 1.2 million input and 48
+thousand output tokens, 35 gates, three items completed (each accepted only by
+the pinned gates), eight repair turns. The workspace it left was checked
+independently with the pinned `run.sh`: build, every module's tests, layering
+and lint pass, coverage is 100 percent, and `run.sh` and `pins.sha256` are
+byte-identical to the shipped files. The agent changed four sources, wrote an
+extra test file per module and a changelog entry.
