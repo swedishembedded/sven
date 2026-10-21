@@ -14,6 +14,7 @@
 //! work into reviewable, resumable programs then you can procure our services
 //! by sending an email to info@swedishembedded.com.
 
+mod body;
 mod checks;
 mod context;
 mod corrections;
@@ -246,6 +247,10 @@ struct RawTask {
     corrections: Option<spec::Corrections>,
     #[serde(default)]
     checkpoint: Option<spec::CheckpointPolicy>,
+    #[serde(default)]
+    conversation: Option<String>,
+    #[serde(default, rename = "do")]
+    body: Vec<Value>,
 }
 
 /// `until:`; the comparison keys are collected and checked by
@@ -265,62 +270,75 @@ fn parse_workflow_tasks(section: Option<Value>) -> Result<Vec<TaskSpec>, Harness
             "`workflow` is required and is a list of tasks".into(),
         ));
     };
-    let mut tasks = Vec::with_capacity(items.len());
-    for (index, raw) in items.into_iter().enumerate() {
-        let label = raw
-            .get("name")
-            .and_then(Value::as_str)
-            .map_or_else(|| format!("workflow[{index}]"), |n| format!("task `{n}`"));
-        let raw: RawTask = decode(raw, &label)?;
-        let verify = raw
-            .verify
-            .into_iter()
-            .enumerate()
-            .map(|(i, check)| parse_check(check, &format!("{label}: verify[{i}]")))
-            .collect::<Result<_, _>>()?;
-        let until = raw
-            .until
-            .map(|u| {
-                let keys: spec::ThresholdKeys =
-                    decode(Value::Object(u.threshold.into_iter().collect()), &label)?;
-                let threshold = keys
-                    .threshold()
-                    .map_err(|e| HarnessError::Parse(format!("{label}: until: {e}")))?;
-                Ok::<_, HarnessError>(spec::Until {
-                    metric: u.metric,
-                    threshold,
-                    max_iterations: u.max_iterations,
-                })
+    parse_tasks(items, "workflow")
+}
+
+fn parse_tasks(items: Vec<Value>, list: &str) -> Result<Vec<TaskSpec>, HarnessError> {
+    items
+        .into_iter()
+        .enumerate()
+        .map(|(index, raw)| {
+            let label = raw
+                .get("name")
+                .and_then(Value::as_str)
+                .map_or_else(|| format!("{list}[{index}]"), |n| format!("task `{n}`"));
+            parse_task(raw, &label)
+        })
+        .collect()
+}
+
+fn parse_task(raw: Value, label: &str) -> Result<TaskSpec, HarnessError> {
+    let raw: RawTask = decode(raw, label)?;
+    let verify = raw
+        .verify
+        .into_iter()
+        .enumerate()
+        .map(|(i, check)| parse_check(check, &format!("{label}: verify[{i}]")))
+        .collect::<Result<_, _>>()?;
+    let until = raw
+        .until
+        .map(|u| {
+            let keys: spec::ThresholdKeys =
+                decode(Value::Object(u.threshold.into_iter().collect()), label)?;
+            let threshold = keys
+                .threshold()
+                .map_err(|e| HarnessError::Parse(format!("{label}: until: {e}")))?;
+            Ok::<_, HarnessError>(spec::Until {
+                metric: u.metric,
+                threshold,
+                max_iterations: u.max_iterations,
             })
-            .transpose()?;
-        tasks.push(TaskSpec {
-            name: raw.name,
-            description: raw.description,
-            task: raw.task,
-            tools: raw.tools,
-            when: raw.when,
-            follow_ups: raw.follow_ups,
-            outputs: raw.outputs,
-            verify,
-            repair: raw.repair,
-            for_each: raw.for_each,
-            until,
-            model_only: raw.model_only,
-            system: raw.system,
-            model: raw.model,
-            schema: raw.schema,
-            sampling: raw.sampling,
-            thinking: raw.thinking,
-            turn: raw.turn,
-            allowance: raw.allowance,
-            max_repeated_results: raw.max_repeated_results,
-            corrections: raw.corrections,
-            checkpoint: raw.checkpoint,
-            use_import: raw.use_import,
-            with: raw.with,
-        });
-    }
-    Ok(tasks)
+        })
+        .transpose()?;
+    let body = parse_tasks(raw.body, &format!("{label}: do"))?;
+    Ok(TaskSpec {
+        name: raw.name,
+        description: raw.description,
+        task: raw.task,
+        tools: raw.tools,
+        when: raw.when,
+        follow_ups: raw.follow_ups,
+        outputs: raw.outputs,
+        verify,
+        repair: raw.repair,
+        for_each: raw.for_each,
+        until,
+        model_only: raw.model_only,
+        system: raw.system,
+        model: raw.model,
+        schema: raw.schema,
+        sampling: raw.sampling,
+        thinking: raw.thinking,
+        turn: raw.turn,
+        allowance: raw.allowance,
+        max_repeated_results: raw.max_repeated_results,
+        corrections: raw.corrections,
+        checkpoint: raw.checkpoint,
+        use_import: raw.use_import,
+        with: raw.with,
+        conversation: raw.conversation,
+        body,
+    })
 }
 
 /// Decodes, validates and lowers a workflow document into the v1 spec the

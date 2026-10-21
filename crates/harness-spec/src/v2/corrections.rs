@@ -44,6 +44,8 @@ pub(super) struct Turn<'a> {
     pub visible: &'a [String],
     pub tools: Option<Vec<String>>,
     pub agent_system: Option<String>,
+    /// The task's conversation, which the correction turns continue.
+    pub conversation: String,
     /// The model role that answers the agent.
     pub role: Option<String>,
     pub decoding: StepDecoding,
@@ -228,6 +230,7 @@ pub(super) fn lower_corrections(
             prompt: format!("{{{{ facts.{author_fact} }}}}"),
             tools: t.tools.clone(),
             store_as: Some(output_fact(name)),
+            conversation: Some(t.conversation.clone()),
             system: t.agent_system.clone(),
             origin: Some("correction".to_string()),
             role: t.role.clone(),

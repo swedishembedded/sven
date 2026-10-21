@@ -39,7 +39,7 @@ use crate::spec::{
 /// The id of the step the run returns from.
 const COMPLETE: &str = "complete";
 
-fn origin(task: Option<&str>, role: &str) -> SourceRef {
+pub(super) fn origin(task: Option<&str>, role: &str) -> SourceRef {
     SourceRef {
         task: task.map(str::to_string),
         role: role.to_string(),
@@ -49,12 +49,12 @@ fn origin(task: Option<&str>, role: &str) -> SourceRef {
 }
 
 /// The id of the task's loop step.
-fn iter_id(task: &TaskSpec) -> String {
+pub(super) fn iter_id(task: &TaskSpec) -> String {
     format!("{}__iter", task.name)
 }
 
 /// The first step that runs for a task.
-fn entry_of(task: &TaskSpec) -> String {
+pub(super) fn entry_of(task: &TaskSpec) -> String {
     if task.when.is_some() {
         format!("{}__when", task.name)
     } else if task.for_each.is_some() || task.until.is_some() {
@@ -70,7 +70,7 @@ fn summary_fact(task: &TaskSpec) -> String {
 }
 
 /// Lowers a task's loop step, if it has a loop, whose body starts at `work`.
-fn lower_loop(
+pub(super) fn lower_loop(
     b: &mut Builder,
     task: &TaskSpec,
     work: &str,
@@ -140,19 +140,17 @@ fn lower_loop(
 }
 
 /// Lowers one task, whose last step continues at `next`.
-fn lower_task(
+pub(super) fn lower_task(
     cx: &Context<'_>,
     b: &mut Builder,
-    index: usize,
+    task: &TaskSpec,
     next: &str,
 ) -> Result<(), HarnessError> {
     let w = cx.w;
-    let task = &w.workflow[index];
-    let names: Vec<String> = w.workflow.iter().map(|t| t.name.clone()).collect();
-    let before = &names[..index];
-    let through = &names[..=index];
+    let before = cx.before(&task.name);
+    let through = cx.through(&task.name);
     let place = format!("task `{}`", task.name);
-    let vars = LoopVars::of(task);
+    let vars = cx.vars(task);
     let tools = task.tools.clone().or_else(|| w.agent.tools.clone());
     let decoding = decoding_of(&w.agent.sampling, &w.agent.thinking, &w.agent.turn)
         .overlaid_by(&decoding_of(&task.sampling, &task.thinking, &task.turn));
@@ -168,6 +166,7 @@ fn lower_task(
         return lower_use(cx, b, task, &offered.name, next);
     }
     let looping = task.for_each.is_some() || task.until.is_some();
+    let conversation = super::body::conversation(cx, task, vars, before)?;
 
     // What the body hands over to when it is done: the loop step, which
     // decides whether another pass or item follows, or the next task.
@@ -195,7 +194,7 @@ fn lower_task(
         None => after_body.clone(),
     };
 
-    let what = if task.for_each.is_some() {
+    let what = if vars.item {
         format!("{place} item `{{{{ facts.item_id }}}}`")
     } else {
         place.clone()
@@ -239,7 +238,7 @@ fn lower_task(
             stop: (!task.model_only).then(|| stop_fact(&task.name)),
             pool: (!task.model_only).then(|| pool_fact(&task.name)),
             max_repeated_results: task.max_repeated_results,
-            conversation: task.model_only.then(|| task.name.clone()),
+            conversation: Some(conversation.clone()),
             system: if task.model_only {
                 task_system.clone()
             } else {
@@ -273,6 +272,7 @@ fn lower_task(
                     visible: &visible,
                     tools: tools.clone(),
                     agent_system: agent_system.clone(),
+                    conversation: conversation.clone(),
                     role: role.clone(),
                     decoding: decoding.clone(),
                     stop: stop_fact(&task.name),
@@ -329,6 +329,7 @@ fn lower_task(
                     prompt: rewrite_text(&turn.task, &scope)?,
                     tools: tools.clone(),
                     store_as: Some(fact.clone()),
+                    conversation: Some(conversation.clone()),
                     system: agent_system.clone(),
                     origin: Some("follow_up".to_string()),
                     role: role.clone(),
@@ -388,12 +389,19 @@ fn lower_task(
         None => task_prompt,
     };
     let work = format!("{}__work", task.name);
-    let work_step = if task.model_only {
+    let work_step = if super::body::is_check_task(task) {
+        // A check task has no turn: its work is to record an empty output and
+        // go on to its checks.
+        StepSpec::Assign(Box::new(AssignStepSpec {
+            set: [(fact, json!(""))].into_iter().collect(),
+            then: following,
+        }))
+    } else if task.model_only {
         StepSpec::Predict(Box::new(PredictStepSpec {
             prompt,
             schema: task.schema.is_some().then(|| task.name.clone()),
             store_as: Some(fact),
-            conversation: Some(task.name.clone()),
+            conversation: Some(conversation),
             system: task_system.clone(),
             origin: Some("task".to_string()),
             role: role.clone(),
@@ -405,6 +413,7 @@ fn lower_task(
             prompt,
             tools,
             store_as: Some(fact),
+            conversation: Some(conversation),
             system: agent_system.clone(),
             origin: Some("task".to_string()),
             role: role.clone(),
@@ -422,12 +431,7 @@ fn lower_task(
             .for_each
             .iter()
             .flat_map(|each| &each.covers)
-            .map(|path| {
-                rewrite_text(
-                    path,
-                    &cx.scope(format!("{place}: covers"), before, LoopVars::of(task)),
-                )
-            })
+            .map(|path| rewrite_text(path, &cx.scope(format!("{place}: covers"), before, vars)))
             .collect::<Result<Vec<_>, _>>()?;
         lower_loop(b, task, &work, next, covers)?;
     }
@@ -458,9 +462,7 @@ fn lower_use(
     child: &str,
     next: &str,
 ) -> Result<(), HarnessError> {
-    let names: Vec<String> = cx.w.workflow.iter().map(|t| t.name.clone()).collect();
-    let index = names.iter().position(|n| *n == task.name).unwrap_or(0);
-    let before = &names[..index];
+    let before = cx.before(&task.name);
     let work = format!("{}__work", task.name);
     b.add(
         &work,
@@ -533,16 +535,16 @@ fn skip_step(cx: &Context<'_>, b: &mut Builder, task: &TaskSpec, next: &str) -> 
 fn lower_success(cx: &Context<'_>, b: &mut Builder) -> Result<String, HarnessError> {
     let w = cx.w;
     let none = LoopVars::default();
-    let names: Vec<String> = w.workflow.iter().map(|t| t.name.clone()).collect();
+    let names = &cx.order;
     let mut checks = Vec::new();
     for gate in &w.success.gates {
-        checks.push(cx.gate(gate, none, &names)?);
+        checks.push(cx.gate(gate, none, names)?);
     }
     for (reference, keys) in &w.success.metrics {
         let threshold = keys
             .threshold()
             .map_err(|e| HarnessError::Invalid(format!("success.metrics.{reference}: {e}")))?;
-        checks.push(cx.metric(reference, threshold, none, &names)?);
+        checks.push(cx.metric(reference, threshold, none, names)?);
     }
     if w.success
         .work_items
@@ -581,10 +583,9 @@ fn outputs_value(cx: &Context<'_>) -> Result<Value, HarnessError> {
     let Some(outputs) = &w.outputs else {
         return Ok(json!({ "status": "completed" }));
     };
-    let names: Vec<String> = w.workflow.iter().map(|t| t.name.clone()).collect();
     let mut value = serde_json::Map::new();
     for (name, decl) in outputs {
-        let scope = cx.scope(format!("outputs.{name}"), &names, LoopVars::default());
+        let scope = cx.scope(format!("outputs.{name}"), &cx.order, LoopVars::default());
         value.insert(name.clone(), rewrite_value(&decl.value, &scope)?);
     }
     if w.on_failure == OnFailure::Return {
@@ -608,8 +609,14 @@ fn step_bound(w: &WorkflowSpec, steps: &std::collections::BTreeMap<String, StepS
             (_, _, Some(corrections)) => corrections.max + 1,
             _ => continue,
         };
-        let prefix = format!("{}__", task.name);
-        let task_steps = steps.keys().filter(|id| id.starts_with(&prefix)).count() as u64;
+        let prefixes: Vec<String> = std::iter::once(task)
+            .chain(task.body.iter())
+            .map(|t| format!("{}__", t.name))
+            .collect();
+        let task_steps = steps
+            .keys()
+            .filter(|id| prefixes.iter().any(|p| id.starts_with(p)))
+            .count() as u64;
         bound += passes.saturating_mul(task_steps + 1);
     }
     bound
@@ -648,8 +655,8 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         w,
         inputs: w.inputs.as_ref().map(|i| i.keys().cloned().collect()),
         authors: w
-            .workflow
-            .iter()
+            .all_tasks()
+            .into_iter()
             .filter_map(|t| t.corrections.as_ref().map(|c| c.author.name.clone()))
             .collect(),
         command_gates: w
@@ -659,19 +666,20 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
             .map(|(name, _)| name.clone())
             .collect(),
         structured: w
-            .workflow
-            .iter()
+            .all_tasks()
+            .into_iter()
             .filter(|t| t.schema.is_some())
             .map(|t| t.name.clone())
             .collect(),
         imported: w
-            .workflow
-            .iter()
+            .all_tasks()
+            .into_iter()
             .filter_map(|t| {
                 let offered = w.resolved.get(t.use_import.as_deref()?)?;
                 Some((t.name.clone(), offered.outputs.keys().cloned().collect()))
             })
             .collect(),
+        order: w.runnable().into_iter().map(|t| t.name.clone()).collect(),
     };
     let mut b = Builder::default();
     let mut next = lower_success(&cx, &mut b)?;
@@ -682,9 +690,13 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         })),
         origin(None, "complete"),
     );
-    for index in (0..w.workflow.len()).rev() {
-        lower_task(&cx, &mut b, index, &next)?;
-        next = entry_of(&w.workflow[index]);
+    for task in w.workflow.iter().rev() {
+        if task.body.is_empty() {
+            lower_task(&cx, &mut b, task, &next)?;
+        } else {
+            super::body::lower_group(&cx, &mut b, task, &next)?;
+        }
+        next = entry_of(task);
     }
     next = system::lower_variants(&cx, &mut b, next)?;
 

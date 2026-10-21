@@ -30,6 +30,9 @@ pub(super) struct Context<'a> {
     pub(super) authors: Vec<String>,
     /// The tasks that run an imported workflow, with the outputs it returns.
     pub(super) imported: std::collections::BTreeMap<String, Vec<String>>,
+    /// The names of the tasks that run, in order (a loop's `do:` body stands
+    /// for the loop).
+    pub(super) order: Vec<String>,
 }
 
 /// What a task's templates may read besides inputs and earlier outputs.
@@ -51,6 +54,28 @@ impl LoopVars {
 }
 
 impl Context<'_> {
+    /// The loop variables in scope for `task`: its own loop's, or those of
+    /// the loop whose `do:` body holds it.
+    pub(super) fn vars(&self, task: &TaskSpec) -> LoopVars {
+        LoopVars::of(self.w.loop_of(task))
+    }
+
+    /// The tasks that have run before task `name` starts.
+    pub(super) fn before(&self, name: &str) -> &[String] {
+        let index = self.order.iter().position(|n| n == name).unwrap_or(0);
+        &self.order[..index]
+    }
+
+    /// The tasks that have run once task `name` is done (itself included).
+    pub(super) fn through(&self, name: &str) -> &[String] {
+        let index = self
+            .order
+            .iter()
+            .position(|n| n == name)
+            .map_or(0, |i| i + 1);
+        &self.order[..index]
+    }
+
     pub(super) fn scope<'s>(
         &'s self,
         place: String,
@@ -160,9 +185,8 @@ impl Context<'_> {
         task: &TaskSpec,
         tasks: &[String],
     ) -> Result<Vec<Resolved>, HarnessError> {
-        let vars = LoopVars::of(task);
-        let names: Vec<String> = self.w.workflow.iter().map(|t| t.name.clone()).collect();
-        let scope = self.scope(format!("task `{}`: files", task.name), &names, vars);
+        let vars = self.vars(task);
+        let scope = self.scope(format!("task `{}`: files", task.name), &self.order, vars);
         let file = |path: &str| rewrite_text(path, &scope);
         let mut checks: Vec<Resolved> = Vec::new();
         for path in &task.outputs {

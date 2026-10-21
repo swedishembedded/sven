@@ -98,15 +98,20 @@ runs *inside the repository* is as editable by the agent as the code under test:
 pin it with an `{artifact: ..., sha256: ...}` check, or keep it outside the
 workspace.
 
-Roles are tasks too. A `model_only` task is one model turn without tools in a
-conversation of its own, for a planner or a supervisor; give it a `schema` and
-later tasks template the fields of its answer. `sampling`, `thinking` and `turn`
+Roles are tasks too, and every task works in a conversation of its own: it
+reads no other task's history, only what templates hand it
+(`{{ tasks.plan.output }}`). A `model_only` task is one model turn without
+tools, for a planner or a supervisor; give it a `schema` and later tasks
+template the fields of its answer. `sampling`, `thinking` and `turn`
 settings (temperature, seed, thinking on or off and its token budget, the most
 output tokens, the wait for the first response) go on the agent for every task or
 on one task, and the trajectory records what each request was sent with
 ([samples/harnesses/planner-worker](../../samples/harnesses/planner-worker)).
 
-For work that has to be done many times, a task can loop. `for_each` runs it
+For work that has to be done many times, a task can loop (and with `do:` a
+loop runs several roles per item: an auditor that only reads, a fixer that
+edits, a reviewer, then a check task - `verify` and no prompt - that commits,
+each in a fresh conversation for every item). `for_each` runs it
 once per item of a collection the agent (or the caller) produced, and
 [samples/harnesses/module-sweep](../../samples/harnesses/module-sweep) shows the
 shape: a planning task leaves `backlog.json`, a `for_each` task reads it **once**,

@@ -49,7 +49,7 @@ outputs:
   left: { type: number, value: "{{ tasks.work.calls_left }}" }
 "#;
 
-const AGENT: &str = "harness.corrected";
+const AGENT: &str = "harness.corrected.work";
 const SUPERVISOR: &str = "harness.corrected.supervisor";
 
 fn report(exit: i64, stdout: &str) -> Value {

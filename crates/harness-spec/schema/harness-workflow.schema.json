@@ -387,14 +387,21 @@
     "task": {
       "type": "object",
       "required": ["name"],
-      "oneOf": [{ "required": ["task"] }, { "required": ["use"] }],
+      "oneOf": [
+        { "required": ["task"] },
+        { "required": ["use"] },
+        { "required": ["do"] },
+        { "required": ["verify"], "not": { "anyOf": [{ "required": ["task"] }, { "required": ["use"] }, { "required": ["do"] }] } }
+      ],
       "additionalProperties": false,
       "properties": {
         "name": { "$ref": "#/$defs/identifier" },
         "description": { "type": "string" },
         "use": { "$ref": "#/$defs/identifier", "description": "Run the imported workflow with this alias instead of an agent turn. Takes only with, when and description." },
         "with": { "type": "object", "description": "The imported workflow's inputs: exactly the ones it takes. Values may be templates." },
-        "task": { "type": "string", "minLength": 1, "description": "The prompt. A template over inputs and earlier task outputs." },
+        "task": { "type": "string", "minLength": 1, "description": "The prompt. A template over inputs and earlier task outputs. A task without one runs its verify checks only." },
+        "conversation": { "type": "string", "minLength": 1, "description": "The conversation the task's turns are in (a template). Absent, the task has its own: one per item in a for_each, one per pass in an until. Tasks naming the same conversation share it." },
+        "do": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/task" }, "description": "The tasks a loop runs for each item or pass, in order, each with its own prompt, tools, conversation and checks." },
         "tools": {
           "type": "array",
           "description": "This task's tool allowlist; replaces the agent's.",

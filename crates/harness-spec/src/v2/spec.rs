@@ -691,6 +691,58 @@ pub struct TaskSpec {
     pub use_import: Option<String>,
     /// The values passed to the imported workflow's inputs.
     pub with: BTreeMap<String, Value>,
+    /// The conversation the task's turns are in. Absent, the task has a
+    /// conversation of its own (one per item inside a `for_each`, one per
+    /// pass inside an `until`); tasks that name the same conversation share
+    /// it. A template over inputs and the loop variables.
+    pub conversation: Option<String>,
+    /// `do:` - the tasks a loop runs for each item or pass, in order, in
+    /// place of a single prompt. Each has its own prompt, tools,
+    /// conversation, checks and repairs.
+    pub body: Vec<TaskSpec>,
+}
+
+impl WorkflowSpec {
+    /// Every task of the document: each top-level task followed by the tasks
+    /// of its `do:` body.
+    #[must_use]
+    pub fn all_tasks(&self) -> Vec<&TaskSpec> {
+        self.workflow
+            .iter()
+            .flat_map(|t| std::iter::once(t).chain(t.body.iter()))
+            .collect()
+    }
+
+    /// The tasks that run, in the order they first run: a loop with a `do:`
+    /// body stands for the tasks of its body.
+    #[must_use]
+    pub fn runnable(&self) -> Vec<&TaskSpec> {
+        self.workflow
+            .iter()
+            .flat_map(|t| {
+                if t.body.is_empty() {
+                    vec![t]
+                } else {
+                    t.body.iter().collect()
+                }
+            })
+            .collect()
+    }
+
+    /// The loop whose `do:` body holds the task named `name`.
+    #[must_use]
+    pub fn owner_of(&self, name: &str) -> Option<&TaskSpec> {
+        self.workflow
+            .iter()
+            .find(|t| t.body.iter().any(|b| b.name == name))
+    }
+
+    /// The task a task's loop belongs to: its owner for a task of a `do:`
+    /// body, the task itself otherwise.
+    #[must_use]
+    pub fn loop_of<'a>(&'a self, task: &'a TaskSpec) -> &'a TaskSpec {
+        self.owner_of(&task.name).unwrap_or(task)
+    }
 }
 
 /// `success:`.

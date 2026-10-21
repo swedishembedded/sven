@@ -22,7 +22,7 @@ use sven_vocab::{RefusedCall, TurnRequest};
 use crate::approval::HeldCall;
 use crate::command_gate::TurnTrouble;
 use crate::decoding::{system_text, TurnShape};
-use crate::machine::{harness_thread, HarnessMachine};
+use crate::machine::HarnessMachine;
 use crate::run::{AgentLoop, HarnessRunState, Inflight, Waiting};
 use crate::state::HarnessState;
 
@@ -42,7 +42,7 @@ impl HarnessMachine {
         let instruction = state.resolve_template(prompt);
         agent_request(
             TurnRequest {
-                thread: harness_thread(self.plan()),
+                thread: shape.thread.to_string(),
                 instruction: instruction.as_str().unwrap_or_default().to_string(),
                 tools: tools.as_deref().unwrap_or_default().to_vec(),
                 system: system_text(state, shape.system),

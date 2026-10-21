@@ -27,8 +27,8 @@ use super::run::HarnessOutcome;
 use super::HarnessRun;
 use crate::engine::Engine;
 
-/// One model conversation of a run: the shared agent thread or the thread of
-/// a `conversation` a model-only step opened.
+/// One model conversation of a run: the shared thread, or a conversation a
+/// task opened (`harness.<name>.<conversation>`).
 struct Conversation {
     origins: Vec<(usize, String)>,
     messages: Vec<Message>,
@@ -48,7 +48,8 @@ pub(super) struct Evidence {
     memory_retrievals: Vec<atif::MemoryRetrieval>,
     call_timings: Vec<atif::CallTiming>,
     unparsed_arguments: std::collections::HashMap<String, String>,
-    /// The conversations model-only steps ran in, by name.
+    /// The conversations the run's tasks ran in, by name, in the order each
+    /// began.
     conversations: Vec<(String, Conversation)>,
     children: Vec<ChildRecord>,
     model: String,
@@ -101,26 +102,21 @@ impl Evidence {
                 )
             })
             .unwrap_or_default();
-        let names: std::collections::BTreeSet<&str> = plan
-            .steps
-            .values()
-            .filter_map(|step| match &step.primitive {
-                sven_harness_spec::PlanPrimitive::Predict { conversation, .. } => {
-                    conversation.as_deref()
-                }
-                _ => None,
-            })
-            .collect();
+        // Every conversation the run opened (a task's own, one per item of a
+        // loop), in the order each began: the names are resolved at run time,
+        // so they come from the store, not from the plan.
+        let prefix = format!("{thread}.");
         let conversations = handle
             .conversation_store()
             .lock()
             .map(|store| {
-                names
+                store
+                    .transcript_threads()
                     .into_iter()
-                    .map(|name| {
-                        let thread = format!("{thread}.{name}");
+                    .filter_map(|id| Some((id.strip_prefix(&prefix)?.to_string(), id.clone())))
+                    .map(|(name, thread)| {
                         (
-                            name.to_string(),
+                            name,
                             Conversation {
                                 messages: store.transcript(&thread),
                                 compactions: store.transcript_compactions(&thread),
@@ -186,6 +182,28 @@ impl HarnessRun {
     pub fn trajectory(&self) -> Option<atif::Trajectory> {
         let evidence = self.evidence.as_ref()?;
         Some(build_trajectory(evidence, &self.plan, &self.run_id))
+    }
+
+    /// Each conversation of the run as a trajectory of its own, with its name
+    /// (a task's, `<task>#<item index>` inside a `for_each`), in the order
+    /// each began: one agent's work, on its own, as training material wants
+    /// it. `None` until the run has executed.
+    #[must_use]
+    pub fn conversations(&self) -> Option<Vec<(String, atif::Trajectory)>> {
+        let trajectory = self.trajectory()?;
+        Some(
+            trajectory
+                .subagent_trajectories
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|t| {
+                    let name = t.extra.as_ref()?["harness"]["conversation"]
+                        .as_str()?
+                        .to_string();
+                    Some((name, t))
+                })
+                .collect(),
+        )
     }
 }
 
@@ -336,26 +354,37 @@ impl HarnessRun {
     #[must_use]
     pub fn corrections(&self) -> Option<Vec<Correction>> {
         let evidence = self.evidence.as_ref()?;
-        let calls = |upto: usize| {
-            evidence.messages[..upto]
-                .iter()
-                .filter(|m| matches!(m.content, sven_model::MessageContent::ToolCall { .. }))
-                .count()
-        };
-        Some(
+        // A correction is a user turn in the corrected task's conversation;
+        // the shared thread is searched too, for a task that names it.
+        let shared = (&evidence.messages, &evidence.origins);
+        let conversations = std::iter::once(shared).chain(
             evidence
-                .origins
+                .conversations
                 .iter()
-                .filter(|(_, origin)| origin == "correction")
-                .filter_map(|(at, _)| {
-                    let message = evidence.messages.get(*at)?;
-                    Some(Correction {
-                        message: message.as_text()?.to_string(),
-                        tool_calls_before: calls(*at),
-                    })
-                })
-                .collect(),
-        )
+                .map(|(_, c)| (&c.messages, &c.origins)),
+        );
+        let mut found = Vec::new();
+        for (messages, origins) in conversations {
+            let calls = |upto: usize| {
+                messages[..upto]
+                    .iter()
+                    .filter(|m| matches!(m.content, sven_model::MessageContent::ToolCall { .. }))
+                    .count()
+            };
+            found.extend(
+                origins
+                    .iter()
+                    .filter(|(_, origin)| origin == "correction")
+                    .filter_map(|(at, _)| {
+                        let message = messages.get(*at)?;
+                        Some(Correction {
+                            message: message.as_text()?.to_string(),
+                            tool_calls_before: calls(*at),
+                        })
+                    }),
+            );
+        }
+        Some(found)
     }
 
     /// Every supervisor message an accept gate refused, in order. A refusal
@@ -366,7 +395,9 @@ impl HarnessRun {
     #[must_use]
     pub fn refused_messages(&self) -> Option<Vec<RefusedMessage>> {
         let evidence = self.evidence.as_ref()?;
-        let authors: std::collections::BTreeSet<&str> = self
+        // An author's conversation is named by a literal: rendering it with
+        // nothing to resolve gives the name.
+        let authors: std::collections::BTreeSet<String> = self
             .plan
             .steps
             .iter()
@@ -378,14 +409,14 @@ impl HarnessRun {
             })
             .filter_map(|(_, step)| match &step.primitive {
                 sven_harness_spec::PlanPrimitive::Predict { conversation, .. } => {
-                    conversation.as_deref()
+                    conversation.as_ref().map(|t| t.render(&|_| None))
                 }
                 _ => None,
             })
             .collect();
         let mut refused = Vec::new();
         for (name, conversation) in &evidence.conversations {
-            if !authors.contains(name.as_str()) {
+            if !authors.contains(name) {
                 continue;
             }
             for (at, origin) in &conversation.origins {
@@ -414,13 +445,13 @@ impl HarnessRun {
     fn unanswered_refusal(
         &self,
         evidence: &Evidence,
-        authors: &std::collections::BTreeSet<&str>,
+        authors: &std::collections::BTreeSet<String>,
     ) -> Option<RefusedMessage> {
         let delivered = self.corrections()?;
         let (name, conversation) = evidence
             .conversations
             .iter()
-            .rfind(|(name, _)| authors.contains(name.as_str()))?;
+            .rfind(|(name, _)| authors.contains(name))?;
         let last = conversation.messages.last()?;
         let draft = last.as_text()?;
         if last.role != sven_model::Role::Assistant

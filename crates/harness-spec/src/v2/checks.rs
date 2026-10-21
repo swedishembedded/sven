@@ -147,7 +147,7 @@ pub(super) struct RepairPlan<'a> {
     pub pool: Option<String>,
     /// Ends a repair turn that gets the same answers this many times.
     pub max_repeated_results: Option<u32>,
-    /// The conversation a model-only repair turn is in.
+    /// The conversation the repair turn is in: the task's own.
     pub conversation: Option<String>,
     /// The system message of the repair turn's conversation (already moved
     /// into run namespaces).
@@ -447,6 +447,7 @@ fn on_failure(
                 prompt,
                 tools: plan.tools.clone(),
                 store_as: Some(plan.fact.clone()),
+                conversation: plan.conversation.clone(),
                 system: plan.system.clone(),
                 origin: Some("repair".to_string()),
                 role: plan.role.clone(),

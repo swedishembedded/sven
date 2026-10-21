@@ -116,6 +116,7 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
             StepSpec::Agent(a)
                 if !a.decoding.is_empty()
                     || a.system.is_some()
+                    || a.conversation.is_some()
                     || a.origin.is_some()
                     || a.role.is_some()
                     || a.stop_as.is_some()
@@ -123,7 +124,7 @@ fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
                     || a.allowance.is_some()
                     || a.max_repeated_results.is_some() =>
             {
-                Some("`decoding` or `system` on an agent step".to_string())
+                Some("`decoding`, `system` or `conversation` on an agent step".to_string())
             }
             StepSpec::Predict(p)
                 if !p.decoding.is_empty()
@@ -390,13 +391,18 @@ fn check_path_root(id: &str, path: &crate::expr::Path) -> Result<(), HarnessErro
 
 fn template_texts(step: &StepSpec) -> Vec<String> {
     match step {
-        StepSpec::Predict(p) => [Some(p.prompt.clone()), p.system.clone()]
-            .into_iter()
-            .flatten()
-            .collect(),
+        StepSpec::Predict(p) => [
+            Some(p.prompt.clone()),
+            p.system.clone(),
+            p.conversation.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         StepSpec::Agent(a) => [
             Some(a.prompt.clone()),
             a.system.clone(),
+            a.conversation.clone(),
             a.allowance.clone(),
         ]
         .into_iter()

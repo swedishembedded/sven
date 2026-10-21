@@ -46,11 +46,12 @@ mod state;
 pub use approval::{HeldCall, HeldGate};
 pub use budget::Ceiling;
 pub use command_gate::{plan_reads_trajectory, INTERRUPTED_OPERATION};
+pub use decoding::harness_thread;
 pub use delegation::child_result;
 pub use error::HarnessRunError;
 pub use events::harness_event;
 pub use iteration::{ItemStatus, IterationState, WorkItem};
-pub use machine::{harness_thread, HarnessMachine};
+pub use machine::HarnessMachine;
 pub use registry::HarnessRegistry;
 pub use run::{
     step_call_id, AgentLoop, ChildRun, Counts, HarnessRunData, HarnessRunState, Inflight,

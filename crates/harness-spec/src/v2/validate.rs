@@ -116,8 +116,8 @@ fn validate_execution(w: &WorkflowSpec) -> Result<(), HarnessError> {
 
 fn validate_agent_tools(w: &WorkflowSpec) -> Result<(), HarnessError> {
     let lists = std::iter::once(("agent.tools".to_string(), w.agent.tools.as_ref())).chain(
-        w.workflow
-            .iter()
+        w.all_tasks()
+            .into_iter()
             .map(|t| (format!("task `{}`: tools", t.name), t.tools.as_ref())),
     );
     for (place, list) in lists {
@@ -274,7 +274,7 @@ fn unknown_gate(w: &WorkflowSpec, place: &str, gate: &str) -> HarnessError {
 
 fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
     let mut seen = BTreeSet::new();
-    for task in &w.workflow {
+    for task in w.all_tasks() {
         let place = format!("task `{}`", task.name);
         if !is_identifier(&task.name) {
             return Err(invalid(format!(
@@ -287,11 +287,10 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
                 "{place}: the name is used by more than one task"
             )));
         }
-        if task.task.trim().is_empty() && task.use_import.is_none() {
-            return Err(invalid(format!("{place}: `task` is empty")));
-        }
+        let in_item = w.loop_of(task).for_each.is_some();
+        super::body::validate_shape(w, task, &place)?;
         for out in &task.outputs {
-            if !is_workspace_relative(out) || (out.contains("{{") && task.for_each.is_none()) {
+            if !is_workspace_relative(out) || (out.contains("{{") && !in_item) {
                 return Err(invalid(format!(
                     "{place}: output `{out}` must be a literal path inside the workspace; only a \
                      `for_each` task's paths may name the item"
@@ -310,7 +309,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
                     )));
                 }
                 Check::Gate(_) | Check::Soft(_) => {}
-                Check::Artifact(a) => validate_artifact(&place, a, task.for_each.is_some())?,
+                Check::Artifact(a) => validate_artifact(&place, a, in_item)?,
                 Check::Metric(m) => check_metric_ref(w, &place, &m.metric)?,
             }
         }
@@ -400,11 +399,11 @@ fn validate_decoding(
 fn validate_roles(w: &WorkflowSpec) -> Result<(), HarnessError> {
     let named = std::iter::once(("agent.model".to_string(), w.agent.model.as_ref()))
         .chain(
-            w.workflow
-                .iter()
+            w.all_tasks()
+                .into_iter()
                 .map(|t| (format!("task `{}`: model", t.name), t.model.as_ref())),
         )
-        .chain(w.workflow.iter().filter_map(|t| {
+        .chain(w.all_tasks().into_iter().filter_map(|t| {
             t.corrections.as_ref().map(|c| {
                 (
                     format!("task `{}`: corrections.author.model", t.name),
@@ -464,7 +463,7 @@ fn validate_corrections(
             c.author.name
         )));
     }
-    if w.workflow.iter().any(|t| t.name == c.author.name) {
+    if w.all_tasks().iter().any(|t| t.name == c.author.name) {
         return Err(invalid(format!(
             "{place}: author name `{}` is also a task's name",
             c.author.name
@@ -675,7 +674,7 @@ fn validate_use(w: &WorkflowSpec) -> Result<(), HarnessError> {
             .keys()
             .filter_map(|r| split_metric(r).map(|(g, _)| g)),
     );
-    for task in &w.workflow {
+    for task in w.all_tasks() {
         if let Some(c) = &task.corrections {
             used.insert(&c.check);
             used.insert(&c.accept);
@@ -724,7 +723,7 @@ pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<String> {
             needed.insert("RunVerifier".to_string());
         }
     };
-    for task in &w.workflow {
+    for task in w.all_tasks() {
         if !task.outputs.is_empty() {
             note(None);
         }

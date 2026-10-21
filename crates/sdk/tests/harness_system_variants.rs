@@ -72,8 +72,10 @@ async fn system_for(mode: &str) -> (String, String) {
         outcome.result
     );
 
-    let trajectory = run.trajectory().expect("an executed run has one");
-    let recorded = trajectory
+    let conversations = run.conversations().expect("an executed run has them");
+    let (name, work) = &conversations[0];
+    assert_eq!(name, "work");
+    let recorded = work
         .steps
         .iter()
         .find(|s| format!("{:?}", s.source) == "System")

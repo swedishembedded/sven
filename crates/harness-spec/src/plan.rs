@@ -168,9 +168,9 @@ pub enum PlanPrimitive {
         /// Where to store the answer.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
-        /// The conversation the turn is in (version 2 plans only).
+        /// The conversation the turn is in, parsed (version 2 plans only).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        conversation: Option<String>,
+        conversation: Option<Template>,
         /// The system message the conversation starts with, parsed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system: Option<Template>,
@@ -196,7 +196,11 @@ pub enum PlanPrimitive {
         /// Where to store the final text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
-        /// The system message the shared conversation starts with, parsed.
+        /// The conversation the step's turns are in, parsed (version 2
+        /// plans only; absent, the run's shared conversation).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation: Option<Template>,
+        /// The system message the step's conversation starts with, parsed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system: Option<Template>,
         /// Decoding settings (version 2 plans only).
@@ -472,7 +476,10 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             prompt: Template::parse(&p.prompt).unwrap_or_else(|_| Template::empty()),
             schema: p.schema.clone(),
             store_as: p.store_as.clone(),
-            conversation: p.conversation.clone(),
+            conversation: p
+                .conversation
+                .as_deref()
+                .and_then(|t| Template::parse(t).ok()),
             system: p.system.as_deref().and_then(|t| Template::parse(t).ok()),
             decoding: p.decoding.clone(),
             origin: p.origin.clone(),
@@ -483,6 +490,10 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             prompt: Template::parse(&a.prompt).unwrap_or_else(|_| Template::empty()),
             tools: a.tools.clone(),
             store_as: a.store_as.clone(),
+            conversation: a
+                .conversation
+                .as_deref()
+                .and_then(|t| Template::parse(t).ok()),
             system: a.system.as_deref().and_then(|t| Template::parse(t).ok()),
             decoding: a.decoding.clone(),
             origin: a.origin.clone(),

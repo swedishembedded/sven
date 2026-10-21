@@ -18,7 +18,8 @@ use sven_vocab::verify::VerifierSpec;
 
 use crate::decoding::{resolve_decoding, TurnShape};
 
-use crate::machine::{harness_thread, primitive_word, store_as_of, then_of, HarnessMachine};
+use crate::decoding::conversation_thread;
+use crate::machine::{primitive_word, store_as_of, then_of, HarnessMachine};
 use crate::run::{
     child_machine_id, AgentLoop, HarnessRunState, Inflight, ParallelJoin, RetryFrame, TraceRecord,
     Waiting, OUTCOME_FACT,
@@ -163,12 +164,13 @@ impl HarnessMachine {
                         ctx,
                     );
                 }
+                let thread = conversation_thread(self.run.plan(), run, conversation.as_ref());
                 let effect = self.turn_effect(
                     run,
                     prompt,
                     schema.as_deref(),
                     TurnShape {
-                        conversation: conversation.as_deref(),
+                        thread: &thread,
                         system: system.as_ref(),
                         origin: origin.as_deref(),
                         role: role.as_deref(),
@@ -187,6 +189,7 @@ impl HarnessMachine {
             PlanPrimitive::Agent {
                 ref prompt,
                 ref tools,
+                ref conversation,
                 ref system,
                 ref origin,
                 ref role,
@@ -231,13 +234,14 @@ impl HarnessMachine {
                         ctx,
                     );
                 }
+                let thread = conversation_thread(self.run.plan(), run, conversation.as_ref());
                 run.agent = Some(AgentLoop {
                     stop_as: stop_as.clone(),
                     role: role.clone(),
                     pool: pool.clone(),
                     max_repeats: max_repeated_results,
                     step: step_id.clone(),
-                    thread: harness_thread(self.run.plan()),
+                    thread: thread.clone(),
                     tools: tools.clone().unwrap_or_default(),
                     open: tools.is_none(),
                     decoding,
@@ -248,7 +252,7 @@ impl HarnessMachine {
                     prompt,
                     tools,
                     TurnShape {
-                        conversation: None,
+                        thread: &thread,
                         system: system.as_ref(),
                         origin: origin.as_deref(),
                         role: role.as_deref(),

@@ -158,16 +158,21 @@ document is never retried as the other one. The JSON Schema is
 
 **Tasks.** `name` (the task's identity: generated step ids derive from it, so
 they survive reordering and reformatting), `task` (the prompt, a template),
-`tools`, `when` (a condition; the task is skipped when it does not hold),
+`conversation`, `do`, `tools`, `when` (a condition; the task is skipped when it does not hold),
 `follow_ups` (further user turns in the same conversation, each with an optional
 `when`), `outputs` (files the task must leave; each is checked to exist),
 `verify` (checks that must pass, in order), `repair: {attempts, prompt}`,
 `model_only`, `system`, `schema`, `sampling`, `thinking`, `turn`, and at most one
 of the loops below.
 
-**Roles and conversations.** All agent tasks share one conversation (follow-ups
-and repair turns continue it), which `agent.system` opens as a real system
-message. `agent.system` may instead be a list of `{when, text}` entries: the
+**Roles and conversations.** Every task runs in a conversation of its own,
+which `agent.system` (or the task's `system`) opens as a real system message;
+its follow-ups, repair turns and corrections continue it. Inside a `for_each`
+each item gets a new one (`<task>#<item_index>`), inside an `until` each pass
+(`<task>#<iteration>`), so no agent reads another task's or another item's
+history: what a task needs from an earlier one reaches it through templates
+(`{{ tasks.audit.output }}`). `conversation: <name>` (a template) puts a task
+in a named conversation instead; tasks that name the same one share it. `agent.system` may instead be a list of `{when, text}` entries: the
 first whose `when` (a condition over inputs) holds is chosen when the run starts
 and is both what the model is sent and the trajectory's system step, so one
 document serves runs with different standing instructions. The last entry has no
@@ -279,6 +284,18 @@ task. `until: {metric: <gate>.<metric>, gte: N, max_iterations: M}` runs the tas
 then measures the metric with a fresh run of the gate's command, and repeats
 while it is not met; the task's templates read `{{ iteration }}` (the pass, from
 1), and a run that uses all `max_iterations` passes fails with `until_exhausted`.
+
+**Loop bodies and check tasks.** A loop task may carry `do: [tasks...]`
+instead of a prompt: for each item (or pass) the tasks of the body run in
+order, each with its own prompt, tools, conversation, checks and repairs, and
+`item`, `item_id`, `item_index` (or `iteration`) in scope in all of them; a
+body task reads the outputs of the body tasks before it in the same item. The
+loop task itself then takes only `name`, `description`, `when`, `for_each` or
+`until`, and `checkpoint`, and the tasks of its body cannot loop themselves.
+An item completes when the last task of its body has passed its checks. A
+task with `verify` and no `task` prompt is a *check task*: its checks run with
+no model turn and its output is empty (useful for steps such as recording a
+base commit or committing).
 
 **Work items.** A `for_each` reads its collection **once**, when the loop
 begins, and freezes it in the run state: each item's id, value and SHA-256, its
@@ -483,11 +500,12 @@ A version 2 `delegate` can set `propagate_failure`: a child that returns
 `ok: false` then fails the parent step (through its retry frame, if any) with
 `child_failed` instead of being stored and continued past.
 
-**Trajectory.** `HarnessRun::trajectory` holds the agent conversation, starting
-with its system message as a `system` step, and each model-only conversation as
-its own embedded trajectory (`extra.harness.conversation` names it, and
-`extra.harness.conversations` lists them), so a planner's or supervisor's
-exchange is never mixed into the agent's.
+**Trajectory.** `HarnessRun::trajectory` holds every conversation of the run
+as its own embedded trajectory, starting with its system message as a `system`
+step (`extra.harness.conversation` names it, and `extra.harness.conversations`
+lists them in the order each began), so no task's exchange is mixed into
+another's; `HarnessRun::conversations()` returns them as `(name, trajectory)`
+pairs.
 
 **Workspace per run, tools on every host.** `HarnessRun::in_workspace(dir)` roots
 one run's file, search and shell tools, its gates and its snapshot reads in
@@ -637,10 +655,11 @@ those the machine emitted, never run. Two replays of one recording are
 identical. A recording of another plan or bundle, or of an unknown format, is
 refused.
 
-**Trajectory.** `HarnessRun::trajectory()` exports the plan thread's messages
-and tool calls as an ATIF trajectory, with the harness name, digests, run id
-and trace under `extra.harness` and the token usage and step count in the
-final metrics. Children's conversations are not included.
+**Trajectory.** `HarnessRun::trajectory()` exports the run's conversations
+(the shared plan thread's messages, then each named conversation embedded) as
+an ATIF trajectory, with the harness name, digests, run id and trace under
+`extra.harness` and the token usage and step count in the final metrics.
+Children's conversations are not included.
 
 **Counts.** `HarnessOutcome::step_counts()` and `HarnessReplay::step_counts()`
 count `StepStarted` per step (a retry body counts once per attempt).
@@ -677,7 +696,7 @@ assert_eq!(replay.trace, outcome.trace);
 | `Harness::replay(&recording)` | offline replay |
 | `HarnessRun::execute(RunOptions)` | run to a verdict or a bound; once per run |
 | `RunOptions::{cancel, deadline, max_output_tokens}` | cancellation is a `CancelToken`; a bound suspends |
-| `HarnessRun::{events, subscribe_trace, run_id, checkpoint, with_recording, recording, trajectory}` | observation and export |
+| `HarnessRun::{events, subscribe_trace, run_id, checkpoint, with_recording, recording, trajectory, conversations}` | observation and export |
 | `HarnessRun::on_item_checkpoint(sink)` | a checkpoint each time a `for_each` item completes |
 | `HarnessOutcome { conclusion, result, usage, trace, steps }` | `result` is the plan's verdict, `None` when a bound stopped the run first |
 | `TraceRecord`, `HarnessEvent`, `harness_plan::*` | re-exported so an application need not name the crates behind the facade |

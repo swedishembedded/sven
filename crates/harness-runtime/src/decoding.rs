@@ -10,7 +10,7 @@
 //! by sending an email to info@swedishembedded.com.
 
 use serde_json::Value;
-use sven_harness_spec::Template;
+use sven_harness_spec::{HarnessPlan, Template};
 
 use crate::run::HarnessRunState;
 
@@ -78,7 +78,8 @@ pub(crate) fn resolve_decoding(
 /// the system message that opens it and its decoding settings.
 #[derive(Clone, Copy)]
 pub(crate) struct TurnShape<'a> {
-    pub(crate) conversation: Option<&'a str>,
+    /// The thread the turn is in (see `HarnessMachine::thread_of`).
+    pub(crate) thread: &'a str,
     pub(crate) system: Option<&'a Template>,
     pub(crate) origin: Option<&'a str>,
     pub(crate) role: Option<&'a str>,
@@ -91,4 +92,27 @@ pub(crate) fn system_text(state: &HarnessRunState, system: Option<&Template>) ->
         Value::String(text) => text,
         other => other.to_string(),
     })
+}
+
+/// The thread every harness model turn runs in: the plan's own
+/// conversation, separate from any host session thread.
+pub fn harness_thread(plan: &HarnessPlan) -> String {
+    format!("harness.{}", plan.name)
+}
+
+/// The thread a step's turns run in: `harness.<plan>.<conversation>` for a
+/// step that names a conversation (resolved against the run now, so a
+/// conversation per `for_each` item is a template over `item_index`), the
+/// run's shared `harness.<plan>` otherwise.
+pub(crate) fn conversation_thread(
+    plan: &HarnessPlan,
+    state: &HarnessRunState,
+    conversation: Option<&Template>,
+) -> String {
+    let shared = harness_thread(plan);
+    match conversation.map(|t| state.resolve_template(t)) {
+        Some(Value::String(name)) if !name.is_empty() => format!("{shared}.{name}"),
+        Some(Value::Null) | None => shared,
+        Some(other) => format!("{shared}.{other}"),
+    }
 }

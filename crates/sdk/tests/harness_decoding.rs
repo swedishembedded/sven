@@ -144,10 +144,23 @@ async fn each_tasks_settings_reach_its_request_and_the_trajectory_records_them()
     let sources = |t: &atif::Trajectory| -> Vec<String> {
         t.steps.iter().map(|s| format!("{:?}", s.source)).collect()
     };
-    // The worker's conversation: its system message, its task, its answer.
-    assert_eq!(sources(&trajectory), ["System", "User", "Agent"]);
+    // Every task has a conversation of its own, embedded and named in the
+    // order each began; the shared thread holds nothing.
+    assert!(trajectory.steps.is_empty(), "{:?}", trajectory.steps);
+    let embedded = trajectory
+        .subagent_trajectories
+        .as_ref()
+        .expect("the tasks' conversations");
+    assert_eq!(embedded.len(), 2);
+    let worker = &embedded[1];
     assert_eq!(
-        decodings(&trajectory),
+        worker.extra.as_ref().unwrap()["harness"]["conversation"],
+        "work"
+    );
+    // The worker's conversation: its system message, its task, its answer.
+    assert_eq!(sources(worker), ["System", "User", "Agent"]);
+    assert_eq!(
+        decodings(worker),
         vec![json!({ "temperature": 0.7, "thinking": true })]
     );
     // Each user turn says where it came from.
@@ -162,13 +175,8 @@ async fn each_tasks_settings_reach_its_request_and_the_trajectory_records_them()
             })
             .collect()
     };
-    assert_eq!(origins(&trajectory), [Some("task".to_string())]);
-    // The planner's conversation is its own trajectory, named, embedded.
-    let embedded = trajectory
-        .subagent_trajectories
-        .as_ref()
-        .expect("the planner's conversation");
-    assert_eq!(embedded.len(), 1);
+    assert_eq!(origins(worker), [Some("task".to_string())]);
+    // The planner's conversation is its own trajectory too.
     assert_eq!(
         embedded[0].extra.as_ref().unwrap()["harness"]["conversation"],
         "plan"
@@ -180,7 +188,7 @@ async fn each_tasks_settings_reach_its_request_and_the_trajectory_records_them()
     );
     assert_eq!(
         trajectory.extra.as_ref().unwrap()["harness"]["conversations"],
-        json!(["plan"])
+        json!(["plan", "work"])
     );
     sven_sdk::atif::validate_trajectory(&trajectory).expect("a valid ATIF document");
 }

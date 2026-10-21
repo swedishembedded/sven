@@ -393,8 +393,9 @@ pub struct PredictStepSpec {
     /// Where to store the answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_as: Option<String>,
-    /// The conversation the turn is in: its own thread, named by this,
-    /// instead of the run's shared one. Version 2 only.
+    /// The conversation the turn is in (a template, resolved when the step
+    /// starts): its own thread, named by this, instead of the run's shared
+    /// one. Version 2 only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation: Option<String>,
     /// The system message the conversation starts with (a template), when
@@ -431,8 +432,13 @@ pub struct AgentStepSpec {
     /// Where to store the agent's final text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_as: Option<String>,
-    /// The system message the run's shared conversation starts with (a
-    /// template), when this step starts it. Version 2 only.
+    /// The conversation the step's turns are in (a template, resolved when
+    /// the step starts): its own thread, named by this, instead of the run's
+    /// shared one. Version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
+    /// The system message the step's conversation starts with (a template),
+    /// when this step starts it. Version 2 only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
     /// Decoding settings for the step's turns. Version 2 only.

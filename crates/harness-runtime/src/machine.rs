@@ -54,12 +54,6 @@ use crate::state::{superstate_of, HarnessState};
 /// tick.
 pub(super) const ADVANCE_SIGNAL: &str = "harness.advance";
 
-/// The thread every harness model turn runs in: the plan's own
-/// conversation, separate from any host session thread.
-pub fn harness_thread(plan: &HarnessPlan) -> String {
-    format!("harness.{}", plan.name)
-}
-
 /// Runs one harness plan through the HSM kernel.
 ///
 /// The struct holds only identity, the compiled program, and the two
@@ -231,10 +225,7 @@ impl HarnessMachine {
             }
         }
         let request = TurnRequest {
-            thread: shape.conversation.map_or_else(
-                || harness_thread(self.plan()),
-                |name| format!("{}.{name}", harness_thread(self.plan())),
-            ),
+            thread: shape.thread.to_string(),
             instruction: instruction.as_str().unwrap_or_default().to_string(),
             tools: Vec::new(),
             all_tools_mode: String::new(),

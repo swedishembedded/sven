@@ -51,7 +51,7 @@ pub(super) fn validate_imports(w: &WorkflowSpec) -> Result<(), HarnessError> {
             )));
         }
     }
-    for task in &w.workflow {
+    for task in w.all_tasks() {
         match &task.use_import {
             Some(alias) => validate_use(w, task, alias)?,
             None if !task.with.is_empty() => {
@@ -64,8 +64,8 @@ pub(super) fn validate_imports(w: &WorkflowSpec) -> Result<(), HarnessError> {
         }
     }
     let used: BTreeSet<&str> = w
-        .workflow
-        .iter()
+        .all_tasks()
+        .into_iter()
         .filter_map(|t| t.use_import.as_deref())
         .collect();
     if let Some(unused) = w.imports.keys().find(|a| !used.contains(a.as_str())) {
@@ -203,7 +203,7 @@ fn check_capabilities(w: &WorkflowSpec) -> Result<(), HarnessError> {
         return Ok(());
     };
     let declared: BTreeSet<&str> = declared.iter().map(|c| c.as_str()).collect();
-    for task in &w.workflow {
+    for task in w.all_tasks() {
         let Some(offered) = task.use_import.as_deref().and_then(|a| w.resolved.get(a)) else {
             continue;
         };
@@ -225,7 +225,7 @@ fn check_capabilities(w: &WorkflowSpec) -> Result<(), HarnessError> {
 /// The capabilities a workflow's imports add to what it needs itself.
 pub(super) fn imported_capabilities(w: &WorkflowSpec) -> BTreeSet<String> {
     let mut needed = BTreeSet::new();
-    for task in &w.workflow {
+    for task in w.all_tasks() {
         if let Some(offered) = task.use_import.as_deref().and_then(|a| w.resolved.get(a)) {
             needed.insert("SpawnChild".to_string());
             needed.extend(offered.capabilities.iter().cloned());
