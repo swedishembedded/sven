@@ -1,10 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
-# The first edit leaves the tests red; the retry sees the new failure and the
-# second edit turns them green. Fixture tools stand in for the shell and the
-# file tools; the real-tools run is `cargo test -p sample-harnesses-sdk-runner
-# --test real_tools`.
+# The first edit leaves the discount unhandled; the repair turn sees the new
+# failure output, edits again, and the tests pass.
 input: {}
 model:
   sequence:
@@ -14,20 +12,12 @@ model:
     - tool_calls: [ { id: e2, name: edit_file, args: { path: src/total.sh, diff: "@@\n-b\n+c\n" } } ]
     - text: "edited again"
 tools:
-  shell:
+  shell_gate:
     capability: ExecuteShell
     responses:
-      - ok: "src/total.sh tests/test_total.sh"
-      - ok: "FAIL no_shipping"
-        write: { path: result.json, content: '{"passed": false}' }
-      - ok: "FAIL with_discount"
-        write: { path: result.json, content: '{"passed": false}' }
-      - ok: "ok no_shipping"
-        write: { path: result.json, content: '{"passed": true}' }
-  read_file:
-    capability: ReadFile
-    responses:
-      - ok: "total() { echo $(( items - discount )); }"
+      - ok: { exit_code: 1, timed_out: false, error: null, stdout: "FAIL no_shipping", stderr: "" }
+      - ok: { exit_code: 1, timed_out: false, error: null, stdout: "FAIL with_discount", stderr: "" }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok no_shipping", stderr: "" }
   edit_file:
     capability: WriteFile
     responses:
@@ -35,6 +25,6 @@ tools:
       - ok: "edited"
 expect:
   status: completed
-  output: { status: fixed, attempts: 2 }
-  steps: { diagnose: 1, fix_first: 1, fix_second: 1, fixed_second: 1, unrepaired: 0 }
-  tools_invoked: [edit_file, edit_file, read_file, shell, shell, shell, shell]
+  output: { defect: "total ignores shipping", note: "edited again" }
+  steps: { diagnose__work: 1, fix__work: 1, fix__v0_tests_a0_repair: 1, fix__v0_tests_a1: 1, fix__v0_tests_a1_fail: 0 }
+  tools_invoked: [edit_file, edit_file, shell_gate, shell_gate, shell_gate]

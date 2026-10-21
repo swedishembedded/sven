@@ -78,14 +78,5 @@ fn print_report(report: &sven_harness_testkit::InspectReport) {
             step.successors.join(", ")
         );
     }
-    for helper in &report.helpers {
-        println!(
-            "  helper {} ({}, {} bytes)",
-            helper.name, helper.abi, helper.bytes
-        );
-    }
-    for child in &report.children {
-        println!("  child {} ({})", child.name, child.path.display());
-    }
     println!("  cases: {}", report.cases.join(", "));
 }

@@ -308,7 +308,7 @@ impl ChildSpawner for SdlcChildSpawner {
         // What the descriptor names decides what the child is: a task (the
         // SDLC decomposition contract, and the one native agent machine
         // with an explicit child contract), a registered harness document
-        // (a delegate or parallel branch), or nothing anyone can interpret
+        // (a delegate step), or nothing anyone can interpret
         // — which reports, it never hangs.
         if let Some(task) = descriptor.get("task").and_then(Value::as_str) {
             self.spawn_task_child(machine, task.to_string(), run, parent)
@@ -316,19 +316,10 @@ impl ChildSpawner for SdlcChildSpawner {
         } else if let Some(name) = descriptor.get("harness").and_then(Value::as_str) {
             self.spawn_harness_child(machine, name, &descriptor, run, parent)
                 .await;
-        } else if let Some(mode) = descriptor.get("mode").and_then(Value::as_str) {
-            self.spawn_mode_child(
-                machine,
-                mode,
-                descriptor.get("input").and_then(Value::as_str),
-                run,
-                parent,
-            )
-            .await;
         } else {
             self.report_failure(
                 machine,
-                json!({"ok": false, "error": "the child descriptor names no task, harness or mode"}),
+                json!({"ok": false, "error": "the child descriptor names no task or harness"}),
                 parent,
             )
             .await;
@@ -415,11 +406,10 @@ impl SdlcChildSpawner {
     }
 
     /// A harness child runs a registered harness document as an isolated
-    /// child kernel, entered at the descriptor's branch when it names one,
-    /// with the descriptor's input namespace. Its contract is the parent's
+    /// child kernel with the descriptor's input namespace. Its contract is the parent's
     /// inherited one narrowed by the child's own declared capabilities: a
     /// child holds only what both its parent and its own document allow.
-    /// It may delegate and fan out in turn - its descriptor carries the
+    /// It may delegate in turn - its descriptor carries the
     /// depth it runs at, so the plan's `max_delegate_depth` bounds the whole
     /// chain. The plan's terminal outcome is the child's result.
     async fn spawn_harness_child(
@@ -430,7 +420,6 @@ impl SdlcChildSpawner {
         run: ChildRun,
         parent: EventSink,
     ) {
-        let entry = descriptor.get("entry").and_then(Value::as_str);
         let input = descriptor.get("input").cloned().unwrap_or(json!({}));
         let depth = descriptor
             .get("depth")
@@ -446,28 +435,10 @@ impl SdlcChildSpawner {
             return;
         };
         let data = sven_harness_runtime::HarnessRunData::from_parts((*plan).clone(), input)
-            .with_helpers(self.harnesses.helpers(name))
             .with_delegate_depth(depth)
             .with_ceiling(sven_harness_runtime::Ceiling::from_value(
                 descriptor.get("budget"),
             ));
-        let api_version = plan.api_version.clone();
-        let data = match entry {
-            Some(step) => match data.with_entry(step) {
-                Ok(data) => data,
-                Err(e) => {
-                    self.report_failure(
-                        machine,
-                        json!({"ok": false, "error": e.to_string()}),
-                        parent,
-                    )
-                    .await;
-                    return;
-                }
-            },
-            None => data,
-        };
-
         let own = ChildRunContract::new(
             sven_harness_runtime::HarnessMachine::permission_policy_for(&data),
         );
@@ -504,7 +475,6 @@ impl SdlcChildSpawner {
             rt.wait_done().await;
             let result = match rt.join().await {
                 Ok(report) => sven_harness_runtime::child_result(
-                    &api_version,
                     report.state_label == "Completed",
                     &report.ctx,
                 ),
@@ -520,32 +490,6 @@ impl SdlcChildSpawner {
                 }))
                 .await;
         });
-    }
-
-    /// A `mode` descriptor names a native agent machine. The task machine
-    /// is the one with an explicit child contract (task in, structured
-    /// result out), so it runs exactly the task path. Every other mode has
-    /// no child contract — its machine would wait for input nobody defined
-    /// how to deliver — so the child fails honestly instead of hanging.
-    async fn spawn_mode_child(
-        &self,
-        machine: MachineId,
-        mode: &str,
-        input: Option<&str>,
-        run: ChildRun,
-        parent: EventSink,
-    ) {
-        if mode == "task" {
-            self.spawn_task_child(machine, input.unwrap_or_default().to_string(), run, parent)
-                .await;
-        } else {
-            self.report_failure(
-                machine,
-                json!({"ok": false, "error": format!("mode `{mode}` has no child contract")}),
-                parent,
-            )
-            .await;
-        }
     }
 }
 
@@ -887,22 +831,24 @@ mod tests {
         assert_eq!(child_shell_call(ApprovalMode::Manual, false).await, (0, 1));
     }
 
-    /// A registry holding one return-only harness with a branch step.
-    fn harness_registry() -> Arc<sven_harness_runtime::HarnessRegistry> {
-        const RETURNER: &str = r#"
-api_version: "1"
-name: returner
-entry: pick
-steps:
-  pick:
-    branch: { on: "{{ inputs.first }}", when_true: done, when_false: branch }
-  done:
-    return: { value: { which: "entry" } }
-  branch:
-    return: { value: { which: "branch" } }
+    /// The one-task workflow the harness children of these tests run: a
+    /// single model turn whose answer the workflow returns.
+    const THINKER: &str = r#"
+api_version: "2"
+name: thinker
+execution: { limits: { model_turns: 2 } }
+workflow:
+  - name: think
+    model_only: true
+    task: Think.
+outputs:
+  thought: { type: string, value: "{{ tasks.think.output }}" }
 "#;
+
+    /// A registry holding the workflow above.
+    fn harness_registry() -> Arc<sven_harness_runtime::HarnessRegistry> {
         let registry = sven_harness_runtime::HarnessRegistry::new();
-        registry.register(RETURNER).expect("the document registers");
+        registry.register(THINKER).expect("the document registers");
         Arc::new(registry)
     }
 
@@ -917,55 +863,12 @@ steps:
     }
 
     /// A harness child resolves its plan through the registry and reports
-    /// the plan's terminal outcome as its result.
+    /// the plan's terminal outcome as its result, in the envelope a parent
+    /// reads. It advances past its model turn by itself: no tick driver
+    /// pumps a spawned run, so the run walks on after storing a turn's
+    /// answer, or the child never reports to its parent.
     #[tokio::test]
     async fn a_harness_child_runs_the_registered_plan_and_reports_its_outcome() {
-        let spawner = spawner(ScriptedMockProvider::new(vec![]), Config::default())
-            .with_harnesses(harness_registry());
-        let parent = ErasedRuntime::spawn(
-            Box::new(Hsm::new(Collector(MachineId::new()))) as Box<dyn ErasedMachine>,
-            Context::new(),
-            PermissionPolicy::builder().build(),
-            sven_executors::CompositeExecutorBuilder::default().build(),
-            8,
-        );
-        spawner
-            .spawn_child(
-                MachineId::new(),
-                json!({"harness": "returner", "input": {"first": true}}),
-                child_run(&parent),
-                parent.sink(),
-            )
-            .await;
-        tokio::time::timeout(Duration::from_secs(10), parent.wait_done())
-            .await
-            .expect("the harness child reports to its parent");
-        let report = parent.join().await.unwrap();
-        let result = report.ctx.fact("child").cloned().unwrap();
-        assert_eq!(result, json!({"which": "entry"}), "{result}");
-    }
-
-    /// A harness child advances past its model turn by itself: no tick
-    /// driver pumps a spawned run, so the run walks on after storing a
-    /// turn's answer, or the child never reports to its parent.
-    #[tokio::test]
-    async fn a_harness_child_advances_past_its_model_turn_by_itself() {
-        const THINKER: &str = r#"
-api_version: "1"
-name: thinker
-entry: ask
-limits: { max_steps: 50, max_model_turns: 5 }
-steps:
-  ask:
-    predict:
-      prompt: "Think"
-      store_as: thought
-      then: out
-  out:
-    return: { value: { thought: "{{ facts.thought }}" } }
-"#;
-        let registry = sven_harness_runtime::HarnessRegistry::new();
-        registry.register(THINKER).expect("the document registers");
         let spawner = spawner(
             ScriptedMockProvider::new(vec![vec![
                 ResponseEvent::TextDelta("deep".into()),
@@ -973,7 +876,7 @@ steps:
             ]]),
             Config::default(),
         )
-        .with_harnesses(Arc::new(registry));
+        .with_harnesses(harness_registry());
         let parent = ErasedRuntime::spawn(
             Box::new(Hsm::new(Collector(MachineId::new()))) as Box<dyn ErasedMachine>,
             Context::new(),
@@ -994,36 +897,8 @@ steps:
             .expect("the harness child finishes its own run");
         let report = parent.join().await.unwrap();
         let result = report.ctx.fact("child").cloned().unwrap();
-        assert_eq!(result, json!({"thought": "deep"}), "{result}");
-    }
-
-    /// A parallel fan-out descriptor names the branch: the child starts at
-    /// that step, not the plan's entry.
-    #[tokio::test]
-    async fn a_harness_child_with_an_entry_descriptor_starts_at_the_branch() {
-        let spawner = spawner(ScriptedMockProvider::new(vec![]), Config::default())
-            .with_harnesses(harness_registry());
-        let parent = ErasedRuntime::spawn(
-            Box::new(Hsm::new(Collector(MachineId::new()))) as Box<dyn ErasedMachine>,
-            Context::new(),
-            PermissionPolicy::builder().build(),
-            sven_executors::CompositeExecutorBuilder::default().build(),
-            8,
-        );
-        spawner
-            .spawn_child(
-                MachineId::new(),
-                json!({"harness": "returner", "entry": "branch", "input": {}}),
-                child_run(&parent),
-                parent.sink(),
-            )
-            .await;
-        tokio::time::timeout(Duration::from_secs(10), parent.wait_done())
-            .await
-            .expect("the harness child reports to its parent");
-        let report = parent.join().await.unwrap();
-        let result = report.ctx.fact("child").cloned().unwrap();
-        assert_eq!(result, json!({"which": "branch"}), "{result}");
+        assert_eq!(result["ok"], json!(true), "{result}");
+        assert_eq!(result["value"], json!({"thought": "deep"}), "{result}");
     }
 
     /// A child nobody can resolve reports, never hangs: an unknown harness
@@ -1054,72 +929,6 @@ steps:
         let result = report.ctx.fact("child").cloned().unwrap();
         assert_eq!(result["ok"], json!(false), "{result}");
         assert!(result["error"].as_str().unwrap().contains("ghost"));
-    }
-
-    /// A `mode` descriptor naming the task machine runs the one native
-    /// agent machine with an explicit child contract: the task text
-    /// reaches the child's model.
-    #[tokio::test]
-    async fn a_task_mode_child_runs_the_native_task_machine() {
-        let model = ScriptedMockProvider::new(vec![decision(json!(
-            {"status": "proceed", "message": "did it"}
-        ))]);
-        let last_request = Arc::clone(&model.last_request);
-        let spawner = spawner(model, Config::default()).with_harnesses(harness_registry());
-        let parent = ErasedRuntime::spawn(
-            Box::new(Hsm::new(Collector(MachineId::new()))) as Box<dyn ErasedMachine>,
-            Context::new(),
-            PermissionPolicy::builder().build(),
-            sven_executors::CompositeExecutorBuilder::default().build(),
-            8,
-        );
-        spawner
-            .spawn_child(
-                MachineId::new(),
-                json!({"mode": "task", "input": "store users"}),
-                child_run(&parent),
-                parent.sink(),
-            )
-            .await;
-        tokio::time::timeout(Duration::from_secs(10), parent.wait_done())
-            .await
-            .expect("the task child reports to its parent");
-        let report = parent.join().await.unwrap();
-        let result = report.ctx.fact("child").cloned().unwrap();
-        assert_eq!(result["ok"], json!(true), "{result}");
-        let sent = format!("{:?}", last_request.lock().unwrap());
-        assert!(sent.contains("store users"), "the task reached the model");
-    }
-
-    /// A mode without a child contract fails the child honestly instead of
-    /// starting a machine that would hang waiting for input nobody defined
-    /// how to deliver.
-    #[tokio::test]
-    async fn a_mode_without_a_child_contract_completes_with_an_error_result() {
-        let spawner = spawner(ScriptedMockProvider::new(vec![]), Config::default())
-            .with_harnesses(harness_registry());
-        let parent = ErasedRuntime::spawn(
-            Box::new(Hsm::new(Collector(MachineId::new()))) as Box<dyn ErasedMachine>,
-            Context::new(),
-            PermissionPolicy::builder().build(),
-            sven_executors::CompositeExecutorBuilder::default().build(),
-            8,
-        );
-        spawner
-            .spawn_child(
-                MachineId::new(),
-                json!({"mode": "reactive"}),
-                child_run(&parent),
-                parent.sink(),
-            )
-            .await;
-        tokio::time::timeout(Duration::from_secs(2), parent.wait_done())
-            .await
-            .expect("the child reports at once, it does not hang");
-        let report = parent.join().await.unwrap();
-        let result = report.ctx.fact("child").cloned().unwrap();
-        assert_eq!(result["ok"], json!(false), "{result}");
-        assert!(result["error"].as_str().unwrap().contains("reactive"));
     }
 
     /// A descriptor nobody can interpret reports, never hangs.

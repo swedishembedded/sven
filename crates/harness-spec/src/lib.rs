@@ -1,13 +1,15 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The sven harness language: YAML agent-harness documents, their typed
-//! AST, static validation and the compiler to a canonical, content-hashed
+//! The sven harness language: YAML workflow documents, their typed AST,
+//! static validation and the compiler to a canonical, content-hashed
 //! [`HarnessPlan`].
 //!
-//! A harness document is a *program*: a map of steps, each step one of a
-//! closed set of primitives, compiled ahead of run time into a plan whose
-//! digest pins exactly what will execute. This crate knows nothing about
+//! A harness document declares *what a job is*: tasks, the trusted gates that
+//! decide whether each succeeded, how failures are repaired and what counts as
+//! success. It is lowered ahead of run time into a plan - a map of steps, each
+//! one of a closed set of primitives - whose digest pins exactly what will
+//! execute. This crate knows nothing about
 //! models, tools or the kernel — it is pure data plus a compiler, with no
 //! I/O of its own, so an entire harness can be validated offline
 //! (`sven harness validate`) and its digest checked before anything runs.
@@ -33,6 +35,8 @@ pub mod package;
 mod plan;
 mod source_map;
 mod spec;
+#[cfg(feature = "testing")]
+pub mod testing;
 mod v2;
 mod validate;
 pub mod vars;
@@ -40,38 +44,30 @@ pub mod vars;
 #[cfg(test)]
 mod tests;
 
-pub use bundle::{CompiledBundle, HarnessBundle, Helper, BUNDLE_FORMAT_VERSION};
+pub use bundle::{CompiledBundle, HarnessBundle, BUNDLE_FORMAT_VERSION};
 pub use error::HarnessError;
 pub use expr::{Expr, Path, PathRewrite, Template};
 pub use gate_command::GateCommand;
 pub use plan::{
     HarnessPlan, PlanGateStep, PlanIteration, PlanLimits, PlanPrimitive, PlanStep,
-    PLAN_FORMAT_VERSION, WORKFLOW_PLAN_FORMAT_VERSION,
+    PLAN_FORMAT_VERSION,
 };
 pub use source_map::{Lowering, SourceRef};
 pub use spec::{
-    AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec,
-    DelegateTarget, FailStepSpec, ForEachSpec, GateStepSpec, HarnessSpec, IOType, InputValue,
-    IterateSource, IterateStepSpec, JsonSource, LimitsSpec, ParallelStepSpec, PredictStepSpec,
-    Reconcile, RetryStepSpec, ReturnStepSpec, StepDecoding, StepId, StepSpec, ToolStepSpec,
-    TransformStepSpec, UntilSpec, VerifyStepSpec, DEFAULT_GATE_TIMEOUT_SECS, DEFAULT_MAX_ITEMS,
+    AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec, FailStepSpec,
+    ForEachSpec, GateStepSpec, HarnessSpec, IOType, InputValue, IterateSource, IterateStepSpec,
+    JsonSource, LimitsSpec, PredictStepSpec, Reconcile, ReturnStepSpec, StepDecoding, StepId,
+    StepSpec, UntilSpec, VerifyStepSpec, API_VERSION, DEFAULT_GATE_TIMEOUT_SECS, DEFAULT_MAX_ITEMS,
     DIGEST_TOOL, GATE_TOOL, ITEM_FAILED_FACT, MAX_COVERS, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT,
-    MAX_ITERATIONS_LIMIT, PRIMITIVES, RESERVED_TOOLS, SNAPSHOT_TOOL, SUPPORTED_API_VERSION,
-    WORKFLOW_API_VERSION, WORKFLOW_PRIMITIVES,
+    MAX_ITERATIONS_LIMIT, RESERVED_TOOLS, SNAPSHOT_TOOL,
 };
 pub use v2::spec::Imported;
 
 /// The JSON Schema (draft 2020-12) of a harness document, for editors and
-/// `sven harness schema`. It names exactly [`PRIMITIVES`] and accepts every
-/// document the typed parser accepts; semantic rules (references, bounds,
-/// capabilities) remain the compiler's.
+/// `sven harness schema`: the declarative workflow language of ADR 0005. It
+/// forbids unknown fields everywhere; references, bounds and capabilities are
+/// checked by the compiler.
 pub const DOCUMENT_SCHEMA: &str = include_str!("../schema/harness-document.schema.json");
-
-/// The JSON Schema (draft 2020-12) of a version 2 workflow document: the
-/// declarative authoring language of ADR 0005. Like [`DOCUMENT_SCHEMA`] it
-/// forbids unknown fields everywhere; references, bounds and capabilities
-/// are checked by the compiler.
-pub const WORKFLOW_SCHEMA: &str = include_str!("../schema/harness-workflow.schema.json");
 
 /// Converts a [`serde_yaml::Value`] to a [`serde_json::Value`]. The harness
 /// language uses the JSON-representable subset of YAML; tagged values,
@@ -121,31 +117,25 @@ fn yaml_to_json(value: &serde_yaml::Value) -> Result<serde_json::Value, HarnessE
     })
 }
 
-/// Formats a typed-deserialization failure. The message already carries the
-/// field path when the deserializer knows it; prefix it so the reader can
-/// tell parse-shape errors from validation errors.
-fn parse_error_with_path(err: &serde_json::Error) -> String {
-    format!("typed spec: {err}")
-}
-
-/// The language version a raw document declares.
-fn api_version_of(value: &serde_json::Value) -> Result<&str, HarnessError> {
+/// Checks the `api_version` a raw document declares.
+fn check_api_version(value: &serde_json::Value) -> Result<(), HarnessError> {
     match value.get("api_version") {
-        Some(serde_json::Value::String(version))
-            if version == SUPPORTED_API_VERSION || version == WORKFLOW_API_VERSION =>
-        {
-            Ok(version)
+        Some(serde_json::Value::String(version)) if version == API_VERSION => Ok(()),
+        Some(serde_json::Value::String(version)) if version == "1" => {
+            Err(HarnessError::Invalid(format!(
+                "`api_version: \"1\"` documents (the step-map language) are no longer accepted; \
+                 write a workflow with `api_version: \"{API_VERSION}\"`"
+            )))
         }
         Some(serde_json::Value::String(version)) => Err(HarnessError::Invalid(format!(
-            "unsupported api_version `{version}` (this compiler supports \
-             `{SUPPORTED_API_VERSION}` and `{WORKFLOW_API_VERSION}`)"
+            "unsupported api_version `{version}` (this compiler supports `{API_VERSION}`)"
         ))),
         Some(other) => Err(HarnessError::Parse(format!(
-            "`api_version` must be a quoted string such as \"{WORKFLOW_API_VERSION}\", got {other}"
+            "`api_version` must be a quoted string such as \"{API_VERSION}\", got {other}"
         ))),
-        None => Err(HarnessError::Parse(
-            "the document has no `api_version` (write `api_version: \"2\"`)".into(),
-        )),
+        None => Err(HarnessError::Parse(format!(
+            "the document has no `api_version` (write `api_version: \"{API_VERSION}\"`)"
+        ))),
     }
 }
 
@@ -156,19 +146,15 @@ pub struct HarnessDocument {
 }
 
 impl HarnessDocument {
-    /// Parses `yaml` into a typed harness specification.
-    ///
-    /// The `api_version` is read from the raw document first and picks the
-    /// path: `"1"` is the step-map language, `"2"` the declarative workflow
-    /// language, lowered here into the same specification. A document is
-    /// never retried as the other version after a failure.
+    /// Parses a workflow document and lowers it into the step specification
+    /// the compiler works on.
     ///
     /// # Errors
     ///
-    /// YAML syntax errors, a missing or unsupported `api_version`, and any
-    /// shape the version's deserializer cannot fit (unknown primitive or key,
-    /// wrong field types, missing required fields), and for version 2 the
-    /// workflow validation and lowering errors.
+    /// YAML syntax errors, a missing or unsupported `api_version`, any shape
+    /// the workflow deserializer cannot fit (unknown key, wrong field types,
+    /// missing required fields), and the workflow validation and lowering
+    /// errors.
     pub fn parse(yaml: &str) -> Result<Self, HarnessError> {
         Self::parse_in(yaml, std::collections::BTreeMap::new())
     }
@@ -189,20 +175,13 @@ impl HarnessDocument {
         let raw: serde_yaml::Value =
             serde_yaml::from_str(yaml).map_err(|e| HarnessError::Parse(e.to_string()))?;
         let value = yaml_to_json(&raw)?;
-        match api_version_of(&value)? {
-            WORKFLOW_API_VERSION => Ok(Self {
-                spec: v2::lower_document_with(value, resolved)?,
-            }),
-            _ => {
-                let spec: HarnessSpec = serde_json::from_value(value)
-                    .map_err(|e| HarnessError::Parse(parse_error_with_path(&e)))?;
-                Ok(Self { spec })
-            }
-        }
+        check_api_version(&value)?;
+        Ok(Self {
+            spec: v2::lower_document_with(value, resolved)?,
+        })
     }
 
-    /// The `imports` of a document, alias to path as written; none for a
-    /// version 1 document.
+    /// The `imports` of a document, alias to path as written.
     ///
     /// # Errors
     ///
@@ -214,10 +193,8 @@ impl HarnessDocument {
         let raw: serde_yaml::Value =
             serde_yaml::from_str(yaml).map_err(|e| HarnessError::Parse(e.to_string()))?;
         let value = yaml_to_json(&raw)?;
-        match api_version_of(&value)? {
-            WORKFLOW_API_VERSION => v2::imports_of(&value),
-            _ => Ok(std::collections::BTreeMap::new()),
-        }
+        check_api_version(&value)?;
+        v2::imports_of(&value)
     }
 
     /// Parses a harness document from YAML bytes.
@@ -240,9 +217,9 @@ impl HarnessDocument {
     /// # Errors
     ///
     /// Every static-validation failure listed under [`HarnessError::Invalid`]:
-    /// unsupported `api_version`, missing or dangling step references,
-    /// unbounded cycles, undeclared capabilities, missing limits where the
-    /// primitive set can run away, and output-contract mismatches.
+    /// missing or dangling step references, unbounded cycles, undeclared
+    /// capabilities, missing limits where the primitive set can run away, and
+    /// output-contract mismatches.
     pub fn compile(&self) -> Result<HarnessPlan, HarnessError> {
         validate::validate(&self.spec)?;
         Ok(plan::compile(&self.spec))

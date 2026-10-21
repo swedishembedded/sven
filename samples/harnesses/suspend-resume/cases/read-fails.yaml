@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The read exits non-zero: the check fails and so does the run - the report is
+# never invented.
+input: {}
+tools:
+  shell_gate:
+    capability: ExecuteShell
+    responses:
+      - ok: { exit_code: 1, timed_out: false, error: null, stdout: "", stderr: "locked" }
+expect:
+  status: failed
+  failure: { code: gate_failed }
+  steps: { fetch__v0_read_a0: 1, complete: 0 }

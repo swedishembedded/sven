@@ -280,10 +280,8 @@ pub(super) fn lower_use(
         &work,
         StepSpec::Delegate(Box::new(DelegateStepSpec {
             target: child.to_string(),
-            as_kind: None,
             input: super::imports::call_input(cx, task, before)?,
             store_as: Some(super::imports::result_fact(task)),
-            propagate_failure: true,
             then: next.to_string(),
         })),
         origin(Some(&task.name), "use"),

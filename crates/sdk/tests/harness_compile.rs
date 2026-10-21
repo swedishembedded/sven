@@ -12,11 +12,13 @@
 use sven_sdk::{compile_harness, CallError};
 
 const VALID: &str = r#"
-api_version: "1"
+api_version: "2"
 name: ok
-entry: done
-steps:
-  done: { return: { value: 1 } }
+execution: { limits: { model_turns: 1 } }
+workflow:
+  - name: only
+    model_only: true
+    task: Say ok.
 "#;
 
 #[test]
@@ -28,9 +30,12 @@ fn a_valid_document_compiles_to_its_plan() {
 
 #[test]
 fn a_document_the_compiler_refuses_is_refused_with_the_compilers_reason() {
-    let misspelled = VALID.replace("entry: done", "entry: done\nentrypoint: done");
+    let misspelled = VALID.replace("name: ok", "name: ok\nentrypoint: done");
     let Err(CallError::Precondition(why)) = compile_harness(&misspelled) else {
         panic!("a misspelled key must be refused");
     };
-    assert!(why.contains("unknown field `entrypoint`"), "{why}");
+    assert!(
+        why.contains("unknown top-level field `entrypoint`"),
+        "{why}"
+    );
 }

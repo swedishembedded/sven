@@ -1,12 +1,11 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Harness bundles: a harness document plus its helpers, one digest.
+//! Harness bundles: a workflow plus the workflows it imports, one digest.
 //!
-//! A harness that uses `transform` references helper programs by name. The
-//! helper bytes are part of the program's meaning — a changed helper is a
-//! changed program — so the bundle is the unit of pinning: a run pins the
-//! bundle digest, not just the document's, and a bundle whose digest no
+//! A workflow that imports others is more than its own document: a changed
+//! import is a changed program. The bundle is the unit of pinning: a run pins
+//! the bundle digest, not just the document's, and a bundle whose digest no
 //! longer matches a checkpoint's is rejected on resume (ADR 0004).
 
 use serde::{Deserialize, Serialize};
@@ -14,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::HarnessError;
 use crate::plan::HarnessPlan;
 
-/// A harness document plus every helper it references.
+/// A harness document plus every workflow it imports.
 ///
 /// Serialized canonically (keys sorted, no whitespace) for its digest, so
 /// the digest is invariant to YAML key order exactly as a lone document's
@@ -23,11 +22,6 @@ use crate::plan::HarnessPlan;
 pub struct HarnessBundle {
     /// The main harness document, raw YAML.
     pub document: String,
-    /// Helper programs by name. `transform` steps name them; a helper that
-    /// no step references is a bundle error, and so is a reference without
-    /// a helper.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub helpers: std::collections::BTreeMap<String, Helper>,
     /// The workflows the main document imports, transitively, by their path
     /// relative to the package root. Their contents are pinned by the
     /// bundle's digest; a file nothing imports is a bundle error.
@@ -35,52 +29,15 @@ pub struct HarnessBundle {
     pub imports: std::collections::BTreeMap<String, String>,
 }
 
-/// A helper program: the sandboxed bytes a `transform` step runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Helper {
-    /// The helper ABI version the bytes were written against. The runtime
-    /// adapter refuses a version it does not implement (ADR 0004: versioned
-    /// ABI, no fs/network, fuel- and memory-capped).
-    pub abi: String,
-    /// The helper's language (e.g. `wasm`).
-    pub language: String,
-    /// The helper's bytes (a WASM module's bytes, base64 in YAML).
-    pub content: String,
-}
-
 impl HarnessBundle {
     /// Parses the main document and compiles it against the helper set.
     ///
     /// # Errors
     ///
-    /// Everything [`crate::HarnessDocument::compile`] can produce, plus bundle
-    /// errors: a `transform` step naming a helper the bundle does not carry,
-    /// or a helper no `transform` step references.
+    /// Everything [`crate::HarnessDocument::compile`] can produce, plus the
+    /// package's own errors (an import that is missing or that nothing uses).
     pub fn compile(&self) -> Result<CompiledBundle, HarnessError> {
         let package = crate::package::compile_package(&self.document, &self.imports)?;
-        let used: std::collections::BTreeSet<&str> = package
-            .spec
-            .steps
-            .values()
-            .filter_map(|step| match step {
-                crate::StepSpec::Transform(t) => Some(t.helper.as_str()),
-                _ => None,
-            })
-            .collect();
-        for name in &used {
-            if !self.helpers.contains_key(*name) {
-                return Err(HarnessError::Invalid(format!(
-                    "step helper `{name}` is not in the bundle's `helpers`"
-                )));
-            }
-        }
-        for name in self.helpers.keys() {
-            if !used.contains(name.as_str()) {
-                return Err(HarnessError::Invalid(format!(
-                    "bundle helper `{name}` is not referenced by any `transform` step"
-                )));
-            }
-        }
         Ok(CompiledBundle {
             plan: package.plan,
             imports: package.imports.into_iter().map(|(_, plan)| plan).collect(),
@@ -89,7 +46,7 @@ impl HarnessBundle {
     }
 
     /// The bundle's content digest: the canonical-JSON digest over the
-    /// document's own canonical digest and the helpers' canonical bytes.
+    /// document's own canonical digest and its imports' digests.
     ///
     /// # Errors
     ///
@@ -101,11 +58,9 @@ impl HarnessBundle {
             .as_ref()
             .map(|p| p.plan.digest.clone())
             .unwrap_or_default();
-        let helpers: std::collections::BTreeMap<&String, &Helper> = self.helpers.iter().collect();
         let mut value = serde_json::json!({
             "format": BUNDLE_FORMAT_VERSION,
             "plan": plan_digest,
-            "helpers": helpers,
         });
         if !self.imports.is_empty() {
             // Each imported file by the digest of its compiled plan, so that

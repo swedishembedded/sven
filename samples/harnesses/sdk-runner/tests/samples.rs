@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The SDK-only runner reproduces the verdicts of the `branching` and
-//! `ticket-routing` harness samples, skips the one case that names a live
-//! model, and says plainly what it will not run.
+//! The SDK-only runner reproduces the verdicts of the `ticket-routing`
+//! harness sample, skips the one case that names a live model, and says
+//! plainly what it will not run.
 //!
 //! Swedish Embedded AB implements embeddable agent runtimes for its clients.
 //! If your team needs expertise in running agent workflows from your own
@@ -19,20 +19,11 @@ fn sample(name: &str) -> PathBuf {
 }
 
 #[tokio::test]
-async fn the_branching_sample_passes_through_the_sdk() {
-    let results = run_dir(&sample("branching")).await.expect("runs");
-    assert_eq!(results.len(), 4, "every case of the sample ran");
-    for result in &results {
-        assert_eq!(result.outcome, Outcome::Passed, "{result:?}");
-    }
-}
-
-#[tokio::test]
 async fn the_ticket_routing_sample_passes_through_the_sdk_and_skips_its_live_case() {
     let results = run_dir(&sample("ticket-routing")).await.expect("runs");
     assert_eq!(
         results.len(),
-        5,
+        4,
         "every case of the sample is accounted for"
     );
     for result in &results {
@@ -49,8 +40,8 @@ async fn the_ticket_routing_sample_passes_through_the_sdk_and_skips_its_live_cas
 #[tokio::test]
 async fn a_wrong_expectation_is_reported_as_a_failure() {
     let dir = tempdir_with(
-        "api_version: \"1\"\nname: one\nentry: done\nsteps:\n  done: { return: { value: 1 } }\n",
-        "expect: { status: completed, output: 2 }\n",
+        ONE_TURN,
+        "model: { sequence: [ { text: \"fine\" } ] }\nexpect: { status: completed, output: { said: \"other\" } }\n",
     );
     let result = run_case(dir.path(), &dir.path().join("cases/c.yaml"))
         .await
@@ -77,10 +68,7 @@ async fn cases_that_need_the_testkit_are_refused_with_a_pointer() {
             "live",
         ),
     ] {
-        let dir = tempdir_with(
-            "api_version: \"1\"\nname: one\nentry: done\nsteps:\n  done: { return: { value: 1 } }\n",
-            case,
-        );
+        let dir = tempdir_with(ONE_TURN, case);
         let error = run_case(dir.path(), &dir.path().join("cases/c.yaml"))
             .await
             .expect_err("refused");
@@ -89,6 +77,9 @@ async fn cases_that_need_the_testkit_are_refused_with_a_pointer() {
         assert!(message.contains("sven harness test"), "{message}");
     }
 }
+
+/// The smallest workflow: one model turn.
+const ONE_TURN: &str = "api_version: \"2\"\nname: one\nexecution: { limits: { model_turns: 1 } }\nworkflow:\n  - name: only\n    model_only: true\n    task: Say it.\noutputs:\n  said: { type: string, value: \"{{ tasks.only.output }}\" }\n";
 
 /// A scratch harness directory: `harness.yaml` plus `cases/c.yaml`.
 fn tempdir_with(harness: &str, case: &str) -> tempfile::TempDir {

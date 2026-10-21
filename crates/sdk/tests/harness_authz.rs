@@ -14,7 +14,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use std::collections::BTreeMap;
+
 use serde_json::{json, Value};
+use sven_harness_spec::HarnessBundle;
 use sven_model::ResponseEvent;
 use sven_model_mock::{FailingMockProvider, ScriptedMockProvider};
 use sven_sdk::{
@@ -69,15 +72,38 @@ fn builder() -> EngineBuilder {
     Engine::builder().model_provider(Arc::new(FailingMockProvider::new("no model here")) as Arc<_>)
 }
 
+/// A model that has the agent call `tool` once and then say it is done.
+fn calls(tool: &str) -> Arc<dyn sven_model::ModelProvider> {
+    Arc::new(ScriptedMockProvider::tool_then_text(
+        "c1", tool, "{}", "done",
+    ))
+}
+
+/// A package: a main workflow and the workflows it imports, by path.
+fn package(main: &str, imports: &[(&str, &str)]) -> String {
+    let bundle = HarnessBundle {
+        document: main.to_string(),
+        imports: imports
+            .iter()
+            .map(|(path, text)| ((*path).to_string(), (*text).to_string()))
+            .collect::<BTreeMap<_, _>>(),
+    };
+    serde_yaml::to_string(&bundle).expect("a package serializes")
+}
+
 /// The approvals a host handler saw, as `capability tool` words.
 type Asked = Arc<Mutex<Vec<String>>>;
 
 /// A builder whose host answers every approval with `answer`, recording the
 /// non-read gates it was asked about.
-fn manual_builder(answer: bool) -> (EngineBuilder, Asked) {
+fn manual_builder(
+    answer: bool,
+    model: Arc<dyn sven_model::ModelProvider>,
+) -> (EngineBuilder, Asked) {
     let asked: Asked = Arc::default();
     let log = Arc::clone(&asked);
-    let builder = builder()
+    let builder = Engine::builder()
+        .model_provider(model)
         .approvals(ApprovalPolicy::Manual)
         .human_gates(move |gate| match gate {
             HumanGate::Approval {
@@ -110,22 +136,20 @@ async fn run(harness: &sven_sdk::Harness) -> sven_sdk::HarnessOutcome {
 }
 
 const WRITES: &str = r#"
-api_version: "1"
+api_version: "2"
 name: writes
-entry: save
 capabilities: [WriteFile]
-limits: { max_steps: 20 }
-steps:
-  save:
-    tool: { name: write_notes, store_as: saved, then: done }
-  done:
-    return: { value: "{{ steps.save.value }}" }
+agent: { tools: [write_notes] }
+execution: { limits: { model_turns: 4, tool_calls: 2 } }
+workflow:
+  - name: save
+    task: Save the notes.
 "#;
 
 #[tokio::test]
 async fn manual_approval_is_asked_before_a_harness_tool_call_runs() {
     let (tool, runs) = Counting::new("write_notes", ToolCapability::WriteFile);
-    let (builder, asked) = manual_builder(false);
+    let (builder, asked) = manual_builder(false, calls("write_notes"));
     let engine = builder.tool(tool).build().expect("an engine builds");
     let harness = engine.load_harness_from_str(WRITES).expect("loads");
 
@@ -140,72 +164,75 @@ async fn manual_approval_is_asked_before_a_harness_tool_call_runs() {
 }
 
 const PARENT: &str = r#"
-api_version: "1"
+api_version: "2"
 name: parent
-entry: hand_over
 capabilities: [SpawnChild, WriteFile]
-limits: { max_steps: 20, max_delegate_depth: 3 }
-steps:
-  hand_over:
-    delegate: { target: child, store_as: out, then: done }
-  done:
-    return: { value: "{{ steps.hand_over.value }}" }
+imports: { child: ./child.yaml }
+execution: { limits: { model_turns: 6, delegate_depth: 3 } }
+workflow:
+  - name: hand_over
+    use: child
 "#;
 
 const CHILD_DECLARING_NOTHING: &str = r#"
-api_version: "1"
+api_version: "2"
 name: child
-entry: write
 capabilities: []
-limits: { max_steps: 20 }
-steps:
-  write:
-    tool: { name: write_notes, then: done }
-  done:
-    return: { value: "wrote" }
+agent: { tools: [write_notes] }
+execution: { limits: { model_turns: 4, tool_calls: 2 } }
+workflow:
+  - name: write
+    task: Write the notes.
 "#;
 
 const CHILD_DECLARING_WRITE: &str = r#"
-api_version: "1"
+api_version: "2"
 name: child
-entry: write
 capabilities: [WriteFile]
-limits: { max_steps: 20 }
-steps:
-  write:
-    tool: { name: write_notes, then: done }
-  done:
-    return: { value: "wrote" }
+agent: { tools: [write_notes] }
+execution: { limits: { model_turns: 4, tool_calls: 2 } }
+workflow:
+  - name: write
+    task: Write the notes.
 "#;
 
 #[tokio::test]
 async fn a_delegated_child_holds_no_capability_its_own_document_does_not_declare() {
     let (tool, runs) = Counting::new("write_notes", ToolCapability::WriteFile);
-    let engine = builder().tool(tool).build().expect("an engine builds");
-    engine
-        .load_harness_from_str(CHILD_DECLARING_NOTHING)
-        .expect("child loads");
-    let parent = engine.load_harness_from_str(PARENT).expect("parent loads");
+    let model = Arc::new(ScriptedMockProvider::tool_then_text(
+        "c1",
+        "write_notes",
+        "{}",
+        "done",
+    ));
+    let last_request = Arc::clone(&model.last_request);
+    let engine = Engine::builder()
+        .model_provider(model)
+        .tool(tool)
+        .build()
+        .expect("an engine builds");
+    let parent = engine
+        .load_harness_from_str(&package(PARENT, &[("child.yaml", CHILD_DECLARING_NOTHING)]))
+        .expect("the package loads");
 
-    let outcome = run(&parent).await;
+    let _ = run(&parent).await;
 
     assert_eq!(runs.load(Ordering::SeqCst), 0, "the child may not write");
+    let told = format!("{:?}", last_request.lock().unwrap());
     assert!(
-        format!("{:?}", outcome.result).contains("WriteFile is not permitted"),
-        "the child's refusal is its result, got {:?}",
-        outcome.result
+        told.contains("it was refused"),
+        "the child's agent is told the call was refused, got {told}"
     );
 }
 
 #[tokio::test]
 async fn a_delegated_childs_calls_are_still_asked_under_manual_approval() {
     let (tool, runs) = Counting::new("write_notes", ToolCapability::WriteFile);
-    let (builder, asked) = manual_builder(false);
+    let (builder, asked) = manual_builder(false, calls("write_notes"));
     let engine = builder.tool(tool).build().expect("an engine builds");
-    engine
-        .load_harness_from_str(CHILD_DECLARING_WRITE)
-        .expect("child loads");
-    let parent = engine.load_harness_from_str(PARENT).expect("parent loads");
+    let parent = engine
+        .load_harness_from_str(&package(PARENT, &[("child.yaml", CHILD_DECLARING_WRITE)]))
+        .expect("the package loads");
 
     let _ = run(&parent).await;
 
@@ -218,47 +245,42 @@ async fn a_delegated_childs_calls_are_still_asked_under_manual_approval() {
 }
 
 const READS_SECRETS: &str = r#"
-api_version: "1"
+api_version: "2"
 name: reads
-entry: peek
 capabilities: [ReadFile]
-limits: { max_steps: 20 }
-steps:
-  peek:
-    tool: { name: read_secrets, then: done }
-  done:
-    return: { value: "peeked" }
+agent: { tools: [read_secrets] }
+execution: { limits: { model_turns: 4, tool_calls: 2 } }
+workflow:
+  - name: peek
+    task: Peek.
 "#;
 
 #[tokio::test]
-async fn a_tool_step_cannot_run_a_tool_whose_capability_its_name_hides() {
+async fn an_agent_cannot_run_a_tool_whose_capability_its_name_hides() {
     // Named like a read, registered as network access: the name must not be
     // what authorizes it.
     let (tool, runs) = Counting::new("read_secrets", ToolCapability::NetworkAccess);
-    let engine = builder().tool(tool).build().expect("an engine builds");
+    let engine = Engine::builder()
+        .model_provider(calls("read_secrets"))
+        .tool(tool)
+        .build()
+        .expect("an engine builds");
     let harness = engine.load_harness_from_str(READS_SECRETS).expect("loads");
 
-    let outcome = run(&harness).await;
+    let _ = run(&harness).await;
 
     assert_eq!(runs.load(Ordering::SeqCst), 0, "the tool must not run");
-    assert!(
-        !matches!(&outcome.result, Some(Ok(_))),
-        "the step did not succeed: {:?}",
-        outcome.result
-    );
 }
 
 const AGENT_WITH_LIST: &str = r#"
-api_version: "1"
+api_version: "2"
 name: agent-list
-entry: work
 capabilities: [ReadFile, WriteFile]
-limits: { max_steps: 20, max_model_turns: 4, max_tool_calls: 4 }
-steps:
-  work:
-    agent: { prompt: "Look around.", tools: [read_notes], store_as: said, then: done }
-  done:
-    return: { value: "{{ steps.work.value }}" }
+agent: { tools: [read_notes] }
+execution: { limits: { model_turns: 4, tool_calls: 4 } }
+workflow:
+  - name: work
+    task: Look around.
 "#;
 
 #[tokio::test]
@@ -298,16 +320,14 @@ async fn an_agent_step_never_runs_a_tool_outside_its_allowlist() {
 }
 
 const SHELLS: &str = r#"
-api_version: "1"
+api_version: "2"
 name: shells
-entry: go
-capabilities: [ExecuteShell]
-limits: { max_steps: 20 }
-steps:
-  go:
-    tool: { name: shell, then: done }
-  done:
-    return: { value: "ran" }
+execution: { limits: { model_turns: 2 } }
+gates:
+  go: { command: [ls] }
+workflow:
+  - name: go
+    verify: [go]
 "#;
 
 /// Characterization: the host provides no tools at all, so a step that

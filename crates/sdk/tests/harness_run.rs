@@ -41,107 +41,76 @@ fn engine_with(scripts: Vec<Vec<ResponseEvent>>) -> (Engine, Arc<ScriptedMockPro
 }
 
 const GREET: &str = r#"
-api_version: "1"
+api_version: "2"
 name: greet
-entry: ask
 inputs:
   topic: string
-limits: { max_steps: 20 }
-steps:
-  ask:
-    predict:
-      prompt: "Name one word about {{ inputs.topic }}."
-      store_as: word
-      then: done
-  done:
-    return:
-      value:
-        topic: "{{ inputs.topic }}"
-        word: "{{ facts.word }}"
+execution: { limits: { model_turns: 4 } }
+workflow:
+  - name: ask
+    model_only: true
+    task: "Name one word about {{ inputs.topic }}."
+outputs:
+  topic: { type: string, value: "{{ inputs.topic }}" }
+  word: { type: string, value: "{{ tasks.ask.output }}" }
 "#;
 
+/// A run whose own check refuses: the gate exits 1.
 const FAILING: &str = r#"
-api_version: "1"
+api_version: "2"
 name: refusing
-entry: boom
-limits: { max_steps: 20 }
-steps:
-  boom:
-    fail:
-      code: not_ready
-      message: "the answer is no"
+execution: { limits: { model_turns: 4 } }
+gates:
+  ready: { command: [ready] }
+workflow:
+  - name: check
+    verify: [ready]
 "#;
 
 const GATED: &str = r#"
-api_version: "1"
+api_version: "2"
 name: gated
-entry: attempt
-capabilities: [NetworkAccess]
-limits: { max_steps: 50 }
-steps:
-  attempt:
-    retry:
-      attempts: 2
-      body: call
-      then: done
-      on_exhausted: give_up
-  call:
-    tool:
-      name: gate
-      store_as: answer
-      then: done
-  done:
-    return:
-      value: "{{ facts.answer }}"
-  give_up:
-    fail:
-      code: gate_stuck
-      message: "the gate never opened"
+execution: { limits: { model_turns: 4 } }
+gates:
+  open: { command: [open-the-gate], timeout: 30 }
+workflow:
+  - name: wait
+    verify: [open]
+outputs:
+  answer: { type: string, value: "{{ gates.open.stdout }}" }
 "#;
 
 const GATED_EDITED: &str = r#"
-api_version: "1"
+api_version: "2"
 name: gated
-entry: attempt
-capabilities: [NetworkAccess]
-limits: { max_steps: 50 }
-steps:
-  attempt:
-    retry:
-      attempts: 3
-      body: call
-      then: done
-      on_exhausted: give_up
-  call:
-    tool:
-      name: gate
-      store_as: answer
-      then: done
-  done:
-    return:
-      value: "{{ facts.answer }}"
-  give_up:
-    fail:
-      code: gate_stuck
-      message: "the gate never opened"
+execution: { limits: { model_turns: 4 } }
+gates:
+  open: { command: [open-the-gate, --again], timeout: 30 }
+workflow:
+  - name: wait
+    verify: [open]
+outputs:
+  answer: { type: string, value: "{{ gates.open.stdout }}" }
 "#;
 
-/// The `gate` tool: its first call blocks until `release` is opened (and
-/// announces itself on `started`), every later call answers at once.
+/// The gate tool a workflow's gates call, scripted: its first call blocks
+/// until `release` is opened (and announces itself on `started`), every later
+/// call answers at once with `exit_code`.
 struct Gate {
     started: std::sync::Mutex<Option<oneshot::Sender<()>>>,
     release: Arc<tokio::sync::Notify>,
     calls: Arc<std::sync::atomic::AtomicUsize>,
+    exit_code: i64,
 }
 
 #[async_trait::async_trait]
 impl Tool for Gate {
     fn name(&self) -> &str {
-        "gate"
+        "shell_gate"
     }
 
     fn kernel_capability(&self) -> ToolCapability {
-        ToolCapability::NetworkAccess
+        ToolCapability::ExecuteShell
     }
 
     fn description(&self) -> &str {
@@ -164,7 +133,12 @@ impl Tool for Gate {
             }
             self.release.notified().await;
         }
-        ToolOutput::ok(&call.id, r#"{"pass": true}"#)
+        ToolOutput::ok(
+            &call.id,
+            json!({ "exit_code": self.exit_code, "timed_out": false, "error": null,
+                    "stdout": "{\"pass\": true}", "stderr": "" })
+            .to_string(),
+        )
     }
 }
 
@@ -176,6 +150,21 @@ fn gated_engine(started_tx: oneshot::Sender<()>, release: Arc<tokio::sync::Notif
             started: std::sync::Mutex::new(Some(started_tx)),
             release,
             calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            exit_code: 0,
+        }))
+        .build()
+        .expect("the engine takes the tool")
+}
+
+/// An engine whose gate tool answers with exit status 1.
+fn failing_engine(started_tx: oneshot::Sender<()>) -> Engine {
+    Engine::builder()
+        .model_provider(Arc::new(ScriptedMockProvider::new(vec![])) as Arc<_>)
+        .tool(Arc::new(Gate {
+            started: std::sync::Mutex::new(Some(started_tx)),
+            release: Arc::new(tokio::sync::Notify::new()),
+            calls: Arc::new(std::sync::atomic::AtomicUsize::new(1)),
+            exit_code: 1,
         }))
         .build()
         .expect("the engine takes the tool")
@@ -203,7 +192,7 @@ async fn a_harness_runs_to_its_return_value() {
     );
     assert!(
         outcome.trace.iter().any(
-            |record| matches!(record, TraceRecord::StepCompleted { step, .. } if step == "ask")
+            |record| matches!(record, TraceRecord::StepCompleted { step, .. } if step == "ask__work")
         ),
         "the trace records the step that ran: {:?}",
         outcome.trace
@@ -235,7 +224,8 @@ async fn inputs_are_validated_before_anything_runs() {
 
 #[tokio::test]
 async fn a_failed_harness_reports_its_own_failure() {
-    let (engine, _p) = engine_with(vec![]);
+    let (started_tx, _started_rx) = oneshot::channel();
+    let engine = failing_engine(started_tx);
     let harness = engine.load_harness_from_str(FAILING).expect("loads");
 
     let mut run = harness.start(json!({})).expect("starts");
@@ -246,8 +236,7 @@ async fn a_failed_harness_reports_its_own_failure() {
         "the run completed"
     );
     assert!(
-        matches!(&outcome.result, Some(Err(failure))
-            if failure.code == "not_ready" && failure.message == "the answer is no"),
+        matches!(&outcome.result, Some(Err(failure)) if failure.code == "gate_failed"),
         "the plan's own failure is the verdict, got {:?}",
         outcome.result
     );
@@ -287,9 +276,9 @@ async fn a_bounded_run_checkpoints_and_resumes_under_the_same_program() {
     assert_eq!(checkpoint.plan_digest, harness.digest());
     assert_eq!(checkpoint.run_id, run_id, "the checkpoint names its run");
 
-    // The abandoned call ended with the suspension. The resumed run settles
-    // it through the step's retry policy, and the second call is answered
-    // at once.
+    // The abandoned call ended with the suspension. The resumed run asks the
+    // gate again - without spending a repair attempt on the lost answer -
+    // and the second call is answered at once.
     release.notify_waiters();
     let mut second = harness
         .resume(checkpoint)
@@ -300,7 +289,7 @@ async fn a_bounded_run_checkpoints_and_resumes_under_the_same_program() {
         .expect("the run ends");
     assert_eq!(outcome.conclusion, RunConclusion::Success);
     assert!(
-        matches!(&outcome.result, Some(Ok(value)) if value == &json!("{\"pass\": true}")),
+        matches!(&outcome.result, Some(Ok(value)) if value == &json!({"answer": "{\"pass\": true}"})),
         "the resumed run finishes the plan, got {:?}",
         outcome.result
     );
@@ -308,8 +297,8 @@ async fn a_bounded_run_checkpoints_and_resumes_under_the_same_program() {
         outcome
             .trace
             .iter()
-            .any(|record| matches!(record, TraceRecord::RetryAttempt { .. })),
-        "the interrupted step went through its retry policy: {:?}",
+            .any(|record| matches!(record, TraceRecord::GateEvaluated { passed: true, .. })),
+        "the interrupted gate ran again and passed: {:?}",
         outcome.trace
     );
     // The resume keeps the run id: both episodes' events read as one
@@ -395,15 +384,15 @@ async fn a_run_streams_its_lifecycle_events() {
     assert!(
         seen.iter().any(|event| matches!(
             event,
-            HarnessEvent::StepStarted { step, primitive, attempt: 1 }
-                if step == "ask" && primitive == "predict"
+            HarnessEvent::StepStarted { step, primitive }
+                if step == "ask__work" && primitive == "predict"
         )),
         "the stream records each step's start: {seen:?}"
     );
     assert!(
         seen.iter().any(|event| matches!(
             event,
-            HarnessEvent::StepCompleted { step, .. } if step == "ask"
+            HarnessEvent::StepCompleted { step, .. } if step == "ask__work"
         )),
         "the stream records each step's completion: {seen:?}"
     );

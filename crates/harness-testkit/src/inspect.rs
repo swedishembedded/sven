@@ -13,7 +13,7 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{json, Map, Value};
-use sven_harness_spec::{DelegateTarget, HarnessPlan, IOType, InputValue, PlanPrimitive};
+use sven_harness_spec::{HarnessPlan, IOType, InputValue, PlanPrimitive};
 
 use crate::dir::HarnessDir;
 use crate::error::TestkitError;
@@ -57,30 +57,6 @@ pub struct StepInfo {
     pub successors: Vec<String>,
 }
 
-/// A bundled helper.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct HelperInfo {
-    /// The helper's name.
-    pub name: String,
-    /// Its ABI version.
-    pub abi: String,
-    /// Its language.
-    pub language: String,
-    /// Decoded size in bytes.
-    pub bytes: usize,
-}
-
-/// A child harness.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ChildInfo {
-    /// The file.
-    pub path: std::path::PathBuf,
-    /// The child's name.
-    pub name: String,
-    /// The child's plan digest.
-    pub plan_digest: String,
-}
-
 /// What a harness is, without running it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InspectReport {
@@ -104,18 +80,11 @@ pub struct InspectReport {
     pub outputs: std::collections::BTreeMap<String, String>,
     /// Every step, by id.
     pub steps: Vec<StepInfo>,
-    /// Bundled helpers.
-    pub helpers: Vec<HelperInfo>,
-    /// Child harnesses found beside it.
-    pub children: Vec<ChildInfo>,
     /// Case names found beside it.
     pub cases: Vec<String>,
 }
 
-/// Compiles the harness at `path` and its children offline.
-///
-/// Every file is compiled, and every `delegate` to a harness must name one
-/// that is in the directory (or the harness itself).
+/// Compiles the harness at `path` and the workflows it imports, offline.
 #[must_use]
 pub fn validate(path: &Path) -> ValidateReport {
     match HarnessDir::open(path) {
@@ -137,64 +106,19 @@ pub(crate) fn validate_dir(dir: &HarnessDir, path: &Path) -> ValidateReport {
         errors: Vec::new(),
         harnesses: Vec::new(),
     };
-    let mut sources = Vec::new();
-    for file in dir.children.iter().chain(std::iter::once(&dir.main)) {
-        match Source::read(file) {
-            Ok(source) => sources.push(source),
-            Err(e) => report.errors.push(e.to_string()),
+    match Source::read(&dir.main) {
+        Ok(source) => {
+            report.harnesses.push(ValidatedHarness {
+                path: source.path,
+                name: source.plan.name,
+                plan_digest: source.plan.digest,
+                bundle_digest: source.bundle_digest,
+            });
+            report.valid = true;
         }
+        Err(e) => report.errors.push(e.to_string()),
     }
-    let names: Vec<&str> = sources
-        .iter()
-        .flat_map(|s| {
-            std::iter::once(s.plan.name.as_str()).chain(s.imported.iter().map(String::as_str))
-        })
-        .collect();
-    for (index, source) in sources.iter().enumerate() {
-        if names[..index].contains(&source.plan.name.as_str()) {
-            report.errors.push(format!(
-                "{}: another harness in this directory is already named `{}`",
-                source.path.display(),
-                source.plan.name
-            ));
-        }
-        for target in harness_delegates(&source.plan) {
-            if !names.contains(&target.1.as_str()) {
-                report.errors.push(format!(
-                    "{}: step `{}` delegates to harness `{}`, which is not among this directory's harnesses",
-                    source.path.display(),
-                    target.0,
-                    target.1
-                ));
-            }
-        }
-    }
-    report.harnesses = sources
-        .into_iter()
-        .map(|s| ValidatedHarness {
-            path: s.path,
-            name: s.plan.name,
-            plan_digest: s.plan.digest,
-            bundle_digest: s.bundle_digest,
-        })
-        .collect();
-    report.valid = report.errors.is_empty();
     report
-}
-
-/// `(step, harness name)` for each delegate to a harness.
-fn harness_delegates(plan: &HarnessPlan) -> Vec<(String, String)> {
-    plan.steps
-        .values()
-        .filter_map(|step| match &step.primitive {
-            PlanPrimitive::Delegate {
-                target,
-                as_kind: DelegateTarget::Harness,
-                ..
-            } => Some((step.id.clone(), target.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 /// The compiled plan of the main document in `dir`, which reads a run's trace
@@ -215,17 +139,6 @@ pub fn main_plan(dir: &HarnessDir) -> Result<HarnessPlan, TestkitError> {
 pub fn inspect(path: &Path) -> Result<InspectReport, TestkitError> {
     let dir = HarnessDir::open(path)?;
     let main = Source::read(&dir.main)?;
-    let children = dir
-        .children
-        .iter()
-        .map(|file| {
-            Source::read(file).map(|s| ChildInfo {
-                path: s.path,
-                name: s.plan.name,
-                plan_digest: s.plan.digest,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let plan = &main.plan;
     let steps = plan
         .steps
@@ -234,17 +147,6 @@ pub fn inspect(path: &Path) -> Result<InspectReport, TestkitError> {
             id: step.id.clone(),
             primitive: primitive_word(&step.primitive),
             successors: successors(&step.primitive),
-        })
-        .collect();
-    let helpers = main
-        .bundle
-        .iter()
-        .flat_map(|bundle| bundle.helpers.iter())
-        .map(|(name, helper)| HelperInfo {
-            name: name.clone(),
-            abi: helper.abi.clone(),
-            language: helper.language.clone(),
-            bytes: base64_len(&helper.content),
         })
         .collect();
     let cases = dir
@@ -263,8 +165,6 @@ pub fn inspect(path: &Path) -> Result<InspectReport, TestkitError> {
         inputs: type_words(plan.inputs.as_ref()),
         outputs: type_words(plan.outputs.as_ref()),
         steps,
-        helpers,
-        children,
         cases,
     })
 }
@@ -288,16 +188,6 @@ fn type_word(ty: &IOType) -> &'static str {
         IOType::Boolean => "boolean",
         IOType::Json => "json",
     }
-}
-
-/// Decoded size of base64 text, without decoding it.
-fn base64_len(content: &str) -> usize {
-    let text: Vec<u8> = content
-        .bytes()
-        .filter(|b| !b.is_ascii_whitespace())
-        .collect();
-    let padding = text.iter().rev().take_while(|b| **b == b'=').count();
-    (text.len() / 4 * 3).saturating_sub(padding)
 }
 
 /// The harness's input/output contract as JSON Schema fragments:

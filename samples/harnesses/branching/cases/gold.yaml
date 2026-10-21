@@ -1,9 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
-
-# A vip on the enterprise plan takes the first branch: gold, two steps to decide.
-input: { plan: enterprise, vip: true }
-expect:
-  status: completed
-  output: { tier: gold, discount: 20 }
-  steps: { top: 1, middle: 0, gold: 1, finish: 1 }

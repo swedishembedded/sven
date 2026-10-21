@@ -19,12 +19,12 @@ use sven_harness_testkit::{
     Verdict,
 };
 
-/// A task whose model answers well under seeds 1 and 2 and spoils its first
-/// answer under seeds 3 and 4, so a harness that does not retry loses those
-/// seeds.
+/// A task whose model answers well under seeds 1 and 2 and misjudges the
+/// ticket in its first answer under seeds 3 and 4, so a harness that has no
+/// second look at the label loses those seeds.
 fn seeded_case(ticket: &str) -> String {
-    let good = "{sequence: [{text: '{\"label\": \"bug\"}', usage: {input: 20, output: 5}}]}";
-    let spoiled = "{sequence: [{text: 'garbage', usage: {input: 20, output: 5}}, {text: '{\"label\": \"bug\"}', usage: {input: 20, output: 5}}]}";
+    let good = "{sequence: [{text: '{\"label\": \"bug\"}', usage: {input: 20, output: 5}}, {text: 'bug', usage: {input: 20, output: 5}}]}";
+    let spoiled = "{sequence: [{text: '{\"label\": \"feature\"}', usage: {input: 20, output: 5}}, {text: 'bug', usage: {input: 20, output: 5}}]}";
     format!(
         r#"
 input: {{ ticket: "{ticket}" }}
@@ -36,7 +36,7 @@ model:
     4: {spoiled}
 expect:
   status: completed
-  output: {{ queue: bugs, label: bug }}
+  output: {{ queue: bug-queue, label: bug }}
 "#
     )
 }
@@ -60,10 +60,6 @@ fn variant(doc: &str) -> tempfile::TempDir {
     tmp
 }
 
-fn no_retry() -> String {
-    ROUTING.replace("attempts: 2", "attempts: 1")
-}
-
 fn options(bootstrap_seed: u64) -> PairedOptions {
     PairedOptions {
         seeds: vec![1, 2, 3, 4],
@@ -74,7 +70,7 @@ fn options(bootstrap_seed: u64) -> PairedOptions {
 
 #[tokio::test]
 async fn a_candidate_that_wins_seeds_the_baseline_loses_is_promoted_with_its_cost() {
-    let (a, b, cases) = (variant(&no_retry()), variant(ROUTING), cases());
+    let (a, b, cases) = (variant(ROUTING), variant(&routing_with_review()), cases());
     let report = compare_paired(
         a.path(),
         b.path(),
@@ -98,8 +94,8 @@ async fn a_candidate_that_wins_seeds_the_baseline_loses_is_promoted_with_its_cos
     assert!(report.regressions.is_empty());
     assert_eq!(report.decision.verdict, Verdict::Promote);
 
-    // The candidate retries, so it spends more model output on the seeds the
-    // baseline gave up on; the cost is accounted per run, not hidden.
+    // The candidate looks twice, so it spends more model output on every
+    // seed; the cost is accounted per run, not hidden.
     let (cost_a, cost_b) = (report.cost.a.output_tokens, report.cost.b.output_tokens);
     assert!(cost_b > cost_a, "{cost_a} vs {cost_b}");
     assert_eq!(report.cost.a.runs, 16);
@@ -110,7 +106,7 @@ async fn a_candidate_that_wins_seeds_the_baseline_loses_is_promoted_with_its_cos
 async fn a_candidate_that_regresses_a_task_is_rejected_by_name() {
     let (a, b, cases) = (
         variant(ROUTING),
-        variant(&routing_with_bug_queue("triage")),
+        variant(&routing_with_queue_suffix("triage")),
         cases(),
     );
     let report = compare_paired(
@@ -146,7 +142,7 @@ async fn an_identical_candidate_is_inconclusive_not_promoted() {
 
 #[tokio::test]
 async fn the_interval_is_a_function_of_the_bootstrap_seed_alone() {
-    let (a, b, cases) = (variant(&no_retry()), variant(ROUTING), cases());
+    let (a, b, cases) = (variant(ROUTING), variant(&routing_with_review()), cases());
     let run = |seed| {
         let (a, b, cases) = (a.path(), b.path(), cases.path());
         async move {

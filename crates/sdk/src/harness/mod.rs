@@ -102,12 +102,8 @@ impl Engine {
                 let plan = Arc::new(compiled.plan);
                 // The imported workflows are what its `use` tasks delegate
                 // to; they register with the main one or not at all.
-                let mut set: Vec<_> = compiled
-                    .imports
-                    .into_iter()
-                    .map(|imported| (Arc::new(imported), Default::default()))
-                    .collect();
-                set.push((Arc::clone(&plan), bundle.helpers.clone()));
+                let mut set: Vec<_> = compiled.imports.into_iter().map(Arc::new).collect();
+                set.push(Arc::clone(&plan));
                 self.harnesses
                     .register_package(set)
                     .map_err(|e| refuse(e.to_string()))?;
@@ -118,7 +114,7 @@ impl Engine {
                     sven_harness_spec::compile_str(&text).map_err(|e| refuse(e.to_string()))?,
                 );
                 self.harnesses
-                    .register_compiled(Arc::clone(&plan), Default::default())
+                    .register_compiled(Arc::clone(&plan))
                     .map_err(|e| refuse(e.to_string()))?;
                 (plan, HarnessSource::Document(text), None)
             }

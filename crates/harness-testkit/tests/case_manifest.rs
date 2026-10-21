@@ -148,8 +148,6 @@ fn a_resume_phase_needs_a_suspended_first_phase() {
 fn a_harness_directory_is_found_by_its_layout() {
     let (tmp, dir) = harness_dir(&[
         ("harness.yaml", ROUTING),
-        ("children/zeta.yaml", "x: 1"),
-        ("children/alpha.yaml", "x: 1"),
         ("cases/b.yaml", "x: 1"),
         ("cases/a.yaml", "x: 1"),
         ("cases/notes.txt", "not a case"),
@@ -161,7 +159,6 @@ fn a_harness_directory_is_found_by_its_layout() {
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect()
     };
-    assert_eq!(names(&dir.children), ["alpha.yaml", "zeta.yaml"]);
     assert_eq!(names(&dir.cases), ["a.yaml", "b.yaml"]);
 }
 
@@ -171,7 +168,7 @@ fn a_file_path_is_a_main_document_alone() {
     write_tree(tmp.path(), &[("only.yaml", ROUTING)]);
     let dir = HarnessDir::open(&tmp.path().join("only.yaml")).expect("a file opens");
     assert_eq!(dir.main, tmp.path().join("only.yaml"));
-    assert!(dir.children.is_empty() && dir.cases.is_empty());
+    assert!(dir.cases.is_empty());
 }
 
 #[test]

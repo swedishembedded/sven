@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# A repository whose tests pass is left alone: no model call, no edit.
+input: {}
+tools:
+  shell_gate:
+    capability: ExecuteShell
+    responses:
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+expect:
+  status: completed
+  output: { defect: "", note: "" }
+  tools_not_invoked: [edit_file]
+  max_output_tokens: 0

@@ -1,21 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
-# One schema-constrained model turn, retried once when the answer is not valid
-# JSON for the schema, then routed by a branch on the label.
-api_version: "1"
+# Classify a ticket with one schema-constrained model turn, then let a
+# condition over the answer decide what else happens. Swedish Embedded AB
+# implements governed, replayable model-routing workflows for its clients. If
+# your team needs expertise in letting a model classify work without letting it
+# decide control flow then you can procure our services by sending an email to
+# info@swedishembedded.com.
+api_version: "2"
 name: model-routing
 description: "Classify a ticket with one schema-constrained model turn, then route it."
 inputs: { ticket: string }
-outputs: { queue: string, label: string }
-schemas:
-  route: { type: object, required: [label], properties: { label: { type: string, enum: [bug, feature, question] } } }
-limits: { max_steps: 20, max_model_turns: 2 }
-entry: classify
-steps:
-  classify:   { retry: { attempts: 2, body: ask, then: route, on_exhausted: unroutable } }
-  ask:        { predict: { prompt: "Classify as bug, feature or question: {{ inputs.ticket }}", schema: route, store_as: route, then: route } }
-  route:      { branch: { on: { eq: "facts.route.label", value: "bug" }, when_true: to_bugs, when_false: to_backlog } }
-  to_bugs:    { return: { value: { queue: bugs, label: "{{ facts.route.label }}" } } }
-  to_backlog: { return: { value: { queue: backlog, label: "{{ facts.route.label }}" } } }
-  unroutable: { fail: { code: unroutable, message: "the model never produced a valid route" } }
+outputs:
+  label: { type: string, value: "{{ tasks.classify.output.label }}" }
+  summary: { type: string, value: "{{ tasks.summarize.output }}" }
+execution: { limits: { model_turns: 3 } }
+workflow:
+  - name: classify
+    model_only: true
+    schema:
+      type: object
+      required: [label]
+      properties: { label: { type: string, enum: [bug, feature, question] } }
+    task: "Classify as bug, feature or question: {{ inputs.ticket }}"
+  - name: summarize
+    model_only: true
+    when: { eq: tasks.classify.output.label, value: bug }
+    task: "Write a one-line summary of this bug for the bugs queue: {{ inputs.ticket }}"

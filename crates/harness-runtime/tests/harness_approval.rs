@@ -19,21 +19,23 @@ use sven_harness_runtime::HarnessState;
 use sven_hsm::ids::{ApprovalId, ToolCallId};
 use sven_hsm::{Effect, Event, ProposedToolCall, ToolCapability};
 
-const TOOL_STEP: &str = r#"
-api_version: "1"
+const GATE_STEP: &str = r#"
+api_version: "2"
 name: saver
 entry: save
-capabilities: [WriteFile]
+capabilities: [ExecuteShell]
 limits: { max_steps: 20 }
 steps:
   save:
-    tool: { name: write_notes, args: { path: "n.txt" }, store_as: saved, then: out }
+    gate: { steps: [{ name: write, argv: [sh, save.sh] }], then: out, on_fail: bad }
   out:
-    return: { value: "{{ steps.save.value }}" }
+    return: { value: "saved" }
+  bad:
+    fail: { code: gate_failed }
 "#;
 
 const AGENT_STEP: &str = r#"
-api_version: "1"
+api_version: "2"
 name: worker
 entry: do
 capabilities: [WriteFile]
@@ -46,9 +48,13 @@ steps:
 "#;
 
 fn approval_required(call_id: ToolCallId) -> Event {
+    approval_required_for(call_id, ToolCapability::WriteFile)
+}
+
+fn approval_required_for(call_id: ToolCallId, capability: ToolCapability) -> Event {
     Event::ToolApprovalRequired {
         call_id,
-        capability: ToolCapability::WriteFile,
+        capability,
         description: "needs approval".into(),
     }
 }
@@ -97,16 +103,21 @@ fn proposed(calls: Vec<ProposedToolCall>) -> Event {
 }
 
 #[test]
-fn a_held_tool_step_call_is_asked_then_run_once_approved() {
-    let (mut m, mut ctx, mut state) = start(TOOL_STEP, json!({}));
+fn a_held_gate_call_is_asked_then_run_once_approved() {
+    let (mut m, mut ctx, mut state) = start(GATE_STEP, json!({}));
     let Some(Effect::CallTool { call_id, .. }) = m.step_effect() else {
-        panic!("the tool step emitted its call");
+        panic!("the gate step emitted its call");
     };
 
-    let fx = drive(&mut m, &mut ctx, &mut state, approval_required(call_id));
+    let fx = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        approval_required_for(call_id, ToolCapability::ExecuteShell),
+    );
     assert_eq!(
         requests(&fx),
-        [(approval_of(call_id), Some("write_notes".to_string()))],
+        [(approval_of(call_id), Some("shell_gate".to_string()))],
         "the person is shown the call that is held"
     );
     assert_eq!(state, HarnessState::WaitingForTool);
@@ -121,7 +132,7 @@ fn a_held_tool_step_call_is_asked_then_run_once_approved() {
     );
     assert_eq!(
         calls(&fx),
-        [(call_id, "write_notes".to_string())],
+        [(call_id, "shell_gate".to_string())],
         "the approved call is issued again, as it was"
     );
     assert!(ctx.is_call_approved(call_id));
@@ -132,7 +143,10 @@ fn a_held_tool_step_call_is_asked_then_run_once_approved() {
         &mut state,
         Event::ToolSucceeded {
             call_id,
-            observation: json!("saved"),
+            observation: json!({ "exit_code": 0, "timed_out": false, "error": null,
+                                 "stdout": "", "stderr": "" })
+            .to_string()
+            .into(),
         },
     );
     let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
@@ -140,12 +154,17 @@ fn a_held_tool_step_call_is_asked_then_run_once_approved() {
 }
 
 #[test]
-fn a_refused_tool_step_call_fails_the_step_without_running() {
-    let (mut m, mut ctx, mut state) = start(TOOL_STEP, json!({}));
+fn a_refused_gate_call_fails_the_run_without_running() {
+    let (mut m, mut ctx, mut state) = start(GATE_STEP, json!({}));
     let Some(Effect::CallTool { call_id, .. }) = m.step_effect() else {
-        panic!("the tool step emitted its call");
+        panic!("the gate step emitted its call");
     };
-    let _ = drive(&mut m, &mut ctx, &mut state, approval_required(call_id));
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        approval_required_for(call_id, ToolCapability::ExecuteShell),
+    );
 
     let fx = drive(
         &mut m,
@@ -164,11 +183,16 @@ fn a_refused_tool_step_call_fails_the_step_without_running() {
 
 #[test]
 fn an_approval_for_another_call_settles_nothing() {
-    let (mut m, mut ctx, mut state) = start(TOOL_STEP, json!({}));
+    let (mut m, mut ctx, mut state) = start(GATE_STEP, json!({}));
     let Some(Effect::CallTool { call_id, .. }) = m.step_effect() else {
-        panic!("the tool step emitted its call");
+        panic!("the gate step emitted its call");
     };
-    let _ = drive(&mut m, &mut ctx, &mut state, approval_required(call_id));
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        approval_required_for(call_id, ToolCapability::ExecuteShell),
+    );
 
     let fx = drive(
         &mut m,

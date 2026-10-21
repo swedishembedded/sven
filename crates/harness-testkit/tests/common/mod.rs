@@ -32,30 +32,40 @@ pub fn harness_dir(files: &[(&str, &str)]) -> (TempDir, HarnessDir) {
     (tmp, dir)
 }
 
-/// A schema-constrained model turn, retried once, then routed.
+/// One schema-constrained model turn that labels a ticket; the run returns the
+/// label and the queue it names.
 pub const ROUTING: &str = r#"
-api_version: "1"
+api_version: "2"
 name: model-routing
-description: "Classify a ticket with one schema-constrained model turn, then route it."
+description: "Classify a ticket with one schema-constrained model turn."
 inputs: { ticket: string }
-outputs: { queue: string, label: string }
-schemas:
-  route: { type: object, required: [label], properties: { label: { type: string, enum: [bug, feature, question] } } }
-limits: { max_steps: 20, max_model_turns: 2 }
-entry: classify
-steps:
-  classify: { retry: { attempts: 2, body: ask, then: route, on_exhausted: unroutable } }
-  ask: { predict: { prompt: "Classify as bug, feature or question: {{ inputs.ticket }}", schema: route, store_as: route, then: route } }
-  route: { branch: { on: { eq: "facts.route.label", value: "bug" }, when_true: to_bugs, when_false: to_backlog } }
-  to_bugs: { return: { value: { queue: bugs, label: "{{ facts.route.label }}" } } }
-  to_backlog: { return: { value: { queue: backlog, label: "{{ facts.route.label }}" } } }
-  unroutable: { fail: { code: unroutable, message: "the model never produced a valid route" } }
+outputs:
+  queue: { type: string, value: "{{ tasks.classify.output.label }}-queue" }
+  label: { type: string, value: "{{ tasks.classify.output.label }}" }
+execution: { limits: { model_turns: 2 } }
+workflow:
+  - name: classify
+    model_only: true
+    schema: { type: object, required: [label], properties: { label: { type: string, enum: [bug, feature, question] } } }
+    task: "Classify as bug, feature or question: {{ inputs.ticket }}"
 "#;
 
-/// The routing harness with the bug queue renamed: a variant that changes
-/// one output.
-pub fn routing_with_bug_queue(queue: &str) -> String {
-    ROUTING.replace("queue: bugs", &format!("queue: {queue}"))
+/// The routing harness with the queue suffix renamed: a variant that changes
+/// every output.
+pub fn routing_with_queue_suffix(suffix: &str) -> String {
+    ROUTING.replace("-queue", &format!("-{suffix}"))
+}
+
+/// The routing harness followed by a review turn that has the last word on
+/// the label: a candidate that spends a second model turn on every ticket.
+pub fn routing_with_review() -> String {
+    ROUTING
+        .replace("model_turns: 2", "model_turns: 4")
+        .replace(
+            "outputs:\n  queue: { type: string, value: \"{{ tasks.classify.output.label }}-queue\" }\n  label: { type: string, value: \"{{ tasks.classify.output.label }}\" }\n",
+            "outputs:\n  queue: { type: string, value: \"{{ tasks.review.output }}-queue\" }\n  label: { type: string, value: \"{{ tasks.review.output }}\" }\n",
+        )
+        + "  - name: review\n    model_only: true\n    task: \"Answer with the label only: {{ tasks.classify.output.label }}\"\n"
 }
 
 pub const ROUTING_BUG_CASE: &str = r#"
@@ -66,8 +76,8 @@ model:
       usage: { input: 20, output: 6 }
 expect:
   status: completed
-  output: { queue: bugs, label: bug }
-  steps: { classify: 1, ask: 1 }
+  output: { queue: bug-queue, label: bug }
+  steps: { classify__work: 1 }
   max_output_tokens: 100
 "#;
 
@@ -75,12 +85,11 @@ pub const ROUTING_FEATURE_CASE: &str = r#"
 input: { ticket: "Please add dark mode" }
 model:
   sequence:
-    - text: 'not json at all'
     - text: '{"label": "feature"}'
 expect:
   status: completed
-  output: { queue: backlog, label: feature }
-  steps: { ask: 2 }
+  output: { queue: feature-queue, label: feature }
+  steps: { classify__work: 1 }
 "#;
 
 pub const ROUTING_UNROUTABLE_CASE: &str = r#"
@@ -88,64 +97,60 @@ input: { ticket: "???" }
 model:
   sequence:
     - text: 'nope'
-    - text: 'still nope'
 expect:
   status: failed
-  failure: { code: unroutable, message_contains: "valid route" }
+  failure: { code: invalid_answer, message_contains: "not valid JSON" }
 "#;
 
-/// A tool step followed by a verification of what the tool wrote.
+/// An agent that patches a file, and a check that the file is there.
 pub const REPAIR: &str = r#"
-api_version: "1"
+api_version: "2"
 name: repair
-capabilities: [WriteFile, RunVerifier]
-limits: { max_steps: 20 }
-entry: patch
-steps:
-  patch: { tool: { name: write_patch, store_as: patched, then: check } }
-  check: { verify: { spec: { kind: file_exists, path: "fixed.txt" }, store_as: verdict, then: done } }
-  done: { return: { value: "{{ steps.check.value }}" } }
+agent: { profile: coding, tools: [write_patch] }
+execution: { limits: { model_turns: 4, tool_calls: 4 } }
+workflow:
+  - name: patch
+    task: Patch it.
+    verify: [{ artifact: fixed.txt }]
+outputs:
+  note: { type: string, value: "{{ tasks.patch.output }}" }
 "#;
 
-/// A retried read that can be parked on, to be suspended and resumed.
+/// The turns of an agent that calls `write_patch` once and says it is done.
+pub const PATCHING_MODEL: &str = r#"
+model:
+  sequence:
+    - tool_calls: [ { id: p1, name: write_patch, args: {} } ]
+    - text: done
+"#;
+
+/// A check task: a gate runs and its output is returned. The gate is a
+/// fixture tool the case scripts, which can be parked on to suspend and
+/// resume the run.
 pub const REPORT: &str = r#"
-api_version: "1"
+api_version: "2"
 name: report
-capabilities: [ReadFile]
-limits: { max_steps: 20 }
-entry: attempt
-steps:
-  attempt: { retry: { attempts: 2, body: call, then: done, on_exhausted: give_up } }
-  call: { tool: { name: read_report, store_as: report, then: done } }
-  done: { return: { value: "{{ facts.report }}" } }
-  give_up: { fail: { code: stuck, message: "the report never came" } }
-"#;
-
-/// Two predict branches joined in declared order.
-pub const FANOUT: &str = r#"
-api_version: "1"
-name: fanout
-capabilities: [SpawnChild]
-limits: { max_steps: 50, max_parallel: 2, max_model_turns: 4 }
-entry: split
-steps:
-  split: { parallel: { branches: [a, b], join: merge } }
-  a: { predict: { prompt: "branch a", store_as: out, then: ret_a } }
-  ret_a: { return: { value: "{{ facts.out }}" } }
-  b: { predict: { prompt: "branch b", store_as: out, then: ret_b } }
-  ret_b: { return: { value: "{{ facts.out }}" } }
-  merge: { return: { value: "{{ steps.split.value }}" } }
+execution: { limits: { model_turns: 2 } }
+gates:
+  read: { command: [cat, report.txt] }
+workflow:
+  - name: fetch
+    verify: [read]
+outputs:
+  report: { type: string, value: "{{ gates.read.stdout }}" }
 "#;
 
 /// Two model turns in a row.
 pub const TWO_TURNS: &str = r#"
-api_version: "1"
+api_version: "2"
 name: two-turns
-limits: { max_steps: 20, max_model_turns: 3 }
 inputs: { ticket: string }
-entry: first
-steps:
-  first: { predict: { prompt: "first", store_as: one, then: second } }
-  second: { predict: { prompt: "second", store_as: two, then: done } }
-  done: { return: { value: "{{ facts.two }}" } }
+execution: { limits: { model_turns: 3 } }
+workflow:
+  - name: first
+    model_only: true
+    task: first
+  - name: second
+    model_only: true
+    task: second
 "#;

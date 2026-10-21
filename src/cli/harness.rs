@@ -178,28 +178,6 @@ pub enum HarnessCommands {
         run: HarnessRunArgs,
     },
 
-    /// Compose a harness document and its WASM helpers into a bundle file.
-    ///
-    /// Every `--helper NAME=FILE.wasm` must be used by a `transform` step,
-    /// every `transform` step's helper must be given, and each module must
-    /// pass the bounded runtime's decoder and validator.
-    Bundle {
-        /// The harness document (YAML).
-        document: PathBuf,
-        /// A helper: the name a `transform` step uses and its `.wasm` file.
-        #[arg(long = "helper", value_name = "NAME=FILE")]
-        helpers: Vec<String>,
-        /// Write the bundle here instead of stdout.
-        #[arg(long, short = 'o', value_name = "FILE")]
-        output: Option<PathBuf>,
-    },
-
-    /// Work with helpers (sandboxed WASM modules).
-    Helper {
-        #[command(subcommand)]
-        command: HelperCommands,
-    },
-
     /// Replay a recording offline: no model, tool or child is started.
     Replay {
         /// A harness file or directory.
@@ -261,30 +239,6 @@ pub enum HarnessCommands {
         json: bool,
         #[command(flatten)]
         live: LiveModelArgs,
-    },
-}
-
-/// `sven harness helper` subcommands.
-#[derive(Subcommand, Debug)]
-pub enum HelperCommands {
-    /// Run a helper on a JSON input in the bounded runtime and print its
-    /// JSON output. Exit 1 when the helper breaks a bound or its contract
-    /// (fuel, memory, trap, bad output), 2 for a usage error.
-    Run {
-        /// A `.wasm` module, or a bundle file with `--helper NAME`.
-        path: PathBuf,
-        /// The helper's name in a bundle.
-        #[arg(long, value_name = "NAME")]
-        helper: Option<String>,
-        /// The input as a JSON value.
-        #[arg(long, value_name = "JSON")]
-        input: String,
-        /// Interpreter ticks the call may spend.
-        #[arg(long, value_name = "N", default_value_t = 1_000_000)]
-        fuel: u64,
-        /// Linear memory the call may hold, in 64 KiB pages.
-        #[arg(long, value_name = "N", default_value_t = 256)]
-        max_pages: u32,
     },
 }
 

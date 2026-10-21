@@ -74,7 +74,7 @@ fn edit(id: &str, diff: &str) -> Answer {
 }
 
 #[tokio::test]
-async fn a_wrong_first_edit_is_retried_with_the_new_failure_and_the_repository_ends_green() {
+async fn a_wrong_first_edit_is_repaired_with_the_new_failure_and_the_repository_ends_green() {
     let (_tmp, repo) = failing_repo();
     assert!(!tests_pass(&repo), "the fixture starts red");
     let model = SequencedModel::new([
@@ -91,16 +91,20 @@ async fn a_wrong_first_edit_is_retried_with_the_new_failure_and_the_repository_e
 
     assert_eq!(report.status, "completed", "{report:?}");
     assert_eq!(
-        report.output,
-        Some(json!({"status": "fixed", "attempts": 2}))
+        report.output.as_ref().map(|o| o["defect"].clone()),
+        Some(json!("total ignores the shipping argument"))
     );
-    assert_eq!(report.steps.get("fix_first"), Some(&1));
-    assert_eq!(report.steps.get("fix_second"), Some(&1));
+    assert_eq!(report.steps.get("fix__work"), Some(&1));
+    assert_eq!(
+        report.steps.get("fix__v0_tests_a0_repair"),
+        Some(&1),
+        "the first edit failed the check and earned a repair turn"
+    );
     assert!(tests_pass(&repo), "the repository really is green");
 }
 
 #[tokio::test]
-async fn a_right_first_edit_takes_one_attempt_and_never_runs_the_retry() {
+async fn a_right_first_edit_takes_one_attempt_and_never_runs_the_repair() {
     let (_tmp, repo) = failing_repo();
     let model = SequencedModel::new([
         Answer::text(DIAGNOSIS),
@@ -110,11 +114,8 @@ async fn a_right_first_edit_takes_one_attempt_and_never_runs_the_retry() {
     let report = repair(&harness_dir(), &repo, Arc::new(model))
         .await
         .unwrap();
-    assert_eq!(
-        report.output,
-        Some(json!({"status": "fixed", "attempts": 1}))
-    );
-    assert_eq!(report.steps.get("fix_second"), None);
+    assert_eq!(report.status, "completed", "{report:?}");
+    assert_eq!(report.steps.get("fix__v0_tests_a0_repair"), None);
     assert!(tests_pass(&repo));
 }
 
@@ -131,7 +132,7 @@ async fn an_agent_claiming_success_without_a_fix_fails_the_run_and_the_repositor
         .unwrap();
     assert_eq!(
         report.failure_code.as_deref(),
-        Some("unrepaired"),
+        Some("gate_failed"),
         "{report:?}"
     );
     assert!(!tests_pass(&repo));
@@ -148,9 +149,6 @@ async fn an_already_green_repository_is_left_alone() {
     let report = repair(&harness_dir(), &repo, Arc::new(SequencedModel::new([])))
         .await
         .unwrap();
-    assert_eq!(
-        report.output,
-        Some(json!({"status": "already_green", "attempts": 0}))
-    );
+    assert_eq!(report.output, Some(json!({"defect": "", "note": ""})));
     assert_eq!(report.output_tokens, 0, "no model call was needed");
 }

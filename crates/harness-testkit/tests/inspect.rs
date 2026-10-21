@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Spec: a harness can be understood without running it - validated offline,
-//! inspected for its steps, capabilities, helpers and digests, and reduced
+//! inspected for its steps, capabilities, imports and digests, and reduced
 //! to the input/output contract a caller must honour.
 //!
 //! Swedish Embedded AB implements offline verification for programmable agent
@@ -16,81 +16,71 @@ use common::*;
 use serde_json::json;
 use sven_harness_testkit::{inspect, io_schema, validate};
 
+/// A workflow that hands its work to an imported one.
 const PARENT: &str = r#"
-api_version: "1"
+api_version: "2"
 name: parent
-capabilities: [SpawnChild]
-limits: { max_steps: 10 }
-entry: hand_over
-steps:
-  hand_over: { delegate: { target: child, store_as: out, then: done } }
-  done: { return: { value: "{{ steps.hand_over.value }}" } }
+inputs: { subject: string }
+imports:
+  helper: ./lib/child.yaml
+execution: { limits: { model_turns: 4 } }
+workflow:
+  - name: hand_over
+    use: helper
+    with: { subject: "{{ inputs.subject }}" }
+outputs:
+  out: { type: string, value: "{{ tasks.hand_over.output.kid }}" }
 "#;
 
 const CHILD: &str = r#"
-api_version: "1"
+api_version: "2"
 name: child
-limits: { max_steps: 10 }
-entry: done
-steps:
-  done: { return: { value: "kid" } }
+inputs: { subject: string }
+execution: { limits: { model_turns: 2 } }
+workflow:
+  - name: think
+    model_only: true
+    task: "Think about {{ inputs.subject }}"
+outputs:
+  kid: { type: string, value: "{{ tasks.think.output }}" }
 "#;
-
-/// A bundle: the document text plus one helper whose bytes inspect never runs.
-fn bundle_yaml() -> String {
-    let document = r#"api_version: "1"
-name: shaper
-inputs: { raw: json }
-outputs: { shaped: json }
-limits: { max_steps: 10 }
-entry: shape
-steps:
-  shape: { transform: { helper: reshape, input: "{{ inputs.raw }}", store_as: shaped, then: done } }
-  done: { return: { value: { shaped: "{{ facts.shaped }}" } } }
-"#;
-    serde_yaml::to_string(&json!({
-        "document": document,
-        "helpers": { "reshape": { "abi": "helper-run/1", "language": "wasm", "content": "AGFzbQEAAAA=" } },
-    }))
-    .unwrap()
-}
 
 #[test]
-fn validate_accepts_a_directory_with_its_children() {
-    let (tmp, _) = harness_dir(&[("harness.yaml", PARENT), ("children/child.yaml", CHILD)]);
+fn validate_accepts_a_package_with_its_imports() {
+    let (tmp, _) = harness_dir(&[("harness.yaml", PARENT), ("lib/child.yaml", CHILD)]);
     let report = validate(tmp.path());
     assert!(report.valid, "{:?}", report.errors);
     let names: Vec<&str> = report.harnesses.iter().map(|h| h.name.as_str()).collect();
-    assert_eq!(
-        names,
-        ["child", "parent"],
-        "children are compiled before the main document"
-    );
+    assert_eq!(names, ["parent"]);
     assert!(report.harnesses.iter().all(|h| !h.plan_digest.is_empty()));
+    assert!(
+        report.harnesses[0].bundle_digest.is_some(),
+        "a package is pinned as one bundle"
+    );
 }
 
 #[test]
-fn validate_reports_every_problem_with_its_file() {
-    let (tmp, _) = harness_dir(&[
-        (
-            "harness.yaml",
-            "api_version: \"1\"\nname: broken\nentry: nowhere\nsteps: {}\n",
-        ),
-        ("children/child.yaml", "not: [valid"),
-    ]);
+fn validate_reports_the_problem_with_its_file() {
+    let (tmp, _) = harness_dir(&[(
+        "harness.yaml",
+        "api_version: \"2\"\nname: broken\nworkflow: []\n",
+    )]);
     let report = validate(tmp.path());
     assert!(!report.valid);
-    assert_eq!(report.errors.len(), 2, "{:?}", report.errors);
-    assert!(report.errors.iter().any(|e| e.contains("child.yaml")));
-    assert!(report.errors.iter().any(|e| e.contains("harness.yaml")));
+    assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+    assert!(report.errors[0].contains("harness.yaml"));
 }
 
 #[test]
-fn validate_flags_a_delegate_to_a_harness_that_is_not_there() {
+fn validate_flags_an_import_that_is_not_there() {
     let (tmp, _) = harness_dir(&[("harness.yaml", PARENT)]);
     let report = validate(tmp.path());
     assert!(!report.valid);
-    assert!(report.errors[0].contains("child"), "{:?}", report.errors);
+    assert!(
+        report.errors[0].contains("child.yaml"),
+        "{:?}",
+        report.errors
+    );
 }
 
 #[test]
@@ -101,42 +91,33 @@ fn validate_of_a_missing_path_is_invalid_not_a_panic() {
 }
 
 #[test]
-fn inspect_lists_steps_capabilities_children_cases_and_digest() {
+fn inspect_lists_steps_capabilities_cases_and_digests() {
     let (tmp, _) = harness_dir(&[
         ("harness.yaml", PARENT),
-        ("children/child.yaml", CHILD),
+        ("lib/child.yaml", CHILD),
         ("cases/one.yaml", "x: 1"),
     ]);
     let report = inspect(tmp.path()).expect("inspects");
     assert_eq!(report.name, "parent");
-    assert_eq!(report.entry, "hand_over");
+    assert_eq!(report.entry, "hand_over__work");
     assert_eq!(report.capabilities, ["SpawnChild"]);
     assert!(!report.plan_digest.is_empty());
-    assert!(report.bundle_digest.is_none());
-    let step = report.steps.iter().find(|s| s.id == "hand_over").unwrap();
+    assert!(
+        report.bundle_digest.is_some(),
+        "the imports are part of the program"
+    );
+    let step = report
+        .steps
+        .iter()
+        .find(|s| s.id == "hand_over__work")
+        .unwrap();
     assert_eq!(step.primitive, "delegate");
-    assert_eq!(step.successors, ["done"]);
-    assert_eq!(report.children.len(), 1);
-    assert_eq!(report.children[0].name, "child");
+    assert_eq!(step.successors, ["complete"]);
     assert_eq!(report.cases, ["one"]);
-    assert_eq!(report.limits.as_ref().and_then(|l| l.max_steps), Some(10));
-}
-
-#[test]
-fn inspect_names_a_bundles_helpers_and_pins_its_digest() {
-    let (tmp, _) = harness_dir(&[("bundle.yaml", &bundle_yaml())]);
-    let report = inspect(tmp.path()).expect("a bundle inspects");
-    assert_eq!(report.name, "shaper");
-    assert!(report.bundle_digest.is_some());
-    assert_eq!(report.helpers.len(), 1);
-    assert_eq!(report.helpers[0].name, "reshape");
-    assert_eq!(report.helpers[0].abi, "helper-run/1");
-    assert_eq!(report.helpers[0].language, "wasm");
-    assert_eq!(report.helpers[0].bytes, 8);
-
-    let report = validate(tmp.path());
-    assert!(report.valid, "{:?}", report.errors);
-    assert!(report.harnesses[0].bundle_digest.is_some());
+    assert_eq!(
+        report.limits.as_ref().and_then(|l| l.max_model_turns),
+        Some(4)
+    );
 }
 
 #[test]
@@ -171,17 +152,18 @@ fn io_schema_derives_the_contract_a_caller_must_honour() {
 #[test]
 fn io_schema_maps_every_declared_type() {
     let doc = r#"
-api_version: "1"
+api_version: "2"
 name: typed
 inputs:
   s: string
   n: { type: number, description: "a count" }
   b: boolean
   j: json
-limits: { max_steps: 5 }
-entry: done
-steps:
-  done: { return: { value: "ok" } }
+execution: { limits: { model_turns: 1 } }
+workflow:
+  - name: only
+    model_only: true
+    task: Say ok.
 "#;
     let (tmp, _) = harness_dir(&[("harness.yaml", doc)]);
     let props = io_schema(tmp.path()).unwrap()["inputs"]["properties"].clone();

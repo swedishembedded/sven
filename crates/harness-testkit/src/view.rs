@@ -80,37 +80,19 @@ fn edge(to: &str, label: &'static str) -> Edge {
 /// Every edge out of `primitive`, in the order the runtime prefers them.
 pub(crate) fn edges(primitive: &PlanPrimitive) -> Vec<Edge> {
     use PlanPrimitive::{
-        Agent, Assign, Branch, Delegate, Fail, Gate, Iterate, Parallel, Predict, Retry, Return,
-        Tool, Transform, Verify,
+        Agent, Assign, Branch, Delegate, Fail, Gate, Iterate, Predict, Return, Verify,
     };
     match primitive {
         Predict { then, .. }
         | Agent { then, .. }
-        | Tool { then, .. }
         | Verify { then, .. }
         | Assign { then, .. }
-        | Delegate { then, .. }
-        | Transform { then, .. } => vec![edge(then, "")],
+        | Delegate { then, .. } => vec![edge(then, "")],
         Branch {
             when_true,
             when_false,
             ..
         } => vec![edge(when_true, "true"), edge(when_false, "false")],
-        Retry {
-            body,
-            then,
-            on_exhausted,
-            ..
-        } => vec![
-            edge(body, "body"),
-            edge(then, "done"),
-            edge(on_exhausted, "exhausted"),
-        ],
-        Parallel { branches, join } => branches
-            .iter()
-            .map(|branch| edge(branch, "branch"))
-            .chain(std::iter::once(edge(join, "join")))
-            .collect(),
         Gate { then, on_fail, .. } => vec![edge(then, "passes"), edge(on_fail, "fails")],
         Iterate {
             body,
@@ -438,12 +420,10 @@ fn first_line(text: &str) -> String {
 }
 
 fn header(plan: &HarnessPlan) -> String {
-    let kind = if plan.source_map.is_empty() {
-        format!("plan, api_version {}", plan.api_version)
-    } else {
-        format!("workflow, api_version {}", plan.api_version)
-    };
-    let mut out = format!("{} ({kind})\n  digest: {}\n", plan.name, plan.digest);
+    let mut out = format!(
+        "{} (workflow, api_version {})\n  digest: {}\n",
+        plan.name, plan.api_version, plan.digest
+    );
     if let Some(profile) = &plan.profile {
         let _ = writeln!(out, "  tool profile: {profile}");
     }

@@ -21,13 +21,8 @@ pub(crate) struct Source {
     /// The file's text, as the engine loads it.
     pub text: String,
     pub plan: HarnessPlan,
-    /// The bundle, when the file is one.
-    pub bundle: Option<HarnessBundle>,
     /// The bundle's content digest, when the file is a bundle.
     pub bundle_digest: Option<String>,
-    /// The names of the workflows the file imports: harnesses its delegates
-    /// may name besides the directory's own.
-    pub imported: Vec<String>,
 }
 
 impl Source {
@@ -52,10 +47,8 @@ impl Source {
             Ok(Self {
                 path: path.to_path_buf(),
                 text,
-                imported: compiled.imports.iter().map(|p| p.name.clone()).collect(),
                 plan: compiled.plan,
                 bundle_digest: Some(compiled.digest),
-                bundle: Some(bundle),
             })
         } else if !HarnessDocument::imports_of(&text)
             .map_err(|e| harness(e.to_string()))?
@@ -68,10 +61,8 @@ impl Source {
             Ok(Self {
                 path: path.to_path_buf(),
                 text: serde_yaml::to_string(&bundle).map_err(|e| harness(e.to_string()))?,
-                imported: compiled.imports.iter().map(|p| p.name.clone()).collect(),
                 plan: compiled.plan,
                 bundle_digest: Some(compiled.digest),
-                bundle: Some(bundle),
             })
         } else {
             let plan = sven_harness_spec::compile_str(&text).map_err(|e| harness(e.to_string()))?;
@@ -79,9 +70,7 @@ impl Source {
                 path: path.to_path_buf(),
                 text,
                 plan,
-                bundle: None,
                 bundle_digest: None,
-                imported: Vec::new(),
             })
         }
     }

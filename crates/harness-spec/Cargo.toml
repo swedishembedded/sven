@@ -2,7 +2,7 @@
 name        = "sven-harness-spec"
 version.workspace = true
 edition     = "2021"
-description = "The sven harness language: YAML agent-harness documents, their typed AST, static validation and the compiler to a canonical, content-hashed HarnessPlan. Zero dependencies on other sven crates."
+description = "The sven harness language: YAML workflow documents, their typed AST, static validation and the compiler to a canonical, content-hashed HarnessPlan. Zero dependencies on other sven crates."
 license     = "Apache-2.0"
 
 [dependencies]
@@ -13,5 +13,12 @@ sha2       = { workspace = true }
 thiserror  = { workspace = true }
 
 [dev-dependencies]
+# The tests compile plans written in the step language (`testing`).
+sven-harness-spec = { path = ".", features = ["testing"] }
 jsonschema = { version = "0.49", default-features = false }
 tempfile = { workspace = true }
+
+[features]
+# Compiling a plan written directly in the step language, for the tests of the
+# machine that runs plans (see `testing`). Not part of any shipped build.
+testing = []

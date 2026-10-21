@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
-# An agent that only claims success: no edit happens, the recorded verdict
-# stays red, and the run fails instead of believing it.
+# The agent claims success twice without fixing anything: the check does not
+# believe it, and the run fails.
 input: {}
 model:
   sequence:
@@ -10,21 +10,13 @@ model:
     - text: "I fixed it"
     - text: "I fixed it again"
 tools:
-  shell:
+  shell_gate:
     capability: ExecuteShell
     responses:
-      - ok: "src/total.sh"
-      - ok: "FAIL"
-        write: { path: result.json, content: '{"passed": false}' }
-      - ok: "FAIL"
-        write: { path: result.json, content: '{"passed": false}' }
-      - ok: "FAIL"
-        write: { path: result.json, content: '{"passed": false}' }
-  read_file:
-    capability: ReadFile
-    responses:
-      - ok: "total() { echo $(( items - discount )); }"
+      - ok: { exit_code: 1, timed_out: false, error: null, stdout: "FAIL", stderr: "" }
+      - ok: { exit_code: 1, timed_out: false, error: null, stdout: "FAIL", stderr: "" }
+      - ok: { exit_code: 1, timed_out: false, error: null, stdout: "FAIL", stderr: "" }
 expect:
   status: failed
-  failure: { code: unrepaired }
+  failure: { code: gate_failed }
   tools_not_invoked: [edit_file]

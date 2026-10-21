@@ -13,7 +13,7 @@ use sven_harness_runtime::{HarnessMachine, RUN_STATE_FACT};
 use sven_hsm::{Effect, Event, Machine};
 
 const GREET: &str = r#"
-api_version: "1"
+api_version: "2"
 name: greet
 entry: ask
 limits: { max_steps: 50, max_model_turns: 5 }
@@ -37,7 +37,7 @@ steps:
 /// The same harness, edited after the fact: the plan a checkpoint recorded
 /// is no longer the plan this document compiles to.
 const GREET_EDITED: &str = r#"
-api_version: "1"
+api_version: "2"
 name: greet
 entry: ask
 limits: { max_steps: 50, max_model_turns: 5 }
@@ -72,7 +72,7 @@ fn a_started_run_records_the_digest_of_the_plan_it_started_under() {
             }
         })
         .expect("the run state names the plan it started under");
-    let plan = sven_harness_spec::compile_str(GREET).expect("compiles");
+    let plan = common::plan(GREET).expect("compiles");
     assert_eq!(
         digest, plan.digest,
         "the recorded digest is the compiled plan's digest"
@@ -90,8 +90,8 @@ fn a_checkpoint_resumes_at_the_step_it_stopped_on() {
         "the walk parks on the predict step"
     );
     let snap = m.snapshot(&ctx);
-    let (mut m2, mut ctx2) = HarnessMachine::restore(GREET.to_string(), snap)
-        .expect("the unchanged document restores its own checkpoint");
+    let (mut m2, mut ctx2) =
+        common::restore(GREET, snap).expect("the unchanged document restores its own checkpoint");
     assert_eq!(
         ctx2.fact(RUN_STATE_FACT)
             .and_then(|v| v.get("current").and_then(|c| c.as_str())),
@@ -127,7 +127,7 @@ fn a_modified_document_cannot_silently_replace_a_checkpointed_plan() {
     );
 
     let snap = m.snapshot(&ctx);
-    let text = match HarnessMachine::restore(GREET_EDITED.to_string(), snap) {
+    let text = match common::restore(GREET_EDITED, snap) {
         Err(err) => err.to_string(),
         Ok(_) => panic!("the edited document is not the checkpointed plan"),
     };
@@ -144,7 +144,7 @@ fn a_modified_document_cannot_silently_replace_a_checkpointed_plan() {
 /// A harness that delegates: its replayable event log contains the child's
 /// completion, which names the machine id the parent's own emission chose.
 const DELEGATOR: &str = r#"
-api_version: "1"
+api_version: "2"
 name: delegator
 entry: ask
 capabilities: [SpawnChild]
@@ -171,8 +171,7 @@ fn run_events(
     sven_harness_runtime::HarnessState,
     Vec<Effect>,
 ) {
-    let run = sven_harness_runtime::HarnessRunData::new(DELEGATOR, serde_json::json!({}))
-        .expect("valid harness");
+    let run = common::data(DELEGATOR, serde_json::json!({})).expect("valid harness");
     let mut m = HarnessMachine::new(run);
     let mut ctx = sven_hsm::Context::new();
     let mut state = m.initial();
@@ -232,7 +231,7 @@ fn a_delegate_run_replays_from_its_recorded_events() {
 #[test]
 fn two_children_of_one_run_are_named_differently() {
     const TWICE: &str = r#"
-api_version: "1"
+api_version: "2"
 name: twice
 entry: first
 capabilities: [SpawnChild]
@@ -252,8 +251,7 @@ steps:
     return:
       value: "ok"
 "#;
-    let run =
-        sven_harness_runtime::HarnessRunData::new(TWICE, serde_json::json!({})).expect("valid");
+    let run = common::data(TWICE, serde_json::json!({})).expect("valid");
     let mut m = HarnessMachine::new(run);
     let mut ctx = sven_hsm::Context::new();
     let mut state = m.initial();
@@ -285,12 +283,13 @@ fn find_child(fx: &[Effect]) -> Option<sven_hsm::MachineId> {
     })
 }
 
-/// A run that asks the model and then calls a tool: the replay topology
-/// that exercises both waiting states.
+/// A run that asks the model and then runs a gate: the replay topology that
+/// exercises both waiting states.
 const ASKER: &str = r#"
-api_version: "1"
+api_version: "2"
 name: asker
 entry: ask
+capabilities: [ExecuteShell]
 limits: { max_steps: 50, max_model_turns: 5, max_tool_calls: 5 }
 steps:
   ask:
@@ -299,19 +298,21 @@ steps:
       store_as: subject
       then: read
   read:
-    tool:
-      name: read_file
-      args: { path: "{{ facts.subject }}" }
+    gate:
+      steps: [{ name: cat, argv: [cat, "{{ facts.subject }}"] }]
       then: out
+      on_fail: bad
   out:
     return:
       value:
         subject: "{{ facts.subject }}"
-        text: "{{ steps.read.value }}"
+        text: "{{ steps.read.stdout }}"
+  bad:
+    fail: { code: gate_failed }
 "#;
 
 #[test]
-fn a_model_and_tool_run_replays_from_its_recorded_events() {
+fn a_model_and_gate_run_replays_from_its_recorded_events() {
     // The recorded log: every completion event the original run's
     // executors posted. The completions are inputs to the replay; the
     // effects the replay emits (its turns and calls) are collected, never
@@ -321,7 +322,7 @@ fn a_model_and_tool_run_replays_from_its_recorded_events() {
         turn("harness.asker", "read the notes"),
         Event::ToolSucceeded {
             call_id: sven_harness_runtime::step_call_id("asker", "read"),
-            observation: serde_json::json!("the notes"),
+            observation: report("the notes"),
         },
         Event::user_message("tick"),
     ];
@@ -345,6 +346,14 @@ fn a_model_and_tool_run_replays_from_its_recorded_events() {
     );
 }
 
+/// The gate tool's report of a command that exited 0 with `stdout`.
+fn report(stdout: &str) -> serde_json::Value {
+    serde_json::json!({ "exit_code": 0, "timed_out": false, "error": null,
+                        "stdout": stdout, "stderr": "" })
+    .to_string()
+    .into()
+}
+
 /// Drives a fresh `ASKER` machine through `events`, collecting the effects
 /// it emits (as an executor would observe them, executing nothing).
 fn run_asker(
@@ -355,8 +364,7 @@ fn run_asker(
     sven_harness_runtime::HarnessState,
     Vec<Effect>,
 ) {
-    let run = sven_harness_runtime::HarnessRunData::new(ASKER, serde_json::json!({}))
-        .expect("valid harness");
+    let run = common::data(ASKER, serde_json::json!({})).expect("valid harness");
     let mut m = HarnessMachine::new(run);
     let mut ctx = sven_hsm::Context::new();
     let mut state = m.initial();
@@ -370,18 +378,21 @@ fn run_asker(
 #[test]
 fn a_restored_run_never_repeats_the_operation_in_flight() {
     const READER: &str = r#"
-api_version: "1"
+api_version: "2"
 name: reader
 entry: fetch
+capabilities: [ExecuteShell]
 limits: { max_steps: 50, max_tool_calls: 5 }
 steps:
   fetch:
-    tool:
-      name: read_file
-      args: { path: "notes.txt" }
+    gate:
+      steps: [{ name: cat, argv: [cat, notes.txt] }]
       then: out
+      on_fail: bad
   out:
-    return: { value: "{{ steps.fetch.value }}" }
+    return: { value: "{{ steps.fetch.stdout }}" }
+  bad:
+    fail: { code: gate_failed }
 "#;
     let (m, ctx, _state) = start(READER, serde_json::json!({}));
     let expected = sven_harness_runtime::step_call_id("reader", "fetch");
@@ -389,8 +400,8 @@ steps:
 
     // The restore itself emits nothing: the call already left the process
     // before the checkpoint, and re-emitting it would run the tool twice.
-    let (mut m2, mut ctx2) = HarnessMachine::restore(READER.to_string(), snap)
-        .expect("the unchanged document restores its own checkpoint");
+    let (mut m2, mut ctx2) =
+        common::restore(READER, snap).expect("the unchanged document restores its own checkpoint");
     assert!(
         m2.step_effect().is_none(),
         "a restored machine does not re-emit the call in flight"
@@ -403,7 +414,7 @@ steps:
         &mut state,
         Event::ToolSucceeded {
             call_id: expected,
-            observation: serde_json::json!("the notes"),
+            observation: report("the notes"),
         },
     ));
     for _ in 0..8 {

@@ -31,20 +31,17 @@ pub enum HarnessEvent {
     Started {
         /// The plan's content digest - which program is running.
         plan_digest: String,
-        /// The bundle's content digest, when the harness carries helpers.
+        /// The bundle's content digest, when the harness is a package with imports.
         bundle_digest: Option<String>,
         /// The inputs' digest - what the run was started with.
         input_digest: String,
     },
-    /// A step began executing. For the body of a `retry`, `attempt` counts
-    /// from 1; otherwise it is 1.
+    /// A step began executing.
     StepStarted {
         /// The step that began.
         step: String,
-        /// The step's primitive, in words (`predict`, `tool`, ...).
+        /// The step's primitive, in words (`predict`, `gate`, ...).
         primitive: String,
-        /// The attempt this execution is, 1-based.
-        attempt: u64,
     },
     /// A step's result was stored.
     StepCompleted {
@@ -56,16 +53,6 @@ pub enum HarnessEvent {
         /// observed - approximately what the step cost. Zero when the run
         /// was observed in a burst (at a resume, or when it ended).
         duration_ms: u64,
-    },
-    /// A step's side effect failed and a retry frame looped back; the
-    /// attempt that is about to run.
-    RetryScheduled {
-        /// The body step re-entered.
-        step: String,
-        /// The 1-based attempt about to run.
-        attempt: u64,
-        /// Attempts left after this one.
-        remaining: u64,
     },
     /// A `branch` step chose its successor.
     BranchSelected {
@@ -83,7 +70,7 @@ pub enum HarnessEvent {
         /// The child's machine id.
         child: String,
     },
-    /// A child run of a delegate or parallel step completed.
+    /// A child run of a delegate step completed.
     ChildCompleted {
         /// The parent step whose child completed.
         step: String,
@@ -91,20 +78,6 @@ pub enum HarnessEvent {
         child: String,
         /// Whether the child reported success.
         ok: bool,
-    },
-    /// A `parallel` step fanned out, in declared order.
-    FanOut {
-        /// The parallel step.
-        step: String,
-        /// The branch steps, in declared order.
-        branches: Vec<String>,
-    },
-    /// A parallel step's join settled.
-    Joined {
-        /// The parallel step.
-        step: String,
-        /// How many results the join settled.
-        results: u64,
     },
     /// A `verify` step settled its verdict.
     Verified {
@@ -268,11 +241,9 @@ impl std::fmt::Display for HarnessEvent {
                     short(input_digest)
                 ),
             },
-            Self::StepStarted {
-                step,
-                primitive,
-                attempt,
-            } => write!(f, "step `{step}` ({primitive}) started, attempt {attempt}"),
+            Self::StepStarted { step, primitive } => {
+                write!(f, "step `{step}` ({primitive}) started")
+            }
             Self::StepCompleted {
                 step,
                 call_id,
@@ -285,14 +256,6 @@ impl std::fmt::Display for HarnessEvent {
                 ),
                 None => write!(f, "step `{step}` completed ({duration_ms} ms)"),
             },
-            Self::RetryScheduled {
-                step,
-                attempt,
-                remaining,
-            } => write!(
-                f,
-                "step `{step}` retrying: attempt {attempt}, {remaining} left after it"
-            ),
             Self::BranchSelected {
                 step,
                 condition,
@@ -309,12 +272,6 @@ impl std::fmt::Display for HarnessEvent {
                 "child {} completed for step `{step}` (ok: {ok})",
                 short(child)
             ),
-            Self::FanOut { step, branches } => {
-                write!(f, "step `{step}` fanned out: {}", branches.join(", "))
-            }
-            Self::Joined { step, results } => {
-                write!(f, "step `{step}` joined {results} results")
-            }
             Self::Verified { verifier, ok } => {
                 write!(
                     f,

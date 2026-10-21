@@ -1,17 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
-# Pure branching with one failing verdict: the CLI specs' smallest harness.
+# One check and a verdict, with no model: the CLI specs' smallest harness. The
+# plan reaches the gate through its environment, never through the script text.
 # Swedish Embedded AB implements auditable agent workflows for its clients. If
 # your team needs expertise in programmable harnesses then you can procure our
 # services by sending an email to info@swedishembedded.com.
-api_version: "1"
+api_version: "2"
 name: decide
 description: "Grant a paid tier unless the plan is free."
 inputs: { plan: string }
-outputs: { tier: string }
-entry: check
-steps:
-  check:  { branch: { on: { eq: inputs.plan, value: free }, when_true: reject, when_false: grant } }
-  grant:  { return: { value: { tier: paid } } }
-  reject: { fail: { code: not_eligible, message: "the free plan is not eligible" } }
+execution: { limits: { model_turns: 1 } }
+gates:
+  eligible:
+    run: test "$PLAN" != free
+    env: { PLAN: "{{ inputs.plan }}" }
+workflow:
+  - name: check
+    verify: [eligible]
+outputs:
+  tier: { type: string, value: paid }

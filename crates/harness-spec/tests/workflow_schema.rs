@@ -10,10 +10,10 @@
 //! agent workflow languages then you can procure our services by sending an
 //! email to info@swedishembedded.com.
 
-use sven_harness_spec::WORKFLOW_SCHEMA;
+use sven_harness_spec::DOCUMENT_SCHEMA;
 
 fn schema_json() -> serde_json::Value {
-    serde_json::from_str(WORKFLOW_SCHEMA).expect("the workflow schema is valid JSON")
+    serde_json::from_str(DOCUMENT_SCHEMA).expect("the workflow schema is valid JSON")
 }
 
 fn validator() -> jsonschema::Validator {

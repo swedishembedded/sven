@@ -6,11 +6,36 @@
 //! at the kernel boundary, entry handlers followed by hand (no executor in
 //! a unit test), no I/O anywhere.
 
-#[cfg(feature = "transform")]
-pub mod echo_helper;
-
-use sven_harness_runtime::{HarnessMachine, HarnessRunData};
+use sven_harness_runtime::{HarnessMachine, HarnessRunData, HarnessRunError};
+use sven_harness_spec::HarnessPlan;
 use sven_hsm::{Context, Effect, Event, Machine, Reaction};
+
+#[allow(dead_code)]
+/// Compiles a plan from `yaml`: a workflow document when it has a `workflow:`
+/// key, otherwise a plan written directly in the step language (the machine
+/// is tested one primitive at a time, which a workflow cannot do).
+pub fn plan(yaml: &str) -> Result<HarnessPlan, HarnessRunError> {
+    if yaml.lines().any(|line| line.starts_with("workflow:")) {
+        Ok(sven_harness_spec::compile_str(yaml)?)
+    } else {
+        Ok(sven_harness_spec::testing::compile_steps(yaml)?)
+    }
+}
+
+#[allow(dead_code)]
+/// The run data for `yaml` (see [`plan`]) and `inputs`.
+pub fn data(yaml: &str, inputs: serde_json::Value) -> Result<HarnessRunData, HarnessRunError> {
+    Ok(HarnessRunData::from_parts(plan(yaml)?, inputs))
+}
+
+#[allow(dead_code)]
+/// Rebuilds a machine from `yaml` (see [`plan`]) and a snapshot.
+pub fn restore(
+    yaml: &str,
+    snapshot: sven_hsm::Snapshot,
+) -> Result<(HarnessMachine, Context), HarnessRunError> {
+    HarnessMachine::restore_plan(plan(yaml)?, snapshot)
+}
 
 /// Follows a transition's entry effects, bouncing any self-addressed
 /// `EmitInternal` round trip (the pure-primitive advance path) the way the
@@ -83,7 +108,7 @@ pub fn start(
     yaml: &str,
     inputs: serde_json::Value,
 ) -> (HarnessMachine, Context, sven_harness_runtime::HarnessState) {
-    let run = HarnessRunData::new(yaml, inputs).expect("valid harness");
+    let run = data(yaml, inputs).expect("valid harness");
     let mut m = HarnessMachine::new(run);
     let mut ctx = Context::new();
     let mut state = m.initial();

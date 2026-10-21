@@ -7,19 +7,16 @@
 //! every declared contract — because a harness must fail offline, at
 //! `validate` time, never halfway through a run. The checks:
 //!
-//! 1. `api_version` is supported, and a version 1 document uses nothing
-//!    that only version 2 has.
-//! 2. The entry step exists; every `then`/branch/retry/parallel reference
-//!    names a step in the map (no dangling targets).
+//! 1. `api_version` is the supported one.
+//! 2. The entry step exists; every `then`/branch reference names a step in
+//!    the map (no dangling targets).
 //! 3. Terminal reachability: every step can reach a terminal (`return` or
 //!    `fail`) — a cycle with no exit is an unbounded cycle and is rejected.
-//!    Bounded cycles (through `retry`, whose attempts bound them) are fine.
-//! 4. Capabilities: primitives that exercise a capability (`tool` and
-//!    `agent` -> ExecuteShell, `verify` -> RunVerifier, `delegate` and
-//!    `parallel` -> SpawnChild) require the harness to declare it.
-//! 5. Limits: a harness whose steps can run away (model, tool, verify,
-//!    retry, parallel, delegate) must declare `limits` with the relevant
-//!    bounds.
+//! 4. Capabilities: primitives that exercise a capability (`agent` with a
+//!    shell tool and `gate` -> ExecuteShell, `verify` -> RunVerifier,
+//!    `delegate` -> SpawnChild) require the harness to declare it.
+//! 5. Limits: a harness whose steps can run away (model, verify, delegate,
+//!    gate, iterate) must declare `limits` with the relevant bounds.
 //! 6. The output contract: every `return` step's value shape satisfies the
 //!    declared `outputs`.
 //! 7. The schema set: every declared schema is a JSON object, every
@@ -29,8 +26,8 @@
 use crate::error::HarnessError;
 use crate::expr::{Expr, Template};
 use crate::spec::{
-    HarnessSpec, IterateSource, StepSpec, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT,
-    MAX_ITERATIONS_LIMIT, RESERVED_TOOLS, SUPPORTED_API_VERSION, WORKFLOW_API_VERSION,
+    HarnessSpec, IterateSource, StepSpec, API_VERSION, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT,
+    MAX_ITERATIONS_LIMIT, RESERVED_TOOLS,
 };
 
 /// The run-data namespaces a path may root at.
@@ -88,68 +85,14 @@ fn validate_schemas(spec: &HarnessSpec) -> Result<(), HarnessError> {
 }
 
 fn validate_version(spec: &HarnessSpec) -> Result<(), HarnessError> {
-    if spec.api_version == WORKFLOW_API_VERSION {
-        return Ok(());
-    }
-    if spec.api_version != SUPPORTED_API_VERSION {
-        return Err(HarnessError::Invalid(format!(
-            "unsupported api_version `{}` (this compiler supports `{SUPPORTED_API_VERSION}` and \
-             `{WORKFLOW_API_VERSION}`)",
+    if spec.api_version == API_VERSION {
+        Ok(())
+    } else {
+        Err(HarnessError::Invalid(format!(
+            "unsupported api_version `{}` (this compiler supports `{API_VERSION}`)",
             spec.api_version
-        )));
+        )))
     }
-    if !spec.variables.is_empty() {
-        return Err(HarnessError::Invalid(format!(
-            "`variables` needs `api_version: \"{WORKFLOW_API_VERSION}\"`"
-        )));
-    }
-    if spec
-        .limits
-        .as_ref()
-        .is_some_and(|l| l.max_tool_calls_input.is_some())
-    {
-        return Err(HarnessError::Invalid(format!(
-            "`max_tool_calls_input` needs `api_version: \"{WORKFLOW_API_VERSION}\"`"
-        )));
-    }
-    for (id, step) in &spec.steps {
-        let only_v2 = match step {
-            StepSpec::Gate(_) | StepSpec::Iterate(_) => Some(format!("primitive `{}`", step.key())),
-            StepSpec::Delegate(d) if d.propagate_failure => {
-                Some("`propagate_failure` on a delegate".to_string())
-            }
-            StepSpec::Agent(a)
-                if !a.decoding.is_empty()
-                    || a.system.is_some()
-                    || a.conversation.is_some()
-                    || !a.vars.is_empty()
-                    || a.origin.is_some()
-                    || a.role.is_some()
-                    || a.stop_as.is_some()
-                    || a.pool.is_some()
-                    || a.allowance.is_some()
-                    || a.max_repeated_results.is_some() =>
-            {
-                Some("`decoding`, `system` or `conversation` on an agent step".to_string())
-            }
-            StepSpec::Predict(p)
-                if !p.decoding.is_empty()
-                    || p.system.is_some()
-                    || p.conversation.is_some()
-                    || p.origin.is_some()
-                    || p.role.is_some() =>
-            {
-                Some("`decoding`, `system` or `conversation` on a predict step".to_string())
-            }
-            _ => None,
-        };
-        if let Some(what) = only_v2 {
-            return Err(HarnessError::Invalid(format!(
-                "step `{id}` uses {what}, which needs `api_version: \"{WORKFLOW_API_VERSION}\"`"
-            )));
-        }
-    }
-    Ok(())
 }
 
 fn validate_structure(spec: &HarnessSpec) -> Result<(), HarnessError> {
@@ -234,27 +177,10 @@ fn declared_schemas(spec: &HarnessSpec) -> impl Iterator<Item = (&String, &serde
 /// Validates one step's internal shape (beyond what serde enforced).
 fn validate_step_shape(id: &str, step: &StepSpec) -> Result<(), HarnessError> {
     match step {
-        StepSpec::Retry(r) => {
-            if r.attempts == 0 {
-                return Err(HarnessError::Invalid(format!(
-                    "step `{id}`: retry attempts must be >= 1"
-                )));
-            }
-            if r.on_exhausted.is_none() {
-                return Err(HarnessError::Invalid(format!(
-                    "step `{id}`: retry needs `on_exhausted`"
-                )));
-            }
-        }
         StepSpec::Branch(b) => {
             Expr::parse_value(&b.on).map_err(|e| {
                 HarnessError::Invalid(format!("step `{id}`: bad branch condition: {e}"))
             })?;
-        }
-        StepSpec::Parallel(p) if p.branches.is_empty() => {
-            return Err(HarnessError::Invalid(format!(
-                "step `{id}`: parallel needs at least one branch"
-            )));
         }
         StepSpec::Agent(a) => {
             if let Some(tool) = a
@@ -435,10 +361,8 @@ fn template_texts(step: &StepSpec) -> Vec<String> {
         .into_iter()
         .flatten()
         .collect(),
-        StepSpec::Tool(t) => template_texts_in_value(&t.args),
         StepSpec::Assign(a) => a.set.values().flat_map(&template_texts_in_value).collect(),
         StepSpec::Delegate(d) => template_texts_in_value(&d.input),
-        StepSpec::Transform(t) => template_texts_in_value(&t.input),
         StepSpec::Fail(f) => f.message.clone().into_iter().collect(),
         StepSpec::Gate(g) => g
             .steps
@@ -448,12 +372,9 @@ fn template_texts(step: &StepSpec) -> Vec<String> {
             .chain(g.stdin.iter())
             .cloned()
             .collect(),
-        StepSpec::Verify(_)
-        | StepSpec::Branch(_)
-        | StepSpec::Retry(_)
-        | StepSpec::Parallel(_)
-        | StepSpec::Iterate(_)
-        | StepSpec::Return(_) => Vec::new(),
+        StepSpec::Verify(_) | StepSpec::Branch(_) | StepSpec::Iterate(_) | StepSpec::Return(_) => {
+            Vec::new()
+        }
     }
 }
 
@@ -471,24 +392,10 @@ fn successors(step: &StepSpec) -> Vec<String> {
     match step {
         StepSpec::Predict(p) => vec![p.then.clone()],
         StepSpec::Agent(a) => vec![a.then.clone()],
-        StepSpec::Tool(t) => vec![t.then.clone()],
         StepSpec::Verify(v) => vec![v.then.clone()],
         StepSpec::Assign(a) => vec![a.then.clone()],
         StepSpec::Branch(b) => vec![b.when_true.clone(), b.when_false.clone()],
-        StepSpec::Retry(r) => {
-            let mut out = vec![r.body.clone(), r.then.clone()];
-            if let Some(alt) = &r.on_exhausted {
-                out.push(alt.clone());
-            }
-            out
-        }
-        StepSpec::Parallel(p) => {
-            let mut out = p.branches.clone();
-            out.push(p.join.clone());
-            out
-        }
         StepSpec::Delegate(d) => vec![d.then.clone()],
-        StepSpec::Transform(t) => vec![t.then.clone()],
         StepSpec::Gate(g) => vec![g.then.clone(), g.on_fail.clone()],
         StepSpec::Iterate(i) => {
             let mut out = vec![i.body.clone(), i.then.clone()];
@@ -562,10 +469,9 @@ fn validate_reachability(spec: &HarnessSpec) -> Result<(), HarnessError> {
 /// call whose bucket is undeclared is refused at the gate.
 fn required_capability(step: &StepSpec) -> Option<&'static str> {
     let names: Vec<&str> = match step {
-        StepSpec::Tool(t) => vec![t.name.as_str()],
         StepSpec::Agent(a) => a.tools.iter().flatten().map(|t| t.as_str()).collect(),
         StepSpec::Verify(_) => return Some("RunVerifier"),
-        StepSpec::Delegate(_) | StepSpec::Parallel(_) => return Some("SpawnChild"),
+        StepSpec::Delegate(_) => return Some("SpawnChild"),
         StepSpec::Gate(_) => return Some("ExecuteShell"),
         StepSpec::Iterate(i) => {
             return match i.for_each.as_ref().map(|each| &each.source) {
@@ -577,8 +483,6 @@ fn required_capability(step: &StepSpec) -> Option<&'static str> {
         StepSpec::Predict(_)
         | StepSpec::Assign(_)
         | StepSpec::Branch(_)
-        | StepSpec::Retry(_)
-        | StepSpec::Transform(_)
         | StepSpec::Return(_)
         | StepSpec::Fail(_) => return None,
     };
@@ -618,10 +522,7 @@ fn validate_limits(spec: &HarnessSpec) -> Result<(), HarnessError> {
             step,
             StepSpec::Predict(_)
                 | StepSpec::Agent(_)
-                | StepSpec::Tool(_)
                 | StepSpec::Verify(_)
-                | StepSpec::Retry(_)
-                | StepSpec::Parallel(_)
                 | StepSpec::Delegate(_)
                 | StepSpec::Gate(_)
                 | StepSpec::Iterate(_)
@@ -632,7 +533,7 @@ fn validate_limits(spec: &HarnessSpec) -> Result<(), HarnessError> {
     }
     let Some(limits) = &spec.limits else {
         return Err(HarnessError::Invalid(
-            "harness has steps that can run away (model/tool/verify/retry/parallel/delegate) \
+            "harness has steps that can run away (model/verify/delegate/gate/iterate) \
              but declares no `limits`"
                 .into(),
         ));
@@ -645,21 +546,6 @@ fn validate_limits(spec: &HarnessSpec) -> Result<(), HarnessError> {
             "`limits` must set at least one of `max_steps`, `max_model_turns`, `max_tool_calls`"
                 .into(),
         ));
-    }
-    // Fan-out is static: a parallel step's branch count is known at
-    // compile time, so a fan-out wider than the declared `max_parallel`
-    // is rejected offline rather than failing mid-run.
-    if let Some(max) = limits.max_parallel {
-        for (id, step) in &spec.steps {
-            if let StepSpec::Parallel(p) = step {
-                let branches = p.branches.len() as u64;
-                if branches > max {
-                    return Err(HarnessError::Invalid(format!(
-                        "step `{id}` fans out to {branches} branches but `max_parallel` is {max}"
-                    )));
-                }
-            }
-        }
     }
     Ok(())
 }

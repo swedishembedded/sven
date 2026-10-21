@@ -2,17 +2,16 @@
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
 # A read that can be parked. When a bound ends the run mid-call, the run is
-# suspended with a checkpoint; resuming it under the same program re-enters the
-# call and finishes.
-api_version: "1"
+# suspended with a checkpoint; resuming it under the same program runs the
+# read again and finishes.
+api_version: "2"
 name: report
-description: "Read a report with one retry; survive a stop in the middle of the read."
-outputs: { report: string }
-capabilities: [ReadFile]
-limits: { max_steps: 20, max_tool_calls: 4 }
-entry: attempt
-steps:
-  attempt: { retry: { attempts: 2, body: call, then: done, on_exhausted: give_up } }
-  call:    { tool: { name: read_report, store_as: report, then: done } }
-  done:    { return: { value: { report: "{{ facts.report }}" } } }
-  give_up: { fail: { code: stuck, message: "the report never came" } }
+description: "Read a report through a gate; survive a stop in the middle of the read."
+execution: { limits: { model_turns: 1 } }
+gates:
+  read: { command: [cat, report.txt], timeout: 30 }
+workflow:
+  - name: fetch
+    verify: [read]
+outputs:
+  report: { type: string, value: "{{ gates.read.stdout }}" }

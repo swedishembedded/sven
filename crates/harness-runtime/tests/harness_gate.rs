@@ -16,7 +16,6 @@ mod common;
 use common::{child_completed, drive, start, turn};
 use serde_json::{json, Value};
 use sven_harness_runtime::{HarnessMachine, HarnessRunData, HarnessState, RUN_STATE_FACT};
-use sven_harness_spec::{compile_str, PlanPrimitive};
 use sven_hsm::{Context, Effect, Event, ProposedToolCall, ToolCallId, ToolCapability};
 
 const GATED: &str = r#"
@@ -286,7 +285,7 @@ fn the_model_cannot_run_a_gate() {
 }
 
 const DELEGATING: &str = r#"
-api_version: "1"
+api_version: "2"
 name: parent
 entry: go
 limits: { max_steps: 10 }
@@ -296,16 +295,8 @@ steps:
   after: { return: { value: reached } }
 "#;
 
-fn parent_with(propagate: bool) -> (HarnessMachine, Context, HarnessState) {
-    let mut plan = compile_str(DELEGATING).expect("compiles");
-    if let Some(step) = plan.steps.get_mut("go") {
-        if let PlanPrimitive::Delegate {
-            propagate_failure, ..
-        } = &mut step.primitive
-        {
-            *propagate_failure = propagate;
-        }
-    }
+fn parent() -> (HarnessMachine, Context, HarnessState) {
+    let plan = common::plan(DELEGATING).expect("compiles");
     let mut m = HarnessMachine::new(HarnessRunData::from_parts(plan, json!({})));
     let mut ctx = Context::new();
     let mut state = sven_hsm::Machine::initial(&m);
@@ -315,7 +306,7 @@ fn parent_with(propagate: bool) -> (HarnessMachine, Context, HarnessState) {
 
 #[test]
 fn child_failure_does_not_succeed_parent() {
-    let (mut m, mut ctx, mut state) = parent_with(true);
+    let (mut m, mut ctx, mut state) = parent();
     let Some(Effect::InstantiateSubmachine { machine, .. }) = m.step_effect() else {
         panic!("delegate emits a child")
     };
@@ -333,7 +324,7 @@ fn child_failure_does_not_succeed_parent() {
 
 #[test]
 fn a_child_that_succeeds_still_continues_the_parent() {
-    let (mut m, mut ctx, mut state) = parent_with(true);
+    let (mut m, mut ctx, mut state) = parent();
     let Some(Effect::InstantiateSubmachine { machine, .. }) = m.step_effect() else {
         panic!("delegate emits a child")
     };
@@ -342,22 +333,6 @@ fn a_child_that_succeeds_still_continues_the_parent() {
         &mut ctx,
         &mut state,
         child_completed(&machine, json!({ "ok": true })),
-    );
-    let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
-    assert_eq!(state, HarnessState::Completed);
-}
-
-#[test]
-fn version_one_delegates_keep_storing_a_failed_child_and_continuing() {
-    let (mut m, mut ctx, mut state) = parent_with(false);
-    let Some(Effect::InstantiateSubmachine { machine, .. }) = m.step_effect() else {
-        panic!("delegate emits a child")
-    };
-    let _ = drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        child_completed(&machine, json!({ "ok": false })),
     );
     let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
     assert_eq!(state, HarnessState::Completed);

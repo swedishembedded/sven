@@ -20,12 +20,9 @@ fn samples_root() -> PathBuf {
 }
 
 /// The harness samples shipped, by directory name.
-const SAMPLES: [&str; 14] = [
-    "branching",
-    "custom-helper",
+const SAMPLES: [&str; 11] = [
     "embedded-hardening",
     "module-sweep",
-    "parallel-research",
     "planner-worker",
     "repair-loop",
     "repo-repair",
@@ -47,11 +44,7 @@ fn sample_dirs() -> Vec<PathBuf> {
         .expect("samples/harnesses exists")
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| {
-            ["harness.yaml", "document.yaml", "bundle.yaml"]
-                .iter()
-                .any(|doc| path.join(doc).is_file())
-        })
+        .filter(|path| path.join("harness.yaml").is_file())
         .collect();
     dirs.sort();
     dirs
@@ -64,7 +57,7 @@ async fn every_default_sample_validates_and_passes() {
         .iter()
         .map(|d| d.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, SAMPLES, "the thirteen named harness samples");
+    assert_eq!(names, SAMPLES, "the named harness samples");
     let options = RunnerOptions {
         opt_in: OptIn::none(),
         ..RunnerOptions::default()

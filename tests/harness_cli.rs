@@ -64,7 +64,7 @@ fn inspect_json_lists_steps_and_digest() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let report = stdout_json(&out);
     assert_eq!(report["name"], "decide");
-    assert_eq!(report["entry"], "check");
+    assert_eq!(report["entry"], "check__work");
     assert!(report["plan_digest"]
         .as_str()
         .is_some_and(|d| !d.is_empty()));
@@ -74,7 +74,15 @@ fn inspect_json_lists_steps_and_digest() {
         .iter()
         .filter_map(|s| s["id"].as_str())
         .collect();
-    assert_eq!(steps, ["check", "grant", "reject"]);
+    assert_eq!(
+        steps,
+        [
+            "check__v0_eligible_a0",
+            "check__v0_eligible_a0_fail",
+            "check__work",
+            "complete"
+        ]
+    );
 
     let out = run(sven(tmp.path())
         .arg("inspect")
@@ -89,7 +97,7 @@ fn schema_prints_the_document_schema() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let schema = stdout_json(&out);
     assert!(schema["$schema"].is_string(), "{schema}");
-    assert!(schema["properties"]["steps"].is_object());
+    assert!(schema["properties"]["workflow"].is_object());
 
     let out = run(sven(tmp.path())
         .arg("schema")
@@ -114,7 +122,7 @@ fn run_returns_json_and_exit_0() {
     assert_eq!(report["harness"], "decide");
     assert_eq!(report["status"], "completed");
     assert_eq!(report["output"]["tier"], "paid");
-    assert_eq!(report["step_counts"]["check"], 1);
+    assert_eq!(report["step_counts"]["check__v0_eligible_a0"], 1);
     assert!(report["steps"].as_u64().is_some_and(|n| n >= 2));
     assert!(report["plan_digest"].is_string());
     assert!(report["run_id"].is_string());
@@ -198,7 +206,7 @@ fn a_fail_verdict_exits_1() {
     assert_eq!(code(&out), 1);
     let report = stdout_json(&out);
     assert_eq!(report["status"], "failed");
-    assert_eq!(report["failure"]["code"], "not_eligible");
+    assert_eq!(report["failure"]["code"], "gate_failed");
 }
 
 #[test]
@@ -242,7 +250,10 @@ fn a_deadline_suspends_with_exit_3_and_writes_a_checkpoint_that_resume_completes
     let report = stdout_json(&out);
     assert_eq!(report["status"], "completed");
     assert_eq!(report["output"]["report"], "all green");
-    assert_eq!(report["step_counts"]["call"], 2, "the read is re-entered");
+    assert_eq!(
+        report["step_counts"]["fetch__v0_read_a0"], 1,
+        "the interrupted read runs again without counting as a second step"
+    );
 }
 
 #[test]
@@ -301,7 +312,7 @@ fn record_then_replay_matches_and_a_tampered_trace_exits_1() {
     assert_eq!(stdout_json(&out)["output"]["tier"], "paid");
 
     let tampered = tmp.path().join("tampered.jsonl");
-    std::fs::write(&tampered, lines.replacen("grant", "reject", 1)).expect("write");
+    std::fs::write(&tampered, lines.replacen("check__work", "tampered", 1)).expect("write");
     let out = run(sven(tmp.path())
         .arg("replay")
         .arg(&decide)
@@ -370,13 +381,13 @@ fn the_committed_samples_pass_offline_and_the_live_case_is_skipped() {
         .filter(|p| p.join("cases").is_dir())
         .collect();
     dirs.sort();
-    assert_eq!(dirs.len(), 14, "the fourteen named samples: {dirs:?}");
+    assert_eq!(dirs.len(), 11, "the named samples: {dirs:?}");
 
     let out = run(sven(tmp.path()).arg("test").args(&dirs).arg("--json"));
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let suites = stdout_json(&out);
     let suites = suites.as_array().expect("one report per directory");
-    assert_eq!(suites.len(), 14);
+    assert_eq!(suites.len(), 11);
     for (dir, suite) in dirs.iter().zip(suites) {
         assert_eq!(suite["failed"], 0, "{suite}");
         // Only ticket-routing's live-local case is skipped, and only it.
@@ -393,7 +404,7 @@ fn compare_reports_a_regression() {
     let text = std::fs::read_to_string(variant.join("harness.yaml")).expect("read");
     std::fs::write(
         variant.join("harness.yaml"),
-        text.replace("tier: paid", "tier: gold"),
+        text.replace("value: paid", "value: gold"),
     )
     .expect("write");
     let cases = fixtures().join("decide/cases");
@@ -436,7 +447,7 @@ fn compare_with_seeds_pairs_runs_and_rejects_a_regression() {
     let text = std::fs::read_to_string(variant.join("harness.yaml")).expect("read");
     std::fs::write(
         variant.join("harness.yaml"),
-        text.replace("tier: paid", "tier: gold"),
+        text.replace("value: paid", "value: gold"),
     )
     .expect("write");
     let compare = |extra: &[&str]| {
@@ -473,102 +484,6 @@ fn compare_with_seeds_pairs_runs_and_rejects_a_regression() {
     );
 }
 
-/// The sample bundle's `reshape` helper as a `.wasm` file in `dir`.
-fn extract_sample_helper(dir: &Path) -> PathBuf {
-    use base64::Engine as _;
-    let bundle: Value = serde_yaml::from_str(
-        &std::fs::read_to_string(sample("custom-helper").join("bundle.yaml")).expect("read"),
-    )
-    .expect("bundle yaml");
-    let encoded = bundle["helpers"]["reshape"]["content"]
-        .as_str()
-        .expect("helper content");
-    let path = dir.join("reshape.wasm");
-    std::fs::write(
-        &path,
-        base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .expect("base64"),
-    )
-    .expect("write wasm");
-    path
-}
-
-#[test]
-fn helper_run_executes_a_module_in_the_bounded_runtime() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let wasm = extract_sample_helper(tmp.path());
-    let out = run(sven(tmp.path())
-        .args(["helper", "run"])
-        .arg(&wasm)
-        .args(["--input", r#"{"customer": "acme", "total": 3}"#]));
-    assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert_eq!(
-        stdout_json(&out),
-        serde_json::json!({"customer": "acme", "total": 3}),
-        "the sample helper is the identity"
-    );
-
-    let out = run(sven(tmp.path())
-        .args(["helper", "run"])
-        .arg(&wasm)
-        .args(["--input", "{}", "--fuel", "1"]));
-    assert_eq!(
-        code(&out),
-        1,
-        "a helper out of fuel is a result, not a crash"
-    );
-    assert!(stderr(&out).contains("fuel"), "{}", stderr(&out));
-
-    let out = run(sven(tmp.path())
-        .args(["helper", "run"])
-        .arg(tmp.path().join("missing.wasm"))
-        .args(["--input", "{}"]));
-    assert_eq!(code(&out), 2);
-}
-
-#[test]
-fn bundle_composes_a_document_and_its_helpers_into_the_committed_sample_bundle() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let wasm = extract_sample_helper(tmp.path());
-    let built = tmp.path().join("bundle.yaml");
-    let out = run(sven(tmp.path())
-        .arg("bundle")
-        .arg(sample("custom-helper").join("document.yaml"))
-        .arg("--helper")
-        .arg(format!("reshape={}", wasm.display()))
-        .arg("--output")
-        .arg(&built));
-    assert_eq!(code(&out), 0, "{}", stderr(&out));
-
-    let parse = |path: &Path| -> Value {
-        serde_yaml::from_str(&std::fs::read_to_string(path).expect("read")).expect("yaml")
-    };
-    assert_eq!(
-        parse(&built),
-        parse(&sample("custom-helper").join("bundle.yaml")),
-        "the CLI builds what the sample ships"
-    );
-    let out = run(sven(tmp.path()).arg("validate").arg(&built));
-    assert_eq!(code(&out), 0, "{}", stderr(&out));
-
-    // A helper the document does not use, or one that is not WASM, is refused.
-    let out = run(sven(tmp.path())
-        .arg("bundle")
-        .arg(sample("custom-helper").join("document.yaml"))
-        .arg("--helper")
-        .arg(format!("unused={}", wasm.display())));
-    assert_eq!(code(&out), 2, "{}", stderr(&out));
-    let junk = tmp.path().join("junk.wasm");
-    std::fs::write(&junk, b"not wasm").expect("write");
-    let out = run(sven(tmp.path())
-        .arg("bundle")
-        .arg(sample("custom-helper").join("document.yaml"))
-        .arg("--helper")
-        .arg(format!("reshape={}", junk.display())));
-    assert_eq!(code(&out), 2, "{}", stderr(&out));
-}
-
 #[test]
 fn run_without_a_model_source_fails_a_model_step_cleanly() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -579,7 +494,7 @@ fn run_without_a_model_source_fails_a_model_step_cleanly() {
     assert_eq!(code(&out), 1, "{}", stderr(&out));
     let report = stdout_json(&out);
     assert_eq!(report["status"], "failed");
-    assert_eq!(report["failure"]["code"], "unroutable");
+    assert_eq!(report["failure"]["code"], "side_effect_failed");
     assert!(
         stderr(&out).contains("no model source"),
         "stderr says what to pass: {}",

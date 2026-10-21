@@ -19,22 +19,35 @@ use sven_harness_runtime::{HarnessMachine, HarnessState, TraceRecord, RUN_STATE_
 use sven_hsm::ids::{ApprovalId, ToolCallId};
 use sven_hsm::{Context, Effect, Event};
 
-/// A model turn, then a tool call that writes: the write is the side effect
-/// that must happen once.
+/// A model turn, then a gate that writes: the write is the side effect that
+/// must happen once.
 const ASK_THEN_WRITE: &str = r#"
-api_version: "1"
+api_version: "2"
 name: writer
 entry: ask
-capabilities: [WriteFile]
+capabilities: [ExecuteShell]
 limits: { max_steps: 50, max_model_turns: 3, max_tool_calls: 3 }
 steps:
   ask:
     predict: { prompt: "What to write?", store_as: text, then: write }
   write:
-    tool: { name: write_file, args: { path: "out.txt", content: "{{ facts.text }}" }, store_as: written, then: out }
+    gate:
+      steps: [{ name: tee, argv: [tee, out.txt] }]
+      stdin: "{{ facts.text }}"
+      then: out
+      on_fail: bad
   out:
-    return: { value: { written: "{{ steps.write.value }}" } }
+    return: { value: { written: "{{ steps.write.stdout }}" } }
+  bad:
+    fail: { code: gate_failed }
 "#;
+
+/// The gate tool's report of a command that exited 0.
+fn report() -> serde_json::Value {
+    json!({ "exit_code": 0, "timed_out": false, "error": null, "stdout": "ok", "stderr": "" })
+        .to_string()
+        .into()
+}
 
 fn tool_calls(effects: &[Effect]) -> Vec<ToolCallId> {
     effects
@@ -47,7 +60,7 @@ fn tool_calls(effects: &[Effect]) -> Vec<ToolCallId> {
 }
 
 fn restore(yaml: &str, m: &HarnessMachine, ctx: &Context) -> (HarnessMachine, Context) {
-    HarnessMachine::restore(yaml.to_string(), m.snapshot(ctx)).expect("the same document restores")
+    common::restore(yaml, m.snapshot(ctx)).expect("the same document restores")
 }
 
 fn settle_ticks(
@@ -121,7 +134,7 @@ fn a_model_turn_delivered_twice_does_not_write_twice() {
 }
 
 #[test]
-fn interrupted_during_a_tool_call_the_write_is_never_issued_again() {
+fn interrupted_during_a_gate_the_write_is_never_issued_again() {
     let (mut m, mut ctx, mut state) = start(ASK_THEN_WRITE, json!({}));
     let mut issued = tool_calls(&drive(
         &mut m,
@@ -146,7 +159,7 @@ fn interrupted_during_a_tool_call_the_write_is_never_issued_again() {
             &mut state2,
             Event::ToolSucceeded {
                 call_id,
-                observation: json!("ok"),
+                observation: report(),
             },
         ));
     }
@@ -159,115 +172,10 @@ fn interrupted_during_a_tool_call_the_write_is_never_issued_again() {
     assert_eq!(completed_steps(&m2, &ctx2, "write"), 1);
 }
 
-const FANOUT: &str = r#"
-api_version: "1"
-name: fanout
-entry: split
-capabilities: [SpawnChild]
-limits: { max_steps: 50, max_delegate_depth: 3, max_parallel: 4 }
-steps:
-  split:
-    parallel: { branches: [left, right], join: merge }
-  left:
-    return: { value: { side: "left" } }
-  right:
-    return: { value: { side: "right" } }
-  merge:
-    return: { value: { results: "{{ steps.split.value }}" } }
-"#;
-
-fn join_machines(ctx: &Context) -> Vec<String> {
-    let machines: Vec<(String, String)> = ctx
-        .fact(RUN_STATE_FACT)
-        .and_then(|v| v.get("join").map(|j| j["machines"].clone()))
-        .and_then(|v| serde_json::from_value(v).ok())
-        .expect("the join record is open");
-    machines.into_iter().map(|(_, id)| id).collect()
-}
-
-fn spawned(effects: &[Effect]) -> usize {
-    effects
-        .iter()
-        .filter(|fx| matches!(fx, Effect::InstantiateSubmachine { .. }))
-        .count()
-}
-
-#[test]
-fn interrupted_mid_fan_out_the_resumed_join_spawns_no_second_batch() {
-    let (m, mut ctx, mut state) = start(FANOUT, json!({}));
-    let children = join_machines(&ctx);
-    let (mut m, mut ctx_after) = {
-        let mut m = m;
-        // One branch finished before the interruption.
-        let _ = drive(
-            &mut m,
-            &mut ctx,
-            &mut state,
-            Event::Internal(sven_hsm::event::InternalEvent::SubmachineCompleted {
-                machine: children[0].clone(),
-                result: json!({ "side": "left" }),
-            }),
-        );
-        restore(FANOUT, &m, &ctx)
-    };
-    assert!(m.step_effect().is_none(), "no child is spawned again");
-
-    let mut state = HarnessState::WaitingForJoin;
-    let mut effects = drive(
-        &mut m,
-        &mut ctx_after,
-        &mut state,
-        Event::Internal(sven_hsm::event::InternalEvent::SubmachineCompleted {
-            machine: children[1].clone(),
-            result: json!({ "side": "right" }),
-        }),
-    );
-    effects.extend(settle_ticks(&mut m, &mut ctx_after, &mut state));
-    assert_eq!(spawned(&effects), 0, "{effects:?}");
-    assert_eq!(state, HarnessState::Completed);
-    assert_eq!(
-        m.outcome().expect("outcome")["results"],
-        json!([{ "side": "left" }, { "side": "right" }]),
-        "the branch finished before the checkpoint is kept"
-    );
-}
-
-#[test]
-fn a_branch_completion_redelivered_after_resume_cannot_overwrite_the_join() {
-    let (mut m, mut ctx, mut state) = start(FANOUT, json!({}));
-    let children = join_machines(&ctx);
-    let done = |machine: &str, side: &str| {
-        Event::Internal(sven_hsm::event::InternalEvent::SubmachineCompleted {
-            machine: machine.to_string(),
-            result: json!({ "side": side }),
-        })
-    };
-    let _ = drive(&mut m, &mut ctx, &mut state, done(&children[0], "left"));
-    let (mut m, mut ctx) = restore(FANOUT, &m, &ctx);
-    let mut state = HarnessState::WaitingForJoin;
-
-    // The executor redelivers the first branch's completion with a different
-    // payload; the slot is already settled.
-    let _ = drive(&mut m, &mut ctx, &mut state, done(&children[0], "forged"));
-    let _ = drive(&mut m, &mut ctx, &mut state, done(&children[1], "right"));
-    let _ = settle_ticks(&mut m, &mut ctx, &mut state);
-    assert_eq!(
-        m.outcome().expect("outcome")["results"],
-        json!([{ "side": "left" }, { "side": "right" }]),
-        "a settled branch is final"
-    );
-    let completions = m
-        .trace(&ctx)
-        .iter()
-        .filter(|r| matches!(r, TraceRecord::ChildCompleted { .. }))
-        .count();
-    assert_eq!(completions, 2, "each branch completes once in the trace");
-}
-
 #[test]
 fn a_delegated_child_completion_redelivered_after_resume_settles_once() {
     const DELEGATE: &str = r#"
-api_version: "1"
+api_version: "2"
 name: parent
 entry: ask_child
 capabilities: [SpawnChild]
@@ -306,16 +214,18 @@ steps:
 }
 
 const GUARDED_WRITE: &str = r#"
-api_version: "1"
+api_version: "2"
 name: saver
 entry: save
-capabilities: [WriteFile]
+capabilities: [ExecuteShell]
 limits: { max_steps: 20 }
 steps:
   save:
-    tool: { name: write_notes, args: { path: "n.txt" }, store_as: saved, then: out }
+    gate: { steps: [{ name: write, argv: [sh, save.sh] }], then: out, on_fail: bad }
   out:
-    return: { value: "{{ steps.save.value }}" }
+    return: { value: "saved" }
+  bad:
+    fail: { code: gate_failed }
 "#;
 
 fn approval_of(call_id: ToolCallId) -> ApprovalId {
@@ -326,7 +236,7 @@ fn approval_of(call_id: ToolCallId) -> ApprovalId {
 fn interrupted_while_waiting_for_approval_nothing_runs_until_it_is_given_and_then_once() {
     let (mut m, mut ctx, mut state) = start(GUARDED_WRITE, json!({}));
     let Some(Effect::CallTool { call_id, .. }) = m.step_effect() else {
-        panic!("the tool step emitted its call");
+        panic!("the gate step emitted its call");
     };
     let _ = drive(
         &mut m,
@@ -334,8 +244,8 @@ fn interrupted_while_waiting_for_approval_nothing_runs_until_it_is_given_and_the
         &mut state,
         Event::ToolApprovalRequired {
             call_id,
-            capability: sven_hsm::ToolCapability::WriteFile,
-            description: "write n.txt".into(),
+            capability: sven_hsm::ToolCapability::ExecuteShell,
+            description: "run save.sh".into(),
         },
     );
     let (mut m, mut ctx) = restore(GUARDED_WRITE, &m, &ctx);
@@ -353,73 +263,4 @@ fn interrupted_while_waiting_for_approval_nothing_runs_until_it_is_given_and_the
         tool_calls(&again).is_empty(),
         "a repeated approval runs nothing: {again:?}"
     );
-}
-
-const RETRIED_WRITE: &str = r#"
-api_version: "1"
-name: retrier
-entry: attempt
-capabilities: [WriteFile]
-limits: { max_steps: 50, max_tool_calls: 5 }
-steps:
-  attempt:
-    retry: { attempts: 2, body: write, then: out, on_exhausted: gave_up }
-  write:
-    tool: { name: write_file, args: { path: "r.txt" }, store_as: written, then: out }
-  out:
-    return: { value: "ok" }
-  gave_up:
-    fail: { code: exhausted, message: "no attempts left" }
-"#;
-
-#[test]
-fn interrupted_during_a_retry_the_attempt_budget_survives_the_resume() {
-    let (mut m, mut ctx, mut state) = start(RETRIED_WRITE, json!({}));
-    let mut issued = tool_calls(&drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        Event::user_message("tick"),
-    ));
-    let Some(Effect::CallTool { call_id, .. }) = m.step_effect() else {
-        panic!("the first attempt is in flight");
-    };
-    issued.push(call_id);
-    // The first attempt fails; the retry issues the second one.
-    let fx = drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        Event::ToolFailed {
-            call_id,
-            error: "disk busy".into(),
-        },
-    );
-    let mut second = tool_calls(&fx);
-    second.extend(tool_calls(&settle_ticks(&mut m, &mut ctx, &mut state)));
-    assert_eq!(
-        second.len(),
-        1,
-        "the second attempt was issued before the interruption"
-    );
-    let call_id = second[0];
-
-    let (mut m, mut ctx) = restore(RETRIED_WRITE, &m, &ctx);
-    let mut state = HarnessState::WaitingForTool;
-    let mut effects = drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        Event::ToolFailed {
-            call_id,
-            error: "disk busy".into(),
-        },
-    );
-    effects.extend(settle_ticks(&mut m, &mut ctx, &mut state));
-    assert!(
-        tool_calls(&effects).is_empty(),
-        "the budget of 2 attempts was spent across the interruption: {effects:?}"
-    );
-    assert_eq!(state, HarnessState::Failed);
-    assert_eq!(m.outcome().expect("outcome")["code"], "exhausted");
 }

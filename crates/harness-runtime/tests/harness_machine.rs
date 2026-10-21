@@ -9,12 +9,12 @@
 mod common;
 
 use common::{drive, start, turn};
-use sven_harness_runtime::{HarnessMachine, HarnessRunData, OUTCOME_FACT, RUN_STATE_FACT};
+use sven_harness_runtime::{HarnessMachine, OUTCOME_FACT, RUN_STATE_FACT};
 use sven_hsm::{Effect, Event, Machine};
 use sven_vocab::verify::{VerifierSpec, VerifierVerdict};
 
 const FAILING: &str = r#"
-api_version: "1"
+api_version: "2"
 name: moody
 entry: ask
 limits: { max_steps: 50, max_model_turns: 5 }
@@ -31,7 +31,7 @@ steps:
 "#;
 
 const GREET: &str = r#"
-api_version: "1"
+api_version: "2"
 name: greet
 entry: ask
 limits: { max_steps: 50, max_model_turns: 5 }
@@ -103,26 +103,28 @@ fn a_predict_step_emits_one_call_llm_and_stores_its_answer() {
 }
 
 #[test]
-fn a_tool_step_emits_call_tool_with_a_deterministic_call_id_and_stores_the_observation() {
+fn a_gate_step_emits_the_gate_call_with_a_deterministic_call_id_and_stores_the_report() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: checker
 entry: probe
+capabilities: [ExecuteShell]
 limits: { max_steps: 50, max_tool_calls: 10 }
 steps:
   probe:
-    tool:
-      name: read_file
-      args: { path: "notes/scratch.txt" }
-      store_as: found
+    gate:
+      steps: [{ name: cat, argv: [cat, "notes/scratch.txt"] }]
       then: out
+      on_fail: bad
   out:
     return:
-      value: "{{ steps.probe.value }}"
+      value: "{{ steps.probe.stdout }}"
+  bad:
+    fail: { code: gate_failed }
 "#;
     let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
 
-    let ask = m.step_effect().expect("the tool step emitted its effect");
+    let ask = m.step_effect().expect("the gate step emitted its effect");
     let Effect::CallTool {
         call_id,
         name,
@@ -130,10 +132,13 @@ steps:
         ..
     } = &ask
     else {
-        panic!("a tool step calls a tool, got {ask:?}");
+        panic!("a gate step calls the gate tool, got {ask:?}");
     };
-    assert_eq!(name, "read_file");
-    assert_eq!(args["path"], "notes/scratch.txt");
+    assert_eq!(name, "shell_gate");
+    assert_eq!(
+        args["steps"][0]["argv"],
+        serde_json::json!(["cat", "notes/scratch.txt"])
+    );
     // Deterministic per step: replay reproduces the same id, so the recorded
     // ToolSucceeded still matches after a checkpoint restore.
     let expected = sven_harness_runtime::step_call_id("checker", "probe");
@@ -145,7 +150,10 @@ steps:
         &mut state,
         Event::ToolSucceeded {
             call_id: expected,
-            observation: serde_json::json!("file contents"),
+            observation: serde_json::json!({ "exit_code": 0, "timed_out": false, "error": null,
+                "stdout": "file contents", "stderr": "" })
+            .to_string()
+            .into(),
         },
     );
     for _ in 0..8 {
@@ -165,7 +173,7 @@ steps:
 #[test]
 fn a_branch_step_chooses_between_successors_without_io() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: router
 entry: ask
 limits: { max_steps: 50, max_model_turns: 5 }
@@ -199,84 +207,9 @@ steps:
 }
 
 #[test]
-fn a_retry_step_bounds_a_failing_body_and_honors_on_exhausted() {
-    let yaml = r#"
-api_version: "1"
-name: flaky
-entry: attempt
-limits: { max_steps: 100, max_tool_calls: 10 }
-steps:
-  attempt:
-    retry:
-      attempts: 2
-      body: probe
-      then: ok
-      on_exhausted: give_up
-  probe:
-    tool:
-      name: read_file
-      args: { path: "flaky-probe" }
-      then: check
-  check:
-    branch:
-      on: "!steps.probe.ok"
-      when_true: attempt
-      when_false: ok
-  ok:
-    return: { value: "made it" }
-  give_up:
-    fail: { code: "unreachable", message: "the probe never succeeded" }
-"#;
-    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
-    let call = |n: u64| sven_harness_runtime::step_call_id("flaky", &format!("probe-{n}"));
-
-    // Attempt 1: the tool fails → the branch routes back into the retry.
-    let _ = m.step_effect().expect("the body step emitted its call");
-    let _ = drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        Event::ToolFailed {
-            call_id: call(1),
-            error: "file missing".into(),
-        },
-    );
-    // Branch evaluates `steps.probe.ok` → absent → falsy → !falsy is false… wait,
-    // the branch is `!steps.probe.ok`: ok is absent → falsy → NOT falsy = true →
-    // when_true = attempt again.
-    assert_eq!(
-        state,
-        sven_harness_runtime::HarnessState::WaitingForTool,
-        "the retry re-entered its body"
-    );
-
-    // Attempt 2: the tool succeeds → the branch exits the retry via `ok`.
-    let _ = m
-        .step_effect()
-        .expect("the re-entered body emitted its call");
-    let _ = drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        Event::ToolSucceeded {
-            call_id: call(2),
-            observation: serde_json::json!({ "ok": true }),
-        },
-    );
-    for _ in 0..8 {
-        if state == sven_harness_runtime::HarnessState::Completed {
-            break;
-        }
-        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
-    }
-    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
-    assert_eq!(m.outcome().unwrap(), serde_json::json!("made it"));
-}
-
-#[test]
 fn an_agent_step_runs_the_tool_loop_and_stores_the_final_text() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: worker
 entry: do
 capabilities: [ExecuteShell]
@@ -355,7 +288,7 @@ steps:
 #[test]
 fn a_verify_step_waits_for_the_verifier_and_stores_the_verdict() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: graded
 entry: check
 capabilities: [RunVerifier]
@@ -410,7 +343,7 @@ steps:
 #[test]
 fn a_fail_step_ends_the_run_failed_with_code_and_message() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: moody
 entry: ask
 limits: { max_steps: 50, max_model_turns: 5 }
@@ -459,7 +392,6 @@ fn the_state_hierarchy_is_fixed_regardless_of_plan_size() {
         "WaitingForTool",
         "WaitingForVerifier",
         "WaitingForChild",
-        "WaitingForJoin",
         "Completed",
         "Failed",
         "Cancelled",
@@ -478,8 +410,8 @@ fn the_state_hierarchy_is_fixed_regardless_of_plan_size() {
     let (m3, _c, _s) = start(GREET, serde_json::json!({}));
     assert_eq!(
         m3.all_states().len(),
-        11,
-        "the hierarchy is fixed: eleven states"
+        10,
+        "the hierarchy is fixed: ten states"
     );
 }
 
@@ -497,7 +429,7 @@ fn run_state_lives_in_the_context_and_survives_a_snapshot_round_trip() {
     // Snapshot → restore into a fresh machine: the run continues from the
     // stored step data, no entry actions re-fire.
     let snap = m.snapshot(&ctx);
-    let (m2, ctx2) = HarnessMachine::restore(run_yaml(), snap).expect("restorable");
+    let (m2, ctx2) = common::restore(GREET, snap).expect("restorable");
     assert_eq!(
         ctx2.fact(RUN_STATE_FACT).and_then(|v| v
             .get("steps")
@@ -523,28 +455,21 @@ fn run_state_lives_in_the_context_and_survives_a_snapshot_round_trip() {
     );
 }
 
-fn run_yaml() -> String {
-    GREET.to_string()
-}
-
 #[test]
 fn the_permission_policy_is_the_declared_capabilities_in_every_state() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: writer
 entry: do
 capabilities: [ReadFile, WriteFile]
-limits: { max_steps: 100, max_tool_calls: 20 }
+limits: { max_steps: 100, max_model_turns: 2 }
 steps:
   do:
-    tool:
-      name: write_file
-      args: { path: "x", content: "y" }
-      then: out
+    predict: { prompt: "Say done.", then: out }
   out:
     return: { value: "done" }
 "#;
-    let run = HarnessRunData::new(yaml, serde_json::json!({})).expect("valid harness");
+    let run = common::data(yaml, serde_json::json!({})).expect("valid harness");
     let policy = HarnessMachine::permission_policy_for(&run);
     use sven_hsm::ToolCapability;
     assert!(policy.allows_in_every_state(ToolCapability::ReadFile));
@@ -560,7 +485,7 @@ steps:
 
     // No capabilities declared: nothing is granted.
     let bare = r#"
-api_version: "1"
+api_version: "2"
 name: pure
 entry: only
 limits: { max_steps: 10 }
@@ -570,7 +495,7 @@ steps:
   out:
     return: { value: "ok" }
 "#;
-    let run = HarnessRunData::new(bare, serde_json::json!({})).expect("valid harness");
+    let run = common::data(bare, serde_json::json!({})).expect("valid harness");
     let policy = HarnessMachine::permission_policy_for(&run);
     for cap in sven_hsm::ToolCapability::ALL {
         assert!(
@@ -636,112 +561,5 @@ fn the_terminal_outcome_is_reported_as_a_context_fact() {
         ctx.fact(OUTCOME_FACT).cloned(),
         m.outcome(),
         "a cancelled run's outcome is the outcome fact"
-    );
-}
-
-#[test]
-fn an_exhausted_retry_follows_on_exhausted() {
-    let yaml = r#"
-api_version: "1"
-name: flaky
-entry: attempt
-limits: { max_steps: 100, max_tool_calls: 10 }
-steps:
-  attempt:
-    retry: { attempts: 2, body: probe, then: ok, on_exhausted: give_up }
-  probe:
-    tool: { name: read_file, args: { path: "flaky-probe" }, then: ok }
-  ok:
-    return: { value: "made it" }
-  give_up:
-    fail: { code: "gave_up", message: "the probe never succeeded" }
-"#;
-    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
-    let call = |n: u64| sven_harness_runtime::step_call_id("flaky", &format!("probe-{n}"));
-    let _ = m.step_effect().expect("attempt 1 emitted its call");
-    for attempt in 1..=2 {
-        let _ = drive(
-            &mut m,
-            &mut ctx,
-            &mut state,
-            Event::ToolFailed {
-                call_id: call(attempt),
-                error: "file missing".into(),
-            },
-        );
-    }
-    for _ in 0..4 {
-        if state == sven_harness_runtime::HarnessState::Failed {
-            break;
-        }
-        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
-    }
-    assert_eq!(state, sven_harness_runtime::HarnessState::Failed);
-    assert_eq!(
-        m.outcome().expect("a failed run has an outcome")["code"],
-        "gave_up",
-        "spent attempts continue at `on_exhausted`, not back into the retry"
-    );
-}
-
-#[test]
-fn a_retry_ends_when_its_body_succeeds() {
-    let yaml = r#"
-api_version: "1"
-name: flaky
-entry: attempt
-limits: { max_steps: 100, max_tool_calls: 10 }
-steps:
-  attempt:
-    retry: { attempts: 3, body: probe, then: ok, on_exhausted: give_up }
-  probe:
-    tool: { name: read_file, args: { path: "flaky-probe" }, then: ok }
-  ok:
-    return: { value: "made it" }
-  give_up:
-    fail: { code: "gave_up", message: "never" }
-"#;
-    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
-    let _ = m.step_effect().expect("the body emitted its call");
-    let _ = drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        Event::ToolFailed {
-            call_id: sven_harness_runtime::step_call_id("flaky", "probe-1"),
-            error: "file missing".into(),
-        },
-    );
-    let _ = drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        Event::ToolSucceeded {
-            call_id: sven_harness_runtime::step_call_id("flaky", "probe-2"),
-            observation: serde_json::json!("fine"),
-        },
-    );
-    for _ in 0..8 {
-        if state == sven_harness_runtime::HarnessState::Completed {
-            break;
-        }
-        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
-    }
-    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
-    let after = m
-        .trace(&ctx)
-        .into_iter()
-        .find_map(|r| match r {
-            sven_harness_runtime::TraceRecord::StepStarted { step, attempt, .. }
-                if step == "ok" =>
-            {
-                Some(attempt)
-            }
-            _ => None,
-        })
-        .expect("the step after the retry started");
-    assert_eq!(
-        after, 1,
-        "no retry frame outlives its body: the next step is not a retry attempt"
     );
 }

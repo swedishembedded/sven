@@ -11,46 +11,53 @@
 //! keeping delegated agents inside one workspace then you can procure our
 //! services by sending an email to info@swedishembedded.com.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
-use sven_model_mock::FailingMockProvider;
+use sven_harness_spec::HarnessBundle;
+use sven_model_mock::ScriptedMockProvider;
 use sven_sdk::{
     tool::{ApprovalPolicy, Tool, ToolCall, ToolCapability, ToolOutput},
     Engine, RunOptions, Toolset,
 };
 
 const PARENT: &str = r#"
-api_version: "1"
+api_version: "2"
 name: parent
-entry: down
 capabilities: [SpawnChild, ReadFile, WriteFile]
-limits: { max_steps: 20, max_delegate_depth: 3 }
-steps:
-  down:
-    delegate: { target: child, store_as: got, then: done }
-  done:
-    return: { value: "{{ steps.down.value }}" }
+imports: { child: ./child.yaml }
+execution: { limits: { model_turns: 6, delegate_depth: 3 } }
+workflow:
+  - name: down
+    use: child
 "#;
 
-/// A child whose only step is `tool` with `args`; a refused call fails the
-/// child, so each tool gets a child of its own.
-fn child(tool: &str, args: &str) -> String {
+/// A child whose only task has its agent call `tool`; a refused call is
+/// reported to the agent, so each tool gets a child of its own.
+fn child(tool: &str) -> String {
     format!(
         r#"
-api_version: "1"
+api_version: "2"
 name: child
-entry: act
 capabilities: [ReadFile, WriteFile]
-limits: {{ max_steps: 10 }}
-steps:
-  act:
-    tool: {{ name: {tool}, args: {args}, store_as: out, then: done }}
-  done:
-    return: {{ value: "{{{{ steps.act.value }}}}" }}
+agent: {{ tools: [{tool}] }}
+execution: {{ limits: {{ model_turns: 4, tool_calls: 2 }} }}
+workflow:
+  - name: act
+    task: Act.
 "#
     )
+}
+
+/// The package of `PARENT` and a child that calls `tool`.
+fn package(parent: &str, child: &str) -> String {
+    let bundle = HarnessBundle {
+        document: parent.to_string(),
+        imports: BTreeMap::from([("child.yaml".to_string(), child.to_string())]),
+    };
+    serde_yaml::to_string(&bundle).expect("a package serializes")
 }
 
 #[tokio::test]
@@ -65,38 +72,46 @@ async fn a_delegated_child_is_confined_to_the_parents_root() {
     std::os::unix::fs::symlink(&outside, root.join("escape")).unwrap();
 
     let attempts = [
-        ("read_file", r#"{ path: "../outside/secret.txt" }"#),
-        ("read_file", r#"{ path: "escape/secret.txt" }"#),
+        ("read_file", json!({ "path": "../outside/secret.txt" })),
+        ("read_file", json!({ "path": "escape/secret.txt" })),
         (
             "write_file",
-            r#"{ path: "../outside/planted.txt", text: "x", append: false }"#,
+            json!({ "path": "../outside/planted.txt", "text": "x", "append": false }),
         ),
         (
             "edit_file",
-            r#"{ path: "escape/secret.txt", diff: "@@\n-the secret\n+changed\n" }"#,
+            json!({ "path": "escape/secret.txt", "diff": "@@\n-old\n+new\n" }),
         ),
-        ("find_file", r#"{ pattern: "*", root: "../outside" }"#),
-        ("grep", r#"{ pattern: "secret", path: "../outside" }"#),
+        ("find_file", json!({ "pattern": "*", "root": "../outside" })),
+        ("grep", json!({ "pattern": "secret", "path": "../outside" })),
     ];
     for (tool, args) in attempts {
+        // The child's agent calls the tool; what the call answered is what its
+        // model reads next.
+        let model = Arc::new(ScriptedMockProvider::tool_then_text(
+            "c1",
+            tool,
+            args.to_string(),
+            "done",
+        ));
+        let last_request = Arc::clone(&model.last_request);
         let engine = Engine::builder()
-            .model_provider(Arc::new(FailingMockProvider::new("no model here")) as Arc<_>)
+            .model_provider(model)
             .toolset(Toolset::coding())
             .project_root(&root)
             .build()
             .expect("an engine builds");
-        engine
-            .load_harness_from_str(&child(tool, args))
-            .expect("child loads");
-        let parent = engine.load_harness_from_str(PARENT).expect("parent loads");
+        let parent = engine
+            .load_harness_from_str(&package(PARENT, &child(tool)))
+            .expect("the package loads");
 
         let mut run = parent.start(json!({})).expect("starts");
-        let outcome = tokio::time::timeout(Duration::from_secs(30), run.execute(RunOptions::new()))
+        let _ = tokio::time::timeout(Duration::from_secs(30), run.execute(RunOptions::new()))
             .await
             .expect("the run ends")
             .expect("an outcome");
 
-        let rendered = format!("{:?}", outcome.result);
+        let rendered = format!("{:?}", last_request.lock().unwrap());
         assert!(
             rendered.contains("outside the project root"),
             "{tool} {args}: the child is refused, naming the root: {rendered}"
@@ -140,29 +155,35 @@ impl Tool for HostShell {
 #[tokio::test]
 async fn a_delegated_child_runs_commands_through_the_hosts_execution_capability() {
     let tmp = tempfile::tempdir().expect("a temp dir");
+    let model = Arc::new(ScriptedMockProvider::tool_then_text(
+        "c1",
+        "shell",
+        json!({ "shell_command": "touch ran-on-host" }).to_string(),
+        "done",
+    ));
+    let last_request = Arc::clone(&model.last_request);
     let engine = Engine::builder()
-        .model_provider(Arc::new(FailingMockProvider::new("no model here")) as Arc<_>)
+        .model_provider(model)
         .toolset(Toolset::coding())
         .project_root(tmp.path())
         .tool(Arc::new(HostShell))
         .build()
         .expect("an engine builds");
-    let shell_child = child("shell", "{ shell_command: \"touch ran-on-host\" }")
-        .replace("[ReadFile, WriteFile]", "[ExecuteShell]");
-    engine
-        .load_harness_from_str(&shell_child)
-        .expect("child loads");
+    let shell_child = child("shell").replace("[ReadFile, WriteFile]", "[ExecuteShell]");
     let parent = engine
-        .load_harness_from_str(&PARENT.replace("ReadFile, WriteFile", "ExecuteShell"))
-        .expect("parent loads");
+        .load_harness_from_str(&package(
+            &PARENT.replace("ReadFile, WriteFile", "ExecuteShell"),
+            &shell_child,
+        ))
+        .expect("the package loads");
 
     let mut run = parent.start(json!({})).expect("starts");
-    let outcome = tokio::time::timeout(Duration::from_secs(30), run.execute(RunOptions::new()))
+    let _ = tokio::time::timeout(Duration::from_secs(30), run.execute(RunOptions::new()))
         .await
         .expect("the run ends")
         .expect("an outcome");
 
-    let rendered = format!("{:?}", outcome.result);
+    let rendered = format!("{:?}", last_request.lock().unwrap());
     assert!(
         rendered.contains("ran in the host's confinement"),
         "the child's shell is the host's, not the built-in: {rendered}"

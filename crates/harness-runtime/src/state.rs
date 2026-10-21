@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The harness machine's fixed state hierarchy.
 //!
-//! Whatever a plan's size, a run lives in exactly one of these eleven states:
+//! Whatever a plan's size, a run lives in exactly one of these ten states:
 //! the current step id and every step result are data in the
 //! [`RUN_STATE_FACT`](crate::RUN_STATE_FACT) context fact, not machine states.
 //! The hierarchy is flat — every state sits directly under [`HarnessState::Root`]
@@ -18,7 +18,7 @@ pub enum HarnessState {
     /// The run exists but its entry step has not begun: waiting for the
     /// message that starts it.
     Ready,
-    /// Pure steps (assign/branch/retry/...) are being worked off. Entered
+    /// Pure steps (assign/branch/...) are being worked off. Entered
     /// after every side-effecting step completes; advances by re-entering
     /// itself with the harness's internal advance signal until the next
     /// side-effecting step or terminal is reached.
@@ -31,8 +31,6 @@ pub enum HarnessState {
     WaitingForVerifier,
     /// A delegated child run is in flight.
     WaitingForChild,
-    /// A parallel step's branches are running.
-    WaitingForJoin,
     /// The run reached a `return` step. Terminal: nothing moves it.
     Completed,
     /// The run reached a `fail` step or exhausted a bound. Terminal.
@@ -62,10 +60,10 @@ pub(super) fn superstate_of(state: HarnessState) -> HarnessState {
     }
 }
 
-/// The `Machine::all_states` of the harness hierarchy: all eleven, Root
+/// The `Machine::all_states` of the harness hierarchy: all ten, Root
 /// included (coverage tooling enumerates the whole set; snapshot restore
 /// separately refuses Root because other states live under it).
-pub(super) const ALL_STATES: [HarnessState; 11] = [
+pub(super) const ALL_STATES: [HarnessState; 10] = [
     HarnessState::Root,
     HarnessState::Ready,
     HarnessState::Advancing,
@@ -73,7 +71,6 @@ pub(super) const ALL_STATES: [HarnessState; 11] = [
     HarnessState::WaitingForTool,
     HarnessState::WaitingForVerifier,
     HarnessState::WaitingForChild,
-    HarnessState::WaitingForJoin,
     HarnessState::Completed,
     HarnessState::Failed,
     HarnessState::Cancelled,

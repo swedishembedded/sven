@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
-# A bug report goes to the bugs queue after exactly one model turn.
+# A bug earns a second model turn: the one-line summary for the bugs queue.
 input: { ticket: "The app crashes on start" }
 model:
   sequence:
     - text: '{"label": "bug"}'
       usage: { input: 20, output: 6 }
+    - text: "Crash on start"
+      usage: { input: 30, output: 4 }
 expect:
   status: completed
-  output: { queue: bugs, label: bug }
-  steps: { classify: 1, ask: 1 }
+  output: { label: bug, summary: "Crash on start" }
+  steps: { classify__work: 1, summarize__work: 1 }
   max_output_tokens: 100

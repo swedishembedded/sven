@@ -28,8 +28,8 @@ pub use disclosure::DisclosureFlags;
 pub use agent::AgentCommands;
 pub use decisions::{DecisionsCommands, DoctorCommands};
 pub use harness::{
-    ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, HelperCommands, LiveModelArgs,
-    PlanFormatArg, ToolsetArg,
+    ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, LiveModelArgs, PlanFormatArg,
+    ToolsetArg,
 };
 pub use index::IndexCommands;
 pub use questions::QuestionsCommands;
@@ -512,8 +512,6 @@ pub enum Commands {
     ///                     [--model SPEC --model-endpoint URL]
     ///   sven harness run DIR --input '{"k": "v"}' [--case FILE] [--json]
     ///   sven harness compare A B --cases DIR [--seed N]... --bootstrap-seed N
-    ///   sven harness bundle DOC --helper NAME=FILE.wasm [-o FILE]
-    ///   sven harness helper run FILE.wasm --input JSON [--fuel N] [--max-pages N]
     ///   sven harness schema (optional output PATH)
     ///   sven harness compile DIR [--format json|yaml] [-o FILE]
     ///   sven harness inspect DIR [--graph dot|mermaid]
@@ -528,8 +526,7 @@ pub enum Commands {
     /// it, 2 not a checkpoint. test: 0 passed or skipped, 1 a case failed, 2 usage or invalid
     /// harness/manifest. compare: 0 produced, 1 regression under
     /// --fail-on-regression, 2 invalid variant. replay: 0 matched, 1 trace
-    /// mismatch, 2 refused recording. bundle: 0 written, 2 refused. helper run:
-    /// 0 output printed, 1 the helper broke a bound or its contract, 2 usage.
+    /// mismatch, 2 refused recording.
     // Verbatim, so `--help` keeps the examples and exit codes apart.
     #[command(verbatim_doc_comment)]
     Harness {

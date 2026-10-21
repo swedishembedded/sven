@@ -4,7 +4,7 @@
 //! Offline test runner and comparer for sven harnesses.
 //!
 //! A harness directory holds a main document (`harness.yaml` or
-//! `bundle.yaml`), optional `children/` documents and `cases/` manifests.
+//! `bundle.yaml`), optional `cases/` manifests.
 //! A case names its input, a fixture model, fixture tools and what the run
 //! must do; [`run_case`] executes it on a fresh engine and judges it,
 //! [`run_suite`] does so for a directory, and [`compare`] runs two variants
@@ -49,8 +49,8 @@ pub use error::TestkitError;
 pub use expect::{includes, json_diff};
 pub use fixture_model::{ModelFixture, OptIn, SequenceItem, SequenceToolCall, SequenceUsage};
 pub use inspect::{
-    inspect, io_schema, main_plan, validate, ChildInfo, HelperInfo, InspectReport, StepInfo,
-    ValidateReport, ValidatedHarness,
+    inspect, io_schema, main_plan, validate, InspectReport, StepInfo, ValidateReport,
+    ValidatedHarness,
 };
 pub use paired::{
     compare_paired, CostComparison, CostTotals, Decision, PairedOptions, PairedReport, TaskPairing,

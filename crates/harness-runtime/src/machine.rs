@@ -17,16 +17,14 @@
 //! * A `UserMessage` **starts** the run (in [`HarnessState::Ready`]) and is
 //!   the universal **tick** afterwards: whenever nothing is in flight, a
 //!   message executes the step the walk points at. A pure chain (assign,
-//!   branch, retry bookkeeping) advances itself through the machine's
+//!   branch) advances itself through the machine's
 //!   internal advance signal — the kernel's executor bounces each
 //!   `EmitInternal` back as an internal event, the same round trip the
 //!   other machines use.
 //! * An impure primitive parks the run in its `Waiting*` state and emits
 //!   its effect as a transition action. The completion event stores the
 //!   result, follows the step's `then` edge, and leaves the run resting:
-//!   the next tick advances. A failed side effect loops the active retry
-//!   frame (straight back into the body's waiting state, next attempt's
-//!   call emitted at once) or fails the run.
+//!   the next tick advances. A failed side effect fails the run.
 //! * A terminal state absorbs everything.
 //!
 //! Swedish Embedded AB implements programmable, data-defined agent harnesses
@@ -73,11 +71,6 @@ pub struct HarnessMachine {
     pub(super) step_effect_cache: Option<Effect>,
     /// The outcome, once a terminal step executed.
     pub(super) outcome_cache: Option<Value>,
-    /// Compiled helper modules, keyed by the SHA-256 of their bytes. A
-    /// cache, not run state: everything in it is derived from the run's
-    /// helpers, so a restored machine rebuilds it on demand.
-    #[cfg(feature = "transform")]
-    pub(super) helper_modules: sven_harness_transform::cache::ModuleCache,
 }
 
 impl HarnessMachine {
@@ -90,8 +83,6 @@ impl HarnessMachine {
             run,
             step_effect_cache: None,
             outcome_cache: None,
-            #[cfg(feature = "transform")]
-            helper_modules: sven_harness_transform::cache::ModuleCache::bounded(64),
         }
     }
 
@@ -102,7 +93,7 @@ impl HarnessMachine {
     }
 
     /// The run data this machine was built with: the plan, the inputs, and
-    /// — for a bundle run — the helpers and the pinned bundle digest.
+    /// — for a bundle run — the pinned bundle digest.
     #[must_use]
     pub fn run(&self) -> &HarnessRunData {
         &self.run
@@ -143,17 +134,6 @@ impl HarnessMachine {
         HarnessRunState::load(ctx)
     }
 
-    /// `true` when `step` is a `delegate` that fails when its child does.
-    pub(super) fn propagates_child_failure(&self, step: &str) -> bool {
-        matches!(
-            self.plan().step(step).map(|s| &s.primitive),
-            Some(PlanPrimitive::Delegate {
-                propagate_failure: true,
-                ..
-            })
-        )
-    }
-
     /// `true` when `step` is a `gate` step.
     pub(super) fn is_gate_step(&self, step: &str) -> bool {
         matches!(
@@ -186,16 +166,9 @@ impl HarnessMachine {
             .or_else(|| serde_json::from_str(unfenced(text)?).ok())
     }
 
-    /// The deterministic call id of `step` (with the active retry frame's
-    /// attempt suffix, when the step is a retry body).
-    pub(super) fn call_id_for(&self, step: &PlanStep, state: &HarnessRunState) -> ToolCallId {
-        let label = match &state.retry {
-            Some(frame) if frame.body == step.id => {
-                format!("{}-{}", step.id, frame.attempt())
-            }
-            _ => step.id.clone(),
-        };
-        step_call_id(&self.plan().name, &label)
+    /// The deterministic call id of `step`.
+    pub(super) fn call_id_for(&self, step: &PlanStep) -> ToolCallId {
+        step_call_id(&self.plan().name, &step.id)
     }
 
     /// Builds a single-turn `CallLlm` request for `prompt`: no tools, no
@@ -246,7 +219,7 @@ impl HarnessMachine {
     /// Parks the run on `step`: records what is in flight so the
     /// completion events can be matched.
     pub(super) fn park(&mut self, state: &mut HarnessRunState, step: &PlanStep, waiting: Waiting) {
-        let call_id = matches!(waiting, Waiting::Tool).then(|| self.call_id_for(step, state));
+        let call_id = matches!(waiting, Waiting::Tool).then(|| self.call_id_for(step));
         state.awaiting = Some(waiting);
         state.inflight = Some(Inflight {
             step: step.id.clone(),
@@ -320,7 +293,6 @@ impl Machine for HarnessMachine {
             HarnessState::WaitingForTool => self.on_tool(event, ctx),
             HarnessState::WaitingForVerifier => self.on_verifier(event, ctx),
             HarnessState::WaitingForChild => self.on_child(event, ctx),
-            HarnessState::WaitingForJoin => self.on_join(event, ctx),
             HarnessState::Completed | HarnessState::Failed | HarnessState::Cancelled => {
                 Reaction::Ignored
             }
@@ -453,7 +425,7 @@ impl HarnessMachine {
                     );
                 }
                 if error.starts_with(sven_hsm::CONTEXT_EXHAUSTED) {
-                    return self.step_failed(&mut run, "context_exhausted", error, ctx);
+                    return self.fail_now(&mut run, "context_exhausted", error, ctx);
                 }
                 self.side_effect_failed(&mut run, error, ctx)
             }
@@ -561,74 +533,11 @@ impl HarnessMachine {
         }
     }
 
-    /// A parallel step's branches are in flight. Each child completion
-    /// fills its declared-order slot; a completion for a machine no
-    /// branch spawned settles nothing. The join settles only when every
-    /// branch is in, and the aggregate — the branch results in declared
-    /// order, whatever order they completed in — is stored under the
-    /// parallel step's value, where the join step's templates read it.
-    /// A failed emission (no spawner configured, a child refused to
-    /// start) takes the same retry/fail path as any other side effect.
-    fn on_join(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
-        if matches!(event, Event::UserCancelled) {
-            return self.cancel(ctx);
-        }
-        let mut run = self.run_state(ctx);
-        if run.awaiting != Some(Waiting::Join) {
-            return self.tick_when_idle(&mut run, event, ctx);
-        }
-        let Some(join) = run.join.clone() else {
-            return Reaction::Ignored;
-        };
-        match event {
-            Event::Internal(InternalEvent::SubmachineCompleted { machine, result }) => {
-                let Some(slot) = join.machines.iter().position(|(_, id)| id == machine) else {
-                    // A completion for a child nobody waits on (a stale
-                    // delivery, a sibling run's child) is ignored.
-                    return Reaction::Ignored;
-                };
-                if join.results[slot].is_some() {
-                    // A redelivery (an executor retry, a resumed run
-                    // receiving a completion it already consumed): the
-                    // settled slot is final.
-                    return Reaction::Ignored;
-                }
-                let mut join = join;
-                join.results[slot] = Some(result.clone());
-                run.trace.push(TraceRecord::ChildCompleted {
-                    step: join.step.clone(),
-                    child: machine.clone(),
-                    // An absent `ok` is a child that returned normally; the child
-                    // failure protocol is an explicit ok:false result.
-                    ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
-                });
-                if join.results.iter().any(Option::is_none) {
-                    run.join = Some(join);
-                    run.store(ctx);
-                    return Reaction::handled();
-                }
-                let aggregate = Value::Array(join.results.into_iter().flatten().collect());
-                let step = join.step;
-                run.trace.push(TraceRecord::Joined {
-                    step: step.clone(),
-                    results: aggregate.as_array().map(Vec::len).unwrap_or_default(),
-                });
-                run.join = None;
-                self.complete_step(&mut run, &step, aggregate, ctx)
-            }
-            Event::EffectFailed { error, .. } => self.side_effect_failed(&mut run, error, ctx),
-            // The tick rule: a run with I/O in flight does not advance
-            // its pure chain, and re-executing a parked step would
-            // fan out a second batch of children.
-            _ => Reaction::Ignored,
-        }
-    }
-
     /// A delegated child run is in flight. Its completion arrives
     /// correlated by the machine id the `InstantiateSubmachine` effect
     /// carried; a completion for some other machine settles nothing. A
-    /// failed effect (no spawner configured, the child run errored) takes
-    /// the same retry/fail path as any other side effect.
+    /// failed effect (no spawner configured, the child run errored) fails
+    /// the run like any other side effect.
     fn on_child(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
         if matches!(event, Event::UserCancelled) {
             return self.cancel(ctx);
@@ -660,10 +569,10 @@ impl HarnessMachine {
                 });
                 run.child = None;
                 let step = child.step;
-                if !reported_ok && self.propagates_child_failure(&step) {
-                    // A required child that failed fails this step (and so
-                    // its retry frame, if any): the result is kept for whoever
-                    // inspects the run, but the walk does not continue.
+                if !reported_ok {
+                    // A child that failed fails this step: the result
+                    // is kept for whoever inspects the run, but the walk does
+                    // not continue.
                     let message = result
                         .get("message")
                         .or_else(|| result.get("error"))
@@ -671,7 +580,7 @@ impl HarnessMachine {
                         .unwrap_or("the delegated child reported failure")
                         .to_string();
                     run.store_step_value(&step, result.clone(), None);
-                    return self.step_failed(&mut run, "child_failed", &message, ctx);
+                    return self.fail_now(&mut run, "child_failed", &message, ctx);
                 }
                 self.complete_step(&mut run, &step, result.clone(), ctx)
             }
@@ -700,14 +609,10 @@ pub(super) fn primitive_word(primitive: &PlanPrimitive) -> &'static str {
     match primitive {
         PlanPrimitive::Predict { .. } => "predict",
         PlanPrimitive::Agent { .. } => "agent",
-        PlanPrimitive::Tool { .. } => "tool",
         PlanPrimitive::Verify { .. } => "verify",
         PlanPrimitive::Assign { .. } => "assign",
         PlanPrimitive::Branch { .. } => "branch",
-        PlanPrimitive::Retry { .. } => "retry",
-        PlanPrimitive::Parallel { .. } => "parallel",
         PlanPrimitive::Delegate { .. } => "delegate",
-        PlanPrimitive::Transform { .. } => "transform",
         PlanPrimitive::Return { .. } => "return",
         PlanPrimitive::Fail { .. } => "fail",
         PlanPrimitive::Gate { .. } => "gate",
@@ -735,13 +640,9 @@ pub(super) fn then_of(primitive: &PlanPrimitive) -> String {
     match primitive {
         PlanPrimitive::Predict { then, .. }
         | PlanPrimitive::Agent { then, .. }
-        | PlanPrimitive::Tool { then, .. }
         | PlanPrimitive::Verify { then, .. }
         | PlanPrimitive::Assign { then, .. }
-        | PlanPrimitive::Retry { then, .. }
-        | PlanPrimitive::Delegate { then, .. }
-        | PlanPrimitive::Transform { then, .. }
-        | PlanPrimitive::Parallel { join: then, .. } => then.clone(),
+        | PlanPrimitive::Delegate { then, .. } => then.clone(),
         PlanPrimitive::Gate { then, .. } | PlanPrimitive::Iterate { then, .. } => then.clone(),
         PlanPrimitive::Branch { .. }
         | PlanPrimitive::Return { .. }
@@ -754,10 +655,8 @@ pub(super) fn store_as_of(primitive: &PlanPrimitive) -> Option<String> {
     match primitive {
         PlanPrimitive::Predict { store_as, .. }
         | PlanPrimitive::Agent { store_as, .. }
-        | PlanPrimitive::Tool { store_as, .. }
         | PlanPrimitive::Verify { store_as, .. }
-        | PlanPrimitive::Delegate { store_as, .. }
-        | PlanPrimitive::Transform { store_as, .. } => store_as.clone(),
+        | PlanPrimitive::Delegate { store_as, .. } => store_as.clone(),
         _ => None,
     }
 }

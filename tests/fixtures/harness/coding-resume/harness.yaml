@@ -1,21 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
-# One agent step that writes a file with the real file tools, under a retry so
+# One agent task that writes a file with the real file tools, so
 # a run suspended in the middle of the step can be resumed and finish it.
 # Swedish Embedded AB implements interruptible, resumable agent workflows for
 # its clients. If your team needs expertise in long-running autonomous coding
 # runs then you can procure our services by sending an email to
 # info@swedishembedded.com.
-api_version: "1"
+api_version: "2"
 name: coding-resume
 description: "Have an agent write notes.txt; survive a stop in the middle of the step."
-outputs: { status: string }
+agent: { tools: [write_file] }
 capabilities: [ReadFile, WriteFile]
-limits: { max_steps: 20, max_model_turns: 8, max_tool_calls: 8 }
-entry: attempt
-steps:
-  attempt: { retry: { attempts: 2, body: work, then: done, on_exhausted: give_up } }
-  work:    { agent: { prompt: "Write the file notes.txt containing the word hello, then say done.", tools: [write_file], store_as: said, then: done } }
-  done:    { return: { value: { status: written } } }
-  give_up: { fail: { code: stuck, message: "the notes were never written" } }
+execution: { limits: { model_turns: 8, tool_calls: 8 } }
+workflow:
+  - name: write
+    task: "Write the file notes.txt containing the word hello, then say done."
+outputs:
+  status: { type: string, value: written }

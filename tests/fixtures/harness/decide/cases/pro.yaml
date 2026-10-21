@@ -5,4 +5,4 @@ input: { plan: pro }
 expect:
   status: completed
   output: { tier: paid }
-  steps: { check: 1, grant: 1, reject: 0 }
+  steps: { check__v0_eligible_a0: 1, check__v0_eligible_a0_fail: 0 }

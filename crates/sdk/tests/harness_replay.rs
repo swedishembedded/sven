@@ -50,113 +50,74 @@ fn engine_without_a_model() -> Engine {
 }
 
 const GREET: &str = r#"
-api_version: "1"
+api_version: "2"
 name: greet
-entry: ask
 inputs:
   topic: string
-limits: { max_steps: 20 }
-steps:
-  ask:
-    predict:
-      prompt: "Name one word about {{ inputs.topic }}."
-      store_as: word
-      then: done
-  done:
-    return:
-      value:
-        topic: "{{ inputs.topic }}"
-        word: "{{ facts.word }}"
+execution: { limits: { model_turns: 4 } }
+workflow:
+  - name: ask
+    model_only: true
+    task: "Name one word about {{ inputs.topic }}."
+outputs:
+  topic: { type: string, value: "{{ inputs.topic }}" }
+  word: { type: string, value: "{{ tasks.ask.output }}" }
 "#;
 
 /// The same name with another prompt: a different program.
 const GREET_EDITED: &str = r#"
-api_version: "1"
+api_version: "2"
 name: greet
-entry: ask
 inputs:
   topic: string
-limits: { max_steps: 20 }
-steps:
-  ask:
-    predict:
-      prompt: "Name two words about {{ inputs.topic }}."
-      store_as: word
-      then: done
-  done:
-    return:
-      value:
-        topic: "{{ inputs.topic }}"
-        word: "{{ facts.word }}"
+execution: { limits: { model_turns: 4 } }
+workflow:
+  - name: ask
+    model_only: true
+    task: "Name two words about {{ inputs.topic }}."
+outputs:
+  topic: { type: string, value: "{{ inputs.topic }}" }
+  word: { type: string, value: "{{ tasks.ask.output }}" }
 "#;
 
-/// A retried model step: the first answer breaks the schema.
-const CLASSIFY: &str = r#"
-api_version: "1"
-name: classify
-entry: classify
+/// The same question put to an agent, whose conversation is the run's own.
+const AGENT_GREET: &str = r#"
+api_version: "2"
+name: agent-greet
 inputs:
-  ticket: string
-schemas:
-  route: { type: object, required: [label], properties: { label: { type: string } } }
-limits: { max_steps: 20, max_model_turns: 3 }
-steps:
-  classify:
-    retry: { attempts: 2, body: ask, then: done, on_exhausted: unroutable }
-  ask:
-    predict:
-      prompt: "Classify: {{ inputs.ticket }}"
-      schema: route
-      store_as: route
-      then: done
-  done:
-    return: { value: "{{ facts.route.label }}" }
-  unroutable:
-    fail: { code: unroutable, message: "no valid route" }
+  topic: string
+execution: { limits: { model_turns: 4 } }
+workflow:
+  - name: ask
+    task: "Name one word about {{ inputs.topic }}."
 "#;
 
 const GATED: &str = r#"
-api_version: "1"
+api_version: "2"
 name: gated
-entry: attempt
-capabilities: [NetworkAccess]
-limits: { max_steps: 50 }
-steps:
-  attempt:
-    retry:
-      attempts: 2
-      body: call
-      then: done
-      on_exhausted: give_up
-  call:
-    tool:
-      name: gate
-      store_as: answer
-      then: done
-  done:
-    return:
-      value: "{{ facts.answer }}"
-  give_up:
-    fail:
-      code: gate_stuck
-      message: "the gate never opened"
+execution: { limits: { model_turns: 4 } }
+gates:
+  open: { command: [open-the-gate], timeout: 30 }
+workflow:
+  - name: wait
+    verify: [open]
+outputs:
+  answer: { type: string, value: "{{ gates.open.stdout }}" }
 "#;
 
 const WRITES: &str = r#"
-api_version: "1"
+api_version: "2"
 name: writes
-entry: save
-capabilities: [WriteFile]
-limits: { max_steps: 20 }
-steps:
-  save:
-    tool: { name: write_notes, store_as: saved, then: done }
-  done:
-    return: { value: "{{ steps.save.value }}" }
+agent: { profile: coding, tools: [write_notes] }
+execution: { limits: { model_turns: 4, tool_calls: 2 } }
+workflow:
+  - name: save
+    task: Save the notes.
 "#;
 
-/// The `gate` tool: its first call blocks until `release` is opened (and
-/// announces itself on `started`), every later call answers at once.
+/// The gate tool a workflow's gates call, scripted: its first call blocks
+/// until `release` is opened (and announces itself on `started`), every later
+/// call answers at once.
 struct Gate {
     started: Mutex<Option<oneshot::Sender<()>>>,
     release: Arc<tokio::sync::Notify>,
@@ -166,10 +127,10 @@ struct Gate {
 #[async_trait::async_trait]
 impl Tool for Gate {
     fn name(&self) -> &str {
-        "gate"
+        "shell_gate"
     }
     fn kernel_capability(&self) -> ToolCapability {
-        ToolCapability::NetworkAccess
+        ToolCapability::ExecuteShell
     }
     fn description(&self) -> &str {
         "answers once it is opened"
@@ -187,7 +148,12 @@ impl Tool for Gate {
             }
             self.release.notified().await;
         }
-        ToolOutput::ok(&call.id, r#"{"pass": true}"#)
+        ToolOutput::ok(
+            &call.id,
+            json!({ "exit_code": 0, "timed_out": false, "error": null,
+                    "stdout": "{\"pass\": true}", "stderr": "" })
+            .to_string(),
+        )
     }
 }
 
@@ -361,8 +327,8 @@ async fn a_resumed_runs_recording_replays_from_its_start_checkpoint() {
         replay
             .trace
             .iter()
-            .any(|r| matches!(r, sven_sdk::TraceRecord::RetryAttempt { .. })),
-        "the interrupted call went through its retry: {:?}",
+            .any(|r| matches!(r, sven_sdk::TraceRecord::GateEvaluated { passed: true, .. })),
+        "the interrupted gate ran again and passed: {:?}",
         replay.trace
     );
 }
@@ -396,29 +362,19 @@ async fn a_checkpoint_survives_json_and_resumes() {
         .execute(RunOptions::new())
         .await
         .expect("ends");
-    assert!(matches!(&outcome.result, Some(Ok(v)) if v == &json!("{\"pass\": true}")));
+    assert!(matches!(&outcome.result, Some(Ok(v)) if v == &json!({"answer": "{\"pass\": true}"})));
 }
 
 #[tokio::test]
 async fn step_counts_follow_the_trace() {
-    let harness = engine_with(vec![says("not json"), says(r#"{"label": "bug"}"#)])
-        .load_harness_from_str(CLASSIFY)
+    let harness = engine_with(vec![says("resilience")])
+        .load_harness_from_str(GREET)
         .expect("loads");
-    let (outcome, recording) = recorded(&harness, json!({"ticket": "crash"})).await;
-    assert!(
-        matches!(&outcome.result, Some(Ok(v)) if v == &json!("bug")),
-        "{:?}",
-        outcome.result
-    );
+    let (outcome, recording) = recorded(&harness, json!({"topic": "reliability"})).await;
 
     let counts = outcome.step_counts();
-    assert_eq!(
-        counts.get("ask"),
-        Some(&2),
-        "the retried body ran twice: {counts:?}"
-    );
-    assert_eq!(counts.get("done"), Some(&1), "{counts:?}");
-    assert_eq!(counts.get("unroutable"), None, "{counts:?}");
+    assert_eq!(counts.get("ask__work"), Some(&1), "{counts:?}");
+    assert_eq!(counts.get("complete"), Some(&1), "{counts:?}");
 
     let replay = harness.replay(&recording).expect("replays");
     assert_eq!(
@@ -431,7 +387,7 @@ async fn step_counts_follow_the_trace() {
 #[tokio::test]
 async fn a_run_exports_its_conversation_as_a_trajectory() {
     let harness = engine_with(vec![says("resilience")])
-        .load_harness_from_str(GREET)
+        .load_harness_from_str(AGENT_GREET)
         .expect("loads");
     let mut run = harness
         .start(json!({"topic": "reliability"}))
@@ -442,12 +398,13 @@ async fn a_run_exports_its_conversation_as_a_trajectory() {
     let trajectory = run
         .trajectory()
         .expect("an executed run exports a trajectory");
-    let text = serde_json::to_string(&trajectory.steps).expect("steps serialize");
+    // The conversation of a workflow travels with the trajectory, under its own name.
+    let text = serde_json::to_string(&trajectory).expect("the trajectory serializes");
     assert!(text.contains("Name one word about reliability"), "{text}");
     assert!(text.contains("resilience"), "{text}");
 
     let harness_extra = &trajectory.extra.as_ref().expect("extra")["harness"];
-    assert_eq!(harness_extra["name"], json!("greet"));
+    assert_eq!(harness_extra["name"], json!("agent-greet"));
     assert_eq!(harness_extra["plan_digest"], json!(harness.digest()));
     assert_eq!(harness_extra["run_id"], json!(run.run_id()));
     assert_eq!(
@@ -486,7 +443,12 @@ async fn a_recording_captures_the_human_approval_events() {
         }
     }
     let engine = Engine::builder()
-        .model_provider(Arc::new(FailingMockProvider::new("no model")) as Arc<_>)
+        .model_provider(Arc::new(ScriptedMockProvider::tool_then_text(
+            "w1",
+            "write_notes",
+            "{}",
+            "saved",
+        )) as Arc<_>)
         .approvals(ApprovalPolicy::Manual)
         .human_gates(|gate| match gate {
             HumanGate::Approval { reply_tx, .. } => {

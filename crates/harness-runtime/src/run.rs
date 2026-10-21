@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sven_harness_spec::{Expr, HarnessBundle, HarnessPlan, Helper, Path, Template};
+use sven_harness_spec::{Expr, HarnessBundle, HarnessPlan, Path, Template};
 use sven_hsm::{Context, MachineId, ToolCallId};
 
 use crate::approval::HeldGate;
@@ -60,10 +60,7 @@ pub fn child_machine_id(plan: &str, step: &str, branch: Option<&str>, ordinal: u
 ///
 /// Deterministic per (harness, label): event-sourced replay and checkpoint
 /// restore reproduce the same id, so a recorded `ToolSucceeded` still
-/// correlates after a resume. A plain step's label is its step id; an attempt
-/// of a retry body appends `-<n>` (`probe-1`, `probe-2`, ... — 1-based, the
-/// first attempt included), which is what makes each attempt its own
-/// correlatable call.
+/// correlates after a resume. A step's label is its step id.
 #[must_use]
 pub fn step_call_id(harness: &str, label: &str) -> ToolCallId {
     let name = format!("harness/{harness}/{label}");
@@ -80,12 +77,9 @@ pub fn step_call_id(harness: &str, label: &str) -> ToolCallId {
 pub struct HarnessRunData {
     plan: HarnessPlan,
     inputs: Value,
-    /// The bundle's helpers, by name. A run built from a bare document has
-    /// none; its `transform` steps fail with `helper_missing` when reached.
-    helpers: BTreeMap<String, Helper>,
     /// The bundle's digest, when the run was built from one: a checkpoint
     /// pins it, and a resume that offers a different bundle is refused —
-    /// a changed helper is a changed program.
+    /// a changed import is a changed program.
     bundle_digest: Option<String>,
     /// Where this run sits in a delegation chain (a top-level run is 1).
     delegate_depth: u64,
@@ -107,7 +101,6 @@ impl HarnessRunData {
         Ok(Self {
             plan: sven_harness_spec::compile_str(yaml)?,
             inputs,
-            helpers: BTreeMap::new(),
             bundle_digest: None,
             delegate_depth: 1,
             ceiling: crate::budget::Ceiling::default(),
@@ -134,7 +127,6 @@ impl HarnessRunData {
         Self {
             plan,
             inputs,
-            helpers: BTreeMap::new(),
             bundle_digest: None,
             delegate_depth: 1,
             ceiling: crate::budget::Ceiling::default(),
@@ -142,34 +134,23 @@ impl HarnessRunData {
         }
     }
 
-    /// Builds a run from a bundle: the document is compiled against the
-    /// helper set (a `transform` step naming a helper the bundle does not
-    /// carry, or a helper no step references, is refused here, offline),
-    /// and the helpers travel with the run.
+    /// Builds a run from a bundle: the package's main document compiled with
+    /// its imports, pinned to the bundle's digest.
     ///
     /// # Errors
     ///
     /// Every parse, validation and compile failure of the harness language,
-    /// plus the bundle's own used↔declared helper checks.
+    /// plus the package's own import checks.
     pub fn from_bundle(bundle: &HarnessBundle, inputs: Value) -> Result<Self, HarnessRunError> {
         let compiled = bundle.compile()?;
         Ok(Self {
             plan: compiled.plan,
             inputs,
-            helpers: bundle.helpers.clone(),
             bundle_digest: Some(compiled.digest),
             delegate_depth: 1,
             ceiling: crate::budget::Ceiling::default(),
             host: crate::host_values::RunValues::default(),
         })
-    }
-
-    /// Attaches helpers to a run built from parts — how a child spawner
-    /// hands a registered harness's helpers to its child.
-    #[must_use]
-    pub fn with_helpers(mut self, helpers: BTreeMap<String, Helper>) -> Self {
-        self.helpers = helpers;
-        self
     }
 
     /// Starts the run at `depth` of its delegation chain: how a child
@@ -202,12 +183,6 @@ impl HarnessRunData {
         self.delegate_depth
     }
 
-    /// The helper named `name`, if the run carries one.
-    #[must_use]
-    pub fn helper(&self, name: &str) -> Option<&Helper> {
-        self.helpers.get(name)
-    }
-
     /// The bundle this run was built from, as its digest; `None` for a run
     /// built from a bare document.
     #[must_use]
@@ -221,20 +196,6 @@ impl HarnessRunData {
     pub fn pinned_to_bundle(mut self, digest: String) -> Self {
         self.bundle_digest = Some(digest);
         self
-    }
-
-    /// Re-enters this run's plan at `step`: how a parallel fan-out starts
-    /// a child at its branch.
-    ///
-    /// # Errors
-    ///
-    /// `step` is not one of the plan's steps.
-    pub fn with_entry(mut self, step: &str) -> Result<Self, HarnessRunError> {
-        if !self.plan.steps.contains_key(step) {
-            return Err(HarnessRunError::UnknownEntry(step.to_string()));
-        }
-        self.plan.entry = step.to_string();
-        Ok(self)
     }
 }
 
@@ -260,60 +221,20 @@ pub enum Waiting {
     Verifier,
     /// A delegated child run.
     Child,
-    /// A parallel step's branches.
-    Join,
 }
 
 pub use crate::agent_loop::AgentLoop;
 
-/// The active retry frame: which retry step is in play, its body, and how
-/// many attempts are left. One frame at a time — a run's control flow is a
-/// linear walk, so at most one retry can be in play; entering a different
-/// retry step replaces the frame.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RetryFrame {
-    /// The retry step's id.
-    pub step: String,
-    /// The body step's id.
-    pub body: String,
-    /// Total attempts the step declared.
-    pub attempts: u64,
-    /// Attempts left (starts at `attempts`, decremented on every loop-back).
-    pub left: u64,
-}
-
 /// The delegated child run currently in flight: the machine id the
 /// `InstantiateSubmachine` effect carried (the correlation key for its
 /// `SubmachineCompleted`) and the delegate step it belongs to. One child at
-/// a time — the walk is linear, and `parallel` joins keep their own record.
+/// a time — the walk is linear.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChildRun {
     /// The child's machine instance id, as the effect emitted it.
     pub machine: String,
     /// The delegate step that started it.
     pub step: String,
-}
-
-/// A parallel step's open fan-out: one child per branch (in declared
-/// order) and the results collected so far. The join settles only when
-/// every slot is filled, and the aggregate is always the declared order —
-/// whatever order the children complete in.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ParallelJoin {
-    /// The parallel step whose fan-out is in flight.
-    pub step: String,
-    /// (branch step id, machine uuid) per branch, in declared order.
-    pub machines: Vec<(String, String)>,
-    /// Each branch's result; `None` until the matching child completes.
-    pub results: Vec<Option<Value>>,
-}
-
-impl RetryFrame {
-    /// The 1-based number of the attempt now running.
-    #[must_use]
-    pub fn attempt(&self) -> u64 {
-        self.attempts - self.left + 1
-    }
 }
 
 /// The side effect currently in flight, matched against completion events.
@@ -334,7 +255,7 @@ pub struct Counts {
     pub model_turns: u64,
     /// Tool calls emitted.
     pub tool_calls: u64,
-    /// Child runs spawned (delegation and fan-out branches).
+    /// Child runs spawned.
     #[serde(default)]
     pub children: u64,
 }
@@ -348,15 +269,12 @@ pub struct Counts {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TraceRecord {
-    /// A step began executing; the attempt it is on, 1-based (the body of
-    /// a `retry` re-enters for a second attempt, everything else is 1).
+    /// A step began executing.
     StepStarted {
         /// The step that began.
         step: String,
-        /// The step's primitive, in words (`predict`, `tool`, ...).
+        /// The step's primitive, in words (`predict`, `gate`, ...).
         primitive: String,
-        /// The attempt this execution is, 1-based.
-        attempt: u64,
     },
     /// A step's result was stored; the id of the tool call that produced
     /// it, when the step called a tool.
@@ -480,16 +398,6 @@ pub enum TraceRecord {
         #[serde(skip_serializing_if = "Option::is_none")]
         exit_code: Option<i64>,
     },
-    /// A retry frame looped back; the attempt it is about to make.
-    RetryAttempt {
-        /// The body step re-entered.
-        step: String,
-        /// The 1-based attempt about to run.
-        attempt: u64,
-        /// Attempts left after this one.
-        #[serde(default)]
-        remaining: u64,
-    },
     /// A delegate step started a child run.
     ChildStarted {
         /// The delegate step that started it.
@@ -497,7 +405,7 @@ pub enum TraceRecord {
         /// The child's machine id.
         child: String,
     },
-    /// A child run of a delegate or parallel step completed.
+    /// A child run of a delegate step completed.
     ChildCompleted {
         /// The parent step whose child completed.
         step: String,
@@ -505,20 +413,6 @@ pub enum TraceRecord {
         child: String,
         /// Whether the child reported success.
         ok: bool,
-    },
-    /// A parallel step fanned out, in declared order.
-    FanOut {
-        /// The parallel step.
-        step: String,
-        /// The branch steps, in declared order.
-        branches: Vec<String>,
-    },
-    /// A parallel step's join settled.
-    Joined {
-        /// The parallel step.
-        step: String,
-        /// How many results the join settled.
-        results: usize,
     },
     /// The run failed.
     Failed {
@@ -558,8 +452,6 @@ pub struct HarnessRunState {
     pub inflight: Option<Inflight>,
     /// The active agent loop, when an agent step's loop is running.
     pub agent: Option<AgentLoop>,
-    /// The active retry frame, when a retry step is in play.
-    pub retry: Option<RetryFrame>,
     /// Set when a resume interrupted work in flight: the next item boundary of
     /// a `reconcile: refresh` loop reads its collection again.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -569,8 +461,6 @@ pub struct HarnessRunState {
     pub iterations: BTreeMap<String, crate::iteration::IterationState>,
     /// The delegated child in flight, when a delegate step is waiting.
     pub child: Option<ChildRun>,
-    /// The parallel step's open fan-out, while the join waits.
-    pub join: Option<ParallelJoin>,
     /// This run's delegation depth (a top-level run is at 1; a delegated
     /// child starts at its parent's depth + 1).
     pub delegate_depth: u64,
@@ -593,7 +483,7 @@ pub struct HarnessRunState {
     /// the version a run was checkpointed under.
     pub plan_digest: Option<String>,
     /// The bundle's content digest, when the run was built from one. A
-    /// checkpoint pins it alongside the plan digest: a helper's bytes are
+    /// checkpoint pins it alongside the plan digest: an imported workflow is
     /// part of the program's meaning, so a resume that offers a different
     /// bundle is refused even when the plan itself is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]

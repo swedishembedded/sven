@@ -20,21 +20,11 @@ pub use crate::iterate::{
     ForEachSpec, IterateSource, IterateStepSpec, JsonSource, Reconcile, UntilSpec,
 };
 
-/// The only harness `api_version` this compiler accepts. Bumping it is a
-/// breaking change to the language, handled the way `sven_vocab::verify`
-/// handles forward compatibility: explicit, documented, and never silently
-/// reinterpreted.
-pub const SUPPORTED_API_VERSION: &str = "1";
-
-/// The `api_version` of the declarative workflow language (ADR 0005). A
-/// document of this version is authored as tasks and gates (`v2`), lowered
-/// into a [`HarnessSpec`] of this version, and compiled like any other.
-pub const WORKFLOW_API_VERSION: &str = "2";
-
-/// The primitive keys only a version 2 document may use, in documentation
-/// order. They are produced by the workflow lowering; a version 1 document
-/// that names one is rejected with a message saying so.
-pub const WORKFLOW_PRIMITIVES: [&str; 2] = ["gate", "iterate"];
+/// The only harness `api_version` this compiler accepts: the declarative
+/// workflow language (ADR 0005). Bumping it is a breaking change to the
+/// language, explicit, documented and never silently reinterpreted. (Version 1,
+/// the step-map language, was removed; ADR 0006.)
+pub const API_VERSION: &str = "2";
 
 pub use crate::names::{
     DIGEST_TOOL, GATE_TOOL, ITEM_FAILED_FACT, MAX_COVERS, RESERVED_TOOLS, SNAPSHOT_TOOL,
@@ -54,25 +44,6 @@ pub const MAX_GATE_TIMEOUT_SECS: u64 = 3600;
 
 /// How long a command gate may run when its definition gives no timeout.
 pub const DEFAULT_GATE_TIMEOUT_SECS: u64 = 600;
-
-/// The primitive keys a step may be written under: the closed set of the
-/// language, in the order the specification documents them. The JSON Schema
-/// (`schema/harness-document.schema.json`) must name exactly these; a test
-/// holds the two together.
-pub const PRIMITIVES: [&str; 12] = [
-    "predict",
-    "agent",
-    "tool",
-    "verify",
-    "assign",
-    "branch",
-    "retry",
-    "parallel",
-    "delegate",
-    "transform",
-    "return",
-    "fail",
-];
 
 /// A step identifier: the map key of a step. Unique by construction (map
 /// keys), non-empty, and referenced by name from other steps.
@@ -299,24 +270,12 @@ pub struct LimitsSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tool_calls: Option<u64>,
     /// Names a run input holding the tool-call limit, which then replaces
-    /// `max_tool_calls` for the run. Version 2 only.
+    /// `max_tool_calls` for the run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tool_calls_input: Option<String>,
     /// The deepest delegation chain (parent harness = 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_delegate_depth: Option<u64>,
-    /// The most concurrent branches one `parallel` step may start.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_parallel: Option<u64>,
-    /// The most interpreter ticks one helper invocation may spend
-    /// (one per executed instruction). Unset means the runtime's default
-    /// budget applies.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_helper_fuel: Option<u64>,
-    /// The most linear memory one helper instance may hold, in 64 KiB
-    /// pages. Unset means the runtime's default budget applies.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_helper_pages: Option<u32>,
 }
 
 /// One step of a harness: exactly one primitive.
@@ -336,30 +295,22 @@ pub enum StepSpec {
     /// A model turn with a tool loop: the model may call tools until it
     /// answers.
     Agent(Box<AgentStepSpec>),
-    /// One tool call.
-    Tool(Box<ToolStepSpec>),
     /// One declarative verification of run artifacts.
     Verify(Box<VerifyStepSpec>),
     /// Store a value into run facts, then move on.
     Assign(Box<AssignStepSpec>),
     /// Choose between two successors on a condition.
     Branch(Box<BranchStepSpec>),
-    /// Run a body step with a bounded attempt count.
-    Retry(Box<RetryStepSpec>),
-    /// Run several child steps concurrently and join.
-    Parallel(Box<ParallelStepSpec>),
-    /// Start a child run: another harness or a registered machine.
+    /// Start a child run: another harness of the package.
     Delegate(Box<DelegateStepSpec>),
-    /// Run a sandboxed transform over a value.
-    Transform(Box<TransformStepSpec>),
     /// Finish the harness successfully with a value.
     Return(Box<ReturnStepSpec>),
     /// Finish the harness with an explicit failure.
     Fail(Box<FailStepSpec>),
-    /// Run a command and let its exit status decide. Version 2 only.
+    /// Run a command and let its exit status decide.
     Gate(Box<GateStepSpec>),
     /// Repeat a body over a frozen collection, or until a condition holds,
-    /// within a bound. Version 2 only.
+    /// within a bound.
     Iterate(Box<IterateStepSpec>),
 }
 
@@ -379,22 +330,22 @@ pub struct PredictStepSpec {
     pub store_as: Option<String>,
     /// The conversation the turn is in (a template, resolved when the step
     /// starts): its own thread, named by this, instead of the run's shared
-    /// one. Version 2 only.
+    /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation: Option<String>,
     /// The system message the conversation starts with (a template), when
-    /// this turn starts it. Version 2 only.
+    /// this turn starts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
-    /// Decoding settings for the turn. Version 2 only.
+    /// Decoding settings for the turn.
     #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
     pub decoding: StepDecoding,
     /// The model role that answers the step's turns (a name the host maps
-    /// to a provider). Version 2 only.
+    /// to a provider).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     /// What the prompt is, for the record: `task`, `follow_up`, `repair` or
-    /// `correction`. Version 2 only.
+    /// `correction`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
     /// The next step.
@@ -418,60 +369,44 @@ pub struct AgentStepSpec {
     pub store_as: Option<String>,
     /// The conversation the step's turns are in (a template, resolved when
     /// the step starts): its own thread, named by this, instead of the run's
-    /// shared one. Version 2 only.
+    /// shared one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation: Option<String>,
-    /// The variables the step's agent may read or set. Version 2 only.
+    /// The variables the step's agent may read or set.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub vars: std::collections::BTreeMap<String, crate::vars::VarAccess>,
     /// The system message the step's conversation starts with (a template),
-    /// when this step starts it. Version 2 only.
+    /// when this step starts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
-    /// Decoding settings for the step's turns. Version 2 only.
+    /// Decoding settings for the step's turns.
     #[serde(default, skip_serializing_if = "StepDecoding::is_empty")]
     pub decoding: StepDecoding,
     /// The model role that answers the step's turns (a name the host maps
-    /// to a provider). Version 2 only.
+    /// to a provider).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     /// What the prompt is, for the record: `task`, `follow_up`, `repair` or
-    /// `correction`. Version 2 only.
+    /// `correction`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
     /// Where to record how the step's loop ended (`concluded`,
-    /// `stopped_without_conclusion`, `output_truncated`, `tool_cap`, `repetition`). Version 2 only.
+    /// `stopped_without_conclusion`, `output_truncated`, `tool_cap`, `repetition`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_as: Option<String>,
-    /// The fact holding the tool calls the step may still make. Version 2 only.
+    /// The fact holding the tool calls the step may still make.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pool: Option<String>,
     /// Sets the pool to this (a template resolving to a whole number) when
     /// the step starts; without it the step draws on what the pool still
     /// holds. A call beyond the pool is refused and ends the loop with the
-    /// stop `tool_cap`. Version 2 only.
+    /// stop `tool_cap`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowance: Option<String>,
     /// Ends the loop with the stop `repetition` when the same call has been
-    /// answered the same way this many times. Version 2 only.
+    /// answered the same way this many times.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_repeated_results: Option<u32>,
-    /// The next step.
-    pub then: String,
-}
-
-/// `tool`: one tool call.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ToolStepSpec {
-    /// The tool's registered name.
-    pub name: String,
-    /// The call's arguments. Values may be templates over run data.
-    #[serde(default)]
-    pub args: serde_json::Value,
-    /// Where to store the tool's result value.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub store_as: Option<String>,
     /// The next step.
     pub then: String,
 }
@@ -516,79 +451,16 @@ pub struct BranchStepSpec {
     pub when_false: String,
 }
 
-/// `retry`: run a body with bounded attempts.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RetryStepSpec {
-    /// The most attempts (>= 1). This is what makes the cycle bounded.
-    pub attempts: u64,
-    /// The step to (re)run.
-    pub body: String,
-    /// The step to go to after the body succeeds.
-    pub then: String,
-    /// The step to go to when every attempt is spent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub on_exhausted: Option<String>,
-}
-
-/// `parallel`: run children concurrently and join.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ParallelStepSpec {
-    /// The steps to run concurrently. Each is entered once; the step waits
-    /// at a join until every branch reaches a terminal or rejoins.
-    pub branches: Vec<String>,
-    /// The step to go to once every branch has finished.
-    pub join: String,
-}
-
 /// `delegate`: start a child run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DelegateStepSpec {
-    /// What to run: a harness name in the same bundle, or a registered
-    /// machine mode.
+    /// The harness to run: its name in the same package.
     pub target: String,
-    /// Whether `target` names a harness in the bundle or a machine mode.
-    /// Defaults to `harness`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub as_kind: Option<DelegateTarget>,
     /// The child's input value (templates allowed).
     #[serde(default)]
     pub input: serde_json::Value,
     /// Where to store the child's result value.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub store_as: Option<String>,
-    /// Fail this step when the child reports `ok: false`, instead of
-    /// storing the result and continuing. Version 2 only (a version 1
-    /// delegate keeps its documented behavior).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub propagate_failure: bool,
-    /// The next step.
-    pub then: String,
-}
-
-/// What a `delegate` target names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum DelegateTarget {
-    /// Another harness in the same bundle.
-    #[default]
-    Harness,
-    /// A registered native machine mode.
-    Machine,
-}
-
-/// `transform`: run a sandboxed helper over a value.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TransformStepSpec {
-    /// The transform helper's name in the bundle.
-    pub helper: String,
-    /// The value to transform. A template or literal.
-    #[serde(default)]
-    pub input: serde_json::Value,
-    /// Where to store the transformed value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_as: Option<String>,
     /// The next step.
@@ -617,7 +489,7 @@ pub struct FailStepSpec {
     pub message: Option<String>,
 }
 
-/// `gate`: run a command; its exit status decides. Version 2 only.
+/// `gate`: run a command; its exit status decides.
 ///
 /// The command is trusted workflow configuration: it is part of the compiled
 /// plan and the agent cannot redefine it. It runs without a shell. The
@@ -679,14 +551,10 @@ impl StepSpec {
         match self {
             Self::Predict(_) => "predict",
             Self::Agent(_) => "agent",
-            Self::Tool(_) => "tool",
             Self::Verify(_) => "verify",
             Self::Assign(_) => "assign",
             Self::Branch(_) => "branch",
-            Self::Retry(_) => "retry",
-            Self::Parallel(_) => "parallel",
             Self::Delegate(_) => "delegate",
-            Self::Transform(_) => "transform",
             Self::Return(_) => "return",
             Self::Fail(_) => "fail",
             Self::Gate(_) => "gate",
@@ -721,9 +589,6 @@ impl TryFrom<serde_json::Value> for StepSpec {
             "agent" => serde_json::from_str(&text)
                 .map(|a| Self::Agent(Box::new(a)))
                 .map_err(|e| format!("bad `agent` step: {e}")),
-            "tool" => serde_json::from_str(&text)
-                .map(|t| Self::Tool(Box::new(t)))
-                .map_err(|e| format!("bad `tool` step: {e}")),
             "verify" => serde_json::from_str(&text)
                 .map(|v| Self::Verify(Box::new(v)))
                 .map_err(|e| format!("bad `verify` step: {e}")),
@@ -733,18 +598,9 @@ impl TryFrom<serde_json::Value> for StepSpec {
             "branch" => serde_json::from_str(&text)
                 .map(|b| Self::Branch(Box::new(b)))
                 .map_err(|e| format!("bad `branch` step: {e}")),
-            "retry" => serde_json::from_str(&text)
-                .map(|r| Self::Retry(Box::new(r)))
-                .map_err(|e| format!("bad `retry` step: {e}")),
-            "parallel" => serde_json::from_str(&text)
-                .map(|p| Self::Parallel(Box::new(p)))
-                .map_err(|e| format!("bad `parallel` step: {e}")),
             "delegate" => serde_json::from_str(&text)
                 .map(|d| Self::Delegate(Box::new(d)))
                 .map_err(|e| format!("bad `delegate` step: {e}")),
-            "transform" => serde_json::from_str(&text)
-                .map(|t| Self::Transform(Box::new(t)))
-                .map_err(|e| format!("bad `transform` step: {e}")),
             "return" => serde_json::from_str(&text)
                 .map(|r| Self::Return(Box::new(r)))
                 .map_err(|e| format!("bad `return` step: {e}")),
@@ -757,11 +613,7 @@ impl TryFrom<serde_json::Value> for StepSpec {
             "iterate" => serde_json::from_str(&text)
                 .map(|i| Self::Iterate(Box::new(i)))
                 .map_err(|e| format!("bad `iterate` step: {e}")),
-            other => Err(format!(
-                "unknown step primitive `{other}` (known: {}; api_version 2 adds {})",
-                PRIMITIVES.join(", "),
-                WORKFLOW_PRIMITIVES.join(", ")
-            )),
+            other => Err(format!("unknown step primitive `{other}`")),
         }
     }
 }
@@ -771,14 +623,10 @@ impl From<StepSpec> for serde_json::Value {
         let (key, body): (&'static str, serde_json::Value) = match &step {
             StepSpec::Predict(p) => ("predict", serde_json::to_value(p).unwrap_or_default()),
             StepSpec::Agent(a) => ("agent", serde_json::to_value(a).unwrap_or_default()),
-            StepSpec::Tool(t) => ("tool", serde_json::to_value(t).unwrap_or_default()),
             StepSpec::Verify(v) => ("verify", serde_json::to_value(v).unwrap_or_default()),
             StepSpec::Assign(a) => ("assign", serde_json::to_value(a).unwrap_or_default()),
             StepSpec::Branch(b) => ("branch", serde_json::to_value(b).unwrap_or_default()),
-            StepSpec::Retry(r) => ("retry", serde_json::to_value(r).unwrap_or_default()),
-            StepSpec::Parallel(p) => ("parallel", serde_json::to_value(p).unwrap_or_default()),
             StepSpec::Delegate(d) => ("delegate", serde_json::to_value(d).unwrap_or_default()),
-            StepSpec::Transform(t) => ("transform", serde_json::to_value(t).unwrap_or_default()),
             StepSpec::Return(r) => ("return", serde_json::to_value(r).unwrap_or_default()),
             StepSpec::Fail(f) => ("fail", serde_json::to_value(f).unwrap_or_default()),
             StepSpec::Gate(g) => ("gate", serde_json::to_value(g).unwrap_or_default()),

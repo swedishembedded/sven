@@ -39,7 +39,6 @@ mod host_values;
 mod iteration;
 mod machine;
 mod registry;
-mod retry;
 mod run;
 mod sourced;
 mod state;
@@ -58,7 +57,7 @@ pub use machine::HarnessMachine;
 pub use registry::HarnessRegistry;
 pub use run::{
     step_call_id, AgentLoop, ChildRun, Counts, HarnessRunData, HarnessRunState, Inflight,
-    ParallelJoin, RetryFrame, StepRecord, TraceRecord, Waiting, OUTCOME_FACT, RUN_STATE_FACT,
+    StepRecord, TraceRecord, Waiting, OUTCOME_FACT, RUN_STATE_FACT,
 };
 pub use sourced::{sourced_trace, Source, SourceTracker, SourcedRecord};
 pub use state::HarnessState;

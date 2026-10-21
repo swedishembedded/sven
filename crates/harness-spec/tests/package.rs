@@ -61,7 +61,6 @@ fn a_use_task_delegates_to_the_imported_workflow_and_reads_what_it_returns() {
     let package = compile_package(MAIN, &files(&[("review.yaml", REVIEW)])).expect("compiles");
     let PlanPrimitive::Delegate {
         target,
-        propagate_failure,
         store_as,
         input,
         ..
@@ -70,7 +69,6 @@ fn a_use_task_delegates_to_the_imported_workflow_and_reads_what_it_returns() {
         panic!("a delegate step");
     };
     assert_eq!(target, "reviewer");
-    assert!(propagate_failure, "a failed child fails the caller");
     assert!(store_as.is_some());
     assert_eq!(input["target"], "{{inputs.repo}}");
     assert_eq!(package.imports.len(), 1);
@@ -191,7 +189,7 @@ outputs:
     );
 
     let v1 = "api_version: \"1\"\nname: old\nentry: r\nsteps:\n  r: { return: { value: {} } }\n";
-    assert!(refused(MAIN, &[("review.yaml", v1)]).contains("only version 2"));
+    assert!(refused(MAIN, &[("review.yaml", v1)]).contains("no longer accepted"));
 }
 
 #[test]
@@ -199,7 +197,6 @@ fn the_bundle_digest_pins_imported_behaviour_and_ignores_formatting() {
     let bundle = |review: &str| HarnessBundle {
         document: MAIN.to_string(),
         imports: files(&[("review.yaml", review)]),
-        ..HarnessBundle::default()
     };
     let base = bundle(REVIEW).digest();
     assert!(!base.is_empty());

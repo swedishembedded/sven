@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
-# Anything that is not a bug waits in the backlog, whatever its label.
+# Anything else is not summarised: the condition over the label skips the turn.
 input: { ticket: "Please add dark mode" }
 model:
   sequence:
     - text: '{"label": "feature"}'
 expect:
   status: completed
-  output: { queue: backlog, label: feature }
-  steps: { ask: 1 }
+  output: { label: feature, summary: "" }
+  steps: { classify__work: 1, summarize__skip: 1, summarize__work: 0 }

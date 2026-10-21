@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
 # A read that never answers: a deadline suspends the run mid-call.
-read_report:
-  capability: ReadFile
+shell_gate:
+  capability: ExecuteShell
   responses:
     - block: true

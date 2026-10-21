@@ -14,10 +14,12 @@
 //! runs into reviewable training and audit records then you can procure our
 //! services by sending an email to info@swedishembedded.com.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
+use sven_harness_spec::HarnessBundle;
 use sven_model::ResponseEvent;
 use sven_model_mock::ScriptedMockProvider;
 use sven_sdk::{
@@ -50,29 +52,25 @@ impl Tool for Notes {
 }
 
 const PARENT: &str = r#"
-api_version: "1"
+api_version: "2"
 name: parent
-entry: down
 capabilities: [SpawnChild, ReadFile]
-limits: { max_steps: 20, max_delegate_depth: 2 }
-steps:
-  down:
-    delegate: { target: worker, store_as: got, then: done }
-  done:
-    return: { value: "{{ steps.down.value }}" }
+imports: { worker: ./worker.yaml }
+execution: { limits: { model_turns: 6, delegate_depth: 2 } }
+workflow:
+  - name: down
+    use: worker
 "#;
 
 const WORKER: &str = r#"
-api_version: "1"
+api_version: "2"
 name: worker
-entry: work
 capabilities: [ReadFile]
-limits: { max_steps: 20, max_model_turns: 4, max_tool_calls: 4 }
-steps:
-  work:
-    agent: { prompt: "Read the notes and report.", tools: [read_notes], store_as: said, then: done }
-  done:
-    return: { value: "{{ steps.work.value }}" }
+agent: { tools: [read_notes] }
+execution: { limits: { model_turns: 4, tool_calls: 4 } }
+workflow:
+  - name: work
+    task: Read the notes and report.
 "#;
 
 fn usage() -> ResponseEvent {
@@ -126,8 +124,13 @@ async fn a_delegated_childs_conversation_and_sampling_identity_are_in_the_parent
         .tool(Arc::new(Notes))
         .build()
         .expect("an engine builds");
-    engine.load_harness_from_str(WORKER).expect("worker loads");
-    let parent = engine.load_harness_from_str(PARENT).expect("parent loads");
+    let package = HarnessBundle {
+        document: PARENT.to_string(),
+        imports: BTreeMap::from([("worker.yaml".to_string(), WORKER.to_string())]),
+    };
+    let parent = engine
+        .load_harness_from_str(&serde_yaml::to_string(&package).expect("serializes"))
+        .expect("the package loads");
     let mut run = parent.start(json!({})).expect("starts");
     let outcome = tokio::time::timeout(Duration::from_secs(20), run.execute(RunOptions::new()))
         .await
@@ -185,8 +188,7 @@ async fn a_delegated_childs_conversation_and_sampling_identity_are_in_the_parent
     assert_eq!(answer_metrics.extra.as_ref().unwrap()["sven"]["seed"], 5);
 
     // The run names the program it ran: its plan's digest (the digest of a
-    // bundle with helpers is in `bundle_digest` when the harness was loaded as
-    // one).
+    // package is in `bundle_digest` when the harness was loaded as one).
     assert_eq!(
         trajectory.extra.as_ref().unwrap()["harness"]["plan_digest"],
         json!(parent.digest())

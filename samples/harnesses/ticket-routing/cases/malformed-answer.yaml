@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# An answer that is not JSON for the schema is a failed run, not a guess.
+input: { ticket: "???" }
+model:
+  sequence:
+    - text: 'nope'
+expect:
+  status: failed
+  failure: { code: invalid_answer, message_contains: "not valid JSON" }
+  steps: { classify__work: 1, summarize__when: 0 }

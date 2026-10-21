@@ -37,7 +37,7 @@ fn variant(doc: &str) -> tempfile::TempDir {
 async fn a_changed_output_is_a_regression_with_a_diff() {
     let (a, b, cases) = (
         variant(ROUTING),
-        variant(&routing_with_bug_queue("triage")),
+        variant(&routing_with_queue_suffix("triage")),
         cases(),
     );
     let report = compare(a.path(), b.path(), cases.path(), &RunnerOptions::default())
@@ -46,7 +46,7 @@ async fn a_changed_output_is_a_regression_with_a_diff() {
 
     assert!(report.a.valid && report.b.valid);
     assert_eq!((report.a.passed, report.a.failed), (2, 0));
-    assert_eq!((report.b.passed, report.b.failed), (1, 1));
+    assert_eq!((report.b.passed, report.b.failed), (0, 2));
     assert_ne!(report.a.plan_digest, report.b.plan_digest);
 
     let bug = report.cases.iter().find(|c| c.case == "bug").unwrap();
@@ -57,18 +57,24 @@ async fn a_changed_output_is_a_regression_with_a_diff() {
     );
     assert_eq!(bug.output_diff.len(), 1);
     assert_eq!(bug.output_diff[0].pointer, "/queue");
-    assert_eq!(bug.output_diff[0].expected, Some(serde_json::json!("bugs")));
-    assert_eq!(bug.output_diff[0].actual, Some(serde_json::json!("triage")));
+    assert_eq!(
+        bug.output_diff[0].expected,
+        Some(serde_json::json!("bug-queue"))
+    );
+    assert_eq!(
+        bug.output_diff[0].actual,
+        Some(serde_json::json!("bug-triage"))
+    );
 
     let feature = report.cases.iter().find(|c| c.case == "feature").unwrap();
-    assert_eq!(feature.change, Change::None);
-    assert!(feature.output_diff.is_empty());
+    assert_eq!(feature.change, Change::Regressed);
+    assert_eq!(feature.output_diff.len(), 1);
 }
 
 #[tokio::test]
 async fn the_other_direction_is_a_fix() {
     let (a, b, cases) = (
-        variant(&routing_with_bug_queue("triage")),
+        variant(&routing_with_queue_suffix("triage")),
         variant(ROUTING),
         cases(),
     );
@@ -98,7 +104,7 @@ async fn cost_and_steps_are_summed_per_variant() {
 #[tokio::test]
 async fn an_invalid_variant_is_reported_and_its_cases_count_as_regressions() {
     let a = variant(ROUTING);
-    let b = variant("api_version: \"1\"\nname: broken\nentry: nowhere\nsteps: {}\n");
+    let b = variant("api_version: \"2\"\nname: broken\nworkflow: []\n");
     let cases = cases();
     let report = compare(a.path(), b.path(), cases.path(), &RunnerOptions::default())
         .await

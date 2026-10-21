@@ -1,9 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
-
-# A pro plan that is not vip falls to the second branch and lands on silver.
-input: { plan: pro, vip: false }
-expect:
-  status: completed
-  output: { tier: silver, discount: 10 }
-  steps: { top: 1, middle: 1, silver: 1, gold: 0, finish: 1 }

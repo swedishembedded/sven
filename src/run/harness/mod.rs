@@ -19,7 +19,6 @@
 //! services by sending an email to info@swedishembedded.com.
 
 mod exec;
-mod helper;
 mod inspect;
 mod production;
 mod replay;
@@ -96,12 +95,6 @@ pub(crate) async fn run_harness_command(command: &HarnessCommands) -> i32 {
             json,
         } => views::status(path, checkpoint, *json),
         HarnessCommands::Schema { path } => inspect::schema(path.as_deref()),
-        HarnessCommands::Bundle {
-            document,
-            helpers,
-            output,
-        } => helper::bundle(document, helpers, output.as_deref()),
-        HarnessCommands::Helper { command } => helper::run_helper(command),
         HarnessCommands::Run { path, run } => exec::run(path, run).await,
         HarnessCommands::Resume {
             path,

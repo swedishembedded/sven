@@ -1,21 +1,16 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Spec-level acceptance tests for the harness language and compiler.
-//!
-//! These are the acceptance criteria from ADR 0004: parsing, validation
-//! rejections, bounded-cycle compilation, key-order-invariant digests and
-//! digest sensitivity to helper bytes.
+//! Spec-level acceptance tests for the validator and the plan compiler, over
+//! plans written directly in the step language (the `testing` feature): what
+//! the validator rejects before a plan exists, and that a plan's digest is a
+//! pure function of what it means.
 
-use sven_harness_spec::{HarnessDocument, HarnessError};
-
-fn doc(yaml: &str) -> Result<sven_harness_spec::HarnessPlan, HarnessError> {
-    HarnessDocument::parse(yaml)?.compile()
-}
+use sven_harness_spec::testing::compile_steps as doc;
 
 /// The smallest complete harness: one entry step that returns.
 const MINIMAL: &str = r#"
-api_version: "1"
+api_version: "2"
 name: minimal
 entry: done
 outputs:
@@ -48,7 +43,7 @@ outputs:
   result: string
 name: minimal
 entry: done
-api_version: "1"
+api_version: "2"
 "#;
     let a = doc(MINIMAL).expect("a");
     let b = doc(reordered).expect("b");
@@ -66,7 +61,7 @@ fn the_digest_changes_when_the_program_meaning_changes() {
 
 #[test]
 fn an_unsupported_api_version_is_rejected() {
-    let yaml = MINIMAL.replace("api_version: \"1\"", "api_version: \"99\"");
+    let yaml = MINIMAL.replace("api_version: \"2\"", "api_version: \"99\"");
     let err = doc(&yaml).expect_err("unsupported version must be rejected");
     assert!(err.to_string().contains("api_version"), "{err}");
 }
@@ -79,48 +74,9 @@ fn a_missing_entry_step_is_rejected() {
 }
 
 #[test]
-fn a_bounded_retry_cycle_compiles() {
-    // A harness whose steps form a bounded retry cycle compiles.
-    let yaml = r#"
-api_version: "1"
-name: retry-cycle
-entry: attempt
-limits:
-  max_steps: 16
-steps:
-  attempt:
-    retry:
-      attempts: 3
-      body: flip
-      then: done
-      on_exhausted: give_up
-  flip:
-    assign:
-      set:
-        flipped: true
-      then: check
-  check:
-    branch:
-      on: "{{ facts.flipped }}"
-      when_true: done
-      when_false: flip
-  give_up:
-    fail:
-      code: never_flipped
-      message: "the coin never landed heads"
-  done:
-    return:
-      value:
-        flipped: "{{ facts.flipped }}"
-"#;
-    let plan = doc(yaml).expect("bounded cycle must compile");
-    assert_eq!(plan.steps.len(), 5);
-}
-
-#[test]
 fn an_unbounded_cycle_is_rejected() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: unbounded
 entry: loop
 steps:
@@ -137,7 +93,7 @@ steps:
 #[test]
 fn a_dangling_branch_target_is_rejected() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: dangling
 entry: pick
 steps:
@@ -157,7 +113,7 @@ steps:
 #[test]
 fn an_unknown_primitive_is_rejected_with_the_step_named() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: unknown
 entry: bad
 steps:
@@ -169,56 +125,10 @@ steps:
 }
 
 #[test]
-fn a_harness_with_side_effect_primitives_requires_their_capabilities_declared() {
-    // `tool` needs a tool call; the harness must declare the capability.
-    let yaml = r#"
-api_version: "1"
-name: undeclared
-entry: act
-steps:
-  act:
-    tool:
-      name: shell
-      args:
-        shell_command: "ls"
-      then: done
-  done:
-    return:
-      value: {}
-"#;
-    let err = doc(yaml).expect_err("undeclared capability must be rejected");
-    assert!(err.to_string().contains("ExecuteShell"), "{err}");
-}
-
-#[test]
-fn declaring_the_capability_makes_the_tool_harness_compile() {
-    let yaml = r#"
-api_version: "1"
-name: declared
-entry: act
-capabilities: [ExecuteShell]
-limits:
-  max_tool_calls: 1
-steps:
-  act:
-    tool:
-      name: shell
-      args:
-        shell_command: "ls"
-      then: done
-  done:
-    return:
-      value: {}
-"#;
-    let plan = doc(yaml).expect("declared capability must compile");
-    assert_eq!(plan.capabilities, vec!["ExecuteShell"]);
-}
-
-#[test]
 fn a_missing_limits_block_is_rejected_when_steps_can_run_away() {
     // A harness with model/tool/verify primitives must declare limits.
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: nolimits
 entry: think
 steps:
@@ -235,28 +145,9 @@ steps:
 }
 
 #[test]
-fn retry_without_a_body_is_rejected() {
-    let yaml = r#"
-api_version: "1"
-name: badretry
-entry: r
-steps:
-  r:
-    retry:
-      attempts: 2
-      then: done
-  done:
-    return:
-      value: {}
-"#;
-    let err = doc(yaml).expect_err("retry needs a body");
-    assert!(err.to_string().contains("body"), "{err}");
-}
-
-#[test]
 fn returning_a_value_that_does_not_match_outputs_is_rejected() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: mismatch
 entry: done
 outputs:
@@ -272,20 +163,9 @@ steps:
 }
 
 #[test]
-fn helper_bytes_change_the_digest() {
-    // Once transforms exist their program bytes are part of the plan digest.
-    // The compile() API is exercised here through the transform primitive's
-    // typed spec; the digest rule is checked at the plan level.
-    let plan = doc(MINIMAL).expect("minimal");
-    // Recompiling the same bytes yields the same digest (determinism).
-    let again = doc(MINIMAL).expect("again");
-    assert_eq!(plan.digest, again.digest);
-}
-
-#[test]
 fn inputs_are_typed_and_referenced_by_name() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: typed
 inputs:
   topic: string
@@ -306,70 +186,9 @@ steps:
 }
 
 #[test]
-fn a_bundle_pins_its_helpers_into_one_digest() {
-    use sven_harness_spec::HarnessBundle;
-
-    let make = |content: &str| HarnessBundle {
-        document: r#"
-api_version: "1"
-name: transformed
-entry: t
-limits:
-  max_steps: 8
-steps:
-  t:
-    transform:
-      helper: upper
-      input: "{{ inputs.word }}"
-      then: done
-  done:
-    return:
-      value:
-        out: "{{ facts.upper }}"
-"#
-        .to_string(),
-        helpers: [(
-            "upper".to_string(),
-            sven_harness_spec::Helper {
-                abi: "1".to_string(),
-                language: "wasm".to_string(),
-                content: content.to_string(),
-            },
-        )]
-        .into_iter()
-        .collect(),
-        ..Default::default()
-    };
-    let a = make("AGFZ").compile().expect("compiles");
-    let b = make("AGFZ").compile().expect("compiles");
-    let c = make("ELSE").compile().expect("compiles");
-    assert_eq!(a.digest, b.digest, "same bytes, same digest");
-    assert_ne!(a.digest, c.digest, "changed helper bytes change the digest");
-
-    // A transform naming a missing helper is a bundle error.
-    let mut missing = make("AGFZ");
-    missing.helpers.clear();
-    let err = missing.compile().expect_err("missing helper");
-    assert!(err.to_string().contains("upper"), "{err}");
-
-    // An unreferenced helper is a bundle error.
-    let mut extra = make("AGFZ");
-    extra.helpers.insert(
-        "unused".to_string(),
-        sven_harness_spec::Helper {
-            abi: "1".to_string(),
-            language: "wasm".to_string(),
-            content: "AA".to_string(),
-        },
-    );
-    let err = extra.compile().expect_err("unreferenced helper");
-    assert!(err.to_string().contains("unused"), "{err}");
-}
-
-#[test]
 fn a_predict_step_names_a_schema_declared_in_the_document() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: shaped
 entry: ask
 limits: { max_steps: 10, max_model_turns: 3 }
@@ -406,7 +225,7 @@ steps:
 #[test]
 fn a_schema_name_without_a_declared_schema_is_rejected() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: dangling
 entry: ask
 limits: { max_steps: 10, max_model_turns: 3 }
@@ -427,7 +246,7 @@ steps:
 #[test]
 fn a_declared_but_unused_schema_is_rejected() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: unused
 entry: done
 schemas:
@@ -445,7 +264,7 @@ steps:
 #[test]
 fn a_schema_that_is_not_an_object_is_rejected() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: badshape
 entry: ask
 limits: { max_steps: 10, max_model_turns: 3 }
@@ -468,7 +287,7 @@ steps:
 #[test]
 fn a_declared_schema_changes_the_plan_digest() {
     let base = r#"
-api_version: "1"
+api_version: "2"
 name: pinned
 entry: ask
 limits: { max_steps: 10, max_model_turns: 3 }
@@ -491,108 +310,11 @@ steps:
 }
 
 #[test]
-fn a_parallel_fan_out_beyond_max_parallel_fails_to_compile() {
-    let yaml = r#"
-api_version: "1"
-name: wide
-entry: split
-capabilities: [SpawnChild]
-limits: { max_steps: 10, max_parallel: 1 }
-steps:
-  split:
-    parallel:
-      branches: [a, b]
-      join: merge
-  a:
-    return: { value: "a" }
-  b:
-    return: { value: "b" }
-  merge:
-    return: { value: {} }
-"#;
-    let err = doc(yaml).expect_err("fan-out beyond max_parallel must not compile");
-    assert!(err.to_string().contains("max_parallel"), "{err}");
-}
-
-#[test]
-fn a_parallel_fan_out_within_max_parallel_compiles() {
-    let yaml = r#"
-api_version: "1"
-name: narrow
-entry: split
-capabilities: [SpawnChild]
-limits: { max_steps: 10, max_parallel: 2 }
-steps:
-  split:
-    parallel:
-      branches: [a, b]
-      join: merge
-  a:
-    return: { value: "a" }
-  b:
-    return: { value: "b" }
-  merge:
-    return: { value: {} }
-"#;
-    let _ = doc(yaml).expect("fan-out within max_parallel compiles");
-}
-
-#[test]
-fn a_parallel_step_requires_spawn_child_declared() {
-    let body = r#"
-api_version: "1"
-name: fan
-entry: split
-limits: { max_steps: 10, max_parallel: 2 }
-steps:
-  split:
-    parallel:
-      branches: [a, b]
-      join: merge
-  a:
-    return: { value: "a" }
-  b:
-    return: { value: "b" }
-  merge:
-    return: { value: {} }
-"#;
-    let err = doc(body).expect_err("a fan-out spawns children, so it must declare SpawnChild");
-    assert!(err.to_string().contains("SpawnChild"), "{err}");
-
-    let declared = body.replace("entry: split", "entry: split\ncapabilities: [SpawnChild]");
-    let _ = doc(&declared).expect("declaring SpawnChild admits the fan-out");
-}
-
-// ---- unknown fields -------------------------------------------------------
-
-#[test]
 fn an_unknown_top_level_key_is_rejected_by_name() {
     let yaml = MINIMAL.replace("name: minimal", "name: minimal\nentrypoint: done");
     let err = doc(&yaml).expect_err("a misspelled top-level key must not be ignored");
     let text = err.to_string();
     assert!(text.contains("unknown field `entrypoint`"), "{text}");
-}
-
-#[test]
-fn an_unknown_field_inside_a_step_names_the_primitive_and_the_field() {
-    let yaml = r#"
-api_version: "1"
-name: typo
-entry: act
-steps:
-  act:
-    tool:
-      name: read_file
-      arguments: { path: x }
-      then: done
-  done:
-    return: { value: 1 }
-"#;
-    let text = doc(yaml)
-        .expect_err("`arguments` is not a tool field")
-        .to_string();
-    assert!(text.contains("`tool`"), "{text}");
-    assert!(text.contains("unknown field `arguments`"), "{text}");
 }
 
 #[test]
@@ -611,7 +333,7 @@ fn an_unknown_field_in_a_declared_io_value_is_rejected() {
 #[test]
 fn a_step_no_path_from_entry_reaches_is_rejected_by_name() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: orphan
 entry: done
 steps:
@@ -627,4 +349,70 @@ steps:
         text.contains("stray") && text.contains("unreachable"),
         "{text}"
     );
+}
+
+#[test]
+fn a_gate_needs_the_shell_capability_declared() {
+    let body = r#"
+api_version: "2"
+name: gated
+entry: act
+limits: { max_steps: 4 }
+steps:
+  act:
+    gate:
+      steps: [{ name: ls, argv: [ls] }]
+      then: done
+      on_fail: bad
+  done:
+    return: { value: {} }
+  bad:
+    fail: { code: no }
+"#;
+    let err = doc(body).expect_err("an undeclared capability must be rejected");
+    assert!(err.to_string().contains("ExecuteShell"), "{err}");
+
+    let declared = body.replace("entry: act", "entry: act\ncapabilities: [ExecuteShell]");
+    let plan = doc(&declared).expect("declaring the capability admits the gate");
+    assert_eq!(plan.capabilities, vec!["ExecuteShell"]);
+}
+
+#[test]
+fn a_delegate_needs_spawn_child_declared() {
+    let body = r#"
+api_version: "2"
+name: parent
+entry: ask
+limits: { max_steps: 4 }
+steps:
+  ask:
+    delegate: { target: child, input: {}, then: done }
+  done:
+    return: { value: {} }
+"#;
+    let err = doc(body).expect_err("a child needs the capability");
+    assert!(err.to_string().contains("SpawnChild"), "{err}");
+    doc(&body.replace("entry: ask", "entry: ask\ncapabilities: [SpawnChild]"))
+        .expect("declaring SpawnChild admits the delegate");
+}
+
+#[test]
+fn an_unknown_field_inside_a_step_names_the_primitive_and_the_field() {
+    let yaml = r#"
+api_version: "2"
+name: typo
+entry: act
+steps:
+  act:
+    assign:
+      sets: { a: 1 }
+      then: done
+  done:
+    return: { value: 1 }
+"#;
+    let text = doc(yaml)
+        .expect_err("`sets` is not an assign field")
+        .to_string();
+    assert!(text.contains("`assign`"), "{text}");
+    assert!(text.contains("unknown field `sets`"), "{text}");
 }

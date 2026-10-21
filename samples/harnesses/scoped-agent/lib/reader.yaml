@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# The imported workflow. It declares ReadFile and nothing else, and its agent
+# names the one tool it may call; a proposed call to anything else is refused
+# before it runs.
+api_version: "2"
+name: reader
+description: "Read the notes with read_notes and answer from them."
+inputs: { question: string }
+capabilities: [ReadFile]
+agent: { tools: [read_notes] }
+execution: { limits: { model_turns: 4, tool_calls: 2 } }
+workflow:
+  - name: read
+    task: "Answer from the notes, using read_notes: {{ inputs.question }}"
+outputs:
+  answer: { type: string, value: "{{ tasks.read.output }}" }

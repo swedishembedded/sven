@@ -4,4 +4,4 @@
 input: { plan: free }
 expect:
   status: failed
-  failure: { code: not_eligible }
+  failure: { code: gate_failed }

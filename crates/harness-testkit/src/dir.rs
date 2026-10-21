@@ -12,23 +12,21 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::TestkitError;
 
-/// The files of one harness: its main document, children and cases.
+/// The files of one harness: its main document and cases.
 #[derive(Debug, Clone)]
 pub struct HarnessDir {
     /// The directory every fixture path is confined to (a file's parent).
     pub root: PathBuf,
     /// `harness.yaml` or `bundle.yaml`, or the file that was opened.
     pub main: PathBuf,
-    /// `children/*.yaml`, sorted.
-    pub children: Vec<PathBuf>,
     /// `cases/*.yaml`, sorted.
     pub cases: Vec<PathBuf>,
 }
 
 impl HarnessDir {
     /// Opens a harness: a file is a main document alone; a directory holds
-    /// exactly one of `harness.yaml` or `bundle.yaml`, optional
-    /// `children/*.yaml` and `cases/*.yaml`.
+    /// exactly one of `harness.yaml` or `bundle.yaml` and optional
+    /// `cases/*.yaml`.
     ///
     /// # Errors
     ///
@@ -43,7 +41,6 @@ impl HarnessDir {
             return Ok(Self {
                 root,
                 main: path.to_path_buf(),
-                children: Vec::new(),
                 cases: Vec::new(),
             });
         }
@@ -63,7 +60,6 @@ impl HarnessDir {
         Ok(Self {
             root: path.to_path_buf(),
             main: main.clone(),
-            children: yaml_files(&path.join("children"))?,
             cases: yaml_files(&path.join("cases"))?,
         })
     }

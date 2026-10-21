@@ -1,17 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
-# A parent that holds two capabilities and delegates reading to a child that
-# holds one. Neither can write: the child's agent step is also held to the
-# tools it names.
-api_version: "1"
+# A parent that holds two capabilities and delegates reading to an imported
+# workflow that holds one. Neither can write: the child's agent is also held to
+# the tools it names.
+api_version: "2"
 name: triage
-description: "Answer a question from the notes by delegating the reading to a child harness."
+description: "Answer a question from the notes by delegating the reading to an imported workflow."
 inputs: { question: string }
-outputs: { answer: string }
+imports:
+  reader: ./lib/reader.yaml
 capabilities: [SpawnChild, ReadFile]
-limits: { max_steps: 20, max_delegate_depth: 2 }
-entry: look_up
-steps:
-  look_up: { delegate: { target: reader, as_kind: harness, input: { question: "{{ inputs.question }}" }, store_as: found, then: done } }
-  done:    { return: { value: { answer: "{{ facts.found }}" } } }
+execution: { limits: { model_turns: 6, delegate_depth: 2 } }
+workflow:
+  - name: look_up
+    use: reader
+    with: { question: "{{ inputs.question }}" }
+outputs:
+  answer: { type: string, value: "{{ tasks.look_up.output.answer }}" }

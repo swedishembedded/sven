@@ -20,21 +20,7 @@ use crate::spec::{HarnessSpec, StepDecoding, StepSpec};
 
 /// The compiled-plan format version, stamped into the digest input so plans
 /// from different compiler generations can never collide.
-pub const PLAN_FORMAT_VERSION: &str = "harness-plan/1";
-
-/// The format stamp of plans compiled from `api_version: "2"` documents.
-/// Distinct from [`PLAN_FORMAT_VERSION`] so that a v2 plan's digest can never
-/// equal a v1 plan's, and a checkpoint of one is never resumed as the other.
-pub const WORKFLOW_PLAN_FORMAT_VERSION: &str = "harness-plan/2";
-
-/// The format stamp for plans compiled from `api_version`.
-fn format_for(api_version: &str) -> &'static str {
-    if api_version == crate::spec::WORKFLOW_API_VERSION {
-        WORKFLOW_PLAN_FORMAT_VERSION
-    } else {
-        PLAN_FORMAT_VERSION
-    }
-}
+pub const PLAN_FORMAT_VERSION: &str = "harness-plan/2";
 
 /// A compiled, canonical harness program.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,17 +102,6 @@ pub struct PlanLimits {
     /// Deepest delegation chain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_delegate_depth: Option<u64>,
-    /// Most concurrent branches per `parallel`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_parallel: Option<u64>,
-    /// Most interpreter ticks per helper invocation. Unset means the
-    /// runtime's default budget applies.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_helper_fuel: Option<u64>,
-    /// Most linear memory per helper instance, in 64 KiB pages. Unset means
-    /// the runtime's default budget applies.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_helper_pages: Option<u32>,
 }
 
 /// The compiled form of an `iterate` step's repetition, bounds applied.
@@ -253,18 +228,6 @@ pub enum PlanPrimitive {
         /// Successor.
         then: String,
     },
-    /// Compiled `tool`.
-    Tool {
-        /// The tool's name.
-        name: String,
-        /// The arguments (templates inside).
-        args: serde_json::Value,
-        /// Where to store the result.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        store_as: Option<String>,
-        /// Successor.
-        then: String,
-    },
     /// Compiled `verify`.
     Verify {
         /// The verifier spec as typed JSON.
@@ -291,47 +254,11 @@ pub enum PlanPrimitive {
         /// Successor when false.
         when_false: String,
     },
-    /// Compiled `retry`.
-    Retry {
-        /// Attempt bound (>= 1, validated).
-        attempts: u64,
-        /// The body step.
-        body: String,
-        /// Successor after the body succeeds.
-        then: String,
-        /// Successor when attempts are spent.
-        on_exhausted: String,
-    },
-    /// Compiled `parallel`.
-    Parallel {
-        /// The branch steps.
-        branches: Vec<String>,
-        /// The join step.
-        join: String,
-    },
     /// Compiled `delegate`.
     Delegate {
-        /// The target (harness name or machine mode).
+        /// The harness to run: its name in the package.
         target: String,
-        /// What the target names.
-        #[serde(default)]
-        as_kind: crate::spec::DelegateTarget,
         /// The child input.
-        input: serde_json::Value,
-        /// Where to store the result.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        store_as: Option<String>,
-        /// Fail the step when the child reports `ok: false`.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        propagate_failure: bool,
-        /// Successor.
-        then: String,
-    },
-    /// Compiled `transform`.
-    Transform {
-        /// The helper's name.
-        helper: String,
-        /// The input value.
         input: serde_json::Value,
         /// Where to store the result.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -353,7 +280,7 @@ pub enum PlanPrimitive {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<Template>,
     },
-    /// Compiled `iterate` (plans of `api_version: "2"` only).
+    /// Compiled `iterate` .
     Iterate {
         /// What repeats and how it is bounded.
         iteration: PlanIteration,
@@ -367,7 +294,7 @@ pub enum PlanPrimitive {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
     },
-    /// Compiled `gate` (plans of `api_version: "2"` only).
+    /// Compiled `gate` .
     Gate {
         /// The commands, run in order, each an argv of templates.
         steps: Vec<PlanGateStep>,
@@ -414,12 +341,12 @@ impl HarnessPlan {
     /// a `BTreeMap` under the hood) over a tagged envelope.
     #[must_use]
     pub fn canonical_digest(value: &serde_json::Value) -> String {
-        Self::digest_in_format(PLAN_FORMAT_VERSION, value)
+        Self::digest_of_value(value)
     }
 
-    fn digest_in_format(format: &str, value: &serde_json::Value) -> String {
+    fn digest_of_value(value: &serde_json::Value) -> String {
         let envelope = serde_json::json!({
-            "format": format,
+            "format": PLAN_FORMAT_VERSION,
             "plan": value,
         });
         let mut hasher = Sha256::new();
@@ -456,9 +383,6 @@ pub fn compile(spec: &HarnessSpec) -> HarnessPlan {
         max_tool_calls: l.max_tool_calls,
         max_tool_calls_input: l.max_tool_calls_input.clone(),
         max_delegate_depth: l.max_delegate_depth,
-        max_parallel: l.max_parallel,
-        max_helper_fuel: l.max_helper_fuel,
-        max_helper_pages: l.max_helper_pages,
     });
 
     let mut plan = HarnessPlan {
@@ -495,7 +419,7 @@ pub fn canonical_digest_of_plan(plan: &HarnessPlan) -> String {
     if let serde_json::Value::Object(map) = &mut value {
         map.remove("digest");
     }
-    HarnessPlan::digest_in_format(format_for(&plan.api_version), &value)
+    HarnessPlan::digest_of_value(&value)
 }
 
 /// Compiles one step. Every parse here is guaranteed to succeed: validation
@@ -539,12 +463,6 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             max_repeated_results: a.max_repeated_results,
             then: a.then.clone(),
         },
-        StepSpec::Tool(t) => PlanPrimitive::Tool {
-            name: t.name.clone(),
-            args: t.args.clone(),
-            store_as: t.store_as.clone(),
-            then: t.then.clone(),
-        },
         StepSpec::Verify(v) => PlanPrimitive::Verify {
             spec: v.spec.clone(),
             store_as: v.store_as.clone(),
@@ -559,30 +477,11 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             when_true: b.when_true.clone(),
             when_false: b.when_false.clone(),
         },
-        StepSpec::Retry(r) => PlanPrimitive::Retry {
-            attempts: r.attempts,
-            body: r.body.clone(),
-            then: r.then.clone(),
-            // Validation has ensured this exists.
-            on_exhausted: r.on_exhausted.clone().unwrap_or_default(),
-        },
-        StepSpec::Parallel(p) => PlanPrimitive::Parallel {
-            branches: p.branches.clone(),
-            join: p.join.clone(),
-        },
         StepSpec::Delegate(d) => PlanPrimitive::Delegate {
             target: d.target.clone(),
-            as_kind: d.as_kind.unwrap_or_default(),
             input: d.input.clone(),
             store_as: d.store_as.clone(),
-            propagate_failure: d.propagate_failure,
             then: d.then.clone(),
-        },
-        StepSpec::Transform(t) => PlanPrimitive::Transform {
-            helper: t.helper.clone(),
-            input: t.input.clone(),
-            store_as: t.store_as.clone(),
-            then: t.then.clone(),
         },
         StepSpec::Return(r) => PlanPrimitive::Return {
             value: r.value.clone(),

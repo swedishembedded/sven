@@ -199,20 +199,6 @@ fn decoding_and_role_mistakes_fail_with_the_name_of_the_culprit() {
 }
 
 #[test]
-fn version_one_documents_cannot_set_decoding() {
-    let yaml = r#"
-api_version: "1"
-name: d
-entry: ask
-limits: { max_steps: 5, max_model_turns: 2 }
-steps:
-  ask: { predict: { prompt: hi, decoding: { temperature: 0.1 }, then: done } }
-  done: { return: { value: 1 } }
-"#;
-    assert!(rejected(yaml).contains("on a predict step"));
-}
-
-#[test]
 fn a_task_names_the_model_role_that_answers_it_and_the_agent_sets_the_default() {
     let yaml = ROLES
         .replace(

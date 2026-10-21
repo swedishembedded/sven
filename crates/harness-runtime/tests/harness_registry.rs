@@ -4,21 +4,18 @@
 //! The harness registry's spec: the named documents a session's children
 //! may be. Registration compiles and validates the document offline, so a
 //! name that resolves always names a complete, bounded plan; a run starts
-//! from a registered plan without re-parsing it, entered at any step.
+//! from a registered plan without re-parsing it.
 
 use sven_harness_runtime::{HarnessRegistry, HarnessRunData, HarnessRunError};
 
 const RETURNER: &str = r#"
-api_version: "1"
+api_version: "2"
 name: returner
-entry: pick
-steps:
-  pick:
-    branch: { on: "{{ inputs.first }}", when_true: done, when_false: branch }
-  done:
-    return: { value: { which: "entry" } }
-  branch:
-    return: { value: { which: "branch" } }
+execution: { limits: { model_turns: 2 } }
+workflow:
+  - name: answer
+    model_only: true
+    task: Say which.
 "#;
 
 #[test]
@@ -46,8 +43,8 @@ fn a_name_registers_once() {
 fn an_invalid_document_is_rejected_at_registration() {
     let registry = HarnessRegistry::new();
     let err = registry
-        .register("api_version: \"1\"\nname: broken\nsteps: {}")
-        .expect_err("no entry step");
+        .register("api_version: \"2\"\nname: broken\nworkflow: []")
+        .expect_err("no tasks");
     assert!(matches!(err, HarnessRunError::Spec(_)), "{err}");
 }
 
@@ -57,20 +54,5 @@ fn a_run_starts_from_a_registered_plan_without_re_parsing() {
     let _ = registry.register(RETURNER).expect("registers");
     let plan = registry.resolve("returner").expect("resolves");
     let run = HarnessRunData::from_parts((*plan).clone(), serde_json::json!({}));
-    assert_eq!(run.plan().entry, "pick");
-}
-
-#[test]
-fn a_run_can_enter_at_a_declared_branch() {
-    let registry = HarnessRegistry::new();
-    let _ = registry.register(RETURNER).expect("registers");
-    let plan = registry.resolve("returner").expect("resolves");
-    let run = HarnessRunData::from_parts((*plan).clone(), serde_json::json!({}))
-        .with_entry("branch")
-        .expect("branch is a step");
-    assert_eq!(run.plan().entry, "branch");
-    let err = HarnessRunData::from_parts((*plan).clone(), serde_json::json!({}))
-        .with_entry("no_such_step");
-    assert!(err.is_err(), "an unknown entry is rejected");
-    let _ = registry;
+    assert_eq!(run.plan().name, "returner");
 }

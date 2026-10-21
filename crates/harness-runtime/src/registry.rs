@@ -16,21 +16,12 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use crate::error::HarnessRunError;
-use sven_harness_spec::{HarnessBundle, HarnessPlan, Helper};
-
-/// What a name resolves to: the compiled plan plus the helpers its
-/// `transform` steps run. Harnesses registered from a bare document have
-/// no helpers and fail such steps when reached; a registered bundle
-/// carries its own.
-struct Registered {
-    plan: Arc<HarnessPlan>,
-    helpers: BTreeMap<String, Helper>,
-}
+use sven_harness_spec::{HarnessBundle, HarnessPlan};
 
 /// Named harness plans, resolved at child-spawn time.
 #[derive(Default)]
 pub struct HarnessRegistry {
-    plans: RwLock<BTreeMap<String, Registered>>,
+    plans: RwLock<BTreeMap<String, Arc<HarnessPlan>>>,
 }
 
 impl HarnessRegistry {
@@ -51,30 +42,15 @@ impl HarnessRegistry {
         self.register_plan(sven_harness_spec::compile_str(yaml)?)
     }
 
-    /// Registers a bundle: the document is compiled against its helper set
-    /// (so a `transform` step naming a helper the bundle does not carry is
-    /// refused here, offline), and both the plan and the helpers register
-    /// under the plan's own name.
+    /// Registers a bundle: its main document compiled with its imports, under
+    /// the plan's own name.
     ///
     /// # Errors
     ///
-    /// The document's parse, validation or compile failure, the bundle's
-    /// used↔declared helper checks, or the name is already registered.
+    /// The document's parse, validation or compile failure, or the name is
+    /// already registered.
     pub fn register_bundle(&self, bundle: &HarnessBundle) -> Result<String, HarnessRunError> {
-        let compiled = bundle.compile()?;
-        let name = compiled.plan.name.clone();
-        let mut plans = self.plans.write().expect("registry lock poisoned");
-        if plans.contains_key(&name) {
-            return Err(HarnessRunError::DuplicateHarness(name));
-        }
-        plans.insert(
-            name.clone(),
-            Registered {
-                plan: Arc::new(compiled.plan),
-                helpers: bundle.helpers.clone(),
-            },
-        );
-        Ok(name)
+        self.register_plan(bundle.compile()?.plan)
     }
 
     /// Registers a compiled plan under its own name.
@@ -83,43 +59,26 @@ impl HarnessRegistry {
     ///
     /// The plan's name is already registered.
     pub fn register_plan(&self, plan: HarnessPlan) -> Result<String, HarnessRunError> {
-        let name = plan.name.clone();
-        let mut plans = self.plans.write().expect("registry lock poisoned");
-        if plans.contains_key(&name) {
-            return Err(HarnessRunError::DuplicateHarness(name));
-        }
-        plans.insert(
-            name.clone(),
-            Registered {
-                plan: Arc::new(plan),
-                helpers: BTreeMap::new(),
-            },
-        );
-        Ok(name)
+        self.register_compiled(Arc::new(plan))
     }
 
-    /// Registers an already-compiled plan with its helper set.
+    /// Registers an already-compiled plan.
     ///
     /// A host that compiled the plan offline — the same compile a child
-    /// spawn clears — registers the result directly; the used↔declared
-    /// helper checks already ran in that compile. Registration compiles
+    /// spawn clears — registers the result directly. Registration compiles
     /// nothing twice and refuses a name that is already taken, exactly as
     /// [`Self::register`](Self::register) does.
     ///
     /// # Errors
     ///
     /// The plan's name is already registered.
-    pub fn register_compiled(
-        &self,
-        plan: Arc<HarnessPlan>,
-        helpers: BTreeMap<String, Helper>,
-    ) -> Result<String, HarnessRunError> {
+    pub fn register_compiled(&self, plan: Arc<HarnessPlan>) -> Result<String, HarnessRunError> {
         let name = plan.name.clone();
         let mut plans = self.plans.write().expect("registry lock poisoned");
         if plans.contains_key(&name) {
             return Err(HarnessRunError::DuplicateHarness(name));
         }
-        plans.insert(name.clone(), Registered { plan, helpers });
+        plans.insert(name.clone(), plan);
         Ok(name)
     }
 
@@ -130,24 +89,18 @@ impl HarnessRegistry {
     /// # Errors
     ///
     /// A name is already registered, or repeats within `set`.
-    pub fn register_package(
-        &self,
-        set: Vec<(Arc<HarnessPlan>, BTreeMap<String, Helper>)>,
-    ) -> Result<String, HarnessRunError> {
+    pub fn register_package(&self, set: Vec<Arc<HarnessPlan>>) -> Result<String, HarnessRunError> {
         let mut plans = self.plans.write().expect("registry lock poisoned");
         let mut names = std::collections::BTreeSet::new();
-        for (plan, _) in &set {
+        for plan in &set {
             if plans.contains_key(&plan.name) || !names.insert(plan.name.clone()) {
                 return Err(HarnessRunError::DuplicateHarness(plan.name.clone()));
             }
         }
         // The main plan is the last of the set.
-        let main = set
-            .last()
-            .map(|(plan, _)| plan.name.clone())
-            .unwrap_or_default();
-        for (plan, helpers) in set {
-            plans.insert(plan.name.clone(), Registered { plan, helpers });
+        let main = set.last().map(|plan| plan.name.clone()).unwrap_or_default();
+        for plan in set {
+            plans.insert(plan.name.clone(), plan);
         }
         Ok(main)
     }
@@ -159,19 +112,7 @@ impl HarnessRegistry {
             .read()
             .expect("registry lock poisoned")
             .get(name)
-            .map(|registered| Arc::clone(&registered.plan))
-    }
-
-    /// The helpers a registered harness carries, by name. Empty for a
-    /// harness registered from a bare document.
-    #[must_use]
-    pub fn helpers(&self, name: &str) -> BTreeMap<String, Helper> {
-        self.plans
-            .read()
-            .expect("registry lock poisoned")
-            .get(name)
-            .map(|registered| registered.helpers.clone())
-            .unwrap_or_default()
+            .map(Arc::clone)
     }
 
     /// Whether nothing is registered (a session with no harness children).

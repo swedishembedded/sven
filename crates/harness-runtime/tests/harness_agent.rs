@@ -18,7 +18,7 @@ mod common;
 
 use common::{drive, start, turn};
 use serde_json::{json, Value};
-use sven_harness_runtime::{HarnessMachine, HarnessRunData, HarnessRunState, HarnessState};
+use sven_harness_runtime::{HarnessMachine, HarnessRunState, HarnessState};
 use sven_hsm::ids::ToolCallId;
 use sven_hsm::{Context, Effect, Event, Machine, ProposedToolCall, ToolCapability};
 
@@ -27,7 +27,7 @@ const THREAD: &str = "harness.worker";
 fn agent_harness(tools: &str) -> String {
     format!(
         r#"
-api_version: "1"
+api_version: "2"
 name: worker
 entry: do
 limits: {{ max_steps: 100, max_model_turns: 20, max_tool_calls: 20 }}
@@ -196,7 +196,7 @@ fn a_turn_of_only_refused_calls_continues_at_once() {
 #[test]
 fn a_delegate_descriptor_carries_the_childs_depth() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: caller
 entry: go
 capabilities: [SpawnChild]
@@ -217,7 +217,7 @@ steps:
 #[test]
 fn a_run_started_deeper_enforces_the_remaining_depth_budget() {
     let yaml = r#"
-api_version: "1"
+api_version: "2"
 name: caller
 entry: go
 capabilities: [SpawnChild]
@@ -228,7 +228,7 @@ steps:
   out:
     return: { value: "done" }
 "#;
-    let run = HarnessRunData::new(yaml, json!({}))
+    let run = common::data(yaml, json!({}))
         .expect("valid harness")
         .with_delegate_depth(3);
     assert_eq!(run.delegate_depth(), 3);

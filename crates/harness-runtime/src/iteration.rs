@@ -358,7 +358,7 @@ impl HarnessMachine {
                 ctx,
             );
         }
-        let call_id = self.call_id_for(step, run);
+        let call_id = self.call_id_for(step);
         let effect = Effect::CallTool {
             call_id,
             name: SNAPSHOT_TOOL.to_string(),

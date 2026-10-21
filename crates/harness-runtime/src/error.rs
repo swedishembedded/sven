@@ -25,9 +25,6 @@ pub enum HarnessRunError {
     /// scratchpad.
     #[error("harness `{0}` is already registered")]
     DuplicateHarness(String),
-    /// A run was entered at a step the plan does not declare.
-    #[error("cannot enter harness at unknown step `{0}`")]
-    UnknownEntry(String),
     /// A checkpoint was taken under a different version of the plan than
     /// the document offered at resume. The checkpoint carries the digest of
     /// the plan it started under; resuming under an edited document would

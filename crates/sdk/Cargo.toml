@@ -7,7 +7,7 @@ license = "Apache-2.0"
 
 [dependencies]
 sven-bootstrap = { path = "../bootstrap", default-features = false }
-sven-harness-runtime = { path = "../harness-runtime", features = ["transform"] }
+sven-harness-runtime = { path = "../harness-runtime" }
 sven-harness-spec = { path = "../harness-spec" }
 sven-hsm       = { path = "../hsm" }
 sven-machines  = { path = "../machines" }

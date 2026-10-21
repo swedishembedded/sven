@@ -6,7 +6,7 @@
 //! A checkpoint is the tracked leaf plus the context — the whole run state
 //! travels inside it. Resuming rebuilds the machine from the same program
 //! the checkpoint was taken under: a bare run pins its plan's digest, a
-//! bundle run pins the bundle's (a changed helper is a changed program),
+//! bundle run pins the bundle's (a changed import is a changed program),
 //! and a document or bundle that no longer matches is refused offline
 //! rather than replaying recorded results through changed steps.
 
@@ -47,8 +47,20 @@ impl HarnessMachine {
     /// [`HarnessRunError::Unrestorable`] when the snapshot names a state
     /// this machine cannot rest in.
     pub fn restore(yaml: String, snap: Snapshot) -> Result<(Self, Context), HarnessRunError> {
+        Self::restore_plan(sven_harness_spec::compile_str(&yaml)?, snap)
+    }
+
+    /// Rebuilds a machine from an already-compiled plan and resumes it from
+    /// `snap`, under the same pinning as [`HarnessMachine::restore`].
+    ///
+    /// # Errors
+    ///
+    /// As [`HarnessMachine::restore`], without the compile failure.
+    pub fn restore_plan(
+        plan: sven_harness_spec::HarnessPlan,
+        snap: Snapshot,
+    ) -> Result<(Self, Context), HarnessRunError> {
         let resumed = HarnessRunState::load(&snap.context);
-        let plan = sven_harness_spec::compile_str(&yaml)?;
         if let Some(checkpoint) = &resumed.plan_digest {
             if plan.digest != *checkpoint {
                 return Err(HarnessRunError::PinnedPlanMismatch {
@@ -73,10 +85,9 @@ impl HarnessMachine {
 
     /// Rebuilds a machine from a bundle and resumes it from `snap`: the
     /// same contract as [`HarnessMachine::restore`], with the bundle the
-    /// checkpoint may pin. The document is compiled against the helper set
-    /// (offline), and a checkpoint taken under a different bundle digest is
-    /// refused — a changed helper is a changed program, exactly as a
-    /// changed document is.
+    /// checkpoint may pin. The package is compiled (offline), and a checkpoint
+    /// taken under a different bundle digest is refused — a changed import is
+    /// a changed program, exactly as a changed document is.
     ///
     /// # Errors
     ///
@@ -108,7 +119,6 @@ impl HarnessMachine {
             }
         }
         let data = HarnessRunData::from_parts(compiled.plan, resumed.inputs.clone())
-            .with_helpers(bundle.helpers.clone())
             .pinned_to_bundle(compiled.digest);
         Self::resume(data, &snap)
     }
@@ -124,8 +134,6 @@ impl HarnessMachine {
             leaf,
             step_effect_cache: None,
             outcome_cache: None,
-            #[cfg(feature = "transform")]
-            helper_modules: sven_harness_transform::cache::ModuleCache::bounded(64),
         };
         Ok((machine, snap.context.clone()))
     }

@@ -1,9 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
-
-# The helper's output is what the branch reads: an urgent order goes express.
-input: { customer: acme, urgent: true }
-expect:
-  status: completed
-  output: { queue: express, customer: acme }
-  steps: { prep: 1, route: 1, express: 1, standard: 0 }

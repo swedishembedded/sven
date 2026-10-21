@@ -163,11 +163,8 @@ fn step_of(record: &TraceRecord) -> Option<&str> {
         | TraceRecord::ItemsInvalidated { step, .. }
         | TraceRecord::TurnRetried { step, .. }
         | TraceRecord::GateEvaluated { step, .. }
-        | TraceRecord::RetryAttempt { step, .. }
         | TraceRecord::ChildStarted { step, .. }
         | TraceRecord::ChildCompleted { step, .. }
-        | TraceRecord::FanOut { step, .. }
-        | TraceRecord::Joined { step, .. }
         | TraceRecord::Failed { step, .. } => Some(step),
         TraceRecord::Verified { .. } | TraceRecord::Outcome { .. } => None,
     }

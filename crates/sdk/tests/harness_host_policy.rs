@@ -14,7 +14,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use std::collections::BTreeMap;
+
 use serde_json::{json, Value};
+use sven_harness_spec::HarnessBundle;
 use sven_model::ResponseEvent;
 use sven_model_mock::ScriptedMockProvider;
 use sven_sdk::{
@@ -123,16 +126,13 @@ fn count(runs: &Arc<AtomicUsize>) -> usize {
 /// The agent is open (no allowlist): the document's capabilities alone
 /// decide, then the host's ceiling.
 const OPEN_AGENT: &str = r#"
-api_version: "1"
+api_version: "2"
 name: open-agent
-entry: work
 capabilities: [ReadFile, WriteFile]
-limits: { max_steps: 20, max_model_turns: 4, max_tool_calls: 8 }
-steps:
-  work:
-    agent: { prompt: "Work.", then: done }
-  done:
-    return: { value: "finished" }
+execution: { limits: { model_turns: 4, tool_calls: 8 } }
+workflow:
+  - name: work
+    task: Work.
 "#;
 
 fn model_proposing_all() -> Arc<ScriptedMockProvider> {
@@ -192,16 +192,15 @@ async fn host_ceiling_cannot_grant_what_the_document_does_not_declare() {
 }
 
 #[tokio::test]
-async fn host_ceiling_stops_a_tool_step_before_it_runs() {
+async fn host_ceiling_stops_a_write_before_it_runs() {
     const WRITES: &str = r#"
-api_version: "1"
+api_version: "2"
 name: writes
-entry: save
 capabilities: [WriteFile]
-limits: { max_steps: 20 }
-steps:
-  save: { tool: { name: write_notes, store_as: saved, then: done } }
-  done: { return: { value: "saved" } }
+execution: { limits: { model_turns: 4, tool_calls: 8 } }
+workflow:
+  - name: save
+    task: Save.
 "#;
     let (builder, tools) = with_tools(
         Engine::builder()
@@ -211,36 +210,30 @@ steps:
     let engine = builder.build().expect("an engine builds");
     let harness = engine.load_harness_from_str(WRITES).expect("loads");
 
-    let outcome = run(&harness).await;
+    let _ = run(&harness).await;
 
     assert_eq!(count(&tools.write), 0);
-    assert!(
-        !matches!(&outcome.result, Some(Ok(_))),
-        "a refused step cannot succeed: {:?}",
-        outcome.result
-    );
 }
 
 const CHILD: &str = r#"
-api_version: "1"
+api_version: "2"
 name: writer
-entry: save
 capabilities: [WriteFile]
-limits: { max_steps: 20 }
-steps:
-  save: { tool: { name: write_notes, then: done } }
-  done: { return: { value: "saved" } }
+execution: { limits: { model_turns: 4, tool_calls: 8 } }
+workflow:
+  - name: save
+    task: Save.
 "#;
 
 const PARENT: &str = r#"
-api_version: "1"
+api_version: "2"
 name: parent
-entry: go
 capabilities: [SpawnChild, WriteFile]
-limits: { max_steps: 20, max_delegate_depth: 3 }
-steps:
-  go: { delegate: { target: writer, then: done } }
-  done: { return: { value: "ok" } }
+imports: { writer: ./writer.yaml }
+execution: { limits: { model_turns: 6, delegate_depth: 3 } }
+workflow:
+  - name: go
+    use: writer
 "#;
 
 /// How often the child's write ran under an engine with this ceiling.
@@ -251,8 +244,13 @@ async fn child_writes(ceiling: Option<Vec<ToolCapability>>) -> usize {
     }
     let (builder, tools) = with_tools(builder);
     let engine = builder.build().expect("an engine builds");
-    engine.load_harness_from_str(CHILD).expect("child loads");
-    let parent = engine.load_harness_from_str(PARENT).expect("parent loads");
+    let package = HarnessBundle {
+        document: PARENT.to_string(),
+        imports: BTreeMap::from([("writer.yaml".to_string(), CHILD.to_string())]),
+    };
+    let parent = engine
+        .load_harness_from_str(&serde_yaml::to_string(&package).expect("serializes"))
+        .expect("the package loads");
     let _ = run(&parent).await;
     count(&tools.write)
 }

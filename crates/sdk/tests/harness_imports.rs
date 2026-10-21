@@ -66,7 +66,6 @@ fn package(main: &str, review: &str) -> String {
     let bundle = HarnessBundle {
         document: main.to_string(),
         imports: BTreeMap::from([("review.yaml".to_string(), review.to_string())]),
-        ..HarnessBundle::default()
     };
     serde_yaml::to_string(&bundle).expect("serializes")
 }

@@ -45,8 +45,11 @@ async fn a_completed_case_passes_and_reports_its_run() {
     assert_eq!(report.status, CaseStatus::Passed, "{:?}", report.mismatches);
     let run = report.run.expect("a case that ran reports its run");
     assert_eq!(run.status, RunStatus::Completed);
-    assert_eq!(run.output, Some(json!({"queue": "bugs", "label": "bug"})));
-    assert_eq!(run.step_counts["ask"], 1);
+    assert_eq!(
+        run.output,
+        Some(json!({"queue": "bug-queue", "label": "bug"}))
+    );
+    assert_eq!(run.step_counts["classify__work"], 1);
     assert_eq!(run.input_tokens, Some(20));
     assert_eq!(run.output_tokens, Some(6));
     assert!(!run.plan_digest.is_empty());
@@ -66,14 +69,14 @@ async fn a_failed_run_is_judged_by_its_failure_object() {
     assert_eq!(report.status, CaseStatus::Passed, "{:?}", report.mismatches);
     let run = report.run.unwrap();
     assert_eq!(run.status, RunStatus::Failed);
-    assert_eq!(run.failure.unwrap().code, "unroutable");
+    assert_eq!(run.failure.unwrap().code, "invalid_answer");
 }
 
 #[tokio::test]
 async fn a_wrong_expectation_fails_the_case_and_names_the_step() {
     let wrong = ROUTING_BUG_CASE.replace(
-        "steps: { classify: 1, ask: 1 }",
-        "steps: { classify: 1, ask: 2 }",
+        "steps: { classify__work: 1 }",
+        "steps: { classify__work: 2 }",
     );
     let report = only_case(&[("harness.yaml", ROUTING), ("cases/bug.yaml", &wrong)]).await;
 
@@ -81,7 +84,7 @@ async fn a_wrong_expectation_fails_the_case_and_names_the_step() {
     let mismatch = report
         .mismatches
         .iter()
-        .find(|m| m.expectation == "steps.ask")
+        .find(|m| m.expectation == "steps.classify__work")
         .unwrap_or_else(|| panic!("the mismatch names the step: {:?}", report.mismatches));
     assert_eq!(mismatch.expected, json!(2));
     assert_eq!(mismatch.actual, json!(1));
@@ -103,13 +106,13 @@ async fn the_unexpected_status_is_a_mismatch_with_the_failure_in_view() {
 async fn running_out_of_tool_responses_is_a_case_error() {
     let case = r#"
 input: {}
-tools: { read_report: { capability: ReadFile, responses: [ { error: "disk full" } ] } }
+tools: { shell_gate: { capability: ExecuteShell, responses: [] } }
 expect: { status: failed }
 "#;
     let report = only_case(&[("harness.yaml", REPORT), ("cases/exhausted.yaml", case)]).await;
     match &report.status {
         CaseStatus::Error { message } => {
-            assert!(message.contains("read_report"), "names the tool: {message}");
+            assert!(message.contains("shell_gate"), "names the tool: {message}");
             assert!(message.contains("exhausted"), "says why: {message}");
         }
         other => panic!("fixture exhaustion is an error, not {other:?}"),
@@ -135,7 +138,7 @@ expect: { status: completed }
 async fn cancelling_on_a_tool_the_case_does_not_define_is_a_manifest_error() {
     let case = r#"
 input: {}
-tools: { read_report: { capability: ReadFile, responses: [ { ok: "x" } ] } }
+tools: { shell_gate: { capability: ExecuteShell, responses: [ { ok: "x" } ] } }
 bounds: { cancel_on_tool_start: nothing_like_it }
 expect: { status: completed }
 "#;
@@ -151,9 +154,9 @@ expect: { status: completed }
 async fn a_blocking_tool_is_cancelled_and_leaves_nothing_running() {
     let case = r#"
 input: {}
-tools: { read_report: { capability: ReadFile, responses: [ { block: true } ] } }
-bounds: { cancel_on_tool_start: read_report }
-expect: { status: cancelled, tools_invoked: [read_report] }
+tools: { shell_gate: { capability: ExecuteShell, responses: [ { block: true } ] } }
+bounds: { cancel_on_tool_start: shell_gate }
+expect: { status: cancelled, tools_invoked: [shell_gate] }
 "#;
     let report = only_case(&[("harness.yaml", REPORT), ("cases/cancel.yaml", case)]).await;
     assert_eq!(
@@ -168,15 +171,19 @@ expect: { status: cancelled, tools_invoked: [read_report] }
 
 const SUSPEND_THEN_RESUME: &str = r#"
 input: {}
-tools: { read_report: { capability: ReadFile, responses: [ { block: true } ] } }
+tools: { shell_gate: { capability: ExecuteShell, responses: [ { block: true } ] } }
 bounds: { deadline_ms: 300 }
 expect: { status: suspended }
 resume:
-  tools: { read_report: { capability: ReadFile, responses: [ { ok: "the report" } ] } }
+  tools:
+    shell_gate:
+      capability: ExecuteShell
+      responses:
+        - ok: { exit_code: 0, timed_out: false, error: null, stdout: "the report", stderr: "" }
   expect:
     status: completed
-    output: "the report"
-    steps: { call: 2 }
+    output: { report: "the report" }
+    steps: { fetch__v0_read_a0: 1 }
 "#;
 
 #[tokio::test]
@@ -198,11 +205,11 @@ async fn a_suspended_run_resumes_on_its_checkpoint_in_the_same_case() {
 
 #[tokio::test]
 async fn a_resume_expectation_that_does_not_hold_is_reported_under_its_phase() {
-    let wrong = SUSPEND_THEN_RESUME.replace("steps: { call: 2 }", "steps: { call: 5 }");
+    let wrong = SUSPEND_THEN_RESUME.replace("fetch__v0_read_a0: 1", "fetch__v0_read_a0: 5");
     let report = only_case(&[("harness.yaml", REPORT), ("cases/resume.yaml", &wrong)]).await;
     assert_eq!(report.status, CaseStatus::Failed);
     assert!(
-        names(&report.mismatches).contains(&"resume.steps.call"),
+        names(&report.mismatches).contains(&"resume.steps.fetch__v0_read_a0"),
         "{:?}",
         report.mismatches
     );
@@ -210,17 +217,20 @@ async fn a_resume_expectation_that_does_not_hold_is_reported_under_its_phase() {
 
 #[tokio::test]
 async fn a_tool_can_write_into_the_case_workspace_for_a_later_verification() {
-    let case = r#"
-input: {}
+    let case = format!(
+        r#"
+input: {{}}
+{PATCHING_MODEL}
 tools:
   write_patch:
     capability: WriteFile
     responses:
       - ok: "patched"
-        write: { path: fixed.txt, content: "ok" }
-expect: { status: completed, output: "passed", tools_invoked: [write_patch] }
-"#;
-    let report = only_case(&[("harness.yaml", REPAIR), ("cases/repair.yaml", case)]).await;
+        write: {{ path: fixed.txt, content: "ok" }}
+expect: {{ status: completed, output: {{ note: "done" }}, tools_invoked: [write_patch] }}
+"#
+    );
+    let report = only_case(&[("harness.yaml", REPAIR), ("cases/repair.yaml", &case)]).await;
     assert_eq!(
         report.status,
         CaseStatus::Passed,
@@ -232,13 +242,16 @@ expect: { status: completed, output: "passed", tools_invoked: [write_patch] }
 
 #[tokio::test]
 async fn a_workspace_file_is_visible_to_the_run_and_the_fixture_write_is_jailed() {
-    let seeded = r#"
-input: {}
-workspace: { "fixed.txt": "already here" }
-tools: { write_patch: { capability: WriteFile, responses: [ { ok: "noop" } ] } }
-expect: { status: completed, output: "passed" }
-"#;
-    let report = only_case(&[("harness.yaml", REPAIR), ("cases/seeded.yaml", seeded)]).await;
+    let seeded = format!(
+        r#"
+input: {{}}
+{PATCHING_MODEL}
+workspace: {{ "fixed.txt": "already here" }}
+tools: {{ write_patch: {{ capability: WriteFile, responses: [ {{ ok: "noop" }} ] }} }}
+expect: {{ status: completed, output: {{ note: "done" }} }}
+"#
+    );
+    let report = only_case(&[("harness.yaml", REPAIR), ("cases/seeded.yaml", &seeded)]).await;
     assert_eq!(
         report.status,
         CaseStatus::Passed,
@@ -247,15 +260,18 @@ expect: { status: completed, output: "passed" }
         report.mismatches
     );
 
-    let escape = r#"
-input: {}
+    let escape = format!(
+        r#"
+input: {{}}
+{PATCHING_MODEL}
 tools:
   write_patch:
     capability: WriteFile
-    responses: [ { ok: "x", write: { path: "../escaped.txt", content: "no" } } ]
-expect: { status: failed }
-"#;
-    let report = only_case(&[("harness.yaml", REPAIR), ("cases/escape.yaml", escape)]).await;
+    responses: [ {{ ok: "x", write: {{ path: "../escaped.txt", content: "no" }} }} ]
+expect: {{ status: failed }}
+"#
+    );
+    let report = only_case(&[("harness.yaml", REPAIR), ("cases/escape.yaml", &escape)]).await;
     assert!(
         matches!(&report.status, CaseStatus::Error { message } if message.contains("outside")),
         "a fixture write cannot leave the workspace: {:?}",
@@ -265,13 +281,17 @@ expect: { status: failed }
 
 #[tokio::test]
 async fn a_tool_whose_declared_capability_hides_behind_its_name_is_refused() {
-    // Named like a read, declared as a write: the harness authorizes by name.
-    let case = r#"
-input: {}
-tools: { read_report: { capability: WriteFile, responses: [ { ok: "x" } ] } }
-expect: { status: completed }
-"#;
-    let report = only_case(&[("harness.yaml", REPORT), ("cases/spoof.yaml", case)]).await;
+    // Named like a write, declared as network access the harness never
+    // granted: the call is held to what the tool really is.
+    let case = format!(
+        r#"
+input: {{}}
+{PATCHING_MODEL}
+tools: {{ write_patch: {{ capability: NetworkAccess, responses: [ {{ ok: "x" }} ] }} }}
+expect: {{ status: completed }}
+"#
+    );
+    let report = only_case(&[("harness.yaml", REPAIR), ("cases/spoof.yaml", &case)]).await;
     assert_ne!(report.status, CaseStatus::Passed);
     let run = report.run.expect("the run itself happened");
     assert!(
@@ -282,33 +302,11 @@ expect: { status: completed }
 }
 
 #[tokio::test]
-async fn stateless_rules_serve_parallel_branches_in_declared_order() {
-    let case = r#"
-input: {}
-model:
-  rules:
-    - { match_type: contains, pattern: "branch a", reply: "A" }
-    - { match_type: contains, pattern: "branch b", reply: "B" }
-expect: { status: completed, output: ["A", "B"] }
-"#;
-    for _ in 0..5 {
-        let report = only_case(&[("harness.yaml", FANOUT), ("cases/fan.yaml", case)]).await;
-        assert_eq!(
-            report.status,
-            CaseStatus::Passed,
-            "{:?} {:?}",
-            report.status,
-            report.mismatches
-        );
-    }
-}
-
-#[tokio::test]
 async fn a_model_file_fixture_is_read_from_inside_the_harness_directory() {
     let case = r#"
 input: { ticket: "x" }
 model: { file: fixtures/model.yaml }
-expect: { status: completed, output: { queue: bugs, label: bug } }
+expect: { status: completed, output: { queue: bug-queue, label: bug } }
 "#;
     let model = "sequence:\n  - text: '{\"label\": \"bug\"}'\n";
     let report = only_case(&[
@@ -395,7 +393,7 @@ async fn a_suite_over_an_invalid_harness_runs_nothing_and_says_why() {
     let (_tmp, dir) = harness_dir(&[
         (
             "harness.yaml",
-            "api_version: \"1\"\nname: broken\nentry: nowhere\nsteps: {}\n",
+            "api_version: \"2\"\nname: broken\nworkflow: []\n",
         ),
         ("cases/bug.yaml", ROUTING_BUG_CASE),
     ]);
@@ -411,7 +409,7 @@ async fn run_once_resume_once_and_replay_once_compose_without_a_case() {
     let blocked = RunRequest {
         input: json!({}),
         tools: serde_yaml::from_str(
-            "read_report: { capability: ReadFile, responses: [ { block: true } ] }",
+            "shell_gate: { capability: ExecuteShell, responses: [ { block: true } ] }",
         )
         .unwrap(),
         bounds: serde_yaml::from_str("{ deadline_ms: 300 }").unwrap(),
@@ -429,7 +427,7 @@ async fn run_once_resume_once_and_replay_once_compose_without_a_case() {
 
     let again = RunRequest {
         tools: serde_yaml::from_str(
-            "read_report: { capability: ReadFile, responses: [ { ok: \"the report\" } ] }",
+            "shell_gate: { capability: ExecuteShell, responses: [ { ok: { exit_code: 0, timed_out: false, error: null, stdout: \"the report\", stderr: \"\" } } ] }",
         )
         .unwrap(),
         model: Some(ModelFixture::Fail("unused".into())),
@@ -440,7 +438,7 @@ async fn run_once_resume_once_and_replay_once_compose_without_a_case() {
         .await
         .expect("the checkpoint resumes");
     assert_eq!(second.summary.status, RunStatus::Completed);
-    assert_eq!(second.summary.output, Some(json!("the report")));
+    assert_eq!(second.summary.output, Some(json!({"report": "the report"})));
 
     let recording = second.recording.expect("recording was asked for");
     let replay = replay_once(&dir, &recording).expect("a recording replays offline");

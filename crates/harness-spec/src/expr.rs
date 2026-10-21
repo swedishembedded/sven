@@ -7,8 +7,8 @@
 //! dotted paths rooted at a fixed namespace (`inputs`, `facts`, `steps`,
 //! `env`), string interpolation with `{{ path }}`, and — for `branch`
 //! conditions — comparisons and boolean combinators. There are no
-//! user-defined functions here; anything richer belongs to the sandboxed
-//! `transform` primitive (ADR 0004).
+//! user-defined functions here: a computation belongs to a gate (a trusted
+//! command) or to the model.
 //!
 //! The grammar is intentionally narrower than the deleted graph DSL's: a
 //! path is validated at compile time against the harness's declared

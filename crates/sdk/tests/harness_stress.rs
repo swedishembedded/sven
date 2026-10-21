@@ -14,12 +14,14 @@
 //! workloads stay correct and leak nothing then you can procure our services
 //! by sending an email to info@swedishembedded.com.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sven_harness_runtime::TraceRecord;
+use sven_harness_spec::HarnessBundle;
 use sven_model_mock::YamlMockProvider;
 use sven_sdk::{
     tool::{ApprovalPolicy, Tool, ToolCall, ToolCapability, ToolOutput},
@@ -35,37 +37,41 @@ const RUN_DEADLINE: Duration = Duration::from_secs(10);
 /// throughput, not a slow machine.
 const WALL_CLOCK_CEILING: Duration = Duration::from_secs(120);
 
-/// Branch, schema-constrained predict, tool call, two pure parallel
-/// branches, then a return: every primitive family the runtime schedules.
+/// A schema-constrained model turn, a gate, an imported workflow and a
+/// returned value: every kind of step the runtime schedules.
 const PROGRAM: &str = r#"
-api_version: "1"
+api_version: "2"
 name: stress
-entry: gate
-capabilities: [SpawnChild, ReadFile]
-limits: { max_steps: 50, max_delegate_depth: 2, max_parallel: 2, max_model_turns: 2, max_tool_calls: 1 }
-schemas:
-  verdict: { type: object, required: [label], properties: { label: { type: string } } }
-steps:
-  gate:   { branch: { on: { eq: "inputs.kind", value: "x" }, when_true: ask, when_false: ask } }
-  ask:    { predict: { prompt: "label this", schema: verdict, store_as: verdict, then: count } }
-  count:  { tool: { name: read_count, store_as: hit, then: kid } }
-  kid:    { delegate: { target: stress-child, store_as: kid, then: fan } }
-  fan:    { parallel: { branches: [left, right], join: merge } }
-  left:   { assign: { set: { side: l }, then: ret_left } }
-  ret_left:  { return: { value: "{{ facts.side }}" } }
-  right:  { assign: { set: { side: r }, then: ret_right } }
-  ret_right: { return: { value: "{{ facts.side }}" } }
-  merge:  { return: { value: { label: "{{ facts.verdict.label }}", sides: "{{ steps.fan.value }}" } } }
+inputs: { kind: string }
+imports: { kid: ./stress-child.yaml }
+execution: { limits: { model_turns: 4, delegate_depth: 2 } }
+gates:
+  count: { command: [count] }
+workflow:
+  - name: ask
+    model_only: true
+    schema: { type: object, required: [label], properties: { label: { type: string } } }
+    task: label this
+  - name: count
+    verify: [count]
+  - name: kid
+    use: kid
+outputs:
+  label: { type: string, value: "{{ tasks.ask.output.label }}" }
+  kid: { type: string, value: "{{ tasks.kid.output.said }}" }
 "#;
 
-/// Delegated by the program: a child run of its own.
+/// Imported by the program: a child run of its own.
 const CHILD: &str = r#"
-api_version: "1"
+api_version: "2"
 name: stress-child
-entry: done
-limits: { max_steps: 5 }
-steps:
-  done: { return: { value: "kid" } }
+execution: { limits: { model_turns: 2 } }
+workflow:
+  - name: say
+    model_only: true
+    task: say something
+outputs:
+  said: { type: string, value: "{{ tasks.say.output }}" }
 "#;
 
 const MODEL_RULES: &str = r#"
@@ -91,10 +97,10 @@ impl Drop for Running {
 #[async_trait::async_trait]
 impl Tool for CountHit {
     fn name(&self) -> &str {
-        "read_count"
+        "shell_gate"
     }
     fn kernel_capability(&self) -> ToolCapability {
-        ToolCapability::ReadFile
+        ToolCapability::ExecuteShell
     }
     fn description(&self) -> &str {
         "counts calls"
@@ -111,7 +117,12 @@ impl Tool for CountHit {
         self.calls.fetch_add(1, Ordering::SeqCst);
         // Yield so concurrent runs really interleave inside the call.
         tokio::task::yield_now().await;
-        ToolOutput::ok(&call.id, "hit")
+        ToolOutput::ok(
+            &call.id,
+            json!({ "exit_code": 0, "timed_out": false, "error": null,
+                    "stdout": "hit", "stderr": "" })
+            .to_string(),
+        )
     }
 }
 
@@ -125,28 +136,19 @@ struct Shape {
     trace: Vec<String>,
 }
 
-/// The trace without its random call ids. Branches run concurrently, so the
-/// order their completions are recorded in is not defined: that one run of
-/// records is put in a canonical order, everything else keeps its place.
+/// The trace without its random call ids and child machine ids.
 fn comparable(trace: Vec<TraceRecord>) -> Vec<String> {
-    let mut lines = Vec::with_capacity(trace.len());
-    let mut completions: Vec<String> = Vec::new();
-    for record in trace {
-        let line = match record {
+    trace
+        .into_iter()
+        .map(|record| match record {
             TraceRecord::StepCompleted { step, .. } => format!("completed {step}"),
+            TraceRecord::ChildStarted { step, .. } => format!("child started {step}"),
+            TraceRecord::ChildCompleted { step, ok, .. } => {
+                format!("child completed {step} {ok}")
+            }
             other => format!("{other:?}"),
-        };
-        if line.starts_with("ChildCompleted") {
-            completions.push(line);
-            continue;
-        }
-        completions.sort();
-        lines.append(&mut completions);
-        lines.push(line);
-    }
-    completions.sort();
-    lines.append(&mut completions);
-    lines
+        })
+        .collect()
 }
 
 async fn one_run(
@@ -161,11 +163,12 @@ async fn one_run(
         .tool(tool as Arc<_>)
         .build()
         .map_err(|e| format!("run {index}: engine: {e}"))?;
-    engine
-        .load_harness_from_str(CHILD)
-        .map_err(|e| format!("run {index}: load child: {e}"))?;
+    let package = HarnessBundle {
+        document: PROGRAM.to_string(),
+        imports: BTreeMap::from([("stress-child.yaml".to_string(), CHILD.to_string())]),
+    };
     let harness = engine
-        .load_harness_from_str(PROGRAM)
+        .load_harness_from_str(&serde_yaml::to_string(&package).map_err(|e| e.to_string())?)
         .map_err(|e| format!("run {index}: load: {e}"))?;
     // A run's scratchpad is kept; each of these thousand lives in a directory
     // that goes away with the run.
@@ -187,7 +190,11 @@ async fn one_run(
 }
 
 fn records(trace: &[String], kind: &str) -> usize {
-    trace.iter().filter(|r| r.starts_with(kind)).count()
+    let word = match kind {
+        "ChildStarted" => "child started",
+        _ => "child completed",
+    };
+    trace.iter().filter(|r| r.starts_with(word)).count()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -232,20 +239,18 @@ async fn a_thousand_concurrent_runs_conclude_identically() {
     let first = &shapes[0];
     assert_eq!(first.conclusion, RunConclusion::Success, "{first:?}");
     assert!(
-        first.result.contains("ok") && first.result.contains("sides"),
+        first.result.contains("ok") && first.result.contains("kid"),
         "the program returned its verdict: {first:?}"
     );
     for (index, shape) in shapes.iter().enumerate() {
         assert_eq!(shape, first, "run {index} differs from run 0");
     }
 
-    // One delegated child plus the two parallel branches: each child that
-    // started (a branch starts with its fan-out) has completed.
-    let started = records(&first.trace, "ChildStarted") + 2;
-    assert_eq!(records(&first.trace, "FanOut"), 1, "{first:?}");
+    // The imported workflow ran as a child: it started and completed.
+    assert_eq!(records(&first.trace, "ChildStarted"), 1, "{first:?}");
     assert_eq!(
         records(&first.trace, "ChildCompleted"),
-        started,
+        1,
         "every child that started completed: {first:?}"
     );
     assert_eq!(tool.calls.load(Ordering::SeqCst), RUNS, "one call per run");

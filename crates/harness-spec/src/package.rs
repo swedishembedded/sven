@@ -171,12 +171,6 @@ impl Walk<'_> {
         self.stack.push(path.to_string());
         let (spec, plan) = self.compile(Some(path), text)?;
         self.stack.pop();
-        if spec.api_version != crate::WORKFLOW_API_VERSION {
-            return Err(invalid(format!(
-                "import {path} is a version {} document; only version 2 workflows can be imported",
-                spec.api_version
-            )));
-        }
         let interface = Imported {
             name: spec.name.clone(),
             inputs: spec.inputs.clone().unwrap_or_default(),
@@ -300,7 +294,6 @@ pub fn load_package_file(main: &Path) -> Result<HarnessBundle, HarnessError> {
     }
     Ok(HarnessBundle {
         document: main,
-        helpers: BTreeMap::new(),
         imports,
     })
 }

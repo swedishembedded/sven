@@ -53,7 +53,7 @@ pub(super) fn interrupted_failure(state: &HarnessRunState) -> Option<Event> {
             kind: EffectKind::Verify,
             error: SUSPENDED.to_string(),
         }),
-        Waiting::Child | Waiting::Join => Some(Event::EffectFailed {
+        Waiting::Child => Some(Event::EffectFailed {
             kind: EffectKind::InstantiateSubmachine,
             error: SUSPENDED.to_string(),
         }),

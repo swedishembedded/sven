@@ -27,28 +27,14 @@ use crate::run::TraceRecord;
 #[must_use]
 pub fn harness_event(record: &TraceRecord, step_duration_ms: u64) -> HarnessEvent {
     match record {
-        TraceRecord::StepStarted {
-            step,
-            primitive,
-            attempt,
-        } => HarnessEvent::StepStarted {
+        TraceRecord::StepStarted { step, primitive } => HarnessEvent::StepStarted {
             step: step.clone(),
             primitive: primitive.clone(),
-            attempt: *attempt,
         },
         TraceRecord::StepCompleted { step, call_id } => HarnessEvent::StepCompleted {
             step: step.clone(),
             call_id: call_id.as_ref().map(ToString::to_string),
             duration_ms: step_duration_ms,
-        },
-        TraceRecord::RetryAttempt {
-            step,
-            attempt,
-            remaining,
-        } => HarnessEvent::RetryScheduled {
-            step: step.clone(),
-            attempt: *attempt,
-            remaining: *remaining,
         },
         TraceRecord::BranchSelected {
             step,
@@ -152,14 +138,6 @@ pub fn harness_event(record: &TraceRecord, step_duration_ms: u64) -> HarnessEven
             step: step.clone(),
             child: child.clone(),
             ok: *ok,
-        },
-        TraceRecord::FanOut { step, branches } => HarnessEvent::FanOut {
-            step: step.clone(),
-            branches: branches.clone(),
-        },
-        TraceRecord::Joined { step, results } => HarnessEvent::Joined {
-            step: step.clone(),
-            results: *results as u64,
         },
         TraceRecord::Failed {
             step,

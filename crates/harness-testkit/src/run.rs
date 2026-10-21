@@ -666,18 +666,13 @@ pub(crate) fn seed_workspace(
     Ok(())
 }
 
-/// Loads the directory's children, then its main document, onto `engine`.
+/// Loads the directory's main document (with what it imports) onto `engine`.
 fn load_all(engine: &Engine, dir: &HarnessDir) -> Result<(Harness, Source), TestkitError> {
-    let load = |source: &Source| {
-        engine
-            .load_harness_from_str(&source.text)
-            .map_err(|e| TestkitError::Harness(format!("{}: {e}", source.path.display())))
-    };
-    for child in &dir.children {
-        load(&Source::read(child)?)?;
-    }
     let main = Source::read(&dir.main)?;
-    Ok((load(&main)?, main))
+    let harness = engine
+        .load_harness_from_str(&main.text)
+        .map_err(|e| TestkitError::Harness(format!("{}: {e}", main.path.display())))?;
+    Ok((harness, main))
 }
 
 fn verdict(

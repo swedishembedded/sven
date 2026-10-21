@@ -184,23 +184,19 @@ test/e2e/basic/demote: build
 # they are written out rather than generated.
 HARNESS_JOBS ?= 4
 HARNESS_TEST = $(CARGO) test --jobs $(HARNESS_JOBS)
-HARNESS_TARGETS := test/harness/spec test/harness/transform test/harness/runtime \
+HARNESS_TARGETS := test/harness/spec test/harness/runtime \
                    test/harness/sdk test/harness/testkit test/harness/samples test/harness/cli
 
 ## test/harness - default: every harness suite below, on mock models only (opt-in: not part of `make test`)
 test/harness: $(HARNESS_TARGETS)
 
-## test/harness/spec - harness document language: sven-harness-spec
+## test/harness/spec - the harness workflow language: sven-harness-spec
 test/harness/spec:
 	$(HARNESS_TEST) -p sven-harness-spec -- --test-threads=4
 
-## test/harness/transform - harness transforms: sven-harness-transform
-test/harness/transform:
-	$(HARNESS_TEST) -p sven-harness-transform -- --test-threads=4
-
 ## test/harness/runtime - harness runtime: sven-harness-runtime
 test/harness/runtime:
-	$(HARNESS_TEST) -p sven-harness-runtime --features transform -- --test-threads=4
+	$(HARNESS_TEST) -p sven-harness-runtime -- --test-threads=4
 
 ## test/harness/sdk - harness through the SDK: run, replay, authz, children and the 1000-run stress test
 test/harness/sdk:
@@ -669,15 +665,6 @@ help:
 generate:
 	@bash scripts/make-help.sh generate
 
-## generate/harness - lists the harness generators; rewrites nothing
-generate/harness:
-	@bash scripts/make-help.sh generate/harness
-
-## generate/harness/sample-bundle - rewrite the custom-helper sample's bundle.yaml from its document
-##   The harness runtime's sample_bundle test (test/harness/runtime) only checks it.
-generate/harness/sample-bundle:
-	$(HARNESS_TEST) -p sven-harness-runtime --features transform --test sample_bundle -- --bless
-
 ## generate/config - lists the configuration generators; rewrites nothing
 generate/config:
 	@bash scripts/make-help.sh generate/config
@@ -691,7 +678,7 @@ generate/config/golden:
 .PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
         test test/features test/gates test/e2e test/e2e/basic/deferred test/e2e/basic/instructions-deferred test/e2e/basic/demote $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
         test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness test/harness/local-model $(HARNESS_TARGETS) \
-        generate generate/harness generate/harness/sample-bundle \
+        generate \
         generate/config generate/config/golden \
         test/crate $(TEST_CRATE_TARGETS) test/formal \
         check check/fmt check/features check/clippy check/doc check/arch \

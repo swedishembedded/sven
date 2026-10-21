@@ -90,6 +90,10 @@ async fn judge(case: &str) -> sven_harness_testkit::CaseReport {
 
 const WRITES_OK: &str = r#"
 input: {}
+model:
+  sequence:
+    - tool_calls: [ { id: p1, name: write_patch, args: {} } ]
+    - text: done
 tools: { write_patch: { capability: WriteFile, responses: [ { ok: "p", write: { path: fixed.txt, content: x } } ] } }
 "#;
 
@@ -133,12 +137,12 @@ async fn output_includes_is_a_subset_check_and_output_is_exact() {
         run_case(&dir, &dir.cases[0], &RunnerOptions::default()).await
     };
     assert_eq!(
-        run("  output_includes: { queue: bugs }\n".into())
+        run("  output_includes: { queue: bug-queue }\n".into())
             .await
             .status,
         CaseStatus::Passed
     );
-    let exact = run("  output: { queue: bugs }\n".into()).await;
+    let exact = run("  output: { queue: bug-queue }\n".into()).await;
     assert_eq!(
         exact.status,
         CaseStatus::Failed,

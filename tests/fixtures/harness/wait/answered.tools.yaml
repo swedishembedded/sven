@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
-read_report:
-  capability: ReadFile
+shell_gate:
+  capability: ExecuteShell
   responses:
-    - ok: "all green"
+    - ok: { exit_code: 0, timed_out: false, error: null, stdout: "all green", stderr: "" }

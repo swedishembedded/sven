@@ -117,13 +117,13 @@ fn compile_writes_yaml_to_a_file_that_means_the_same_plan() {
 }
 
 #[test]
-fn compile_handles_a_version_one_document_and_refuses_an_invalid_one() {
+fn compile_prints_a_plan_with_its_source_map_and_refuses_an_invalid_document() {
     let tmp = tempfile::tempdir().unwrap();
     let out = run(sven(tmp.path()).arg("compile").arg(fixture("decide")));
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let plan = stdout_json(&out);
-    assert_eq!(plan["api_version"], "1");
-    assert!(plan.get("source_map").is_none());
+    assert_eq!(plan["api_version"], "2");
+    assert!(plan["source_map"].is_object(), "{plan}");
 
     let out = run(sven(tmp.path()).arg("compile").arg(fixture("broken.yaml")));
     assert_eq!(code(&out), 1, "{}", stderr(&out));
@@ -219,18 +219,6 @@ fn the_mermaid_graph_is_a_flowchart_with_a_subgraph_per_task() {
 }
 
 #[test]
-fn a_version_one_plan_draws_without_a_source_map() {
-    let tmp = tempfile::tempdir().unwrap();
-    let out = run(sven(tmp.path())
-        .arg("inspect")
-        .arg(fixture("decide"))
-        .args(["--graph", "dot"]));
-    assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert!(!stdout(&out).contains("subgraph"), "{}", stdout(&out));
-    assert!(stdout(&out).contains("->"));
-}
-
-#[test]
 fn a_graph_format_must_be_dot_or_mermaid_and_excludes_json() {
     let tmp = tempfile::tempdir().unwrap();
     let out = run(sven(tmp.path())
@@ -291,7 +279,7 @@ fn explain_a_step_gives_its_origin_and_where_it_leads() {
 }
 
 #[test]
-fn explain_works_on_version_one_plans_and_refuses_an_unknown_step() {
+fn explain_names_the_workflow_and_refuses_an_unknown_step() {
     let tmp = tempfile::tempdir().unwrap();
     let out = run(sven(tmp.path()).arg("explain").arg(fixture("decide")));
     assert_eq!(code(&out), 0, "{}", stderr(&out));

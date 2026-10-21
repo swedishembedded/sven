@@ -1,20 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
-# A repair loop that does not take the tool's word for it. The patch tool is
-# retried while it fails; once it claims success, an independent verification
-# checks that the file is really there, and only a passing verdict is a repair.
-api_version: "1"
+# An agent patches a file with a patch tool; an independent check decides
+# whether the patch landed, and a failed check earns one repair turn. Swedish
+# Embedded AB implements verifiable, bounded repair loops for agent workflows
+# for its clients. If your team needs expertise in not taking an agent's word
+# for it then you can procure our services by sending an email to
+# info@swedishembedded.com.
+api_version: "2"
 name: repair
-description: "Apply a patch with up to three attempts, then verify the result independently."
-outputs: { status: string, check: string }
+description: "Apply a patch, then verify the result independently; one repair attempt."
+outputs:
+  result: { type: string, value: "{{ tasks.patch.output }}" }
+agent: { tools: [write_patch] }
 capabilities: [WriteFile, RunVerifier]
-limits: { max_steps: 30, max_tool_calls: 3 }
-entry: fix
-steps:
-  fix:        { retry: { attempts: 3, body: patch, then: check, on_exhausted: unrepaired } }
-  patch:      { tool: { name: write_patch, args: { target: fixed.txt }, store_as: patched, then: check } }
-  check:      { verify: { spec: { kind: file_exists, path: "fixed.txt" }, store_as: verdict, then: judge } }
-  judge:      { branch: { on: { eq: "steps.check.value", value: passed }, when_true: repaired, when_false: unrepaired } }
-  repaired:   { return: { value: { status: repaired, check: "{{ steps.check.value }}" } } }
-  unrepaired: { fail: { code: unrepaired, message: "the patch never produced fixed.txt" } }
+execution: { limits: { model_turns: 6, tool_calls: 3 } }
+workflow:
+  - name: patch
+    task: Apply the patch so that fixed.txt exists.
+    verify: [{ artifact: fixed.txt }]
+    repair: { attempts: 1 }

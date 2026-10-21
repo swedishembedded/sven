@@ -34,7 +34,7 @@ use crate::source_map::{Lowering, SourceRef};
 use crate::spec::{
     AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, FailStepSpec, ForEachSpec,
     HarnessSpec, InputValue, IterateStepSpec, LimitsSpec, PredictStepSpec, ReturnStepSpec,
-    StepSpec, UntilSpec, DEFAULT_MAX_ITEMS, WORKFLOW_API_VERSION,
+    StepSpec, UntilSpec, API_VERSION, DEFAULT_MAX_ITEMS,
 };
 
 /// The id of the step the run returns from.
@@ -709,7 +709,7 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
             .collect(),
     };
     Ok(HarnessSpec {
-        api_version: WORKFLOW_API_VERSION.to_string(),
+        api_version: API_VERSION.to_string(),
         name: w.name.clone(),
         description: w.description.clone(),
         inputs: w.inputs.clone(),
@@ -739,9 +739,6 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
                 .and_then(|text| crate::expr::Template::parse(text).ok())
                 .and_then(|t| t.single_hole().map(|h| h.segments()[1..].join("."))),
             max_delegate_depth: limits.delegate_depth,
-            max_parallel: None,
-            max_helper_fuel: None,
-            max_helper_pages: None,
         }),
         entry: next,
         steps: b.steps,

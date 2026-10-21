@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# A right first edit takes one attempt: the repair turn never runs.
+input: {}
+model:
+  sequence:
+    - text: '{"file": "src/total.sh", "summary": "total ignores shipping"}'
+    - tool_calls: [ { id: e1, name: edit_file, args: { path: src/total.sh, diff: "@@\n-a\n+b\n" } } ]
+    - text: "edited"
+tools:
+  shell_gate:
+    capability: ExecuteShell
+    responses:
+      - ok: { exit_code: 1, timed_out: false, error: null, stdout: "FAIL no_shipping", stderr: "" }
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "ok", stderr: "" }
+  edit_file:
+    capability: WriteFile
+    responses:
+      - ok: "edited"
+expect:
+  status: completed
+  output: { defect: "total ignores shipping", note: "edited" }
+  steps: { fix__work: 1, fix__v0_tests_a0_repair: 0 }

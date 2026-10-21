@@ -27,9 +27,7 @@ use serde_json::Value;
 use sven_harness_spec::{IterateSource, PlanIteration, PlanPrimitive, GATE_TOOL, SNAPSHOT_TOOL};
 use sven_hsm::context::PendingApproval;
 use sven_hsm::ids::{ApprovalId, ToolCallId};
-use sven_hsm::{
-    capability_for_tool_name, Context, Effect, Event, GatedCall, Reaction, ToolCapability,
-};
+use sven_hsm::{Context, Effect, Event, GatedCall, Reaction, ToolCapability};
 
 use sven_vocab::AnsweredCall;
 
@@ -102,8 +100,8 @@ impl HarnessMachine {
         }
     }
 
-    /// The call `call_id` stands for, while it is in flight: the `tool`
-    /// step's own call, or one the agent loop's last turn proposed.
+    /// The call `call_id` stands for, while it is in flight: a gate or
+    /// loop step's own call, or one the agent loop's last turn proposed.
     fn held_call(&self, run: &HarnessRunState, call_id: ToolCallId) -> Option<HeldCall> {
         if let Some(agent) = &run.agent {
             if let Some(call) = agent.calls.get(&call_id.as_uuid().to_string()) {
@@ -126,11 +124,6 @@ impl HarnessMachine {
             });
         }
         match &self.plan().step(&inflight.step)?.primitive {
-            PlanPrimitive::Tool { name, args, .. } => Some(HeldCall {
-                name: name.clone(),
-                capability: capability_for_tool_name(name),
-                args: run.resolve_value(args),
-            }),
             PlanPrimitive::Iterate {
                 iteration:
                     PlanIteration::ForEach {

@@ -382,24 +382,28 @@ fn authoring_mistakes_fail_with_the_name_of_the_culprit() {
 
 #[test]
 fn unsupported_versions_are_named() {
-    assert!(rejected("api_version: \"3\"\nname: x\n").contains("supports `1` and `2`"));
+    assert!(rejected("api_version: \"3\"\nname: x\n").contains("supports `2`"));
 }
 
 #[test]
-fn version_one_documents_cannot_use_version_two_primitives() {
-    let gate = r#"
+fn a_version_one_document_is_refused_with_a_message_that_says_it_was_removed() {
+    let step_map = r#"
 api_version: "1"
 name: g
-entry: run
-capabilities: [ExecuteShell]
-limits: { max_steps: 5 }
+entry: ok
 steps:
-  run: { gate: { steps: [{ name: t, argv: ["true"] }], then: ok, on_fail: bad } }
   ok: { return: { value: 1 } }
-  bad: { fail: { code: no } }
 "#;
-    let message = rejected(gate);
-    assert!(message.contains("needs `api_version: \"2\"`"), "{message}");
+    let message = rejected(step_map);
+    assert!(
+        message.contains("no longer accepted") && message.contains("api_version: \"2\""),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_document_without_an_api_version_is_refused() {
+    assert!(rejected("name: x\n").contains("no `api_version`"));
 }
 
 #[test]

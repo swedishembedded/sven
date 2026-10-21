@@ -91,19 +91,18 @@ fn the_opt_in_is_constructed_only_from_an_explicit_endpoint() {
 
 #[tokio::test]
 async fn a_case_without_a_model_never_reaches_configuration() {
-    // A model-free harness completes with no model of any kind.
-    let decide = r#"
-api_version: "1"
-name: decide
-inputs: { amount: number }
-outputs: { tier: string }
-limits: { max_steps: 10 }
-entry: tier
-steps:
-  tier: { return: { value: { tier: standard } } }
+    // A model-free harness (a check task over a scripted gate) completes
+    // with no model of any kind.
+    let case = r#"
+input: {}
+tools:
+  shell_gate:
+    capability: ExecuteShell
+    responses:
+      - ok: { exit_code: 0, timed_out: false, error: null, stdout: "all clear", stderr: "" }
+expect: { status: completed, output: { report: "all clear" } }
 "#;
-    let case = "input: { amount: 3 }\nexpect: { status: completed, output: { tier: standard } }\n";
-    let (_tmp, dir) = harness_dir(&[("harness.yaml", decide), ("cases/c.yaml", case)]);
+    let (_tmp, dir) = harness_dir(&[("harness.yaml", REPORT), ("cases/c.yaml", case)]);
     let report = run_case(&dir, &dir.cases[0], &RunnerOptions::default()).await;
     assert_eq!(report.status, CaseStatus::Passed, "{:?}", report.mismatches);
 
