@@ -9,6 +9,7 @@ edition = "2021"
 license = "Apache-2.0"
 description = "Sample: run a harness directory's cases through the public SDK alone, with no test kit"
 publish = false
+default-run = "sample-harnesses-sdk-runner"
 
 [dependencies]
 # The ONLY sven dependency a sample may have is the SDK facade - see
