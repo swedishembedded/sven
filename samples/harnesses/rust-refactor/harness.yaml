@@ -90,9 +90,11 @@ gates:
     run: |
       # PATHS holds several pathspecs, split on purpose.
       # shellcheck disable=SC2086
-      git ls-files -- $PATHS | grep '\.rs$' | head -n "$MAX" | awk '
+      # awk takes the first MAX files but reads all its input: `head` would
+      # close the pipe early and, under pipefail, fail the gate on SIGPIPE.
+      git ls-files -- $PATHS | grep '\.rs$' | awk -v max="$MAX" '
         BEGIN { printf "[" }
-        { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); printf "%s{\"file\": \"%s\"}", (NR > 1 ? ", " : ""), $0 }
+        NR <= max { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); printf "%s{\"file\": \"%s\"}", (NR > 1 ? ", " : ""), $0 }
         END { print "]" }'
   baseline:
     description: The project's own checks pass on the untouched tree; record its test count.
@@ -225,8 +227,9 @@ workflow:
          lint gate it passes today) and `format_check` (e.g. `cargo fmt --all -- --check`, or
          "" if the project is not formatted). Prefer the commands the project's own Makefile
          or CI uses; keep each one non-interactive and offline; avoid tests that need special
-         hardware or network. Run each command once yourself to confirm it passes on the
-         untouched tree; if lint or format_check fail before any change, set it to "".
+         hardware or network. The harness runs them on the
+         untouched tree right after you finish and tells you if one fails, so do not run the
+         slow ones yourself.
 
       Finish with one sentence saying you are done.
     verify: [clean_start, inventory, baseline]
