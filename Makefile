@@ -185,7 +185,7 @@ test/e2e/basic/demote: build
 HARNESS_JOBS ?= 4
 HARNESS_TEST = $(CARGO) test --jobs $(HARNESS_JOBS)
 HARNESS_TARGETS := test/harness/spec test/harness/runtime \
-                   test/harness/sdk test/harness/testkit test/harness/samples test/harness/cli
+                   test/harness/sdk test/harness/cli
 
 ## test/harness - default: every harness suite below, on mock models only (opt-in: not part of `make test`)
 test/harness: $(HARNESS_TARGETS)
@@ -202,28 +202,9 @@ test/harness/runtime:
 test/harness/sdk:
 	$(HARNESS_TEST) -p sven-sdk --test harness_run --test harness_replay --test harness_authz --test harness_host_policy --test harness_item_checkpoints --test harness_children --test harness_stress -- --test-threads=4
 
-## test/harness/testkit - harness test kit: sven-harness-testkit
-test/harness/testkit:
-	$(HARNESS_TEST) -p sven-harness-testkit -- --test-threads=4
-
-## test/harness/samples - the SDK runner sample over the harness samples
-test/harness/samples:
-	$(HARNESS_TEST) -p sample-harnesses-sdk-runner -- --test-threads=4
-
-## test/harness/cli - the `sven harness` command line
+## test/harness/cli - the `sven harness` command line, against a loopback scripted model server
 test/harness/cli:
-	$(HARNESS_TEST) -p sven --test harness_cli --test harness_production --test harness_suspension --test harness_views --test harness_isolation -- --test-threads=4
-
-## test/harness/local-model - OPT-IN: the live-local case of the ticket-routing sample against a server you already run
-##   Needs ENDPOINT=<url> (and optionally MODEL=<provider/name>) on the make command
-##   line; refuses with exit 2 without ENDPOINT. Nothing is pulled or started.
-##   Not part of test/harness.
-MODEL ?= ollama/qwen3:8b
-ENDPOINT ?=
-LOCAL_MODEL_SAMPLE = samples/harnesses/ticket-routing
-test/harness/local-model:
-	@test -n "$(ENDPOINT)" || { echo "test/harness/local-model: pass ENDPOINT=<url> of a model server you are already running (optional MODEL=<provider/name>); nothing is pulled or started"; exit 2; }
-	$(CARGO) run --jobs $(HARNESS_JOBS) -p sven -- harness test $(LOCAL_MODEL_SAMPLE) --case live-local --model $(MODEL) --model-endpoint $(ENDPOINT)
+	$(HARNESS_TEST) -p sven --test harness_cli --test harness_production --test harness_suspension --test harness_views --test harness_cli_outputs --test harness_isolation -- --test-threads=4
 
 ## test/e2e/delegation - lists the delegation checks; runs nothing
 test/e2e/delegation:
@@ -677,7 +658,7 @@ generate/config/golden:
 # Declared last so every generated list above is already defined.
 .PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
         test test/features test/gates test/e2e test/e2e/basic/deferred test/e2e/basic/instructions-deferred test/e2e/basic/demote $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
-        test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness test/harness/local-model $(HARNESS_TARGETS) \
+        test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness $(HARNESS_TARGETS) \
         generate \
         generate/config generate/config/golden \
         test/crate $(TEST_CRATE_TARGETS) test/formal \

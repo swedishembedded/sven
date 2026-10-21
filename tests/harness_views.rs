@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! `sven harness compile | explain | status | inspect --graph | validate`
-//! against version 2 workflows and version 1 plans: the commands that let a
+//! against workflows: the commands that let a
 //! person read a harness, and a run's progress, in the author's terms
 //! without running a model.
 //!
@@ -10,12 +10,14 @@
 //! shows every step and groups a workflow's steps by task; `explain` speaks
 //! of tasks, checks and repairs, and of any one generated step by its origin;
 //! `status` says where a suspended run rests and whether the document still
-//! matches it; nothing here needs a model or a network.
+//! matches it; the reading commands need no model or network.
 //!
 //! Swedish Embedded AB implements reviewable, declarative agent workflows for
 //! its clients. If your team needs expertise in explaining what a long-running
 //! agent job does before it runs then you can procure our services by
 //! sending an email to info@swedishembedded.com.
+
+mod harness_support;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -297,26 +299,19 @@ fn explain_names_the_workflow_and_refuses_an_unknown_step() {
     );
 }
 
-/// Runs the verified-task case that suspends in its first gate and returns
-/// the checkpoint file it left.
-fn suspended_checkpoint(dir: &Path) -> PathBuf {
-    let checkpoint = dir.join("checkpoint.json");
-    let out = run(sven(dir)
-        .arg("run")
-        .arg(verified_task())
-        .arg("--case")
-        .arg(verified_task().join("cases/suspended-then-resumed.yaml"))
-        .args(["--quiet", "--json", "--checkpoint-out"])
-        .arg(&checkpoint));
-    assert_eq!(code(&out), 3, "{}", stderr(&out));
-    checkpoint
+/// Runs the verified-task sample against a model that never answers, so that
+/// the deadline suspends it in its first model turn, and returns the
+/// checkpoint file it left.
+fn suspended_checkpoint(setup: &harness_support::Setup) -> PathBuf {
+    harness_support::suspended_checkpoint(setup, &verified_task(), r#"{"feature": "x"}"#)
 }
 
 #[test]
 fn status_says_where_a_suspended_run_rests() {
-    let tmp = tempfile::tempdir().unwrap();
-    let checkpoint = suspended_checkpoint(tmp.path());
-    let out = run(sven(tmp.path())
+    let setup = harness_support::setup();
+    let tmp = setup.scratch.path();
+    let checkpoint = suspended_checkpoint(&setup);
+    let out = run(sven(tmp)
         .arg("status")
         .arg(verified_task())
         .arg("--checkpoint")
@@ -326,20 +321,18 @@ fn status_says_where_a_suspended_run_rests() {
     let status = stdout_json(&out);
     assert_eq!(status["harness"], "verified-task");
     assert_eq!(status["resumable"], true);
-    assert_eq!(status["current"]["step"], "implement__v0_test_a0");
+    assert_eq!(status["current"]["step"], "implement__work");
     assert_eq!(status["current"]["task"], "implement");
-    assert_eq!(status["current"]["role"], "check");
-    assert_eq!(status["counts"]["model_turns"], 1);
-    assert_eq!(status["steps_completed"][0], "implement__work");
+    assert_eq!(status["current"]["role"], "work");
 
-    let text = run(sven(tmp.path())
+    let text = run(sven(tmp)
         .arg("status")
         .arg(verified_task())
         .arg("--checkpoint")
         .arg(&checkpoint));
     assert_eq!(code(&text), 0, "{}", stderr(&text));
     assert!(
-        stdout(&text).contains("suspended at implement__v0_test_a0"),
+        stdout(&text).contains("suspended at implement__work"),
         "{}",
         stdout(&text)
     );
@@ -352,16 +345,17 @@ fn status_says_where_a_suspended_run_rests() {
 
 #[test]
 fn status_says_a_checkpoint_no_longer_fits_an_edited_document() {
-    let tmp = tempfile::tempdir().unwrap();
-    let checkpoint = suspended_checkpoint(tmp.path());
-    let edited = tmp.path().join("edited");
+    let setup = harness_support::setup();
+    let tmp = setup.scratch.path();
+    let checkpoint = suspended_checkpoint(&setup);
+    let edited = tmp.join("edited");
     std::fs::create_dir_all(&edited).unwrap();
     let text = std::fs::read_to_string(verified_task().join("harness.yaml"))
         .unwrap()
         .replace("attempts: 1", "attempts: 2");
     std::fs::write(edited.join("harness.yaml"), text).unwrap();
 
-    let out = run(sven(tmp.path())
+    let out = run(sven(tmp)
         .arg("status")
         .arg(&edited)
         .arg("--checkpoint")

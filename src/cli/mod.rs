@@ -27,10 +27,7 @@ pub use disclosure::DisclosureFlags;
 // than duplicated here.
 pub use agent::AgentCommands;
 pub use decisions::{DecisionsCommands, DoctorCommands};
-pub use harness::{
-    ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, LiveModelArgs, PlanFormatArg,
-    ToolsetArg,
-};
+pub use harness::{ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, PlanFormatArg};
 pub use index::IndexCommands;
 pub use questions::QuestionsCommands;
 #[cfg(feature = "network")]
@@ -500,33 +497,32 @@ pub enum Commands {
         command: QuestionsCommands,
     },
 
-    /// Validate, inspect, run, resume, replay, test and compare programmable
-    /// harnesses, offline.
+    /// Validate, inspect, run, resume and replay programmable harnesses.
     ///
-    /// Nothing here starts or contacts a model unless you opt in explicitly
-    /// (`run --help`); runs use fixture models and tools, and no sven
-    /// configuration is read.
+    /// The reading commands compile a harness and start nothing. `run` and
+    /// `resume` drive a real model on a server you already run, with the
+    /// coding tools on a workspace you name and an approval mode you choose;
+    /// no sven configuration is read.
     ///
     ///   sven harness validate DIR...
-    ///   sven harness test DIR... [--case NAME] [--no-replay] [--json]
-    ///                     [--model SPEC --model-endpoint URL]
-    ///   sven harness run DIR --input '{"k": "v"}' [--case FILE] [--json]
-    ///   sven harness compare A B --cases DIR [--seed N]... --bootstrap-seed N
+    ///   sven harness run DIR --input '{"k": "v"}' --workspace DIR
+    ///                     --model PROVIDER/NAME --model-endpoint URL
+    ///                     --approvals auto|deny|ask [--json]
+    ///   sven harness resume DIR --checkpoint FILE [the flags of run]
+    ///   sven harness replay DIR --recording FILE [--expect-trace FILE]
     ///   sven harness schema (optional output PATH)
     ///   sven harness compile DIR [--format json|yaml] [-o FILE]
     ///   sven harness inspect DIR [--graph dot|mermaid]
     ///   sven harness explain DIR [--step ID]
     ///   sven harness status DIR --checkpoint FILE [--json]
     ///
-    /// Exit codes. run, resume: 0 returned, 1 the plan failed, 2 usage or
+    /// Exit codes. run, resume: 0 returned, 1 the workflow failed, 2 usage or
     /// invalid harness/input/file, 3 suspended by a bound, 4 cancelled,
     /// 5 infrastructure. validate, inspect, compile: 0 valid, 1 invalid, 2
     /// unreadable path. explain: 0 explained, 2 unknown step or unreadable
     /// path. status: 0 the checkpoint fits the document, 1 resume would refuse
-    /// it, 2 not a checkpoint. test: 0 passed or skipped, 1 a case failed, 2 usage or invalid
-    /// harness/manifest. compare: 0 produced, 1 regression under
-    /// --fail-on-regression, 2 invalid variant. replay: 0 matched, 1 trace
-    /// mismatch, 2 refused recording.
+    /// it, 2 not a checkpoint. replay: 0 matched, 1 trace mismatch, 2 refused
+    /// recording.
     // Verbatim, so `--help` keeps the examples and exit codes apart.
     #[command(verbatim_doc_comment)]
     Harness {

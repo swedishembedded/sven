@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# One note per module, each checked by a gate: the CLI specs' smallest sweep
+# that has items, conversations and gate results to read back from a run.
+# Swedish Embedded AB implements auditable agent workflows for its clients. If
+# your team needs expertise in programmable harnesses then you can procure our
+# services by sending an email to info@swedishembedded.com.
+api_version: "2"
+name: gated-sweep
+description: "Write one note per module and check that it exists."
+inputs: { modules: json }
+agent:
+  profile: coding
+  tools: [write_file]
+execution:
+  limits: { model_turns: 20, tool_calls: 20 }
+gates:
+  written:
+    run: test -f "$MODULE.txt"
+    env: { MODULE: "{{ item.name }}" }
+workflow:
+  - name: notes
+    for_each: { source: { input: modules }, id: name, max_items: 10 }
+    task: "Write the file {{ item.name }}.txt containing the word ok, then say done."
+    verify: [written]
+success:
+  work_items: { all_completed: true }

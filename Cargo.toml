@@ -73,10 +73,6 @@ members = [
     "samples/study/svf",
     "samples/agent/task",
     "samples/host/sessions",
-    "samples/harnesses/sdk-runner",
-    # Offline case manifests, fixture models and tools, runner and comparer for
-    # harnesses (mock models unless explicitly opted in).
-    "crates/harness-testkit",
 ]
 
 # Single source of truth for the sven release version. The top-level `sven`
@@ -167,10 +163,10 @@ sven-ci          = { path = "crates/ci" }
 # Without default features for the same reason as sven-bootstrap: the
 # `minimal` build must not get the SDK's presets back through unification.
 sven-sdk         = { path = "crates/sdk", default-features = false }
-# `sven harness`: offline fixtures, runner and comparer for programmable
-# harnesses, and the document JSON Schema (`sven harness schema`).
-sven-harness-testkit = { path = "crates/harness-testkit" }
+# `sven harness`: the workflow language (validate, compile, the document JSON
+# Schema) and the machine's run state (`status`).
 sven-harness-spec = { path = "crates/harness-spec" }
+sven-harness-runtime = { path = "crates/harness-runtime" }
 base64           = { workspace = true }
 # `sven task run`: Task/VerifiedTaskSeed/ContentDigest to build the seed a
 # freshly-loaded `.task.toml` is posted as. Zero-dependency foundation crate,
@@ -197,6 +193,8 @@ tracing-subscriber = { workspace = true }
 dirs        = { workspace = true }
 serde_json  = { workspace = true }
 serde_yaml  = { workspace = true }
+thiserror   = { workspace = true }
+async-trait = { workspace = true }
 serde       = { workspace = true }
 reqwest     = { workspace = true }
 libc        = { workspace = true }
@@ -251,7 +249,6 @@ sven-tools-ctx   = { path = "crates/tools-ctx" }
 sven-model       = { path = "crates/model" }
 sven-vocab       = { path = "crates/vocab" }
 sven-model-mock  = { path = "crates/model-mock" }
-async-trait      = { workspace = true }
 tokio            = { workspace = true }
 tempfile         = { workspace = true }
 

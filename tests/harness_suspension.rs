@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `sven harness run --toolset coding` under interruption: a stop that can be
+//! `sven harness run` under interruption: a stop that can be
 //! caught leaves a checkpoint, a kill that cannot be caught loses at most the
 //! item in flight, and a long step reports what it is doing as it goes.
 //!

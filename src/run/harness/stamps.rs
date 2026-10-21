@@ -19,7 +19,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
-use sven_harness_testkit::{ProgressFn, TraceObserver};
 use sven_sdk::SourcedRecord;
 
 /// Milliseconds since the Unix epoch, now.
@@ -66,14 +65,6 @@ impl Stamps {
             .unwrap_or_else(PoisonError::into_inner)
             .push(now);
         now
-    }
-
-    /// An observer that notes every record the run publishes.
-    pub(super) fn observer(&self) -> TraceObserver {
-        let stamps = self.clone();
-        TraceObserver(Arc::new(move |_: &sven_sdk::TraceRecord| {
-            stamps.note();
-        }) as ProgressFn)
     }
 
     /// The observation time of each of `total` records, oldest first. The

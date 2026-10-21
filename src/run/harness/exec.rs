@@ -4,24 +4,23 @@
 //! `sven harness run` and `resume`: one run, its files, its report and its
 //! exit code.
 //!
-//! Swedish Embedded AB implements offline verification for programmable agent
-//! harnesses for its clients. If your team needs expertise in testing
-//! autonomous workflows without a live model then you can procure our
-//! services by sending an email to info@swedishembedded.com.
+//! Swedish Embedded AB implements governed autonomous coding workflows for
+//! its clients. If your team needs expertise in letting agents change real
+//! repositories under verifiable control then you can procure our services
+//! by sending an email to info@swedishembedded.com.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use sven_harness_testkit::{
-    inspect, main_plan, resume_once, run_once, HarnessDir, RunResult, RunStatus, RunSummary,
-};
 use sven_sdk::{sourced_trace, HarnessCheckpoint, SourcedRecord};
 
-use super::production::{self, Production};
+use super::engine::{self, Assembly};
+use super::engine_run::{RunResult, RunStatus, RunSummary};
+use super::source::Source;
 use super::stamps::{stamped_line, Stamps};
-use super::{kit, print_json, request, usage, Failure, Outcome};
-use crate::cli::{HarnessRunArgs, ToolsetArg};
+use super::{kit, print_json, usage, Failure, Outcome};
+use crate::cli::HarnessRunArgs;
 
 /// What the run's observer saw: when each trace record arrived, and whether
 /// the progress lines were printed as they did.
@@ -32,76 +31,38 @@ struct Seen<'a> {
 
 /// Starts the harness at `path` and reports how it ended.
 pub(super) async fn run(path: &Path, args: &HarnessRunArgs) -> Outcome {
-    let dir = HarnessDir::open(path).map_err(kit)?;
-    if args.toolset == ToolsetArg::Coding {
-        let plan = Arc::new(main_plan(&dir).map_err(kit)?);
-        let stamps = Stamps::begin();
-        let production = Production::from_args(args, plan, &stamps)?;
-        let printed = production.streams_progress();
-        let result = production::run(&dir, production).await?;
-        return finish(
-            path,
-            args,
-            &result,
-            false,
-            Seen {
-                stamps: &stamps,
-                printed,
-            },
-        );
-    }
+    let plan = Arc::new(Source::open(path).map_err(kit)?.plan);
     let stamps = Stamps::begin();
-    let request = request::build(args, stamps.observer())?;
-    let no_model = request::is_default_model(&request);
-    let result = run_once(&dir, request).await.map_err(kit)?;
+    let assembly = Assembly::from_args(args, plan, &stamps)?;
+    let printed = assembly.streams_progress();
+    let result = engine::run(path, assembly).await?;
     finish(
-        path,
         args,
         &result,
-        no_model,
         Seen {
             stamps: &stamps,
-            printed: false,
+            printed,
         },
     )
 }
 
 /// Resumes the checkpoint in `checkpoint` under the harness at `path`.
 pub(super) async fn resume(path: &Path, checkpoint: &Path, args: &HarnessRunArgs) -> Outcome {
-    let dir = HarnessDir::open(path).map_err(kit)?;
+    let plan = Arc::new(Source::open(path).map_err(kit)?.plan);
     let text = std::fs::read_to_string(checkpoint)
         .map_err(|e| usage(format!("cannot read {}: {e}", checkpoint.display())))?;
     let checkpoint: HarnessCheckpoint = serde_json::from_str(&text)
         .map_err(|e| usage(format!("{} is not a checkpoint: {e}", checkpoint.display())))?;
-    if args.toolset == ToolsetArg::Coding {
-        let plan = Arc::new(main_plan(&dir).map_err(kit)?);
-        let stamps = Stamps::begin();
-        let production = Production::from_args(args, plan, &stamps)?;
-        let printed = production.streams_progress();
-        let result = production::resume(&dir, checkpoint, production).await?;
-        return finish(
-            path,
-            args,
-            &result,
-            false,
-            Seen {
-                stamps: &stamps,
-                printed,
-            },
-        );
-    }
     let stamps = Stamps::begin();
-    let request = request::build(args, stamps.observer())?;
-    let no_model = request::is_default_model(&request);
-    let result = resume_once(&dir, checkpoint, request).await.map_err(kit)?;
+    let assembly = Assembly::from_args(args, plan, &stamps)?;
+    let printed = assembly.streams_progress();
+    let result = engine::resume(path, checkpoint, assembly).await?;
     finish(
-        path,
         args,
         &result,
-        no_model,
         Seen {
             stamps: &stamps,
-            printed: false,
+            printed,
         },
     )
 }
@@ -112,13 +73,7 @@ pub(super) async fn resume(path: &Path, checkpoint: &Path, args: &HarnessRunArgs
 /// `seen` says when the trace records were observed, and whether the progress
 /// lines were already printed while the run went (so they are not repeated
 /// from the trace afterwards).
-fn finish(
-    path: &Path,
-    args: &HarnessRunArgs,
-    result: &RunResult,
-    no_model: bool,
-    seen: Seen<'_>,
-) -> Outcome {
+fn finish(args: &HarnessRunArgs, result: &RunResult, seen: Seen<'_>) -> Outcome {
     let times = seen.stamps.times(result.outcome.trace.len());
     write_files(args, result, &times)?;
     if !args.quiet && !seen.printed {
@@ -135,15 +90,8 @@ fn finish(
     if summary.status == RunStatus::Suspended && args.checkpoint_out.is_none() {
         eprintln!("note: the run is suspended; pass --checkpoint-out FILE to keep its checkpoint");
     }
-    if no_model && summary.status == RunStatus::Failed {
-        // The model's own error is the plan's business (a retry may turn it
-        // into the plan's failure); say what the default model was.
-        eprintln!(
-            "note: no model source was given (--model-fixture, --case model or --model), so every model call failed"
-        );
-    }
     if args.json {
-        print_json(&report(path, args, result))?;
+        print_json(&report(args, result))?;
     } else {
         if let Some(dir) = &result.scratchpad {
             eprintln!("scratchpad: {}", dir.display());
@@ -248,15 +196,14 @@ fn write(path: &Path, text: &str) -> Result<(), Failure> {
 
 /// The `--json` document. `checkpoint` is the file the checkpoint was
 /// written to (`--checkpoint-out`), null when none was written.
-fn report(path: &Path, args: &HarnessRunArgs, result: &RunResult) -> Value {
+fn report(args: &HarnessRunArgs, result: &RunResult) -> Value {
     let summary = &result.summary;
-    let name = inspect(path).map(|i| i.name).unwrap_or_default();
     let written = args
         .checkpoint_out
         .as_ref()
         .filter(|_| result.checkpoint.is_some());
     json!({
-        "harness": name,
+        "harness": result.plan.name,
         "plan_digest": summary.plan_digest,
         "bundle_digest": result.bundle_digest,
         "run_id": result.run_id,

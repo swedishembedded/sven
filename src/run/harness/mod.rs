@@ -1,33 +1,38 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `sven harness`: the offline CLI over programmable harnesses.
+//! `sven harness`: validate, inspect, compile, explain, run, resume and
+//! replay programmable harnesses.
 //!
-//! Every subcommand is a thin shell over `sven-harness-testkit`, which builds
-//! each run on a fresh engine with an injected provider and
-//! `Config::default()`. Nothing here loads `Settings` or any user
-//! configuration, and a real model is built only under the testkit's explicit
-//! opt-in, so no subcommand can start or contact a model by default.
+//! The reading commands (`validate`, `inspect`, `compile`, `explain`,
+//! `status`, `schema`) compile a harness and look at it; none starts a model.
+//! `run` and `resume` build one engine from the flags (a model server you
+//! already run, the coding tools on a workspace you name, an approval mode you
+//! choose), load the harness onto it and drive the run, printing
+//! `[sven:harness] ...` progress lines as it goes. `replay` re-derives a
+//! recorded run offline. Nothing here loads `Settings` or any user
+//! configuration.
 //!
-//! Progress lines (`[sven:harness] ...`) are printed as the run goes under
-//! `--toolset coding` (the testkit streams the trace and the agent's tool
-//! calls) and derived from the run's trace after it ends on the fixture path.
-//!
-//! Swedish Embedded AB implements offline verification for programmable agent
-//! harnesses for its clients. If your team needs expertise in testing
-//! autonomous workflows without a live model then you can procure our
-//! services by sending an email to info@swedishembedded.com.
+//! Swedish Embedded AB implements governed autonomous coding workflows for
+//! its clients. If your team needs expertise in letting agents change real
+//! repositories under verifiable control then you can procure our services
+//! by sending an email to info@swedishembedded.com.
 
+mod args;
+mod engine;
+mod engine_run;
+mod error;
 mod exec;
 mod inspect;
-mod production;
+mod plan_view;
+mod render;
 mod replay;
-mod request;
+mod source;
 mod stamps;
-mod suites;
+mod status;
 mod views;
 
-use sven_harness_testkit::TestkitError;
+use error::HarnessError;
 
 use crate::cli::HarnessCommands;
 
@@ -47,10 +52,10 @@ pub(super) fn usage(message: impl Into<String>) -> Failure {
     }
 }
 
-/// Maps a testkit error to its exit code: a run that could not be carried
-/// out is infrastructure (5), everything else is the caller's input (2).
-pub(super) fn kit(error: TestkitError) -> Failure {
-    let code = if matches!(error, TestkitError::Run(_)) {
+/// Maps an error to its exit code: a run that could not be carried out is
+/// infrastructure (5), everything else is the caller's input (2).
+fn kit(error: HarnessError) -> Failure {
+    let code = if matches!(error, HarnessError::Run(_)) {
         5
     } else {
         2
@@ -64,7 +69,7 @@ pub(super) fn kit(error: TestkitError) -> Failure {
 /// Runs a `sven harness` subcommand and returns the process exit code.
 pub(crate) async fn run_harness_command(command: &HarnessCommands) -> i32 {
     let outcome = match command {
-        HarnessCommands::Validate { paths, json } => suites::validate(paths, *json),
+        HarnessCommands::Validate { paths, json } => inspect::validate(paths, *json),
         HarnessCommands::Inspect { path, json, graph } => match graph {
             Some(format) => views::graph(path, *format),
             None => inspect::inspect(path, *json),
@@ -107,43 +112,6 @@ pub(crate) async fn run_harness_command(command: &HarnessCommands) -> i32 {
             expect_trace,
             json,
         } => replay::replay(path, recording, expect_trace.as_deref(), *json),
-        HarnessCommands::Test {
-            dirs,
-            case,
-            no_replay,
-            json,
-            live,
-        } => {
-            suites::test(
-                dirs,
-                case.as_deref(),
-                !*no_replay,
-                *json,
-                request::live_opt_in(live),
-            )
-            .await
-        }
-        HarnessCommands::Compare {
-            dir_a,
-            dir_b,
-            cases,
-            fail_on_regression,
-            seeds,
-            bootstrap_seed,
-            json,
-            live,
-        } => {
-            let opt_in = request::live_opt_in(live);
-            let compare = suites::CompareArgs {
-                dir_a,
-                dir_b,
-                cases,
-                fail_on_regression: *fail_on_regression,
-                paired_seeds: bootstrap_seed.map(|bootstrap| (seeds.clone(), bootstrap)),
-                json: *json,
-            };
-            suites::compare(compare, opt_in).await
-        }
     };
     outcome.unwrap_or_else(|failure| {
         eprintln!("error: {}", failure.message);

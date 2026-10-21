@@ -183,8 +183,20 @@ impl Setup {
         self.subcommand("run", &sample(), server)
     }
 
-    /// `sven harness <subcommand> <harness>` as a coding run on the repo.
+    /// `sven harness <subcommand> <harness>` as a coding run on the repo,
+    /// suspended by the 120 s deadline when it has not ended by then.
     pub fn subcommand(&self, subcommand: &str, harness: &Path, server: &Server) -> Command {
+        self.subcommand_for(subcommand, harness, server, 120)
+    }
+
+    /// As [`Setup::subcommand`], with a deadline of `seconds`.
+    pub fn subcommand_for(
+        &self,
+        subcommand: &str,
+        harness: &Path,
+        server: &Server,
+        seconds: u64,
+    ) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_sven"));
         cmd.current_dir(self.scratch.path())
             .env("HOME", self.scratch.path())
@@ -195,7 +207,7 @@ impl Setup {
             .env_remove("SVEN_MODEL")
             .args(["harness", subcommand])
             .arg(harness)
-            .args(["--toolset", "coding", "--workspace"])
+            .arg("--workspace")
             .arg(self.repo.path())
             .args([
                 "--model",
@@ -205,9 +217,25 @@ impl Setup {
                 "--api-key-file",
             ])
             .arg(self.key_file())
-            .args(["--json", "--timeout", "120"]);
+            .args(["--json", "--timeout", &seconds.to_string()]);
         cmd
     }
+}
+
+/// Runs `harness` against a model that never answers, with a one second
+/// deadline: the run is suspended in its first model turn, and the returned
+/// checkpoint is the file it left.
+#[cfg(unix)]
+pub fn suspended_checkpoint(setup: &Setup, harness: &Path, input: &str) -> PathBuf {
+    let stalled = serve(vec![Turn::Stall]);
+    let checkpoint = setup.out("checkpoint.json");
+    let out = run(setup
+        .subcommand_for("run", harness, &stalled, 1)
+        .args(["--approvals", "auto", "--input", input, "--checkpoint-out"])
+        .arg(&checkpoint));
+    assert_eq!(code(&out), 3, "{}", stderr(&out));
+    assert!(checkpoint.is_file(), "the deadline left a checkpoint");
+    checkpoint
 }
 
 pub fn run(cmd: &mut Command) -> Output {

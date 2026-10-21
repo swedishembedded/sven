@@ -11,9 +11,9 @@
 
 use std::path::Path;
 
-use sven_harness_testkit::{replay_once, HarnessDir};
 use sven_sdk::{HarnessRecording, TraceRecord};
 
+use super::engine_run::replay_once;
 use super::{kit, print_json, usage, Outcome};
 
 /// Replays `recording` under the harness at `path`. With `expect_trace`
@@ -24,12 +24,11 @@ pub(super) fn replay(
     expect_trace: Option<&Path>,
     json: bool,
 ) -> Outcome {
-    let dir = HarnessDir::open(path).map_err(kit)?;
     let text = std::fs::read_to_string(recording)
         .map_err(|e| usage(format!("cannot read {}: {e}", recording.display())))?;
     let recording: HarnessRecording = serde_json::from_str(&text)
         .map_err(|e| usage(format!("{} is not a recording: {e}", recording.display())))?;
-    let summary = replay_once(&dir, &recording).map_err(kit)?;
+    let summary = replay_once(path, &recording).map_err(kit)?;
 
     let matches = expect_trace
         .map(|file| expected_trace(file).map(|expected| expected == summary.trace))

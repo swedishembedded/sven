@@ -12,7 +12,8 @@
 
 mod harness_support;
 
-use harness_support::cli::{code, fixtures, run, sample, stderr, sven};
+use harness_support::cli::fixtures;
+use harness_support::{code, run, serve, setup, stderr, write, Turn};
 use serde_json::Value;
 
 fn now_ms() -> u64 {
@@ -24,13 +25,19 @@ fn now_ms() -> u64 {
 
 #[test]
 fn every_trace_record_the_cli_writes_or_prints_carries_the_time_it_observed_it() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let trace = tmp.path().join("trace.jsonl");
+    let setup = setup();
+    let server = serve(vec![]);
+    let trace = setup.out("trace.jsonl");
     let before = now_ms();
-    let out = run(sven(tmp.path())
-        .arg("run")
-        .arg(fixtures().join("decide"))
-        .args(["--input", r#"{"plan": "pro"}"#, "--trace"])
+    let out = run(setup
+        .subcommand("run", &fixtures().join("decide"), &server)
+        .args([
+            "--approvals",
+            "auto",
+            "--input",
+            r#"{"plan": "pro"}"#,
+            "--trace",
+        ])
         .arg(&trace));
     let after = now_ms();
     assert_eq!(code(&out), 0, "{}", stderr(&out));
@@ -54,7 +61,9 @@ fn every_trace_record_the_cli_writes_or_prints_carries_the_time_it_observed_it()
     let printed: Vec<Value> = stderr(&out)
         .lines()
         .filter_map(|l| l.strip_prefix("[sven:harness] "))
-        .map(|l| serde_json::from_str(l).expect("a JSON line"))
+        .map(|l| serde_json::from_str::<Value>(l).expect("a JSON line"))
+        // The tool-call reports of a long step are not trace records.
+        .filter(|l| !matches!(l["event"].as_str(), Some("tool_started" | "tool_finished")))
         .collect();
     assert_eq!(written.len(), printed.len());
     for (what, lines) in [("file", written), ("stderr", printed)] {
@@ -72,16 +81,24 @@ fn every_trace_record_the_cli_writes_or_prints_carries_the_time_it_observed_it()
 
 #[test]
 fn conversations_writes_one_trajectory_per_agent_conversation() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let dir = tmp.path().join("conversations");
-    let sweep = sample("module-sweep");
-    let out = run(sven(tmp.path())
-        .arg("run")
-        .arg(&sweep)
-        .arg("--case")
-        .arg(sweep.join("cases/sweeps-every-module.yaml"))
-        .arg("--quiet")
-        .arg("--conversations")
+    let setup = setup();
+    let server = serve(vec![
+        Turn::Calls(vec![write("lexer.txt", "ok")]),
+        Turn::Text("done lexer"),
+        Turn::Calls(vec![write("parser.txt", "ok")]),
+        Turn::Text("done parser"),
+    ]);
+    let dir = setup.out("conversations");
+    let out = run(setup
+        .subcommand("run", &fixtures().join("gated-sweep"), &server)
+        .args([
+            "--approvals",
+            "auto",
+            "--input",
+            r#"{"modules": [{"name": "lexer"}, {"name": "parser"}]}"#,
+            "--quiet",
+            "--conversations",
+        ])
         .arg(&dir));
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let mut names: Vec<String> = std::fs::read_dir(&dir)
@@ -89,19 +106,11 @@ fn conversations_writes_one_trajectory_per_agent_conversation() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     names.sort();
-    // The planning task, each module in its own conversation, the coverage pass.
-    assert_eq!(
-        names,
-        [
-            "0000-plan.json",
-            "0001-modules-0.json",
-            "0002-modules-1.json",
-            "0003-coverage-1.json"
-        ]
-    );
+    // Each module is worked on in a conversation of its own.
+    assert_eq!(names, ["0000-notes-0.json", "0001-notes-1.json"]);
     let first: Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("0001-modules-0.json")).unwrap())
+        serde_json::from_str(&std::fs::read_to_string(dir.join("0000-notes-0.json")).unwrap())
             .unwrap();
-    assert_eq!(first["extra"]["harness"]["conversation"], "modules#0");
+    assert_eq!(first["extra"]["harness"]["conversation"], "notes#0");
     assert!(first["steps"].as_array().is_some_and(|s| !s.is_empty()));
 }

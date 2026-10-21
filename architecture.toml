@@ -101,7 +101,6 @@ sven-sdk = "sdk"
 sven-ci  = "surface"
 sven-mcp = "surface"
 sven-tui = "surface"
-sven-harness-testkit = "surface"
 
 # composite
 sven-acp   = "composite"
@@ -128,7 +127,6 @@ sven-ablation = "composite"
 sample-study-svf = "sample"
 sample-agent-task = "sample"
 sample-host-sessions = "sample"
-sample-harnesses-sdk-runner = "sample"
 
 # ── Forbidden reachability. Checked transitively over normal dependencies. ─
 [[forbidden]]

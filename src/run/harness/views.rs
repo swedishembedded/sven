@@ -11,19 +11,22 @@
 
 use std::path::Path;
 
-use sven_harness_testkit::{
-    compile as compile_harness, explain_plan, explain_step, graph as draw, render_prompts,
-    render_step, status as read_status, CompiledHarness, GraphFormat, StatusReport, TestkitError,
+use super::args::{parse_json, read};
+use super::error::HarnessError;
+use super::plan_view::{
+    compile as compile_harness, explain_plan, explain_step, graph as draw, CompiledHarness,
+    GraphFormat,
 };
-
-use super::{kit, print_json, request, usage, Failure, Outcome};
+use super::render::{render_prompts, render_step};
+use super::status::{status as read_status, StatusReport};
+use super::{kit, print_json, usage, Failure, Outcome};
 use crate::cli::{GraphArg, PlanFormatArg};
 
 /// Compiles the harness at `path`. A document that does not compile is exit
 /// 1, as for `validate` and `inspect`; a path that cannot be read is 2.
 fn compiled(path: &Path) -> Result<CompiledHarness, Failure> {
     compile_harness(path).map_err(|error| match error {
-        TestkitError::Harness(_) | TestkitError::Manifest(_) => Failure {
+        HarnessError::Harness(_) => Failure {
             code: 1,
             message: error.to_string(),
         },
@@ -73,10 +76,8 @@ impl ExplainInputs<'_> {
     /// The inputs the flags give, if any: a JSON object.
     fn read(&self) -> Result<Option<serde_json::Value>, Failure> {
         let value = match (self.json, self.file) {
-            (Some(text), _) => request::parse_json(text, "--input")?,
-            (None, Some(file)) => {
-                request::parse_json(&request::read(file)?, &file.display().to_string())?
-            }
+            (Some(text), _) => parse_json(text, "--input")?,
+            (None, Some(file)) => parse_json(&read(file)?, &file.display().to_string())?,
             (None, None) => return Ok(None),
         };
         if value.is_object() {

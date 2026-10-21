@@ -1,8 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
-
-# A read that never answers: a deadline suspends the run mid-call.
-shell_gate:
-  capability: ExecuteShell
-  responses:
-    - block: true

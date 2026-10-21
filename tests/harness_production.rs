@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `sven harness run --toolset coding`: the real binary, the real coding
+//! `sven harness run`: the real binary, the real coding
 //! tools, a real C compiler and a loopback model server that plays a script.
 //!
 //! The specs: a run on real tools repairs a real repository and finishes only
@@ -275,16 +275,11 @@ fn flags_that_widen_a_run_are_never_implied() {
     };
     let ws = setup.repo.path().to_str().unwrap().to_string();
     let endpoint = server.base.clone();
-    refused(&["--toolset", "coding"], "--workspace");
-    refused(&["--toolset", "coding", "--workspace", &ws], "--model");
-    refused(
-        &["--toolset", "coding", "--workspace", &ws, "--model", MODEL],
-        "--model-endpoint",
-    );
+    refused(&[], "--workspace");
+    refused(&["--workspace", &ws], "--model");
+    refused(&["--workspace", &ws, "--model", MODEL], "--model-endpoint");
     refused(
         &[
-            "--toolset",
-            "coding",
             "--workspace",
             &ws,
             "--model",
@@ -294,26 +289,6 @@ fn flags_that_widen_a_run_are_never_implied() {
         ],
         "--approvals",
     );
-    refused(
-        &[
-            "--toolset",
-            "coding",
-            "--workspace",
-            &ws,
-            "--model",
-            MODEL,
-            "--model-endpoint",
-            &endpoint,
-            "--approvals",
-            "auto",
-            "--model-fixture",
-            "x.yaml",
-        ],
-        "fixture",
-    );
-    // An approval mode or a key means nothing on the fixture path.
-    refused(&["--approvals", "auto"], "--toolset coding");
-    refused(&["--allow-capability", "ReadFile"], "--toolset coding");
 }
 
 #[test]
@@ -327,7 +302,7 @@ fn a_key_file_inside_the_workspace_is_refused() {
         .env("HOME", setup.scratch.path())
         .args(["harness", "run"])
         .arg(sample())
-        .args(["--toolset", "coding", "--approvals", "auto", "--workspace"])
+        .args(["--approvals", "auto", "--workspace"])
         .arg(setup.repo.path())
         .args([
             "--model",
@@ -346,67 +321,14 @@ fn a_key_file_inside_the_workspace_is_refused() {
     assert!(!stderr(&out).contains(KEY));
 }
 
-// ── v2 workflows: the gate tool is on every host ──────────────────────────
+// ── workflows: the gate tool is on every host ─────────────────────────────
 
 fn workflow() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/harness/verified-v2")
 }
 
-/// A workspace holding the check, and `ok.txt` when `ready`.
-fn workflow_repo(ready: bool) -> tempfile::TempDir {
-    let repo = tempfile::tempdir().unwrap();
-    std::fs::write(repo.path().join("check.sh"), "test -f ok.txt\n").unwrap();
-    if ready {
-        std::fs::write(repo.path().join("ok.txt"), "ok\n").unwrap();
-    }
-    repo
-}
-
-fn none_command(scratch: &Path, repo: &Path, replies: &[&str]) -> Command {
-    let model = scratch.join("model.yaml");
-    let sequence: Vec<Value> = replies.iter().map(|t| json!({ "text": t })).collect();
-    std::fs::write(&model, json!({ "sequence": sequence }).to_string()).unwrap();
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_sven"));
-    cmd.current_dir(scratch)
-        .env("HOME", scratch)
-        .env("XDG_CONFIG_HOME", scratch)
-        .args(["harness", "run"])
-        .arg(workflow())
-        .args(["--toolset", "none", "--workspace"])
-        .arg(repo)
-        .arg("--model-fixture")
-        .arg(&model)
-        .args(["--json", "--timeout", "60"]);
-    cmd
-}
-
 #[test]
-fn a_workflow_gate_runs_a_real_command_with_the_none_toolset() {
-    let scratch = tempfile::tempdir().unwrap();
-    // The check passes: the exit status of the real command is 0.
-    let out = run(&mut none_command(
-        scratch.path(),
-        workflow_repo(true).path(),
-        &["done"],
-    ));
-    assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert_eq!(report(&out)["output"], json!({ "note": "done" }));
-
-    // The agent claims it is fixed, but the command exits 1 both times: the
-    // claim is not believed and the run fails on the gate.
-    let out = run(&mut none_command(
-        scratch.path(),
-        workflow_repo(false).path(),
-        &["all fixed", "really fixed"],
-    ));
-    let report = report(&out);
-    assert_ne!(code(&out), 0, "{report}");
-    assert_eq!(report["status"], "failed", "{report}");
-    assert_eq!(report["failure"]["code"], "gate_failed", "{report}");
-}
-
-#[test]
-fn a_workflow_gate_runs_a_real_command_with_the_coding_toolset() {
+fn a_workflow_gate_runs_a_real_command_and_the_agents_claim_is_not_believed() {
     let setup = setup();
     std::fs::remove_dir_all(setup.repo.path()).unwrap();
     std::fs::create_dir_all(setup.repo.path()).unwrap();

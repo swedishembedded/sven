@@ -1,7 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
-
-shell_gate:
-  capability: ExecuteShell
-  responses:
-    - ok: { exit_code: 0, timed_out: false, error: null, stdout: "all green", stderr: "" }
