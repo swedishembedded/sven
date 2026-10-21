@@ -19,23 +19,51 @@ use sven_harness_testkit::{
 use sven_sdk::{sourced_trace, HarnessCheckpoint, SourcedRecord};
 
 use super::production::{self, Production};
+use super::stamps::{stamped_line, Stamps};
 use super::{kit, print_json, request, usage, Failure, Outcome};
 use crate::cli::{HarnessRunArgs, ToolsetArg};
+
+/// What the run's observer saw: when each trace record arrived, and whether
+/// the progress lines were printed as they did.
+struct Seen<'a> {
+    stamps: &'a Stamps,
+    printed: bool,
+}
 
 /// Starts the harness at `path` and reports how it ended.
 pub(super) async fn run(path: &Path, args: &HarnessRunArgs) -> Outcome {
     let dir = HarnessDir::open(path).map_err(kit)?;
     if args.toolset == ToolsetArg::Coding {
         let plan = Arc::new(main_plan(&dir).map_err(kit)?);
-        let production = Production::from_args(args, plan)?;
-        let streamed = production.streams_progress();
+        let stamps = Stamps::begin();
+        let production = Production::from_args(args, plan, &stamps)?;
+        let printed = production.streams_progress();
         let result = production::run(&dir, production).await?;
-        return finish(path, args, &result, false, streamed);
+        return finish(
+            path,
+            args,
+            &result,
+            false,
+            Seen {
+                stamps: &stamps,
+                printed,
+            },
+        );
     }
-    let request = request::build(args)?;
+    let stamps = Stamps::begin();
+    let request = request::build(args, stamps.observer())?;
     let no_model = request::is_default_model(&request);
     let result = run_once(&dir, request).await.map_err(kit)?;
-    finish(path, args, &result, no_model, false)
+    finish(
+        path,
+        args,
+        &result,
+        no_model,
+        Seen {
+            stamps: &stamps,
+            printed: false,
+        },
+    )
 }
 
 /// Resumes the checkpoint in `checkpoint` under the harness at `path`.
@@ -47,33 +75,58 @@ pub(super) async fn resume(path: &Path, checkpoint: &Path, args: &HarnessRunArgs
         .map_err(|e| usage(format!("{} is not a checkpoint: {e}", checkpoint.display())))?;
     if args.toolset == ToolsetArg::Coding {
         let plan = Arc::new(main_plan(&dir).map_err(kit)?);
-        let production = Production::from_args(args, plan)?;
-        let streamed = production.streams_progress();
+        let stamps = Stamps::begin();
+        let production = Production::from_args(args, plan, &stamps)?;
+        let printed = production.streams_progress();
         let result = production::resume(&dir, checkpoint, production).await?;
-        return finish(path, args, &result, false, streamed);
+        return finish(
+            path,
+            args,
+            &result,
+            false,
+            Seen {
+                stamps: &stamps,
+                printed,
+            },
+        );
     }
-    let request = request::build(args)?;
+    let stamps = Stamps::begin();
+    let request = request::build(args, stamps.observer())?;
     let no_model = request::is_default_model(&request);
     let result = resume_once(&dir, checkpoint, request).await.map_err(kit)?;
-    finish(path, args, &result, no_model, false)
+    finish(
+        path,
+        args,
+        &result,
+        no_model,
+        Seen {
+            stamps: &stamps,
+            printed: false,
+        },
+    )
 }
 
 /// Writes the files the flags asked for, prints the report, and maps the
 /// run's status to its exit code.
 ///
-/// `streamed` says the progress lines were already printed while the run
-/// went, so they are not repeated from the trace afterwards.
+/// `seen` says when the trace records were observed, and whether the progress
+/// lines were already printed while the run went (so they are not repeated
+/// from the trace afterwards).
 fn finish(
     path: &Path,
     args: &HarnessRunArgs,
     result: &RunResult,
     no_model: bool,
-    streamed: bool,
+    seen: Seen<'_>,
 ) -> Outcome {
-    write_files(args, result)?;
-    if !args.quiet && !streamed {
-        for record in sourced_trace(&result.plan, &result.outcome.trace) {
-            if let Ok(line) = serde_json::to_string(&record) {
+    let times = seen.stamps.times(result.outcome.trace.len());
+    write_files(args, result, &times)?;
+    if !args.quiet && !seen.printed {
+        for (record, ts_ms) in sourced_trace(&result.plan, &result.outcome.trace)
+            .into_iter()
+            .zip(&times)
+        {
+            if let Ok(line) = stamped_line(&record, *ts_ms) {
                 eprintln!("[sven:harness] {line}");
             }
         }
@@ -105,11 +158,14 @@ fn finish(
     })
 }
 
-fn write_files(args: &HarnessRunArgs, result: &RunResult) -> Result<(), Failure> {
+fn write_files(args: &HarnessRunArgs, result: &RunResult, times: &[u64]) -> Result<(), Failure> {
     if let Some(file) = &args.trace {
         let mut lines = String::new();
-        for record in sourced_trace(&result.plan, &result.outcome.trace) {
-            lines.push_str(&jsonl_line(&record)?);
+        for (record, ts_ms) in sourced_trace(&result.plan, &result.outcome.trace)
+            .into_iter()
+            .zip(times)
+        {
+            lines.push_str(&jsonl_line(&record, *ts_ms)?);
         }
         write(file, &lines)?;
     }
@@ -129,8 +185,8 @@ fn write_files(args: &HarnessRunArgs, result: &RunResult) -> Result<(), Failure>
     Ok(())
 }
 
-fn jsonl_line(record: &SourcedRecord) -> Result<String, Failure> {
-    serde_json::to_string(record)
+fn jsonl_line(record: &SourcedRecord, ts_ms: u64) -> Result<String, Failure> {
+    stamped_line(record, ts_ms)
         .map(|line| line + "\n")
         .map_err(|e| Failure {
             code: 5,

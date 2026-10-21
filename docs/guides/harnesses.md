@@ -336,7 +336,8 @@ where it rests, exits 3 and leaves its checkpoint for `harness resume`.
 ### Files written
 
 Nothing is written unless a flag asks for it: `--trace` (one trace record per
-line, JSONL), `--record` (the recording, JSON), `--trajectory` (the ATIF
+line, JSONL, each with `ts_ms`, the Unix time in milliseconds at which sven
+observed it), `--record` (the recording, JSON), `--trajectory` (the ATIF
 trajectory, JSON) and `--checkpoint-out` (the checkpoint of a suspended run,
 JSON). Case workspaces are temporary directories removed with the run, and so
 is the scratchpad of a case or of a run in a fresh workspace; a run in a

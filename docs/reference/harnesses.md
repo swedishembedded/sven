@@ -696,6 +696,14 @@ finished item). The record's own fields are unchanged. `sven harness run`
 prints and writes (`--trace`) records this way; a version 1 plan has no source
 map, so its records carry no `source`.
 
+**Timestamps.** The machine is clock-free, so a record does not say when it
+happened. The CLI adds `"ts_ms"` to every record it writes (`--trace`) or prints
+(`[sven:harness]`): the wall clock, in milliseconds since the Unix epoch, at the
+moment it observed the record, so per-step and per-item timings are differences
+between stamps. A run that resumes a checkpoint stamps the records the
+checkpoint carried with the time the resume began. `harness replay
+--expect-trace` ignores the stamp.
+
 ## Checkpoints, recordings and replay
 
 **Checkpoint.** A run stopped by a bound (`RunConclusion::Timeout` or

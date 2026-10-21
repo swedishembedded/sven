@@ -29,6 +29,7 @@ use sven_sdk::config::Config;
 use sven_sdk::tool::ToolCapability;
 use sven_sdk::{ApprovalPolicy, Engine, HarnessCheckpoint, HumanGate, Toolset};
 
+use super::stamps::{stamped_line, Stamps};
 use super::{kit, request, usage, Failure};
 use crate::cli::{ApprovalsArg, HarnessRunArgs, ToolsetArg};
 
@@ -61,6 +62,7 @@ pub(super) struct Production {
     /// Where `--checkpoint-out` keeps the latest checkpoint while the run
     /// goes; removed when the run ends with a verdict.
     progress_checkpoint: Option<PathBuf>,
+    quiet: bool,
     run: EngineRun,
 }
 
@@ -69,6 +71,7 @@ impl Production {
     pub(super) fn from_args(
         args: &HarnessRunArgs,
         plan: Arc<sven_sdk::harness_plan::HarnessPlan>,
+        stamps: &Stamps,
     ) -> Result<Self, Failure> {
         debug_assert_eq!(args.toolset, ToolsetArg::Coding);
         for (given, flag) in [
@@ -126,18 +129,22 @@ impl Production {
                 .map(|name| capability_named(name))
                 .collect::<Result<_, _>>()?
         };
-        let progress: Option<ProgressFn> = (!args.quiet).then(|| {
+        // Every record is noted as it arrives (the trace file is stamped from
+        // these times); it is printed as well unless the run is quiet.
+        let progress: Option<ProgressFn> = {
             let tracker = std::sync::Mutex::new(sven_sdk::SourceTracker::new(plan));
-            Arc::new(move |record: &sven_sdk::TraceRecord| {
+            let (stamps, quiet) = (stamps.clone(), args.quiet);
+            Some(Arc::new(move |record: &sven_sdk::TraceRecord| {
+                let ts_ms = stamps.note();
                 let sourced = tracker
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .next(record);
-                if let Ok(line) = serde_json::to_string(&sourced) {
+                if let (false, Ok(line)) = (quiet, stamped_line(&sourced, ts_ms)) {
                     eprintln!("[sven:harness] {line}");
                 }
-            }) as ProgressFn
-        });
+            }) as ProgressFn)
+        };
         let activity: Option<ActivityFn> = (!args.quiet).then(|| {
             Arc::new(|event: &sven_sdk::SessionEvent| {
                 if let Some(line) = activity_line(event) {
@@ -165,6 +172,7 @@ impl Production {
             first_byte_timeout_secs: args.first_byte_timeout,
             capabilities,
             progress_checkpoint: args.checkpoint_out.clone(),
+            quiet: args.quiet,
             run: EngineRun {
                 input: request::explicit_input(args)?.unwrap_or_else(|| serde_json::json!({})),
                 bounds: request::bounds(args, Bounds::default())?,
@@ -181,7 +189,7 @@ impl Production {
 
     /// Whether the run reported its progress itself, as it went.
     pub(super) fn streams_progress(&self) -> bool {
-        self.run.progress.is_some()
+        !self.quiet
     }
 
     /// The engine of the run: the real model, the coding toolset confined to

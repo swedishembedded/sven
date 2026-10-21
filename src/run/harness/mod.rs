@@ -24,6 +24,7 @@ mod inspect;
 mod production;
 mod replay;
 mod request;
+mod stamps;
 mod suites;
 mod views;
 

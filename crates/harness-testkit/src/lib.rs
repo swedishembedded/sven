@@ -63,7 +63,7 @@ pub use report::{
 };
 pub use run::{
     replay_once, resume_on_engine, resume_once, run_on_engine, run_once, ActivityFn, CheckpointFn,
-    EngineRun, ProgressFn, ReplaySummary, RunRequest, RunResult, Workspace,
+    EngineRun, ProgressFn, ReplaySummary, RunRequest, RunResult, TraceObserver, Workspace,
 };
 pub use runner::{run_case, run_suite, RunnerOptions};
 pub use stats::{bootstrap_mean, Estimate, CONFIDENCE};

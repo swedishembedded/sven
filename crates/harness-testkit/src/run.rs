@@ -73,6 +73,18 @@ pub struct RunRequest {
     /// run in a fresh workspace gets a directory removed with the workspace,
     /// and a run in an existing directory the SDK's default, which is kept.
     pub scratchpad: Option<PathBuf>,
+    /// Told of each trace record as the run publishes it.
+    pub progress: Option<TraceObserver>,
+}
+
+/// A [`ProgressFn`] that a [`RunRequest`] can hold and still be printed.
+#[derive(Clone)]
+pub struct TraceObserver(pub ProgressFn);
+
+impl std::fmt::Debug for TraceObserver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TraceObserver(..)")
+    }
 }
 
 /// What a single run produced.
@@ -439,7 +451,7 @@ impl Prepared {
             request.trajectory,
             Drive {
                 safety: Some(SAFETY_LIMIT),
-                progress: None,
+                progress: request.progress.as_ref().map(|o| Arc::clone(&o.0)),
                 activity: None,
                 suspend: None,
                 item_checkpoint: None,

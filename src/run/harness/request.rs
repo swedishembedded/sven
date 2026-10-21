@@ -14,7 +14,7 @@ use std::path::Path;
 
 use serde::de::DeserializeOwned;
 use sven_harness_testkit::{
-    Bounds, CaseManifest, ModelFixture, OptIn, RunRequest, ToolFixture, Workspace,
+    Bounds, CaseManifest, ModelFixture, OptIn, RunRequest, ToolFixture, TraceObserver, Workspace,
 };
 
 use super::{usage, Failure};
@@ -45,7 +45,7 @@ pub(super) fn is_default_model(request: &RunRequest) -> bool {
 }
 
 /// Builds the request for a run of `args`.
-pub(super) fn build(args: &HarnessRunArgs) -> Result<RunRequest, Failure> {
+pub(super) fn build(args: &HarnessRunArgs, progress: TraceObserver) -> Result<RunRequest, Failure> {
     // Fixture tools are the only tools an offline run is given; the flags
     // that configure a production run mean nothing here and are refused
     // rather than ignored.
@@ -112,6 +112,7 @@ pub(super) fn build(args: &HarnessRunArgs) -> Result<RunRequest, Failure> {
         record: args.record.is_some(),
         trajectory: args.trajectory.is_some(),
         scratchpad: scratchpad(args)?,
+        progress: Some(progress),
     })
 }
 
