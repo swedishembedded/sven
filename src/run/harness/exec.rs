@@ -92,6 +92,9 @@ fn finish(
     if args.json {
         print_json(&report(path, args, result))?;
     } else {
+        if let Some(dir) = &result.scratchpad {
+            eprintln!("scratchpad: {}", dir.display());
+        }
         print_human(summary);
     }
     Ok(match summary.status {
@@ -174,6 +177,7 @@ fn report(path: &Path, args: &HarnessRunArgs, result: &RunResult) -> Value {
         "corrections": result.corrections,
         "refused_messages": result.refused,
         "checkpoint": written,
+        "scratchpad": result.scratchpad,
     })
 }
 

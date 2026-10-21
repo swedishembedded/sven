@@ -187,6 +187,9 @@ impl Setup {
         cmd.current_dir(self.scratch.path())
             .env("HOME", self.scratch.path())
             .env("XDG_CONFIG_HOME", self.scratch.path())
+            // A run's default scratchpad is made under the temporary
+            // directory; here that is the scratch directory, removed with it.
+            .env("TMPDIR", self.scratch.path())
             .env_remove("SVEN_MODEL")
             .args(["harness", subcommand])
             .arg(harness)

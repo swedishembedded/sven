@@ -25,6 +25,7 @@ use super::corrections::{lower_corrections, Turn};
 use super::rewrite::{
     output_fact, pool_fact, rewrite_condition, rewrite_text, rewrite_value, stop_fact, Scope,
 };
+use super::scratchpad;
 use super::spec::{decoding_of, GateDef, OnFailure, TaskSpec, WorkflowSpec};
 use super::system;
 use super::validate::needed_capabilities;
@@ -755,6 +756,7 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         },
         lowering: Some(Lowering {
             profile: w.agent.profile.as_str().to_string(),
+            scratchpad: scratchpad::lower(&cx)?,
             source_map: b.source,
         }),
     })

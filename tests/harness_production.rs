@@ -52,16 +52,21 @@ fn repairing_script() -> Vec<Turn> {
     ]
 }
 
-/// Every file the run left outside the repository, as one string.
-fn everything_written(setup: &Setup) -> String {
+/// Every file the run left outside the repository, as one string: what is
+/// next to the key file, and the run's audit log in its scratchpad.
+fn everything_written(setup: &Setup, report: &Value) -> String {
     let mut text = String::new();
     for entry in std::fs::read_dir(setup.scratch.path()).unwrap().flatten() {
         if entry.file_name() != "keys.json" {
             text.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
         }
     }
-    let audit = setup.repo.path().join(".sven/audit.jsonl");
-    text.push_str(&std::fs::read_to_string(audit).unwrap_or_default());
+    let pad = PathBuf::from(
+        report["scratchpad"]
+            .as_str()
+            .expect("the scratchpad is named"),
+    );
+    text.push_str(&std::fs::read_to_string(pad.join("audit.jsonl")).unwrap_or_default());
     text
 }
 
@@ -130,9 +135,63 @@ fn a_coding_run_repairs_a_c_repository_and_finishes_only_when_the_gate_passes() 
         "{}{}{}",
         String::from_utf8_lossy(&out.stdout),
         stderr_text,
-        everything_written(&setup)
+        everything_written(&setup, &report)
     );
     assert!(!leaked.contains(KEY), "the key is in nothing the run wrote");
+}
+
+#[test]
+fn a_coding_run_audits_into_its_scratchpad_and_leaves_no_dot_sven_in_the_repository() {
+    let setup = setup();
+    let pad = setup.out("pad");
+    let server = serve(vec![
+        Turn::Calls(vec![write("notes.txt", "hello")]),
+        Turn::Text("wrote the notes"),
+    ]);
+    let out = run(setup
+        .subcommand("run", &sven_fixture("scratchpad"), &server)
+        .args(["--approvals", "auto", "--scratchpad"])
+        .arg(&pad));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let report = report(&out);
+    assert_eq!(report["status"], "completed", "{report}");
+    assert_eq!(
+        Path::new(report["scratchpad"].as_str().unwrap()),
+        pad.canonicalize().unwrap(),
+        "the report names the directory"
+    );
+
+    let repo = setup.repo.path();
+    assert!(repo.join("notes.txt").is_file(), "the agent really wrote");
+    assert!(
+        !repo.join(".sven").exists(),
+        "nothing of the run's own is left in the repository"
+    );
+    let audit = std::fs::read_to_string(pad.join("audit.jsonl")).expect("the audit log");
+    assert!(audit.contains("write_file"), "{audit}");
+    assert_eq!(
+        std::fs::read_to_string(pad.join("seen")).unwrap(),
+        pad.canonicalize().unwrap().to_string_lossy(),
+        "the gate was told where the scratchpad is"
+    );
+}
+
+#[test]
+fn a_scratchpad_inside_the_repository_is_refused_and_nothing_is_written_there() {
+    let setup = setup();
+    let server = serve(vec![Turn::Text("unused")]);
+    let inside = setup.repo.path().join("pad");
+    let out = run(setup
+        .subcommand("run", &sven_fixture("scratchpad"), &server)
+        .args(["--approvals", "auto", "--scratchpad"])
+        .arg(&inside));
+    assert_ne!(code(&out), 0);
+    assert!(
+        stderr(&out).contains("inside the workspace"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!inside.exists());
 }
 
 #[test]
@@ -379,4 +438,11 @@ fn a_workflow_gate_runs_a_real_command_with_the_coding_toolset() {
     let out = run(&mut swapped);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert_eq!(report(&out)["output"], json!({ "note": "created ok.txt" }));
+}
+
+/// A fixture harness of this repository's tests.
+fn sven_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/harness")
+        .join(name)
 }

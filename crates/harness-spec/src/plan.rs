@@ -69,6 +69,11 @@ pub struct HarnessPlan {
     /// version 1 plans.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    /// Where the run's private directory lives, as a template over inputs,
+    /// when the document names one (`execution.scratchpad`). Absent, the host
+    /// chooses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scratchpad: Option<String>,
     /// For a version 2 plan, where each generated step came from in the
     /// authored document. Empty in version 1 plans.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -447,6 +452,7 @@ pub fn compile(spec: &HarnessSpec) -> HarnessPlan {
         capabilities,
         limits,
         profile: spec.lowering.as_ref().map(|l| l.profile.clone()),
+        scratchpad: spec.lowering.as_ref().and_then(|l| l.scratchpad.clone()),
         source_map: spec
             .lowering
             .as_ref()

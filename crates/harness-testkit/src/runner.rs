@@ -146,6 +146,12 @@ async fn execute(dir: &HarnessDir, case: &CaseManifest, options: &RunnerOptions)
     if let Err(e) = seed_workspace(workspace.path(), &case.workspace) {
         return Ended::Error(e.to_string());
     }
+    // The case's runs (and its resumes) share one private directory, removed
+    // with the case rather than left in the temporary directory.
+    let scratchpad = match tempfile::tempdir() {
+        Ok(tmp) => tmp,
+        Err(e) => return Ended::Error(format!("cannot create a scratchpad: {e}")),
+    };
     let replay_on = case.replay && options.replay_check;
     let request =
         |model: &Option<ModelFixture>, tools: &BTreeMap<String, ToolFixture>| RunRequest {
@@ -156,6 +162,7 @@ async fn execute(dir: &HarnessDir, case: &CaseManifest, options: &RunnerOptions)
             opt_in: options.opt_in.clone(),
             seed: options.seed,
             record: replay_on,
+            scratchpad: Some(scratchpad.path().to_path_buf()),
             ..RunRequest::default()
         };
 

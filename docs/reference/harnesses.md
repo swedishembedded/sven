@@ -150,7 +150,7 @@ document is never retried as the other one. The JSON Schema is
 | `inputs` | typed per-run inputs, as in version 1 (`name: type` or `{type, description}`); templates read `{{ inputs.<name> }}` and an undeclared one is an error |
 | `outputs` | `name: {type, value}`; the value is a template over inputs and task outputs; without `outputs` the run returns `{"status": "completed"}` |
 | `agent` | `profile` (`none` or `coding`), `instructions` (prepended to every task prompt), `system` (the model's system message for the agent's conversation, a template over inputs; or a list of `{when, text}` variants, see below), `tools` (an allowlist for every task, also enforced on proposed calls), and `sampling`, `thinking`, `turn` defaults for every task |
-| `execution` | `limits` (`model_turns` is required; `steps`, `tool_calls`, `delegate_depth` optional), `workspace: repository`, `resume: true` |
+| `execution` | `limits` (`model_turns` is required; `steps`, `tool_calls`, `delegate_depth` optional), `workspace: repository`, `resume: true`, `scratchpad` (the run's private directory, below) |
 | `capabilities` | the exact grant; omitted, it is derived and shown in the plan |
 | `gates` | named checks, below |
 | `workflow` | the tasks, in order |
@@ -473,9 +473,10 @@ holds, narrowed by its own declaration.
 A command gate can judge what the agent *did*, not only what it left behind.
 `{{ run.trajectory_file }}` in a gate's argv or `stdin` is the path of a file
 holding the run's ATIF trajectory so far, written by the host just before the
-command starts (a directory of its own under the host's temporary directory,
-not the workspace) and left holding the final trajectory when the run ends. A
-host that cannot provide it fails the run with `trajectory_unavailable`.
+command starts (`trajectory.json` in the run's scratchpad, not the workspace).
+The file is removed when the run ends; a host that asked to keep it
+(`HarnessRun::keep_trajectory_file`) finds the final trajectory there. A host
+that cannot provide it fails the run with `trajectory_unavailable`.
 
 `cwd_input: <input>` runs the command in the absolute directory a `string` run
 input names (a pinned checkout, a ledger) instead of the workspace. The host
@@ -493,13 +494,43 @@ stderr, else its exit status); `sven harness run --json`
 reports both, and `HarnessRun::trajectory()` is available after a failed run
 too.
 
+### The scratchpad
+
+Every run owns a private directory. Its path is `{{ run.scratchpad }}` in
+prompts, system texts and gate arguments and `stdin`, and a command gate also
+finds it in its environment as `SVEN_SCRATCHPAD`. It holds what the run needs
+to keep but must not put in the workspace: the run's audit log
+(`audit.jsonl`; nothing of the run's own is written to `<workspace>/.sven`),
+the trajectory file a gate reads, and whatever the workflow's gates leave there.
+
+Where it is, in order of precedence:
+
+1. the host's choice: `--scratchpad DIR` on `sven harness run` and `resume`,
+   `HarnessRun::with_scratchpad(dir)` in the SDK;
+2. on a resume, the directory the checkpoint recorded (the run state carries
+   it, so a resumed run works where the first episode did);
+3. `execution.scratchpad`, a template over `inputs` only (the directory exists
+   before the first step, so nothing else can be known): an absolute path;
+4. `sven-harness-<run id>` under the system temporary directory.
+
+The directory is created with mode 0700 if it is missing. A path that is not
+absolute, that contains `..`, that lies inside the workspace (symbolic links
+resolved) or that holds the workspace is refused before the run starts: the
+agent can write the workspace, so a directory there would let it change what
+its own checks read. The directory is kept after the run; the CLI prints
+`scratchpad: <dir>` on stderr (a `scratchpad` field with `--json`). A workflow
+that reads `run.scratchpad` fails with `scratchpad_unavailable` under a host that
+provides none (a delegated child run has none of its own). `run.scratchpad` is
+also allowed in a file check's path, but a check resolves paths in the workspace
+and refuses one outside it.
+
 ### The `gate` step
 
 The thirteenth primitive, written only by the lowering and rejected in a
 version 1 document: `gate: {command, timeout, cwd, store_as, then, on_fail}`. It
 calls the reserved tool `shell_gate` (`sven_harness_spec::GATE_TOOL`; capability
 `ExecuteShell`, so host approval policy applies) with `{argv, timeout_secs,
-cwd}`. The tool, `sven_tools_exec::GateCommandTool`, runs the program in a new
+cwd, env}` (`env` is `{SVEN_SCRATCHPAD: <dir>}`). The tool, `sven_tools_exec::GateCommandTool`, runs the program in a new
 session, confined to the workspace, kills the whole process group at the
 deadline, and returns JSON `{exit_code, timed_out, error, stdout, stderr,
 truncated, duration_ms}` (the last 16 KiB of each stream). No agent mode lists
@@ -730,6 +761,7 @@ assert_eq!(replay.trace, outcome.trace);
 | `RunOptions::{cancel, deadline, max_output_tokens}` | cancellation is a `CancelToken`; a bound suspends |
 | `HarnessRun::{events, subscribe_trace, run_id, checkpoint, with_recording, recording, trajectory, conversations}` | observation and export |
 | `HarnessRun::on_item_checkpoint(sink)` | a checkpoint each time a `for_each` item completes |
+| `HarnessRun::{with_scratchpad, scratchpad}` | choose the run's private directory; read it once the run executed |
 | `HarnessOutcome { conclusion, result, usage, trace, steps }` | `result` is the plan's verdict, `None` when a bound stopped the run first |
 | `TraceRecord`, `HarnessEvent`, `harness_plan::*` | re-exported so an application need not name the crates behind the facade |
 

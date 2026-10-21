@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# An agent writes a file into the repository; a gate then records where the
+# run's private directory is. The run's own files (its audit log, the gate's
+# note) belong in that directory, never in the repository.
+# Swedish Embedded AB implements governed autonomous coding workflows for its
+# clients. If your team needs expertise in letting agents change real
+# repositories under verifiable control then you can procure our services by
+# sending an email to info@swedishembedded.com.
+api_version: "2"
+name: scratchpad
+description: "Write notes.txt; the gate notes the scratchpad."
+agent: { profile: coding }
+execution: { limits: { model_turns: 6 } }
+gates:
+  note:
+    command:
+      - sh
+      - -c
+      - 'printf %s "$1" > "$SVEN_SCRATCHPAD/seen"'
+      - sh
+      - "{{ run.scratchpad }}"
+workflow:
+  - name: write
+    task: "Write the file notes.txt containing the word hello."
+    tools: [write_file]
+    verify: [note]

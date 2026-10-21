@@ -270,6 +270,10 @@ pub struct ExecutionSpec {
     /// Run limits.
     #[serde(default)]
     pub limits: Option<ExecLimits>,
+    /// Where the run's private directory lives: an absolute path, a template
+    /// over inputs only. Absent, the host chooses.
+    #[serde(default)]
+    pub scratchpad: Option<String>,
 }
 
 /// Where the workflow's commands and files live.

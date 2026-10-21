@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! What a harness run is assembled from, and how a resumed one picks up: the
-//! tools only the harness's own steps call, and the event that answers the
-//! operation a suspension interrupted.
+//! What a harness run is assembled from, and how it is driven: the tools only
+//! the harness's own steps call, the event that answers the operation a
+//! suspension interrupted, cancellation, checkpoints, and the trace a run
+//! publishes as it goes.
 //!
 //! Swedish Embedded AB implements verifiable, declarative agent workflows for
 //! its clients. If your team needs expertise in turning long-running agent
@@ -11,9 +12,20 @@
 //! by sending an email to info@swedishembedded.com.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use sven_harness_runtime::{HarnessRunState, Waiting};
-use sven_hsm::{EffectKind, Event};
+use serde_json::Value;
+use sven_harness_runtime::{harness_event, HarnessRunState, TraceRecord, Waiting};
+use sven_hsm::{Context, EffectKind, Event, Snapshot};
+use sven_vocab::SessionEvent;
+use tokio::sync::broadcast;
+
+use super::run::HarnessFailure;
+use super::HarnessCheckpoint;
+
+/// How long a stopped run is given to report what it had before it is
+/// left - the same grace a mode session's wind-down gets.
+pub(super) const WIND_DOWN: Duration = Duration::from_secs(5);
 
 /// The event that settles what a suspension interrupted, from what the
 /// run was waiting on.
@@ -78,6 +90,103 @@ pub(super) fn harness_tools(
     }
     tools.extend(host);
     tools
+}
+
+/// Cancels a run: the machine is told the user cancelled, settles into its
+/// own terminal cancelled state - propagating the cancellation through the
+/// children it started - and reports a cancelled verdict. Nothing is left
+/// to resume.
+pub(super) async fn settle_cancel(
+    handle: &sven_bootstrap::RuntimeHandle,
+    abort_slot: &tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    wind_down: std::pin::Pin<&mut tokio::time::Sleep>,
+) {
+    if let Some(abort) = abort_slot.lock().await.take() {
+        let _ = abort.send(());
+    }
+    let _ = handle.cancel().await;
+    wind_down.reset(tokio::time::Instant::now() + WIND_DOWN);
+}
+
+/// The checkpoint of a run resting at `snapshot`. The program it ran under
+/// is the run state's recorded digest, or `plan_digest` when the run was
+/// stopped before its first step recorded one.
+pub(super) fn checkpoint_at(
+    snapshot: Snapshot,
+    plan_digest: &str,
+    run_id: &str,
+) -> HarnessCheckpoint {
+    let state = HarnessRunState::load(&snapshot.context);
+    HarnessCheckpoint {
+        plan_digest: state.plan_digest.unwrap_or_else(|| plan_digest.to_string()),
+        bundle_digest: state.bundle_digest,
+        run_id: run_id.to_string(),
+        snapshot,
+    }
+}
+
+/// Publishes the trace records `ctx` gained since the last publish: each
+/// as a raw record on the trace stream and as its session event on the
+/// event stream, so one run's progress has one form everywhere. `observed`
+/// carries when the previous record was seen; a step's duration is the gap
+/// between observations - approximately what the step cost, zero when the
+/// run is observed in a burst. Says which loops completed an item among
+/// the records published.
+pub(super) fn publish_trace(
+    ctx: &Context,
+    emitted: &mut usize,
+    trace_tx: &broadcast::Sender<TraceRecord>,
+    events: &broadcast::Sender<SessionEvent>,
+    run_id: &str,
+    observed: &mut Option<tokio::time::Instant>,
+) -> Vec<String> {
+    let state = HarnessRunState::load(ctx);
+    let mut completed_loops = Vec::new();
+    for record in state.trace.iter().skip(*emitted) {
+        if let Some(step) = finished_item_loop(record) {
+            completed_loops.push(step.to_string());
+        }
+        let duration_ms = observed
+            .replace(tokio::time::Instant::now())
+            .map_or(0, |previous| previous.elapsed().as_millis() as u64);
+        let _ = trace_tx.send(record.clone());
+        let _ = events.send(SessionEvent::Harness {
+            run_id: run_id.to_string(),
+            event: harness_event(record, duration_ms),
+        });
+    }
+    *emitted = state.trace.len();
+    completed_loops
+}
+
+/// The verdict a finished run reported, read off its terminal state and
+/// its outcome fact. `None` when the run has no verdict: a bound stopped
+/// it first.
+pub(super) fn outcome_of(
+    state_label: &str,
+    outcome: Option<&Value>,
+) -> Option<Result<Value, HarnessFailure>> {
+    match state_label {
+        "Completed" => Some(Ok(outcome.cloned().unwrap_or(Value::Null))),
+        "Failed" => {
+            let code = outcome
+                .and_then(|o| o.get("code"))
+                .and_then(Value::as_str)
+                .unwrap_or("failed")
+                .to_string();
+            let message = outcome
+                .and_then(|o| o.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("the run failed")
+                .to_string();
+            Some(Err(HarnessFailure { code, message }))
+        }
+        "Cancelled" => Some(Err(HarnessFailure {
+            code: "cancelled".to_string(),
+            message: "the user cancelled the run".to_string(),
+        })),
+        _ => None,
+    }
 }
 
 /// The loop a record says finished one of its items (completed or failed):

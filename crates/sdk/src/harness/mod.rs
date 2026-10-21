@@ -45,6 +45,7 @@ mod outcome;
 mod record;
 mod run;
 mod run_support;
+mod scratchpad;
 mod trajectory;
 
 pub use record::{HarnessRecording, HarnessReplay};
@@ -290,7 +291,7 @@ impl Harness {
                 checkpoint.plan_digest, self.plan.digest
             )));
         }
-        let (mut machine, _) = match &self.source {
+        let (machine, _) = match &self.source {
             HarnessSource::Document(text) => {
                 HarnessMachine::restore(text.clone(), checkpoint.snapshot.clone())
             }
@@ -299,11 +300,6 @@ impl Harness {
             }
         }
         .map_err(|e| CallError::Precondition(format!("cannot resume: {e}")))?;
-        if sven_harness_runtime::plan_reads_trajectory(&self.plan) {
-            machine.set_trajectory_file(
-                live_trajectory::trajectory_path(&checkpoint.run_id).to_string_lossy(),
-            );
-        }
         let policy = HarnessMachine::permission_policy_for(machine.run());
         Ok(HarnessRun::resumed(
             self.engine.clone(),

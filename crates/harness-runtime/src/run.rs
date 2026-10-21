@@ -91,8 +91,8 @@ pub struct HarnessRunData {
     delegate_depth: u64,
     /// What the parent had left when it started this run.
     ceiling: crate::budget::Ceiling,
-    /// Where the host writes the run's trajectory for gates to read.
-    trajectory_file: Option<String>,
+    /// What the host provides the run: its scratchpad, its trajectory file.
+    pub(crate) host: crate::host_values::RunValues,
 }
 
 impl HarnessRunData {
@@ -111,7 +111,7 @@ impl HarnessRunData {
             bundle_digest: None,
             delegate_depth: 1,
             ceiling: crate::budget::Ceiling::default(),
-            trajectory_file: None,
+            host: crate::host_values::RunValues::default(),
         })
     }
 
@@ -138,7 +138,7 @@ impl HarnessRunData {
             bundle_digest: None,
             delegate_depth: 1,
             ceiling: crate::budget::Ceiling::default(),
-            trajectory_file: None,
+            host: crate::host_values::RunValues::default(),
         }
     }
 
@@ -160,7 +160,7 @@ impl HarnessRunData {
             bundle_digest: Some(compiled.digest),
             delegate_depth: 1,
             ceiling: crate::budget::Ceiling::default(),
-            trajectory_file: None,
+            host: crate::host_values::RunValues::default(),
         })
     }
 
@@ -188,24 +188,6 @@ impl HarnessRunData {
     pub fn with_ceiling(mut self, ceiling: crate::budget::Ceiling) -> Self {
         self.ceiling = ceiling;
         self
-    }
-
-    /// Names the file the host writes the run's trajectory to before a gate
-    /// that reads `{{ run.trajectory_file }}` runs.
-    #[must_use]
-    pub fn with_trajectory_file(mut self, file: impl Into<String>) -> Self {
-        self.trajectory_file = Some(file.into());
-        self
-    }
-
-    pub(crate) fn set_trajectory_file(&mut self, file: String) {
-        self.trajectory_file = Some(file);
-    }
-
-    /// The trajectory file the host named, if any.
-    #[must_use]
-    pub fn trajectory_file(&self) -> Option<&str> {
-        self.trajectory_file.as_deref()
     }
 
     /// What the parent had left when it started this run.

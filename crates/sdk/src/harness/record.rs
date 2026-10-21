@@ -22,12 +22,13 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sven_harness_runtime::{
-    HarnessMachine, HarnessRunData, HarnessRunState, TraceRecord, OUTCOME_FACT,
+    HarnessMachine, HarnessRunData, HarnessRunState, RunValues, TraceRecord, OUTCOME_FACT,
 };
 use sven_hsm::submachine::ErasedMachine;
 use sven_hsm::{Context, DispatchOutcome, Effect, Event, Hsm, MachineId, RestoreError, Snapshot};
 
-use super::run::{outcome_of, HarnessFailure};
+use super::run::HarnessFailure;
+use super::run_support::outcome_of;
 use super::{Harness, HarnessCheckpoint, HarnessRun, HarnessSource};
 use crate::error::CallError;
 
@@ -53,6 +54,11 @@ pub struct HarnessRecording {
     pub run_id: String,
     /// The inputs the run started with.
     pub inputs: Value,
+    /// What the host provided the run (its scratchpad, its trajectory file),
+    /// which a fresh run's replay needs to read the same templates. A resumed
+    /// run's checkpoint carries them.
+    #[serde(default)]
+    pub run_values: RunValues,
     /// The checkpoint a resumed run started from; `None` for a fresh run.
     pub start: Option<HarnessCheckpoint>,
     /// Every event the machine was dispatched, in order.
@@ -198,6 +204,7 @@ impl HarnessRun {
             bundle_digest,
             run_id: self.run_id.clone(),
             inputs,
+            run_values: self.run_values.clone(),
             start: recorder.start.clone(),
             events,
         })
@@ -253,6 +260,7 @@ impl Harness {
                         HarnessRunData::from_parts((*self.plan).clone(), recording.inputs.clone())
                     }
                 };
+                let data = data.with_run_values(recording.run_values.clone());
                 (Hsm::new(HarnessMachine::new(data)), Context::new())
             }
         };

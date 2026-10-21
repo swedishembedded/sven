@@ -69,6 +69,10 @@ pub struct RunRequest {
     pub record: bool,
     /// Build an ATIF trajectory after the run.
     pub trajectory: bool,
+    /// The run's private directory (`{{ run.scratchpad }}`). Without one, a
+    /// run in a fresh workspace gets a directory removed with the workspace,
+    /// and a run in an existing directory the SDK's default, which is kept.
+    pub scratchpad: Option<PathBuf>,
 }
 
 /// What a single run produced.
@@ -86,6 +90,8 @@ pub struct RunResult {
     pub trajectory: Option<Value>,
     /// The run's id.
     pub run_id: String,
+    /// The run's private directory, when it outlives the run.
+    pub scratchpad: Option<PathBuf>,
     /// The bundle digest, when the harness is a bundle.
     pub bundle_digest: Option<String>,
     /// Wall-clock time.
@@ -148,14 +154,13 @@ const LEAK_GRACE: Duration = Duration::from_secs(2);
 /// not be carried out. A plan's own failure is a result, not an error.
 pub async fn run_once(dir: &HarnessDir, request: RunRequest) -> Result<RunResult, TestkitError> {
     let prepared = Prepared::new(dir, &request)?;
-    let mut run = prepared
+    let run = prepared
         .harness
         .start(request.input.clone())
         .map_err(|e| TestkitError::Harness(e.to_string()))?;
-    if request.record {
-        run = run.with_recording();
-    }
-    prepared.drive(run, &request).await
+    prepared
+        .drive(prepared.prepare(run, &request), &request)
+        .await
 }
 
 /// Resumes a checkpoint of the harness in `dir`; `request.input` is
@@ -170,14 +175,13 @@ pub async fn resume_once(
     request: RunRequest,
 ) -> Result<RunResult, TestkitError> {
     let prepared = Prepared::new(dir, &request)?;
-    let mut run = prepared
+    let run = prepared
         .harness
         .resume(checkpoint)
         .map_err(|e| TestkitError::Harness(e.to_string()))?;
-    if request.record {
-        run = run.with_recording();
-    }
-    prepared.drive(run, &request).await
+    prepared
+        .drive(prepared.prepare(run, &request), &request)
+        .await
 }
 
 /// How a run on a caller-built engine starts and is bounded.
@@ -199,6 +203,9 @@ pub struct EngineRun {
     pub record: bool,
     /// Build an ATIF trajectory after the run.
     pub trajectory: bool,
+    /// The run's private directory (`{{ run.scratchpad }}`); without one the
+    /// SDK's default is used and kept.
+    pub scratchpad: Option<PathBuf>,
     /// Called with each trace record as the run produces it, so a long run
     /// can report progress while it is still going.
     pub progress: Option<ProgressFn>,
@@ -239,9 +246,7 @@ pub async fn run_on_engine(
     let mut run = harness
         .start(request.input.clone())
         .map_err(|e| TestkitError::Harness(e.to_string()))?;
-    if request.record {
-        run = run.with_recording();
-    }
+    run = with_recording_and_scratchpad(run, request.record, request.scratchpad.clone());
     drive_run(
         &harness,
         main.bundle_digest,
@@ -276,9 +281,7 @@ pub async fn resume_on_engine(
     let mut run = harness
         .resume(checkpoint)
         .map_err(|e| TestkitError::Harness(e.to_string()))?;
-    if request.record {
-        run = run.with_recording();
-    }
+    run = with_recording_and_scratchpad(run, request.record, request.scratchpad.clone());
     drive_run(
         &harness,
         main.bundle_digest,
@@ -332,6 +335,22 @@ pub fn replay_once(
     })
 }
 
+/// `run`, recording its events when asked and working in `scratchpad` when
+/// one is named.
+fn with_recording_and_scratchpad(
+    mut run: HarnessRun,
+    record: bool,
+    scratchpad: Option<PathBuf>,
+) -> HarnessRun {
+    if record {
+        run = run.with_recording();
+    }
+    match scratchpad {
+        Some(dir) => run.with_scratchpad(dir),
+        None => run,
+    }
+}
+
 /// An engine with the request's fixtures, and the harness loaded on it.
 struct Prepared {
     harness: Harness,
@@ -340,12 +359,24 @@ struct Prepared {
     model: BuiltModel,
     /// Keeps a fresh workspace alive for the run.
     _workspace: Option<tempfile::TempDir>,
+    /// The scratchpad of a run in a fresh workspace that names none: removed
+    /// with the workspace, so a suite of offline cases leaves nothing behind.
+    private_scratchpad: Option<tempfile::TempDir>,
 }
 
 impl Prepared {
     fn new(dir: &HarnessDir, request: &RunRequest) -> Result<Self, TestkitError> {
         let model =
             fixture_model::build(request.model.as_ref(), dir, &request.opt_in, request.seed)?;
+        let private_scratchpad = match (&request.workspace, &request.scratchpad) {
+            (Workspace::Fresh(_), None) => {
+                Some(tempfile::tempdir().map_err(|source| TestkitError::Io {
+                    path: std::env::temp_dir(),
+                    source,
+                })?)
+            }
+            _ => None,
+        };
         let (root, keep) = match &request.workspace {
             Workspace::Fresh(files) => {
                 let tmp = tempfile::tempdir().map_err(|source| TestkitError::Io {
@@ -381,7 +412,18 @@ impl Prepared {
             books,
             model,
             _workspace: keep,
+            private_scratchpad,
         })
+    }
+
+    /// `run`, set up the way `request` asks.
+    fn prepare(&self, run: HarnessRun, request: &RunRequest) -> HarnessRun {
+        let scratchpad = request.scratchpad.clone().or_else(|| {
+            self.private_scratchpad
+                .as_ref()
+                .map(|d| d.path().to_path_buf())
+        });
+        with_recording_and_scratchpad(run, request.record, scratchpad)
     }
 
     async fn drive(
@@ -408,6 +450,9 @@ impl Prepared {
             },
         )
         .await?;
+        if self.private_scratchpad.is_some() {
+            result.scratchpad = None;
+        }
         let leaked = self.settle_fixtures().await;
         let mut problems = self.books.problems();
         problems.extend(self.model.usage.exhausted());
@@ -580,6 +625,7 @@ async fn drive_run(
             None
         },
         run_id: run.run_id().to_string(),
+        scratchpad: run.scratchpad().map(Path::to_path_buf),
         bundle_digest,
         duration_ms,
         corrections: run.corrections().unwrap_or_default(),

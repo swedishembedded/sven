@@ -326,6 +326,14 @@ pub struct HarnessRunArgs {
     /// empty tempdir, or the case's `workspace` files).
     #[arg(long, value_name = "DIR")]
     pub workspace: Option<PathBuf>,
+    /// The run's private directory, where its audit log and its gates' files
+    /// go (created if missing, mode 0700). Default: the harness's
+    /// `execution.scratchpad`, else a fresh `sven-harness-<run id>` under the
+    /// system temporary directory; on `resume`, the one the checkpoint
+    /// recorded. It may not be inside `--workspace` or contain it. Kept after
+    /// the run; its path is printed.
+    #[arg(long, value_name = "DIR")]
+    pub scratchpad: Option<PathBuf>,
     /// A real model, `provider/name`. Needs `--model-endpoint`, as described
     /// in `sven harness run --help`; otherwise exit 2.
     #[arg(long, value_name = "SPEC")]

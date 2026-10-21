@@ -10,17 +10,22 @@ use std::time::Duration;
 use serde_json::Value;
 use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
 use sven_harness_runtime::{
-    harness_event, HarnessMachine, HarnessRunData, HarnessRunState, TraceRecord, OUTCOME_FACT,
+    apply_to_snapshot, HarnessMachine, HarnessRunData, HarnessRunState, RunValues, TraceRecord,
+    OUTCOME_FACT,
 };
 use sven_harness_spec::{HarnessBundle, HarnessPlan, PlanIteration, PlanPrimitive};
 use sven_hsm::submachine::ErasedMachine;
-use sven_hsm::{Context, Event, Snapshot};
+use sven_hsm::{Event, Snapshot};
 use sven_vocab::{HarnessEvent, SessionEvent};
 use tokio::sync::broadcast;
 
 use super::live_trajectory;
 use super::record::{start_checkpoint, Recorder};
-use super::run_support::{harness_tools, interrupted_failure};
+use super::run_support::{
+    checkpoint_at, harness_tools, interrupted_failure, outcome_of, publish_trace, settle_cancel,
+    WIND_DOWN,
+};
+use super::scratchpad::{Choices, Scratchpad};
 use super::trajectory::Evidence;
 use super::HarnessCheckpoint;
 use crate::engine::Engine;
@@ -28,10 +33,6 @@ use crate::error::CallError;
 use crate::gates::{ask_through, forward};
 use crate::meter::Meter;
 use crate::run::{RunConclusion, RunOptions, Usage};
-
-/// How long a stopped run is given to report what it had before it is
-/// left - the same grace a mode session's wind-down gets.
-const WIND_DOWN: Duration = Duration::from_secs(5);
 
 /// How many captures may be served with nothing processed in between
 /// before a resting run is judged stuck.
@@ -80,6 +81,10 @@ pub struct HarnessRun {
     item_checkpoint: Option<ItemCheckpointSink>,
     /// Whether the trajectory file a gate reads outlives the run.
     keep_trajectory_file: bool,
+    /// The directory the host chose for this run, if it chose one.
+    scratchpad_choice: Option<std::path::PathBuf>,
+    /// What the host provided the run, known once it executes.
+    pub(super) run_values: RunValues,
 }
 
 /// Receives the checkpoint a host asked for at each completed work item.
@@ -157,6 +162,21 @@ impl HarnessRun {
             workspace: None,
             item_checkpoint: None,
             keep_trajectory_file: false,
+            scratchpad_choice: None,
+            run_values: RunValues::default(),
+        }
+    }
+
+    /// The data a fresh run starts from: the bundle's, with its helpers and
+    /// digest pinned, or the plan's alone.
+    fn fresh_data(&self) -> Result<HarnessRunData, CallError> {
+        match &self.bundle {
+            Some(bundle) => HarnessRunData::from_bundle(bundle, self.inputs.clone())
+                .map_err(|e| CallError::Precondition(format!("cannot start: {e}"))),
+            None => Ok(HarnessRunData::from_parts(
+                (*self.plan).clone(),
+                self.inputs.clone(),
+            )),
         }
     }
 
@@ -201,8 +221,31 @@ impl HarnessRun {
         Ok(self)
     }
 
+    /// Gives the run the private directory `dir` (`{{ run.scratchpad }}`),
+    /// created if it is missing. Without this a run uses the directory its
+    /// checkpoint recorded, else the one its document names
+    /// (`execution.scratchpad`), else a fresh one under the system temporary
+    /// directory. It must be an absolute path that is neither inside the
+    /// workspace nor holds it; [`Self::execute`] refuses it otherwise.
+    #[must_use]
+    pub fn with_scratchpad(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
+        self.scratchpad_choice = Some(dir.into());
+        self
+    }
+
+    /// The run's private directory, once [`Self::execute`] has settled it.
+    /// It holds the run's audit log (`audit.jsonl`) and whatever its gates
+    /// leave, and is kept after the run.
+    #[must_use]
+    pub fn scratchpad(&self) -> Option<&std::path::Path> {
+        self.run_values
+            .scratchpad
+            .as_deref()
+            .map(std::path::Path::new)
+    }
+
     /// Keeps the trajectory file (`{{ run.trajectory_file }}`), final after the run;
-    /// by default its directory is removed when the run ends, however it ends.
+    /// by default it is removed when the run ends, however it ends.
     #[must_use]
     pub fn keep_trajectory_file(mut self) -> Self {
         self.keep_trajectory_file = true;
@@ -271,7 +314,7 @@ impl HarnessRun {
             ));
         }
         self.executed = true;
-        let resumed = self.restored.take();
+        let mut resumed = self.restored.take();
 
         // A project root is discovered from the way the CLI discovers its
         // project, and confines the built-in tools; without one the session
@@ -293,6 +336,40 @@ impl HarnessRun {
             ..discovered
         };
 
+        // The run's private directory, settled before anything is built on it.
+        // A fresh run's data is built here because the document's scratchpad
+        // is a template over its inputs.
+        let mut restored_state = resumed
+            .as_ref()
+            .map(|restored| HarnessRunState::load(&restored.snapshot.context));
+        let fresh = match resumed {
+            Some(_) => None,
+            None => Some(self.fresh_data()?),
+        };
+        let recorded = restored_state
+            .as_ref()
+            .and_then(|state| state.run_values().scratchpad);
+        let document = match fresh.as_ref().map(HarnessRunData::document_scratchpad) {
+            Some(Err(why)) => return Err(CallError::Precondition(why)),
+            Some(Ok(dir)) => dir,
+            None => None,
+        };
+        let scratch = Scratchpad::resolve(&Choices {
+            host: self.scratchpad_choice.as_deref(),
+            recorded: recorded.as_deref(),
+            document,
+            run_id: &self.run_id,
+            workspace: root.as_deref(),
+        })?;
+        let reads_trajectory = sven_harness_runtime::plan_reads_trajectory(&self.plan);
+        self.run_values = scratch.run_values(reads_trajectory);
+        if let Some(restored) = resumed.as_mut() {
+            // A resumed run continues in the directory it now has, which is
+            // the recorded one unless the host chose another.
+            apply_to_snapshot(&mut restored.snapshot, &self.run_values);
+            restored_state = Some(HarnessRunState::load(&restored.snapshot.context));
+        }
+
         // The turn executor parks the abort sender for the model call in
         // flight here; taking it interrupts that call.
         let abort_slot = Arc::new(tokio::sync::Mutex::new(None));
@@ -306,6 +383,7 @@ impl HarnessRun {
             .with_child_records(children.clone())
             .with_allow_interactive_oauth(false)
             .with_runtime_context(runtime_ctx)
+            .with_audit_log_path(scratch.audit_log())
             .with_builtin_tools(self.engine.toolset().builtin())
             .with_extra_tools(harness_tools(
                 root.as_deref(),
@@ -339,9 +417,6 @@ impl HarnessRun {
         // its suspension interrupted (a failed-effect event, which the
         // step's declared retry policy answers).
         let resumed_trace_len = resumed.as_ref().map_or(0, |r| r.trace_len);
-        let restored_state = resumed
-            .as_ref()
-            .map(|restored| HarnessRunState::load(&restored.snapshot.context));
         let kickoff = match &restored_state {
             Some(state) => match interrupted_failure(state) {
                 Some(event) => event,
@@ -376,18 +451,13 @@ impl HarnessRun {
                 // A bundle run travels with its helpers and pins the
                 // bundle's digest, exactly as a resume does: a fresh start
                 // is not a way to run a bundle without its program.
-                let data = match &self.bundle {
-                    Some(bundle) => HarnessRunData::from_bundle(bundle, self.inputs.clone())
-                        .map_err(|e| CallError::Precondition(format!("cannot start: {e}")))?,
-                    None => HarnessRunData::from_parts((*self.plan).clone(), self.inputs.clone()),
-                };
-                let data = if sven_harness_runtime::plan_reads_trajectory(&self.plan) {
-                    data.with_trajectory_file(
-                        live_trajectory::trajectory_path(&self.run_id).to_string_lossy(),
-                    )
-                } else {
-                    data
-                };
+                let data = fresh
+                    .ok_or_else(|| {
+                        CallError::Infrastructure(anyhow::anyhow!(
+                            "a fresh run's data is built before its session"
+                        ))
+                    })?
+                    .with_run_values(self.run_values.clone());
                 let policy = HarnessMachine::permission_policy_for(&data);
                 (
                     Box::new(sven_hsm::Hsm::new(HarnessMachine::new(data)))
@@ -420,7 +490,7 @@ impl HarnessRun {
             None => tokio::spawn(session.channels.answer_unattended()),
         };
 
-        let live = sven_harness_runtime::plan_reads_trajectory(&self.plan).then(|| {
+        let live = reads_trajectory.then(|| {
             Arc::new(live_trajectory::Source {
                 engine: self.engine.clone(),
                 plan: Arc::clone(&self.plan),
@@ -431,9 +501,9 @@ impl HarnessRun {
                 tap: session.runtime.snapshots(),
             })
         });
-        let _dir = live
-            .as_ref()
-            .map(|_| live_trajectory::Cleanup::of(&self.run_id, self.keep_trajectory_file));
+        let _dir = live.as_ref().map(|_| {
+            live_trajectory::Cleanup::of(scratch.trajectory_file(), self.keep_trajectory_file)
+        });
         if let Some(live) = &live {
             let writer = Arc::clone(live);
             let _ = trajectory_slot.set(Arc::new(move |path| writer.write(path)));
@@ -667,7 +737,7 @@ impl HarnessRun {
             children.finished(),
         ));
         if live.is_some() && self.keep_trajectory_file {
-            live_trajectory::write_final(&self.run_id, self.trajectory());
+            live_trajectory::write_final(&scratch.trajectory_file(), self.trajectory());
         }
         Ok(outcome)
     }
@@ -704,97 +774,4 @@ pub struct HarnessFailure {
     pub code: String,
     /// What the failure means, for a person reading the outcome.
     pub message: String,
-}
-
-/// Cancels a run: the machine is told the user cancelled, settles into its
-/// own terminal cancelled state - propagating the cancellation through the
-/// children it started - and reports a cancelled verdict. Nothing is left
-/// to resume.
-async fn settle_cancel(
-    handle: &sven_bootstrap::RuntimeHandle,
-    abort_slot: &tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    wind_down: std::pin::Pin<&mut tokio::time::Sleep>,
-) {
-    if let Some(abort) = abort_slot.lock().await.take() {
-        let _ = abort.send(());
-    }
-    let _ = handle.cancel().await;
-    wind_down.reset(tokio::time::Instant::now() + WIND_DOWN);
-}
-
-/// The checkpoint of a run resting at `snapshot`. The program it ran under
-/// is the run state's recorded digest, or `plan_digest` when the run was
-/// stopped before its first step recorded one.
-fn checkpoint_at(snapshot: Snapshot, plan_digest: &str, run_id: &str) -> HarnessCheckpoint {
-    let state = HarnessRunState::load(&snapshot.context);
-    HarnessCheckpoint {
-        plan_digest: state.plan_digest.unwrap_or_else(|| plan_digest.to_string()),
-        bundle_digest: state.bundle_digest,
-        run_id: run_id.to_string(),
-        snapshot,
-    }
-}
-
-/// Publishes the trace records `ctx` gained since the last publish: each
-/// as a raw record on the trace stream and as its session event on the
-/// event stream, so one run's progress has one form everywhere. `observed`
-/// carries when the previous record was seen; a step's duration is the gap
-/// between observations - approximately what the step cost, zero when the
-/// run is observed in a burst. Says which loops completed an item among
-/// the records published.
-fn publish_trace(
-    ctx: &Context,
-    emitted: &mut usize,
-    trace_tx: &broadcast::Sender<TraceRecord>,
-    events: &broadcast::Sender<SessionEvent>,
-    run_id: &str,
-    observed: &mut Option<tokio::time::Instant>,
-) -> Vec<String> {
-    let state = HarnessRunState::load(ctx);
-    let mut completed_loops = Vec::new();
-    for record in state.trace.iter().skip(*emitted) {
-        if let Some(step) = super::run_support::finished_item_loop(record) {
-            completed_loops.push(step.to_string());
-        }
-        let duration_ms = observed
-            .replace(tokio::time::Instant::now())
-            .map_or(0, |previous| previous.elapsed().as_millis() as u64);
-        let _ = trace_tx.send(record.clone());
-        let _ = events.send(SessionEvent::Harness {
-            run_id: run_id.to_string(),
-            event: harness_event(record, duration_ms),
-        });
-    }
-    *emitted = state.trace.len();
-    completed_loops
-}
-
-/// The verdict a finished run reported, read off its terminal state and
-/// its outcome fact. `None` when the run has no verdict: a bound stopped
-/// it first.
-pub(super) fn outcome_of(
-    state_label: &str,
-    outcome: Option<&Value>,
-) -> Option<Result<Value, HarnessFailure>> {
-    match state_label {
-        "Completed" => Some(Ok(outcome.cloned().unwrap_or(Value::Null))),
-        "Failed" => {
-            let code = outcome
-                .and_then(|o| o.get("code"))
-                .and_then(Value::as_str)
-                .unwrap_or("failed")
-                .to_string();
-            let message = outcome
-                .and_then(|o| o.get("message"))
-                .and_then(Value::as_str)
-                .unwrap_or("the run failed")
-                .to_string();
-            Some(Err(HarnessFailure { code, message }))
-        }
-        "Cancelled" => Some(Err(HarnessFailure {
-            code: "cancelled".to_string(),
-            message: "the user cancelled the run".to_string(),
-        })),
-        _ => None,
-    }
 }

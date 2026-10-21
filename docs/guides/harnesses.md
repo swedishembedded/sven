@@ -164,8 +164,8 @@ sven harness run      <PATH> [--input JSON | --input-file FILE] [--case FILE]
                        [--allow-capability NAME]... [--api-key-file FILE]
                        [--first-byte-timeout SECS]]
                       [--timeout SECS] [--max-output-tokens N]
-                      [--trace FILE] [--record FILE] [--trajectory FILE]
-                      [--checkpoint-out FILE] [--json] [--quiet]
+                      [--scratchpad DIR] [--trace FILE] [--record FILE]
+                      [--trajectory FILE] [--checkpoint-out FILE] [--json] [--quiet]
 sven harness resume   <PATH> --checkpoint FILE [the flags of run]
 sven harness replay   <PATH> --recording FILE [--expect-trace FILE] [--json]
 sven harness test     <DIR>... [--case NAME] [--no-replay] [--json]
@@ -252,7 +252,15 @@ sven harness run ./c-repair --toolset coding --workspace ./repo \
 - `--workspace DIR` is where the file tools are confined and the shell
   starts. A shell is not a sandbox: a command can still reach outside the
   directory; run the whole command in a container when that matters. The
-  run also writes `.sven/audit.jsonl` there.
+  run writes nothing of its own there: its audit log is
+  `<scratchpad>/audit.jsonl`.
+- `--scratchpad DIR` is the run's private directory (mode 0700, created if
+  missing; kept after the run and printed as `scratchpad: DIR`, a
+  `scratchpad` field with `--json`). Without the flag a workflow's
+  `execution.scratchpad` is used, else `sven-harness-<run id>` under the
+  temporary directory; a resume goes back to the directory its checkpoint
+  recorded. A directory inside `--workspace`, or one that holds it, is
+  refused.
 - `--model` and `--model-endpoint` name a server you already run. The
   fixture flags (`--model-fixture`, `--tool-fixture`, `--case`) are refused.
 - `--approvals` is `auto` (allowed calls run unasked), `deny` (every call
@@ -328,8 +336,10 @@ where it rests, exits 3 and leaves its checkpoint for `harness resume`.
 Nothing is written unless a flag asks for it: `--trace` (one trace record per
 line, JSONL), `--record` (the recording, JSON), `--trajectory` (the ATIF
 trajectory, JSON) and `--checkpoint-out` (the checkpoint of a suspended run,
-JSON). Case workspaces are temporary directories removed with the run. No
-sven configuration is read.
+JSON). Case workspaces are temporary directories removed with the run, and so
+is the scratchpad of a case or of a run in a fresh workspace; a run in a
+directory you name (`--workspace`) keeps its scratchpad and prints the path.
+No sven configuration is read.
 
 ## Cases
 
@@ -576,8 +586,8 @@ is 90 percent is decided by a gate, which is a program sven runs.
   and `digest_files` are reserved to the harness's own steps, and a proposed
   call to one is refused.
 - **Gates can judge what the agent did.** `{{ run.trajectory_file }}` is the
-  run's trajectory so far, written by the host outside the workspace before the
-  command starts; `stdin` carries a diff or an answer too large for an
+  run's trajectory so far, written by the host in the run's scratchpad, outside
+  the workspace, before the command starts; `stdin` carries a diff or an answer too large for an
   argument. A gate that reads either is only as honest as its program, so keep
   that program outside the agent's reach.
 - **Substituted values are data.** Braces in an input, an output or a model's

@@ -22,6 +22,7 @@ mod counts;
 mod imports;
 mod lower;
 mod rewrite;
+mod scratchpad;
 pub mod spec;
 mod system;
 mod validate;

@@ -174,6 +174,39 @@ fn run_returns_json_and_exit_0() {
 }
 
 #[test]
+fn run_names_its_scratchpad_on_stderr_or_in_the_json_report() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pad = tmp.path().join("pad");
+    let named = run(sven(tmp.path())
+        .arg("run")
+        .arg(fixtures().join("decide"))
+        .args(["--input", r#"{"plan": "pro"}"#, "--json", "--scratchpad"])
+        .arg(&pad));
+    assert_eq!(code(&named), 0, "{}", stderr(&named));
+    let real = pad.canonicalize().expect("the directory was created");
+    assert_eq!(
+        stdout_json(&named)["scratchpad"],
+        real.to_string_lossy().as_ref()
+    );
+    assert!(real.join("audit.jsonl").is_file(), "the audit log is in it");
+
+    let human = run(sven(tmp.path())
+        .arg("run")
+        .arg(fixtures().join("decide"))
+        .args(["--input", r#"{"plan": "pro"}"#, "--scratchpad"])
+        .arg(&pad));
+    assert!(
+        stderr(&human).contains(&format!("scratchpad: {}", real.display())),
+        "{}",
+        stderr(&human)
+    );
+    assert!(
+        !String::from_utf8_lossy(&human.stdout).contains("scratchpad"),
+        "stdout keeps to the verdict"
+    );
+}
+
+#[test]
 fn run_takes_its_input_from_a_case_manifest_and_flags_override_it() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let case = fixtures().join("decide/cases/free.yaml");

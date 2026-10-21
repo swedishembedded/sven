@@ -165,6 +165,7 @@
       "properties": {
         "workspace": { "const": "repository", "description": "The host-provided workspace root." },
         "resume": { "const": true, "description": "Every run is checkpointable and resumable; false is not supported." },
+        "scratchpad": { "type": "string", "minLength": 1, "description": "Where the run's private directory lives: an absolute path, a template over inputs only ({{ inputs.<name> }}). Omitted: the host chooses (the CLI's --scratchpad, else a fresh directory under the system temporary directory). It may not be inside the workspace or contain it. Steps read the path as {{ run.scratchpad }}." },
         "limits": {
           "type": "object",
           "additionalProperties": false,

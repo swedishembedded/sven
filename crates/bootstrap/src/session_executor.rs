@@ -134,6 +134,8 @@ pub(crate) struct ExecutorParts {
     /// and the activation of conditional instructions.
     pub instructions: crate::instruction_wiring::InstructionWiring,
     pub audit_trail: AuditTrailHandle,
+    /// Where the audit log goes; by default under the project root's `.sven`.
+    pub audit_log_path: Option<PathBuf>,
     pub parked_tx: mpsc::Sender<sven_executors::user::ParkedQuestion>,
     /// Replaces only the tool slot, keeping every other default executor.
     pub tool_executor_override: Option<ToolExecutorFactory>,
@@ -157,12 +159,14 @@ pub(crate) fn compose(
     if let Some(custom) = custom {
         return custom;
     }
-    let audit_log_path = parts
-        .instructions
-        .project_root
-        .as_ref()
-        .map(|r| r.join(".sven").join("audit.jsonl"))
-        .unwrap_or_else(|| PathBuf::from(".sven/audit.jsonl"));
+    let audit_log_path = parts.audit_log_path.unwrap_or_else(|| {
+        parts
+            .instructions
+            .project_root
+            .as_ref()
+            .map(|r| r.join(".sven").join("audit.jsonl"))
+            .unwrap_or_else(|| PathBuf::from(".sven/audit.jsonl"))
+    });
     // Only the verified-task machine's `Verifying` state ever emits
     // `Effect::Verify` (see its `permission_policy`), so wiring it here
     // unconditionally is harmless for every other mode.

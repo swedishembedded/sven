@@ -96,6 +96,8 @@ pub struct RuntimeBuilder {
     cancel_handle: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
     decoding: sven_turn::Decoding,
     child_records: Option<crate::child_records::ChildRecords>,
+    /// See [`RuntimeBuilder::with_audit_log_path`].
+    audit_log_path: Option<std::path::PathBuf>,
     /// When set, this executor replaces the default [`CompositeExecutor`]
     /// entirely (see [`Self::with_effect_executor`]).
     effect_executor: Option<Box<dyn EffectExecutor>>,
@@ -178,6 +180,7 @@ impl RuntimeBuilder {
             cancel_handle: None,
             decoding: sven_turn::Decoding::default(),
             child_records: None,
+            audit_log_path: None,
             effect_executor: None,
             tool_executor_override: None,
             principal: None,
@@ -339,6 +342,14 @@ impl RuntimeBuilder {
     /// [`crate::child_records`].
     pub fn with_child_records(mut self, records: crate::child_records::ChildRecords) -> Self {
         self.child_records = Some(records);
+        self
+    }
+
+    /// Writes the session's audit log to `path` instead of
+    /// `<project root>/.sven/audit.jsonl`: a host that must not put files in
+    /// the project it works on (a harness run) names a file of its own.
+    pub fn with_audit_log_path(mut self, path: std::path::PathBuf) -> Self {
+        self.audit_log_path = Some(path);
         self
     }
 
@@ -803,6 +814,7 @@ impl RuntimeBuilder {
                 context,
                 instructions: InstructionWiring::new(&runtime, &self.mode),
                 audit_trail: audit_trail.clone(),
+                audit_log_path: self.audit_log_path.take(),
                 parked_tx,
                 tool_executor_override: self.tool_executor_override.take(),
                 reconcile_capabilities: harness_session,

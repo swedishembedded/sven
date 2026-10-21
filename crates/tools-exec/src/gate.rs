@@ -121,6 +121,29 @@ impl Report {
     }
 }
 
+/// The variables a call sets for its command: an object of string values
+/// whose names are plain identifiers (`[A-Za-z_][A-Za-z0-9_]*`).
+fn environment(given: Option<&Value>) -> Result<Vec<(String, String)>, String> {
+    let entries = match given {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Object(entries)) => entries,
+        Some(_) => return Err("`env` must be an object of strings".to_string()),
+    };
+    entries
+        .iter()
+        .map(|(name, value)| {
+            let plain = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !name.starts_with(|c: char| c.is_ascii_digit())
+                && !name.is_empty();
+            match (plain, value.as_str()) {
+                (true, Some(text)) => Ok((name.clone(), text.to_string())),
+                (false, _) => Err(format!("`env` name `{name}` is not a plain variable name")),
+                (true, None) => Err(format!("`env` value of `{name}` must be a string")),
+            }
+        })
+        .collect()
+}
+
 /// Runs a harness gate's command inside the workspace.
 pub struct GateCommandTool {
     scope: PathScope,
@@ -196,11 +219,13 @@ impl GateCommandTool {
         limit: Duration,
         stdin: Option<String>,
         keep: usize,
+        env: &[(String, String)],
     ) -> Report {
         let mut command = Command::new(&argv[0]);
         command
             .args(&argv[1..])
             .current_dir(dir)
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .stdin(if stdin.is_some() {
                 Stdio::piped()
             } else {
@@ -298,7 +323,8 @@ impl Tool for GateCommandTool {
                 "stdin": { "type": "string", "description": "Text the command reads on standard input" },
                 "tail_bytes": { "type": "integer", "minimum": 1024, "maximum": MAX_TAIL_BYTES, "description": "How much of the end of each output stream to keep (default 16384)" },
                 "trusted_cwd": { "type": "string", "description": "Absolute directory outside the workspace (a run input the host set)" },
-                "trajectory_file": { "type": "string", "description": "File the host writes the run's trajectory to before the command starts" }
+                "trajectory_file": { "type": "string", "description": "File the host writes the run's trajectory to before the command starts" },
+                "env": { "type": "object", "description": "Variables set for the command, name to value", "additionalProperties": { "type": "string" } }
             },
             "required": ["argv", "timeout_secs"],
             "additionalProperties": false
@@ -397,8 +423,12 @@ impl Tool for GateCommandTool {
                 }
             },
         };
+        let env = match environment(call.args.get("env")) {
+            Ok(env) => env,
+            Err(why) => return ToolOutput::err(&call.id, why),
+        };
         let report = self
-            .run(&argv, &dir, Duration::from_secs(seconds), stdin, keep)
+            .run(&argv, &dir, Duration::from_secs(seconds), stdin, keep, &env)
             .await;
         ToolOutput::ok(&call.id, report.to_json())
     }
@@ -456,6 +486,30 @@ mod tests {
         assert!(!is_error);
         assert_eq!(r["exit_code"], 0);
         assert_eq!(r["stdout"].as_str().unwrap().trim(), text.len().to_string());
+    }
+
+    #[tokio::test]
+    async fn the_command_finds_the_variables_it_is_given_in_its_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let (is_error, r) = run(
+            &tool(&dir),
+            json!({
+                "argv": ["sh", "-c", "printf %s \"$SVEN_SCRATCHPAD\""],
+                "timeout_secs": 10,
+                "env": { "SVEN_SCRATCHPAD": "/some/dir" }
+            }),
+        )
+        .await;
+        assert!(!is_error);
+        assert_eq!(r["stdout"], "/some/dir");
+        for bad in [json!({ "A-B": "x" }), json!({ "A": 1 }), json!("x")] {
+            let (is_error, _) = run(
+                &tool(&dir),
+                json!({ "argv": ["true"], "timeout_secs": 10, "env": bad }),
+            )
+            .await;
+            assert!(is_error, "{bad} is refused");
+        }
     }
 
     #[tokio::test]

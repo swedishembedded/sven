@@ -6,11 +6,11 @@
 //! A gate that reads `{{ run.trajectory_file }}` judges what the agent did:
 //! which files it read before editing, which commands it ran, how many calls it
 //! made. The file is the run's ATIF trajectory so far, written by the host
-//! just before the gate's command starts, in a directory of its own under the
-//! host's temporary directory (not the workspace, which the agent can write).
-//! After the run the directory is removed, unless the host asked to keep it
-//! ([`super::run::HarnessRun::keep_trajectory_file`]); then the file holds the
-//! final trajectory.
+//! just before the gate's command starts, in the run's scratchpad (not the
+//! workspace, which the agent can write). After the run the file is removed,
+//! unless the host asked to keep it
+//! ([`super::run::HarnessRun::keep_trajectory_file`]); then it holds the final
+//! trajectory.
 //!
 //! Swedish Embedded AB implements verifiable, declarative agent workflows for
 //! its clients. If your team needs expertise in checks that judge what an
@@ -32,39 +32,36 @@ use super::trajectory::{build_trajectory, Evidence};
 use crate::engine::Engine;
 use crate::run::{RunConclusion, Usage};
 
-/// Where run `run_id`'s trajectory file is: a directory of its own under the
-/// host's temporary directory.
-pub(super) fn trajectory_path(run_id: &str) -> PathBuf {
-    std::env::temp_dir()
-        .join(format!("sven-harness-{run_id}"))
-        .join("trajectory.json")
-}
-
-/// Removes the run's trajectory directory when dropped, unless the host asked
-/// to keep it: the file is for the gates of the run, and a host that runs
-/// thousands of harnesses must not collect a directory for each. Dropping
-/// covers every way the run can end: a verdict, a bound, a cancellation, an
-/// error and a panic.
+/// Removes the run's trajectory file when dropped, unless the host asked to
+/// keep it: the file is for the gates of the run, and a host that runs
+/// thousands of harnesses must not collect one for each. Dropping covers every
+/// way the run can end: a verdict, a bound, a cancellation, an error and a
+/// panic.
 pub(super) struct Cleanup {
-    dir: Option<PathBuf>,
+    file: Option<PathBuf>,
 }
 
 impl Cleanup {
-    /// The cleanup of run `run_id`'s directory; nothing is removed when `keep`.
-    pub(super) fn of(run_id: &str, keep: bool) -> Self {
-        let dir = trajectory_path(run_id).parent().map(Path::to_path_buf);
+    /// The cleanup of the trajectory `file`; nothing is removed when `keep`.
+    pub(super) fn of(file: PathBuf, keep: bool) -> Self {
         Self {
-            dir: dir.filter(|_| !keep),
+            file: (!keep).then_some(file),
         }
     }
 }
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        if let Some(dir) = &self.dir {
-            let _ = std::fs::remove_dir_all(dir);
+        if let Some(file) = &self.file {
+            let _ = std::fs::remove_file(file);
+            let _ = std::fs::remove_file(partial(file));
         }
     }
+}
+
+/// The private file a trajectory is written to before it is renamed into place.
+fn partial(file: &Path) -> PathBuf {
+    file.with_extension("json.partial")
 }
 
 /// The slot the gate tool's hook reads, filled once the run's session exists.
@@ -132,20 +129,20 @@ pub(super) fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
         .parent()
         .ok_or_else(|| format!("{} has no directory", path.display()))?;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let partial = path.with_extension("json.partial");
+    let partial = partial(path);
     std::fs::write(&partial, text).map_err(|e| format!("{}: {e}", partial.display()))?;
     std::fs::rename(&partial, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Writes the final `trajectory` of run `run_id` to its file, for a host that
-/// keeps it; a failure is a warning, the run's verdict stands.
-pub(super) fn write_final(run_id: &str, trajectory: Option<atif::Trajectory>) {
+/// Writes the final `trajectory` to `file`, for a host that keeps it; a
+/// failure is a warning, the run's verdict stands.
+pub(super) fn write_final(file: &Path, trajectory: Option<atif::Trajectory>) {
     let Some(trajectory) = trajectory else {
         return;
     };
     let written = serde_json::to_string_pretty(&trajectory)
         .map_err(|e| e.to_string())
-        .and_then(|text| write_atomically(&trajectory_path(run_id), &text));
+        .and_then(|text| write_atomically(file, &text));
     if let Err(e) = written {
         eprintln!("warning: cannot write the final trajectory: {e}");
     }

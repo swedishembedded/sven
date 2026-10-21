@@ -170,6 +170,7 @@ impl Production {
                 bounds: request::bounds(args, Bounds::default())?,
                 record: args.record.is_some(),
                 trajectory: args.trajectory.is_some(),
+                scratchpad: request::scratchpad(args)?,
                 progress,
                 activity,
                 suspend: Some(suspend_on_signal()),

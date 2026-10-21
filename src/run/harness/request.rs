@@ -111,7 +111,20 @@ pub(super) fn build(args: &HarnessRunArgs) -> Result<RunRequest, Failure> {
         seed: args.seed,
         record: args.record.is_some(),
         trajectory: args.trajectory.is_some(),
+        scratchpad: scratchpad(args)?,
     })
+}
+
+/// The `--scratchpad` directory as an absolute path, so that the run does not
+/// depend on where the process happens to be.
+pub(super) fn scratchpad(args: &HarnessRunArgs) -> Result<Option<std::path::PathBuf>, Failure> {
+    args.scratchpad
+        .as_deref()
+        .map(|dir| {
+            std::path::absolute(dir)
+                .map_err(|e| usage(format!("--scratchpad {}: {e}", dir.display())))
+        })
+        .transpose()
 }
 
 /// The input the flags give (`--input` or `--input-file`), if any.

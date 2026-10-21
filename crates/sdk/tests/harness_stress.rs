@@ -167,9 +167,13 @@ async fn one_run(
     let harness = engine
         .load_harness_from_str(PROGRAM)
         .map_err(|e| format!("run {index}: load: {e}"))?;
+    // A run's scratchpad is kept; each of these thousand lives in a directory
+    // that goes away with the run.
+    let scratch = tempfile::tempdir().map_err(|e| format!("run {index}: scratchpad: {e}"))?;
     let mut run = harness
         .start(json!({"kind": "x"}))
-        .map_err(|e| format!("run {index}: start: {e}"))?;
+        .map_err(|e| format!("run {index}: start: {e}"))?
+        .with_scratchpad(scratch.path());
     let outcome = run
         .execute(RunOptions::new().deadline(RUN_DEADLINE))
         .await

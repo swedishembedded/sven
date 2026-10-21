@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 use sven_harness_spec::{PlanPrimitive, PlanStep, Template, GATE_TOOL};
 use sven_hsm::{Context, Effect, Reaction, ToolCapability};
 
+use crate::host_values::{RUN_FACT, TRAJECTORY_FILE};
 use crate::machine::HarnessMachine;
 use crate::run::{HarnessRunState, Inflight, TraceRecord, Waiting};
 use crate::state::HarnessState;
@@ -30,6 +31,9 @@ use crate::state::HarnessState;
 /// the settling event from this text and the machine recognises it.
 pub const INTERRUPTED_OPERATION: &str =
     "the run was suspended with this operation in flight; it did not complete";
+
+/// The environment variable a command gate finds the run's scratchpad in.
+const SCRATCHPAD_ENV: &str = "SVEN_SCRATCHPAD";
 
 /// The capability a gate's command exercises.
 pub(super) const GATE_CAPABILITY: ToolCapability = ToolCapability::ExecuteShell;
@@ -75,10 +79,14 @@ pub(super) fn gate_args(run: &HarnessRunState, gate: &PlanPrimitive) -> Value {
     {
         args["trusted_cwd"] = json!(dir);
     }
+    let host = run.run_values();
     if command.iter().chain(stdin).any(reads_trajectory_file) {
-        if let Some(file) = run.facts.get(RUN_FACT).and_then(|f| f.get(TRAJECTORY_FILE)) {
-            args["trajectory_file"] = file.clone();
+        if let Some(file) = host.trajectory_file {
+            args["trajectory_file"] = json!(file);
         }
+    }
+    if let Some(dir) = host.scratchpad {
+        args["env"] = json!({ SCRATCHPAD_ENV: dir });
     }
     if let Some(stdin) = stdin {
         args["stdin"] = match run.resolve_template(stdin) {
@@ -102,11 +110,6 @@ pub(super) enum TurnTrouble<'a> {
     /// The server failed in a way that may pass, with its error.
     Transient(&'a str),
 }
-
-/// The fact the host-provided values of the run live under (`run.*`).
-pub(super) const RUN_FACT: &str = "run";
-/// The name of the run's trajectory file in [`RUN_FACT`].
-pub(super) const TRAJECTORY_FILE: &str = "trajectory_file";
 
 /// `true` when a template reads `{{ run.trajectory_file }}`.
 pub(super) fn reads_trajectory_file(template: &Template) -> bool {
@@ -348,19 +351,13 @@ impl HarnessMachine {
         {
             // The host decides where the trajectory goes (and is the only one
             // who can write it); a host that gave no place cannot run this gate.
-            match self.run.trajectory_file() {
-                Some(file) => {
-                    run.facts
-                        .insert(RUN_FACT.to_string(), json!({ TRAJECTORY_FILE: file }));
-                }
-                None => {
-                    return self.fail_now(
-                        run,
-                        "trajectory_unavailable",
-                        "a gate reads the run's trajectory but this host provides none",
-                        ctx,
-                    )
-                }
+            if run.run_values().trajectory_file.is_none() {
+                return self.fail_now(
+                    run,
+                    "trajectory_unavailable",
+                    "a gate reads the run's trajectory but this host provides none",
+                    ctx,
+                );
             }
         }
         let call_id = self.call_id_for(step, run);

@@ -45,6 +45,7 @@ use sven_vocab::TurnRequest;
 
 use crate::command_gate::TurnTrouble;
 use crate::decoding::{system_text, TurnShape};
+use crate::host_values::plan_reads_scratchpad;
 use crate::run::{step_call_id, HarnessRunData, HarnessRunState, Inflight, TraceRecord, Waiting};
 use crate::state::{superstate_of, HarnessState};
 
@@ -105,13 +106,6 @@ impl HarnessMachine {
     #[must_use]
     pub fn run(&self) -> &HarnessRunData {
         &self.run
-    }
-
-    /// Names the file the host writes the run's trajectory to (see
-    /// [`HarnessRunData::with_trajectory_file`]), for a machine restored from
-    /// a checkpoint.
-    pub fn set_trajectory_file(&mut self, file: impl Into<String>) {
-        self.run.set_trajectory_file(file.into());
     }
 
     /// The effect the most recently entered step emitted, if the walk is
@@ -352,6 +346,17 @@ impl HarnessMachine {
         }
         let mut state = self.run_state(ctx);
         state.start(self.run.plan(), self.run.inputs(), self.run.bundle_digest());
+        state.set_run_values(self.run.run_values());
+        if state.run_values().scratchpad.is_none() && plan_reads_scratchpad(self.run.plan()) {
+            // The host decides where the run's private directory is; one that
+            // gave none cannot run a workflow that writes into it.
+            return self.fail_now(
+                &mut state,
+                "scratchpad_unavailable",
+                "the workflow reads the run's scratchpad but this host provides none",
+                ctx,
+            );
+        }
         state.delegate_depth = self.run.delegate_depth();
         state.ceiling = self.run.ceiling();
         state.store(ctx);

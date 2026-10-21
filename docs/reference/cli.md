@@ -197,7 +197,7 @@ Run options (`run` and `resume`): `--input JSON` or `--input-file FILE`,
 `--case FILE`, `--model-fixture FILE`, `--tool-fixture FILE` (repeatable),
 `--workspace DIR`, `--model SPEC` with `--model-endpoint URL`,
 `--toolset none|coding` (`coding` needs `--workspace`, `--model`, `--model-endpoint` and `--approvals auto|deny|ask`; also `--allow-capability NAME` and `--api-key-file FILE`), `--seed N`, `--timeout SECS`,
-`--max-output-tokens N`, `--trace FILE` (JSONL), `--record FILE`,
+`--max-output-tokens N`, `--scratchpad DIR` (the run's private directory; its audit log goes there, never into the workspace), `--trace FILE` (JSONL), `--record FILE`,
 `--trajectory FILE`, `--checkpoint-out FILE`, `--json` (one JSON document on
 stdout and nothing else) and `--quiet` (no `[sven:harness]` progress lines).
 A coding run (`--toolset coding`) that receives SIGINT or SIGTERM suspends where

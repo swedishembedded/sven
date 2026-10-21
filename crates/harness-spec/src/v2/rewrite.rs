@@ -47,6 +47,9 @@ pub(super) const FAILURE_FIELDS: [&str; 7] = [
     "stderr",
 ];
 
+/// The values the host provides a run, readable as `run.<name>`.
+const RUN_VALUES: [&str; 2] = ["trajectory_file", "scratchpad"];
+
 /// What a repair prompt's `failure.*` refers to.
 pub(super) struct FailureView {
     /// The check that failed.
@@ -233,10 +236,13 @@ impl Scope<'_> {
                 Path::parse(&format!("facts.{fact}{rest}")).map(PathRewrite::Path)
             }
             "run" => match segments {
-                [_, field] if field == "trajectory_file" => {
-                    Path::parse("facts.run.trajectory_file").map(PathRewrite::Path)
+                [_, field] if RUN_VALUES.contains(&field.as_str()) => {
+                    Path::parse(&format!("facts.run.{field}")).map(PathRewrite::Path)
                 }
-                _ => Err(self.invalid(path, "can only read `run.trajectory_file`")),
+                _ => Err(self.invalid(
+                    path,
+                    "can only read `run.trajectory_file` and `run.scratchpad`",
+                )),
             },
             "failure" => self.map_failure(path),
             "vars" => {

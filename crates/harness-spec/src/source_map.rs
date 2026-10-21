@@ -46,6 +46,8 @@ pub struct SourceRef {
 pub struct Lowering {
     /// The tool profile the workflow declared (`none` or `coding`).
     pub profile: String,
+    /// The `execution.scratchpad` template (over inputs), when declared.
+    pub scratchpad: Option<String>,
     /// Generated step id to its authored origin.
     pub source_map: BTreeMap<String, SourceRef>,
 }

@@ -138,9 +138,10 @@ async fn the_file_is_removed_when_the_run_ends_whether_it_succeeded_or_failed() 
         let id = run.run_id().to_string();
         assert_eq!(finish(&mut run).await.is_ok(), succeeds, "{name}");
         assert!(
-            !trajectory_dir(&id).exists(),
-            "{name}: the trajectory directory outlived the run"
+            !trajectory_dir(&id).join("trajectory.json").exists(),
+            "{name}: the trajectory file outlived the run"
         );
+        let _ = std::fs::remove_dir_all(trajectory_dir(&id));
     }
 }
 
