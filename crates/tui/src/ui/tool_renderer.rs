@@ -14,7 +14,7 @@ use ratatui::{
 };
 use sven_tool_api::ToolDisplay;
 
-use super::theme::{BAR_ERROR, BAR_TOOL, TEXT, TEXT_DIM};
+use super::theme::{BAR_TOOL, TEXT, TEXT_DIM};
 use super::width_utils::truncate_to_width;
 
 // ── Category colours ──────────────────────────────────────────────────────────
@@ -105,58 +105,6 @@ pub fn render_tool_call_collapsed(
     ]
 }
 
-/// Render a single-line collapsed view for a tool result as `Vec<Span>`.
-///
-/// `label_override` replaces the tool display name when set (e.g. "Tool Result: shell").
-pub fn render_tool_result_collapsed(
-    tool_name: &str,
-    is_error: bool,
-    duration: Option<f32>,
-    display: Option<&dyn ToolDisplay>,
-    label_override: Option<String>,
-) -> Vec<Span<'static>> {
-    let (icon, label, category) = if let Some(d) = display {
-        (
-            d.icon().to_string(),
-            label_override.unwrap_or_else(|| d.display_name().to_string()),
-            d.category().to_string(),
-        )
-    } else {
-        (
-            sven_tool_api::tool_icon(tool_name).to_string(),
-            label_override.unwrap_or_else(|| tool_name.to_string()),
-            sven_tool_api::tool_category(tool_name).to_string(),
-        )
-    };
-
-    let status_sym = if is_error { "✗" } else { "✓" };
-    let status_color = if is_error {
-        BAR_ERROR
-    } else {
-        Color::Rgb(80, 200, 120)
-    };
-    let accent = category_color(&category);
-
-    let dur_str = if let Some(d) = duration {
-        format!("  {:.1}s", d)
-    } else {
-        String::new()
-    };
-
-    vec![
-        Span::styled(
-            format!("{icon} "),
-            Style::default().fg(accent).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            label,
-            Style::default().fg(accent).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!("  {status_sym}"), Style::default().fg(status_color)),
-        Span::styled(dur_str, Style::default().fg(Color::Rgb(120, 120, 140))),
-    ]
-}
-
 // ── Expanded tool call view ───────────────────────────────────────────────────
 
 /// Render an expanded tool call as a list of styled lines.
@@ -187,84 +135,6 @@ pub fn render_tool_call_expanded(
         "system" => render_system_tool_call(tool_name, args, width, accent),
         _ => render_generic_tool_call(tool_name, args, width, accent),
     }
-}
-
-/// Render an expanded tool result.
-///
-/// `expand` controls how much output is shown:
-/// - `1` (partial): first `PARTIAL_LINES` lines followed by a "... N more" hint.
-/// - `2` (full): all lines, no truncation.
-pub fn render_tool_result_expanded(
-    tool_name: &str,
-    output: &str,
-    is_error: bool,
-    width: u16,
-    expand: u8,
-    display: Option<&dyn ToolDisplay>,
-) -> Vec<Line<'static>> {
-    let category = display
-        .map(|d| d.category().to_string())
-        .unwrap_or_else(|| sven_tool_api::tool_category(tool_name).to_string());
-
-    let _accent = category_color(&category);
-    let status_color = if is_error {
-        BAR_ERROR
-    } else {
-        Color::Rgb(80, 200, 120)
-    };
-    let status_label = if is_error { "Error" } else { "Result" };
-    let status_sym = if is_error { "✗" } else { "✓" };
-
-    let mut lines: Vec<Line<'static>> = Vec::new();
-
-    // Header line: ✓/✗ Result
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("{status_sym} "),
-            Style::default()
-                .fg(status_color)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            status_label,
-            Style::default()
-                .fg(status_color)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
-
-    // Output body.
-    //   expand == 1 → show first PARTIAL_LINES lines with a "... N more" hint.
-    //   expand >= 2 → show everything so the user can scroll the full result.
-    const PARTIAL_LINES: usize = 20;
-    let avail_cols = (width as usize).saturating_sub(2);
-    let output_lines: Vec<&str> = output.lines().collect();
-    let total = output_lines.len();
-
-    let (to_show_count, show_hint) = if expand >= 2 {
-        (total, false)
-    } else {
-        (total.min(PARTIAL_LINES), total > PARTIAL_LINES)
-    };
-
-    for l in output_lines.iter().take(to_show_count) {
-        let display = truncate_to_width(l, avail_cols);
-        lines.push(Line::from(Span::styled(
-            format!("  {display}"),
-            Style::default().fg(TEXT),
-        )));
-    }
-    if show_hint {
-        lines.push(Line::from(Span::styled(
-            format!(
-                "  ... {} more lines (press Enter again to expand)",
-                total - to_show_count
-            ),
-            Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC),
-        )));
-    }
-
-    lines
 }
 
 // ── Category-specific call renderers ─────────────────────────────────────────

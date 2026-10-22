@@ -85,8 +85,10 @@ async fn a_result_inserted_above_keeps_the_highlight_and_expansion_on_their_segm
     app.handle_agent_event(sid.clone(), tool_started("a")).await;
     app.handle_agent_event(sid.clone(), tool_started("b")).await;
 
+    // Two tools form a run; open it so `b` has a row of its own.
+    app.chat.set_run_expanded(call_index(&app, "a"), true);
     let b = call_index(&app, "b");
-    app.chat.focused_segment = Some(b);
+    app.chat.focus_segment(b);
     app.chat.set_expand_level(b, 1);
 
     // `a` finishes: its result lands between `a` and `b`.
@@ -95,7 +97,7 @@ async fn a_result_inserted_above_keeps_the_highlight_and_expansion_on_their_segm
 
     let focused = app
         .chat
-        .focused_segment
+        .focused_segment()
         .expect("a segment stays highlighted");
     assert_eq!(focused, call_index(&app, "b"), "the highlight follows `b`");
     assert_eq!(expand_level_of_call(&app, "b"), 1, "`b` stays expanded");
@@ -149,14 +151,121 @@ async fn thinking_is_hidden_by_default_and_the_status_says_thinking() {
     assert_eq!(start, end, "but it takes no lines in the chat");
 
     // The highlight never lands on a segment that shows nothing.
-    app.chat.focused_segment = Some(0);
+    app.chat.focus_segment(0);
     app.dispatch_action(crate::keys::Action::ChatHighlightDown)
         .await;
-    assert_eq!(app.chat.focused_segment, Some(0));
+    assert_eq!(app.chat.focused_segment(), Some(0));
 }
 
 #[tokio::test]
 async fn thinking_is_shown_when_configured() {
     let app = chat_with_thinking(true).await;
     assert!(text_of(&app).contains("weighing"), "{}", text_of(&app));
+}
+
+// ── Tool runs ─────────────────────────────────────────────────────────────────
+
+use crate::keys::Action;
+
+/// A chat where the user asked, the agent ran `tools` (each reading
+/// `<id>.rs`, whose output is `output(id)`), then answered.
+async fn chat_with_tools(tools: &[&str], output: impl Fn(&str) -> String) -> App {
+    let (mut app, _rx) = App::for_testing();
+    app.layout.chat_height = 20;
+    let sid = app.sessions.active_id.clone();
+    app.chat
+        .push_segment(ChatSegment::Message(sven_model::Message::user("look")));
+    for id in tools {
+        app.handle_agent_event(sid.clone(), tool_started(id)).await;
+    }
+    for id in tools {
+        app.handle_agent_event(sid.clone(), tool_finished(id, &output(id)))
+            .await;
+    }
+    app.chat
+        .push_segment(ChatSegment::Message(sven_model::Message::assistant(
+            "all done",
+        )));
+    app.build_display_from_segments();
+    app
+}
+
+async fn press(app: &mut App, action: Action) {
+    app.dispatch_action(action).await;
+}
+
+#[tokio::test]
+async fn consecutive_tools_are_one_collapsed_ran_n_tools_row() {
+    let app = chat_with_tools(&["a", "b", "c"], |id| format!("fn {id}() {{}}")).await;
+    let text = text_of(&app);
+    assert!(text.contains("Ran 3 tools"), "{text}");
+    assert!(!text.contains("a.rs"), "the tools are folded away: {text}");
+    assert!(text.contains("all done"));
+}
+
+#[tokio::test]
+async fn the_run_expands_to_its_tools_and_a_tool_expands_to_its_output() {
+    let mut app = chat_with_tools(&["a", "b", "c"], |id| format!("fn {id}() {{}}")).await;
+    app.ui.focus = crate::app::FocusPane::Chat;
+    press(&mut app, Action::ChatHighlightDown).await; // the user's message
+    press(&mut app, Action::ChatHighlightDown).await; // the run
+    press(&mut app, Action::ToggleChatItem).await;
+    let text = text_of(&app);
+    for id in ["a", "b", "c"] {
+        assert!(text.contains(&format!("{id}.rs")), "row for {id}: {text}");
+    }
+    assert!(!text.contains("fn a()"), "rows are summaries: {text}");
+
+    press(&mut app, Action::ChatHighlightDown).await; // tool `a`
+    press(&mut app, Action::ToggleChatItem).await;
+    assert!(text_of(&app).contains("fn a()"), "{}", text_of(&app));
+
+    // Collapsing from inside the run folds the whole run back up.
+    press(&mut app, Action::CollapseChatItem).await; // tool `a`
+    press(&mut app, Action::CollapseChatItem).await; // the run
+    assert!(text_of(&app).contains("Ran 3 tools"));
+    assert!(!text_of(&app).contains("b.rs"), "{}", text_of(&app));
+}
+
+#[tokio::test]
+async fn an_expanded_tool_is_never_taller_than_the_chat_pane_and_opens_in_full() {
+    let huge = |_: &str| {
+        (0..100_000)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut app = chat_with_tools(&["a"], huge).await;
+    app.ui.focus = crate::app::FocusPane::Chat;
+    press(&mut app, Action::ChatHighlightDown).await;
+    press(&mut app, Action::ChatHighlightDown).await; // the tool
+    press(&mut app, Action::ToggleChatItem).await;
+
+    let call = call_index(&app, "a");
+    let (start, end) = app.chat.segment_line_ranges[call];
+    assert!(end - start <= 20, "inline height {} > pane", end - start);
+    assert!(text_of(&app).contains("more lines"), "{}", text_of(&app));
+
+    let scroll = app.chat.scroll_offset;
+    press(&mut app, Action::OpenChatItem).await;
+    let viewer = app.ui.inspector.as_ref().expect("the viewer is open");
+    assert!(viewer.pager.cloned_lines().len() >= 100_000);
+    app.ui.inspector = None;
+    assert_eq!(app.chat.scroll_offset, scroll, "the chat did not move");
+    assert_eq!(app.chat.focused_segment(), Some(call));
+}
+
+#[tokio::test]
+async fn enter_edits_a_message_and_expands_anything_else() {
+    let mut app = chat_with_tools(&["a", "b"], |id| format!("fn {id}() {{}}")).await;
+    app.ui.focus = crate::app::FocusPane::Chat;
+    press(&mut app, Action::ChatHighlightDown).await; // the user's message
+    press(&mut app, Action::ActivateChatItem).await;
+    assert_eq!(app.edit.message_index, Some(0), "Enter edits the message");
+
+    app.edit.clear();
+    app.ui.focus = crate::app::FocusPane::Chat;
+    press(&mut app, Action::ChatHighlightDown).await; // the run
+    press(&mut app, Action::ActivateChatItem).await;
+    assert!(text_of(&app).contains("b.rs"), "Enter expands the run");
 }

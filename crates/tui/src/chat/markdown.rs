@@ -9,9 +9,8 @@ use std::collections::HashMap;
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use std::sync::{Arc, RwLock};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
-use sven_tool_api::{TodoItem, ToolDisplayRegistry};
+use sven_tool_api::TodoItem;
 
 use crate::chat::segment::ChatSegment;
 use crate::markdown::StyledLines;
@@ -120,116 +119,18 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
     }
 }
 
-/// Render a partial view - the first `max_lines` of the full content.
-/// Used for expand tier 1 (detail view).
-pub fn partial_content(
-    seg: &ChatSegment,
-    tool_args_cache: &HashMap<String, String>,
-    max_lines: usize,
-) -> String {
-    let full = segment_to_markdown(seg, tool_args_cache);
-    let lines: Vec<&str> = full.lines().collect();
-    if lines.len() <= max_lines {
-        return full;
-    }
-    let truncated = lines[..max_lines].join("\n");
-    format!("{truncated}\n*...{} more lines*\n", lines.len() - max_lines)
-}
-
-/// Optional display registry for tool-specific labels and summaries in the chat view.
-pub type ToolDisplayRegistryRef = Option<Arc<RwLock<ToolDisplayRegistry>>>;
-
-/// Render a single-line collapsed preview for a segment (ratatui-only mode).
+/// Render a single-line collapsed preview for a message or thinking block
+/// (ratatui-only mode). Tools have their own rows (`chat::tool_lines`).
 ///
-/// When `tool_display_registry` is set, tools that implement [`sven_tool_api::ToolDisplay`]
-/// use their display name and collapsed summary instead of the generic fallback.
-///
-/// The preview is a compact, information-dense one-liner:
-/// - Tool call:   `⚙  tool_name  smart_description  duration  ▶`
-/// - Tool result: `✓/✗  tool_name  duration  ▶`
-/// - Thinking:    `◆  Reasoning  ~N words  ▶`
-/// - User:        `You  first_line...  ▶`
-/// - Agent:       `first_line...  ▶`
-pub fn collapsed_preview(
-    seg: &ChatSegment,
-    tool_args_cache: &HashMap<String, String>,
-    tool_durations: &HashMap<String, f32>,
-    tool_display_registry: ToolDisplayRegistryRef,
-) -> String {
+/// - Thinking:    `◆  Thought  first words…  ▶`
+/// - User, agent: `first_line…  ▶`
+pub fn collapsed_preview(seg: &ChatSegment, tool_args_cache: &HashMap<String, String>) -> String {
     match seg {
         ChatSegment::Message(m) => match (&m.role, &m.content) {
-            (Role::User, MessageContent::Text(t)) => {
+            (Role::User | Role::Assistant, MessageContent::Text(t)) => {
                 let first = t.lines().next().unwrap_or("").trim();
                 let preview = truncate_to_width(first, 80);
-                let ellipsis = "";
-                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}\n")
-            }
-            (Role::Assistant, MessageContent::Text(t)) => {
-                let first = t.lines().next().unwrap_or("").trim();
-                let preview = truncate_to_width(first, 80);
-                let ellipsis = "";
-                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}\n")
-            }
-            (
-                Role::Assistant,
-                MessageContent::ToolCall {
-                    tool_call_id,
-                    function,
-                },
-            ) => {
-                let args_val: serde_json::Value =
-                    serde_json::from_str(&function.arguments).unwrap_or(serde_json::Value::Null);
-                let (label, summary) = tool_display_registry
-                    .as_ref()
-                    .and_then(|r| r.read().ok())
-                    .and_then(|guard| {
-                        guard.get(function.name.as_str()).map(|disp| {
-                            (
-                                disp.display_name().to_string(),
-                                disp.collapsed_summary(&args_val),
-                            )
-                        })
-                    })
-                    .unwrap_or_else(|| {
-                        (
-                            function.name.clone(),
-                            tool_smart_summary(&function.name, &function.arguments),
-                        )
-                    });
-                let summary_part = if summary.is_empty() {
-                    String::new()
-                } else {
-                    format!("  {summary}")
-                };
-                let duration = tool_durations
-                    .get(tool_call_id)
-                    .map(|s| format!("  {:.1}s", s))
-                    .unwrap_or_default();
-                format!("\n{SYM_TOOL}  {label}{summary_part}{duration}  {SYM_EXPAND}\n",)
-            }
-            (
-                Role::Tool,
-                MessageContent::ToolResult {
-                    tool_call_id,
-                    content,
-                },
-            ) => {
-                let tool_name = tool_args_cache
-                    .get(tool_call_id)
-                    .map(|s| s.as_str())
-                    .unwrap_or("tool");
-                let label = tool_display_registry
-                    .as_ref()
-                    .and_then(|r| r.read().ok())
-                    .and_then(|guard| guard.get(tool_name).map(|d| d.display_name().to_string()))
-                    .unwrap_or_else(|| tool_name.to_string());
-                let is_error = content.to_string().starts_with("error:");
-                let sym = if is_error { SYM_ERR } else { SYM_OK };
-                let duration = tool_durations
-                    .get(tool_call_id)
-                    .map(|s| format!("  {:.1}s", s))
-                    .unwrap_or_default();
-                format!("\n{sym}  {label}{duration}  {SYM_EXPAND}\n")
+                format!("\n`{preview}` {SYM_EXPAND}\n")
             }
             _ => segment_to_markdown(seg, tool_args_cache),
         },
@@ -426,16 +327,6 @@ pub fn strip_display_anchors(md: &str) -> String {
         out.push('\n');
     }
     out
-}
-
-/// Build a human-readable one-line description of a tool call for the collapsed
-/// tier-0 display.  Delegates to the canonical implementation in `sven-tool-api`.
-pub fn tool_smart_summary(name: &str, args_json: &str) -> String {
-    let v: serde_json::Value = match serde_json::from_str(args_json) {
-        Ok(v) => v,
-        Err(_) => return truncate_to_width(args_json, 55),
-    };
-    sven_tool_api::tool_smart_summary(name, &v)
 }
 
 // ── Parse helpers ─────────────────────────────────────────────────────────────

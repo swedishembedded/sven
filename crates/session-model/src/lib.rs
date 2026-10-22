@@ -22,6 +22,9 @@ pub use outcome::{
     announces_unfinished_work, OutcomeFold, RunConclusion, SessionOutcome, SessionReward, Verdict,
 };
 
+mod tool_runs;
+pub use tool_runs::{tool_runs, ToolRun};
+
 mod conversation;
 pub use conversation::{
     parse_conversation, serialize_conversation, serialize_conversation_turn,

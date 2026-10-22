@@ -31,7 +31,7 @@ use sven_workspace::{
     find_workspace_root, format_agents_list, format_skills_tree, AgentInfo, SkillInfo,
 };
 
-use crate::markdown::render_markdown;
+use crate::markdown::{render_markdown, StyledLines};
 use crate::pager::PagerOverlay;
 use crate::ui::width_utils::truncate_to_width_exact;
 
@@ -52,6 +52,14 @@ pub struct InspectorOverlay {
 
 impl InspectorOverlay {
     // ── Constructors ──────────────────────────────────────────────────────────
+
+    /// A viewer over arbitrary content - a tool's full output, a message -
+    /// under `title`.
+    pub fn for_content(lines: StyledLines, title: impl Into<String>) -> Self {
+        let mut pager = PagerOverlay::with_title(lines, title);
+        pager.scroll_to_line(0);
+        Self { pager }
+    }
 
     /// Build the skills inspector from a slice of discovered skills.
     ///

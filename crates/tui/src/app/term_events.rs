@@ -633,11 +633,11 @@ impl App {
                     if let Some(action) = modal.action {
                         match action {
                             ConfirmedAction::RemoveSegment(seg_idx) => {
-                                let saved = self.chat.focused_segment;
-                                self.chat.focused_segment = Some(seg_idx);
+                                let saved = self.chat.focus;
+                                self.chat.focus_segment(seg_idx);
                                 self.dispatch(Action::RemoveChatSegment).await;
-                                if self.chat.focused_segment.is_some() {
-                                    self.chat.focused_segment = saved;
+                                if self.chat.focus.is_some() {
+                                    self.chat.focus = saved;
                                 }
                             }
                         }

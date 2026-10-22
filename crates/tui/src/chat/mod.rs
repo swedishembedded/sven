@@ -6,3 +6,4 @@
 pub mod markdown;
 pub mod search;
 pub mod segment;
+pub(crate) mod tool_lines;

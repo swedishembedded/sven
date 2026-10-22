@@ -69,7 +69,7 @@ pub use projection::{
 pub use segment::{
     messages_for_resubmit, segment_at_line, segment_editable_text, segment_is_removable,
     segment_is_rerunnable, segment_short_preview, segment_tool_call_id,
-    tool_result_insert_position, ChatSegment,
+    tool_result_insert_position, tool_runs, ChatSegment, ToolRun,
 };
 pub use settings::{Settings, TuiConfig};
 pub use types::{FrontendOptions, ModelDirective, NodeBackend, QueuedMessage, SessionMeta};

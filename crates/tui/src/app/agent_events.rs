@@ -180,9 +180,9 @@ impl App {
                 self.chat.tool_args.insert(tc.id.clone(), tc.name.clone());
                 self.agent.current_tool = Some(tc.name.clone());
                 // Record start time for elapsed-time display.
-                self.agent
-                    .tool_start_times
-                    .insert(tc.id.clone(), Instant::now());
+                let now = Instant::now();
+                self.agent.tool_start_times.insert(tc.id.clone(), now);
+                self.chat.tool_started_at.insert(tc.id.clone(), now);
                 self.chat.push_segment(ChatSegment::Message(Message {
                     role: Role::Assistant,
                     content: MessageContent::ToolCall {

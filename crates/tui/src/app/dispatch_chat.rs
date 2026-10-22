@@ -12,7 +12,7 @@ use crate::{
     app::{App, FocusPane},
     chat::{
         markdown::parse_markdown_to_messages,
-        segment::{messages_for_resubmit, segment_at_line, segment_tool_call_id, ChatSegment},
+        segment::{messages_for_resubmit, segment_tool_call_id, ChatSegment},
     },
     keys::Action,
     overlay::confirm::ConfirmModal,
@@ -24,7 +24,7 @@ Navigation
   j / k       Move highlight down / up
 
 Actions (apply to the highlighted message)
-  e / Enter   Edit message
+  e / Enter   Edit message (Enter on anything else expands it)
   y           Copy segment to clipboard
   Y           Copy all to clipboard
   x           Remove segment
@@ -38,16 +38,24 @@ Scrolling
 Other
   /           Search
   q           Focus queue panel
-  Space       Toggle delegate summary
+  Space       Expand / collapse
+  l / h       Expand / collapse (h on a tool folds its run)
+  o           Open in the full-screen viewer
   ?           Show this help";
 
 impl App {
     /// Dispatch the chat-pane subset of [`Action`]: segment operations,
     /// scrolling, search, mouse selection, and Esc's priority chain.
     pub(crate) async fn dispatch_chat(&mut self, action: Action) -> bool {
+        // Enter edits a message and expands or collapses anything else.
+        let action = match action {
+            Action::ActivateChatItem if self.chat_item_is_editable() => Action::EditMessageAtCursor,
+            Action::ActivateChatItem => Action::ToggleChatItem,
+            other => other,
+        };
         match action {
             Action::EditMessageAtCursor => {
-                if let Some(seg_idx) = self.chat.focused_segment {
+                if let Some(seg_idx) = self.chat.focused_segment() {
                     if let Some(text) =
                         crate::chat::segment::segment_editable_text(self.chat.segments(), seg_idx)
                     {
@@ -63,7 +71,7 @@ impl App {
             }
 
             Action::DeleteChatSegment => {
-                if let Some(seg_idx) = self.chat.focused_segment {
+                if let Some(seg_idx) = self.chat.focused_segment() {
                     if self
                         .edit
                         .message_index
@@ -73,14 +81,14 @@ impl App {
                         self.edit.clear();
                     }
                     self.chat.truncate_segments(seg_idx);
-                    self.chat.focused_segment = None;
+                    self.chat.focus = None;
                     self.rerender_chat().await;
                     self.save_history_async();
                 }
             }
 
             Action::RemoveChatSegment => {
-                if let Some(seg_idx) = self.chat.focused_segment {
+                if let Some(seg_idx) = self.chat.focused_segment() {
                     let paired_id: Option<String> = self
                         .chat
                         .segments()
@@ -114,14 +122,14 @@ impl App {
                         }
                     }
 
-                    self.chat.focused_segment = None;
+                    self.chat.focus = None;
                     self.rerender_chat().await;
                     self.save_history_async();
                 }
             }
 
             Action::CopySegment => {
-                if let Some(seg_idx) = self.chat.focused_segment {
+                if let Some(seg_idx) = self.chat.focused_segment() {
                     if self.copy_segment_to_clipboard(seg_idx) {
                         self.ui
                             .push_toast(crate::app::ui_state::Toast::info("Copied to clipboard"));
@@ -137,7 +145,7 @@ impl App {
             }
 
             Action::RerunFromSegment => {
-                if let Some(seg_idx) = self.chat.focused_segment {
+                if let Some(seg_idx) = self.chat.focused_segment() {
                     let last_user =
                         (0..seg_idx)
                             .rev()
@@ -171,7 +179,7 @@ impl App {
                             .push_segment(ChatSegment::Message(sven_model::Message::user(
                                 &user_text,
                             )));
-                        self.chat.focused_segment = None;
+                        self.chat.focus = None;
                         let qm = crate::app::QueuedMessage {
                             content: user_text,
                             model_transition: None,
@@ -440,19 +448,15 @@ impl App {
                 if self.nvim.bridge.is_some() {
                     return false;
                 }
-                if let Some(next) = self.step_highlight(true) {
-                    self.chat.focused_segment = Some(next);
-                    self.scroll_chat_to_show_segment(next);
-                }
+                self.chat.focus = self.step_highlight(true);
+                self.scroll_chat_to_show_focus();
             }
             Action::ChatHighlightUp => {
                 if self.nvim.bridge.is_some() {
                     return false;
                 }
-                if let Some(prev) = self.step_highlight(false) {
-                    self.chat.focused_segment = Some(prev);
-                    self.scroll_chat_to_show_segment(prev);
-                }
+                self.chat.focus = self.step_highlight(false);
+                self.scroll_chat_to_show_focus();
             }
             Action::ShowChatHelp => {
                 self.ui.confirm_modal = Some(ConfirmModal::info_with_border(
@@ -632,16 +636,10 @@ impl App {
                 }
             }
 
-            Action::ToggleDelegateSummary => {
-                if let Some(seg_idx) = self.chat.focused_segment {
-                    if let Some(ChatSegment::DelegateSummary { expanded, .. }) =
-                        self.chat.segments_mut().get_mut(seg_idx)
-                    {
-                        *expanded = !*expanded;
-                        self.rerender_chat().await;
-                    }
-                }
-            }
+            Action::ToggleChatItem => self.toggle_chat_item(),
+            Action::ExpandChatItem => self.expand_chat_item(),
+            Action::CollapseChatItem => self.collapse_chat_item(),
+            Action::OpenChatItem => self.open_chat_item(),
 
             // ── Mouse-originated actions ──────────────────────────────────────
             Action::ChatContentClick {
@@ -660,46 +658,10 @@ impl App {
                 // Since this action only fires for non-icon clicks, always clear.
                 self.ui.confirm_modal = None;
 
-                // Expand/collapse if the click lands on a collapsible segment.
-                if let Some(seg_idx) = segment_at_line(&self.chat.segment_line_ranges, abs_line) {
-                    let is_collapsible = match self.chat.segments().get(seg_idx) {
-                        Some(ChatSegment::Message(m)) => matches!(
-                            (&m.role, &m.content),
-                            (Role::User, MessageContent::Text(_))
-                                | (Role::Assistant, MessageContent::Text(_))
-                                | (Role::Assistant, MessageContent::ToolCall { .. })
-                                | (Role::Tool, MessageContent::ToolResult { .. })
-                        ),
-                        Some(ChatSegment::Thinking { .. }) => true,
-                        _ => false,
-                    };
-                    if is_collapsible {
-                        let next = if self.chat.expand_level(seg_idx) == 0 {
-                            2
-                        } else {
-                            0
-                        };
-                        self.chat.set_expand_level(seg_idx, next);
-                        // When expanding a tool call, also expand the paired result
-                        // so it is visible without an extra click.
-                        if next >= 2 {
-                            if let Some(result_idx) = self.paired_result_for(seg_idx) {
-                                if self.chat.expand_level(result_idx) == 0 {
-                                    self.chat.set_expand_level(result_idx, 2);
-                                }
-                            }
-                        }
-                        self.build_display_from_segments();
-                        self.ui.search.update_matches(&self.chat.lines);
-                        self.chat.scroll_offset =
-                            self.chat.scroll_offset.min(self.max_chat_scroll());
-                        if let Some(&(seg_start, _)) = self.chat.segment_line_ranges.get(seg_idx) {
-                            if seg_start < self.chat.scroll_offset {
-                                self.chat.scroll_offset = seg_start;
-                            }
-                        }
-                        self.chat.focused_segment = Some(seg_idx);
-                    }
+                // A click on an item highlights it and expands or collapses it.
+                if let Some(item) = self.item_at_line(abs_line) {
+                    self.chat.focus = Some(item);
+                    self.toggle_chat_item();
                 }
             }
 

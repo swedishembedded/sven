@@ -28,7 +28,8 @@ const BINDINGS: &[(&str, &str, bool)] = &[
     ("^d / ^u", "Page down / page up", false),
     ("g / G", "Scroll to top / bottom", false),
     ("/ n N", "Search / next / prev match", false),
-    ("click / Enter", "Cycle expand level", false),
+    ("Space / click", "Expand / collapse", false),
+    ("l h / o", "Expand, collapse / open in full", false),
     ("e", "Edit message at cursor", false),
     ("y", "Copy segment to clipboard", false),
     ("Y", "Copy all to clipboard", false),
@@ -57,7 +58,6 @@ const BINDINGS: &[(&str, &str, bool)] = &[
     ("^a", "Open team picker", false),
     ("Shift+↓/↑", "Cycle teammate views", false),
     ("Alt+t", "Toggle task list overlay", false),
-    ("Space", "Expand/collapse delegate summary", false),
 ];
 
 pub struct HelpOverlay {

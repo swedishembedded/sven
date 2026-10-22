@@ -34,12 +34,18 @@ the full terminal width.
 - Team name, role and task progress when a team is active
 - On the right, a hint for the focused pane
 
-**Chat pane** - the conversation history. User messages, agent responses, and
-tool calls are shown here. Tool calls, tool results and thinking blocks start
-collapsed to a summary; click one to cycle how much of it is shown, and press
-`Space` on a sub-agent summary to expand or collapse it. The pane scrolls
-independently of the input box. The model's thinking is not drawn unless
-`tui.show_thinking` is set; while it streams, the status bar says `Thinking`.
+**Chat pane** - the conversation history: your messages, the agent's answers
+and the tools it ran. Tools the agent ran one after another, with no text of
+its own in between, are folded into one row, `▸ Ran 4 tools · 1 failed ·
+3.2s`; a single tool shows as its own row (icon, what it worked on, `✓` or
+`✗`, and how long it took). Expand the run to see a row per tool, and expand
+a tool to see what it was asked to do - the command, the path, an edit's
+diff - and its output. Nothing expands to more than one chat pane's height:
+a longer view ends in `… N more lines · o: open in viewer`, and `o` shows all
+of it full screen. See [tools in the chat](#tools-in-the-chat). The pane
+scrolls independently of the input box. The model's thinking is not drawn
+unless `tui.show_thinking` is set; while it streams, the status bar says
+`Thinking`.
 
 **Input box** - a multi-line text field. `Enter` sends the message, `Alt+Enter`
 inserts a newline (`Shift+Enter` and `Ctrl+J` also work). `Ctrl+Up` / `Ctrl+Down`
@@ -75,6 +81,10 @@ First move focus to the chat pane with `Ctrl+W K`.
 |-----|--------|
 | `j` / `↓` | Move the highlight to the next entry |
 | `k` / `↑` | Move the highlight to the previous entry |
+| `Space` / `Enter` | Expand or collapse the highlighted entry (`Enter` on a message edits it) |
+| `l` / `→` | Expand; on an expanded run, move into it |
+| `h` / `←` | Collapse; on a collapsed tool, fold its run back up |
+| `o` | Open the highlighted entry in full in the viewer |
 | `J` / `K` | Scroll down / up one line |
 | `Ctrl+D` / `Ctrl+U` | Scroll half a page down / up |
 | `g` / `G` | Jump to the very top / bottom |
@@ -83,6 +93,32 @@ First move focus to the chat pane with `Ctrl+W K`.
 
 `PgUp` and `PgDn` scroll the chat pane a full page whichever pane has focus.
 Dragging with the mouse selects text, which is copied when you release.
+
+---
+
+### Tools in the chat
+
+The highlight visits what is drawn: messages, the header of a run of tools,
+and - once the run is expanded - each tool in it. Clicking an entry
+highlights it and expands or collapses it, the same as `Space`.
+
+```
+▸ Ran 3 tools · 0.4s                  collapsed run
+
+▾ Ran 3 tools · 0.4s                  expanded run
+  ▾ ▶ read_file  src/auth.rs  ✓  0.1s   expanded tool: its arguments,
+      src/auth.rs                       then its output
+      use crate::tokens;
+      … 2413 more lines · o: open in viewer
+  ▸ $ shell  cargo test  ✗  0.3s      collapsed tool
+```
+
+While a tool runs, its row shows a moving marker and the time so far, the
+run's header names the tool that is running, and an expanded tool shows the
+newest output it has streamed. Every expanded entry is at most one chat pane
+tall, so expanding a large file or log never pushes the conversation out of
+reach; `o` opens the whole of it in the full-screen viewer, and closing the
+viewer returns to the chat exactly where it was.
 
 ---
 
@@ -106,7 +142,7 @@ With an entry highlighted in the chat pane:
 
 | Key | Action |
 |-----|--------|
-| `e`, `Enter` or `F2` | Edit it: its text moves to the input box. `Enter` confirms, `Esc` cancels and restores the original. |
+| `e`, `Enter` or `F2` | Edit it: its text moves to the input box. `Enter` confirms, `Esc` cancels and restores the original. (`Enter` edits only messages; on anything else it expands or collapses.) |
 | `d` or `F8` | Truncate the chat from this entry onward |
 | `x` | Remove only this entry (and its paired tool call or result) |
 | `r` | Truncate to just before this entry and send the conversation to the agent again |

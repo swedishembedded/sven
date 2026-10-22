@@ -226,9 +226,8 @@ impl App {
 
         let auto_scroll_paused = !self.chat.auto_scroll && !self.chat.lines.is_empty();
         let highlight_line_range = (self.ui.focus == FocusPane::Chat && self.nvim.disabled)
-            .then_some(self.chat.focused_segment)
-            .flatten()
-            .and_then(|idx| self.chat.segment_line_ranges.get(idx).copied());
+            .then(|| self.focused_item_range())
+            .flatten();
         if !show_welcome {
             frame.render_widget(
                 ChatPane {

@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Chat pane state: conversation segments, rendered display lines, scroll, and labels.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use crate::{
     chat::segment::{tool_result_insert_position, ChatSegment},
@@ -17,9 +18,35 @@ pub type SegmentId = u64;
 /// Expand level for a collapsible segment.
 ///
 /// - `0` - one-line summary (default for tool calls, tool results, thinking)
-/// - `1` - partial view (first ~10 lines of content)
+/// - `1` - expanded, at most one chat pane tall; the rest opens in a viewer
 /// - `2` - full content (default for user text, agent text)
 pub type ExpandLevel = u8;
+
+/// What the chat's keyboard highlight is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChatFocus {
+    /// A segment: a message, a tool, a note.
+    Segment(usize),
+    /// The "Ran N tools" header of the run of tools starting at this segment.
+    ToolRun(usize),
+}
+
+impl ChatFocus {
+    /// The segment the highlight is on, or the first one of its run. Actions
+    /// on "the highlighted entry" (edit, copy, truncate) apply to it.
+    pub fn index(self) -> usize {
+        match self {
+            ChatFocus::Segment(i) | ChatFocus::ToolRun(i) => i,
+        }
+    }
+
+    fn with_index(self, i: usize) -> Self {
+        match self {
+            ChatFocus::Segment(_) => ChatFocus::Segment(i),
+            ChatFocus::ToolRun(_) => ChatFocus::ToolRun(i),
+        }
+    }
+}
 
 /// All state owned by the chat pane.
 #[derive(Clone)]
@@ -49,13 +76,21 @@ pub(crate) struct ChatState {
     /// Per-segment expand level (ratatui-only mode), keyed by segment id.
     /// Segments not in this map use the default level for their type.
     expand_level: HashMap<SegmentId, ExpandLevel>,
-    /// Index of the keyboard-highlighted segment. Inserting or removing a
-    /// segment before it moves it along with its segment.
-    pub focused_segment: Option<usize>,
+    /// Runs of tools the user expanded, keyed by the run's first segment.
+    expanded_runs: HashSet<SegmentId>,
+    /// What the keyboard highlight is on. Inserting or removing a segment
+    /// before it moves it along with its segment.
+    pub focus: Option<ChatFocus>,
+    /// Everything the reader can put the highlight on, in display order,
+    /// with its `(start_line, end_line)`. Rebuilt with `lines`.
+    pub view_items: Vec<(ChatFocus, (usize, usize))>,
     /// `call_id → tool_name` lookup used when rendering tool results.
     pub tool_args: HashMap<String, String>,
     /// `call_id → elapsed_secs` for completed tool calls.
     pub tool_durations: HashMap<String, f32>,
+    /// `call_id → when it started`, for every tool started in this process;
+    /// with the durations it gives a run of tools its wall-clock time.
+    pub tool_started_at: HashMap<String, Instant>,
     /// `call_id → streaming preview` for in-progress tool calls that send
     /// incremental output via `ToolEvent::Progress`.  Used by the expanded
     /// (tier 1/2) view to show live output from sub-agent processes.
@@ -89,9 +124,12 @@ impl ChatState {
             scroll_offset: 0,
             auto_scroll: true,
             expand_level: HashMap::new(),
-            focused_segment: None,
+            expanded_runs: HashSet::new(),
+            focus: None,
+            view_items: Vec::new(),
             tool_args: HashMap::new(),
             tool_durations: HashMap::new(),
+            tool_started_at: HashMap::new(),
             tool_streaming_content: HashMap::new(),
             selection_anchor: None,
             selection_end: None,
@@ -148,9 +186,9 @@ impl ChatState {
         let id = self.fresh_id();
         self.segments.insert(idx, seg);
         self.segment_ids.insert(idx, id);
-        if let Some(f) = self.focused_segment.as_mut() {
-            if *f >= idx {
-                *f += 1;
+        if let Some(f) = self.focus {
+            if f.index() >= idx {
+                self.focus = Some(f.with_index(f.index() + 1));
             }
         }
     }
@@ -159,9 +197,10 @@ impl ChatState {
     pub fn remove_segment(&mut self, idx: usize) -> ChatSegment {
         let id = self.segment_ids.remove(idx);
         self.expand_level.remove(&id);
-        self.focused_segment = match self.focused_segment {
-            Some(f) if f == idx => None,
-            Some(f) if f > idx => Some(f - 1),
+        self.expanded_runs.remove(&id);
+        self.focus = match self.focus {
+            Some(f) if f.index() == idx => None,
+            Some(f) if f.index() > idx => Some(f.with_index(f.index() - 1)),
             other => other,
         };
         self.segments.remove(idx)
@@ -171,10 +210,11 @@ impl ChatState {
     pub fn truncate_segments(&mut self, len: usize) {
         for id in self.segment_ids.drain(len.min(self.segments.len())..) {
             self.expand_level.remove(&id);
+            self.expanded_runs.remove(&id);
         }
         self.segments.truncate(len);
-        if self.focused_segment.is_some_and(|f| f >= len) {
-            self.focused_segment = None;
+        if self.focus.is_some_and(|f| f.index() >= len) {
+            self.focus = None;
         }
     }
 
@@ -184,7 +224,8 @@ impl ChatState {
         self.segments.clear();
         self.segment_ids.clear();
         self.expand_level.clear();
-        self.focused_segment = None;
+        self.expanded_runs.clear();
+        self.focus = None;
         for seg in segments {
             self.push_segment(seg);
         }
@@ -209,7 +250,34 @@ impl ChatState {
         }
     }
 
+    /// The highlighted segment, or the first segment of the highlighted run.
+    pub fn focused_segment(&self) -> Option<usize> {
+        self.focus.map(ChatFocus::index)
+    }
+
+    /// Put the highlight on the segment at `idx`.
+    pub fn focus_segment(&mut self, idx: usize) {
+        self.focus = Some(ChatFocus::Segment(idx));
+    }
+
     // ── Expansion ─────────────────────────────────────────────────────────────
+
+    /// Whether the run of tools starting at segment `first` is expanded.
+    pub fn run_expanded(&self, first: usize) -> bool {
+        self.segment_id(first)
+            .is_some_and(|id| self.expanded_runs.contains(&id))
+    }
+
+    /// Expand or collapse the run of tools starting at segment `first`.
+    pub fn set_run_expanded(&mut self, first: usize, expanded: bool) {
+        if let Some(id) = self.segment_id(first) {
+            if expanded {
+                self.expanded_runs.insert(id);
+            } else {
+                self.expanded_runs.remove(&id);
+            }
+        }
+    }
 
     /// The expand level of the segment at `idx`: the one set for it, or the
     /// default for its kind.

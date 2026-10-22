@@ -146,8 +146,16 @@ pub enum Action {
     CycleTeammateBackward,
     /// Toggle the task list overlay (Ctrl+t when in team mode).
     ToggleTaskList,
-    /// Expand or collapse a DelegateSummary segment at cursor (Space / Enter).
-    ToggleDelegateSummary,
+    /// Expand or collapse the highlighted chat item (Space, a click).
+    ToggleChatItem,
+    /// Expand the highlighted item; on an expanded run, step into it (l, →).
+    ExpandChatItem,
+    /// Collapse the highlighted item, or the run it is in (h, ←).
+    CollapseChatItem,
+    /// Open the highlighted item in full in the viewer (o).
+    OpenChatItem,
+    /// Enter on the highlighted item: edit a message, expand anything else.
+    ActivateChatItem,
 
     // Session picker (`/resume`)
     /// Navigate down in the session picker list.
@@ -365,7 +373,14 @@ pub fn map_key(
         KeyCode::Down | KeyCode::Char('j') if !in_input && plain && in_chat_pane => {
             Some(Action::ChatHighlightDown)
         }
-        KeyCode::Enter if !in_input && plain && in_chat_pane => Some(Action::EditMessageAtCursor),
+        KeyCode::Enter if !in_input && plain && in_chat_pane => Some(Action::ActivateChatItem),
+        KeyCode::Right | KeyCode::Char('l') if !in_input && plain && in_chat_pane => {
+            Some(Action::ExpandChatItem)
+        }
+        KeyCode::Left | KeyCode::Char('h') if !in_input && plain && in_chat_pane => {
+            Some(Action::CollapseChatItem)
+        }
+        KeyCode::Char('o') if !in_input && plain && in_chat_pane => Some(Action::OpenChatItem),
         KeyCode::Up | KeyCode::Char('k') if !in_input && plain => Some(Action::ScrollUp),
         KeyCode::Down | KeyCode::Char('j') if !in_input && plain => Some(Action::ScrollDown),
         KeyCode::Char('K') if !in_input => Some(Action::ScrollUp),
@@ -394,8 +409,8 @@ pub fn map_key(
         KeyCode::Char('Y') if !in_input => Some(Action::CopyAll),
         KeyCode::Char('q') if !in_input && plain => Some(Action::FocusQueue),
 
-        // Space in the chat pane toggles a DelegateSummary segment.
-        KeyCode::Char(' ') if !in_input && plain => Some(Action::ToggleDelegateSummary),
+        // Space in the chat pane expands or collapses the highlighted item.
+        KeyCode::Char(' ') if !in_input && plain => Some(Action::ToggleChatItem),
 
         // Submit buffer to agent (Ctrl+Enter from chat pane with Neovim)
         KeyCode::Enter if !in_input && ctrl => Some(Action::SubmitBufferToAgent),
@@ -740,11 +755,11 @@ mod tests {
     }
 
     #[test]
-    fn space_in_chat_toggles_delegate_summary() {
+    fn space_in_chat_toggles_the_highlighted_item() {
         let ev = key(KeyCode::Char(' '), KeyModifiers::NONE);
         assert_eq!(
             mk(ev, false, false, false, false, false, false),
-            Some(Action::ToggleDelegateSummary)
+            Some(Action::ToggleChatItem)
         );
     }
 
@@ -767,11 +782,11 @@ mod tests {
     }
 
     #[test]
-    fn enter_in_chat_pane_edits_message() {
+    fn enter_in_chat_pane_activates_the_highlighted_item() {
         let ev = key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(
             mk(ev, false, false, false, false, false, true),
-            Some(Action::EditMessageAtCursor)
+            Some(Action::ActivateChatItem)
         );
     }
 

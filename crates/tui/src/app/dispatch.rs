@@ -92,7 +92,11 @@ impl App {
             | Action::SearchBackspace
             | Action::SearchNextMatch
             | Action::SearchPrevMatch
-            | Action::ToggleDelegateSummary
+            | Action::ToggleChatItem
+            | Action::ExpandChatItem
+            | Action::CollapseChatItem
+            | Action::OpenChatItem
+            | Action::ActivateChatItem
             | Action::ChatContentClick { .. }
             | Action::SelectionExtend { .. }
             | Action::SelectionFinish
