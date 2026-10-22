@@ -42,7 +42,7 @@ pub(crate) use queue_panel::{QueueItem, QueuePanel};
 pub(crate) use search_bar::SearchBar;
 pub(crate) use session_picker::{SessionPickerOverlay, SessionPickerState};
 pub(crate) use status_bar::StatusBar;
-pub(crate) use team_picker::{AgentPickerStatus, TeamPickerOverlay};
+pub(crate) use team_picker::TeamPickerOverlay;
 pub(crate) use theme::open_pane_block;
 #[allow(unused)]
 pub(crate) use theme::pane_block;

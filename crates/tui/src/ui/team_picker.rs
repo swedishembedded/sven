@@ -127,7 +127,6 @@ impl TeamPickerState {
 pub struct TeamPickerOverlay<'a> {
     pub entries: &'a [TeamPickerEntry],
     pub state: &'a mut TeamPickerState,
-    pub team_name: &'a str,
     pub ascii: bool,
 }
 
@@ -146,10 +145,7 @@ impl Widget for TeamPickerOverlay<'_> {
         let bt = border_type(self.ascii);
         let block = Block::default()
             .title(Span::styled(
-                format!(
-                    "  Team: {}  (↑↓ select · Enter switch · Esc close)  ",
-                    self.team_name
-                ),
+                "  Team  (↑↓ select · Enter switch · Esc close)  ",
                 Style::default().fg(BAR_AGENT).add_modifier(Modifier::BOLD),
             ))
             .borders(Borders::ALL)

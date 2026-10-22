@@ -97,8 +97,6 @@ pub(crate) struct UiState {
     pub team_picker_entries: Vec<TeamPickerEntry>,
     /// Selection state for the team picker list.
     pub team_picker_state: TeamPickerState,
-    /// Current team name (if any).
-    pub team_name: Option<String>,
     /// Peer ID of the currently viewed session in the team picker.
     /// `None` = viewing the local (lead) session.
     pub active_session_peer: Option<String>,
@@ -132,7 +130,6 @@ impl UiState {
             show_team_picker: false,
             team_picker_entries: Vec::new(),
             team_picker_state: TeamPickerState::default(),
-            team_name: None,
             active_session_peer: None,
             peers: Vec::new(),
             peers_selected: 0,

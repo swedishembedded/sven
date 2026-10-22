@@ -31,7 +31,6 @@ the full terminal width.
 - Cumulative input and output token counts, the cache-hit rate and the cost in
   USD once the provider has reported them
 - The name of any tool currently running
-- Team name, role and task progress when a team is active
 - On the right, a hint for the focused pane
 
 **Chat pane** - the conversation history: your messages, the agent's answers
