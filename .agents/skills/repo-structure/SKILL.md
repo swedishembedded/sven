@@ -18,7 +18,9 @@ sven/
 ├── xtask/                      # `cargo run -p xtask -- arch` enforces architecture.toml
 ├── tests/
 │   ├── e2e/
-│   │   └── basic/              # All bats end-to-end tests + helpers.bash
+│   │   ├── basic/              # All bats end-to-end tests + helpers.bash
+│   │   └── delegation/         # Delegation to a local model server (`make test/e2e/delegation`)
+│   ├── gates/                  # Bats self-tests of scripts/gates/ (`make test/gates`)
 │   ├── fixtures/               # Shared test fixtures (mock_responses.yaml, plan.md, ...)
 │   └── *.rs                    # Workspace-level integration tests
 ├── docs/                       # Documentation sources (manifest.yaml, guides, concepts, reference, internals, adr)
@@ -29,7 +31,8 @@ sven/
 │   ├── install.sh              # curl-pipe installer
 │   ├── release-build.sh        # local multi-platform artifact builder
 │   ├── build-deb.sh            # manual .deb packager (cross-compile use)
-│   ├── gates/                  # checks run by `make check/gates`
+│   ├── gates/                  # checks run by `make check/gates`, one target per check-<gate>.sh
+│   ├── gen-roadmap-index.py    # `make generate/roadmap/index`
 │   ├── make-help.sh            # `make help`: the target tree from the `## name - text` lines
 │   └── hooks/                  # git hooks (`make hooks/install`)
 ├── .github/
@@ -37,6 +40,9 @@ sven/
 │       ├── ci.yml              # Push/PR: check, e2e-basic, build-smoke, minimal-profile, macOS/Windows
 │       └── release.yml         # Tag push: e2e-basic gate → builds → publish
 ├── .agents/
+│   ├── rules/                  # Rules every change follows (architecture, cross-cutting changes, ...)
+│   ├── roadmap/                # One ledger per workstream; index.md is generated
+│   ├── knowledge/              # Non-obvious findings about how the code behaves
 │   └── skills/                 # Agent skills for this repo
 ├── Makefile                    # Primary developer interface (see targets below)
 ├── Cargo.toml                  # Workspace root; `[workspace.package].version` is the release version
@@ -74,7 +80,7 @@ tiers unless an edge is listed there.
 | `sven-image` | Image loading/resizing/base64 for attachments |
 | `sven-audio` | Audio loading, WAV decoding and resampling |
 | `sven-tool-api` | `Tool` trait, `ToolDisplay`, approval policy, `PermissionRequester`, tool events |
-| `sven-tool-registry` | `ToolRegistry`, `ToolPolicy` |
+| `sven-tool-registry` | `ToolRegistry`, `ToolPolicy`, the core-tool set and deferred disclosure (`offer`) |
 | `sven-tools-fs` | File read/write/edit/find/attach tools and subprocess output buffer tools |
 | `sven-tools-exec` | `shell` tool |
 | `sven-tools-web` | `web_fetch`, `web_search`, `grep`, `read_lints` |
@@ -82,17 +88,26 @@ tiers unless an edge is listed there.
 | `sven-tools-agent` | `system`, `todo`, `ask_question`, `skill` |
 | `sven-tools-gdb` | GDB/MI debugging tools and the compound `gdb` tool (Unix only) |
 | `sven-tools-android` | Typed Android device control over ADB |
+| `sven-memory-api` | The memory contract: scoped units, opaque ids, index generations, annotations, and the conformance suite every adapter passes; no storage |
+| `sven-memory-sqlite` | SQLite adapter of the memory contract: versioned schema, FTS5 retrieval with the access scope applied inside the query |
+| `sven-sources` | Deterministic segmentation of sources into memory units, reanchoring after edits, redaction, BM25 and rank fusion |
 | `sven-memory` | The `semantic_memory` tool over the `MemoryStore` contract |
+| `sven-chunks` | Addressable context: content-addressed evidence with provenance, spill to disk, staleness, representations at four visibilities |
+| `sven-decision` | The decision runtime: typed questions to a small decision model that only advises, its policy and mock provider |
+| `sven-cost` | The cost of a model request term by term; cache break-even and routing as pure functions |
+| `sven-harness-spec` | The harness workflow language: parsing, validation, lowering and the compiler to a content-hashed plan |
+| `sven-harness-runtime` | The harness machine that runs a compiled plan through the kernel |
 | `sven-team` | Agent team coordination: shared task lists, team config and definitions, `sven team` commands |
 | `sven-mcp-client` | MCP client: external MCP servers as a tool/prompt/resource source |
 | `sven-mcp` | MCP server exposing sven tools |
 | `sven-acp` | ACP (Agent Client Protocol) server |
-| `sven-commands` | `SlashCommand` vocabulary and builtin `/…` commands |
+| `sven-commands` | `SlashCommand` vocabulary and builtin `/...` commands |
 | `sven-frontend` | Shared agent-wiring layer for frontends: `SessionController` (the one session-lifecycle controller of the TUI, headless and ACP surfaces), `Settings` (the whole config file) |
 | `sven-sdk` / `sven-sdk-macros` | The public framework facade and its `#[agent]` macro |
 | `sven-ci` | Headless/CI runner (`CiRunner` + `RuntimeRunner`) and output formatters |
 | `sven-tui` | Terminal UI |
 | `sven-tui-nvim` | Embedded Neovim client for the TUI's edit mode |
+| `sven-ablation` | The ablation benchmark suite (development tooling, not part of the product) |
 
 ## Key Makefile targets
 
@@ -101,7 +116,7 @@ Run `make help` for the full list.
 | Target | Description |
 |--------|-------------|
 | `build` / `build/release` | Debug / release build |
-| `test` | `cargo test --workspace` |
+| `test` | `cargo test --workspace`, then `test/features`, `test/gates`, `test/package` |
 | `test/e2e/basic` | Build + run all bats tests in `tests/e2e/basic/` |
 | `test/e2e` | Alias for `test/e2e/basic` |
 | `test/harness` | Every harness suite, mock models only |
@@ -162,6 +177,11 @@ All tests use `--model mock` (no API key or network required). Hardware-gated te
 | `16_agent_step.bats` | `sven agent step`, the CLI surface of the SDK |
 | `17_stdin.bats` | Which headless runs read stdin |
 | `18_subagent_provider.bats` | `task` sub-agents run on the parent's provider |
+| `19_approvals.bats` | A headless run never waits for a person |
+| `20_token_ledger.bats` | The per-request token ledger |
+| `21_instruction_catalog.bats` | What skills, subagents and knowledge documents cost a request |
+| `22_gate_records.bats` | The trajectory records each permission-gate decision |
+| `23_delegated_model.bats` | A `task` sub-agent runs on the provider its `model` argument names |
 | `helpers.bash` | Shared helpers: `BIN`, `FIXTURES`, `sven_mock`, `assert_output_contains` |
 
 ---
