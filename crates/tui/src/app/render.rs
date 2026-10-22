@@ -293,17 +293,20 @@ impl App {
 
         // ── Queue panel ───────────────────────────────────────────────────────
         if !self.queue.messages.is_empty() {
+            let model_labels: Vec<Option<String>> = self
+                .queue
+                .messages
+                .iter()
+                .map(|qm| qm.model_transition.as_ref().map(|d| d.display_label()))
+                .collect();
             let items: Vec<QueueItem> = self
                 .queue
                 .messages
                 .iter()
-                .map(|qm| QueueItem {
+                .zip(&model_labels)
+                .map(|(qm, label)| QueueItem {
                     content: &qm.content,
-                    model_label: qm.model_transition.as_ref().map(|d| {
-                        // Leak to 'static for the widget lifetime - the queue
-                        // lives in self which outlives this frame.
-                        Box::leak(d.display_label().into_boxed_str()) as &str
-                    }),
+                    model_label: label.as_deref(),
                     mode_label: qm.mode_transition,
                 })
                 .collect();
