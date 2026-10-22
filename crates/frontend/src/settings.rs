@@ -111,6 +111,23 @@ impl Settings {
         Ok(Self::from_document(&document))
     }
 
+    /// Whether `document` is a configuration sven reads as written: every
+    /// key one it knows, every value of its type. What a command that writes
+    /// the file checks before it saves, so a mistake is refused rather than
+    /// found as a warning on the next start.
+    ///
+    /// # Errors
+    ///
+    /// Each key sven does not know, else why a value cannot be read.
+    pub fn validate(document: &ConfigDocument) -> Result<(), String> {
+        let unknown = document.unknown_keys(&Self::schema());
+        if !unknown.is_empty() {
+            return Err(unknown.join("; "));
+        }
+        document.check::<Config>()?;
+        document.check::<TuiSection>()
+    }
+
     /// The settings `document` holds, settled ([`Config::settle_from`]).
     ///
     /// A document that cannot be read as settings is ignored whole, runtime

@@ -303,7 +303,18 @@ sven --file review.md | sven --stdin "Summarise the main findings in one sentenc
 
 ## Configuring sven
 
-Create `~/.config/sven/config.yaml` to set your default model and other options:
+`sven init` writes a starting `.sven.yaml` in the current directory (an
+OpenRouter GLM model, no key), and `sven config set <key> <value>` changes one
+value of it, or of your user file with `--scope user`:
+
+```sh
+sven init
+sven auth set openrouter                 # the key, once, outside any file
+sven config set model.temperature 0.3
+sven config get model.name
+```
+
+Or write `~/.config/sven/config.yaml` yourself:
 
 ```yaml
 model:

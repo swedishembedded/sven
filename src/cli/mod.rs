@@ -10,6 +10,7 @@
 mod agent;
 mod assembly;
 mod auth;
+mod config;
 mod decisions;
 mod disclosure;
 mod harness;
@@ -28,6 +29,7 @@ pub use disclosure::DisclosureFlags;
 // than duplicated here.
 pub use agent::AgentCommands;
 pub use auth::AuthCommands;
+pub use config::ConfigCommands;
 pub use decisions::{DecisionsCommands, DoctorCommands};
 pub use harness::{ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, PlanFormatArg};
 pub use index::IndexCommands;
@@ -336,6 +338,20 @@ pub enum Commands {
     Tool {
         #[command(subcommand)]
         command: ToolCommands,
+    },
+
+    /// Write a starting configuration, `.sven.yaml`, in this directory: an
+    /// OpenRouter GLM model and no key (`sven auth set openrouter` stores it).
+    /// An existing configuration file here is never overwritten.
+    Init,
+
+    /// Read and write one key of a configuration file.
+    ///
+    ///   sven config get model.name            - the value in force
+    ///   sven config set model.temperature 0.3 - write it into ./.sven.yaml
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
     },
 
     /// Store, list and forget the keys of hosted providers.

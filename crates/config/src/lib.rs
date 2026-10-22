@@ -14,8 +14,9 @@
 
 mod document;
 mod schema;
+pub mod scope;
 
-pub use document::ConfigDocument;
+pub use document::{layer_files, ConfigDocument};
 pub use schema::Schema;
 
 /// Serde default helper - returns `true`.

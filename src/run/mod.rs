@@ -10,6 +10,7 @@ pub(crate) mod agent_dispatch;
 pub(crate) mod auth;
 pub(crate) mod chats;
 pub(crate) mod ci;
+pub(crate) mod config;
 pub(crate) mod decisions;
 pub(crate) mod harness;
 pub(crate) mod index;
@@ -20,6 +21,7 @@ pub(crate) mod oauth;
 pub(crate) mod pipeline;
 pub(crate) mod provider_doctor;
 pub(crate) mod questions;
+pub(crate) mod secret;
 pub(crate) mod task;
 #[cfg(feature = "network")]
 pub(crate) mod team;

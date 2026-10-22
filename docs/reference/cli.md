@@ -126,6 +126,9 @@ Everything a subcommand prints on failure goes to stderr and the exit code is
 | Command | Description |
 |---------|-------------|
 | `sven show-config` | Print the effective configuration as YAML: every layer merged, defaults filled in. |
+| `sven init` | Write `.sven.yaml` in the current directory naming an OpenRouter GLM model and no key. Refused when the directory already has a configuration file. |
+| `sven config get KEY [--scope SCOPE]` | Print the value of KEY (a dotted path, `model.name`) in force: as a file writes it, else the default; with `--scope project\|workspace\|user`, only what that file says (exit 1 when it says nothing). |
+| `sven config set KEY [VALUE] [--stdin] [--scope SCOPE]` | Write KEY into a configuration file (default the project's, `./.sven.yaml`), creating it as needed; VALUE is read as YAML. `--stdin` reads the value from stdin, without echo on a terminal, so a secret never reaches the shell history. A key sven does not know, or a value of the wrong type, is refused and the file left as it was. |
 | `sven completions SHELL` | Print a completion script for `bash`, `elvish`, `fish`, `powershell` or `zsh`. |
 | `sven list-models [-p PROVIDER] [--catalog] [--json]` | Print every model that can be used now, with the name `--model` takes for it (`brain/Qwen/Qwen3-0.6B`, `openrouter/z-ai/glm-5.3-flash`), its context window, output cap and tool support: each local server that answers (brain, ollama, vLLM, LM Studio), each `providers:` entry and each hosted provider with a stored key, asked live. A source that does not answer or refuses its key is reported on stderr. `PROVIDER` is a driver id or a `providers:` entry; an unknown one is an error that lists them. `--catalog` prints the bundled catalog instead. |
 | `sven list-providers [-v] [--json]` | Print every provider id with its name and description; `-v` adds whether a key is stored and the base URL. Use the id as `model.provider`. |

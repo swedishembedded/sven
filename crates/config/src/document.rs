@@ -13,40 +13,35 @@ use tracing::{debug, warn};
 
 use crate::Schema;
 
-/// Ordered list of config file locations searched from lowest to highest priority.
-/// Later files override earlier ones.
-fn config_search_paths() -> Vec<PathBuf> {
+/// The configuration files of `dir`'s layers, lowest priority first: the
+/// system's, the user's, the workspace's (the nearest configuration file
+/// above `dir`) and the project's (`dir`'s own). Later files override
+/// earlier ones. Only files that exist are named.
+#[must_use]
+pub fn layer_files(dir: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-
-    // 1. System-wide default.  /etc/ is a Linux convention; macOS and Windows
-    //    use dirs::config_dir() for system-wide configuration instead.
+    // /etc/ is a Linux convention; macOS and Windows use the user's
+    // configuration directory for everything instead.
     #[cfg(target_os = "linux")]
-    {
-        paths.push(PathBuf::from("/etc/sven/config.yaml"));
-        paths.push(PathBuf::from("/etc/sven/config.yml"));
-    }
-
-    // 2. XDG / home.  dirs::config_dir() returns:
-    //    Linux:   $XDG_CONFIG_HOME or ~/.config
-    //    macOS:   ~/Library/Application Support
-    //    Windows: %APPDATA% (C:\Users\<user>\AppData\Roaming)
+    paths.extend(["/etc/sven/config.yaml", "/etc/sven/config.yml"].map(PathBuf::from));
+    // dirs::config_dir() is $XDG_CONFIG_HOME or ~/.config on Linux,
+    // ~/Library/Application Support on macOS and %APPDATA% on Windows; the
+    // ~/.config spelling is read on every platform.
     if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".config/sven/config.yaml"));
-        paths.push(home.join(".config/sven/config.yml"));
+        paths.extend(["config.yaml", "config.yml"].map(|n| home.join(".config/sven").join(n)));
     }
     if let Some(cfg) = dirs::config_dir() {
-        paths.push(cfg.join("sven/config.yaml"));
-        paths.push(cfg.join("sven/config.yml"));
+        paths.extend(["config.yaml", "config.yml"].map(|n| cfg.join("sven").join(n)));
     }
-
-    // 3. Workspace-local
-    paths.push(PathBuf::from(".sven/config.yaml"));
-    paths.push(PathBuf::from(".sven/config.yml"));
-    paths.push(PathBuf::from(".sven.yaml"));
-    paths.push(PathBuf::from(".sven.yml"));
-    paths.push(PathBuf::from("sven.yaml"));
-    paths.push(PathBuf::from("sven.yml"));
-
+    paths.extend(crate::scope::workspace_file(dir));
+    paths.extend(crate::scope::directory_file(dir));
+    let mut seen = Vec::new();
+    paths.retain(|p| {
+        p.is_file() && !seen.contains(p) && {
+            seen.push(p.clone());
+            true
+        }
+    });
     paths
 }
 
@@ -59,12 +54,15 @@ fn config_search_paths() -> Vec<PathBuf> {
 #[derive(Clone, Debug)]
 pub struct ConfigDocument {
     root: serde_yaml::Value,
+    /// The files merged into it, lowest priority first.
+    files: Vec<PathBuf>,
 }
 
 impl Default for ConfigDocument {
     fn default() -> Self {
         Self {
             root: serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+            files: Vec::new(),
         }
     }
 }
@@ -79,11 +77,10 @@ impl ConfigDocument {
     /// path that cannot be read.
     pub fn load(extra: Option<&Path>) -> anyhow::Result<Self> {
         let mut document = Self::default();
-        for path in config_search_paths() {
-            if path.is_file() {
-                debug!(path = %path.display(), "loading config layer");
-                document.merge_file(&path)?;
-            }
+        let here = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        for path in layer_files(&here) {
+            debug!(path = %path.display(), "loading config layer");
+            document.merge_file(&path)?;
         }
         if let Some(path) = extra {
             debug!(path = %path.display(), "loading explicit config");
@@ -106,7 +103,22 @@ impl ConfigDocument {
     fn merge_file(&mut self, path: &Path) -> anyhow::Result<()> {
         let raw =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        self.merge_text(&raw, &path.display().to_string())
+        self.merge_text(&raw, &path.display().to_string())?;
+        self.files.push(path.to_path_buf());
+        Ok(())
+    }
+
+    /// The files merged into this document, lowest priority first; empty
+    /// when no configuration file was found.
+    #[must_use]
+    pub fn files(&self) -> &[PathBuf] {
+        &self.files
+    }
+
+    /// The document as merged.
+    #[must_use]
+    pub fn root(&self) -> &serde_yaml::Value {
+        &self.root
     }
 
     fn merge_text(&mut self, raw: &str, source: &str) -> anyhow::Result<()> {
@@ -184,6 +196,26 @@ impl ConfigDocument {
                 warn_ignored(&e);
                 (A::default(), B::default())
             })
+    }
+
+    /// Whether the document can be read as `T`, and why not: the check a
+    /// writer makes before it saves, where [`Self::decode`] would only warn.
+    ///
+    /// # Errors
+    ///
+    /// The decoder's message.
+    pub fn check<T: DeserializeOwned + Default>(&self) -> Result<(), String> {
+        self.read::<T>().map(drop).map_err(|e| e.to_string())
+    }
+
+    /// A document of `root` alone, as written (no placeholder expansion):
+    /// what a writer checks before it saves a file.
+    #[must_use]
+    pub fn from_value(root: serde_yaml::Value) -> Self {
+        Self {
+            root,
+            files: Vec::new(),
+        }
     }
 
     fn read<T: DeserializeOwned + Default>(&self) -> Result<T, serde_yaml::Error> {

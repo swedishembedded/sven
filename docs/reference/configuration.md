@@ -13,17 +13,50 @@ configuration file is optional: write one only to change something.
 ## Config file location
 
 sven reads every file it finds below and merges them from lowest to highest
-priority; a later file overrides an earlier one. Each name is also tried with
-the extension `.yml`, which then overrides the `.yaml` file beside it.
+priority; a later file overrides an earlier one. A file holds only the keys
+written into it; every other key keeps its default.
 
 1. `/etc/sven/config.yaml` (Linux only; system-wide)
-2. `~/.config/sven/config.yaml` (user)
-3. `sven/config.yaml` in the platform configuration directory, when that is not
-   `~/.config` (`~/Library/Application Support` on macOS, `%APPDATA%` on
-   Windows)
-4. `.sven/config.yaml`, `.sven.yaml`, `sven.yaml`, in that order, relative to
-   the **current working directory** (not the project root)
+2. The user's file: `~/.config/sven/config.yaml`, and `sven/config.yaml` in the
+   platform configuration directory when that is not `~/.config`
+   (`~/Library/Application Support` on macOS, `%APPDATA%` on Windows)
+3. The workspace's file: the nearest configuration file in a directory above
+   the current one
+4. The project's file: the configuration file of the current directory
 5. The file named by `--config FILE`, which overrides all of the above
+
+A directory's configuration file is the first of `.sven/config.yaml`,
+`.sven/config.yml`, `.sven.yaml`, `.sven.yml`, `sven.yaml` and `sven.yml` it
+holds; the user's may be `.yml` as well.
+
+With no configuration file at all, a session still starts (a local brain
+server, a stored key) and says to run `sven init`, which writes a
+`.sven.yaml` here naming an OpenRouter GLM model and no key.
+
+### Changing a value from the command line
+
+`sven config set <key> <value>` writes one key into a file, creating it as
+needed, and `sven config get <key>` prints the value in force: as a file
+writes it, else the default. A key is a dotted path (`model.name`); a segment
+holding a dot is quoted (`providers.or.models."z-ai/glm-5.3".max_tokens`).
+The value is read as YAML: `0.3` is a number, `true` a bool, `[a, b]` a list,
+anything else text.
+
+```sh
+sven config set model.name z-ai/glm-5.3-flash      # ./.sven.yaml
+sven config set --scope user model.temperature 0.3  # ~/.config/sven/config.yaml
+sven config set --scope workspace agent.max_tool_rounds 50
+sven config set model.api_key --stdin               # typed without echo, never in shell history
+sven config get model.name
+sven config get --scope user model.temperature      # only what that file says
+```
+
+`--scope` is `project` (the default: the file here, made as `.sven.yaml`),
+`workspace` (the nearest file above here; refused when there is none) or
+`user`. A key sven does not know, or a value of the wrong type, is refused and
+the file left as it was. Files are rewritten whole by `set`, so comments in
+them are not kept. A key stored with `sven auth set` is the better home for a
+hosted provider's key: it is never in a file a repository holds.
 
 A file that exists but is not valid YAML, and a `--config` file that cannot be
 read, stop sven with an error. Files are YAML only.

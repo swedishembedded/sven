@@ -149,6 +149,7 @@ path = "src/main.rs"
 [dependencies]
 sven-decision    = { path = "crates/decision" }
 sven-frontend    = { path = "crates/frontend" }
+sven-config      = { path = "crates/config" }
 sven-model       = { path = "crates/model" }
 sven-model-drivers = { path = "crates/model-drivers" }
 sven-session-store = { path = "crates/session-store" }

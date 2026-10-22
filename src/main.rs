@@ -14,6 +14,7 @@ use run::agent_dispatch::run_agent_dispatch_command;
 use run::auth::run_auth_command;
 use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
+use run::config::{run_config_command, run_init};
 use run::decisions::{run_decisions_models, run_doctor_decisions};
 use run::harness::run_harness_command;
 use run::index::run_index_command;
@@ -207,12 +208,28 @@ async fn main() -> anyhow::Result<()> {
             Commands::Auth { command } => {
                 return run_auth_command(command);
             }
+            Commands::Init => {
+                return run_init();
+            }
+            Commands::Config { command } => {
+                return run_config_command(command, cli.config.as_deref());
+            }
             Commands::ListProviders { verbose, json } => {
                 return list_providers_cmd(*verbose, *json);
             }
         }
     }
 
+    // A session with no configuration file at all still starts (a local
+    // brain server, a stored key), but the person is told how to make one.
+    if cli.config.is_none() {
+        let here = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        if sven_config::layer_files(&here).is_empty() {
+            eprintln!(
+                "sven: no configuration file found; run `sven init` to write a .sven.yaml here"
+            );
+        }
+    }
     let mut settings = Settings::load(cli.config.as_deref())?;
     cli.disclosure.apply(&mut settings.runtime);
     if let Some(mode) = cli.context_assembly {
