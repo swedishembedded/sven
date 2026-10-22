@@ -92,7 +92,6 @@ impl App {
 
                 let in_search = self.ui.search.active;
                 let in_input = self.ui.focus == FocusPane::Input;
-                let in_queue = self.ui.focus == FocusPane::Queue;
 
                 if self.ui.focus == FocusPane::Chat
                     && !in_search
@@ -138,18 +137,13 @@ impl App {
                     }
                 }
 
-                let in_edit_mode =
-                    self.edit.message_index.is_some() || self.edit.queue_index.is_some();
-                let in_chat_pane = self.ui.focus == FocusPane::Chat;
-                if let Some(action) = map_key(
-                    k,
-                    in_search,
-                    in_input,
-                    self.ui.pending_nav,
-                    in_edit_mode,
-                    in_queue,
-                    in_chat_pane,
-                ) {
+                let cx = crate::keys::KeyContext {
+                    focus: self.ui.focus,
+                    searching: in_search,
+                    pending_nav: self.ui.pending_nav,
+                    editing: self.edit.message_index.is_some() || self.edit.queue_index.is_some(),
+                };
+                if let Some(action) = map_key(k, cx) {
                     if action == Action::NavPrefix {
                         self.ui.pending_nav = true;
                         return false;
