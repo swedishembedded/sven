@@ -91,3 +91,4 @@ navigation:
       - docs/adr/0003-agents-as-typed-objects.md
       - docs/adr/0004-programmable-harnesses.md
       - docs/adr/0005-declarative-harness-v2.md
+      - docs/adr/0006-v2-is-the-only-harness-language.md
