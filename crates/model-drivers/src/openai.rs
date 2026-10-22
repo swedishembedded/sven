@@ -52,6 +52,9 @@ impl sven_model::ModelProvider for OpenAiProvider {
     fn endpoint_host(&self) -> Option<String> {
         self.inner.endpoint_host()
     }
+    fn supports_tool_choice_none(&self) -> bool {
+        self.inner.supports_tool_choice_none()
+    }
 
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
         self.inner.list_models().await

@@ -38,6 +38,35 @@ enum Notes {
     None,
 }
 
+/// What the request that just failed or came back empty was sized with.
+#[derive(Clone, Copy)]
+pub(super) struct Sent {
+    /// The response budget it asked for.
+    pub(super) output_budget: Option<u32>,
+    /// The plain estimate of the whole request.
+    pub(super) plain_estimate: usize,
+    /// What a compaction works against, when the window is known.
+    pub(super) fit: Option<Fit>,
+}
+
+/// What compaction and the retries after it remember between requests.
+#[derive(Default)]
+pub(super) struct Recovery {
+    /// The last "context budget" notice, so that it is repeated only when it
+    /// changes.
+    announced_budget: Option<sven_vocab::ContextBudget>,
+    /// The tools a compaction's fork offers (with `tool_choice: none`) so it
+    /// shares its prompt prefix with the requests that use them: those of the
+    /// request being built, or none when the provider cannot forbid calls.
+    fork_tools: Vec<sven_model::ToolSchema>,
+    /// Threads whose turn was already retried after a response spent its
+    /// output budget thinking.
+    exhaustion_retried: std::collections::HashSet<String>,
+    /// Threads whose turn was already retried after a compaction answered a
+    /// request the server rejected as too long.
+    overflow_retried: std::collections::HashSet<String>,
+}
+
 /// What a compaction works against: the window and how the server counts.
 #[derive(Clone, Copy)]
 pub(super) struct Fit {
@@ -60,9 +89,9 @@ impl TurnExecutor {
             .unwrap_or_default()
     }
 
-    /// Makes the history an overflow retry was sent with (if there was one)
-    /// the thread's own and records it as an emergency compaction, so the
-    /// next request starts from it instead of overflowing again.
+    /// Makes the trimmed history (if there is one) the thread's own and
+    /// records it as an emergency compaction, so the next request starts from
+    /// it instead of overflowing again.
     pub(super) fn keep_overflow_trim(
         &self,
         thread_id: &str,
@@ -88,7 +117,6 @@ impl TurnExecutor {
         });
         drop(store);
         self.prompt_counts.forget(thread_id);
-        warn_history_dropped(obs, tokens_before.saturating_sub(tokens_after));
         obs.emit(UiEvent::ContextCompacted {
             tokens_before,
             tokens_after,
@@ -106,35 +134,39 @@ impl TurnExecutor {
         configured_max_output: Option<u32>,
         obs: &ObservationSink,
     ) {
-        let thinking_cap = self
-            .limits
-            .thinking
-            .max_thinking_tokens
-            .map_or_else(|| "none".to_string(), |cap| format!("{cap} tokens"));
-        let line = match self.compaction_fit(context_window, configured_max_output) {
-            Some(fit) => format!(
-                "context budget: window {} tokens; compaction at ~{} tokens of request; \
-                 {} tokens kept free for the response; notes of at most {} tokens; \
-                 thinking cap {thinking_cap}",
-                fit.window,
-                fit.limit,
-                self.compaction.output_reserve_tokens(fit.window),
-                self.compaction.reply_cap(fit.window),
-            ),
-            None => format!(
-                "context budget: the model's window is unknown, so the conversation is never \
-                 compacted ahead of a request; thinking cap {thinking_cap}"
-            ),
+        let budget = self
+            .compaction_fit(context_window, configured_max_output)
+            .map(|fit| sven_vocab::ContextBudget {
+                window: fit.window,
+                compaction_at: fit.limit,
+                output_reserve: self.compaction.output_reserve_tokens(fit.window),
+                notes_tokens: self.compaction.reply_cap(fit.window),
+                thinking_cap: self.limits.thinking.max_thinking_tokens,
+            });
+        // Nothing to be surprised by when no window is known: no compaction
+        // will happen.
+        let Some(budget) = budget else {
+            return;
         };
-        if self.announced_budget.as_deref() != Some(line.as_str()) {
-            tracing::info!("{line}");
-            // Nothing to be surprised by when no window is known: no
-            // compaction will happen. Only the log carries that line.
-            if context_window.is_some() {
-                obs.emit(UiEvent::Warning(line.clone()));
-            }
-            self.announced_budget = Some(line);
+        if self.recovery.announced_budget != Some(budget) {
+            tracing::info!("{}", sven_vocab::context_budget_text(&budget));
+            obs.emit(UiEvent::ContextBudget(budget));
+            self.recovery.announced_budget = Some(budget);
         }
+    }
+
+    /// The tools of the request being built, which a compaction's fork offers
+    /// too - when the provider can forbid calling them.
+    pub(super) fn offer_fork_tools(
+        &mut self,
+        model: &dyn sven_model::ModelProvider,
+        tools: &[sven_model::ToolSchema],
+    ) {
+        self.recovery.fork_tools = if model.supports_tool_choice_none() {
+            tools.to_vec()
+        } else {
+            Vec::new()
+        };
     }
 
     /// What a compaction works against, when the window is known: the request
@@ -147,6 +179,8 @@ impl TurnExecutor {
         let window = context_window?;
         let budget =
             sven_model::budget::effective_input_budget(context_window, configured_max_output)?;
+        // The request sizes it is compared with already count the tools the
+        // fork offers.
         let prompt_tokens =
             sven_turn::estimate_tokens(&[Message::user(sven_turn::COMPACTION_PROMPT)], 1.0);
         let limit = limits::compaction_limit(
@@ -183,6 +217,83 @@ impl TurnExecutor {
         (estimate >= fit.limit).then_some(Fit { calibration, ..fit })
     }
 
+    /// What to do about a turn that failed because the conversation does not
+    /// fit, or ended with no answer because thinking used the whole response
+    /// budget: the effect to run again after a compaction, or `None`.
+    pub(super) async fn recover_turn(
+        &mut self,
+        req: &mut sven_vocab::TurnRequest,
+        result: &anyhow::Result<sven_turn::StreamedTurn>,
+        sent: Sent,
+        model: &dyn sven_model::ModelProvider,
+        obs: &ObservationSink,
+    ) -> Option<sven_hsm::Effect> {
+        match result {
+            Err(e) => {
+                let error = format!("{e:#}");
+                self.recover_prompt_overflow(req, &error, sent, model, obs)
+                    .await
+            }
+            Ok(turn) => {
+                self.recovery.overflow_retried.remove(&req.thread);
+                self.recover_exhausted_output(req, turn, sent.output_budget, model, sent.fit, obs)
+                    .await
+            }
+        }
+    }
+
+    /// A request the server rejected as too long for its context means the
+    /// estimate undercounted the prompt. Compacts the thread with the fork,
+    /// planned from the server's own count where it gave one, and returns the
+    /// effect to ask again - once per turn. Only a window that is not known
+    /// (so no fork can be planned) falls back to the model-free trim. `None`
+    /// when the error is not an overflow, the turn was already retried, or
+    /// compaction cannot shrink the thread.
+    pub(super) async fn recover_prompt_overflow(
+        &mut self,
+        req: &mut sven_vocab::TurnRequest,
+        error: &str,
+        sent: Sent,
+        model: &dyn sven_model::ModelProvider,
+        obs: &ObservationSink,
+    ) -> Option<sven_hsm::Effect> {
+        if !sven_model::budget::is_context_overflow(error)
+            || !self.recovery.overflow_retried.insert(req.thread.clone())
+        {
+            return None;
+        }
+        obs.emit(UiEvent::Warning(
+            "the server rejected the request as too long for its context; compacting the \
+             conversation and asking again once"
+                .into(),
+        ));
+        let thread_id = req.thread.as_str();
+        let messages = snapshot_thread(&self.store, thread_id);
+        let before = messages.len();
+        let compacted = if let Some(mut fit) = sent.fit {
+            if let Some(needed) = super::overflow::needed_tokens(error) {
+                let prompt = needed.saturating_sub(sent.output_budget.unwrap_or(0)) as f32;
+                let ratio = prompt / sent.plain_estimate.max(1) as f32;
+                fit.calibration = fit.calibration.max(ratio.clamp(1.0, 8.0) * 1.05);
+            }
+            self.compact_thread(thread_id, messages, model, fit, obs)
+                .await
+        } else {
+            let mut trimmed = messages;
+            self.emergency_trim(&mut trimmed, &self.pinned_todos(), obs);
+            self.keep_overflow_trim(thread_id, Some(trimmed.clone()), obs);
+            trimmed
+        };
+        if compacted.len() >= before {
+            return None;
+        }
+        req.instruction.clear();
+        req.delay_ms = None;
+        Some(sven_hsm::Effect::CallLlm {
+            request: req.to_value(),
+        })
+    }
+
     /// A response that spent its whole output budget thinking, with no text
     /// and no tool call, says the conversation leaves too little room to
     /// think in. Reports it with the tokens used and, once per turn, compacts
@@ -202,11 +313,11 @@ impl TurnExecutor {
         let thread_id = req.thread.as_str();
         let exhausted = turn.truncated && turn.text.trim().is_empty() && turn.tool_calls.is_empty();
         if !exhausted {
-            self.exhaustion_retried.remove(thread_id);
+            self.recovery.exhaustion_retried.remove(thread_id);
             return None;
         }
         let spent = output_budget.map_or_else(|| "its".to_string(), |b| b.to_string());
-        let retry = fit.filter(|_| !self.exhaustion_retried.contains(thread_id));
+        let retry = fit.filter(|_| !self.recovery.exhaustion_retried.contains(thread_id));
         let outcome = if retry.is_some() {
             "compacting the conversation and asking again once"
         } else {
@@ -218,7 +329,9 @@ impl TurnExecutor {
             turn.thinking_tokens
         )));
         let fit = retry?;
-        self.exhaustion_retried.insert(thread_id.to_string());
+        self.recovery
+            .exhaustion_retried
+            .insert(thread_id.to_string());
         let messages = snapshot_thread(&self.store, thread_id);
         let before = messages.len();
         let compacted = self
@@ -267,7 +380,13 @@ impl TurnExecutor {
         let tokens_before: usize = messages.iter().map(Message::approx_tokens).sum();
         let todos = self.pinned_todos();
         let reply_cap = self.compaction.reply_cap(fit.window);
-        let request_budget = (fit.window as usize).saturating_sub(reply_cap);
+        let request_budget = (fit.window as usize)
+            .saturating_sub(reply_cap)
+            .saturating_sub(sven_model::budget::estimate_request_tokens(
+                &[],
+                &self.recovery.fork_tools,
+                None,
+            ));
 
         let mut history = messages;
         let mut strategy = CompactionStrategyUsed::Fork;
@@ -379,9 +498,12 @@ impl TurnExecutor {
         window: u32,
         calibration: f32,
     ) -> Notes {
-        let request_estimate = estimate(&plan.request, calibration);
+        let tools_tokens =
+            sven_model::budget::estimate_request_tokens(&[], &self.recovery.fork_tools, None);
+        let request_estimate = estimate(&plan.request, calibration) + tools_tokens;
         let room = (window as usize).saturating_sub(request_estimate + 128);
         let output = u32::try_from(reply_cap.min(room)).unwrap_or(u32::MAX);
+        let started = std::time::Instant::now();
         for thinking in [Some(false), None] {
             // The thinking-token cap guards against a reasoning loop in the
             // agent's own turns. Notes must not be thrown away (and the
@@ -389,6 +511,7 @@ impl TurnExecutor {
             let mut limits = self.limits;
             limits.thinking.max_thinking_tokens = Some(u32::MAX);
             limits.enable_thinking = thinking;
+            limits.tool_choice = sven_model::ToolChoice::None;
 
             // Throwaway channel: the notes' own text deltas must not reach
             // the observation plane as if the agent had said them.
@@ -397,7 +520,7 @@ impl TurnExecutor {
             let result = stream_turn(
                 model,
                 plan.request.clone(),
-                vec![],
+                self.recovery.fork_tools.clone(),
                 None,
                 None,
                 None,
@@ -416,6 +539,12 @@ impl TurnExecutor {
                             "compaction: the notes hit the {output}-token reply cap and may be cut off"
                         );
                     }
+                    tracing::info!(
+                        fork_ms = started.elapsed().as_millis() as u64,
+                        request_tokens = request_estimate,
+                        tools = self.recovery.fork_tools.len(),
+                        "compaction: the notes were written"
+                    );
                     return Notes::Text(turn.text);
                 }
                 Ok(_) => tracing::warn!(
@@ -429,7 +558,7 @@ impl TurnExecutor {
                     // fork was too large and asking again as it is cannot help.
                     if let Some(needed) = super::overflow::needed_tokens(&error) {
                         let prompt = needed.saturating_sub(output) as f32;
-                        let plain = estimate(&plan.request, 1.0).max(1) as f32;
+                        let plain = (estimate(&plan.request, 1.0) + tools_tokens).max(1) as f32;
                         return Notes::TooLarge {
                             tokens_per_estimate: (prompt / plain).clamp(1.0, 8.0),
                         };

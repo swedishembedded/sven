@@ -43,7 +43,10 @@ pub use ledger::{
 
 pub use conclusion::announces_unfinished_work;
 pub use request::{RequestFold, RequestRecord, Sampled};
-pub use served::{describe_adapter, served_model_changed_text, AdapterRef, ServedIdentity};
+pub use served::{
+    context_budget_text, describe_adapter, served_model_changed_text, AdapterRef, ContextBudget,
+    ServedIdentity,
+};
 pub use turn::{AnsweredCall, TurnDecoding, TurnRequest, TURN_KIND};
 pub use wait::ModelWaitPhase;
 
@@ -725,6 +728,11 @@ pub enum SessionEvent {
     /// capability the served model lacks. Shown as a notice; never
     /// conversation content, and never a failure (that is `Error`).
     Warning(String),
+    /// Where this session compacts and what room a response has: sent when a
+    /// session starts and whenever the numbers change, so that no compaction
+    /// or cut-off response comes as a surprise. Shown as a notice
+    /// ([`context_budget_text`]); never conversation content.
+    ContextBudget(ContextBudget),
     /// A stream of events could not deliver `count` of them: the consumer fell
     /// behind a bounded buffer and the oldest were discarded. Never emitted by
     /// the kernel; the stream that dropped the events inserts it at the gap,

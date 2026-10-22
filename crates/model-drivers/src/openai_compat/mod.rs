@@ -258,6 +258,10 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         &self.model
     }
 
+    fn supports_tool_choice_none(&self) -> bool {
+        true
+    }
+
     fn endpoint_host(&self) -> Option<String> {
         crate::url_host(&self.chat_url)
     }
@@ -500,8 +504,7 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         if let Some(top_p) = req.sampling.top_p {
             body["top_p"] = json!(top_p);
         }
-        // `top_k` and `seed` are not in the OpenAI schema; servers that do
-        // not know them ignore unknown fields.
+        // `top_k` and `seed` are not in the OpenAI schema; servers ignore them.
         if let Some(top_k) = req.sampling.top_k {
             body["top_k"] = json!(top_k);
         }
@@ -510,11 +513,13 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         }
         if req.want_logprobs {
             body["logprobs"] = json!(true);
-            // Extension (vLLM's name): the prompt and completion token ids.
             body["return_token_ids"] = json!(true);
         }
         if !tools.is_empty() {
             body["tools"] = json!(tools);
+            if req.tool_choice == sven_model::ToolChoice::None {
+                body["tool_choice"] = json!("none");
+            }
         }
 
         // Structured-output: drivers that speak the OpenAI wire format accept a

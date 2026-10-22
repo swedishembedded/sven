@@ -715,8 +715,9 @@ Decreasing it gives you more control by forcing sven to pause and ask.
 #### Context budget and compaction
 
 sven keeps a session inside the model's context window in layers. At the
-start of a session, and whenever it changes, it prints one line saying where
-it stands, so that no compaction or cut-off comes as a surprise:
+start of a session, and whenever it changes, it sends one `ContextBudget`
+event (shown as a notice, `[sven:info]` in headless output) saying where it
+stands, so that no compaction or cut-off comes as a surprise:
 
 ```
 context budget: window 98304 tokens; compaction at ~58764 tokens of request; 24576 tokens kept free for the response; notes of at most 10000 tokens; thinking cap none
@@ -741,7 +742,8 @@ when you set it.
 
 **What compaction does** - It forks the conversation. The model gets the
 real messages (same system prompt, same tool calls and results, no
-serialisation into text) followed by one instruction asking for everything
+serialisation into text; the session's tool definitions are offered too, with
+`tool_choice: none`, to share the prompt cache) followed by one instruction asking for everything
 needed to continue: the goal, the constraints, decisions and failed
 approaches, files and commands with their key facts, exact identifiers and
 values, the current state, open questions and next steps. The reply, limited
@@ -754,7 +756,9 @@ spent thinking; an empty or failed reply is retried once with the
 provider's default.
 
 A conversation too large for one fork is summarised in pieces: the largest
-oldest part that fits first, then the rest. Nothing is dropped.
+oldest part that fits first, then the rest. Nothing is dropped. A request the
+server rejects as too long is answered the same way, calibrated by the
+server's own count.
 
 **Emergency fallback** - Only when the model cannot produce notes at all
 (or a round of notes is no smaller than what it replaced), the oldest

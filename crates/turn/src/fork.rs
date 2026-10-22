@@ -60,6 +60,10 @@ pub struct ForkPlan {
     /// How many of the conversation's messages after the system message the
     /// request covers (all of them when [`ForkPlan::whole`]).
     pub covered: usize,
+    /// Which of those messages, in order, the request covers: the oldest ones,
+    /// and when only part of a batch of parallel tool calls fits, those calls
+    /// with their results. What is not taken stays in the thread.
+    taken: Vec<bool>,
     /// Whether the request covers the whole conversation, so the summary
     /// replaces all of it.
     pub whole: bool,
@@ -116,6 +120,20 @@ pub fn plan_fork(messages: &[Message], budget_tokens: usize, calibration: f32) -
         + estimate_tokens(std::slice::from_ref(&prompt), calibration);
     let room = budget_tokens.saturating_sub(fixed);
 
+    // The task is kept whole outside the notes, so the copy of it the fork
+    // reads may be cut down to a third of the room: a task too large for the
+    // fork must not keep the rest of the conversation from being summarised.
+    let mut view: Vec<Message> = body.to_vec();
+    let mut task_clipped = 0;
+    if let Some(task) = view.first_mut().filter(|m| m.role == Role::User) {
+        let before = estimate_tokens(std::slice::from_ref(task), calibration);
+        if before > room / 3 {
+            *task = clip_message(task, chars_for(room / 3, calibration));
+            task_clipped =
+                before.saturating_sub(estimate_tokens(std::slice::from_ref(task), calibration));
+        }
+    }
+    let body = &view[..];
     let cost = |upto: usize| estimate_tokens(&body[..upto], calibration);
     // The task is carried over verbatim, so a request that covers only the
     // task would shrink nothing: a useful request reaches past it.
@@ -125,14 +143,36 @@ pub fn plan_fork(messages: &[Message], budget_tokens: usize, calibration: f32) -
         1
     }
     .min(body.len());
-    let fitting = (useful_from..=body.len())
+    // The largest oldest prefix that fits and ends at a clean boundary...
+    let prefix = (0..=body.len())
         .rev()
-        .find(|&n| is_clean_boundary(body, n) && cost(n) <= room);
-    let mut clipped_tokens = 0;
-    let mut slice: Vec<Message> = Vec::new();
-    let covered = if let Some(n) = fitting {
-        slice.extend_from_slice(&body[..n]);
-        Some(n)
+        .find(|&n| n == 0 || (is_clean_boundary(body, n) && cost(n) <= room))
+        .unwrap_or(0);
+    let mut taken = vec![false; body.len()];
+    taken[..prefix].fill(true);
+    // ...and, when a batch of parallel tool calls follows it that does not fit
+    // whole, as many of its calls, with their results, as do.
+    if prefix < body.len() && matches!(body[prefix].content, MessageContent::ToolCall { .. }) {
+        let mut spent = cost(prefix);
+        for (call, result) in batch_pairs(body, prefix) {
+            let pair = estimate_tokens(&[body[call].clone(), body[result].clone()], calibration);
+            if spent + pair > room {
+                break;
+            }
+            spent += pair;
+            taken[call] = true;
+            taken[result] = true;
+        }
+    }
+    let mut clipped_tokens = task_clipped;
+    let mut slice: Vec<Message>;
+    if taken.iter().filter(|&&t| t).count() >= useful_from {
+        slice = body
+            .iter()
+            .zip(&taken)
+            .filter(|(_, &t)| t)
+            .map(|(m, _)| m.clone())
+            .collect();
     } else {
         // Not even the first exchange fits: take it and clip it to the room.
         let n = (useful_from..=body.len())
@@ -140,30 +180,75 @@ pub fn plan_fork(messages: &[Message], budget_tokens: usize, calibration: f32) -
             .unwrap_or(body.len());
         let before = cost(n);
         slice = clip_to(&body[..n], room, calibration);
-        clipped_tokens = before.saturating_sub(estimate_tokens(&slice, calibration));
-        Some(n)
-    };
-    let covered = covered.unwrap_or(0);
+        clipped_tokens += before.saturating_sub(estimate_tokens(&slice, calibration));
+        taken = vec![false; body.len()];
+        taken[..n].fill(true);
+    }
+    let covered = taken.iter().filter(|&&t| t).count();
     let mut request = system;
-    request.extend(slice);
+    request.append(&mut slice);
     request.push(prompt);
     ForkPlan {
         request,
         covered,
+        taken,
         whole: covered == body.len(),
         clipped_tokens,
     }
 }
 
-/// `messages` with the text of each cut down (head and tail kept, the middle
-/// replaced by a notice) until they are estimated at no more than `room`.
-fn clip_to(messages: &[Message], room: usize, calibration: f32) -> Vec<Message> {
-    let per_message_chars = (room * 4 / messages.len().max(1)).max(256);
-    let per_message_chars = (per_message_chars as f32 / (calibration.max(1.0) * 1.1)) as usize;
-    messages
+/// The calls of the batch of parallel tool calls that starts at `start` (the
+/// stored form is every call, then every result), each paired with the index
+/// of its result, in order, up to the first call with no result.
+fn batch_pairs(body: &[Message], start: usize) -> Vec<(usize, usize)> {
+    let calls = body[start..]
         .iter()
-        .map(|m| clip_message(m, per_message_chars))
-        .collect()
+        .take_while(|m| matches!(m.content, MessageContent::ToolCall { .. }))
+        .count();
+    let results_from = start + calls;
+    let mut pairs = Vec::new();
+    for call in start..results_from {
+        let MessageContent::ToolCall { tool_call_id, .. } = &body[call].content else {
+            break;
+        };
+        let found = (results_from..body.len()).find(|&i| {
+            matches!(&body[i].content,
+                MessageContent::ToolResult { tool_call_id: id, .. } if id == tool_call_id)
+        });
+        match found {
+            Some(result) => pairs.push((call, result)),
+            None => break,
+        }
+    }
+    pairs
+}
+
+/// The characters of text that `tokens` of estimate hold, under `calibration`.
+fn chars_for(tokens: usize, calibration: f32) -> usize {
+    ((tokens * 4) as f32 / (calibration.max(1.0) * 1.1)) as usize
+}
+
+/// `messages` with the longest texts cut down (head and tail kept, the middle
+/// replaced by a notice) until they are estimated at no more than `room`;
+/// a message shorter than the common cut is left as it is.
+fn clip_to(messages: &[Message], room: usize, calibration: f32) -> Vec<Message> {
+    // Each cut message also carries a notice of about 80 characters.
+    let budget = chars_for(room, calibration)
+        .saturating_sub(80 * messages.len())
+        .max(256 * messages.len());
+    let len = |m: &Message| m.approx_tokens() * 4;
+    // The cut every message above it is brought down to: the largest one
+    // under which the messages together fit the budget.
+    let (mut lo, mut hi) = (256, messages.iter().map(len).max().unwrap_or(256).max(256));
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if messages.iter().map(|m| len(m).min(mid)).sum::<usize>() <= budget {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    messages.iter().map(|m| clip_message(m, lo)).collect()
 }
 
 fn clip_text(text: &str, max_chars: usize) -> String {
@@ -218,8 +303,16 @@ pub fn apply_summary(
 ) -> Vec<Message> {
     let system = messages.first().filter(|m| m.role == Role::System);
     let body = &messages[usize::from(system.is_some())..];
-    let (covered, rest) = body.split_at(plan.covered.min(body.len()));
-    let task = task_message(covered);
+    let taken = |i: usize| plan.taken.get(i).copied().unwrap_or(false);
+    let covered: Vec<Message> = (0..body.len())
+        .filter(|&i| taken(i))
+        .map(|i| body[i].clone())
+        .collect();
+    let rest: Vec<Message> = (0..body.len())
+        .filter(|&i| !taken(i))
+        .map(|i| body[i].clone())
+        .collect();
+    let task = task_message(&covered);
 
     let mut note = format!(
         "[The conversation so far was compacted to free context space. These are \
@@ -236,7 +329,7 @@ pub fn apply_summary(
     out.extend(system.cloned());
     out.extend(task.cloned());
     out.push(Message::user(note));
-    out.extend_from_slice(rest);
+    out.extend(rest);
     out
 }
 
@@ -454,5 +547,109 @@ mod tests {
             1
         );
         assert!(second[2].as_text().unwrap().contains("second"));
+    }
+
+    #[test]
+    fn a_first_message_too_large_for_the_fork_is_clipped_alone_and_the_loss_reported() {
+        let mut msgs = vec![
+            Message::system("sys"),
+            Message::user(format!("the task CODEWORD-T {}", "x".repeat(40_000))),
+        ];
+        for i in 0..6 {
+            msgs.push(Message::assistant(format!(
+                "answer {i} {}",
+                "y".repeat(800)
+            )));
+            msgs.push(Message::user(format!("question {i} {}", "z".repeat(800))));
+        }
+        msgs.push(Message::assistant("last"));
+        // The task is ~10k tokens; the fork has room for 4k.
+        let plan = plan_fork(&msgs, 4_000, 1.0);
+        assert!(plan.clipped_tokens > 7_000, "{}", plan.clipped_tokens);
+        assert!(estimate_tokens(&plan.request, 1.0) <= 4_000);
+        // Only the task was clipped; what comes after it is sent as it is,
+        // and the fork reaches past the task, so it shrinks the thread.
+        let sent: Vec<&str> = plan.request.iter().filter_map(Message::as_text).collect();
+        assert!(sent[1].starts_with("the task CODEWORD-T"));
+        assert!(sent[1].contains("cut to fit the context window"));
+        assert!(plan.covered > 2, "covered {}", plan.covered);
+        assert_eq!(sent[2], msgs[2].as_text().unwrap());
+        // The task itself is kept whole in the rebuilt history.
+        let out = apply_summary(&msgs, &plan, "notes", &[]);
+        assert_eq!(out[1].as_text(), msgs[1].as_text());
+    }
+
+    /// system, task, then `n` parallel calls and then their `n` results, as
+    /// a model that answers with a batch of tool calls leaves them.
+    fn burst(n: usize, chars: usize) -> Vec<Message> {
+        let mut m = vec![Message::system("sys"), Message::user("the task")];
+        m.extend((0..n).map(|i| call(&format!("c{i}"))));
+        m.extend((0..n).map(|i| {
+            Message::tool_result(
+                format!("c{i}"),
+                format!("CODEWORD {i} {}", "x".repeat(chars)),
+            )
+        }));
+        m
+    }
+
+    /// Whether every call in `messages` is followed by its result and no
+    /// result is without its call.
+    fn is_valid(messages: &[Message]) -> bool {
+        let mut open = std::collections::HashSet::new();
+        for m in messages {
+            match &m.content {
+                MessageContent::ToolCall { tool_call_id, .. } => {
+                    open.insert(tool_call_id.clone());
+                }
+                MessageContent::ToolResult { tool_call_id, .. } if !open.remove(tool_call_id) => {
+                    return false;
+                }
+                _ => {}
+            }
+        }
+        open.is_empty()
+    }
+
+    #[test]
+    fn a_batch_of_parallel_calls_larger_than_a_fork_is_summarised_part_by_part() {
+        let msgs = burst(20, 4000); // ~1000 tokens a result
+        let plan = plan_fork(&msgs, 6_000, 1.0);
+        assert!(!plan.whole);
+        assert_eq!(
+            plan.clipped_tokens, 0,
+            "nothing is cut: part of the batch fits"
+        );
+        assert!(plan.covered > 2, "covered {}", plan.covered);
+        assert!(estimate_tokens(&plan.request, 1.0) <= 6_000);
+        let sent = &plan.request[..plan.request.len() - 1];
+        assert!(is_valid(sent), "the fork request is a valid conversation");
+        // What stays in the thread is a valid batch of its own, in order.
+        let out = apply_summary(&msgs, &plan, "notes", &[]);
+        assert!(is_valid(&out), "{out:?}");
+        let kept_results = out
+            .iter()
+            .filter(|m| matches!(m.content, MessageContent::ToolResult { .. }))
+            .count();
+        assert_eq!(kept_results, 20 - (plan.covered - 1) / 2);
+    }
+
+    #[test]
+    fn summarising_a_batch_part_by_part_ends_with_every_result_summarised_once() {
+        let mut msgs = burst(12, 4000);
+        let mut rounds = 0;
+        loop {
+            let plan = plan_fork(&msgs, 6_000, 1.0);
+            let notes = format!("notes {rounds}");
+            msgs = apply_summary(&msgs, &plan, &notes, &[]);
+            assert!(is_valid(&msgs));
+            rounds += 1;
+            if plan.whole {
+                break;
+            }
+            assert!(rounds < 20, "no progress");
+        }
+        assert!(rounds >= 2);
+        assert_eq!(msgs.len(), 3, "system, task, notes");
     }
 }

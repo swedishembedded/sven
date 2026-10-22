@@ -517,6 +517,17 @@ pub struct SamplingParams {
     pub seed: Option<u64>,
 }
 
+/// Whether the model may call the tools a request offers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToolChoice {
+    /// The model decides (the providers' default).
+    #[default]
+    Auto,
+    /// The tools are offered - so that the request shares its prompt prefix
+    /// with the requests that use them - but the model must not call one.
+    None,
+}
+
 /// Request sent to a model provider.
 #[derive(Debug, Clone, Default)]
 pub struct CompletionRequest {
@@ -565,6 +576,10 @@ pub struct CompletionRequest {
     /// thinking`). `None` leaves the configured behaviour; providers without
     /// the switch ignore it.
     pub enable_thinking: Option<bool>,
+    /// Whether the model may call the offered tools. Only a provider that
+    /// answers `true` to [`crate::ModelProvider::supports_tool_choice_none`] is sent
+    /// [`ToolChoice::None`].
+    pub tool_choice: ToolChoice,
     /// Ask the provider for the sampled token ids and their log-probabilities.
     ///
     /// Providers that cannot supply them ignore the flag and emit no

@@ -55,6 +55,7 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
         | SessionEvent::ModelWaiting { .. }
         | SessionEvent::ServedModelChanged { .. }
         | SessionEvent::Warning(_)
+        | SessionEvent::ContextBudget(_)
         | SessionEvent::ContextCompacted { .. }
         | SessionEvent::TokenUsage { .. }
         | SessionEvent::ResponseSampled(_)

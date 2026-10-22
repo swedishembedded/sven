@@ -59,6 +59,10 @@ pub fn notice_line(event: &sven_vocab::SessionEvent) -> Option<String> {
             )
         )),
         SessionEvent::Warning(text) => Some(format!("[sven:warn] {text}")),
+        SessionEvent::ContextBudget(budget) => Some(format!(
+            "[sven:info] {}",
+            sven_vocab::context_budget_text(budget)
+        )),
         _ => None,
     }
 }
@@ -167,6 +171,19 @@ mod tests {
         assert_eq!(
             notice_line(&SessionEvent::Warning("no tools".into())).unwrap(),
             "[sven:warn] no tools"
+        );
+        let budget = SessionEvent::ContextBudget(sven_vocab::ContextBudget {
+            window: 16_000,
+            compaction_at: 9_382,
+            output_reserve: 4_000,
+            notes_tokens: 4_000,
+            thinking_cap: None,
+        });
+        assert_eq!(
+            notice_line(&budget).unwrap(),
+            "[sven:info] context budget: window 16000 tokens; compaction at ~9382 tokens of \
+             request; 4000 tokens kept free for the response; notes of at most 4000 tokens; \
+             thinking cap none"
         );
         assert_eq!(notice_line(&SessionEvent::TurnComplete), None);
     }

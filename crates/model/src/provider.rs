@@ -101,6 +101,14 @@ pub trait ModelProvider: Send + Sync {
         None
     }
 
+    /// Whether the provider takes `tool_choice: none`: the tool definitions
+    /// are offered (and so part of the prompt a cache can match) but the
+    /// model must not call one. A provider that does not is never sent
+    /// [`crate::ToolChoice::None`]; callers leave the tools out instead.
+    fn supports_tool_choice_none(&self) -> bool {
+        false
+    }
+
     /// The host (and port) of the server this provider talks to, for naming
     /// it in errors. `None` when the provider has no network endpoint.
     fn endpoint_host(&self) -> Option<String> {

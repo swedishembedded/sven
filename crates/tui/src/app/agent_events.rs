@@ -135,6 +135,9 @@ impl App {
             AgentEvent::Warning(text) => {
                 self.agent.notice = Some(format!("warning: {text}"));
             }
+            AgentEvent::ContextBudget(budget) => {
+                self.agent.notice = Some(sven_vocab::context_budget_text(&budget));
+            }
             AgentEvent::TextDelta(delta) => {
                 tracing::debug!(len = delta.len(), "TUI: TextDelta received");
                 self.agent.model_waiting = None;

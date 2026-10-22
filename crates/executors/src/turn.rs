@@ -150,12 +150,8 @@ pub struct TurnExecutor {
     /// the compaction trigger's estimate, which the chars/4 heuristic alone
     /// gets wrong by tens of percent on code.
     prompt_counts: Arc<limits::PromptCounts>,
-    /// The last "context budget" notice, so that it is repeated only when it
-    /// changes.
-    announced_budget: Option<String>,
-    /// Threads whose turn was already retried after a response spent its
-    /// output budget thinking.
-    exhaustion_retried: std::collections::HashSet<String>,
+    /// What compaction and the retries after it remember between requests.
+    recovery: compaction::Recovery,
     /// The gate's view of the request being built.
     cache_ctx: Option<crate::CacheContext>,
     /// The rebuild decisions made for the request being built, for its record.
@@ -188,8 +184,7 @@ impl TurnExecutor {
             cost: CostPolicy::default(),
             cache_usage: Arc::new(Mutex::new(cost_gate::CacheUsage::default())),
             prompt_counts: Arc::default(),
-            announced_budget: None,
-            exhaustion_retried: std::collections::HashSet::new(),
+            recovery: compaction::Recovery::default(),
             cache_ctx: None,
             rebuilds: Vec::new(),
             instructions: None,
@@ -364,6 +359,7 @@ impl EffectExecutor for TurnExecutor {
         let mut view = planned.view;
         let withheld_tools = planned.offered.withheld;
         let tool_schemas = to_model_schemas(planned.offered.schemas);
+        self.offer_fork_tools(model.as_ref(), &tool_schemas);
         if !planned.activate.is_empty() {
             let _ = sink
                 .emit(Event::ToolsActivated {
@@ -579,8 +575,7 @@ impl EffectExecutor for TurnExecutor {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         *self.cancel_handle.lock().await = Some(cancel_tx);
 
-        let todos = self.pinned_todos();
-        let (result, trimmed) = tokio::select! {
+        let result = tokio::select! {
             biased;
             _ = cancel_rx => {
                 // A caller that stops the run from outside says why; a
@@ -591,13 +586,13 @@ impl EffectExecutor for TurnExecutor {
                     .ok()
                     .and_then(|mut store| store.take_stop_reason())
                     .unwrap_or_else(|| "turn cancelled by user".to_string());
-                (Err(anyhow::Error::new(AbortedError::by_user(reason))), None)
+                Err(anyhow::Error::new(AbortedError::by_user(reason)))
             }
             () = turn_deadline(limits.deadline) => {
                 let secs = limits.deadline.map_or(0, |d| d.as_secs());
-                (Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
+                Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
                     "the turn reached its deadline of {secs} s"
-                )))), None)
+                ))))
             }
             r = overflow::Request {
                 messages,
@@ -607,16 +602,9 @@ impl EffectExecutor for TurnExecutor {
                 response_format,
                 max_output_tokens_override,
             }
-            .stream_retrying_overflow(
-                model.as_ref(),
-                limits,
-                &todos,
-                &tx,
-                obs,
-            ) => r,
+            .stream_retrying_overflow(model.as_ref(), limits, &tx, obs) => r,
         };
 
-        self.keep_overflow_trim(&thread_id, trimmed, obs);
         self.cancel_handle.lock().await.take();
         drop(tx);
         let _ = forwarder.await;
@@ -655,14 +643,16 @@ impl EffectExecutor for TurnExecutor {
             }
         }
 
-        if let Ok(turn) = &result {
-            let output = max_output_tokens_override;
-            if let Some(retry) = self
-                .recover_exhausted_output(&mut req, turn, output, model.as_ref(), recoverable, obs)
-                .await
-            {
-                return self.execute(retry, sink, obs).await;
-            }
+        let sent = compaction::Sent {
+            output_budget: max_output_tokens_override,
+            plain_estimate: estimate,
+            fit: recoverable,
+        };
+        if let Some(retry) = self
+            .recover_turn(&mut req, &result, sent, model.as_ref(), obs)
+            .await
+        {
+            return self.execute(retry, sink, obs).await;
         }
 
         let (text, tool_calls, unparsed, truncated) = match result {

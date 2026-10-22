@@ -135,6 +135,9 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
             *context_window,
         ))),
         AgentEvent::Warning(text) => Some(thought_notice(&format!("warning: {text}"))),
+        AgentEvent::ContextBudget(budget) => {
+            Some(thought_notice(&sven_vocab::context_budget_text(budget)))
+        }
 
         // A request's token ledger rides on a UsageUpdate: the context
         // meter it carries is the request's prompt size against the window,
@@ -307,6 +310,13 @@ mod tests {
     fn server_notices_map_to_thought_chunks() {
         for ev in [
             AgentEvent::Warning("no tools".into()),
+            AgentEvent::ContextBudget(sven_vocab::ContextBudget {
+                window: 8192,
+                compaction_at: 4000,
+                output_reserve: 2048,
+                notes_tokens: 2048,
+                thinking_cap: None,
+            }),
             AgentEvent::ServedModelChanged {
                 model: "m".into(),
                 from: None,

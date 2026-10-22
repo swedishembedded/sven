@@ -91,6 +91,8 @@ pub struct TurnLimits {
     /// Reasoning switched on or off for every request of the turn (see
     /// `CompletionRequest::enable_thinking`).
     pub enable_thinking: Option<bool>,
+    /// Whether the model may call the offered tools.
+    pub tool_choice: sven_model::ToolChoice,
     /// The most wall-clock time one response may take, whole.
     pub deadline: Option<Duration>,
     /// Ask the provider for the sampled token ids and log-probabilities;
@@ -113,6 +115,7 @@ impl From<ThinkingBudget> for TurnLimits {
             max_output_tokens: None,
             sampling: SamplingParams::default(),
             enable_thinking: None,
+            tool_choice: sven_model::ToolChoice::Auto,
             deadline: None,
             want_logprobs: false,
         }
@@ -189,22 +192,18 @@ impl TurnLimits {
 const DEFAULT_THINKING_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// How a runaway reasoning loop is stopped (observed with some local
-/// reasoning models, e.g. Qwen, which repeat themselves instead of converging
-/// to an answer).
+/// reasoning models, e.g. Qwen, which repeat themselves instead of answering).
 ///
-/// Thinking is part of the response, so it is bounded by the same thing as
-/// the rest of it: the output budget of the request (the window minus the
-/// prompt), which the server enforces. There is deliberately no token cap by
-/// default - any default low enough to matter ended honest runs mid-thought.
-/// A loop is caught by what marks it instead:
+/// Thinking is part of the response, so it is bounded like the rest of it: by
+/// the request's output budget (the window less the prompt), which the server
+/// enforces. There is deliberately no token cap by default - any default low
+/// enough to matter ended honest runs mid-thought. A loop is caught by what
+/// marks it:
 ///
-/// - **Repetition**: the reasoning stream repeats a stretch of itself
-///   verbatim (see [`RepetitionWatch`]).
-/// - **Time cap**: wall-clock time spent emitting `ThinkingDelta`s *without*
-///   forward progress. Reset on every `TextDelta` or tool-call delta, so a
-///   legitimately long multi-step turn is never killed.
-/// - **Token cap**, opt-in: total estimated `ThinkingDelta` tokens (chars/4)
-///   for one `stream_turn` call, for a user who wants a hard ceiling.
+/// - **Repetition**: the reasoning repeats a stretch of itself verbatim
+///   (see [`RepetitionWatch`]).
+/// - **Time cap**: time spent thinking with no forward progress.
+/// - **Token cap**, opt-in: estimated thinking tokens (chars/4) per call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ThinkingBudget {
     /// Opt-in cap on estimated thinking tokens. `None` (the default) sets no
@@ -427,6 +426,7 @@ pub async fn stream_turn(
         response_format,
         sampling: limits.sampling,
         enable_thinking: limits.enable_thinking,
+        tool_choice: limits.tool_choice,
         want_logprobs: limits.want_logprobs,
     };
 

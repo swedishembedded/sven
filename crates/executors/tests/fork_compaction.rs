@@ -41,11 +41,16 @@ fn is_fork(req: &CompletionRequest) -> bool {
 /// token per two characters, and rejects a request whose prompt plus the
 /// output it asked for passes the window - the way brain words it.
 fn dense_server(window: u32) -> Reply {
+    dense_server_counting(window, 2.0)
+}
+
+/// As [`dense_server`], with `chars_per_token` characters to a token.
+fn dense_server_counting(window: u32, chars_per_token: f32) -> Reply {
     Box::new(move |req, _| {
         let prompt: usize = req
             .messages
             .iter()
-            .map(|m| m.as_text().map_or(10, str::len) / 2)
+            .map(|m| (m.as_text().map_or(10, str::len) as f32 / chars_per_token) as usize)
             .sum();
         let needs = prompt + req.max_output_tokens_override.unwrap_or(0) as usize;
         if needs > window as usize {
@@ -66,6 +71,7 @@ fn dense_server(window: u32) -> Reply {
 type Reply = Box<dyn Fn(&CompletionRequest, usize) -> Vec<ResponseEvent> + Send + Sync>;
 
 struct Scripted {
+    tool_choice_none: bool,
     window: u32,
     reply: Reply,
     requests: Arc<Mutex<Vec<CompletionRequest>>>,
@@ -78,6 +84,9 @@ impl sven_model::ModelProvider for Scripted {
     }
     fn model_name(&self) -> &str {
         "scripted"
+    }
+    fn supports_tool_choice_none(&self) -> bool {
+        self.tool_choice_none
     }
     fn catalog_context_window(&self) -> Option<u32> {
         Some(self.window)
@@ -111,26 +120,69 @@ struct Run {
 /// Seed `exchanges` question/answer pairs of `chars` characters, then post
 /// one more question and run the turn to its end.
 async fn run(window: u32, exchanges: usize, chars: usize, reply: Reply) -> Run {
+    let mut seed = Vec::new();
+    for i in 0..exchanges {
+        seed.push(Message::user(format!(
+            "question {i} CODEWORD-{i} {}",
+            "q".repeat(chars)
+        )));
+        seed.push(Message::assistant(format!("answer {i}")));
+    }
+    run_seeded(window, seed, reply).await
+}
+
+/// As [`run`], from the conversation `seed`.
+async fn run_seeded(window: u32, seed: Vec<Message>, reply: Reply) -> Run {
+    run_full(window, seed, reply, true).await
+}
+
+/// A tool the session offers; the forks must offer it too, uncallable.
+struct Lookup;
+
+#[async_trait]
+impl sven_tool_registry::Tool for Lookup {
+    fn name(&self) -> &str {
+        "lookup"
+    }
+    fn description(&self) -> &str {
+        "Looks something up."
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn default_policy(&self) -> sven_tool_registry::ApprovalPolicy {
+        sven_tool_registry::ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> sven_hsm::ToolCapability {
+        sven_hsm::ToolCapability::ReadFile
+    }
+    async fn execute(&self, call: &sven_tool_registry::ToolCall) -> sven_tool_registry::ToolOutput {
+        sven_tool_registry::ToolOutput::ok(&call.id, "found")
+    }
+}
+
+/// As [`run_seeded`], with a provider that does or does not take
+/// `tool_choice: none`.
+async fn run_full(window: u32, seed: Vec<Message>, reply: Reply, tool_choice_none: bool) -> Run {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let store = Arc::new(Mutex::new(ThreadStore::new()));
     {
         let mut seeded = store.lock().unwrap();
-        for i in 0..exchanges {
-            seeded.append(
-                CHAT_THREAD,
-                Message::user(format!("question {i} CODEWORD-{i} {}", "q".repeat(chars))),
-            );
-            seeded.append(CHAT_THREAD, Message::assistant(format!("answer {i}")));
+        for m in seed {
+            seeded.append(CHAT_THREAD, m);
         }
     }
+    let mut registry = sven_tool_registry::ToolRegistry::new();
+    registry.register(Lookup);
     let turn = TurnExecutor::new(
         Arc::new(Scripted {
+            tool_choice_none,
             window,
             reply,
             requests: Arc::clone(&requests),
         }),
         None,
-        Arc::new(sven_tool_registry::ToolRegistry::new()),
+        Arc::new(registry),
         Arc::clone(&store),
         Arc::new(Mutex::new(std::collections::HashMap::new())),
         Arc::new(tokio::sync::Mutex::new(None)),
@@ -198,7 +250,14 @@ fn warnings(events: &[UiEvent]) -> Vec<String> {
 fn notes_listing_codewords(req: &CompletionRequest) -> Vec<ResponseEvent> {
     let mut words = Vec::new();
     for m in &req.messages {
-        if let Some(t) = m.as_text() {
+        let body = match &m.content {
+            sven_model::MessageContent::ToolResult {
+                content: sven_model::ToolResultContent::Text(t),
+                ..
+            } => Some(t.as_str()),
+            _ => m.as_text(),
+        };
+        if let Some(t) = body {
             for w in t.split_whitespace().filter(|w| w.starts_with("CODEWORD-")) {
                 if !words.contains(&w.to_string()) {
                     words.push(w.to_string());
@@ -406,4 +465,184 @@ async fn a_fork_the_server_counts_larger_than_estimated_is_planned_again_smaller
         "the second fork covers less"
     );
     assert!(warnings(&r.events).iter().all(|w| !w.contains("WITHOUT")));
+}
+
+#[tokio::test]
+async fn the_budget_is_announced_once_as_its_own_event_not_a_warning() {
+    let r = run(8192, 1, 100, Box::new(|_, _| text("done"))).await;
+    let budgets: Vec<_> = r
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            UiEvent::ContextBudget(b) => Some(*b),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(budgets.len(), 1, "{:?}", r.events);
+    assert_eq!(budgets[0].window, 8192);
+    assert_eq!(budgets[0].notes_tokens, 2048);
+    assert_eq!(budgets[0].thinking_cap, None);
+    assert!(warnings(&r.events)
+        .iter()
+        .all(|w| !w.contains("context budget")));
+}
+
+#[tokio::test]
+async fn a_prompt_the_server_rejects_as_too_long_is_compacted_by_fork_and_every_codeword_kept() {
+    // The estimate puts the history near 2.8k tokens, below the trigger; the
+    // server counts one token a character: 9k, over its 8k window.
+    let r = run(8192, 6, 1500, dense_server_counting(8192, 1.0)).await;
+    assert_eq!(strategies(&r.events), [CompactionStrategyUsed::Fork]);
+    assert!(warnings(&r.events).iter().all(|w| !w.contains("WITHOUT")));
+    assert!(warnings(&r.events).iter().any(|w| w.contains("too long")));
+    let last = r.requests.last().unwrap();
+    assert!(!is_fork(last));
+    let sent: String = last.messages.iter().filter_map(|m| m.as_text()).collect();
+    for i in 0..6 {
+        assert!(sent.contains(&format!("CODEWORD-{i}")), "lost CODEWORD-{i}");
+    }
+    assert_eq!(
+        last.messages
+            .iter()
+            .filter(|m| m.as_text() == Some("one more question"))
+            .count(),
+        1,
+        "the question is asked once"
+    );
+    assert!(r.events.iter().any(|e| matches!(e, UiEvent::TurnComplete)));
+}
+
+#[tokio::test]
+async fn a_first_message_too_large_for_a_fork_is_clipped_for_it_not_dropped() {
+    let mut seed = vec![Message::user(format!(
+        "the task CODEWORD-T {}",
+        "t".repeat(14_000)
+    ))];
+    for i in 0..6 {
+        seed.push(Message::assistant(format!("answer {i} CODEWORD-{i}")));
+        seed.push(Message::user(format!("question {i} {}", "q".repeat(1200))));
+    }
+    seed.push(Message::assistant("so far so good"));
+    // Window 6144: the fork has room for about 3.9k tokens, the task alone is 3.5k.
+    let r = run_seeded(
+        6144,
+        seed,
+        Box::new(|req, _| {
+            if is_fork(req) {
+                notes_listing_codewords(req)
+            } else {
+                text("done")
+            }
+        }),
+    )
+    .await;
+    assert_eq!(strategies(&r.events), [CompactionStrategyUsed::Fork]);
+    assert!(warnings(&r.events).iter().all(|w| !w.contains("WITHOUT")));
+    assert!(
+        warnings(&r.events)
+            .iter()
+            .any(|w| w.contains("tokens of it were cut")),
+        "{:?}",
+        warnings(&r.events)
+    );
+    let last = r.requests.last().unwrap();
+    let sent: String = last.messages.iter().filter_map(|m| m.as_text()).collect();
+    assert!(sent.contains(&"t".repeat(14_000)), "the task is kept whole");
+}
+
+fn fork_replies() -> Reply {
+    Box::new(|req, _| {
+        if is_fork(req) {
+            notes_listing_codewords(req)
+        } else {
+            text("done")
+        }
+    })
+}
+
+fn seed(exchanges: usize) -> Vec<Message> {
+    (0..exchanges)
+        .flat_map(|i| {
+            [
+                Message::user(format!("question {i} CODEWORD-{i} {}", "q".repeat(3000))),
+                Message::assistant(format!("answer {i}")),
+            ]
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_fork_offers_the_sessions_tools_but_forbids_calling_them() {
+    let r = run_full(8192, seed(6), fork_replies(), true).await;
+    let fork = r.requests.iter().find(|q| is_fork(q)).expect("a fork");
+    let main = r
+        .requests
+        .iter()
+        .find(|q| !is_fork(q))
+        .expect("a main request");
+    assert!(!main.tools.is_empty());
+    assert_eq!(
+        fork.tools.iter().map(|t| &t.name).collect::<Vec<_>>(),
+        main.tools.iter().map(|t| &t.name).collect::<Vec<_>>(),
+        "the same definitions in the same order, so the prompt prefix matches"
+    );
+    assert_eq!(fork.tool_choice, sven_model::ToolChoice::None);
+    assert_eq!(main.tool_choice, sven_model::ToolChoice::Auto);
+}
+
+#[tokio::test]
+async fn a_provider_that_cannot_forbid_tool_calls_gets_a_fork_without_tools() {
+    let r = run_full(8192, seed(6), fork_replies(), false).await;
+    let fork = r.requests.iter().find(|q| is_fork(q)).expect("a fork");
+    assert!(fork.tools.is_empty());
+    assert_eq!(strategies(&r.events), [CompactionStrategyUsed::Fork]);
+}
+
+#[tokio::test]
+async fn a_burst_of_parallel_tool_results_larger_than_the_window_is_summarised_part_by_part() {
+    // Twelve calls answered at once, ~800 tokens each: 9.6k tokens in a window
+    // of 8k. The stored form is every call, then every result.
+    let call = |i: usize| Message {
+        role: sven_model::Role::Assistant,
+        content: sven_model::MessageContent::ToolCall {
+            tool_call_id: format!("c{i}"),
+            function: sven_model::FunctionCall {
+                name: "lookup".into(),
+                arguments: "{}".into(),
+            },
+        },
+    };
+    let mut burst = vec![Message::user("read the twelve files")];
+    burst.extend((0..12).map(call));
+    burst.extend((0..12).map(|i| {
+        Message::tool_result(
+            format!("c{i}"),
+            format!("CODEWORD-{i} {}", "r".repeat(3200)),
+        )
+    }));
+    burst.push(Message::assistant("read them all"));
+    let r = run_seeded(8192, burst, fork_replies()).await;
+    assert_eq!(strategies(&r.events), [CompactionStrategyUsed::Fork]);
+    assert!(warnings(&r.events).iter().all(|w| !w.contains("WITHOUT")));
+    assert!(
+        warnings(&r.events).iter().all(|w| !w.contains("were cut")),
+        "no result is cut: part of the batch fits a fork"
+    );
+    let forks: Vec<_> = r.requests.iter().filter(|q| is_fork(q)).collect();
+    assert!(forks.len() >= 2, "{} fork(s)", forks.len());
+    let last = r.requests.last().unwrap();
+    let sent: String = last
+        .messages
+        .iter()
+        .filter_map(|m| match &m.content {
+            sven_model::MessageContent::ToolResult {
+                content: sven_model::ToolResultContent::Text(t),
+                ..
+            } => Some(t.as_str()),
+            _ => m.as_text(),
+        })
+        .collect();
+    for i in 0..12 {
+        assert!(sent.contains(&format!("CODEWORD-{i}")), "lost CODEWORD-{i}");
+    }
 }

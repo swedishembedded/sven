@@ -248,9 +248,8 @@ impl ModelProvider for ConfigBoundedProvider {
     }
 
     /// Forwards to the driver. On a local server, a stale probe is refreshed
-    /// in the background (the turn does not wait for it), and a request the
-    /// server rejects as too large for its context window re-probes before
-    /// the error is returned, so the caller's retry sees the new window.
+    /// in the background, and a request rejected as too large for the window
+    /// re-probes before the error is returned, so the retry sees the new one.
     async fn complete(
         &self,
         req: sven_model::CompletionRequest,
@@ -282,8 +281,7 @@ impl ModelProvider for ConfigBoundedProvider {
         self.inner.list_models().await
     }
 
-    /// Configured cap first, then what the server says it will produce, then
-    /// the catalog's figure.
+    /// Configured cap, else the server's, else the catalog's.
     fn catalog_max_output_tokens(&self) -> Option<u32> {
         self.max_output_tokens
             .or_else(|| self.live.as_ref().and_then(|l| l.max_output_tokens()))
@@ -296,6 +294,10 @@ impl ModelProvider for ConfigBoundedProvider {
 
     fn tool_support(&self) -> Option<bool> {
         self.live.as_ref().and_then(|l| l.tool_support())
+    }
+
+    fn supports_tool_choice_none(&self) -> bool {
+        self.inner.supports_tool_choice_none()
     }
 
     fn catalog_context_window(&self) -> Option<u32> {

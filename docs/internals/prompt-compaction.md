@@ -133,7 +133,10 @@ user message, `COMPACTION_PROMPT`, which asks for everything needed to
 continue: goal and assignment, constraints and rules, decisions and failed
 approaches, files read or changed with key facts, commands and outcomes, exact
 identifiers and values copied verbatim, current state, open questions and next
-steps. No tools are offered. The reply is capped at `reply_cap` tokens and is
+steps. The session's tool definitions are offered too, with `tool_choice:
+none`, so that the fork shares its prompt prefix (and so a provider's prompt
+cache) with the requests that use them; a provider that cannot forbid tool
+calls is sent the fork without tools. The reply is capped at `reply_cap` tokens and is
 requested with reasoning switched off (`enable_thinking: false`), so the
 budget cannot be spent thinking, and the thinking-token cap does not apply to
 it.
@@ -146,7 +149,12 @@ thread that no one has answered yet is not summarised: it stays after the
 notes. The notes are a user message, so the next turn of a tool loop answers
 them by carrying on.
 
-A cut never falls inside a tool call or between a call and its results.
+A cut never falls inside a tool call or between a call and its results. A
+model that answers with a batch of parallel tool calls leaves them stored as
+every call and then every result, so the batch is one unit for a cut; when a
+batch is larger than a fork can hold, the fork takes as many of its calls, with
+their results, as fit, and the rest of the batch stays in the thread as a batch
+of its own.
 
 ### Pieces
 
@@ -156,7 +164,9 @@ and ends at a clean boundary. Its notes replace that prefix, and the loop
 repeats on what is left until the thread is back under the limit (at most six
 rounds). Nothing is dropped. If even the oldest exchange alone does not fit,
 its contents are clipped for the fork and the tokens cut are reported in a
-warning.
+warning. The first message (the task) is clipped on its own, to a third of the
+fork's room: the task is kept whole outside the notes, so a large task does not
+keep the rest of the conversation from being summarised.
 
 ### Retry
 
@@ -172,15 +182,21 @@ the thread). A second exhaustion in a row is not retried.
 
 ### Rejected by the server
 
-If the server still rejects a request as too long for its context
-(`context_length_exceeded`, `n_ctx`, ...), the executor announces it with a
-`Warning`, applies `emergency_compact` to that request and sends it once more.
-A second rejection fails the turn with the server's message.
+If the server rejects a request as too long for its context
+(`context_length_exceeded`, `n_ctx`, ...), the estimate undercounted the
+prompt. When the rejection says the response budget alone overshot (the prompt
+fitting), the budget is lowered by the overshoot and the request is sent again,
+dropping nothing. Otherwise the executor warns and compacts the thread with the
+fork, calibrated by the server's own "needs N tokens" figure (the ratio of what
+it counted to what sven estimated), and asks again once. A fork the server in
+turn rejects is planned again, smaller, from the figure it gives. Only when no
+window is known, so no fork can be planned, does the request fall back to the
+model-free trim.
 
 ### Emergency path
 
 `emergency_compact` is the last resort: it runs only when the model could not
-produce notes at all, or a round of notes was no smaller than what it
+produce notes at all, or a partial round of notes was no smaller than what it
 replaced.
 
 - Drop all non-system messages except the last six (adjusted to a clean
