@@ -426,9 +426,13 @@ impl std::fmt::Display for AgentMode {
 /// Which compaction strategy was executed when context compaction fired.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CompactionStrategyUsed {
-    /// Structured Markdown checkpoint with typed sections.
+    /// The model wrote notes on a fork of the conversation (the real
+    /// messages, then one instruction), and the notes replaced the history.
+    Fork,
+    /// Structured Markdown checkpoint with typed sections. Recorded by older
+    /// versions; sessions that hold it still load.
     Structured,
-    /// Legacy free-form narrative summary.
+    /// Legacy free-form narrative summary. Recorded by older versions.
     Narrative,
     /// Emergency fallback: history was dropped without a model summary call
     /// because the session was too large to fit even a compaction prompt.
@@ -438,6 +442,7 @@ pub enum CompactionStrategyUsed {
 impl std::fmt::Display for CompactionStrategyUsed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            CompactionStrategyUsed::Fork => write!(f, "fork"),
             CompactionStrategyUsed::Structured => write!(f, "structured"),
             CompactionStrategyUsed::Narrative => write!(f, "narrative"),
             CompactionStrategyUsed::Emergency => write!(f, "emergency"),

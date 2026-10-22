@@ -70,7 +70,7 @@ fn compaction_markers(agent: &Agent) -> Vec<serde_json::Value> {
 async fn a_compaction_is_marked_in_the_trajectory_and_the_history_is_the_compacted_one() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut config = Config::default();
-    config.agent.compaction_keep_recent = 2;
+    config.agent.compaction_summary_tokens = 1000;
     let engine = Engine::builder()
         .config(config)
         .model_provider(Arc::new(SmallWindow {
@@ -81,6 +81,8 @@ async fn a_compaction_is_marked_in_the_trajectory_and_the_history_is_the_compact
     let mut agent = engine.agent("agent");
 
     let long_message = "word ".repeat(450);
+    // A short task: it is kept verbatim across a compaction.
+    agent.send("start").await.expect("an outcome");
     let mut sent = 0;
     while compaction_markers(&agent).is_empty() {
         assert!(sent < 12, "no compaction after {sent} long messages");
@@ -103,7 +105,7 @@ async fn a_compaction_is_marked_in_the_trajectory_and_the_history_is_the_compact
     // than the exchanges that produced it.
     let held = agent.state().history().len();
     assert!(
-        held < sent * 2,
+        held < (sent + 1) * 2,
         "history kept {held} messages after {sent} exchanges"
     );
 
@@ -123,7 +125,7 @@ async fn a_compaction_is_marked_in_the_trajectory_and_the_history_is_the_compact
 async fn a_compaction_does_not_drop_the_steps_it_replaced_from_the_trajectory() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut config = Config::default();
-    config.agent.compaction_keep_recent = 2;
+    config.agent.compaction_summary_tokens = 1000;
     let engine = Engine::builder()
         .config(config)
         .model_provider(Arc::new(SmallWindow {

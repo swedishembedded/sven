@@ -264,26 +264,21 @@ agent:
   # summarise progress before the turn ends.  Increase for very long tasks.
   max_tool_rounds: 200
 
-  # Fraction of the input budget at which proactive compaction triggers.
-  # The input budget is context_window − 256 (a minimal output reserve; the
-  # output limit itself is scaled per-request to whatever room the prompt
-  # leaves), so this threshold is applied against the usable input space
-  # rather than the raw model window.
-  # 0.85 means compaction fires when 85% of the input budget is consumed.
+  # Fraction of the input budget at which proactive compaction triggers,
+  # less compaction_output_reserve (below). The input budget is
+  # context_window − 256. Compaction also fires earlier when the request
+  # that asks for the notes would stop fitting the window.
   compaction_threshold: 0.85
 
-  # Number of recent non-system messages to keep verbatim after compaction.
-  # The oldest messages beyond this tail are summarised.
-  # Set to 0 to summarise the full history.
-  compaction_keep_recent: 6
+  # Fraction of the context window kept free for the model's response,
+  # reasoning included. Compaction fires when the request plus this reserve
+  # passes the threshold, so a normal turn always has room to think and
+  # answer.
+  compaction_output_reserve: 0.25
 
-  # Compaction checkpoint format.
-  # "structured": produces a typed Markdown checkpoint with fixed
-  #   sections (Goal & Assignment, Constraints & Repo Rules, Decisions,
-  #   Files Read & Changed, Commands & Outcomes, Current State, Open
-  #   Questions, Next Steps, Session Narrative). Easier to navigate.
-  # "narrative": uses a free-form summarisation prompt.
-  compaction_strategy: structured
+  # Most tokens the notes a compaction asks the model to write may take
+  # (also capped at a quarter of the window).
+  compaction_summary_tokens: 10000
 
   # Maximum tokens allowed for a single tool result before it is
   # deterministically truncated before entering the session.
@@ -302,14 +297,10 @@ agent:
   # whitespace, key order.
   note_repeated_results: true
 
-  # Fraction of the context window reserved for tool schemas, the dynamic
-  # context block (git / CI info), and measurement error in the token
-  # approximation. Reduces the effective compaction trigger threshold.
-  #
-  # Example: compaction_threshold=0.85, compaction_overhead_reserve=0.10
-  # → compaction fires when calibrated session tokens reach 75% of the
-  # input budget (effectively threshold − reserve = 0.75).
-  compaction_overhead_reserve: 0.10
+  # Fraction of the input budget set aside for what the token count does not
+  # see (a dynamic context block, estimation error). The count of everything
+  # already sent is the server's own, so the default is 0.
+  compaction_overhead_reserve: 0.0
 
   # Override the system prompt sent to the model.
   # Leave unset to use the built-in prompt.
@@ -326,7 +317,8 @@ agent:
   # SDLC task), in seconds (0 = no limit).
   child_run_timeout_secs: 3600
 
-  # Thinking-loop watchdog. Defaults: 10% of the context window, 600 seconds.
+  # Thinking-loop watchdog. No token cap by default (opt-in); a repetition
+  # detector and a 600 second no-progress limit stop loops.
   # max_thinking_tokens: 20000
   # thinking_timeout_secs: 600
 
@@ -701,13 +693,13 @@ Controls the agent's autonomy and defaults.
 | `default_mode` | `"agent"` | The mode of an interactive or headless run that gets no `--mode`: `research`, `plan`, `agent`, `chat` or `sdlc` |
 | `max_tool_rounds` | `200` | Maximum autonomous tool-call rounds before stopping |
 | `compaction_threshold` | `0.85` | Fraction of the input budget that triggers compaction |
-| `compaction_keep_recent` | `6` | Recent non-system messages preserved verbatim during compaction |
-| `compaction_strategy` | `"structured"` | Checkpoint format: `"structured"` or `"narrative"` |
+| `compaction_output_reserve` | `0.25` | Fraction of the window kept free for the response (reasoning included) when judging the conversation full |
+| `compaction_summary_tokens` | `10000` | Most tokens the compaction notes may take; also capped at a quarter of the window |
 | `tool_result_token_cap` | `4000` | Token cap per tool result before smart truncation; `0` disables |
 | `note_repeated_results` | `true` | Note on the result of a call that repeats an earlier one with the same result |
-| `compaction_overhead_reserve` | `0.10` | Fraction of context reserved for schemas and dynamic context |
+| `compaction_overhead_reserve` | `0.0` | Fraction of the input budget set aside for what the token count does not see |
 | `system_prompt` | - | System prompt override (leave unset to use built-in) |
-| `max_thinking_tokens` | 10% of context window | Estimated reasoning-token cap per turn; see [Thinking-loop watchdog](#thinking-loop-watchdog) |
+| `max_thinking_tokens` | none | Opt-in cap on estimated reasoning tokens per turn; see [Thinking-loop watchdog](#thinking-loop-watchdog) |
 | `thinking_timeout_secs` | `600` | Seconds a model may reason with no forward progress before the turn aborts |
 | `stream_idle_timeout_secs` | `300`; `1200` for a local server | Seconds a streamed response may stay silent before the connection is declared stale and the turn fails |
 | `first_byte_timeout_secs` | `120`; `600` for a local server | Seconds to wait for the model server's response headers; see [Stalled model servers](#stalled-model-servers) |
@@ -722,35 +714,60 @@ Decreasing it gives you more control by forcing sven to pause and ask.
 
 #### Context budget and compaction
 
-sven uses a multi-layer system to keep sessions within the model's context
-window at all times:
+sven keeps a session inside the model's context window in layers. At the
+start of a session, and whenever it changes, it prints one line saying where
+it stands, so that no compaction or cut-off comes as a surprise:
 
-**Budget gate** - Before every model submission and after every batch of tool
-results, sven checks an effective token count that accounts for:
-- Calibrated message tokens (corrected from API-reported counts over time)
-- Tool schema overhead (schemas sent with every request but not stored in history)
-- Dynamic context (git branch, CI info) injected per-request
-- A configurable overhead reserve (`compaction_overhead_reserve`)
+```
+context budget: window 98304 tokens; compaction at ~58764 tokens of request; 24576 tokens kept free for the response; notes of at most 10000 tokens; thinking cap none
+```
 
-The effective threshold is `compaction_threshold − compaction_overhead_reserve`.
-For example, with defaults (0.85 − 0.10 = 0.75), compaction fires when
-calibrated session tokens reach 75% of the input budget
-(`context_window − 256`; the fixed 256-token minimum output reserve — the
-actual per-request output limit is scaled separately to the room the prompt
-leaves).
+**When compaction fires** - Before every model request, including each round
+of a tool loop after the tool results are appended. The size of the request
+is the server's own token count of the previous request plus an estimate of
+what was appended since (a chars/4 estimate with 10% headroom is used only
+before the first count). Compaction fires at the earlier of:
 
-**Rolling compaction** - When the budget gate fires:
-1. The oldest `(total - compaction_keep_recent)` non-system messages are
-   serialised and compacted by the model.
-2. The system prompt is re-issued so the model has full instructions.
-3. The `compaction_keep_recent` most recent messages are restored verbatim.
+- `compaction_threshold − compaction_overhead_reserve` of the input budget
+  (`context_window − 256`), less the output reserve
+  (`compaction_output_reserve` of the window), so that a normal turn always
+  has room to think and answer;
+- the last size at which the request asking for the notes still fits: the
+  conversation, the instruction, `compaction_summary_tokens` (at most a
+  quarter of the window) for the reply and a small template margin.
 
-With `compaction_strategy: structured` (default), the model produces a typed
-Markdown checkpoint with dedicated sections for the goal, constraints and repo
-rules, decisions, files read and changed, commands and outcomes (failed
-approaches included), current state, open questions, next steps, and a Session
-Narrative.
-Set `compaction_strategy: narrative` to use the original free-form summary.
+The window is the one the server reports (a live probe), or `max_tokens`
+when you set it.
+
+**What compaction does** - It forks the conversation. The model gets the
+real messages (same system prompt, same tool calls and results, no
+serialisation into text) followed by one instruction asking for everything
+needed to continue: the goal, the constraints, decisions and failed
+approaches, files and commands with their key facts, exact identifiers and
+values, the current state, open questions and next steps. The reply, limited
+to `compaction_summary_tokens`, replaces the history as one message. The
+original task message and the todo list are kept verbatim. A question still
+waiting for its answer stays after the notes. Token accounting starts over
+from there. A tool call is never separated from its result. The model
+writes the notes with reasoning switched off, so the reply budget cannot be
+spent thinking; an empty or failed reply is retried once with the
+provider's default.
+
+A conversation too large for one fork is summarised in pieces: the largest
+oldest part that fits first, then the rest. Nothing is dropped.
+
+**Emergency fallback** - Only when the model cannot produce notes at all
+(or a round of notes is no smaller than what it replaced), the oldest
+messages are dropped without a model call, keeping the task, the todo list
+and the six most recent messages. This is reported as a warning with the
+number of tokens dropped, and recorded as an `emergency` compaction. If a
+single exchange alone is larger than a fork can hold, it is clipped for the
+summary and the tokens cut are reported.
+
+**Output exhaustion** - If a response spends its whole output budget
+thinking and produces no answer, sven reports the tokens used, compacts the
+conversation, and asks again once. The reasoning of the failed attempt is not
+resent.
 
 **Smart tool-result truncation** - Before any tool result enters the session,
 `tool_result_token_cap` is applied. Truncation is content-aware:
@@ -758,19 +775,9 @@ shell output keeps the head and tail; grep output keeps leading matches;
 file content keeps head and tail. A notice is always appended so the model
 can retrieve more with a targeted follow-up call.
 
-**Emergency fallback** - If the session is already too large to fit even the
-compaction prompt, the oldest messages are dropped deterministically (no model
-call needed). The model is notified via a canned notice and the session
-continues without crashing.
-
-**Calibration** - After every model turn, sven updates a running calibration
-factor from the API-reported input token count. This exponential moving
-average corrects the chars/4 approximation over time, so token estimates
-improve automatically within a session.
-
-Setting `compaction_keep_recent: 0` disables the rolling strategy and
-summarises the full history, which produces the smallest sessions at the cost
-of losing immediate context.
+The keys `compaction_keep_recent` and `compaction_strategy` no longer do
+anything (a compaction summarises the whole conversation, with one prompt).
+They are still accepted and reported at start-up as ignored.
 
 ##### CI / long-running workflow tuning
 
@@ -779,50 +786,51 @@ For CI pipelines with many tool calls and large file outputs:
 ```yaml
 agent:
   compaction_threshold: 0.80
-  compaction_overhead_reserve: 0.12
   tool_result_token_cap: 2000   # tighter cap for CI workloads
-  compaction_strategy: structured
 ```
 
-For interactive sessions where you want to preserve more recent context:
+For interactive sessions where you want more detail kept in the notes:
 
 ```yaml
 agent:
-  compaction_threshold: 0.85
-  compaction_keep_recent: 10
+  compaction_summary_tokens: 16000
   tool_result_token_cap: 6000
 ```
 
 #### Thinking-loop watchdog
 
 Some models (local reasoning models such as Qwen are the common case) can
-loop indefinitely in their reasoning without ever converging to an answer.
-`stream_turn` guards against this with two independent caps, checked on every
-`ThinkingDelta` - whichever fires first aborts the turn:
+loop in their reasoning without ever converging to an answer. Thinking is part
+of the response, so it is bounded like the rest of it: by the request's
+output budget, the window less the prompt, which the server enforces. A
+model that runs a local server may use all of it. There is no default token
+cap: any default low enough to matter ended honest runs mid-thought (a tenth
+of a 16k window did). Compaction, with its output reserve, keeps the window
+in bounds instead. A loop is stopped by:
 
-- **`max_thinking_tokens`** - a per-turn ceiling on estimated reasoning
-  tokens (chars/4). Not reset by progress; it's a total budget for the turn.
-  Defaults to 10% of the model's resolved context window, or no cap at all
-  when the window isn't known.
+- **a repetition detector** on the reasoning stream: when the most recent
+  400 characters already occur three times in the last 16 000, the turn is
+  aborted and the error says how many thinking tokens were spent;
 - **`thinking_timeout_secs`** - wall-clock time spent reasoning with *no*
   forward progress (a real text or tool-call delta). Reset on every sign of
-  progress, so a legitimately long multi-step turn is never killed - only a
-  stalled loop is. Defaults to `600`.
+  progress. Defaults to `600`.
+
+and, if you want a hard ceiling, the opt-in **`max_thinking_tokens`**, an
+estimate (chars/4) of reasoning tokens per turn.
 
 A watchdog abort ends the turn like pressing `Esc` mid-generation (the partial
 text streamed so far is kept, marked `[aborted: ...]`) but, because nobody asked
-for it, it is also reported as an error naming the limit and the setting that
-raises it: a headless run exits 1 with outcome `agent_error`, and an embedding
-application's call fails with that message. The summarisation call of a
-compaction is not subject to the token cap.
+for it, it is also reported as an error naming the cause: a headless run exits
+1 with outcome `agent_error`, and an embedding application's call fails with
+that message. The notes of a compaction are not subject to the token cap.
 
 ```yaml
 agent:
-  max_thinking_tokens: 20000
+  max_thinking_tokens: 20000   # optional
   thinking_timeout_secs: 300
 ```
 
-Both caps can also be adjusted live in a running session with `/think-limit`
+Both limits can also be adjusted live in a running session with `/think-limit`
 (no args to show the current values).
 
 #### Stalled model servers

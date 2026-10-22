@@ -43,9 +43,14 @@ impl sven_model::ModelProvider for Reasoner {
     }
     async fn complete(&self, _req: sven_model::CompletionRequest) -> anyhow::Result<Stream> {
         use futures::StreamExt;
-        let thinking = Ok(ResponseEvent::ThinkingDelta(
-            "t".repeat(self.thinking_chars),
-        ));
+        // Words that never repeat a stretch: honest reasoning, not a loop.
+        let mut text = String::new();
+        let mut word = 0u32;
+        while text.len() < self.thinking_chars {
+            text.push_str(&format!("w{word:x} "));
+            word += 1;
+        }
+        let thinking = Ok(ResponseEvent::ThinkingDelta(text));
         if self.hang {
             return Ok(futures::stream::iter([thinking])
                 .chain(futures::stream::pending())
@@ -208,8 +213,8 @@ async fn the_thinking_cap_does_not_abort_a_summarisation_call() {
         Some(CompactionConfig {
             threshold: 0.005,
             overhead_reserve: 0.0,
-            keep_recent: 2,
-            strategy: sven_turn::CompactionStrategy::Structured,
+            output_reserve: 0.0,
+            summary_tokens: 10_000,
         }),
     );
     let mut rx = h.rt.subscribe_observations();
@@ -222,7 +227,7 @@ async fn the_thinking_cap_does_not_abort_a_summarisation_call() {
     });
     assert_eq!(
         strategy,
-        Some(CompactionStrategyUsed::Structured),
+        Some(CompactionStrategyUsed::Fork),
         "the summary was written, not replaced by the emergency fallback: {events:?}"
     );
 }

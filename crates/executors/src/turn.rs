@@ -64,8 +64,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Consecutive empty turns (no text, no tool calls) on one thread before the
-/// turn is failed outright instead of nudged again. See the module docs.
+/// Consecutive empty turns on one thread before the turn is failed outright
+/// instead of nudged again. See the module docs.
 const EMPTY_TURN_FAILURE_THRESHOLD: u32 = 2;
 
 use async_trait::async_trait;
@@ -77,7 +77,6 @@ use sven_tool_registry::ToolRegistry;
 use sven_turn::{to_model_schemas, AbortedError, ModelResolver};
 use sven_vocab::TurnRequest;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
-
 mod compaction;
 mod context_view;
 mod cost_gate;
@@ -88,7 +87,6 @@ mod limits;
 mod overflow;
 mod replies;
 
-use limits::record_estimate_scale;
 pub use limits::CompactionConfig;
 
 use crate::chunks::ContextAssembler;
@@ -148,12 +146,16 @@ pub struct TurnExecutor {
     cost: CostPolicy,
     /// What the previous requests left in that cache.
     cache_usage: Arc<Mutex<cost_gate::CacheUsage>>,
-    /// How many tokens the server counted per token this executor estimated
-    /// for the last request that reported usage (1.0 until one has). The
-    /// chars/4 estimate undercounts code by tens of percent, so the
-    /// compaction trigger scales its estimate by this to act on the server's
-    /// count instead of waiting for the server to reject an oversized request.
-    estimate_scale: Arc<Mutex<f32>>,
+    /// What the server counted for each thread's last request: the base of
+    /// the compaction trigger's estimate, which the chars/4 heuristic alone
+    /// gets wrong by tens of percent on code.
+    prompt_counts: Arc<limits::PromptCounts>,
+    /// The last "context budget" notice, so that it is repeated only when it
+    /// changes.
+    announced_budget: Option<String>,
+    /// Threads whose turn was already retried after a response spent its
+    /// output budget thinking.
+    exhaustion_retried: std::collections::HashSet<String>,
     /// The gate's view of the request being built.
     cache_ctx: Option<crate::CacheContext>,
     /// The rebuild decisions made for the request being built, for its record.
@@ -185,7 +187,9 @@ impl TurnExecutor {
             context: None,
             cost: CostPolicy::default(),
             cache_usage: Arc::new(Mutex::new(cost_gate::CacheUsage::default())),
-            estimate_scale: Arc::new(Mutex::new(1.0)),
+            prompt_counts: Arc::default(),
+            announced_budget: None,
+            exhaustion_retried: std::collections::HashSet::new(),
             cache_ctx: None,
             rebuilds: Vec::new(),
             instructions: None,
@@ -392,56 +396,42 @@ impl EffectExecutor for TurnExecutor {
         );
 
         // Fail fast when the request is too large for the model's known
-        // effective window, instead of building it, sending it, and letting
-        // the server reject it after already paying the connection/admission
-        // cost (or - before the fail-loudly SSE fix - silently swallowing
-        // the rejection into an empty "successful" completion). `model` here
-        // is whatever `from_config_probed` resolved at session build time,
-        // so `catalog_context_window()`/`catalog_max_output_tokens()` already
-        // reflect the live-probed, clamped values when a probe succeeded.
-        // No gate at all (not even a wrong one) when the window isn't known -
-        // see `sven_model::budget::effective_input_budget`'s doc comment.
+        // effective window (the live-probed, clamped one when a probe
+        // succeeded), instead of letting the server reject it. No gate at all
+        // when the window isn't known - see
+        // `sven_model::budget::effective_input_budget`'s doc comment.
         let context_window = model.catalog_context_window();
         let limits = self.limits.with_turn_decoding(&req.decoding);
-        let configured_max_output = limits.cap_output(model.catalog_max_output_tokens());
+        let configured_max_output =
+            limits.cap_output(limits::response_cap(model.as_ref(), context_window));
+        self.announce_budget(context_window, configured_max_output, obs);
         let mut estimate = sven_model::budget::estimate_request_tokens(
             view.as_ref().map_or(&messages, |v| &v.0),
             &tool_schemas,
             req.dynamic_suffix.as_deref(),
         );
 
-        // Proactive compaction: fires *before* the hard gate below, while
-        // there's still enough room to ask the model for a summary. Only
-        // possible when the window is known (same precondition as the gate
-        // itself - see `effective_input_budget`'s doc comment).
-        if let Some(budget) =
-            sven_model::budget::effective_input_budget(context_window, configured_max_output)
-        {
-            let scale = *self
-                .estimate_scale
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if budget > 0
-                && (estimate as f32 * scale / budget as f32)
-                    >= self.compaction.effective_threshold()
-            {
-                messages = self
-                    .compact_thread(
-                        &thread_id,
-                        messages,
-                        model.as_ref(),
-                        context_window,
-                        configured_max_output,
-                        obs,
-                    )
-                    .await;
-                view = self.reassemble_view(&messages, expandable);
-                estimate = sven_model::budget::estimate_request_tokens(
-                    view.as_ref().map_or(&messages, |v| &v.0),
-                    &tool_schemas,
-                    req.dynamic_suffix.as_deref(),
-                );
-            }
+        // Proactive compaction, before the hard gate below and before every
+        // request, so also between the rounds of a tool loop.
+        let due = self.compaction_due(
+            &thread_id,
+            view.as_ref().map_or(&messages, |v| &v.0),
+            estimate,
+            context_window,
+            configured_max_output,
+        );
+        let recoverable =
+            due.or_else(|| self.compaction_fit(context_window, configured_max_output));
+        if let Some(fit) = due {
+            messages = self
+                .compact_thread(&thread_id, messages, model.as_ref(), fit, obs)
+                .await;
+            view = self.reassemble_view(&messages, expandable);
+            estimate = sven_model::budget::estimate_request_tokens(
+                view.as_ref().map_or(&messages, |v| &v.0),
+                &tool_schemas,
+                req.dynamic_suffix.as_deref(),
+            );
         }
         let (messages, context_view) = match view {
             Some((assembled, record)) => {
@@ -470,15 +460,13 @@ impl EffectExecutor for TurnExecutor {
                 return;
             }
         }
-        // Scale the requested output-token limit down to whatever room this
-        // specific prompt actually leaves (never up past the configured cap,
-        // and never touched at all when no cap is configured or the window
-        // isn't known - see the doc comment on `dynamic_output_budget`). A
-        // fixed reservation of the full configured cap on every request is
-        // what made a 2-token "hi" against a small-context model with a
-        // capacity-sized output cap impossible to send at all.
+        // The response may ask for what this prompt actually leaves of the
+        // window, sized from the server's count where there is one.
+        let sizing = self
+            .prompt_counts
+            .sizing_estimate(&thread_id, &messages, estimate);
         let max_output_tokens_override =
-            limits.output_budget(context_window, configured_max_output, estimate);
+            limits.output_budget(context_window, configured_max_output, sizing);
 
         // Build optional structured-output constraint.
         let response_format = if req.schema.is_null() {
@@ -511,8 +499,9 @@ impl EffectExecutor for TurnExecutor {
         let catalog_max_output = configured_max_output.unwrap_or(0);
         let decisions = self.decisions.clone();
         let cache_usage = Arc::clone(&self.cache_usage);
-        let estimate_scale = Arc::clone(&self.estimate_scale);
-        let estimated_prompt_tokens = estimate;
+        let prompt_counts = Arc::clone(&self.prompt_counts);
+        let counted_thread = thread_id.clone();
+        let counted_messages = limits::SentMessages::of(&messages);
         let rebuilds = std::mem::take(&mut self.rebuilds);
         // Teed copy of the assistant text streamed so far. `stream_turn`'s
         // own return value is unreachable on cancellation (its future is
@@ -547,9 +536,9 @@ impl EffectExecutor for TurnExecutor {
                     ..
                 } = &mut ev
                 {
-                    record_estimate_scale(
-                        &estimate_scale,
-                        estimated_prompt_tokens,
+                    prompt_counts.record(
+                        &counted_thread,
+                        counted_messages,
                         u64::from(*input) + u64::from(*cache_read) + u64::from(*cache_write),
                     );
                     if let Some(breakdown) = breakdown {
@@ -621,7 +610,6 @@ impl EffectExecutor for TurnExecutor {
             .stream_retrying_overflow(
                 model.as_ref(),
                 limits,
-                self.compaction.keep_recent,
                 &todos,
                 &tx,
                 obs,
@@ -664,6 +652,16 @@ impl EffectExecutor for TurnExecutor {
                 });
                 let _ = sink.emit(Event::UserCancelled).await;
                 return;
+            }
+        }
+
+        if let Ok(turn) = &result {
+            let output = max_output_tokens_override;
+            if let Some(retry) = self
+                .recover_exhausted_output(&mut req, turn, output, model.as_ref(), recoverable, obs)
+                .await
+            {
+                return self.execute(retry, sink, obs).await;
             }
         }
 

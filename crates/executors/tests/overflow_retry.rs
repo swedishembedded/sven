@@ -170,3 +170,97 @@ async fn the_trimmed_history_becomes_the_threads_so_the_next_request_fits() {
     );
     assert!(compactions[0].tokens_after < compactions[0].tokens_before);
 }
+
+/// Rejects a request whose response budget, added to its prompt, passes the
+/// capacity: the prompt itself is fine.
+struct CapacityServer {
+    outputs: Arc<Mutex<Vec<Option<u32>>>>,
+    messages: Arc<Mutex<Vec<usize>>>,
+}
+
+#[async_trait]
+impl sven_model::ModelProvider for CapacityServer {
+    fn name(&self) -> &str {
+        "capacity"
+    }
+    fn model_name(&self) -> &str {
+        "capacity"
+    }
+    fn catalog_context_window(&self) -> Option<u32> {
+        Some(8192)
+    }
+    fn catalog_max_output_tokens(&self) -> Option<u32> {
+        Some(8192)
+    }
+    async fn complete(&self, req: sven_model::CompletionRequest) -> anyhow::Result<Stream> {
+        let mut outputs = self.outputs.lock().unwrap();
+        outputs.push(req.max_output_tokens_override);
+        self.messages.lock().unwrap().push(req.messages.len());
+        // The prompt and the response budget together pass the capacity by 2100.
+        if outputs.len() == 1 {
+            anyhow::bail!(
+                "brain error 400 Bad Request: {{\"error\":{{\"code\":\"context_length_exceeded\",\
+                 \"message\":\"the request needs {} tokens but this model's serving capacity \
+                 is 8192 tokens\"}}}}",
+                8192 + 2100
+            );
+        }
+        let events: Vec<anyhow::Result<ResponseEvent>> = vec![
+            Ok(ResponseEvent::TextDelta("ok".into())),
+            Ok(ResponseEvent::Done),
+        ];
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
+}
+
+#[tokio::test]
+async fn a_response_budget_the_server_says_overshoots_is_lowered_without_dropping_history() {
+    let outputs = Arc::new(Mutex::new(Vec::new()));
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let store = Arc::new(Mutex::new(ThreadStore::new()));
+    let turn = TurnExecutor::new(
+        Arc::new(CapacityServer {
+            outputs: Arc::clone(&outputs),
+            messages: Arc::clone(&messages),
+        }),
+        None,
+        Arc::new(sven_tool_registry::ToolRegistry::new()),
+        store,
+        Arc::new(Mutex::new(std::collections::HashMap::new())),
+        Arc::new(tokio::sync::Mutex::new(None)),
+    );
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(ReactiveAgentMachine::new())) as Box<dyn ErasedMachine>,
+        Context::new(),
+        PermissionPolicy::builder().build(),
+        CompositeExecutorBuilder::default().with_turn(turn).build(),
+        64,
+    );
+    let mut rx = rt.subscribe_observations();
+    rt.post(Event::user_message("hello")).await;
+    let mut events = Vec::new();
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        tokio::select! {
+            Ok(ev) = rx.recv() => {
+                let end = matches!(ev, UiEvent::TurnComplete | UiEvent::Aborted { .. });
+                events.push(ev);
+                if end { break; }
+            }
+            _ = tokio::time::sleep(remaining) => break,
+        }
+    }
+    rt.abort();
+    let outputs = outputs.lock().unwrap().clone();
+    let messages = messages.lock().unwrap().clone();
+    assert_eq!(outputs.len(), 2, "{outputs:?}");
+    assert!(
+        outputs[1] < outputs[0],
+        "the response budget was lowered: {outputs:?}"
+    );
+    assert_eq!(messages[0], messages[1], "no history was dropped");
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, UiEvent::TextDelta(t) if t == "ok")));
+}

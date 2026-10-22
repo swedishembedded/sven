@@ -660,8 +660,8 @@ async fn long_thread_triggers_compaction_before_the_next_turn() {
         // sven_model::budget's own unit tests.
         threshold: 0.02,
         overhead_reserve: 0.0,
-        keep_recent: 2,
-        strategy: sven_turn::CompactionStrategy::Structured,
+        output_reserve: 0.0,
+        summary_tokens: 10_000,
     });
     let executor = CompositeExecutorBuilder::default()
         .with_turn(turn_exec)
@@ -725,7 +725,7 @@ async fn long_thread_triggers_compaction_before_the_next_turn() {
         tokens_after < tokens_before,
         "compaction must actually shrink the thread"
     );
-    assert_eq!(strategy, CompactionStrategyUsed::Structured);
+    assert_eq!(strategy, CompactionStrategyUsed::Fork);
 
     // Exactly two model calls: one to summarize, one for the real turn.
     assert_eq!(
@@ -833,8 +833,8 @@ async fn compaction_falls_back_to_emergency_when_the_summarization_call_fails() 
     .with_compaction_config(CompactionConfig {
         threshold: 0.02,
         overhead_reserve: 0.0,
-        keep_recent: 2,
-        strategy: sven_turn::CompactionStrategy::Structured,
+        output_reserve: 0.0,
+        summary_tokens: 10_000,
     });
     let executor = CompositeExecutorBuilder::default()
         .with_turn(turn_exec)

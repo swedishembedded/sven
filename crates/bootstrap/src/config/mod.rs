@@ -268,11 +268,11 @@ mod tests {
     fn a_section_the_file_leaves_partial_does_not_discard_the_rest() {
         let config = Config::from_document(&document(
             "model: {provider: anthropic, name: claude-opus-4-6}\n\
-             agent: {compaction_keep_recent: 3}\n\
+             agent: {compaction_summary_tokens: 3000}\n\
              tools: {timeout_secs: 99}\n",
         ));
         assert_eq!(config.model.provider, "anthropic");
-        assert_eq!(config.agent.compaction_keep_recent, 3);
+        assert_eq!(config.agent.compaction_summary_tokens, 3000);
         assert_eq!(config.agent.max_tool_rounds, 200);
         assert_eq!(config.tools.timeout_secs, 99);
     }

@@ -91,8 +91,8 @@ async fn thread_after_a_compaction(fails: bool) -> Vec<String> {
     .with_compaction_config(CompactionConfig {
         threshold: 0.005,
         overhead_reserve: 0.0,
-        keep_recent: 2,
-        strategy: sven_turn::CompactionStrategy::Structured,
+        output_reserve: 0.0,
+        summary_tokens: 10_000,
     });
     let rt = ErasedRuntime::spawn(
         Box::new(Hsm::new(ReactiveAgentMachine::new())) as Box<dyn ErasedMachine>,

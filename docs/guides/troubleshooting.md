@@ -164,17 +164,20 @@ operation, start with `--approval manual`. See
 
 ### sven seems to "forget" earlier parts of the conversation
 
-When the context window fills up, sven compacts older messages into a structured
-checkpoint summary. The raw text is no longer directly visible to the model, but
-the checkpoint captures the key decisions, files, constraints, and narrative.
-This is expected behaviour.
+When the context window fills up, sven asks the model to write notes on the
+whole conversation and replaces the history with them (the task and the todo
+list are kept verbatim). The raw text is no longer directly visible to the
+model, but the notes carry the decisions, files, values and next steps. This is
+expected behaviour. At the start of a session sven prints a `context budget:`
+line saying at what size it compacts.
 
-To preserve more recent messages before compaction triggers, adjust the settings:
+To compact later, or to allow longer notes, adjust the settings:
 
 ```yaml
 agent:
-  compaction_threshold: 0.90    # compact only when 90% of the input budget is used
-  compaction_keep_recent: 10    # keep 10 recent messages verbatim (default: 6)
+  compaction_threshold: 0.90        # compact when 90% of the input budget is used
+  compaction_output_reserve: 0.15   # keep less of the window free for the response
+  compaction_summary_tokens: 16000  # allow longer notes (default: 10000)
 ```
 
 If compaction triggers very frequently due to large tool outputs, reduce the
@@ -186,9 +189,10 @@ agent:
 ```
 
 To see how full the context is at any time, check the status bar's `ctx` gauge.
-When emergency compaction fires (session was too large to compact normally),
-the TUI shows `⚠ Context emergency-compacted` and the CI log shows
-`[sven:context:compacted:emergency]`.
+When emergency compaction fires (the model could not write notes), the TUI
+shows `⚠ Context emergency-compacted`, the CI log shows
+`[sven:compact] strategy=emergency` and a warning says how many tokens were
+dropped without a summary.
 
 ### The agent stops calling tools and wraps up early
 

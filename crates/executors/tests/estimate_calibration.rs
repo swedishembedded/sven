@@ -122,8 +122,8 @@ async fn compaction_fires_on_the_server_count_when_the_estimate_is_far_below_it(
         // count of the first request is about 85% of it.
         threshold: 0.5,
         overhead_reserve: 0.0,
-        keep_recent: 2,
-        strategy: sven_turn::CompactionStrategy::Structured,
+        output_reserve: 0.0,
+        summary_tokens: 10_000,
     });
     let rt = ErasedRuntime::spawn(
         Box::new(Hsm::new(ReactiveAgentMachine::new())) as Box<dyn ErasedMachine>,

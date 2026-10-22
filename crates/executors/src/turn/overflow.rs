@@ -13,6 +13,28 @@ use sven_model::{Message, ModelProvider, ResponseFormat, Role, ToolSchema};
 use sven_turn::{stream_turn, StreamedTurn, TurnLimits};
 use tokio::sync::mpsc;
 
+/// How many tokens over its capacity a server says a request was, from a
+/// rejection like "the request needs 99293 tokens but this model's serving
+/// capacity is 98304 tokens". The server counts the prompt exactly and adds
+/// the output it was asked for, so this is the measure of how far the
+/// estimate of the prompt was off when the output budget was sized from it.
+fn overshoot_tokens(error: &str) -> Option<u32> {
+    needed_tokens(error)?.checked_sub(number_after(error, "capacity is ")?)
+}
+
+/// How many tokens a server says a rejected request needed (the prompt plus
+/// the output it was asked for), from a message like "the request needs 99293
+/// tokens but ...".
+pub(super) fn needed_tokens(error: &str) -> Option<u32> {
+    number_after(error, "needs ")
+}
+
+fn number_after(text: &str, key: &str) -> Option<u32> {
+    let rest = &text[text.find(key)? + key.len()..];
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
 /// One model request, as [`stream_turn`] takes it.
 pub(super) struct Request {
     pub(super) messages: Vec<Message>,
@@ -56,7 +78,6 @@ impl Request {
         self,
         model: &dyn ModelProvider,
         limits: TurnLimits,
-        keep_recent: usize,
         todos: &[sven_vocab::TodoItem],
         tx: &mpsc::Sender<UiEvent>,
         obs: &ObservationSink,
@@ -71,6 +92,27 @@ impl Request {
         };
         match self.stream(model, limits, tx).await {
             Err(e) if sven_model::budget::is_context_overflow(&format!("{e:#}")) => {
+                // The prompt was larger than estimated, but the history may
+                // be fine: when the response budget was sized as all the room
+                // the estimate left, lower it by the overshoot and ask again
+                // without dropping anything.
+                let lowered = overshoot_tokens(&format!("{e:#}"))
+                    .zip(again.max_output_tokens_override)
+                    .and_then(|(over, out)| out.checked_sub(over + 256))
+                    .filter(|&out| out >= 1024);
+                if let Some(out) = lowered {
+                    obs.emit(UiEvent::Warning(format!(
+                        "the server counted the prompt larger than estimated; lowering the \
+                         response budget to {out} tokens and retrying once"
+                    )));
+                    let result = Request {
+                        max_output_tokens_override: Some(out),
+                        ..again
+                    }
+                    .stream(model, limits, tx)
+                    .await;
+                    return (result, None);
+                }
                 obs.emit(UiEvent::Warning(
                     "the server rejected the request as too long for its context; \
                      dropping older history and retrying once"
@@ -78,7 +120,12 @@ impl Request {
                 ));
                 let mut shrunk = again.messages;
                 let system = shrunk.first().filter(|m| m.role == Role::System).cloned();
-                sven_turn::emergency_compact(&mut shrunk, system, keep_recent, todos);
+                sven_turn::emergency_compact(
+                    &mut shrunk,
+                    system,
+                    super::compaction::EMERGENCY_KEEP,
+                    todos,
+                );
                 let result = Request {
                     messages: shrunk.clone(),
                     ..again
@@ -89,5 +136,22 @@ impl Request {
             }
             other => (other, None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overshoot_tokens;
+
+    #[test]
+    fn the_overshoot_is_read_from_the_servers_own_count() {
+        let e = "brain error 400: the request needs 99293 tokens but this model's serving \
+                 capacity is 98304 tokens; reduce the prompt or lower max_tokens";
+        assert_eq!(overshoot_tokens(e), Some(989));
+        assert_eq!(overshoot_tokens("context_length_exceeded"), None);
+        assert_eq!(
+            overshoot_tokens("needs 10 tokens, capacity is 20 tokens"),
+            None
+        );
     }
 }

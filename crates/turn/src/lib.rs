@@ -18,11 +18,13 @@ pub mod assembly;
 mod assembly_focus;
 mod assembly_supersede;
 mod compact;
+mod fork;
 pub mod instruction_index;
 pub mod instructions;
 pub mod ledger;
 mod ledger_recorder;
 mod oneshot;
+mod repetition;
 mod tool_slots;
 
 pub mod prompts;
@@ -32,9 +34,9 @@ mod stall;
 pub mod stream_turn;
 mod turn_decoding;
 
-pub use compact::{
-    compact_session, compact_session_with_strategy, emergency_compact, finish_compaction,
-    prepare_compaction, smart_truncate, CompactionPlan, CompactionStrategy,
+pub use compact::{emergency_compact, smart_truncate, todo_block};
+pub use fork::{
+    apply_summary, estimate_tokens, plan_fork, ForkPlan, COMPACTION_PROMPT, FORK_MARGIN_TOKENS,
 };
 pub use oneshot::complete_text;
 pub use prompts::{system_prompt, CollabEvent};

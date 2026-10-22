@@ -265,12 +265,13 @@ conversation context. Language models have a finite context window, and when
 the conversation grows long enough, older messages must be summarised to make
 room for new ones.
 
-sven tracks context usage and shows it in the status bar. Before each turn, when
-usage reaches `agent.compaction_threshold` of the usable input budget (0.85 by
-default, less a 10% reserve for tool schemas and estimation error), sven
-compacts the older part of the conversation into a structured checkpoint and keeps
-the most recent messages (`agent.compaction_keep_recent`, 6 by default) verbatim.
-This happens transparently.
+sven tracks context usage and shows it in the status bar. Before each request,
+when usage reaches `agent.compaction_threshold` of the usable input budget (0.85
+by default) less the part of the window kept free for the response
+(`agent.compaction_output_reserve`, 0.25), sven asks the model to write notes on
+the conversation and replaces the history with them; the task and the todo list
+are kept verbatim. This happens transparently, and a `context budget:` line at
+the start of the session says at what size.
 
 Compaction changes how much raw history the model sees at once; the checkpoint
 carries the tasks, decisions, files and constraints forward. The full conversation

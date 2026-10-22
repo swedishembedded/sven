@@ -46,6 +46,7 @@ pub fn to_model_schemas(schemas: Vec<sven_tool_registry::ToolSchema>) -> Vec<Too
 }
 
 use crate::ledger_recorder::LedgerRecorder;
+use crate::repetition::RepetitionWatch;
 use crate::stall::{StallLimits, StallWatch};
 use crate::tool_slots::attempt_json_repair;
 use sven_vocab::{ReportedUsage, Sampled, SessionEvent as AgentEvent};
@@ -183,35 +184,31 @@ impl TurnLimits {
 
 // ─── Thinking-loop watchdog ─────────────────────────────────────────────────
 
-/// Fraction of the model's context window used as the default thinking-token
-/// cap when no explicit override is configured (see [`ThinkingBudget`]).
-const DEFAULT_THINKING_TOKEN_FRACTION: f64 = 0.10;
-
 /// Default time a model may spend emitting `ThinkingDelta`s with no forward
 /// progress (a `TextDelta` or a tool-call delta) before the turn is aborted.
 const DEFAULT_THINKING_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// Configured caps for the thinking-loop watchdog: guards against a model
-/// (observed with some local reasoning models, e.g. Qwen) that loops
-/// indefinitely in its reasoning instead of converging to an answer. Two
-/// independent triggers, whichever fires first:
+/// How a runaway reasoning loop is stopped (observed with some local
+/// reasoning models, e.g. Qwen, which repeat themselves instead of converging
+/// to an answer).
 ///
-/// - **Token cap**: total estimated `ThinkingDelta` tokens (chars/4, matching
-///   the TUI's own streaming estimate) for this one `stream_turn` call. Not
-///   reset by forward progress - it is a resource ceiling for the whole turn.
+/// Thinking is part of the response, so it is bounded by the same thing as
+/// the rest of it: the output budget of the request (the window minus the
+/// prompt), which the server enforces. There is deliberately no token cap by
+/// default - any default low enough to matter ended honest runs mid-thought.
+/// A loop is caught by what marks it instead:
+///
+/// - **Repetition**: the reasoning stream repeats a stretch of itself
+///   verbatim (see [`RepetitionWatch`]).
 /// - **Time cap**: wall-clock time spent emitting `ThinkingDelta`s *without*
 ///   forward progress. Reset on every `TextDelta` or tool-call delta, so a
-///   legitimately long multi-step turn is never killed - only a stalled
-///   reasoning loop is.
-///
-/// `None` fields fall back to the defaults on [`ThinkingBudget::resolve`].
+///   legitimately long multi-step turn is never killed.
+/// - **Token cap**, opt-in: total estimated `ThinkingDelta` tokens (chars/4)
+///   for one `stream_turn` call, for a user who wants a hard ceiling.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ThinkingBudget {
-    /// Cap on estimated thinking tokens. `None` defaults to
-    /// [`DEFAULT_THINKING_TOKEN_FRACTION`] of the model's resolved context
-    /// window (via `model.catalog_context_window()`) - or no cap at all when
-    /// the window isn't known, matching the "no gate when unknown" precedent
-    /// in `sven_model::budget::effective_input_budget`.
+    /// Opt-in cap on estimated thinking tokens. `None` (the default) sets no
+    /// cap: the request's output budget is the bound.
     pub max_thinking_tokens: Option<u32>,
     /// Cap on time spent thinking without forward progress. `None` defaults
     /// to [`DEFAULT_THINKING_TIMEOUT`].
@@ -219,24 +216,17 @@ pub struct ThinkingBudget {
 }
 
 impl ThinkingBudget {
-    /// Resolve the effective `(token_cap, time_cap)`, filling in defaults for
-    /// unset fields. `context_window` is only consulted for the default
-    /// token cap; an explicit `max_thinking_tokens` always wins.
-    fn resolve(self, context_window: Option<u32>) -> (Option<u32>, Duration) {
-        let tokens = self.max_thinking_tokens.or_else(|| {
-            context_window
-                .filter(|&w| w > 0)
-                .map(|w| (f64::from(w) * DEFAULT_THINKING_TOKEN_FRACTION) as u32)
-        });
+    /// The effective `(token_cap, time_cap)`, filling in the default time cap.
+    fn resolve(self) -> (Option<u32>, Duration) {
         let timeout = self
             .thinking_timeout_secs
             .map(Duration::from_secs)
             .unwrap_or(DEFAULT_THINKING_TIMEOUT);
-        (tokens, timeout)
+        (self.max_thinking_tokens, timeout)
     }
 }
 
-/// Rough token estimate matching the TUI's own live streaming counter
+/// Rough token estimate matching the TUI's live streaming counter
 /// (`crates/tui/src/app/agent_events.rs`) - chars/4, not a real tokenizer.
 /// Good enough for a loop-prevention ceiling; not used for billing.
 fn estimate_tokens(text: &str) -> u32 {
@@ -372,6 +362,8 @@ pub struct StreamedTurn {
     /// The provider stopped the reply at its output-token limit, so `text`
     /// (and any call) may be cut off.
     pub truncated: bool,
+    /// Estimated tokens the model spent thinking in this reply (chars/4).
+    pub thinking_tokens: u32,
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -422,7 +414,7 @@ pub async fn stream_turn(
 
     let (thinking_token_cap, thinking_time_cap) = thinking_budget_override()
         .unwrap_or(limits.thinking)
-        .resolve(model.catalog_context_window());
+        .resolve();
 
     let req = CompletionRequest {
         messages,
@@ -449,6 +441,7 @@ pub async fn stream_turn(
 
     let mut full_text = String::new();
     let mut thinking_buf = String::new();
+    let mut repetition = RepetitionWatch::default();
     let mut thinking_token_estimate: u32 = 0;
     // Set on the first ThinkingDelta of an uninterrupted reasoning stretch;
     // cleared on any TextDelta or tool-call delta (forward progress).
@@ -503,7 +496,15 @@ pub async fn stream_turn(
                 thinking_token_estimate =
                     thinking_token_estimate.saturating_add(estimate_tokens(&delta));
                 thinking_buf.push_str(&delta);
+                let looped = repetition.feed(&delta);
                 let _ = tx.send(AgentEvent::ThinkingDelta(delta)).await;
+                if let Some(times) = looped {
+                    return Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
+                        "the model is looping in its reasoning (the same stretch occurs {times} \
+                         times in the last few thousand characters; ~{thinking_token_estimate} thinking \
+                         tokens so far)"
+                    ))));
+                }
 
                 // Thinking-loop watchdog: whichever cap fires first aborts
                 // the turn through the same path as a user-initiated cancel
@@ -526,6 +527,7 @@ pub async fn stream_turn(
             }
             ResponseEvent::TextDelta(delta) if !delta.is_empty() => {
                 thinking_stall_started = None; // forward progress resets the stall clock
+                repetition.reset();
                 if !thinking_buf.is_empty() {
                     let content = std::mem::take(&mut thinking_buf);
                     let _ = tx
@@ -542,6 +544,7 @@ pub async fn stream_turn(
                 arguments,
             } => {
                 thinking_stall_started = None; // forward progress resets the stall clock
+                repetition.reset();
                 let slot = slots.entry(index).or_insert_with(|| AccumSlot {
                     id: String::new(),
                     name: String::new(),
@@ -687,6 +690,7 @@ pub async fn stream_turn(
         tool_calls: completed,
         unparsed_arguments,
         truncated,
+        thinking_tokens: thinking_token_estimate,
     })
 }
 
@@ -985,11 +989,10 @@ mod thinking_watchdog_tests {
     }
 
     #[tokio::test]
-    async fn default_token_cap_is_ten_percent_of_context_window() {
+    async fn an_endless_reasoning_loop_is_stopped_without_any_token_cap() {
         let _guard = locked_no_override();
-        // context_window=40, default fraction 10% -> cap=4 estimated tokens.
-        // words_per_delta=5 -> 6 estimated tokens per delta, so the very
-        // first delta already exceeds the cap.
+        // No cap is configured and the window is tiny; the model only ever
+        // repeats itself, which the repetition detector catches.
         let provider = EndlessThinkingProvider {
             context_window: Some(40),
             words_per_delta: 5,
@@ -1011,11 +1014,11 @@ mod thinking_watchdog_tests {
         drop(tx);
         let _ = drain.await;
 
-        let err = result.expect_err("the default 10% cap must still apply");
+        let err = result.expect_err("a loop must be stopped");
         let aborted = err
             .downcast_ref::<AbortedError>()
             .expect("must be AbortedError");
-        assert!(aborted.reason.contains("thinking-token limit"));
+        assert!(aborted.reason.contains("looping"), "{}", aborted.reason);
     }
 
     #[tokio::test]
@@ -1341,5 +1344,24 @@ mod output_cap_tests {
         assert_eq!(capped.cap_output(Some(500)), Some(500));
         assert_eq!(capped.cap_output(None), Some(1_000));
         assert_eq!(TurnLimits::default().cap_output(Some(8_192)), Some(8_192));
+    }
+}
+
+#[cfg(test)]
+mod default_thinking_cap_tests {
+    use super::*;
+
+    #[test]
+    fn there_is_no_default_thinking_token_cap() {
+        assert_eq!(ThinkingBudget::default().resolve().0, None);
+    }
+
+    #[test]
+    fn an_explicit_cap_is_an_opt_in_that_is_honoured() {
+        let explicit = ThinkingBudget {
+            max_thinking_tokens: Some(100),
+            thinking_timeout_secs: Some(5),
+        };
+        assert_eq!(explicit.resolve(), (Some(100), Duration::from_secs(5)));
     }
 }

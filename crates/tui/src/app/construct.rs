@@ -257,7 +257,8 @@ pub(crate) fn conversation_record_to_chat_segment(
             let strategy = match strategy.as_deref() {
                 Some("emergency") => CompactionStrategyUsed::Emergency,
                 Some("narrative") => CompactionStrategyUsed::Narrative,
-                _ => CompactionStrategyUsed::Structured,
+                Some("structured") => CompactionStrategyUsed::Structured,
+                _ => CompactionStrategyUsed::Fork,
             };
             Some(ChatSegment::ContextCompacted {
                 tokens_before,

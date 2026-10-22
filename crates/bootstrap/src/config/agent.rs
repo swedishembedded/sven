@@ -14,7 +14,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sven_config::Schema;
 use sven_executors::CompactionConfig;
-use sven_turn::{CompactionStrategy, StallLimits, ThinkingBudget, TurnLimits};
+use sven_turn::{StallLimits, ThinkingBudget, TurnLimits};
 use sven_vocab::AgentMode;
 
 /// Default total wall-clock bound of a headless run, in seconds.
@@ -36,8 +36,8 @@ fn default_compaction_threshold() -> f32 {
 fn default_child_run_timeout_secs() -> u64 {
     3600
 }
-fn default_compaction_keep_recent() -> usize {
-    6
+fn default_compaction_summary_tokens() -> u32 {
+    10_000
 }
 fn default_note_repeated_results() -> bool {
     true
@@ -46,7 +46,10 @@ fn default_tool_result_token_cap() -> usize {
     4000
 }
 fn default_compaction_overhead_reserve() -> f32 {
-    0.10
+    0.0
+}
+fn default_compaction_output_reserve() -> f32 {
+    0.25
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,28 +62,19 @@ pub struct AgentConfig {
     #[serde(default = "default_max_tool_rounds")]
     pub max_tool_rounds: u32,
     /// Token fraction at which proactive compaction triggers (0.0-1.0),
-    /// checked by `TurnExecutor` before every turn against the usable input
-    /// budget (`sven_model::budget::effective_input_budget`), minus
-    /// `compaction_overhead_reserve`. See `sven_turn::prepare_compaction`.
+    /// checked by `TurnExecutor` before every model request against the usable
+    /// input budget (`sven_model::budget::effective_input_budget`), minus
+    /// `compaction_overhead_reserve`. Compaction also fires earlier when
+    /// the request that asks for the notes would stop fitting the window.
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: f32,
-    /// Number of recent non-system messages preserved verbatim during
-    /// compaction.  The oldest messages beyond this tail are summarised by
-    /// the LLM.  Higher values retain more recent context but reduce the
-    /// compression benefit.
-    ///
-    /// A value of 6 corresponds to roughly 3 back-and-forth turns
-    /// (user + assistant per turn, tool results excluded from the count).
-    /// Set to 0 to summarise the full history (original behaviour).
-    #[serde(default = "default_compaction_keep_recent")]
-    pub compaction_keep_recent: usize,
-    /// Compaction checkpoint format.
-    ///
-    /// `structured` (default): produces a typed Markdown checkpoint with
-    /// fixed sections preserving tasks, decisions, files, and constraints.
-    /// `narrative`: uses the original free-form summarisation prompt.
-    #[serde(default)]
-    pub compaction_strategy: CompactionStrategy,
+    /// Most tokens the notes a compaction asks the model to write may take.
+    /// Also capped at a quarter of the context window, so that the
+    /// conversation being compacted and its notes fit together. The notes
+    /// replace the conversation, so a larger value keeps more detail and
+    /// leaves less room before the next compaction.
+    #[serde(default = "default_compaction_summary_tokens")]
+    pub compaction_summary_tokens: u32,
     /// Maximum tokens allowed for a single tool result before it is
     /// deterministically truncated before entering the session, applied by
     /// `ToolExecutor` on the way into the conversation store (`sven_machines::
@@ -103,14 +97,21 @@ pub struct AgentConfig {
     /// whitespace, key order).
     #[serde(default = "default_note_repeated_results")]
     pub note_repeated_results: bool,
-    /// Fraction of the context window reserved for tool schemas, the dynamic
-    /// context block (git/CI info), and measurement error in the token
-    /// approximation.  Reduces the effective compaction trigger threshold.
+    /// Fraction of the input budget set aside for what the token count does
+    /// not see (a dynamic context block, estimation error). Reduces the
+    /// effective compaction trigger threshold. The count is the server's own
+    /// for everything already sent, so the default is 0.
     ///
-    /// Example: threshold=0.85, reserve=0.10 → compaction fires when
-    /// calibrated session tokens reach 75% of the input budget.
+    /// Example: threshold=0.85, reserve=0.05 → compaction fires when the
+    /// request reaches 80% of the input budget (less the output reserve).
     #[serde(default = "default_compaction_overhead_reserve")]
     pub compaction_overhead_reserve: f32,
+    /// Fraction of the context window kept free for the model's response,
+    /// reasoning included. Compaction fires when the request plus this reserve
+    /// would pass the threshold, so a normal turn always has room to think
+    /// and answer: compaction, not a thinking cap, keeps the window in bounds.
+    #[serde(default = "default_compaction_output_reserve")]
+    pub compaction_output_reserve: f32,
     /// System prompt override; leave None to use the built-in prompt
     #[serde(default)]
     pub system_prompt: Option<String>,
@@ -127,13 +128,13 @@ pub struct AgentConfig {
     #[serde(default = "default_max_run_timeout_secs")]
     pub max_run_timeout_secs: u64,
 
-    /// Cap on estimated thinking/reasoning tokens for a single turn, guarding
-    /// against a model (observed with some local reasoning models, e.g. Qwen)
-    /// that loops indefinitely instead of converging to an answer. Checked by
-    /// `stream_turn` against a chars/4 estimate of accumulated
-    /// `ThinkingDelta` content. `None` (the default) falls back to 10% of the
-    /// model's resolved context window - or no cap at all when the window
-    /// isn't known. Live-adjustable in a session via `/think-limit`.
+    /// Opt-in cap on estimated thinking/reasoning tokens for a single turn
+    /// (chars/4 of accumulated `ThinkingDelta` content). `None` (the default)
+    /// sets no cap: thinking is part of the response and is bounded by the
+    /// request's output budget, the window less the prompt. A model that
+    /// loops in its reasoning is stopped by a repetition detector and by
+    /// `thinking_timeout_secs`, not by a token count. Live-adjustable in a
+    /// session via `/think-limit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_thinking_tokens: Option<u32>,
 
@@ -193,11 +194,11 @@ impl AgentConfig {
             "default_mode",
             "max_tool_rounds",
             "compaction_threshold",
-            "compaction_keep_recent",
-            "compaction_strategy",
+            "compaction_summary_tokens",
             "tool_result_token_cap",
             "note_repeated_results",
             "compaction_overhead_reserve",
+            "compaction_output_reserve",
             "system_prompt",
             "max_step_timeout_secs",
             "max_run_timeout_secs",
@@ -209,6 +210,18 @@ impl AgentConfig {
             "no_progress_timeout_secs",
             "child_run_timeout_secs",
         ])
+        .with(
+            "compaction_keep_recent",
+            Schema::ignored(
+                "a compaction now summarises the whole conversation; remove the key",
+            ),
+        )
+        .with(
+            "compaction_strategy",
+            Schema::ignored(
+                "a compaction now asks for one set of notes on the whole conversation; remove the key",
+            ),
+        )
     }
 
     /// The wall-clock budget of a child run, if bounded.
@@ -240,8 +253,8 @@ impl AgentConfig {
         CompactionConfig {
             threshold: self.compaction_threshold,
             overhead_reserve: self.compaction_overhead_reserve,
-            keep_recent: self.compaction_keep_recent,
-            strategy: self.compaction_strategy.clone(),
+            output_reserve: self.compaction_output_reserve,
+            summary_tokens: self.compaction_summary_tokens,
         }
     }
 }
@@ -252,11 +265,11 @@ impl Default for AgentConfig {
             default_mode: AgentMode::Agent,
             max_tool_rounds: 200,
             compaction_threshold: 0.85,
-            compaction_keep_recent: default_compaction_keep_recent(),
-            compaction_strategy: CompactionStrategy::Structured,
+            compaction_summary_tokens: default_compaction_summary_tokens(),
             tool_result_token_cap: default_tool_result_token_cap(),
             note_repeated_results: default_note_repeated_results(),
             compaction_overhead_reserve: default_compaction_overhead_reserve(),
+            compaction_output_reserve: default_compaction_output_reserve(),
             system_prompt: None,
             max_step_timeout_secs: 0,
             max_run_timeout_secs: DEFAULT_MAX_RUN_TIMEOUT_SECS,
@@ -281,25 +294,21 @@ mod tests {
         assert_eq!(a.default_mode, AgentMode::Agent);
         assert_eq!(a.max_tool_rounds, 200);
         assert!((a.compaction_threshold - 0.85).abs() < f32::EPSILON);
-        assert_eq!(a.compaction_keep_recent, 6);
-        assert_eq!(a.compaction_strategy, CompactionStrategy::Structured);
+        assert_eq!(a.compaction_summary_tokens, 10_000);
         assert!(a.system_prompt.is_none());
     }
 
     #[test]
     fn a_partial_section_keeps_the_defaults_for_absent_keys() {
-        let a: AgentConfig = serde_yaml::from_str("compaction_keep_recent: 12\n").unwrap();
-        assert_eq!(a.compaction_keep_recent, 12);
+        let a: AgentConfig = serde_yaml::from_str("compaction_summary_tokens: 6000\n").unwrap();
+        assert_eq!(a.compaction_summary_tokens, 6000);
         assert_eq!(a.max_tool_rounds, 200);
-        assert_eq!(a.compaction_strategy, CompactionStrategy::Structured);
     }
 
     #[test]
-    fn the_mode_and_strategy_are_written_in_lowercase() {
-        let a: AgentConfig =
-            serde_yaml::from_str("default_mode: plan\ncompaction_strategy: narrative\n").unwrap();
+    fn the_mode_is_written_in_lowercase() {
+        let a: AgentConfig = serde_yaml::from_str("default_mode: plan\n").unwrap();
         assert_eq!(a.default_mode, AgentMode::Plan);
-        assert_eq!(a.compaction_strategy, CompactionStrategy::Narrative);
     }
 
     #[test]
@@ -337,14 +346,13 @@ mod tests {
     fn the_compaction_keys_reach_the_executor_settings() {
         let a: AgentConfig = serde_yaml::from_str(
             "compaction_threshold: 0.5\ncompaction_overhead_reserve: 0.25\n\
-             compaction_keep_recent: 2\ncompaction_strategy: narrative\n",
+             compaction_summary_tokens: 2000\n",
         )
         .unwrap();
         let c = a.compaction();
         assert!((c.threshold - 0.5).abs() < f32::EPSILON);
         assert!((c.overhead_reserve - 0.25).abs() < f32::EPSILON);
-        assert_eq!(c.keep_recent, 2);
-        assert_eq!(c.strategy, CompactionStrategy::Narrative);
+        assert_eq!(c.summary_tokens, 2000);
     }
 
     #[test]
@@ -357,6 +365,29 @@ mod tests {
         assert_eq!(
             AgentConfig::default().child_run_timeout(),
             Some(Duration::from_secs(3600))
+        );
+    }
+
+    #[test]
+    fn the_retired_compaction_keys_still_load_and_are_reported_as_ignored() {
+        let section = "compaction_keep_recent: 6\ncompaction_strategy: narrative\n\
+                       compaction_summary_tokens: 5000\n";
+        let agent: AgentConfig = serde_yaml::from_str(section).unwrap();
+        assert_eq!(agent.compaction_summary_tokens, 5000);
+        let document = sven_config::ConfigDocument::from_yaml(&format!(
+            "agent:\n{}",
+            section
+                .lines()
+                .map(|l| format!("  {l}\n"))
+                .collect::<String>()
+        ))
+        .unwrap();
+        let schema = sven_config::Schema::fields([("agent", AgentConfig::schema())]);
+        let warnings = document.unknown_keys(&schema);
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(
+            warnings.iter().all(|w| w.contains("is ignored")),
+            "{warnings:?}"
         );
     }
 }

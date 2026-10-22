@@ -34,33 +34,36 @@ hard request-size gate, and per-result truncation of tool output.
 ## Architecture overview
 
 Compaction lives in the kernel's turn executor (`TurnExecutor`,
-`crates/executors/src/turn.rs`); the pure building blocks live in
-`sven-turn` (`crates/turn/src/compact.rs`) and `sven_model::budget`.
+`crates/executors/src/turn.rs` and `turn/compaction.rs`, `turn/limits.rs`);
+the pure building blocks live in `sven-turn` (`crates/turn/src/fork.rs`,
+`compact.rs`) and `sven_model::budget`.
 
 ```
-CallLlm { kind: "turn" } effect
+CallLlm { kind: "turn" } effect          (every model request, tool loop included)
   │
   ▼
 TurnExecutor: snapshot the thread, resolve tool schemas
   │
   ▼
-estimate_request_tokens(messages, tool_schemas, dynamic_suffix)
+request size = server's count of the last request + estimate of what was appended
   │
   ▼
-estimate / input_budget ≥ trigger_threshold?     ← only when the window is known
+size ≥ compaction limit?                 ← only when the window is known
   ├─ no  → continue
   └─ yes → compact_thread()
-             ├─ nothing older than the kept tail → unchanged
-             ├─ summary request fits → tool-free summarization turn
-             │     └─ call fails / empty text → emergency_compact()
-             └─ summary request does not fit → emergency_compact()
+             ├─ plan_fork(): the conversation (or its largest oldest prefix
+             │     that fits) + the compaction prompt
+             ├─ notes (thinking off; retried once with the provider default)
+             │     └─ apply_summary(); repeat for the rest if only a prefix fit
+             └─ no notes at all → emergency_compact(), loudly
   │
   ▼
 estimate > input_budget?  → fail the turn with an actionable error (hard gate)
   │
   ▼
 stream_turn()                 ← model call
-  │
+  │     └─ response out of output budget while thinking, no answer
+  │            → warn with the tokens used, compact, ask again once
   ▼
 ToolExecutor (per tool call, concurrently)
   └─ smart_truncate()         ← cap each result before it enters the thread
@@ -74,9 +77,11 @@ ToolExecutor (per tool call, concurrently)
 
 `effective_input_budget(context_window, max_output_tokens)` returns the usable
 input ceiling: the model's context window minus a minimal output reserve
-(256 tokens). It does **not** subtract the full configured output cap - the
-output limit actually requested for a call is computed separately by
-`dynamic_output_budget`, scaled to whatever room the real prompt leaves.
+(256 tokens). The output limit actually requested for a call is computed
+separately by `dynamic_output_budget`, scaled to whatever room the real prompt
+leaves. For a model on a local server with no configured output cap that is
+the whole of that room: thinking is part of the response and the server
+enforces the bound.
 
 The window comes from the provider: the smaller of the configured
 `model.max_tokens` and the figure a local server reports (see
@@ -86,64 +91,84 @@ hosted provider with no catalog entry and no live probe result), the budget is
 `None` and both the compaction trigger and the hard gate are skipped rather
 than guessing.
 
-### The request estimate
+### The request size
 
-`estimate_request_tokens` covers the whole request, not just the history:
-
-```
-raw      = Σ approx_tokens(message)                      // chars / 4
-         + Σ (len(name + description + parameters)) / 4  // tool schemas
-         + len(dynamic_suffix) / 4
-estimate = raw × 1.1                                     // headroom
-```
-
-The 10% headroom errs toward compacting (or rejecting) slightly early, which
-is far cheaper than a request the server rejects after admission.
+The server's token count of the thread's previous request (prompt, cache reads
+and writes) is the base. Only what was appended since - the reply, tool
+results, the user's next message - is estimated, as `chars / 4 × 1.1`. No scale
+factor is applied to the server's count, so an over-counting heuristic cannot
+make compaction fire early; a burst of tool results costs only its own
+estimation error. The count is used only while the messages it described still
+lead the thread; a rewritten or compacted thread starts from the plain
+estimate (`chars / 4` over messages, tool schemas and the dynamic suffix,
+×1.1) until the next request reports.
 
 ---
 
 ## Layer 2 - Proactive compaction
 
-Before every model turn, `TurnExecutor` compares the estimate with the budget:
+### The trigger
+
+Before every model request:
 
 ```
-trigger_threshold = max(compaction_threshold − compaction_overhead_reserve, 0)
-compact when       estimate × scale / input_budget ≥ trigger_threshold
+reply_cap    = min(compaction_summary_tokens, window / 4)
+by_threshold = input_budget × max(compaction_threshold − compaction_overhead_reserve, 0)
+               − window × compaction_output_reserve
+by_fit       = window − prompt_tokens − reply_cap − 256
+compact when   request size ≥ min(by_threshold, by_fit)
 ```
 
-`scale` is how many tokens the server counted per estimated token for the last
-request that reported usage (1 until one has, at most 4). The chars/4 estimate
-undercounts code by tens of percent; the scale makes the trigger act on the
-server's count from the second request on, instead of on a request the server
-then rejects as too long.
+`by_fit` guarantees the request that asks for the notes - conversation, the
+compaction prompt and room for the notes - fits the window. `by_threshold`
+keeps `compaction_output_reserve` of the window free for the response, so a
+normal turn always has room to think and answer. At the start of a session
+(and when it changes) sven prints the numbers in one `context budget:` line.
 
-The overhead reserve (default 10%) keeps enough room for the summarization
-request itself.
+### The fork
 
-### Normal path
+`plan_fork` builds the request: the **real message list** (same system prompt,
+same tool calls and results; it is not serialised into text) followed by one
+user message, `COMPACTION_PROMPT`, which asks for everything needed to
+continue: goal and assignment, constraints and rules, decisions and failed
+approaches, files read or changed with key facts, commands and outcomes, exact
+identifiers and values copied verbatim, current state, open questions and next
+steps. No tools are offered. The reply is capped at `reply_cap` tokens and is
+requested with reasoning switched off (`enable_thinking: false`), so the
+budget cannot be spent thinking, and the thinking-token cap does not apply to
+it.
 
-1. `prepare_compaction` splits the non-system messages into the older part to
-   summarize and the most recent `compaction_keep_recent` messages to keep
-   verbatim, moving the split so the kept tail never starts inside a
-   tool-call/tool-result group (see [Split safety](#split-safety-for-tool-callresult-pairs)).
-   If nothing is older than the kept tail, compaction cannot help and the turn
-   proceeds unchanged.
-2. The older part is serialized into a single summarization request using the
-   configured strategy's prompt.
-3. If that request fits the budget, a **tool-free** `stream_turn` call
-   produces the summary. Its text deltas go to a throwaway channel so they
-   never reach the observation plane as if the agent had said them.
-4. `finish_compaction` rebuilds the history as
-   `[system, user(task), assistant(summary + todo list), ...kept tail]`. The
-   task is the first user message; it is kept verbatim when it was among the
-   summarized messages, so a summary is never the only record of what was
-   asked. The todo list (the `todo` tool's state, which the conversation store
-   also holds as structured state) is appended to the summary message
-   verbatim - ids, statuses and contents as the tool last reported them - and
-   is never left to the summariser. The goal and the todo list therefore
-   survive every compaction intact.
-5. The thread is replaced in the `ThreadStore` and the in-flight turn
-   continues with the smaller history immediately.
+`apply_summary` rebuilds the history as
+`[system, user(task), user(notes + todo list), ...rest]`. The task is the first
+user message, kept verbatim, as is the todo list (the `todo` tool's state), so
+neither is ever left to the summariser. A user message at the end of the
+thread that no one has answered yet is not summarised: it stays after the
+notes. The notes are a user message, so the next turn of a tool loop answers
+them by carrying on.
+
+A cut never falls inside a tool call or between a call and its results.
+
+### Pieces
+
+When the conversation does not fit one fork (a huge tool result, a long run
+that outgrew the window), the fork covers the largest oldest prefix that fits
+and ends at a clean boundary. Its notes replace that prefix, and the loop
+repeats on what is left until the thread is back under the limit (at most six
+rounds). Nothing is dropped. If even the oldest exchange alone does not fit,
+its contents are clipped for the fork and the tokens cut are reported in a
+warning.
+
+### Retry
+
+A failed call or empty notes is tried once more with the provider's default
+reasoning setting.
+
+### Output exhaustion
+
+If a response runs out of its output budget while thinking and produced no
+text or tool call, the executor warns with the thinking tokens spent, compacts
+the thread and asks again once (the failed attempt's reasoning is not part of
+the thread). A second exhaustion in a row is not retried.
 
 ### Rejected by the server
 
@@ -154,60 +179,24 @@ A second rejection fails the turn with the server's message.
 
 ### Emergency path
 
-`emergency_compact` runs instead when the summarization request would not fit
-the budget, or when the summarization call fails or returns empty text:
+`emergency_compact` is the last resort: it runs only when the model could not
+produce notes at all, or a round of notes was no smaller than what it
+replaced.
 
-- Drop all non-system messages except the last `compaction_keep_recent`
-  (again adjusted to a clean tool-group boundary).
+- Drop all non-system messages except the last six (adjusted to a clean
+  tool-group boundary).
 - Prepend a canned assistant notice telling the model that earlier history was
   dropped (with the todo list verbatim), followed by the first user message
   (the task) unless it is already in the kept tail.
 - No model call - always succeeds regardless of session size.
-- Reported as `CompactionStrategyUsed::Emergency`.
-
-A compaction failure is never propagated to the caller; the turn continues
-with whatever history compaction produced.
+- Reported as `CompactionStrategyUsed::Emergency`, with a warning that gives
+  the number of tokens dropped.
 
 ### The hard gate
 
 After compaction, if the estimate still exceeds the input budget, the turn
 fails immediately with an error naming the estimate, the context window, the
 provider and the model, instead of sending a request the server would reject.
-
----
-
-## Compaction strategies
-
-The strategy is selected by the `compaction_strategy` config key.
-
-### Structured (default)
-
-The compaction prompt instructs the model to produce exactly nine Markdown
-sections. The model is not allowed to add or remove sections:
-
-```markdown
-## Goal & Assignment
-## Constraints & Repo Rules
-## Decisions & Rationale
-## Files Read & Changed
-## Commands & Outcomes
-## Current State
-## Open Questions
-## Next Steps
-## Session Narrative
-```
-
-Commands & Outcomes keeps failed approaches and why they failed, so that the
-agent does not retry them.
-
-Technical details - file paths, function names, error messages, code snippets,
-test names - are preserved verbatim within those sections. The result is a
-checkpoint that the model can reference reliably on subsequent turns.
-
-### Narrative
-
-A free-form prose summary of the conversation. Useful for highly
-conversational sessions where structured sections add little value.
 
 ---
 
@@ -265,28 +254,9 @@ By putting `output_category()` on the `Tool` trait rather than in
 
 Anthropic (and other providers) require that every `tool_result` block in the
 conversation has a corresponding `tool_use` block in the preceding assistant
-message. If compaction summarised the `tool_use` messages but preserved their
-`tool_result` messages in the kept tail, the next API call would fail with:
-
-```
-messages.2.content.0: unexpected `tool_use_id` found in `tool_result` blocks
-```
-
-`clean_boundary_start` therefore starts the kept tail at `len − keep_recent`
-and walks it forward past any leading `ToolCall`/`ToolResult` messages:
-
-```rust
-while start < messages.len() {
-    match &messages[start].content {
-        ToolResult { .. } | ToolCall { .. } => start += 1,
-        _ => break,
-    }
-}
-```
-
-The kept tail therefore always begins on a user message or an
-assistant-text message - never mid-batch. Both the normal and the emergency
-path use this boundary.
+message. A fork covering a prefix therefore only ends where the next message
+is not a `ToolResult` and the last covered message is not a `ToolCall`, and
+the emergency path starts its kept tail the same way (`clean_boundary_start`).
 
 ---
 
@@ -299,7 +269,7 @@ type):
 ContextCompacted {
     tokens_before: usize,             // history estimate before compaction
     tokens_after:  usize,             // history estimate after rebuild
-    strategy: CompactionStrategyUsed, // Structured | Narrative | Emergency
+    strategy: CompactionStrategyUsed, // Fork | Emergency (Structured and Narrative: older sessions)
     turn: u32,                        // 0 for compaction before a model turn
 }
 ```
@@ -307,7 +277,7 @@ ContextCompacted {
 The TUI displays this in the chat pane. CI logs it to stderr as:
 
 ```
-[sven:context:compacted:structured] 60674 → 7144 tokens
+[sven:compact] strategy=fork turn=0 60674->7144
 ```
 
 ---
@@ -321,29 +291,27 @@ files that are read).
 | Key | Default | Description |
 |---|---|---|
 | `compaction_threshold` | `0.85` | Fraction of the input budget that triggers compaction |
-| `compaction_keep_recent` | `6` | Number of non-system messages preserved verbatim (≈ 3 back-and-forth turns) |
-| `compaction_strategy` | `structured` | `structured` or `narrative` |
+| `compaction_output_reserve` | `0.25` | Fraction of the window kept free for the response, reasoning included |
+| `compaction_summary_tokens` | `10000` | Most tokens the notes may take (also at most a quarter of the window) |
+| `compaction_overhead_reserve` | `0.0` | Fraction of the input budget set aside for what the token count does not see |
 | `tool_result_token_cap` | `4000` | Per-result token ceiling before truncation (`0` disables) |
-| `compaction_overhead_reserve` | `0.10` | Safety margin subtracted from `compaction_threshold` |
+
+`compaction_keep_recent` and `compaction_strategy` are retired: they are
+accepted and reported as ignored.
 
 ### Tuning for CI / long-running workflows
 
 ```yaml
 agent:
-  compaction_threshold: 0.65       # fire earlier, more margin for schema overhead
-  compaction_keep_recent: 15       # keep more recent context for multi-step plans
-  compaction_strategy: structured  # structured checkpoint survives many turns
+  compaction_threshold: 0.75       # fire earlier, more margin
   tool_result_token_cap: 2000      # tighter cap if build logs are large
-  compaction_overhead_reserve: 0.12
 ```
 
 ### Tuning for interactive sessions
 
 ```yaml
 agent:
-  compaction_threshold: 0.80       # allow longer free-form conversation
-  compaction_keep_recent: 5
-  compaction_strategy: narrative   # prose summary reads more naturally in TUI
+  compaction_summary_tokens: 16000 # more detail in the notes
   tool_result_token_cap: 8000      # more context per file read
 ```
 
@@ -353,12 +321,15 @@ agent:
 
 | Failure | What sven does |
 |---|---|
-| Summarization call fails (network, rate limit) | Falls back to emergency compaction; does not propagate the error |
-| Summarization returns empty text | Same fallback as above |
-| Summarization request itself would not fit | Emergency compaction directly, no model call |
+| Notes call fails or returns empty text | Asks once more with the provider's default reasoning setting |
+| Both attempts fail | Emergency compaction with a warning giving the tokens dropped |
+| Conversation too large for one fork | Summarised in pieces, oldest prefix first; nothing dropped |
+| One exchange larger than a fork | Clipped for the summary; tokens cut reported in a warning |
+| Response spent its output budget thinking | Warns with the tokens used, compacts, asks again once |
 | Request still too large after compaction | Turn fails fast with an actionable error instead of reaching the server |
 | Tool result too large for cap | Truncated before being appended; omission notice included |
-| `ToolResult` would be orphaned by the split | Kept tail starts at the next clean boundary |
+| `ToolResult` would be orphaned by a cut | The cut moves to the next clean boundary |
+| Model loops in its reasoning | Stopped by the repetition detector (see the [thinking-loop watchdog](../reference/configuration.md#thinking-loop-watchdog)) |
 
 See [parallel-tool-slots.md](parallel-tool-slots.md) for how tool calls from
 one model response are executed concurrently and appended to the thread.

@@ -2,9 +2,9 @@
   "config": {
     "agent": {
       "child_run_timeout_secs": 900,
-      "compaction_keep_recent": 10,
+      "compaction_output_reserve": 0.30000001192092896,
       "compaction_overhead_reserve": 0.11999999731779099,
-      "compaction_strategy": "narrative",
+      "compaction_summary_tokens": 6000,
       "compaction_threshold": 0.800000011920929,
       "default_mode": "research",
       "first_byte_timeout_secs": 240,

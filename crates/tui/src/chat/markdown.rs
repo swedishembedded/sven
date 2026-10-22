@@ -65,6 +65,7 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
         } => {
             use sven_machines::CompactionStrategyUsed;
             let label = match strategy {
+                CompactionStrategyUsed::Fork => "Context compacted",
                 CompactionStrategyUsed::Structured => "Context compacted (structured)",
                 CompactionStrategyUsed::Narrative => "Context compacted (narrative)",
                 CompactionStrategyUsed::Emergency => "⚠ Context emergency-compacted",
