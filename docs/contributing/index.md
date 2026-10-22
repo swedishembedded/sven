@@ -5,10 +5,9 @@ Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
 # Contributing
 
-sven is a Rust workspace. [AGENTS.md](../../AGENTS.md) is the authoritative
-guide to the repository layout, the crate tiers, the conventions every change
-follows and the gates it must pass; this page is the short path to a working
-checkout.
+sven is a Rust workspace. [AGENTS.md](../../AGENTS.md) routes to the
+repository map, the rules every change follows (`.agents/rules/`) and the
+gates it must pass; this page is the short path to a working checkout.
 
 ## Build and test
 

@@ -36,6 +36,7 @@ bash scripts/gates/check-no-machine-paths.sh "${staged[@]}"
 bash scripts/gates/check-no-brain-dependency.sh
 bash scripts/gates/check-repo-scope.sh "${staged[@]}"
 bash scripts/gates/check-make-targets.sh
+bash scripts/gates/check-agents-md.sh
 if printf '%s\n' "${staged[@]}" | grep -qE '(\.rs$|^scripts/gates/env-reads\.allow$)'; then
     bash scripts/gates/check-env-reads.sh
 fi

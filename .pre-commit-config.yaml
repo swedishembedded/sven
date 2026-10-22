@@ -82,6 +82,15 @@ repos:
         files: '^\.agents/roadmap/'
         pass_filenames: false
 
+      # AGENTS.md stays a short router whose paths all exist. Also run by
+      # `make check/gates/agents-md`.
+      - id: agents-md
+        name: AGENTS.md within budget, every path exists
+        entry: bash scripts/gates/check-agents-md.sh
+        language: system
+        always_run: true
+        pass_filenames: false
+
       # Replace common non-ASCII punctuation (em/en dashes, curly quotes,
       # ellipsis, non-breaking spaces) with plain ASCII equivalents so the
       # repository stays pure ASCII in all text and markdown files.
