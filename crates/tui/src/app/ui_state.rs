@@ -38,18 +38,23 @@ pub struct Toast {
     pub message: String,
     pub color: Color,
     pub born: Instant,
+    /// How long it stays up.
+    pub lifetime: std::time::Duration,
 }
 
 #[allow(dead_code)]
 impl Toast {
-    /// How long a toast is visible before it disappears.
-    pub const LIFETIME_MS: u128 = 3000;
+    /// How long a notice is visible before it disappears.
+    pub const LIFETIME: std::time::Duration = std::time::Duration::from_secs(3);
+    /// Errors carry detail worth reading, so they stay up longer.
+    pub const ERROR_LIFETIME: std::time::Duration = std::time::Duration::from_secs(10);
 
     pub fn new(message: impl Into<String>, color: Color) -> Self {
         Self {
             message: message.into(),
             color,
             born: Instant::now(),
+            lifetime: Self::LIFETIME,
         }
     }
 
@@ -66,11 +71,14 @@ impl Toast {
     }
 
     pub fn error(message: impl Into<String>) -> Self {
-        Self::new(message, Color::Red)
+        Self {
+            lifetime: Self::ERROR_LIFETIME,
+            ..Self::new(message, Color::Red)
+        }
     }
 
     pub fn is_expired(&self) -> bool {
-        self.born.elapsed().as_millis() > Self::LIFETIME_MS
+        self.born.elapsed() > self.lifetime
     }
 }
 
@@ -261,6 +269,17 @@ impl UiState {
 mod tests {
     use super::*;
     use crate::ui::team_picker::{AgentPickerStatus, TeamPickerEntry};
+
+    #[test]
+    fn an_error_stays_up_long_enough_to_read_after_a_notice_has_gone() {
+        let five_seconds_ago = Instant::now() - std::time::Duration::from_secs(5);
+        let mut info = Toast::info("Copied");
+        let mut error = Toast::error("MCP 'github': HTTP 403 ...");
+        info.born = five_seconds_ago;
+        error.born = five_seconds_ago;
+        assert!(info.is_expired());
+        assert!(!error.is_expired());
+    }
 
     fn entry(name: &str, peer: &str, local: bool) -> TeamPickerEntry {
         TeamPickerEntry {
