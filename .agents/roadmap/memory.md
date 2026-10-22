@@ -1,5 +1,7 @@
 # memory
 
+Scope: Agent memory: the `sven-memory-api` contract, the `sven-memory-sqlite` adapter and the `semantic_memory` tool.
+
 **Status: in progress. The `sven-memory-api` contract, its conformance suite,
 the `sven-memory-sqlite` adapter and the `semantic_memory` tool on top of them
 exist; the items below remain.**

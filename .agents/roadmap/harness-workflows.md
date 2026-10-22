@@ -1,5 +1,7 @@
 # harness-workflows
 
+Scope: Open work on the harness workflow language and runtime (`sven-harness-spec`, `sven-harness-runtime`, `sven harness`).
+
 The workflow language now covers long, multi-agent sweeps over a repository. It
 has a conversation per task and per item, `do:` bodies, check tasks, typed run
 variables with `capture` and the trust rule, script gates, a run scratchpad,

@@ -638,12 +638,21 @@ generate/config:
 generate/config/golden:
 	$(CARGO) test --jobs $(HARNESS_JOBS) -p sven-frontend --test config_golden -- --bless
 
+## generate/roadmap - lists the roadmap generators; rewrites nothing
+generate/roadmap:
+	@bash scripts/make-help.sh generate/roadmap
+
+## generate/roadmap/index - rewrite .agents/roadmap/index.md from the ledgers beside it
+##   check/gates/roadmap-index only checks it.
+generate/roadmap/index:
+	python3 scripts/gen-roadmap-index.py
+
 # Declared last so every generated list above is already defined.
 .PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
         test test/features test/gates test/package test/e2e test/e2e/basic/deferred test/e2e/basic/instructions-deferred test/e2e/basic/demote $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
         test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness $(HARNESS_TARGETS) \
         generate \
-        generate/config generate/config/golden \
+        generate/config generate/config/golden generate/roadmap generate/roadmap/index \
         test/crate $(TEST_CRATE_TARGETS) test/formal \
         check check/fmt check/features check/clippy check/doc check/arch \
         check/gates $(GATE_TARGETS) \

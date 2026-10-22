@@ -1,5 +1,7 @@
 # android-ui-test
 
+Scope: Android UI-test workflows: the `android` tool (`sven-tools-android`), the `ui-test` mode and `sven agent-dispatch`.
+
 **Status: phase 1 done (device control), phase 2 done (brain grounding),
 phase 3 done against mocks (sven machine + tools) and now wired to a real
 CLI entry point (`sven agent-dispatch`, see this file's own update below) -

@@ -23,12 +23,12 @@ repos:
 
   - repo: local
     hooks:
-      # The same two gates `make check` runs (via `make check/gates`), wired
-      # here so they also fire at commit time. Keep this list and
+      # The text gates `make check` runs (via `make check/gates`), wired here
+      # so they also fire at commit time. Keep this list and
       # scripts/hooks/pre-commit in sync: a gate added to only one of them
       # silently stops being enforced for whoever installed the other. Neither
-      # is the only enforcement path - `make check` runs both from a clean
-      # clone with no hook installed at all.
+      # is the only enforcement path - `make check` runs every gate from a
+      # clean clone with no hook installed at all.
       - id: no-machine-paths
         name: no absolute machine paths
         entry: bash scripts/gates/check-no-machine-paths.sh
@@ -71,6 +71,15 @@ repos:
         entry: bash scripts/gates/check-env-reads.sh
         language: system
         files: '(\.rs$|^scripts/gates/env-reads\.allow$)'
+        pass_filenames: false
+
+      # The roadmap index is generated from the ledgers and every ledger
+      # states its scope. Also run by `make check/gates/roadmap-index`.
+      - id: roadmap-index
+        name: roadmap index matches its ledgers
+        entry: bash scripts/gates/check-roadmap-index.sh
+        language: system
+        files: '^\.agents/roadmap/'
         pass_filenames: false
 
       # Replace common non-ASCII punctuation (em/en dashes, curly quotes,

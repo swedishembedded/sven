@@ -1,5 +1,7 @@
 # Training-grade trajectories - roadmap
 
+Scope: What a trajectory records so an application that trains models can learn from it and a run can be reproduced.
+
 What a trajectory must record so that an application that trains models can learn from it
 without re-deriving anything, and so a run is reproducible. Update this file in the same
 commit that finishes or changes an item; finished items move to

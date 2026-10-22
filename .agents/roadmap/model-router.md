@@ -1,11 +1,13 @@
 # model-router
 
+Scope: Routing a request to models beyond the session language model (image, speech, video and other brain-served models).
+
 **Status: research done, no implementation started. This document is the plan.**
 
 ## Goal
 
 Sven becomes a general-purpose agent the user starts in a directory and
-controls entirely through natural language — typed or spoken — where the
+controls entirely through natural language - typed or spoken - where the
 request may be satisfied by the current language model alone, or by routing
 work to any other model brain can serve (image, video, speech, transcription,
 music, depth, segmentation, detection, forecasting, 3D reconstruction), or by
@@ -19,7 +21,7 @@ Three properties define "done":
 2. **Capability is discovered, not hard-coded.** Sven ships no per-model tool.
    A model brain gains tomorrow is reachable from sven today.
 3. **It fits in the context budget.** Capability is added without growing the
-   per-request tool payload — measurements below make this the binding
+   per-request tool payload - measurements below make this the binding
    constraint on every design choice here.
 
 ## The binding constraint, measured
@@ -37,7 +39,7 @@ Measured on this tree against a `mock` provider in a minimal `chat` session
 `grep` 1,468 · `shell` 1,392.
 
 Re-measured with the token ledger ([docs/internals/token-ledger.md](../../docs/internals/token-ledger.md))
-on the default headless tool set — 15 tools, because `context`, `gdb` and
+on the default headless tool set - 15 tools, because `context`, `gdb` and
 `assimilate_fact` above are not in it: 1,291 system tokens and 4,253 schema
 tokens, **284 per tool**, the heaviest `task` 591 · `grep` 399 · `system` 395 ·
 `edit_file` 385 · `semantic_memory` 342 (estimator: 4 bytes per token). The
@@ -46,8 +48,8 @@ the build in hand.
 
 Brain advertises **66 actions across 44 models** (`brain caps --json`). Exposing
 them one-tool-per-action would cost roughly **+23,000 tokens** and put sven at
-85 tools — far inside the measured degradation band, where published results
-put the onset of tool-selection failure at 20–30 tools and clear quality loss
+85 tools - far inside the measured degradation band, where published results
+put the onset of tool-selection failure at 20-30 tools and clear quality loss
 past 40.
 
 This is why the tool surface below is three tools and not sixty-six.
@@ -65,9 +67,9 @@ filesystem path.
 
 Over D-Bus (`com.swedishembedded.Brain1.Manager`) this is exposed as:
 
-- `Manifests() -> String` — every manifest as JSON (discovery)
+- `Manifests() -> String` - every manifest as JSON (discovery)
 - `Run(model, action, params, in_fds, in_meta, transport) -> (result, out_fds, out_meta)`
-- `Subscribe(model, action, params, ...) -> (job, event_fd)` — a `SOCK_SEQPACKET`
+- `Subscribe(model, action, params, ...) -> (job, event_fd)` - a `SOCK_SEQPACKET`
   fd delivering one framed datagram per event, blobs arriving as `SCM_RIGHTS`
   ancillary fds
 - `Cancel(job) -> bool`
@@ -98,7 +100,7 @@ brain's model rather than a replacement for it.
 **Replicate** is structurally the closest: each model version carries an
 OpenAPI Schema describing its inputs and outputs, and a generic predictions
 endpoint executes any of them. This is brain's `ActionSpec` with less type
-information — no declared media kinds, no host-param hiding. It validates the
+information - no declared media kinds, no host-param hiding. It validates the
 shape; it does not supersede it.
 
 **OpenAI / OpenRouter / LiteLLM** converged on a *closed vocabulary* of verb
@@ -122,18 +124,18 @@ brain's models.
 plus `supported_parameters` and `supported_voices`. That `"text+image->text"`
 notation is *identical* to the media signature derivable from a brain
 `ActionSpec`'s blob lists. Brain should emit exactly these field names, so
-discovery vocabulary is shared rather than invented — and a client that
+discovery vocabulary is shared rather than invented - and a client that
 already understands OpenRouter understands brain.
 
 Brain's `/models` today emits none of it; its serving classifier (`CapSet`) is
-three booleans — `chat`, `embeddings`, `image`.
+three booleans - `chat`, `embeddings`, `image`.
 
 ## Design
 
 ### The router vocabulary (sven, kernel tier)
 
 A second trait beside `ModelProvider`, in `sven-model`, mirroring brain's wire
-JSON as plain serde types. **No dependency on any brain crate** — the contract
+JSON as plain serde types. **No dependency on any brain crate** - the contract
 is the JSON `Manifests()` already returns.
 
 ```rust
@@ -154,18 +156,18 @@ D-Bus (local, zero-copy `memfd` blobs) and HTTP (remote).
 `ActionSpec -> JSON Schema` is mechanical, and **must drop `host_env` /
 `host_resolved` params client-side**. `for_serving()` is applied by individual
 models today, not centrally by `Manifests()`, so a served manifest can still
-carry them — `brain/qwen3tts`'s `synth` action advertises `weights_dir` and
+carry them - `brain/qwen3tts`'s `synth` action advertises `weights_dir` and
 `ckpt` as *required*, both env-backed. A language model can never answer those,
 and dropping a param must drop it from `required` too.
 
-### The tool surface (sven) — three tools, schemas on demand
+### The tool surface (sven) - three tools, schemas on demand
 
-- **`models`** — discovery. Filters by modality signature, returns a compact
+- **`models`** - discovery. Filters by modality signature, returns a compact
   line per model (`id`, `text->image`, one-line summary). Cheap enough to call
   mid-turn.
-- **`model_schema`** — the full JSON Schema for one `(model, action)`, fetched
+- **`model_schema`** - the full JSON Schema for one `(model, action)`, fetched
   only once the agent has chosen. This is the progressive-disclosure hinge.
-- **`run_model`** — executes. `model` accepts a **role alias** or a concrete
+- **`run_model`** - executes. `model` accepts a **role alias** or a concrete
   id; `action` is optional and defaults to the model's primary action; brain's
   own `validate` fills every other default. Artifacts are written to disk and
   returned as paths, with progress streamed from `Subscribe`.
@@ -176,7 +178,7 @@ params={prompt:"a dog"})`. Naming a specific model is the same call with
 is added.
 
 Roles live in config (`models.image`, `models.voice`, `models.transcribe`,
-`models.fast`, …) and resolve through the existing `ModelResolver`, so the same
+`models.fast`, ...) and resolve through the existing `ModelResolver`, so the same
 alias works for a text sub-agent and for an image generation.
 
 ### Brain's remote surface
@@ -184,14 +186,14 @@ alias works for a text sub-agent and for an image generation.
 A generic substrate carrying all 66 actions, plus a thin standard-verb
 projection for interoperability:
 
-- `GET /v1/capabilities` — manifests, `for_serving()` applied, OpenAPI-described
-- `POST /v1/run/{model}/{action}` — typed blobs in/out; `?stream=true` for SSE
+- `GET /v1/capabilities` - manifests, `for_serving()` applied, OpenAPI-described
+- `POST /v1/run/{model}/{action}` - typed blobs in/out; `?stream=true` for SSE
   progress mirroring `Subscribe`'s frames
-- `DELETE /v1/run/{job}` — cancellation, mirroring `Cancel`
+- `DELETE /v1/run/{job}` - cancellation, mirroring `Cancel`
 - `/v1/models` gains `architecture.modality`, `input_modalities`,
   `output_modalities`, `supported_voices`
 - `/v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/videos`,
-  `/v1/images/edits` — the standard verbs, implemented as projections of the
+  `/v1/images/edits` - the standard verbs, implemented as projections of the
   substrate so the two cannot drift
 
 ### Tool composition (sven)
@@ -282,13 +284,13 @@ mode belongs in whichever phase gives `task` a non-blocking path.
 Ordered so the user-visible north star is reachable early and the two large
 infrastructure items follow it.
 
-### Phase 1 — the router, locally (sven)
+### Phase 1 - the router, locally (sven)
 
 `ActionProvider` and the manifest vocabulary; the D-Bus implementation
 extended from today's hard-wired `action: "generate"` to arbitrary
 `(model, action)`; `Subscribe` consumed for real (`SOCK_SEQPACKET` frame
 reader with `SCM_RIGHTS` ancillary fds) so a multi-minute generation reports
-progress and can be cancelled — sven's D-Bus module docs previously declined
+progress and can be cancelled - sven's D-Bus module docs previously declined
 this on the grounds that its one model emitted no per-token deltas; image and
 video generation make it load-bearing.
 
@@ -297,7 +299,7 @@ video generation make it load-bearing.
 real `brain serve --dbus` on this machine generating an image with
 `flux2-klein` (Q8_0, 4 GiB, fits one P40).
 
-### Phase 2 — compact tools, roles, sub-agent routing (sven)
+### Phase 2 - compact tools, roles, sub-agent routing (sven)
 
 The three tools. Model roles in `sven-model-drivers`' provider section.
 
@@ -307,15 +309,15 @@ session default). What that lands on is still unresolved: there is no role
 alias table, so a persona declaring `model: fast` resolves to nothing unless
 `fast` happens to be a provider key. Roles are what close it.
 
-*Verification:* "generate an image of a dog" and "…using Z-Image" both succeed
+*Verification:* "generate an image of a dog" and "...using Z-Image" both succeed
 end to end against real weights; a sub-agent persona pinned to a different
 model demonstrably runs on it; tool payload growth stays within one tool's
 worth of the measured baseline.
 
-### Phase 3 — voice, end to end (sven)
+### Phase 3 - voice, end to end (sven)
 
-Microphone capture in the TUI — net-new, there is no `cpal`/`rodio`/`hound`/
-`symphonia` dependency anywhere in the tree today — push-to-talk, transcription
+Microphone capture in the TUI - net-new, there is no `cpal`/`rodio`/`hound`/
+`symphonia` dependency anywhere in the tree today - push-to-talk, transcription
 routed through the router to `qwen3asr`/`nemotronasr`, and the transcript
 landing **editable in the input box** rather than auto-submitted, so the user
 corrects before sending.
@@ -331,7 +333,7 @@ non-brain backends behind the same interface.
 *Verification:* speaking into a running sven produces correct editable text in
 the input box; speech synthesis round-trips through a configured role.
 
-### Phase 4 — brain's generic HTTP substrate + verb projection (brain)
+### Phase 4 - brain's generic HTTP substrate + verb projection (brain)
 
 The endpoints above, with modality metadata on `/models` using OpenRouter's
 field names. Standard verbs implemented as projections of the substrate.
@@ -340,13 +342,13 @@ field names. Standard verbs implemented as projections of the substrate.
 over D-Bus action-for-action; a stock OpenAI-dialect client can drive
 `/v1/audio/speech` against brain.
 
-### Phase 5 — transport interchangeability (sven)
+### Phase 5 - transport interchangeability (sven)
 
 The HTTP `ActionProvider`. Phase 1 and 2's test suites are re-run unchanged
 against both transports; a remote brain is proven to reach every action a local
 one does.
 
-### Phase 6 — tool bundles (sven)
+### Phase 6 - tool bundles (sven)
 
 Deferred disclosure (built) already brings the per-request payload down to the
 core set. What this phase still owns is the composition model: bundles named in

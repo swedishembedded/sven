@@ -1,5 +1,7 @@
 # experience-memory
 
+Scope: Recording which memory units and skills were in play for a step and its outcome, so an embedding application can learn from them.
+
 **Status: planned. Nothing below has been started. Extends `memory.md`; do the items there
 first where an item here says "after".**
 

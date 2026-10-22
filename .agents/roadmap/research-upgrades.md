@@ -1,5 +1,7 @@
 # research-to-stack - sven share
 
+Scope: Isolated multi-attempt runs, per-attempt effects and the prompt each model call saw, for an embedding application.
+
 **Status: planned. Nothing below has been started.** Update this file in the same commit that
 finishes or changes an item. Sven records facts and runs attempts; the embedding application
 decides what they mean. Model providers are the only other component involved.

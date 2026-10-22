@@ -10,16 +10,13 @@
 # hooks and repository quality gates then you can procure our services by
 # sending an email to info@swedishembedded.com.
 #
-# Blocks a commit that bakes an absolute machine path into a staged file
-# (scripts/gates/check-no-machine-paths.sh has the rules), or that declares a
-# brain dependency anywhere in the workspace
-# (scripts/gates/check-no-brain-dependency.sh has the rationale), or that adds
-# an environment read (scripts/gates/check-env-reads.sh).
+# Runs the text gates of scripts/gates/ that a commit can break: each
+# script's header says what it enforces.
 #
 # Two ways to install this repo's hooks, and `make hooks/install` picks
 # whichever fits the machine:
 #   - `pre-commit install`, if the pre-commit framework is available. That
-#     runs .pre-commit-config.yaml, which includes the SAME two gates plus
+#     runs .pre-commit-config.yaml, which includes the SAME gates plus
 #     rustfmt, clippy and the ASCII/whitespace hygiene hooks.
 #   - this script, otherwise. It needs nothing but bash and git.
 # Keep the two in sync: a gate added to only one of them silently stops being
@@ -41,4 +38,7 @@ bash scripts/gates/check-repo-scope.sh "${staged[@]}"
 bash scripts/gates/check-make-targets.sh
 if printf '%s\n' "${staged[@]}" | grep -qE '(\.rs$|^scripts/gates/env-reads\.allow$)'; then
     bash scripts/gates/check-env-reads.sh
+fi
+if printf '%s\n' "${staged[@]}" | grep -q '^\.agents/roadmap/'; then
+    bash scripts/gates/check-roadmap-index.sh
 fi
