@@ -29,7 +29,7 @@ use super::width_utils::truncate_to_width_exact;
 /// when the chat pane is focused; the focused segment is determined by scroll position.
 pub struct ChatPane<'a> {
     pub lines: &'a StyledLines,
-    pub scroll_offset: u16,
+    pub scroll_offset: usize,
     pub focused: bool,
     pub ascii: bool,
     pub search_query: &'a str,
@@ -80,7 +80,7 @@ impl Widget for ChatPane<'_> {
             .lines
             .iter()
             .enumerate()
-            .skip(self.scroll_offset as usize)
+            .skip(self.scroll_offset)
             .take(content_height as usize)
             .map(|(i, line)| {
                 let is_current = !self.search_query.is_empty() && current_match_line == Some(i);
@@ -107,7 +107,7 @@ impl Widget for ChatPane<'_> {
         if let Some((seg_start, seg_end)) = self.highlight_line_range {
             let highlight_style = Style::default().bg(Color::Rgb(35, 45, 55));
             for vis_row in 0..content_height as usize {
-                let abs_line = vis_row + self.scroll_offset as usize;
+                let abs_line = vis_row + self.scroll_offset;
                 if abs_line >= seg_start && abs_line < seg_end {
                     let y = inner.y + vis_row as u16;
                     let row_rect = Rect::new(inner.x, y, content_width, 1);
@@ -123,7 +123,7 @@ impl Widget for ChatPane<'_> {
         if let Some((seg_start, seg_end)) = self.editing_line_range {
             let edit_style = Style::default().bg(Color::Rgb(0, 45, 65));
             for vis_row in 0..content_height as usize {
-                let abs_line = vis_row + self.scroll_offset as usize;
+                let abs_line = vis_row + self.scroll_offset;
                 if abs_line >= seg_start && abs_line < seg_end {
                     let y = inner.y + vis_row as u16;
                     let row_rect = Rect::new(inner.x, y, content_width, 1);
@@ -140,7 +140,7 @@ impl Widget for ChatPane<'_> {
             let sel_bg = Color::Rgb(50, 80, 135);
             let sel_fg = Color::Rgb(220, 220, 230);
             for vis_row in 0..content_height as usize {
-                let abs_line = vis_row + self.scroll_offset as usize;
+                let abs_line = vis_row + self.scroll_offset;
                 if abs_line >= s_line && abs_line <= e_line {
                     let y = inner.y + vis_row as u16;
                     let from_x = if abs_line == s_line {
@@ -209,20 +209,21 @@ impl Widget for ChatPane<'_> {
 pub fn nvim_cursor_screen_pos(
     inner: Rect,
     cursor: (u16, u16),
-    scroll_offset: u16,
+    scroll_offset: usize,
     focused: bool,
 ) -> Option<(u16, u16)> {
     if !focused {
         return None;
     }
     let (cursor_row, cursor_col) = cursor;
-    let visible_row = cursor_row.checked_sub(scroll_offset)?;
-    if (visible_row as usize) >= inner.height as usize {
+    let visible_row = usize::from(cursor_row).checked_sub(scroll_offset)?;
+    if visible_row >= usize::from(inner.height) {
         return None;
     }
     Some((
         inner.x + cursor_col.min(inner.width.saturating_sub(1)),
-        inner.y + visible_row,
+        // In range: `visible_row < inner.height`, which is a u16.
+        inner.y + visible_row as u16,
     ))
 }
 

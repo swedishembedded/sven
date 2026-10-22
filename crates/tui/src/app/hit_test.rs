@@ -51,7 +51,7 @@ pub fn hit_test(
     layout: &LayoutCache,
     col: u16,
     row: u16,
-    chat_scroll_offset: u16,
+    chat_scroll_offset: usize,
     queue_len: usize,
 ) -> HitArea {
     // ── Resize borders (checked before pane interiors so a drag that drifts ──
@@ -91,7 +91,7 @@ pub fn hit_test(
 
     if row >= content_start && row < content_start + chat_inner_h {
         let rel_row = row - content_start;
-        let abs_line = rel_row as usize + chat_scroll_offset as usize;
+        let abs_line = rel_row as usize + chat_scroll_offset;
 
         // Content click (expand/collapse, selection anchor). Segment actions
         // (yank, edit, rerun, delete) are keyboard-first via y/e/r/x. No

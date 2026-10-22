@@ -29,7 +29,7 @@ pub(crate) struct ChatState {
     /// Rebuilt whenever `build_display_from_segments` runs.
     pub segment_line_ranges: Vec<(usize, usize)>,
     /// Current scroll position (index of the topmost visible line).
-    pub scroll_offset: u16,
+    pub scroll_offset: usize,
     /// When true, new agent content automatically scrolls to the bottom.
     pub auto_scroll: bool,
     /// Per-segment expand level (ratatui-only mode).

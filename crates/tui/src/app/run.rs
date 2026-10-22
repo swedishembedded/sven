@@ -261,11 +261,7 @@ impl App {
                     desired_input_height,
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
-                let max_scroll =
-                    (self.chat.lines.len() as u16).saturating_sub(self.layout.chat_height);
-                if self.chat.scroll_offset > max_scroll {
-                    self.chat.scroll_offset = max_scroll;
-                }
+                self.chat.scroll_offset = self.chat.scroll_offset.min(self.max_chat_scroll());
                 self.layout.chat_pane = layout.chat_pane;
                 // Open-border chat: no left/right `│`, full width available.
                 self.layout.chat_inner_width = layout.chat_pane.width.max(20);
@@ -315,7 +311,7 @@ impl App {
                     let bridge = nvim_bridge.lock().await;
                     let lines = bridge.render_to_lines(0, bridge.height).await;
                     let cursor = bridge.get_cursor_pos().await;
-                    (lines, 0u16, Some(cursor))
+                    (lines, 0usize, Some(cursor))
                 } else {
                     (Vec::new(), self.chat.scroll_offset, None)
                 };

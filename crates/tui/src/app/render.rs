@@ -27,7 +27,7 @@ impl App {
         &mut self,
         frame: &mut Frame,
         nvim_lines: &StyledLines,
-        nvim_draw_scroll: u16,
+        nvim_draw_scroll: usize,
         nvim_cursor: Option<(u16, u16)>,
     ) {
         let ascii = self.ascii();

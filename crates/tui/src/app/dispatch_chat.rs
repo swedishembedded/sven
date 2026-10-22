@@ -565,7 +565,7 @@ impl App {
                     } else if let Some(pager) = &mut self.ui.pager {
                         pager.scroll_to_line(line);
                     } else {
-                        self.chat.scroll_offset = line as u16;
+                        self.chat.scroll_offset = line;
                     }
                 }
             }
@@ -588,7 +588,7 @@ impl App {
                 } else {
                     self.ui.search.update_matches(&self.chat.lines);
                     if let Some(line) = self.ui.search.current_line() {
-                        self.chat.scroll_offset = line as u16;
+                        self.chat.scroll_offset = line;
                         if let Some(pager) = &mut self.ui.pager {
                             pager.scroll_to_line(line);
                         }
@@ -624,7 +624,7 @@ impl App {
                                 insp.pager.scroll_to_line(line);
                             }
                         } else {
-                            self.chat.scroll_offset = line as u16;
+                            self.chat.scroll_offset = line;
                             if let Some(pager) = &mut self.ui.pager {
                                 pager.scroll_to_line(line);
                             }
@@ -646,7 +646,7 @@ impl App {
                                 insp.pager.scroll_to_line(line);
                             }
                         } else {
-                            self.chat.scroll_offset = line as u16;
+                            self.chat.scroll_offset = line;
                             if let Some(pager) = &mut self.ui.pager {
                                 pager.scroll_to_line(line);
                             }
@@ -716,12 +716,11 @@ impl App {
                         }
                         self.build_display_from_segments();
                         self.ui.search.update_matches(&self.chat.lines);
-                        let max_offset =
-                            (self.chat.lines.len() as u16).saturating_sub(self.layout.chat_height);
-                        self.chat.scroll_offset = self.chat.scroll_offset.min(max_offset);
+                        self.chat.scroll_offset =
+                            self.chat.scroll_offset.min(self.max_chat_scroll());
                         if let Some(&(seg_start, _)) = self.chat.segment_line_ranges.get(seg_idx) {
-                            if (seg_start as u16) < self.chat.scroll_offset {
-                                self.chat.scroll_offset = seg_start as u16;
+                            if seg_start < self.chat.scroll_offset {
+                                self.chat.scroll_offset = seg_start;
                             }
                         }
                         self.chat.focused_segment = Some(seg_idx);

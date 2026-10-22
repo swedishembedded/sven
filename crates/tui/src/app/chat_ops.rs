@@ -20,7 +20,7 @@ use crate::{
             partial_content, segment_bar_style, segment_to_markdown, strip_display_anchors,
             ToolDisplayRegistryRef, SYM_THINK, SYM_TOOL,
         },
-        segment::{segment_at_line, ChatSegment},
+        segment::ChatSegment,
     },
     markdown::render_markdown,
     ui::theme::{BAR_AGENT, BAR_THINKING},
@@ -236,13 +236,6 @@ impl App {
         get_paired_result_idx(&self.chat.segments, idx)
     }
 
-    /// Recompute the keyboard-focused segment (highlight) based on the current
-    /// scroll offset and chat height. Used when focus moves to the chat pane.
-    pub(crate) fn recompute_focused_segment(&mut self) {
-        let center = self.chat.scroll_offset as usize + self.layout.chat_height as usize / 2;
-        self.chat.focused_segment = segment_at_line(&self.chat.segment_line_ranges, center);
-    }
-
     /// Re-render the chat pane: update the Neovim buffer (if active) and
     /// rebuild the ratatui display lines.
     pub(crate) async fn rerender_chat(&mut self) {
@@ -274,43 +267,6 @@ impl App {
             return true;
         }
         self.tui_config.ascii_borders
-    }
-
-    // ── Scroll helpers ────────────────────────────────────────────────────────
-
-    pub(crate) fn scroll_up(&mut self, n: u16) {
-        self.chat.scroll_offset = self.chat.scroll_offset.saturating_sub(n);
-        self.chat.auto_scroll = false;
-    }
-
-    pub(crate) fn scroll_down(&mut self, n: u16) {
-        let max = (self.chat.lines.len() as u16).saturating_sub(self.layout.chat_height);
-        self.chat.scroll_offset = (self.chat.scroll_offset + n).min(max);
-        if self.chat.scroll_offset >= max {
-            self.chat.auto_scroll = true;
-        }
-    }
-
-    pub(crate) fn scroll_to_bottom(&mut self) {
-        if self.nvim.bridge.is_none() && self.chat.auto_scroll {
-            self.chat.scroll_offset =
-                (self.chat.lines.len() as u16).saturating_sub(self.layout.chat_height);
-        }
-    }
-
-    /// Adjust scroll so the segment at `seg_idx` is visible. Called after j/k move the highlight.
-    pub(crate) fn scroll_chat_to_show_segment(&mut self, seg_idx: usize) {
-        let Some(&(seg_start, seg_end)) = self.chat.segment_line_ranges.get(seg_idx) else {
-            return;
-        };
-        let h = self.layout.chat_height as usize;
-        let seg_start_u = seg_start as u16;
-        if seg_start_u < self.chat.scroll_offset {
-            self.chat.scroll_offset = seg_start_u;
-        } else if seg_end > self.chat.scroll_offset as usize + h {
-            self.chat.scroll_offset = (seg_end.saturating_sub(h)) as u16;
-        }
-        self.chat.auto_scroll = false;
     }
 
     /// Adjust `input.scroll_offset` so the cursor row is within the visible

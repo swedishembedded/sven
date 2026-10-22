@@ -412,7 +412,7 @@ impl App {
                 let clamped = mouse
                     .row
                     .clamp(content_top, content_bottom.saturating_sub(1));
-                let abs_line = (clamped - content_top) as usize + self.chat.scroll_offset as usize;
+                let abs_line = (clamped - content_top) as usize + self.chat.scroll_offset;
                 let abs_line = abs_line.min(self.chat.lines.len().saturating_sub(1));
                 let inner_col = mouse
                     .column

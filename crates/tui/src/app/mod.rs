@@ -6,7 +6,10 @@
 pub(crate) mod agent_conn;
 pub(crate) mod agent_events;
 pub(crate) mod chat_ops;
+pub(crate) mod chat_scroll;
 pub(crate) mod chat_state;
+#[cfg(test)]
+mod chat_view_tests;
 pub(crate) mod construct;
 pub(crate) mod dispatch;
 pub(crate) mod dispatch_chat;
