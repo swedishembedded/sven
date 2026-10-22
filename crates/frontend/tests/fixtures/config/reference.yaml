@@ -389,3 +389,7 @@ tui:
   # Enable this if your terminal font renders Unicode as gibberish.
   # Can also be forced with SVEN_ASCII_BORDERS=1 environment variable.
   ascii_borders: false
+
+  # Show the model's thinking in the chat. When off, thinking is kept in the
+  # session but not drawn; the status bar says "Thinking" while it streams.
+  show_thinking: false

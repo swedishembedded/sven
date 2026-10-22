@@ -18,6 +18,17 @@ use crate::{
 };
 
 impl App {
+    /// What the agent is doing, for the status bar: the running tool, the
+    /// model request it is waiting on, its thinking, or a passing notice.
+    pub(crate) fn activity_label(&self) -> Option<&str> {
+        self.agent
+            .current_tool
+            .as_deref()
+            .or(self.agent.model_waiting.as_deref())
+            .or(self.chat.streaming_is_thinking.then_some("Thinking"))
+            .or(self.agent.notice.as_deref())
+    }
+
     /// Render the entire TUI into `frame`.
     ///
     /// `nvim_lines`      - rendered Neovim grid lines (empty when no nvim).
@@ -166,12 +177,7 @@ impl App {
                     .total_cost_including_children(&self.sessions.active_id),
                 cache_hit_pct: self.agent.cache_hit_pct,
                 agent_busy: self.agent.busy,
-                current_tool: self
-                    .agent
-                    .current_tool
-                    .as_deref()
-                    .or(self.agent.model_waiting.as_deref())
-                    .or(self.agent.notice.as_deref()),
+                current_tool: self.activity_label(),
                 ascii,
                 focus: self.ui.focus,
                 spinner_frame: self.agent.spinner_frame,

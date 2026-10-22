@@ -440,31 +440,19 @@ impl App {
                 if self.nvim.bridge.is_some() {
                     return false;
                 }
-                let n = self.chat.segments().len();
-                if n == 0 {
-                    return false;
+                if let Some(next) = self.step_highlight(true) {
+                    self.chat.focused_segment = Some(next);
+                    self.scroll_chat_to_show_segment(next);
                 }
-                let next = match self.chat.focused_segment {
-                    Some(i) => (i + 1).min(n - 1),
-                    None => 0,
-                };
-                self.chat.focused_segment = Some(next);
-                self.scroll_chat_to_show_segment(next);
             }
             Action::ChatHighlightUp => {
                 if self.nvim.bridge.is_some() {
                     return false;
                 }
-                let n = self.chat.segments().len();
-                if n == 0 {
-                    return false;
+                if let Some(prev) = self.step_highlight(false) {
+                    self.chat.focused_segment = Some(prev);
+                    self.scroll_chat_to_show_segment(prev);
                 }
-                let prev = match self.chat.focused_segment {
-                    Some(i) => i.saturating_sub(1),
-                    None => n - 1,
-                };
-                self.chat.focused_segment = Some(prev);
-                self.scroll_chat_to_show_segment(prev);
             }
             Action::ShowChatHelp => {
                 self.ui.confirm_modal = Some(ConfirmModal::info_with_border(

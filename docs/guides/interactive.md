@@ -38,7 +38,8 @@ the full terminal width.
 tool calls are shown here. Tool calls, tool results and thinking blocks start
 collapsed to a summary; click one to cycle how much of it is shown, and press
 `Space` on a sub-agent summary to expand or collapse it. The pane scrolls
-independently of the input box.
+independently of the input box. The model's thinking is not drawn unless
+`tui.show_thinking` is set; while it streams, the status bar says `Thinking`.
 
 **Input box** - a multi-line text field. `Enter` sends the message, `Alt+Enter`
 inserts a newline (`Shift+Enter` and `Ctrl+J` also work). `Ctrl+Up` / `Ctrl+Down`

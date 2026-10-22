@@ -535,6 +535,10 @@ tui:
   # Enable this if your terminal font renders Unicode as gibberish.
   # Can also be forced with SVEN_ASCII_BORDERS=1 environment variable.
   ascii_borders: false
+
+  # Show the model's thinking in the chat. When off, thinking is kept in the
+  # session but not drawn; the status bar says "Thinking" while it streams.
+  show_thinking: false
 ```
 
 ---
@@ -1339,6 +1343,7 @@ that use the same server URL.
 | `code_line_numbers` | `false` | Show line numbers in code blocks |
 | `wrap_width` | `0` | Markdown wrap column (0 = auto) |
 | `ascii_borders` | `false` | Use ASCII instead of Unicode box-drawing characters |
+| `show_thinking` | `false` | Show the model's thinking in the chat; when off it is kept in the session and the status bar says "Thinking" while it streams |
 
 The `ascii_borders` setting is also controlled by the `SVEN_ASCII_BORDERS=1`
 environment variable, which is useful when you cannot edit the config file

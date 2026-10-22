@@ -55,4 +55,26 @@ impl App {
         let center = self.chat.scroll_offset + self.layout.chat_height as usize / 2;
         self.chat.focused_segment = segment_at_line(&self.chat.segment_line_ranges, center);
     }
+
+    /// The segment the highlight moves to from the current one, one step
+    /// down (`forward`) or up, skipping segments that render no lines
+    /// (hidden thinking, results drawn on their call's line). With no
+    /// highlight yet, moving down starts at the top and up at the bottom;
+    /// at either end the highlight stays where it is.
+    pub(crate) fn step_highlight(&self, forward: bool) -> Option<usize> {
+        let visible = |i: &usize| {
+            self.chat
+                .segment_line_ranges
+                .get(*i)
+                .is_some_and(|&(start, end)| end > start)
+        };
+        let n = self.chat.segments().len();
+        let found = match (self.chat.focused_segment, forward) {
+            (Some(i), true) => (i + 1..n).find(visible),
+            (Some(i), false) => (0..i).rev().find(visible),
+            (None, true) => (0..n).find(visible),
+            (None, false) => (0..n).rev().find(visible),
+        };
+        found.or(self.chat.focused_segment)
+    }
 }

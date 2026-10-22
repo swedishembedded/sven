@@ -8,6 +8,7 @@ pub(crate) mod agent_events;
 pub(crate) mod chat_ops;
 pub(crate) mod chat_scroll;
 pub(crate) mod chat_state;
+pub(crate) mod chat_streaming;
 #[cfg(test)]
 mod chat_view_tests;
 pub(crate) mod construct;

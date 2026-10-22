@@ -339,7 +339,7 @@ path = "crates/executors/tests/pipeline_integration.rs"
 lines = 1066
 [[allow.large_file]]
 path = "crates/tui/src/app/chat_ops.rs"
-lines = 1118
+lines = 1075
 [[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
 lines = 995

@@ -6,7 +6,6 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use sven_model::{MessageContent, Role};
@@ -18,12 +17,11 @@ use crate::{
         markdown::{
             apply_role_style, collapsed_preview, format_conversation, parse_markdown_to_messages,
             partial_content, segment_bar_style, segment_to_markdown, strip_display_anchors,
-            ToolDisplayRegistryRef, SYM_THINK, SYM_TOOL,
+            ToolDisplayRegistryRef, SYM_TOOL,
         },
         segment::ChatSegment,
     },
     markdown::render_markdown,
-    ui::theme::{BAR_AGENT, BAR_THINKING},
     ui::tool_renderer,
     ui::width_utils::{col_to_byte_offset, display_width, truncate_to_width},
 };
@@ -69,6 +67,10 @@ impl App {
             }
 
             let seg = &self.chat.segments()[i];
+            if !self.tui_config.show_thinking && matches!(seg, ChatSegment::Thinking { .. }) {
+                ranges.push((line_start, line_start));
+                continue;
+            }
             let expand = if self.nvim.disabled {
                 self.chat.expand_level(i)
             } else {
@@ -175,52 +177,7 @@ impl App {
             line_start += n;
         }
 
-        if !self.chat.streaming_buffer.is_empty() {
-            if self.chat.streaming_is_thinking {
-                // Scanning dot (side to side) for Seasoning, same as in-progress tool calls.
-                let dot = crate::ui::theme::tool_scan(anim_frame, ascii);
-                let sep = if self.chat.segments().is_empty() {
-                    ""
-                } else {
-                    "\n"
-                };
-                // Show "Seasoning" heading with scanning dot, then streaming thought below
-                // (no backticks, no 80-char clip - stream full thought in real-time)
-                let header = format!("{sep}{SYM_THINK} **Seasoning**  {dot}\n");
-                let header_lines = render_markdown(&header, render_width, ascii);
-                let header_styled =
-                    apply_role_style(header_lines, Some(Style::default().fg(BAR_THINKING)), false);
-                // Render thinking content on next line, styled with DIM modifier
-                let thinking = format!("{}\n", self.chat.streaming_buffer);
-                let thinking_lines = render_markdown(&thinking, render_width, ascii);
-                let dim_thinking: Vec<Line> = thinking_lines
-                    .into_iter()
-                    .map(|mut line| {
-                        for span in &mut line.spans {
-                            span.style = span.style.add_modifier(Modifier::DIM);
-                        }
-                        line
-                    })
-                    .collect();
-                let thinking_styled =
-                    apply_role_style(dim_thinking, Some(Style::default().fg(BAR_THINKING)), false);
-                let mut combined = header_styled;
-                combined.extend(thinking_styled);
-                all_lines.extend(combined);
-            } else {
-                // Blinking ▌ cursor shows the stream is live.
-                let cursor = crate::ui::theme::stream_cursor(anim_frame, ascii);
-                let sep = if self.chat.segments().is_empty() {
-                    ""
-                } else {
-                    "\n"
-                };
-                let text = format!("{sep}**Agent:** {}{}", self.chat.streaming_buffer, cursor);
-                let lines = render_markdown(&text, render_width, ascii);
-                let styled = apply_role_style(lines, Some(Style::default().fg(BAR_AGENT)), false);
-                all_lines.extend(styled);
-            }
-        }
+        all_lines.extend(self.streaming_tail_lines(render_width, ascii, anim_frame));
 
         self.chat.lines = all_lines;
         self.chat.segment_line_ranges = ranges;

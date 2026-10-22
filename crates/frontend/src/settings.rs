@@ -39,6 +39,10 @@ pub struct TuiConfig {
     /// Can also be forced with the SVEN_ASCII_BORDERS=1 environment variable.
     #[serde(default)]
     pub ascii_borders: bool,
+    /// Show the model's thinking in the chat. Off by default: the thinking
+    /// is kept in the session, and the status bar says "Thinking" while it
+    /// streams.
+    pub show_thinking: bool,
 }
 
 impl Default for TuiConfig {
@@ -48,6 +52,7 @@ impl Default for TuiConfig {
             code_line_numbers: false,
             wrap_width: 0,
             ascii_borders: false,
+            show_thinking: false,
         }
     }
 }
@@ -56,7 +61,13 @@ impl TuiConfig {
     /// The keys of the `tui:` section.
     #[must_use]
     pub fn schema() -> Schema {
-        Schema::keys(&["theme", "code_line_numbers", "wrap_width", "ascii_borders"])
+        Schema::keys(&[
+            "theme",
+            "code_line_numbers",
+            "wrap_width",
+            "ascii_borders",
+            "show_thinking",
+        ])
     }
 }
 

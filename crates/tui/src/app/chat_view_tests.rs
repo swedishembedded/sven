@@ -101,3 +101,62 @@ async fn a_result_inserted_above_keeps_the_highlight_and_expansion_on_their_segm
     assert_eq!(expand_level_of_call(&app, "b"), 1, "`b` stays expanded");
     assert_eq!(expand_level_of_call(&app, "a"), 0, "`a` stays collapsed");
 }
+
+// ── Thinking ──────────────────────────────────────────────────────────────────
+
+fn text_of(app: &App) -> String {
+    app.chat
+        .lines
+        .iter()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+async fn chat_with_thinking(show_thinking: bool) -> App {
+    let (mut app, _rx) = App::for_testing();
+    app.tui_config.show_thinking = show_thinking;
+    let sid = app.sessions.active_id.clone();
+    app.chat
+        .push_segment(ChatSegment::Message(sven_model::Message::user("hi")));
+    app.handle_agent_event(
+        sid.clone(),
+        sven_machines::AgentEvent::ThinkingDelta("weighing the options".into()),
+    )
+    .await;
+    app.build_display_from_segments();
+    app
+}
+
+#[tokio::test]
+async fn thinking_is_hidden_by_default_and_the_status_says_thinking() {
+    let mut app = chat_with_thinking(false).await;
+    assert!(!text_of(&app).contains("weighing"), "{}", text_of(&app));
+    assert_eq!(app.activity_label(), Some("Thinking"));
+
+    let sid = app.sessions.active_id.clone();
+    app.handle_agent_event(
+        sid,
+        sven_machines::AgentEvent::ThinkingComplete("weighing the options".into()),
+    )
+    .await;
+    let thinking = app.chat.segments().len() - 1;
+    assert!(
+        matches!(app.chat.segments()[thinking], ChatSegment::Thinking { .. }),
+        "the thinking is kept in the conversation"
+    );
+    let (start, end) = app.chat.segment_line_ranges[thinking];
+    assert_eq!(start, end, "but it takes no lines in the chat");
+
+    // The highlight never lands on a segment that shows nothing.
+    app.chat.focused_segment = Some(0);
+    app.dispatch_action(crate::keys::Action::ChatHighlightDown)
+        .await;
+    assert_eq!(app.chat.focused_segment, Some(0));
+}
+
+#[tokio::test]
+async fn thinking_is_shown_when_configured() {
+    let app = chat_with_thinking(true).await;
+    assert!(text_of(&app).contains("weighing"), "{}", text_of(&app));
+}

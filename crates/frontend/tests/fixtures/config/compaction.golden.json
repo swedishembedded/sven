@@ -158,6 +158,7 @@
     "tui": {
       "ascii_borders": false,
       "code_line_numbers": false,
+      "show_thinking": false,
       "theme": "dark",
       "wrap_width": 0
     }
