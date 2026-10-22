@@ -11,7 +11,7 @@
 # level at a time: `test`, then `test/`, then `test/harness`. That only works
 # while the names keep to a convention, so this gate enforces it.
 #
-# THE RULE (also in AGENTS.md, "Make targets"): a public target is
+# THE RULE (in full: .agents/rules/make-targets.md): a public target is
 # `make <concept>/<subconcept>/.../<action>`. The concept comes first, the verb
 # or variant last, and a directory hierarchy (tests, samples) gets one segment
 # per directory level. Every prefix is itself a target, so tab descent works

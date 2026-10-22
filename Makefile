@@ -33,7 +33,7 @@ RELEASE_REMOTE ?= origin
 # package name.
 CRATE_PACKAGES := $(shell sed -sn '/^\[package\]/,/^name *=/s/^name *= *"\(.*\)"/\1/p' Cargo.toml crates/*/Cargo.toml samples/*/*/Cargo.toml xtask/Cargo.toml)
 
-# MAKE TARGETS (rule: AGENTS.md, "Make targets"). A target is
+# MAKE TARGETS (rule: .agents/rules/make-targets.md). A target is
 # `make <concept>/<subconcept>/.../<action>`: concept first, verb last, one
 # segment per directory level of a test or sample hierarchy, and every prefix
 # is itself a target so `make <TAB>` descends one level at a time. Where a set

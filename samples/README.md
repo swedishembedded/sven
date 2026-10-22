@@ -8,10 +8,11 @@ you can build with sven, built and run on its own. The framework is one thing;
 the applications that show what it is for are another. A sample is not a test
 and not a fixture.
 
-Sven is a framework whose CLI is one consumer among several (see the golden
-rule in `AGENTS.md`). A sample is the other half of that claim's proof: `sven
-agent step` shows the surface is enough to build the CLI on, and a sample shows
-it is enough to build something that is *not* the CLI on.
+Sven is a framework whose CLI is one consumer among several (see "Framework
+first" in `.agents/rules/architecture.md`). A sample is the other half of that
+claim's proof: `sven agent step` shows the surface is enough to build the CLI
+on, and a sample shows it is enough to build something that is *not* the CLI
+on.
 
 ## The two rules
 
