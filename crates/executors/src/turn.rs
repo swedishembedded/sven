@@ -437,24 +437,25 @@ impl EffectExecutor for TurnExecutor {
             None => (messages, None),
         };
 
-        if let Some(budget) =
-            sven_model::budget::effective_input_budget(context_window, configured_max_output)
-        {
-            if estimate > budget {
-                let msg = format!(
-                    "prompt (~{estimate} tokens) leaves no room for a response in this model's context \
-                     (context {ctx} tokens, usable input budget {budget} tokens after reserving a minimal \
-                     response); reduce context or raise the server's capacity \
-                     [provider={provider} model={model}]",
-                    ctx = context_window.unwrap_or(0),
-                    provider = model.name(),
-                    model = model.model_name(),
-                );
-                obs.emit(UiEvent::Error(msg.clone()));
-                let _ = sink.emit(Event::LlmFailed { error: msg }).await;
-                obs.emit(UiEvent::TurnComplete);
-                return;
-            }
+        let no_room = |prompt: usize, budget: usize| {
+            format!(
+                "prompt (~{prompt} tokens) leaves no room for a response in this model's context \
+                 (context {ctx} tokens, usable input budget {budget} tokens after reserving a minimal \
+                 response); reduce context or raise the server's capacity \
+                 [provider={provider} model={model}]",
+                ctx = context_window.unwrap_or(0),
+                provider = model.name(),
+                model = model.model_name(),
+            )
+        };
+        let input_budget =
+            sven_model::budget::effective_input_budget(context_window, configured_max_output);
+        if let Some(budget) = input_budget.filter(|&budget| estimate > budget) {
+            let msg = no_room(estimate, budget);
+            obs.emit(UiEvent::Error(msg.clone()));
+            let _ = sink.emit(Event::LlmFailed { error: msg }).await;
+            obs.emit(UiEvent::TurnComplete);
+            return;
         }
         // The response may ask for what this prompt actually leaves of the
         // window, sized from the server's count where there is one.
@@ -463,6 +464,16 @@ impl EffectExecutor for TurnExecutor {
             .sizing_estimate(&thread_id, &messages, estimate);
         let max_output_tokens_override =
             limits.output_budget(context_window, configured_max_output, sizing);
+        // The server's count can exceed the estimate the gate above used, and
+        // then nothing is left: a request asking for no tokens is refused by
+        // every server, so it fails here, saying why, instead.
+        if max_output_tokens_override == Some(0) {
+            let msg = no_room(sizing, input_budget.unwrap_or(0));
+            obs.emit(UiEvent::Error(msg.clone()));
+            let _ = sink.emit(Event::LlmFailed { error: msg }).await;
+            obs.emit(UiEvent::TurnComplete);
+            return;
+        }
 
         // Build optional structured-output constraint.
         let response_format = if req.schema.is_null() {

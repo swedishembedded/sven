@@ -75,3 +75,77 @@ async fn the_output_cap_applies_when_the_context_window_is_unknown() {
     let sent = last.lock().unwrap().take().expect("the model was called");
     assert_eq!(sent.max_output_tokens_override, Some(123));
 }
+
+/// A provider whose context window is `window` tokens, recording what it is
+/// sent.
+struct SmallWindow {
+    window: u32,
+    last: Arc<Mutex<Option<sven_model::CompletionRequest>>>,
+}
+
+#[async_trait::async_trait]
+impl sven_model::ModelProvider for SmallWindow {
+    fn name(&self) -> &str {
+        "small"
+    }
+    fn model_name(&self) -> &str {
+        "small"
+    }
+    fn catalog_context_window(&self) -> Option<u32> {
+        Some(self.window)
+    }
+    async fn complete(
+        &self,
+        req: sven_model::CompletionRequest,
+    ) -> anyhow::Result<
+        std::pin::Pin<
+            Box<dyn futures::Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>,
+        >,
+    > {
+        *self.last.lock().unwrap() = Some(req);
+        let events: Vec<anyhow::Result<sven_model::ResponseEvent>> = vec![
+            Ok(sven_model::ResponseEvent::TextDelta("pong".into())),
+            Ok(sven_model::ResponseEvent::Done),
+        ];
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
+}
+
+/// A prompt that passes the input gate but, sized the way a thread's first
+/// request is (its estimate raised by half), leaves nothing of the window for
+/// the response is never sent asking for zero output tokens: every server
+/// refuses that, so the turn fails saying the prompt leaves no room.
+#[tokio::test]
+async fn a_request_with_no_room_left_for_a_response_is_never_sent() {
+    let last = Arc::new(Mutex::new(None));
+    let turn = TurnExecutor::new(
+        Arc::new(SmallWindow {
+            window: 1500,
+            last: Arc::clone(&last),
+        }),
+        None,
+        Arc::new(sven_tool_registry::ToolRegistry::new()),
+        Arc::new(std::sync::Mutex::new(ThreadStore::new())),
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        Arc::new(tokio::sync::Mutex::new(None)),
+    );
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(ReactiveAgentMachine::new())) as Box<dyn ErasedMachine>,
+        Context::new(),
+        PermissionPolicy::builder().build(),
+        CompositeExecutorBuilder::default().with_turn(turn).build(),
+        64,
+    );
+    // About 1100 estimated tokens: under the 1500-token window's input gate,
+    // over what a first request's raised estimate leaves of it.
+    rt.post(Event::user_message("word ".repeat(800))).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    rt.abort();
+    let sent = last.lock().unwrap().take();
+    assert!(
+        sent.as_ref()
+            .is_none_or(|r| r.max_output_tokens_override != Some(0)),
+        "a request asking for no output tokens was sent: {:?}",
+        sent.map(|r| r.max_output_tokens_override)
+    );
+}
