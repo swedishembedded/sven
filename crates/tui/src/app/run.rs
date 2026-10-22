@@ -23,7 +23,6 @@ use crate::{
     app::{ui_state, App, FocusPane},
     chat::segment::ChatSegment,
     keys::Action,
-    layout::AppLayout,
     node_agent::node_agent_task,
     overlay::question::{watch_withdrawal, QuestionModal},
 };
@@ -157,12 +156,7 @@ impl App {
             }
             self.rerender_chat().await;
             if let Ok(size) = terminal.size() {
-                let layout = AppLayout::compute(
-                    Rect::new(0, 0, size.width, size.height),
-                    false,
-                    self.queue.messages.len(),
-                    self.prefs.input_height,
-                );
+                let layout = self.layout_for(Rect::new(0, 0, size.width, size.height));
                 self.layout.chat_height = layout.chat_inner_height().max(1);
             }
             self.scroll_to_bottom();
@@ -170,12 +164,7 @@ impl App {
 
         if !self.nvim.disabled {
             let (nvim_width, nvim_height) = if let Ok(size) = terminal.size() {
-                let layout = AppLayout::compute(
-                    Rect::new(0, 0, size.width, size.height),
-                    false,
-                    0,
-                    self.prefs.input_height,
-                );
+                let layout = self.layout_for(Rect::new(0, 0, size.width, size.height));
                 (
                     layout.chat_pane.width.saturating_sub(2),
                     layout.chat_inner_height().max(1),
@@ -234,41 +223,8 @@ impl App {
         loop {
             // ── Layout cache update ───────────────────────────────────────────
             if let Ok(size) = terminal.size() {
-                let prompt_width: u16 = 2;
-                let avail_wrap_width = size.width.saturating_sub(prompt_width).max(1) as usize;
-                let in_edit = self.edit.queue_index.is_some() || self.edit.message_index.is_some();
-                let content_str = if in_edit {
-                    &self.edit.buffer
-                } else {
-                    &self.input.buffer
-                };
-                let wrap_est = crate::input_wrap::wrap_content(
-                    content_str,
-                    avail_wrap_width,
-                    content_str.len(),
-                );
-                let text_lines = wrap_est.lines.len().max(1) as u16;
-                let attach_rows = self.input.attachments.len() as u16;
-                let max_input_height = (size.height / 2).max(3);
-                let desired_input_height = (text_lines + attach_rows + 2)
-                    .max(self.prefs.input_height)
-                    .min(max_input_height);
-                let layout = AppLayout::compute(
-                    Rect::new(0, 0, size.width, size.height),
-                    self.ui.search.active,
-                    self.queue.messages.len(),
-                    desired_input_height,
-                );
-                self.layout.chat_height = layout.chat_inner_height().max(1);
-                self.chat.scroll_offset = self.chat.scroll_offset.min(self.max_chat_scroll());
-                self.layout.chat_pane = layout.chat_pane;
-                // Open-border chat: no left/right `│`, full width available.
-                self.layout.chat_inner_width = layout.chat_pane.width.max(20);
-                // Input: no left/right borders, but 2 cols reserved for `>` prompt.
-                self.layout.input_inner_width = layout.input_pane.width.saturating_sub(2);
-                self.layout.input_inner_height = layout.input_pane.height.saturating_sub(2);
-                self.layout.input_pane = layout.input_pane;
-                self.layout.queue_pane = layout.queue_pane;
+                let layout = self.layout_for(Rect::new(0, 0, size.width, size.height));
+                self.cache_layout(&layout);
             }
 
             // ── Cursor scroll adjustment ──────────────────────────────────────

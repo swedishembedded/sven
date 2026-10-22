@@ -1,10 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    Frame,
-};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 /// The regions that make up the TUI layout.
 #[derive(Debug, Clone, Copy)]
@@ -24,9 +21,9 @@ impl AppLayout {
     /// `input_height` - user-preferred input pane height (clamped 3-20).
     ///
     /// There is no sidebar: the chat pane always spans the full terminal
-    /// width - see `.todo/terminal-ui.md`'s "no floating controls on either
-    /// side" brief. Session switching and peers are reached through
-    /// `/resume` and `/peers` instead of a permanent side panel.
+    /// width, with no controls on either side. Session switching and peers
+    /// are reached through `/resume` and `/peers` instead of a permanent
+    /// side panel.
     pub fn compute(area: Rect, search_visible: bool, queue_len: usize, input_height: u16) -> Self {
         let status_height = 1u16;
         let input_height = input_height.clamp(3, area.height.saturating_sub(5).max(3));
@@ -55,11 +52,6 @@ impl AppLayout {
             input_pane: vertical[3],
             search_bar: vertical[4],
         }
-    }
-
-    /// Convenience wrapper - derive the area from the current frame.
-    pub fn new(frame: &Frame, search_visible: bool, queue_len: usize, input_height: u16) -> Self {
-        Self::compute(frame.area(), search_visible, queue_len, input_height)
     }
 
     /// The number of text rows visible inside the chat pane's border.

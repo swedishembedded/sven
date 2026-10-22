@@ -27,7 +27,6 @@ use crate::{
     app::{App, FocusPane},
     input::{is_reserved_key, to_nvim_notation},
     keys::{map_key, Action},
-    layout::AppLayout,
 };
 
 use super::dispatch_input::prev_char_boundary;
@@ -227,35 +226,8 @@ impl App {
             }
 
             Event::Resize(width, height) => {
-                // Estimate dynamic input height for the layout cache update.
-                let prompt_width: u16 = 2;
-                let avail_wrap_width = width.saturating_sub(prompt_width).max(1) as usize;
-                let wrap_est = crate::input_wrap::wrap_content(
-                    &self.input.buffer,
-                    avail_wrap_width,
-                    self.input.buffer.len(),
-                );
-                let text_lines = wrap_est.lines.len().max(1) as u16;
-                let attach_rows = self.input.attachments.len() as u16;
-                let max_input_height = (height / 2).max(3);
-                let desired_input_height = (text_lines + attach_rows + 2)
-                    .max(self.prefs.input_height)
-                    .min(max_input_height);
-                let layout = AppLayout::compute(
-                    Rect::new(0, 0, width, height),
-                    self.ui.search.active,
-                    self.queue.messages.len(),
-                    desired_input_height,
-                );
-                // Open-border panes (TOP+BOTTOM only) - no left/right `│` chars.
-                self.layout.chat_inner_width = layout.chat_pane.width.max(20);
-                self.layout.chat_height = layout.chat_inner_height().max(1);
-                // Input pane: no left/right borders; reserve 2 cols for `> ` prompt.
-                self.layout.input_inner_width = layout.input_pane.width.saturating_sub(2);
-                self.layout.input_inner_height = layout.input_pane.height.saturating_sub(2);
-                self.layout.chat_pane = layout.chat_pane;
-                self.layout.input_pane = layout.input_pane;
-                self.layout.queue_pane = layout.queue_pane;
+                let layout = self.layout_for(Rect::new(0, 0, width, height));
+                self.cache_layout(&layout);
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let chat_width = layout.chat_pane.width.saturating_sub(2);
                     let chat_height = layout.chat_inner_height();

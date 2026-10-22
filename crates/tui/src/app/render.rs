@@ -103,35 +103,7 @@ impl App {
             return;
         }
 
-        // Compute a dynamic input height that expands with content up to 50% of
-        // the screen, but never shrinks below the user-preferred minimum.
-        let area = frame.area();
-        let max_input_height = (area.height / 2).max(3);
-        let prompt_width: u16 = 2; // `> ` prefix
-        let avail_wrap_width = area.width.saturating_sub(prompt_width).max(1) as usize;
-        let in_edit_for_height =
-            self.edit.queue_index.is_some() || self.edit.message_index.is_some();
-        let content_for_height = if in_edit_for_height {
-            &self.edit.buffer
-        } else {
-            &self.input.buffer
-        };
-        let wrap = crate::input_wrap::wrap_content(
-            content_for_height,
-            avail_wrap_width,
-            content_for_height.len(),
-        );
-        let text_lines = wrap.lines.len().max(1) as u16;
-        let attach_rows = self.input.attachments.len() as u16;
-        let desired_input_height = (text_lines + attach_rows + 2) // +2 for top/bottom borders
-            .max(self.prefs.input_height)
-            .min(max_input_height);
-        let layout = crate::layout::AppLayout::new(
-            frame,
-            self.ui.search.active,
-            self.queue.messages.len(),
-            desired_input_height,
-        );
+        let layout = self.layout_for(frame.area());
         // Clean up expired toasts every frame.
         self.ui.prune_toasts();
 

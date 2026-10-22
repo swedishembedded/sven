@@ -11,6 +11,8 @@
 
 use ratatui::layout::Rect;
 
+use crate::{app::App, layout::AppLayout};
+
 /// Which pane border is currently being dragged, with an anchor offset.
 ///
 /// `anchor_offset` is the signed distance from the click coordinate to the
@@ -92,5 +94,51 @@ impl LayoutCache {
             queue_pane: Rect::default(),
             resize_drag: None,
         }
+    }
+}
+
+// ── Layout of the current state ───────────────────────────────────────────────
+
+impl App {
+    /// The layout of a terminal of size `area`, with the input pane as tall
+    /// as the text being typed or edited needs - up to half the screen, and
+    /// never shorter than the user's preferred height.
+    pub(crate) fn layout_for(&self, area: Rect) -> AppLayout {
+        const PROMPT_WIDTH: u16 = 2; // `> `
+        let wrap_width = usize::from(area.width.saturating_sub(PROMPT_WIDTH).max(1));
+        let text = if self.edit.queue_index.is_some() || self.edit.message_index.is_some() {
+            &self.edit.buffer
+        } else {
+            &self.input.buffer
+        };
+        let text_rows = crate::input_wrap::wrap_content(text, wrap_width, text.len())
+            .lines
+            .len()
+            .max(1) as u16;
+        let attachment_rows = self.input.attachments.len() as u16;
+        let input_height = (text_rows + attachment_rows + 2) // + top/bottom borders
+            .max(self.prefs.input_height)
+            .min((area.height / 2).max(3));
+        AppLayout::compute(
+            area,
+            self.ui.search.active,
+            self.queue.messages.len(),
+            input_height,
+        )
+    }
+
+    /// Record `layout` where event handlers read pane sizes from, and keep
+    /// the chat's scroll position inside the resized pane.
+    pub(crate) fn cache_layout(&mut self, layout: &AppLayout) {
+        self.layout.chat_height = layout.chat_inner_height().max(1);
+        // Open-border chat: no left/right `│`, the full width is text.
+        self.layout.chat_inner_width = layout.chat_pane.width.max(20);
+        // Input: no left/right borders, but 2 columns for the `> ` prompt.
+        self.layout.input_inner_width = layout.input_pane.width.saturating_sub(2);
+        self.layout.input_inner_height = layout.input_pane.height.saturating_sub(2);
+        self.layout.chat_pane = layout.chat_pane;
+        self.layout.input_pane = layout.input_pane;
+        self.layout.queue_pane = layout.queue_pane;
+        self.chat.scroll_offset = self.chat.scroll_offset.min(self.max_chat_scroll());
     }
 }
