@@ -22,8 +22,9 @@ pub struct WhichKeyOverlay {
 impl Widget for WhichKeyOverlay {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let items: &[(&str, &str)] = &[
-            ("k / ↑", "Focus chat pane"),
-            ("j / ↓", "Focus input pane"),
+            ("k / ↑", "Focus the pane above"),
+            ("j / ↓", "Focus the pane below"),
+            ("a", "Focus the agents panel"),
             ("+  /  =", "Grow input pane"),
             ("-", "Shrink input pane"),
             ("Esc", "Cancel"),

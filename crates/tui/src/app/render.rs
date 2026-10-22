@@ -273,6 +273,24 @@ impl App {
             }
         }
 
+        // ── Activity panel ────────────────────────────────────────────────────
+        let agents: Vec<_> = self.activity_agents().into_iter().map(|(_, a)| a).collect();
+        if !agents.is_empty() {
+            frame.render_widget(
+                crate::ui::activity_panel::ActivityPanel {
+                    agents: &agents,
+                    expanded: self.ui.activity.expanded,
+                    selected: self.ui.activity.selected,
+                    scroll: self.ui.activity.scroll,
+                    focused: self.ui.focus == FocusPane::Activity,
+                    ascii,
+                    now: std::time::Instant::now(),
+                    anim_frame: self.agent.anim_frame,
+                },
+                layout.activity_pane,
+            );
+        }
+
         // ── Queue panel ───────────────────────────────────────────────────────
         if !self.queue.messages.is_empty() {
             let items: Vec<QueueItem> = self

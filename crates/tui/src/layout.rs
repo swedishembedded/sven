@@ -8,28 +8,43 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 pub struct AppLayout {
     pub status_bar: Rect,
     pub chat_pane: Rect,
+    /// Activity panel under the chat; zero-height without subagents.
+    pub activity_pane: Rect,
     /// Queue panel shown above the input pane; zero-height when queue is empty.
     pub queue_pane: Rect,
     pub input_pane: Rect,
     pub search_bar: Rect,
 }
 
+/// How tall the panes other than the chat want to be.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PaneSizes {
+    pub search_visible: bool,
+    /// Messages waiting in the queue; the queue panel shows when there are any.
+    pub queue_len: usize,
+    /// Rows for the activity panel (0 hides it).
+    pub activity_height: u16,
+    /// Input pane height (clamped 3-20).
+    pub input_height: u16,
+}
+
 impl AppLayout {
-    /// Calculate layout regions from a `Rect` (terminal area).
-    ///
-    /// `queue_len`    - controls whether a queue panel is shown.
-    /// `input_height` - user-preferred input pane height (clamped 3-20).
+    /// Calculate layout regions from a `Rect` (terminal area): the status
+    /// bar, the chat, the activity and queue panels, the input and the
+    /// search bar, top to bottom. The chat gets what the others leave.
     ///
     /// There is no sidebar: the chat pane always spans the full terminal
     /// width, with no controls on either side. Session switching and peers
     /// are reached through `/resume` and `/peers` instead of a permanent
     /// side panel.
-    pub fn compute(area: Rect, search_visible: bool, queue_len: usize, input_height: u16) -> Self {
+    pub fn compute(area: Rect, sizes: PaneSizes) -> Self {
         let status_height = 1u16;
-        let input_height = input_height.clamp(3, area.height.saturating_sub(5).max(3));
-        let search_height = if search_visible { 1u16 } else { 0u16 };
-        let queue_height: u16 = if queue_len > 0 {
-            (queue_len as u16 + 2).min(6)
+        let input_height = sizes
+            .input_height
+            .clamp(3, area.height.saturating_sub(5).max(3));
+        let search_height = u16::from(sizes.search_visible);
+        let queue_height: u16 = if sizes.queue_len > 0 {
+            (sizes.queue_len as u16 + 2).min(6)
         } else {
             0
         };
@@ -39,6 +54,7 @@ impl AppLayout {
             .constraints([
                 Constraint::Length(status_height),
                 Constraint::Min(10),
+                Constraint::Length(sizes.activity_height),
                 Constraint::Length(queue_height),
                 Constraint::Length(input_height),
                 Constraint::Length(search_height),
@@ -48,9 +64,10 @@ impl AppLayout {
         AppLayout {
             status_bar: vertical[0],
             chat_pane: vertical[1],
-            queue_pane: vertical[2],
-            input_pane: vertical[3],
-            search_bar: vertical[4],
+            activity_pane: vertical[2],
+            queue_pane: vertical[3],
+            input_pane: vertical[4],
+            search_bar: vertical[5],
         }
     }
 
@@ -71,7 +88,13 @@ mod tests {
     fn chat_pane_spans_the_full_terminal_width() {
         for (w, h) in [(40, 20), (80, 24), (120, 40), (200, 60)] {
             let area = Rect::new(0, 0, w, h);
-            let layout = AppLayout::compute(area, false, 0, 4);
+            let layout = AppLayout::compute(
+                area,
+                PaneSizes {
+                    input_height: 4,
+                    ..PaneSizes::default()
+                },
+            );
             assert_eq!(
                 layout.chat_pane.width, w,
                 "chat_pane width must equal the terminal width at {w}x{h}"

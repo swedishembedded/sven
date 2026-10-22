@@ -153,6 +153,7 @@ impl Widget for StatusBar<'_> {
                 }
                 FocusPane::Chat => "",
                 FocusPane::Queue => "↑↓ select · Enter send · Esc close",
+                FocusPane::Activity => "↑↓ select · Enter open · Esc close",
             }
         };
 

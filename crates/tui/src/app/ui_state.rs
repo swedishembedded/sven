@@ -29,6 +29,8 @@ pub enum FocusPane {
     Input,
     /// The compact queue panel shown above the input when there are pending messages.
     Queue,
+    /// The activity panel listing the session's subagents (`Ctrl+w a`).
+    Activity,
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -99,6 +101,8 @@ pub(crate) struct UiState {
     pub pending_nav: bool,
     /// Toast notifications (newest last). Cleaned up each frame.
     pub toasts: Vec<Toast>,
+    /// The activity panel between the chat and the input.
+    pub activity: crate::app::activity::ActivityPanelState,
     /// Team picker overlay (shown when `show_team_picker` is true).
     pub show_team_picker: bool,
     /// Current set of team members for the picker.
@@ -135,6 +139,7 @@ impl UiState {
             confirm_modal: None,
             pending_nav: false,
             toasts: Vec::new(),
+            activity: Default::default(),
             show_team_picker: false,
             team_picker_entries: Vec::new(),
             team_picker_state: TeamPickerState::default(),

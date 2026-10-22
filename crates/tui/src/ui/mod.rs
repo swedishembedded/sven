@@ -17,6 +17,7 @@ pub(crate) mod completion_menu;
 pub(crate) mod help_overlay;
 pub(crate) mod input_pane;
 pub(crate) mod inspector;
+pub(crate) mod activity_panel;
 pub(crate) mod modals;
 pub(crate) mod queue_panel;
 pub(crate) mod search_bar;

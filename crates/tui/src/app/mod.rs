@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Top-level TUI application state and event loop.
 
+pub(crate) mod activity;
+#[cfg(test)]
+mod activity_tests;
 pub(crate) mod agent_conn;
 pub(crate) mod agent_events;
 pub(crate) mod chat_ops;

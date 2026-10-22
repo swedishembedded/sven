@@ -340,6 +340,10 @@ impl App {
                 Some(Action::QueueClick { index })
             }
 
+            (MouseEventKind::Down(MouseButton::Left), HitArea::ActivityRow { row }) => {
+                Some(Action::ActivityClick { row })
+            }
+
             (
                 MouseEventKind::Down(MouseButton::Left),
                 HitArea::ChatContent {

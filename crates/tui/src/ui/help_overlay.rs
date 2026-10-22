@@ -20,8 +20,9 @@ use super::{
 /// All key binding entries, grouped into sections.  Each tuple is `(key, description, is_header)`.
 const BINDINGS: &[(&str, &str, bool)] = &[
     ("── Navigation ──", "", true),
-    ("^w k / ^w ↑", "Focus chat pane", false),
-    ("^w j / ^w ↓", "Focus input pane", false),
+    ("^w k / ^w ↑", "Focus the pane above", false),
+    ("^w j / ^w ↓", "Focus the pane below", false),
+    ("^w a", "Focus the agents panel", false),
     ("^w + / ^w -", "Grow/shrink input pane", false),
     ("── Chat pane ──", "", true),
     ("j / k", "Scroll down/up", false),

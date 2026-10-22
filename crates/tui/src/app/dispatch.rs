@@ -111,44 +111,19 @@ impl App {
             Action::FocusInput => {
                 self.ui.focus = FocusPane::Input;
             }
-            Action::NavUp => match self.ui.focus {
-                FocusPane::Input => {
-                    if !self.queue.messages.is_empty() {
-                        if self.queue.selected.is_none() {
-                            self.queue.selected = Some(0);
-                        }
-                        self.ui.focus = FocusPane::Queue;
-                    } else {
-                        self.ui.focus = FocusPane::Chat;
-                        self.recompute_focused_segment();
-                    }
-                }
-                FocusPane::Queue => {
-                    self.ui.focus = FocusPane::Chat;
-                    self.recompute_focused_segment();
-                }
-                FocusPane::Chat => {}
-            },
-            Action::NavDown => match self.ui.focus {
-                FocusPane::Chat => {
-                    if !self.queue.messages.is_empty() {
-                        if self.queue.selected.is_none() {
-                            self.queue.selected = Some(0);
-                        }
-                        self.ui.focus = FocusPane::Queue;
-                    } else {
-                        self.ui.focus = FocusPane::Input;
-                    }
-                }
-                FocusPane::Queue => {
-                    self.ui.focus = FocusPane::Input;
-                }
-                FocusPane::Input => {}
-            },
+            Action::NavUp => self.focus_neighbour_pane(false),
+            Action::NavDown => self.focus_neighbour_pane(true),
+            Action::FocusActivity => self.focus_activity(),
             // No horizontal neighbour pane exists any more (the sidebar is
             // gone); Ctrl+w h/l are now no-ops, same as vim's own Ctrl-w h/l
             // with no window in that direction.
             Action::NavLeft | Action::NavRight => {}
+            Action::ActivityNavUp => self.step_activity(false),
+            Action::ActivityNavDown => self.step_activity(true),
+            Action::ToggleActivity => self.toggle_activity(),
+            Action::ActivateActivity => self.activate_activity().await,
+            Action::LeaveActivity => self.leave_activity(),
+            Action::ActivityClick { row } => self.click_activity(row).await,
             Action::FocusQueue => {
                 if !self.queue.messages.is_empty() {
                     if self.queue.selected.is_none() {

@@ -34,38 +34,7 @@ impl App {
             {
                 let active_id = self.sessions.active_id.clone();
                 if let Some(entry) = self.sessions.find_by_buffer_handle(handle_id) {
-                    if entry.stored_chat.is_none() {
-                        let mut chat = ChatState::new();
-                        if let Some(ref prompt) = entry.initial_prompt.clone() {
-                            chat.push_segment(ChatSegment::Message(Message::user(prompt)));
-                        }
-                        entry.stored_chat = Some(chat);
-                    }
-                    if let Some(chat) = &mut entry.stored_chat {
-                        apply_subagent_update(chat, update);
-                    }
-                    match update {
-                        SubagentUpdate::ToolCallStarted { name, .. } => {
-                            entry.busy = true;
-                            entry.current_tool = Some(name.clone());
-                        }
-                        SubagentUpdate::ToolCallFinished { .. } => {
-                            entry.current_tool = None;
-                        }
-                        SubagentUpdate::Finished { .. } => {
-                            entry.busy = false;
-                            entry.current_tool = None;
-                            entry.status = sven_session_store::ChatStatus::Completed;
-                        }
-                        SubagentUpdate::Failed { .. } => {
-                            entry.busy = false;
-                            entry.current_tool = None;
-                        }
-                        SubagentUpdate::TokenUsage { cost_usd } => {
-                            entry.total_cost_usd += cost_usd;
-                        }
-                        _ => {}
-                    }
+                    entry.apply_subagent_update(update, Instant::now());
                     // If the user is currently viewing this subagent's chat, sync the
                     // update to the displayed state so streaming content appears and
                     // the spinner stops when the subagent finishes.
@@ -565,53 +534,23 @@ impl App {
                 ..
             } => {
                 let parent_id = session_id.clone();
-                let entry = crate::app::session_manager::SessionEntry::new_subagent(
-                    description,
+                let mut entry = crate::app::session_manager::SessionEntry::new_subagent(
+                    description.clone(),
                     parent_id.clone(),
                     Some(handle_id),
                     prompt,
                 );
+                entry.activity = Some(sven_frontend::SubagentActivity::started(
+                    description,
+                    Instant::now(),
+                ));
                 self.sessions.add_child_session(parent_id, entry);
             }
             AgentEvent::SubagentEvent {
                 handle_id, update, ..
             } => {
                 if let Some(entry) = self.sessions.find_by_buffer_handle(&handle_id) {
-                    if entry.stored_chat.is_none() {
-                        let mut chat = ChatState::new();
-                        // Seed the chat with the user prompt so the subagent view
-                        // shows the initial request as the first message.
-                        if let Some(ref prompt) = entry.initial_prompt.clone() {
-                            chat.push_segment(ChatSegment::Message(Message::user(prompt)));
-                        }
-                        entry.stored_chat = Some(chat);
-                    }
-                    if let Some(chat) = &mut entry.stored_chat {
-                        apply_subagent_update(chat, &update);
-                    }
-                    // Keep the entry's busy/current_tool status in sync.
-                    match &update {
-                        SubagentUpdate::ToolCallStarted { name, .. } => {
-                            entry.busy = true;
-                            entry.current_tool = Some(name.clone());
-                        }
-                        SubagentUpdate::ToolCallFinished { .. } => {
-                            entry.current_tool = None;
-                        }
-                        SubagentUpdate::Finished { .. } => {
-                            entry.busy = false;
-                            entry.current_tool = None;
-                            entry.status = sven_session_store::ChatStatus::Completed;
-                        }
-                        SubagentUpdate::Failed { .. } => {
-                            entry.busy = false;
-                            entry.current_tool = None;
-                        }
-                        SubagentUpdate::TokenUsage { cost_usd } => {
-                            entry.total_cost_usd += cost_usd;
-                        }
-                        _ => {}
-                    }
+                    entry.apply_subagent_update(&update, Instant::now());
                 }
             }
             AgentEvent::PeerList(peers) => {
@@ -635,7 +574,7 @@ impl App {
 /// - Streamed text accumulates in `streaming_buffer` (flushed on turn boundaries)
 /// - Tool calls / results become `ChatSegment::Message` nodes
 /// - The `Finished` and `Failed` events finalise the chat
-fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdate) {
+pub(super) fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdate) {
     match update {
         SubagentUpdate::TextDelta(t) => {
             chat.streaming_is_thinking = false;

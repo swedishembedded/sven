@@ -20,6 +20,19 @@ pub enum Action {
     NavLeft,
     /// Navigate to the pane to the right of the current one (Ctrl+w l).
     NavRight,
+    /// Focus the activity panel listing the session's subagents (Ctrl+w a).
+    FocusActivity,
+
+    // Activity panel
+    /// Highlight the previous / next agent in the open panel.
+    ActivityNavUp,
+    ActivityNavDown,
+    /// Open the panel to a row per agent, or fold it (Space).
+    ToggleActivity,
+    /// Open a folded panel; show the highlighted agent's session (Enter).
+    ActivateActivity,
+    /// Fold the panel and return to the input (Esc, q).
+    LeaveActivity,
 
     // Scrolling (in chat pane)
     ScrollUp,
@@ -177,6 +190,11 @@ pub enum Action {
         index: usize,
     },
 
+    /// Click on the activity panel, `row` rows below its top.
+    ActivityClick {
+        row: u16,
+    },
+
     /// Click anywhere in the chat content area.
     ///
     /// Dispatching this action sets the selection anchor **and**, if the click
@@ -250,6 +268,7 @@ pub fn map_key(event: KeyEvent, cx: KeyContext) -> Option<Action> {
             KeyCode::Char('l') | KeyCode::Right => Some(Action::NavRight),
             KeyCode::Char('+') | KeyCode::Char('=') => Some(Action::ResizeInputGrow),
             KeyCode::Char('-') => Some(Action::ResizeInputShrink),
+            KeyCode::Char('a') => Some(Action::FocusActivity),
             _ => None, // cancel without action
         };
     }
@@ -295,6 +314,19 @@ pub fn map_key(event: KeyEvent, cx: KeyContext) -> Option<Action> {
             KeyCode::Char('u') if ctrl => Some(Action::InputDeleteToStart),
             KeyCode::Char('k') if ctrl => Some(Action::InputDeleteToEnd),
             KeyCode::Char(c) if plain => Some(Action::InputChar(c)),
+            _ => None,
+        };
+    }
+
+    // ── Activity panel focus ──────────────────────────────────────────────────
+    if cx.focus == FocusPane::Activity {
+        return match event.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(Action::ActivityNavUp),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::ActivityNavDown),
+            KeyCode::Enter => Some(Action::ActivateActivity),
+            KeyCode::Char(' ') => Some(Action::ToggleActivity),
+            KeyCode::Esc | KeyCode::Char('q') => Some(Action::LeaveActivity),
+            KeyCode::Char('w') if ctrl => Some(Action::NavPrefix),
             _ => None,
         };
     }

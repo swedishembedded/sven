@@ -72,4 +72,5 @@ pub use segment::{
     tool_result_insert_position, tool_runs, ChatSegment, ToolRun,
 };
 pub use settings::{Settings, TuiConfig};
+pub use sven_session_model::{SubagentActivity, SubagentState};
 pub use types::{FrontendOptions, ModelDirective, NodeBackend, QueuedMessage, SessionMeta};

@@ -11,7 +11,10 @@
 
 use ratatui::layout::Rect;
 
-use crate::{app::App, layout::AppLayout};
+use crate::{
+    app::App,
+    layout::{AppLayout, PaneSizes},
+};
 
 /// Which pane border is currently being dragged, with an anchor offset.
 ///
@@ -78,6 +81,8 @@ pub(crate) struct LayoutCache {
     pub input_pane: Rect,
     /// Last known bounding rect of the queue panel.
     pub queue_pane: Rect,
+    /// Last known bounding rect of the activity panel.
+    pub activity_pane: Rect,
     /// Active drag resize state - `Some` while the user holds down the mouse on a border.
     pub resize_drag: Option<ResizeDrag>,
 }
@@ -92,6 +97,7 @@ impl LayoutCache {
             chat_pane: Rect::default(),
             input_pane: Rect::default(),
             queue_pane: Rect::default(),
+            activity_pane: Rect::default(),
             resize_drag: None,
         }
     }
@@ -121,9 +127,12 @@ impl App {
             .min((area.height / 2).max(3));
         AppLayout::compute(
             area,
-            self.ui.search.active,
-            self.queue.messages.len(),
-            input_height,
+            PaneSizes {
+                search_visible: self.ui.search.active,
+                queue_len: self.queue.messages.len(),
+                activity_height: self.activity_pane_height(area.height),
+                input_height,
+            },
         )
     }
 
@@ -139,6 +148,7 @@ impl App {
         self.layout.chat_pane = layout.chat_pane;
         self.layout.input_pane = layout.input_pane;
         self.layout.queue_pane = layout.queue_pane;
+        self.layout.activity_pane = layout.activity_pane;
         self.chat.scroll_offset = self.chat.scroll_offset.min(self.max_chat_scroll());
     }
 }

@@ -347,8 +347,5 @@ lines = 1016
 path = "crates/tools-ctx/src/context/store.rs"
 lines = 885
 [[allow.large_file]]
-path = "crates/tui/src/app/session_manager.rs"
-lines = 856
-[[allow.large_file]]
 path = "tests/context_pipeline_test.rs"
 lines = 850

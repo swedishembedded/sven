@@ -30,6 +30,10 @@ pub enum HitArea {
     /// A row inside the queue panel; `index` is the item index.
     QueueItem { index: usize },
 
+    /// A row of the activity panel, counted from its top (its summary line
+    /// or top border is row 0).
+    ActivityRow { row: u16 },
+
     /// The horizontal resize border above the input pane.
     InputBorder,
 
@@ -54,6 +58,14 @@ pub fn hit_test(
     chat_scroll_offset: usize,
     queue_len: usize,
 ) -> HitArea {
+    // ── Activity panel ────────────────────────────────────────────────────────
+    // Before the input border: the border's grab zone reaches one row above
+    // it, which is the panel's summary line when the panel is folded.
+    let ap = layout.activity_pane;
+    if ap.height > 0 && row >= ap.y && row < ap.y + ap.height {
+        return HitArea::ActivityRow { row: row - ap.y };
+    }
+
     // ── Resize borders (checked before pane interiors so a drag that drifts ──
     // ── into a pane still registers as a border hit) ──────────────────────────
 

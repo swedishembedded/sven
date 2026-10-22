@@ -22,6 +22,9 @@ pub use outcome::{
     announces_unfinished_work, OutcomeFold, RunConclusion, SessionOutcome, SessionReward, Verdict,
 };
 
+mod activity;
+pub use activity::{SubagentActivity, SubagentState};
+
 mod tool_runs;
 pub use tool_runs::{tool_runs, ToolRun};
 

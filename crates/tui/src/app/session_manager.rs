@@ -126,6 +126,8 @@ pub(crate) struct SessionEntry {
     pub total_cost_usd: f64,
     /// Cache-hit rate for the last turn (0-100 %).
     pub cache_hit_pct: u8,
+    /// What this subagent is doing; `None` for sessions that are not subagents.
+    pub activity: Option<sven_frontend::SubagentActivity>,
 }
 
 impl SessionEntry {
@@ -194,6 +196,7 @@ impl SessionEntry {
             total_output_tokens: total_output_tokens as u32,
             total_cost_usd,
             cache_hit_pct: 0,
+            activity: None,
         }
     }
 
@@ -229,46 +232,7 @@ impl SessionEntry {
             total_output_tokens: 0,
             total_cost_usd: 0.0,
             cache_hit_pct: 0,
-        }
-    }
-
-    /// Create a new session entry for a subagent task (child of another session).
-    pub fn new_subagent(
-        title: impl Into<String>,
-        parent_id: SessionId,
-        buffer_handle: Option<String>,
-        prompt: String,
-    ) -> Self {
-        let now = Utc::now();
-        Self {
-            id: SessionId::new(),
-            parent_id: Some(parent_id),
-            title: title.into(),
-            status: ChatStatus::Active,
-            session_path: None,
-            is_legacy: false,
-            legacy_path: None,
-            created_at: now,
-            updated_at: now,
-            stored_chat: None,
-            copied_context_steps: Vec::new(),
-            stored_input_buffer: None,
-            stored_input_cursor: None,
-            stored_input_attachments: None,
-            stored_queue: None,
-            session_state: None,
-            buffer_handle,
-            initial_prompt: Some(prompt),
-            agent_tx: None,
-            agent_cancel: Arc::new(Mutex::new(None)),
-            busy: false,
-            current_tool: None,
-            context_pct: 0,
-            total_context_tokens: 0,
-            total_context_pct: 0,
-            total_output_tokens: 0,
-            total_cost_usd: 0.0,
-            cache_hit_pct: 0,
+            activity: None,
         }
     }
 
@@ -551,6 +515,7 @@ fn session_entry_from_unified(
             .map(|u| u.total_cost_usd)
             .unwrap_or(0.0),
         cache_hit_pct: 0,
+        activity: None,
     }
 }
 

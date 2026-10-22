@@ -6,7 +6,8 @@ The terminal interface, sessions, slash commands and the keys that drive them.
 
 ### Layout
 
-The TUI has a status bar, the chat pane, an input box, and a queue panel that
+The TUI has a status bar, the chat pane, an input box, an agents panel that
+appears under the chat while the session has subagents, and a queue panel that
 appears above the input box while messages are waiting. The chat pane always spans
 the full terminal width.
 
@@ -50,6 +51,10 @@ unless `tui.show_thinking` is set; while it streams, the status bar says
 inserts a newline (`Shift+Enter` and `Ctrl+J` also work). `Ctrl+Up` / `Ctrl+Down`
 walk through the history of messages you sent.
 
+**Agents panel** - one line summing up the session's subagents, `▸ Agents · 2
+running · 1 done · 1m 14s · 12.3k tok`; open it for a row per agent. See [the
+agents panel](#the-agents-panel).
+
 **Queue panel** - a message sent while the agent is working is queued and sent
 when the turn ends. See [the queue panel](#the-queue-panel).
 
@@ -59,13 +64,15 @@ Press `F1` for an overlay that lists the key bindings.
 
 ### Focus and pane switching
 
-The chat pane and the input box can each have focus; focus starts on the input
-box. Switch with the `Ctrl+W` chord:
+The chat pane, the agents and queue panels (while they are shown) and the input
+box can each have focus; focus starts on the input box. Switch with the `Ctrl+W`
+chord:
 
 | Sequence | Effect |
 |----------|--------|
-| `Ctrl+W` then `K` or `↑` | Focus the chat pane |
-| `Ctrl+W` then `J` or `↓` | Focus the input box |
+| `Ctrl+W` then `K` or `↑` | Focus the pane above |
+| `Ctrl+W` then `J` or `↓` | Focus the pane below |
+| `Ctrl+W` then `A` | Focus the agents panel |
 | `Ctrl+W` then `+` / `-` | Grow / shrink the input box |
 
 When the input box has focus, printable characters go to the text field.
@@ -74,7 +81,8 @@ When the input box has focus, printable characters go to the text field.
 
 ### Scrolling and navigation (chat pane)
 
-First move focus to the chat pane with `Ctrl+W K`.
+First move focus to the chat pane with `Ctrl+W K` (once more for each panel
+between the input box and the chat).
 
 | Key | Action |
 |-----|--------|
@@ -168,6 +176,33 @@ box and is sent when the turn ends. Press `q` in the chat pane to focus the pane
 | `s` | Send it when the agent is idle |
 | `d` or `Delete` | Delete it |
 | `Esc` or `q` | Return to the input box |
+
+---
+
+### The agents panel
+
+While the session has subagents (started by the `task` tool), a line under the
+chat sums them up: how many are running, done and failed, how long they have
+taken from the first start to the last end, and the tokens they used. Press
+`Ctrl+W A` to focus it.
+
+| Key | Action |
+|-----|--------|
+| `Enter` or `Space` | Open the panel: a row per agent |
+| `↑` / `↓` or `k` / `j` | Select an agent |
+| `Enter` | Show the selected agent's session - its transcript, live |
+| `Esc` or `q` | Fold the panel and return to the input box |
+
+A row shows the agent's task, the tool it is running (or `done`, or why it
+failed), how many tools it ran, how long it has been running and its tokens.
+Tokens add up from each request's reported usage while the agent runs and are
+replaced by its own totals when it finishes. The open panel takes at most two
+fifths of the screen; with more agents than rows it scrolls, with a scrollbar on
+the right. Clicking the summary line opens or folds the panel, and clicking an
+agent's row shows its session. The panel lists the subagents of the session
+being viewed, or - while one of them is viewed - of its parent, so you can move
+between siblings. Subagents restored from a saved session are reachable through
+`/resume`, not the panel.
 
 ---
 
