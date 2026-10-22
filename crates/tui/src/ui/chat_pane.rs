@@ -67,12 +67,14 @@ impl Widget for ChatPane<'_> {
         let match_set: HashSet<usize> = self.search_matches.iter().copied().collect();
         let current_match_line = self.search_matches.get(self.search_current).copied();
 
-        // Reserve the last row of inner for the auto-scroll banner if needed.
-        let banner_reserved = if self.auto_scroll_paused && inner.height > 2 {
-            1u16
-        } else {
-            0
-        };
+        // While paused with content below the view, the last row says how
+        // much (and the content gives up that row for it).
+        let below_full_pane = self
+            .lines
+            .len()
+            .saturating_sub(self.scroll_offset + usize::from(inner.height));
+        let banner_reserved =
+            u16::from(self.auto_scroll_paused && below_full_pane > 0 && inner.height > 2);
         let content_height = inner.height.saturating_sub(banner_reserved);
         let content_width = inner.width;
 
@@ -177,16 +179,17 @@ impl Widget for ChatPane<'_> {
         // ── Auto-scroll paused banner ─────────────────────────────────────────
         // The only scroll-position affordance, by design - no scrollbar glyph:
         // a visible scrollbar would sit inside the pane's right edge, which
-        // the "no controls on either side" redesign specifically avoids (see
-        // module docs above and `.todo/terminal-ui.md`'s original brief).
+        // the pane keeps free of controls (see the module docs above).
         if self.auto_scroll_paused && banner_reserved > 0 {
             let banner_y = inner.y + content_height;
+            let below = below_full_pane + 1; // the banner covers one more line
+            let noun = if below == 1 { "line" } else { "lines" };
             let msg = if self.ascii {
-                "v  New content below -- press G to scroll to bottom  v"
+                format!("v  {below} {noun} below -- G to follow  v")
             } else {
-                "↓  New content below  ·  press G to jump to bottom  ↓"
+                format!("↓  {below} {noun} below  ·  G to follow  ↓")
             };
-            let msg_chars = truncate_to_width_exact(msg, inner.width as usize);
+            let msg_chars = truncate_to_width_exact(&msg, inner.width as usize);
             // Fill the banner row with the highlighted background.
             for col in inner.x..inner.x + inner.width {
                 buf[(col, banner_y)].set_bg(Color::Rgb(60, 45, 0));
@@ -284,5 +287,32 @@ mod tests {
             assert_ne!(sym, "|", "no scrollbar thumb glyph at row {row}");
             assert_ne!(sym, "░", "no scrollbar track glyph at row {row}");
         }
+    }
+
+    fn row_text(buf: &Buffer, row: u16) -> String {
+        (0..buf.area.width)
+            .map(|x| buf[(x, row)].symbol())
+            .collect()
+    }
+
+    #[test]
+    fn a_paused_view_says_how_many_lines_are_below_it_and_only_when_some_are() {
+        let area = Rect::new(0, 0, 60, 12); // 10 inner rows, one for the banner
+        let styled_lines = lines(40);
+        let mut buf = Buffer::empty(area);
+        let mut p = pane(&styled_lines, 40);
+        p.auto_scroll_paused = true;
+        p.render(area, &mut buf);
+        let banner = row_text(&buf, 10);
+        assert!(banner.contains("31 lines below"), "{banner:?}");
+
+        // Scrolled to the very bottom while paused: nothing below, no banner.
+        let mut buf = Buffer::empty(area);
+        let mut p = pane(&styled_lines, 40);
+        p.auto_scroll_paused = true;
+        p.scroll_offset = 30;
+        p.render(area, &mut buf);
+        assert!(!row_text(&buf, 10).contains("below"));
+        assert_eq!(row_text(&buf, 10).trim(), "line 39");
     }
 }

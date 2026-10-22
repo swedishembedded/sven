@@ -22,6 +22,17 @@ pub type SegmentId = u64;
 /// - `2` - full content (default for user text, agent text)
 pub type ExpandLevel = u8;
 
+/// One thing drawn in the chat that the highlight can visit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewItem {
+    pub focus: ChatFocus,
+    /// `(start_line, end_line)` in the chat's lines.
+    pub lines: (usize, usize),
+    /// The id of the segment `focus` indexes, which - unlike the index -
+    /// still names the same item after segments are inserted before it.
+    pub segment: SegmentId,
+}
+
 /// What the chat's keyboard highlight is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChatFocus {
@@ -81,9 +92,9 @@ pub(crate) struct ChatState {
     /// What the keyboard highlight is on. Inserting or removing a segment
     /// before it moves it along with its segment.
     pub focus: Option<ChatFocus>,
-    /// Everything the reader can put the highlight on, in display order,
-    /// with its `(start_line, end_line)`. Rebuilt with `lines`.
-    pub view_items: Vec<(ChatFocus, (usize, usize))>,
+    /// Everything the reader can put the highlight on, in display order.
+    /// Rebuilt with `lines`.
+    pub view_items: Vec<ViewItem>,
     /// `call_id → tool_name` lookup used when rendering tool results.
     pub tool_args: HashMap<String, String>,
     /// `call_id → elapsed_secs` for completed tool calls.
@@ -160,6 +171,11 @@ impl ChatState {
     /// number or order of segments, so their identities are unchanged.
     pub fn segments_mut(&mut self) -> &mut [ChatSegment] {
         &mut self.segments
+    }
+
+    /// The stable ids of the segments, in the segments' order.
+    pub fn segment_ids(&self) -> &[SegmentId] {
+        &self.segment_ids
     }
 
     /// The stable id of the segment at `idx`.

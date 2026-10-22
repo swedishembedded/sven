@@ -269,3 +269,43 @@ async fn enter_edits_a_message_and_expands_anything_else() {
     press(&mut app, Action::ActivateChatItem).await;
     assert!(text_of(&app).contains("b.rs"), "Enter expands the run");
 }
+
+// ── Reading position ──────────────────────────────────────────────────────────
+
+/// The text of the line at the top of the chat pane.
+fn top_line(app: &App) -> String {
+    app.chat.lines[app.chat.scroll_offset].to_string()
+}
+
+#[tokio::test]
+async fn a_reader_scrolled_up_keeps_their_place_when_content_above_grows() {
+    let (mut app, _rx) = App::for_testing();
+    app.layout.chat_height = 10;
+    app.layout.chat_inner_width = 80;
+    let sid = app.sessions.active_id.clone();
+    app.chat
+        .push_segment(ChatSegment::Message(sven_model::Message::user("look")));
+    app.handle_agent_event(sid.clone(), tool_started("a")).await;
+    let a = call_index(&app, "a");
+    app.chat.set_expand_level(a, 1); // the reader opened the running tool
+    let essay: String = (0..60).map(|i| format!("paragraph {i}\n\n")).collect();
+    app.chat
+        .push_segment(ChatSegment::Message(sven_model::Message::assistant(&essay)));
+    app.build_display_from_segments();
+
+    // The reader scrolls up into the middle of the answer.
+    app.chat.auto_scroll = false;
+    app.chat.scroll_offset = 40;
+    if top_line(&app).trim().is_empty() {
+        app.chat.scroll_offset += 1;
+    }
+    let before = top_line(&app);
+    assert!(before.contains("paragraph"), "{before:?}");
+
+    // The tool above finishes: its expanded view grows by its output.
+    app.handle_agent_event(sid, tool_finished("a", "one\ntwo\nthree"))
+        .await;
+
+    assert_eq!(top_line(&app), before, "the reader's line stays on top");
+    assert!(!app.chat.auto_scroll, "and they are still not following");
+}

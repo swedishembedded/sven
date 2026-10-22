@@ -19,7 +19,7 @@ use sven_model::{MessageContent, Role};
 
 use crate::{
     app::{
-        chat_state::{ChatFocus, ExpandLevel},
+        chat_state::{ChatFocus, ExpandLevel, SegmentId, ViewItem},
         App,
     },
     chat::{
@@ -40,6 +40,14 @@ use sven_tool_api::ToolDisplayRegistry;
 /// Runs of fewer tools than this are shown as their tools' rows directly:
 /// a header saying "Ran 1 tool" would only hide what the tool was.
 const MIN_TOOLS_PER_HEADER: usize = 2;
+
+/// A reader's place in the chat: an item, by identity, and how many rows
+/// into it the top of the pane is.
+struct ReadingAnchor {
+    segment: SegmentId,
+    run: bool,
+    rows_into: isize,
+}
 
 /// Width of the indent of a tool inside an expanded run.
 const RUN_INDENT: &str = "  ";
@@ -89,13 +97,15 @@ fn paired_result(segments: &[ChatSegment], i: usize) -> Option<usize> {
 
 /// The chat being laid out: its lines, each segment's line range and the
 /// items the highlight can visit.
-struct Layout {
+struct Layout<'a> {
     lines: StyledLines,
     ranges: Vec<(usize, usize)>,
-    items: Vec<(ChatFocus, (usize, usize))>,
+    items: Vec<ViewItem>,
+    /// The chat's segment ids, to tag each item with its segment's.
+    ids: &'a [SegmentId],
 }
 
-impl Layout {
+impl Layout<'_> {
     /// Segment `i` draws nothing (hidden, or drawn as part of another item).
     fn skip(&mut self, i: usize) {
         let at = self.lines.len();
@@ -109,7 +119,11 @@ impl Layout {
         let range = (start, self.lines.len());
         self.ranges[i] = range;
         if range.1 > range.0 {
-            self.items.push((focus, range));
+            self.items.push(ViewItem {
+                focus,
+                lines: range,
+                segment: self.ids[focus.index()],
+            });
         }
     }
 }
@@ -184,11 +198,13 @@ impl App {
         let registry = self.shared_tool_displays.get();
         let displays = registry.as_ref().and_then(|r| r.read().ok());
         let ctx = self.tool_line_ctx(displays.as_deref());
+        let anchor = self.reading_anchor();
         let segments = self.chat.segments();
         let mut out = Layout {
             lines: Vec::new(),
             ranges: vec![(0, 0); segments.len()],
             items: Vec::new(),
+            ids: self.chat.segment_ids(),
         };
 
         let mut runs = tool_runs(segments, self.tui_config.show_thinking).into_iter();
@@ -227,12 +243,51 @@ impl App {
         }
         drop(displays);
 
-        out.lines
-            .extend(self.streaming_tail_lines(width, ascii, self.agent.anim_frame));
-        self.chat.lines = out.lines;
-        self.chat.segment_line_ranges = out.ranges;
-        self.chat.view_items = out.items;
+        let Layout {
+            mut lines,
+            ranges,
+            items,
+            ..
+        } = out;
+        lines.extend(self.streaming_tail_lines(width, ascii, self.agent.anim_frame));
+        self.chat.lines = lines;
+        self.chat.segment_line_ranges = ranges;
+        self.chat.view_items = items;
+        if let Some(anchor) = anchor {
+            self.restore_reading_anchor(anchor);
+        }
         self.settle_focus();
+    }
+
+    /// Where a reader who is not following the output is: the item at the
+    /// top of the pane (or the first one below it) and how far into it -
+    /// negative when it starts below the top row.
+    fn reading_anchor(&self) -> Option<ReadingAnchor> {
+        if self.chat.auto_scroll {
+            return None;
+        }
+        let top = self.chat.scroll_offset;
+        let item = self.chat.view_items.iter().find(|it| it.lines.1 > top)?;
+        Some(ReadingAnchor {
+            segment: item.segment,
+            run: matches!(item.focus, ChatFocus::ToolRun(_)),
+            rows_into: top as isize - item.lines.0 as isize,
+        })
+    }
+
+    /// Scroll so the anchored item is where it was on the screen, however
+    /// much the chat above it grew or shrank.
+    fn restore_reading_anchor(&mut self, anchor: ReadingAnchor) {
+        let Some(item) = self.chat.view_items.iter().find(|it| {
+            it.segment == anchor.segment && matches!(it.focus, ChatFocus::ToolRun(_)) == anchor.run
+        }) else {
+            return;
+        };
+        let (start, end) = item.lines;
+        // An item that shrank keeps the reader on its last line.
+        let rows_into = anchor.rows_into.min(end.saturating_sub(start + 1) as isize);
+        let top = (start as isize + rows_into).max(0) as usize;
+        self.chat.scroll_offset = top.min(self.max_chat_scroll());
     }
 
     /// A run of tools: its header and, when expanded, its tools indented
@@ -243,7 +298,11 @@ impl App {
         let tools = self.run_tools(run.segments.clone());
         let at = out.lines.len();
         out.lines.push(run_header(&tools, expanded, ctx));
-        out.items.push((ChatFocus::ToolRun(first), (at, at + 1)));
+        out.items.push(ViewItem {
+            focus: ChatFocus::ToolRun(first),
+            lines: (at, at + 1),
+            segment: out.ids[first],
+        });
         if expanded {
             self.lay_out_tools(run.segments.clone(), RUN_INDENT, ctx, budget, out);
         } else {
@@ -320,7 +379,7 @@ impl App {
     /// collapsed run hands it to the run's header; anything else that is no
     /// longer drawn hands it to whatever is at the middle of the pane.
     fn settle_focus(&mut self) {
-        let visible = |f: ChatFocus| self.chat.view_items.iter().any(|(it, _)| *it == f);
+        let visible = |f: ChatFocus| self.chat.view_items.iter().any(|it| it.focus == f);
         match self.chat.focus {
             Some(f) if visible(f) => {}
             Some(ChatFocus::Segment(j)) => match self.run_containing(j) {
@@ -398,8 +457,8 @@ impl App {
         self.chat
             .view_items
             .iter()
-            .find(|(it, _)| *it == focus)
-            .map(|(_, range)| *range)
+            .find(|it| it.focus == focus)
+            .map(|it| it.lines)
     }
 
     /// The item drawn on line `line`.
@@ -407,8 +466,8 @@ impl App {
         self.chat
             .view_items
             .iter()
-            .find(|(_, (s, e))| (*s..*e).contains(&line))
-            .map(|(it, _)| *it)
+            .find(|it| (it.lines.0..it.lines.1).contains(&line))
+            .map(|it| it.focus)
     }
 
     /// Space, or a click: expand the highlighted item, or collapse it.

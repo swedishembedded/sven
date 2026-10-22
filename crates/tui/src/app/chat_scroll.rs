@@ -68,13 +68,13 @@ impl App {
         let at = self
             .chat
             .focus
-            .and_then(|f| items.iter().position(|(it, _)| *it == f));
+            .and_then(|f| items.iter().position(|it| it.focus == f));
         let next = match (at, forward) {
             (Some(i), true) => items.get(i + 1).or(items.get(i)),
             (Some(i), false) => items.get(i.saturating_sub(1)),
             (None, true) => items.first(),
             (None, false) => items.last(),
         };
-        next.map(|(it, _)| *it).or(self.chat.focus)
+        next.map(|it| it.focus).or(self.chat.focus)
     }
 }

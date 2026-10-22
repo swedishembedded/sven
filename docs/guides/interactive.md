@@ -92,6 +92,10 @@ First move focus to the chat pane with `Ctrl+W K`.
 | `?` | Show the chat-pane shortcuts |
 
 `PgUp` and `PgDn` scroll the chat pane a full page whichever pane has focus.
+While you are scrolled up, the view stays on what you are reading: output that
+arrives, and tools above you that finish or are expanded, do not move it. The
+bottom row says how many lines are below (`↓ 23 lines below · G to follow`);
+`G`, or scrolling to the end, follows the output again.
 Dragging with the mouse selects text, which is copied when you release.
 
 ---
