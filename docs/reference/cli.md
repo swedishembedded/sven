@@ -238,10 +238,7 @@ A headless run exits with:
 `harness` commands use their own codes: `run` and `resume` exit `0` returned,
 `1` the workflow failed, `2` usage or invalid harness, input or file, `3` suspended
 by a bound, `4` cancelled, `5` infrastructure; `validate` and `inspect` exit
-`0` valid, `1` invalid, `2` unreadable path; `test` exits `0` passed or
-skipped, `1` a case failed, `2` usage or invalid harness; `compare` exits `0`
-produced, `1` regression under `--fail-on-regression`, `2` invalid variant;
-`replay` exits `0` matched, `1` trace mismatch, `2` refused recording.
+`0` valid, `1` invalid, `2` unreadable path; `replay` exits `0` matched, `1` trace mismatch, `2` refused recording.
 
 ## Environment
 
