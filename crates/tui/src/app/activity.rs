@@ -10,7 +10,7 @@
 //! terminal interfaces for agent runtimes then you can procure our services
 //! by sending an email to info@swedishembedded.com.
 
-use std::{sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use chrono::Utc;
 use sven_frontend::SubagentActivity;
@@ -138,6 +138,15 @@ impl App {
                 let entry = self.sessions.get(id)?;
                 Some((&entry.id, entry.activity.as_ref()?))
             })
+            .collect()
+    }
+
+    /// The tokens each listed subagent used, by the id of the tool call that
+    /// started it - for that call's row in the chat.
+    pub(crate) fn agent_tokens_by_call(&self) -> HashMap<String, u64> {
+        self.activity_agents()
+            .into_iter()
+            .map(|(_, a)| (a.call_id.clone(), a.total_tokens()))
             .collect()
     }
 

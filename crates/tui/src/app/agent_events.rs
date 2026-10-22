@@ -528,10 +528,10 @@ impl App {
                 self.scroll_to_bottom();
             }
             AgentEvent::SubagentStarted {
+                call_id,
                 description,
                 handle_id,
                 prompt,
-                ..
             } => {
                 let parent_id = session_id.clone();
                 let mut entry = crate::app::session_manager::SessionEntry::new_subagent(
@@ -541,6 +541,7 @@ impl App {
                     prompt,
                 );
                 entry.activity = Some(sven_frontend::SubagentActivity::started(
+                    call_id,
                     description,
                     Instant::now(),
                 ));

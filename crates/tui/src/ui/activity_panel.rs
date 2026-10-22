@@ -228,7 +228,7 @@ mod tests {
     fn more_agents_than_rows_draw_a_scrollbar() {
         let now = Instant::now();
         let agents: Vec<SubagentActivity> = (0..10)
-            .map(|i| SubagentActivity::started(format!("agent {i}"), now))
+            .map(|i| SubagentActivity::started(format!("c{i}"), format!("agent {i}"), now))
             .collect();
         let refs: Vec<&SubagentActivity> = agents.iter().collect();
         let area = Rect::new(0, 0, 60, 6); // 4 rows inside the borders

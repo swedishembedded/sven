@@ -12,7 +12,7 @@
 //! in terminal user interfaces for agent runtimes then you can procure our
 //! services by sending an email to info@swedishembedded.com.
 
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 use ratatui::text::{Line, Span};
 use sven_model::{MessageContent, Role};
@@ -157,8 +157,13 @@ impl App {
         usize::from(self.layout.chat_height).max(4)
     }
 
-    fn tool_line_ctx<'a>(&'a self, displays: Option<&'a ToolDisplayRegistry>) -> ToolLineCtx<'a> {
+    fn tool_line_ctx<'a>(
+        &'a self,
+        displays: Option<&'a ToolDisplayRegistry>,
+        agent_tokens: &'a HashMap<String, u64>,
+    ) -> ToolLineCtx<'a> {
         ToolLineCtx {
+            agent_tokens,
             durations: &self.chat.tool_durations,
             started_at: &self.chat.tool_started_at,
             running: &self.agent.tool_start_times,
@@ -197,7 +202,8 @@ impl App {
         let budget = self.item_line_budget();
         let registry = self.shared_tool_displays.get();
         let displays = registry.as_ref().and_then(|r| r.read().ok());
-        let ctx = self.tool_line_ctx(displays.as_deref());
+        let agent_tokens = self.agent_tokens_by_call();
+        let ctx = self.tool_line_ctx(displays.as_deref(), &agent_tokens);
         let anchor = self.reading_anchor();
         let segments = self.chat.segments();
         let mut out = Layout {
@@ -526,7 +532,8 @@ impl App {
         };
         let registry = self.shared_tool_displays.get();
         let displays = registry.as_ref().and_then(|r| r.read().ok());
-        let ctx = self.tool_line_ctx(displays.as_deref());
+        let agent_tokens = self.agent_tokens_by_call();
+        let ctx = self.tool_line_ctx(displays.as_deref(), &agent_tokens);
         let (title, lines) = match focus {
             ChatFocus::ToolRun(start) => {
                 let end = self.run_end(start).unwrap_or(start + 1);

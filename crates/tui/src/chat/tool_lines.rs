@@ -47,6 +47,8 @@ pub(crate) struct ToolLineCtx<'a> {
     pub running: &'a HashMap<String, Instant>,
     /// `call_id → output so far` for running tools that stream it.
     pub streaming: &'a HashMap<String, String>,
+    /// `call_id → tokens used` for tools that ran a subagent.
+    pub agent_tokens: &'a HashMap<String, u64>,
     pub displays: Option<&'a ToolDisplayRegistry>,
     pub width: u16,
     pub anim_frame: u8,
@@ -211,6 +213,15 @@ pub(crate) fn tool_row(
         usize::from(ctx.width).saturating_sub(16),
     ));
     spans.extend(status_spans(tool.status(ctx), tool.seconds(ctx), ctx));
+    if let Some(tokens) = ctx.agent_tokens.get(tool.call_id).filter(|t| **t > 0) {
+        spans.push(Span::styled(
+            format!(
+                " · {} tok",
+                crate::ui::activity_panel::format_tokens(*tokens)
+            ),
+            Style::default().fg(DURATION_GREY),
+        ));
+    }
     Line::from(spans)
 }
 

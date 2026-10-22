@@ -212,3 +212,37 @@ async fn clicking_the_summary_opens_the_panel_and_clicking_an_agent_shows_its_se
     let active = app.sessions.get(&app.sessions.active_id).unwrap();
     assert_eq!(active.buffer_handle.as_deref(), Some("buf_1"));
 }
+
+#[tokio::test]
+async fn the_task_row_in_the_chat_shows_its_agent_s_tokens() {
+    let (mut app, _rx) = App::for_testing();
+    let sid = app.sessions.active_id.clone();
+    app.handle_agent_event(
+        sid.clone(),
+        AgentEvent::ToolCallStarted(sven_vocab::ToolCall {
+            id: "call-buf_1".into(),
+            name: "task".into(),
+            args: serde_json::json!({ "prompt": "run the unit tests" }),
+        }),
+    )
+    .await;
+    spawn(&mut app, "buf_1", "run the unit tests").await;
+    update(
+        &mut app,
+        "buf_1",
+        SubagentUpdate::TokensUsed {
+            input_tokens: 12_000,
+            output_tokens: 300,
+        },
+    )
+    .await;
+    app.build_display_from_segments();
+    let row = app
+        .chat
+        .lines
+        .iter()
+        .map(|l| l.to_string())
+        .find(|l| l.contains("task"))
+        .expect("the task row");
+    assert!(row.contains("12.3k tok"), "{row}");
+}

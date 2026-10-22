@@ -126,7 +126,8 @@ highlights it and expands or collapses it, the same as `Space`.
 
 While a tool runs, its row shows a moving marker and the time so far, the
 run's header names the tool that is running, and an expanded tool shows the
-newest output it has streamed. Every expanded entry is at most one chat pane
+newest output it has streamed. The row of a `task` call - a subagent - also
+shows the tokens that agent has used. Every expanded entry is at most one chat pane
 tall, so expanding a large file or log never pushes the conversation out of
 reach; `o` opens the whole of it in the full-screen viewer, and closing the
 viewer returns to the chat exactly where it was.

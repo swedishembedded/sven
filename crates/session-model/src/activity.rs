@@ -28,6 +28,9 @@ pub enum SubagentState {
 /// A subagent's progress, as far as its updates tell.
 #[derive(Debug, Clone)]
 pub struct SubagentActivity {
+    /// The id of the tool call that started it, which is how the parent's
+    /// transcript refers to it.
+    pub call_id: String,
     /// What it was asked to do, in a few words.
     pub description: String,
     pub state: SubagentState,
@@ -46,9 +49,14 @@ pub struct SubagentActivity {
 }
 
 impl SubagentActivity {
-    /// A subagent that started at `now`.
-    pub fn started(description: impl Into<String>, now: Instant) -> Self {
+    /// A subagent that tool call `call_id` started at `now`.
+    pub fn started(
+        call_id: impl Into<String>,
+        description: impl Into<String>,
+        now: Instant,
+    ) -> Self {
         Self {
+            call_id: call_id.into(),
             description: description.into(),
             state: SubagentState::Running,
             current_tool: None,
@@ -114,7 +122,9 @@ impl SubagentActivity {
 
     /// How long it ran, or has been running at `now`.
     pub fn elapsed(&self, now: Instant) -> Duration {
-        self.ended.unwrap_or(now).saturating_duration_since(self.started)
+        self.ended
+            .unwrap_or(now)
+            .saturating_duration_since(self.started)
     }
 
     pub fn total_tokens(&self) -> u64 {
@@ -159,7 +169,7 @@ mod tests {
     #[test]
     fn a_running_subagent_shows_its_tool_its_count_its_time_and_its_tokens() {
         let t0 = Instant::now();
-        let mut a = SubagentActivity::started("review auth", t0);
+        let mut a = SubagentActivity::started("c1", "review auth", t0);
         a.apply(&started("read_file"), t0);
         a.apply(&finished("read_file", false), t0);
         a.apply(&request(1_000, 200), t0);
@@ -169,13 +179,16 @@ mod tests {
         assert_eq!(a.current_tool.as_deref(), Some("shell"));
         assert_eq!(a.tools_run, 2);
         assert_eq!(a.total_tokens(), 1_200);
-        assert_eq!(a.elapsed(t0 + Duration::from_secs(42)), Duration::from_secs(42));
+        assert_eq!(
+            a.elapsed(t0 + Duration::from_secs(42)),
+            Duration::from_secs(42)
+        );
     }
 
     #[test]
     fn the_end_freezes_the_clock_and_its_reported_totals_replace_the_running_sum() {
         let t0 = Instant::now();
-        let mut a = SubagentActivity::started("tests", t0);
+        let mut a = SubagentActivity::started("c2", "tests", t0);
         a.apply(&started("shell"), t0);
         a.apply(&finished("shell", true), t0);
         a.apply(&request(500, 50), t0);
