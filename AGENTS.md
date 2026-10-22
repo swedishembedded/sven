@@ -194,6 +194,8 @@ HARD RULE. Every public make target is `make <concept>/<subconcept>/.../<action>
 | `make check/doc` | `cargo doc`, broken intra-doc links are errors |
 | `make test/gates` | Bats self-tests of the text gates (env-reads, make-targets) on scratch trees; no build needed, part of `make test` |
 | `make fmt` | Format |
+| `make release/minor` (or `patch`, `major`) | Bump the version, commit and tag, locally |
+| `make release/publish` | Push HEAD and the tag to `RELEASE_REMOTE` (default `origin`), then `make package/deb/publish`: the signed `.deb` and its `.asc` on the tag's GitHub release, replacing an earlier upload |
 | `make test/harness` | Every harness suite (one `test/harness/<suite>` each) (spec, runtime, SDK, CLI, 1000-run stress), scripted models only |
 | `make generate/config/golden` | Rewrite committed derived files (`generate/<area>/<file>`); the matching tests only check them |
 | `make help` | Every target as a tree; names are concept first (`test/harness`, `check/gates/no-machine-paths`), so `make <TAB>` descends level by level (`check/gates/make-targets` enforces it) |

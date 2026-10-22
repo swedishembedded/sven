@@ -23,7 +23,9 @@ VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1
 TAG     := v$(VERSION)
 DIST    ?= dist
 DEB_OUT := target/debian
-REPO    := swedishembedded/sven
+# The git remote whose GitHub repository receives a release (release/publish,
+# package/deb/publish).
+RELEASE_REMOTE ?= origin
 
 # Every workspace package (root, crates, xtask, samples): one sed over the
 # manifests, so adding a crate adds its build/crate/<package> and
@@ -101,6 +103,19 @@ package/deb/release: build/release
 		bash scripts/build-deb.sh --out-dir $(DEB_OUT); \
 	fi
 
+# Checks every precondition (gh, its login, the tag checked out and on GitHub,
+# a signing key) before the release build, so a missing one costs seconds.
+# Earlier packages of this version are removed first: cargo-deb names its file
+# with a Debian revision and build-deb.sh without, and package/deb/debug writes
+# the release name, so only a fresh build may be the one that is published.
+## package/deb/publish - sign the release package and attach it to the GitHub release of v<version> (created if missing; an earlier upload is replaced); needs gh, a GnuPG key and the tag on GitHub (RELEASE_REMOTE, default origin)
+package/deb/publish:
+	@bash scripts/publish-deb.sh --check --version $(VERSION) --remote $(RELEASE_REMOTE)
+	rm -f $(DEB_OUT)/sven_$(VERSION)[-_]*
+	$(MAKE) package/deb/release
+	bash scripts/publish-deb.sh --version $(VERSION) --remote $(RELEASE_REMOTE) \
+		$(DEB_OUT)/sven_$(VERSION)*_$$(dpkg --print-architecture).deb
+
 # ---------------------------------------------------------------------------
 ##@ Verify
 ## Tests, static checks, formal models and benchmarks. Only `test`, `check` and
@@ -118,6 +133,7 @@ test:
 	$(CARGO) test --workspace $(CARGO_FLAGS)
 	$(MAKE) test/features
 	$(MAKE) test/gates
+	$(MAKE) test/package
 
 ## test/features - the feature-off configurations' own tests (see check/features)
 test/features:
@@ -130,6 +146,10 @@ test/features:
 ##   Proves the gates fail on bad input, not only pass on this tree.
 test/gates:
 	bats tests/gates/
+
+## test/package - the spec of the release publishing script against a scratch repository and a fake gh (bats, no build)
+test/package:
+	bats tests/package/publish_deb.bats
 
 ## test/crate - lists the per-package test targets; tests nothing
 test/crate:
@@ -458,61 +478,24 @@ $(PAPER_TARGETS): papers/%/pdf:
 release:
 	@bash scripts/make-help.sh release
 
-## release/tag - create an annotated git tag for current version and push
-release/tag:
-	@echo "Current version: $(VERSION)"
-	@if git rev-parse "$(TAG)" >/dev/null 2>&1; then \
-	    echo "error: tag $(TAG) already exists. Bump the version first."; \
-	    exit 1; \
-	fi
-	@if [ -n "$$(git status --porcelain)" ]; then \
-	    echo "error: working tree is dirty. Commit your changes before tagging."; \
-	    git status --short; \
-	    exit 1; \
-	fi
-	@echo "Tagging $(TAG) on $$(git rev-parse --short HEAD)..."
-	@git tag -a "$(TAG)" -m "Release $(TAG)"
-	@git push origin "$(TAG)"
-	@echo ""
-	@echo "Tag $(TAG) pushed - GitHub Actions release workflow will start."
-	@echo "Watch: https://github.com/$(REPO)/actions"
-
-## release/publish - create a GitHub Release and upload dist/ artifacts via gh CLI
+## release/publish - push HEAD and the tag v<version> to RELEASE_REMOTE, then package/deb/publish
+##   The pushed tag starts the GitHub Actions release workflow, which attaches
+##   the dist/ artifacts to the same release.
 release/publish:
-	@if [ -z "$$(ls $(DIST)/sven-* 2>/dev/null)" ]; then \
-	    echo "error: no artifacts found in $(DIST)/"; \
-	    echo "       Run 'make package/dist' first."; \
-	    exit 1; \
-	fi
-	@if ! command -v gh >/dev/null 2>&1; then \
-	    echo "error: gh CLI not found."; \
-	    echo "       Install from https://cli.github.com/"; \
-	    exit 1; \
-	fi
-	@echo "Publishing $(TAG) to github.com/$(REPO)..."
-	@ARTIFACTS=$$(find $(DIST) -maxdepth 1 -type f | sort | tr '\n' ' '); \
-	gh release create "$(TAG)" \
-	    --repo "$(REPO)" \
-	    --title "sven $(TAG)" \
-	    --generate-notes \
-	    $$ARTIFACTS
-	@echo ""
-	@echo "Release: https://github.com/$(REPO)/releases/tag/$(TAG)"
+	git push $(RELEASE_REMOTE) HEAD "$(TAG)"
+	$(MAKE) package/deb/publish
 
-## release/patch - bump patch version (0.1.x to 0.1.x+1), tag, push; triggers CI
+## release/patch - bump the patch version (0.1.x to 0.1.x+1), commit and tag (local only; release/publish pushes)
 release/patch: _require-cargo-release test test/e2e/basic
 	@cargo release patch -p sven --execute --no-confirm
-	@git push origin main --follow-tags
 
-## release/minor - bump minor version (0.x.0 to 0.x+1.0), tag, push; triggers CI
+## release/minor - bump the minor version (0.x.0 to 0.x+1.0), commit and tag (local only; release/publish pushes)
 release/minor: _require-cargo-release test test/e2e/basic
 	@cargo release minor -p sven --execute --no-confirm
-	@git push origin main --follow-tags
 
-## release/major - bump major version (x.0.0 to x+1.0.0), tag, push; triggers CI
+## release/major - bump the major version (x.0.0 to x+1.0.0), commit and tag (local only; release/publish pushes)
 release/major: _require-cargo-release test test/e2e/basic
 	@cargo release major -p sven --execute --no-confirm
-	@git push origin main --follow-tags
 
 ## site - lists the site targets; does nothing (site/publish uploads to production)
 site:
@@ -657,7 +640,7 @@ generate/config/golden:
 
 # Declared last so every generated list above is already defined.
 .PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
-        test test/features test/gates test/e2e test/e2e/basic/deferred test/e2e/basic/instructions-deferred test/e2e/basic/demote $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
+        test test/features test/gates test/package test/e2e test/e2e/basic/deferred test/e2e/basic/instructions-deferred test/e2e/basic/demote $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
         test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness $(HARNESS_TARGETS) \
         generate \
         generate/config generate/config/golden \
@@ -665,11 +648,11 @@ generate/config/golden:
         check check/fmt check/features check/clippy check/doc check/arch \
         check/gates $(GATE_TARGETS) \
         fmt clean help \
-        package package/dist package/deb package/deb/debug package/deb/release \
+        package package/dist package/deb package/deb/debug package/deb/release package/deb/publish \
         docs docs/build docs/check docs/clean docs/pdf _docs-publisher-pin papers papers/pdf $(PAPER_DIRS) $(PAPER_TARGETS) \
         samples hooks hooks/install $(SAMPLE_CATEGORY_TARGETS) $(SAMPLE_NAME_TARGETS) \
         $(SAMPLE_BUILD_TARGETS) $(SAMPLE_RUN_TARGETS) \
-        release release/tag release/publish release/patch release/minor release/major \
+        release release/publish release/patch release/minor release/major \
         _require-cargo-release \
         site site/build site/publish site/serve \
         benchmark benchmark/build benchmark/terminal-bench benchmark/report benchmark/ledger benchmark/ablation

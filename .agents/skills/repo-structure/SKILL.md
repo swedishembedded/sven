@@ -111,10 +111,11 @@ Run `make help` for the full list.
 | `package/deb` | Build Debian package (`package` lists) |
 | `docs` / `docs/build` / `docs/check` / `docs/pdf` | Build manual and publication / publication only / verify it / PDF manual |
 | `test/formal` | Machine-check the TLA+ models |
-| `release/patch\|minor\|major` | Bump version via cargo-release |
+| `release/patch\|minor\|major` | Bump version via cargo-release, commit and tag (local only) |
 | `package/dist` | Build release artifacts into `dist/` (`package` lists) |
-| `release/tag` | Create + push annotated git tag |
-| `release/publish` | Upload `dist/` to GitHub Release via `gh` |
+| `package/deb/publish` | Sign the release `.deb` and attach it (and its `.asc`) to the tag's GitHub release, replacing an earlier upload (`RELEASE_REMOTE`, default `origin`) |
+| `release/publish` | Push HEAD and the tag to `RELEASE_REMOTE` (starts `release.yml`), then `package/deb/publish` |
+| `test/package` | Spec of the publishing script against a fake `gh` (part of `test`) |
 
 ## CI/release flow
 
